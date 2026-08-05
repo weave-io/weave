@@ -7822,3 +7822,76 @@ describe("createPiExtension: Task 13 overlay keys and picker", () => {
     expect(host.customDoneCalls).toBe(doneBeforeEscape);
   });
 });
+
+describe("createPiExtension: real-dispatch active-child shortcut", () => {
+  it("mounts the native overlay from Alt+1 on a live weave_delegate child without borrowing pi-vim", async () => {
+    // Real dispatch has no readable historical native page yet (thread sources
+    // are unwired in this fixture). Live open must still take the native
+    // ui.custom path instead of the custom-editor fallback that steals the
+    // primary editor from pi-vim.
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.effectiveKeybindingConfig = { "app.interrupt": "ctrl+c" };
+    const modalFactory = () => ({ handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+    const processPort = new FakeChildProcessPort();
+    installDelegationLifecycleExtension(host, processPort, {
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor({
+                delegationTargets: [
+                  {
+                    name: "shuttle",
+                    description: "General specialist",
+                    triggers: [],
+                    isCategory: false,
+                  },
+                ],
+              }),
+            },
+          ],
+          errors: [],
+        },
+        {
+          ...DELEGATION_LIFECYCLE_CONFIG,
+          settings: { adapters: { pi: { child_inspection: {} } } },
+        } as unknown as WeaveConfig,
+      ),
+    });
+
+    await host.triggerSessionStart();
+    expect(host.editorFactoryCalls.length).toBe(0);
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+
+    await spawnLifecycleChild(host, processPort);
+    expect(processPort.spawnedProcesses).toHaveLength(1);
+    expect(host.registerShortcutCalls.map((call) => call.shortcut)).toContain(
+      "alt+1",
+    );
+
+    const customBefore = host.customCalls.length;
+    const editorCallsBefore = host.editorFactoryCalls.length;
+    void host.invokeShortcut("alt+1");
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (host.customCalls.length > customBefore) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    expect(host.customCalls.length).toBe(customBefore + 1);
+    expect(host.editorFactoryCalls.length).toBe(editorCallsBefore);
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+
+    const rendered = host.customRenderedLines.at(-1)?.join("\n") ?? "";
+    expect(rendered).toContain("LIVE");
+    expect(rendered).toMatch(/shuttle/i);
+    expect(rendered).not.toContain("/Users/");
+
+    host.inputCustom("\u001b");
+    host.finishCustom();
+    await flushBackgroundWork();
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+  });
+});

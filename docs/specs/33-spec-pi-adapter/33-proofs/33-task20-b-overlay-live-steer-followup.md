@@ -359,3 +359,36 @@ coordinatorCleanupTargets:
   - current_proof_pane_when_no_longer_needed
   - temporary_proof_artifacts_after_commit_verification
 ```
+
+---
+
+## Source remediation — live unreadable initial page (2026-08-05)
+
+Result: **FAIL** (source-side only; Herdr item (b) still required)
+
+Root cause of the active-child Alt+1 mount failure after Task 21 shortcut
+registration: `ChildOverlayController.open` required a readable historical
+newest page before mounting. A live `weave_delegate` child often has no
+readable thread/session page yet, so open returned `fallback-required` and the
+extension handed off to custom-editor inspection, which borrows the primary
+editor from whoever owns it (`pi-vim`). That path never mounts the native
+`ui.custom` overlay.
+
+Fix:
+
+- When `loadNewest` fails for a child with `status === "live"`, open an empty
+  native live-tail page (`entries: []`, `liveTail: true`) and fill from the
+  live event stream.
+- Settled, orphaned, and unknown children keep the fail-closed
+  `source-failed` fallback.
+
+Unit coverage:
+
+- Controller: live unreadable initial source → empty page + later live event
+  renders; settled unreadable source → `fallback-required`.
+- Extension: real `weave_delegate` dispatch, registered Alt+1, native overlay
+  mount while pi-vim retains primary editor ownership.
+
+Status: unchanged for Task 20(b), S043, and S044. A fresh Herdr pane must still
+prove live tail, scroll disengage/follow, Enter steering, Alt+Enter follow-up,
+primary-editor isolation, and clean settlement.

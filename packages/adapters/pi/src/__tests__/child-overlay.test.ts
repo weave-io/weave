@@ -19,6 +19,7 @@ import {
   type ChildOverlayFallbackRequired,
   type ChildOverlayMutationPort,
   type ChildOverlayReplayStep,
+  type ChildOverlaySourcePort,
   type ChildOverlayView,
   createChildOverlayController,
   createChildOverlayCustomComponent,
@@ -194,6 +195,26 @@ async function mustOpen(
   const result = await controller.open(target);
   expect(result.isOk()).toBe(true);
   return result._unsafeUnwrap();
+}
+
+/**
+ * Describe succeeds, but the initial historical newest-page read fails. Models
+ * a live child's session ref/file not being readable yet, or a settled child's
+ * unreadable source that must stay fail-closed.
+ */
+function unreadableNewestSource(
+  children: readonly MemoryOverlaySourceChild[],
+): ChildOverlaySourcePort {
+  const memory = createMemoryChildOverlaySource(children);
+  return {
+    describe: (childId) => memory.describe(childId),
+    loadNewest: () =>
+      errAsync({ type: "SourceCorrupt", operation: "loadNewest" }),
+    loadOlder: (childId, cursor, pageSize) =>
+      memory.loadOlder(childId, cursor, pageSize),
+    loadNewer: (childId, cursor, pageSize) =>
+      memory.loadNewer(childId, cursor, pageSize),
+  };
 }
 
 /** In-memory native page adapter for overlay source unit tests. */
@@ -1761,6 +1782,59 @@ describe("ChildOverlayController", () => {
     const error = result._unsafeUnwrapErr() as ChildOverlayFallbackRequired;
     expect(error.kind).toBe("fallback-required");
     expect(error.metadata.reason).toBe("describe-failed");
+    expect(JSON.stringify(error)).not.toContain("/Users/");
+  });
+
+  it("opens a live child on an empty native page when the initial source is unreadable", async () => {
+    const source = unreadableNewestSource([
+      child({
+        childId: "live-unreadable",
+        status: "live",
+        generationId: "gen-live",
+        entries: entries(4, "hist"),
+      }),
+    ]);
+    const overlay = createChildOverlayController(source, { pageSize: 10 });
+    const opened = await mustOpen(overlay, "live-unreadable");
+    expect(opened.child.status).toBe("live");
+    expect(opened.readOnly).toBe(false);
+    expect(opened.entries).toEqual([]);
+    expect(opened.liveTail).toBe(true);
+    expect(opened.hasOlder).toBe(false);
+    expect(opened.hasNewer).toBe(false);
+
+    const after = overlay.applyLiveEvent({
+      type: "message_update",
+      delta: {
+        messageId: "msg-live-empty",
+        text: "live-tail-after-empty-open",
+      },
+    });
+    expect(after.isOk()).toBe(true);
+    const view = after._unsafeUnwrap();
+    expect(
+      view.entries.some((entry) =>
+        entry.text.includes("live-tail-after-empty-open"),
+      ),
+    ).toBe(true);
+    expect(view.liveTail).toBe(true);
+  });
+
+  it("keeps settled children fail-closed when the initial source is unreadable", async () => {
+    const source = unreadableNewestSource([
+      child({
+        childId: "settled-unreadable",
+        status: "settled",
+        entries: entries(3, "s"),
+      }),
+    ]);
+    const overlay = createChildOverlayController(source, { pageSize: 10 });
+    const result = await overlay.open("settled-unreadable");
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr() as ChildOverlayFallbackRequired;
+    expect(error.kind).toBe("fallback-required");
+    expect(error.metadata.reason).toBe("source-failed");
+    expect(error.metadata.childId).toBe("settled-unreadable");
     expect(JSON.stringify(error)).not.toContain("/Users/");
   });
 
