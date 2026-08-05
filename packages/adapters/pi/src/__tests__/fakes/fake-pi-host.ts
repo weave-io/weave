@@ -19,6 +19,7 @@ import type {
   PiModelInfo,
   PiModelRegistry,
   PiSessionContext,
+  PiSessionManagerPort,
   PiSkillInfo,
   PiSourceInfo,
   PiToolRegistration,
@@ -27,6 +28,27 @@ import type {
   PiUiPort,
   PiUiThemePort,
 } from "../../types.js";
+
+/** Default host-reported persistent parent session for fake extension contexts. */
+export function persistentFakeSessionManager(
+  overrides: { readonly id?: string; readonly file?: string } = {},
+): PiSessionManagerPort {
+  return {
+    getSessionId: () => overrides.id ?? "fake-session-1",
+    getSessionFile: () =>
+      overrides.file ?? "/fake/sessions/fake-session-1.jsonl",
+    isPersisted: () => true,
+  };
+}
+
+/** Host-reported `--no-session` / ephemeral parent for fake extension contexts. */
+export function ephemeralFakeSessionManager(): PiSessionManagerPort {
+  return {
+    getSessionId: () => "ephemeral-session",
+    getSessionFile: () => undefined,
+    isPersisted: () => false,
+  };
+}
 
 /**
  * Pi's own documented default keys for the bindings custom components read.
@@ -114,6 +136,12 @@ export interface FakePiHostOptions {
    * themed active-agent badge exactly as the real host would render it.
    */
   readonly theme?: PiUiThemePort;
+  /**
+   * Host `ctx.sessionManager`. Defaults to a persistent session so production
+   * delegation wiring keeps working. Pass `null` to omit the surface (unknown
+   * / no-probe). Pass an ephemeral manager to simulate `--no-session`.
+   */
+  readonly sessionManager?: PiSessionManagerPort | null;
 }
 
 /**
@@ -211,6 +239,7 @@ export class RecordingFakePiHost {
   private readonly cwd: string;
   private readonly installPath: string;
   private readonly systemPromptOptionsAvailable: boolean;
+  private sessionManager: PiSessionManagerPort | undefined;
   private commandsInventory: PiCommandInfo[] = [];
   private selectResponses: (
     | string
@@ -257,7 +286,16 @@ export class RecordingFakePiHost {
     this.currentSkills = options.systemPromptSkills ?? [];
     this.systemPromptOptionsAvailable =
       options.systemPromptOptionsAvailable ?? true;
+    this.sessionManager =
+      options.sessionManager === null
+        ? undefined
+        : (options.sessionManager ?? persistentFakeSessionManager());
     this.api = this.buildApi();
+  }
+
+  /** Replaces the host-reported session manager for the next context. */
+  setSessionManager(manager: PiSessionManagerPort | undefined): void {
+    this.sessionManager = manager;
   }
 
   /** The object handed to an extension's default factory. */
@@ -685,6 +723,9 @@ export class RecordingFakePiHost {
         hasUI: this.hasUI,
         model,
         modelRegistry,
+        ...(this.sessionManager === undefined
+          ? {}
+          : { sessionManager: this.sessionManager }),
         getSystemPrompt: () => {
           this.getSystemPromptCalls += 1;
           if (this.currentSkills.length === 0) return "native-system-prompt";

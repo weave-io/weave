@@ -22,6 +22,8 @@ import {
   makeChildAbortFailedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
+import type { PiParentSessionState } from "./primary-session.js";
+import { requirePersistentParentSession } from "./primary-session.js";
 import type { PiChildSettlement } from "./rpc-child.js";
 import type { JsonValue } from "./strict-json.js";
 import type {
@@ -102,6 +104,13 @@ export interface PiDelegationToolDeps {
     parentAgentName: string,
   ) => JsonValue;
   readonly buildEnv: () => Record<string, string>;
+  /**
+   * Reads the host-probed parent session state. Required so every registration
+   * runs the persistent-parent guard before any child process, native child
+   * session file, execution lease, or parent ref exists. Non-persistent and
+   * unproven (`unknown`) parents fail closed.
+   */
+  readonly getParentSessionState: () => PiParentSessionState;
   /**
    * Names the model and reasoning level the target agent will run with, so the
    * tool call can show them before the child exists.
@@ -445,6 +454,17 @@ export function buildDelegationToolRegistration(
       return new Text(`${rule}\n${body}`, 0, 0);
     },
     execute: async (_toolCallId, params, signal, onUpdate, ctx) => {
+      // The persistent-parent guard runs first, before this call parses
+      // arguments, reads the controller, generates a child id, or touches any
+      // other state: a `--no-session` or unproven parent must never produce a
+      // partially created child, session file, lease, or ref.
+      const guard = requirePersistentParentSession(
+        deps.getParentSessionState(),
+        "delegate",
+      );
+      if (guard.isErr()) {
+        return failureResult(guard.error.code, guard.error);
+      }
       const parsed = parseDelegationCall(params);
       if (parsed === undefined || !allowedNames.has(parsed.agent)) {
         return failureResult("invalid-delegation-target");

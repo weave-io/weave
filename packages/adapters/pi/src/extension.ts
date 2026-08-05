@@ -173,6 +173,7 @@ import {
   DEFAULT_PRIMARY_AGENT_NAME,
   type PiPrimaryActivationError,
   PiPrimarySession,
+  UNKNOWN_PARENT_SESSION,
 } from "./primary-session.js";
 import {
   PROMPT_CHUNK_COMMAND,
@@ -2270,6 +2271,9 @@ export function createPiExtension(
                   ) ?? descriptor.composedPrompt,
               ),
             buildEnv: () => ({}),
+            getParentSessionState: () =>
+              activeSession?.primarySession.getParentSession() ??
+              UNKNOWN_PARENT_SESSION,
             resolveAgentRuntime: (agentName) =>
               latestSessionCtx === undefined
                 ? {}
@@ -3735,6 +3739,7 @@ export function createPiExtension(
         primarySession: new PiPrimarySession({
           skillCatalog: new PiSkillCatalog([]),
           logger: deps.logger,
+          parentSessionProbe: ctx.sessionManager,
         }),
         descriptors: configActivation.descriptors.byName,
         disabledSkills: configActivation.config.disabled?.skills ?? [],

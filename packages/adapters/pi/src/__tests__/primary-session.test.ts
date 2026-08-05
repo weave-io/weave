@@ -7,8 +7,12 @@ import { errAsync, okAsync } from "neverthrow";
 import type { PiModelApplyPort } from "../model-resolution.js";
 import {
   appendWeaveBlockOnce,
+  isReadOnlyChildAccessAllowed,
   PiPrimarySession,
+  probeParentSession,
   renderWeavePromptBlock,
+  requirePersistentParentSession,
+  UNKNOWN_PARENT_SESSION,
 } from "../primary-session.js";
 import { PiSkillCatalog } from "../skill-catalog.js";
 import type { PiModelInfo } from "../types.js";
@@ -454,5 +458,155 @@ describe("PiPrimarySession.appendToSystemPrompt", () => {
     const result = session.appendToSystemPrompt("native prompt");
     expect(result).toContain("native prompt");
     expect(result).toContain("You are Loom, the orchestrator.");
+  });
+});
+
+describe("parent session persistence", () => {
+  function probe(overrides: {
+    persisted?: boolean;
+    file?: string | undefined;
+    id?: string;
+    throws?: boolean;
+  }) {
+    return {
+      isPersisted: () => {
+        if (overrides.throws === true) throw new Error("host exploded");
+        return overrides.persisted ?? true;
+      },
+      getSessionFile: () => overrides.file,
+      getSessionId: () => overrides.id ?? "session-1",
+    };
+  }
+
+  it("records the host-probed identity of a persisted parent", () => {
+    const state = probeParentSession(
+      probe({ persisted: true, file: "/sessions/a.jsonl", id: "session-a" }),
+    );
+    expect(state).toEqual({
+      persistence: "persistent",
+      sessionId: "session-a",
+      sessionFile: "/sessions/a.jsonl",
+    });
+  });
+
+  it("reports a --no-session parent as ephemeral from the host answer alone", () => {
+    expect(
+      probeParentSession(probe({ persisted: false, file: undefined })),
+    ).toEqual({
+      persistence: "ephemeral",
+      reason: "host-reports-not-persisted",
+    });
+  });
+
+  it("treats a persisted parent without a session file as ephemeral", () => {
+    expect(probeParentSession(probe({ persisted: true, file: "" }))).toEqual({
+      persistence: "ephemeral",
+      reason: "no-session-file",
+    });
+  });
+
+  it("never infers persistence when no probe or a throwing probe is available", () => {
+    expect(probeParentSession(undefined)).toEqual(UNKNOWN_PARENT_SESSION);
+    expect(probeParentSession(probe({ throws: true }))).toEqual({
+      persistence: "unknown",
+      reason: "probe-failed",
+    });
+  });
+
+  it("rejects every mutation boundary on a non-persistent parent with one stable failure", () => {
+    const state = probeParentSession(probe({ persisted: false }));
+    for (const operation of [
+      "delegate",
+      "steer",
+      "follow-up",
+      "retry",
+      "continue",
+      "delete",
+    ] as const) {
+      const result = requirePersistentParentSession(state, operation);
+      expect(result.isErr()).toBe(true);
+      const failure = result._unsafeUnwrapErr();
+      expect(failure.code).toBe("PersistentParentSessionRequired");
+      expect(failure.retryable).toBe(false);
+      expect(failure.correlation).toEqual({
+        operation,
+        reason: "host-reports-not-persisted",
+        remediation:
+          "Start or reopen Pi with a persistent session (do not use --no-session).",
+      });
+      expect(failure.safeMessage).toContain("persistent Pi session");
+      expect(JSON.stringify(failure)).not.toContain("session-1");
+    }
+  });
+
+  it("allows mutations only on a host-proven persistent parent", () => {
+    expect(
+      requirePersistentParentSession(
+        probeParentSession(probe({ file: "/sessions/a.jsonl" })),
+        "delegate",
+      ).isOk(),
+    ).toBe(true);
+  });
+
+  it("fails closed for unknown parents (no-probe and probe-failed)", () => {
+    for (const reason of ["no-probe", "probe-failed"] as const) {
+      const result = requirePersistentParentSession(
+        { persistence: "unknown", reason },
+        "delegate",
+      );
+      expect(result.isErr()).toBe(true);
+      const failure = result._unsafeUnwrapErr();
+      expect(failure.code).toBe("PersistentParentSessionRequired");
+      expect(failure.correlation).toMatchObject({
+        operation: "delegate",
+        reason,
+      });
+    }
+  });
+
+  it("keeps read-only child access allowed for every parent state", () => {
+    expect(
+      isReadOnlyChildAccessAllowed(
+        probeParentSession(probe({ persisted: false })),
+      ),
+    ).toBe(true);
+    expect(isReadOnlyChildAccessAllowed(UNKNOWN_PARENT_SESSION)).toBe(true);
+    expect(
+      isReadOnlyChildAccessAllowed(
+        probeParentSession(probe({ file: "/sessions/a.jsonl" })),
+      ),
+    ).toBe(true);
+  });
+
+  it("records the parent session on the primary session and re-probes on transition", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+      parentSessionProbe: probe({ persisted: false }),
+    });
+    expect(session.getParentSession().persistence).toBe("ephemeral");
+    expect(session.requirePersistentParent("delegate").isErr()).toBe(true);
+
+    session.refreshParentSession(
+      probe({ persisted: true, file: "/sessions/b.jsonl", id: "session-b" }),
+    );
+    expect(session.getParentSession()).toEqual({
+      persistence: "persistent",
+      sessionId: "session-b",
+      sessionFile: "/sessions/b.jsonl",
+    });
+    expect(session.requirePersistentParent("delegate").isOk()).toBe(true);
+  });
+
+  it("defaults to unknown and fails closed when no probe is wired", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    expect(session.getParentSession()).toEqual(UNKNOWN_PARENT_SESSION);
+    expect(session.requirePersistentParent("retry").isErr()).toBe(true);
+    expect(
+      session.requirePersistentParent("retry")._unsafeUnwrapErr().correlation,
+    ).toMatchObject({ reason: "no-probe" });
   });
 });

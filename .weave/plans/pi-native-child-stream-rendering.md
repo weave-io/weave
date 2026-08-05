@@ -160,7 +160,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - `bun test packages/adapters/pi/src/__tests__/child-metadata-cache.test.ts` passes: rebuild-from-source equivalence, corrupt-cache degrade path, scoping, tombstone handling, permission modes.
     - Grep-level assertion in tests that no transcript field exists in the schema.
 
-- [ ] 7. Enforce the persistent-parent requirement
+- [x] 7. Enforce the persistent-parent requirement
   - **What**: Detect `--no-session` (non-persistent) parent sessions; block delegation with structured `PersistentParentSessionRequired` diagnostics (stable code, remediation) while keeping safe read-only UI (picker/history/doctor over prior data where resolvable) available.
   - **Files**: `packages/adapters/pi/src/primary-session.ts`, `packages/adapters/pi/src/delegation-tool.ts` (guard), `packages/adapters/pi/src/errors.ts`; tests in `packages/adapters/pi/src/__tests__/primary-session.test.ts`, `delegation-tool.test.ts`.
   - **Depends on**: Tasks 4–5 (needs the ref/session model to define "read-only remains safe").

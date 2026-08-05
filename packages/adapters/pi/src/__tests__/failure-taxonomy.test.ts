@@ -39,6 +39,7 @@ const FROZEN_FAILURE_CODES = [
   "HostIdentityUnknown",
   "HostVersionUnsupported",
   "InteractiveTuiRequired",
+  "PersistentParentSessionRequired",
   "ActivationFailed",
   "CommandCollision",
   "RequiredCapabilityUnavailable",

@@ -68,6 +68,11 @@ function baseDeps(
     idGenerator: { next: () => `child-${++counter}` },
     buildBootstrap: () => ({}),
     buildEnv: () => ({}),
+    getParentSessionState: () => ({
+      persistence: "persistent",
+      sessionId: "session-test",
+      sessionFile: "/sessions/test.jsonl",
+    }),
     ...overrides,
   };
 }
@@ -664,5 +669,195 @@ describe("buildDelegationToolRegistration", () => {
     // has nothing left to cancel.
     abortController.abort();
     expect(cancelSubtreeCalls).toBe(0);
+  });
+});
+
+describe("weave_delegate persistent-parent guard", () => {
+  it("refuses delegation from a --no-session parent before any child side effect", async () => {
+    let idCalls = 0;
+    let controllerCalls = 0;
+    let bootstrapCalls = 0;
+    let envCalls = 0;
+    let delegateCalls = 0;
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getParentSessionState: () => ({
+          persistence: "ephemeral",
+          reason: "host-reports-not-persisted",
+        }),
+        idGenerator: {
+          next: () => {
+            idCalls += 1;
+            return "child-1";
+          },
+        },
+        buildBootstrap: () => {
+          bootstrapCalls += 1;
+          return {};
+        },
+        buildEnv: () => {
+          envCalls += 1;
+          return {};
+        },
+        getController: () => {
+          controllerCalls += 1;
+          return fakeController(() => {
+            delegateCalls += 1;
+            return okAsync({ outcome: "cancelled" } as PiChildSettlement);
+          });
+        },
+      }),
+    );
+
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("PersistentParentSessionRequired");
+    expect(text.retryable).toBe(false);
+    expect(text.reason).toBe("host-reports-not-persisted");
+    expect(text.message).toContain("persistent Pi session");
+    // Zero child ids, bootstraps, envs, controller reads, or dispatches: no
+    // child process, session file, lease, or parent ref can exist.
+    expect([
+      idCalls,
+      bootstrapCalls,
+      envCalls,
+      controllerCalls,
+      delegateCalls,
+    ]).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it("keeps existing delegation behaviour for a persistent parent", async () => {
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getParentSessionState: () => ({
+          persistence: "persistent",
+          sessionId: "session-a",
+          sessionFile: "/sessions/a.jsonl",
+        }),
+        getController: () =>
+          fakeController(() =>
+            okAsync({
+              outcome: "completed",
+              assistantOutput: "done",
+            } as PiChildSettlement),
+          ),
+      }),
+    );
+
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
+      ok: true,
+      settlement: {
+        outcome: "completed",
+        finalOutput: "done",
+        interventionCount: 0,
+      },
+    });
+  });
+
+  it("refuses delegation when parent persistence is unknown (no probe)", async () => {
+    let idCalls = 0;
+    let controllerCalls = 0;
+    let bootstrapCalls = 0;
+    let envCalls = 0;
+    let delegateCalls = 0;
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getParentSessionState: () => ({
+          persistence: "unknown",
+          reason: "no-probe",
+        }),
+        idGenerator: {
+          next: () => {
+            idCalls += 1;
+            return "child-1";
+          },
+        },
+        buildBootstrap: () => {
+          bootstrapCalls += 1;
+          return {};
+        },
+        buildEnv: () => {
+          envCalls += 1;
+          return {};
+        },
+        getController: () => {
+          controllerCalls += 1;
+          return fakeController(() => {
+            delegateCalls += 1;
+            return okAsync({ outcome: "cancelled" } as PiChildSettlement);
+          });
+        },
+      }),
+    );
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("PersistentParentSessionRequired");
+    expect(text.reason).toBe("no-probe");
+    expect([
+      idCalls,
+      bootstrapCalls,
+      envCalls,
+      controllerCalls,
+      delegateCalls,
+    ]).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it("refuses delegation when the parent probe failed", async () => {
+    let idCalls = 0;
+    let controllerCalls = 0;
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getParentSessionState: () => ({
+          persistence: "unknown",
+          reason: "probe-failed",
+        }),
+        idGenerator: {
+          next: () => {
+            idCalls += 1;
+            return "child-1";
+          },
+        },
+        getController: () => {
+          controllerCalls += 1;
+          return fakeController(() =>
+            okAsync({ outcome: "cancelled" } as PiChildSettlement),
+          );
+        },
+      }),
+    );
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("PersistentParentSessionRequired");
+    expect(text.reason).toBe("probe-failed");
+    expect([idCalls, controllerCalls]).toEqual([0, 0]);
   });
 });

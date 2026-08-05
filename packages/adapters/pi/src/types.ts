@@ -204,6 +204,18 @@ export interface PiUiPort {
   ): Promise<boolean>;
 }
 
+/**
+ * Narrow projection of Pi's `SessionManager` for parent identity/persistence.
+ * Matches the host methods Weave probes; the live object is
+ * `ctx.sessionManager` (Pi's public readonly session-manager surface plus
+ * `isPersisted()`, which the concrete manager exposes at runtime).
+ */
+export interface PiSessionManagerPort {
+  getSessionId(): string;
+  getSessionFile(): string | undefined;
+  isPersisted(): boolean;
+}
+
 /** Narrow projection of `ExtensionContext` used by command handlers and lifecycle delegates. */
 export interface PiSessionContext {
   readonly mode: PiMode;
@@ -218,6 +230,11 @@ export interface PiSessionContext {
   readonly model: PiModelInfo | undefined;
   /** Authenticated-model discovery (`ctx.modelRegistry`). */
   readonly modelRegistry: PiModelRegistry;
+  /**
+   * Pi's live session manager. Present on real extension contexts; unit-test
+   * doubles may omit it, which the persistent-parent guard treats as unknown.
+   */
+  readonly sessionManager?: PiSessionManagerPort;
   /** Command-context access to Pi's current skill discovery snapshot. */
   readonly getSystemPromptOptions?: () => PiBuildSystemPromptOptions;
   /** Public on ordinary Pi extension contexts, including `session_start`. */

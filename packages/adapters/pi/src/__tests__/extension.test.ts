@@ -63,14 +63,17 @@ import type {
 import { InMemoryRecoveryPointerStore } from "../recovery-pointer.js";
 import type { JsonValue } from "../strict-json.js";
 import { serializeCompletionCandidate } from "../structured-completion.js";
+import type { IdGenerator } from "../types.js";
 import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
 import { FakeHostPackageReader } from "./fakes/fake-host-package-reader.js";
 import {
+  ephemeralFakeSessionManager,
   FakeClock,
   FakeIdGenerator,
+  persistentFakeSessionManager,
   RecordingFakePiHost,
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
@@ -4032,6 +4035,143 @@ async function waitForKilled(
   }
   return process?.killed === true;
 }
+
+class TrackingIdGenerator implements IdGenerator {
+  calls = 0;
+  private readonly inner = new FakeIdGenerator();
+  next(): string {
+    this.calls += 1;
+    return this.inner.next();
+  }
+}
+
+describe("createPiExtension: persistent-parent guard on production weave_delegate", () => {
+  it("refuses weave_delegate from a host-reported ephemeral sessionManager before any child side effect", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: ephemeralFakeSessionManager(),
+    });
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new TrackingIdGenerator();
+    installDelegationLifecycleExtension(host, processPort, { idGenerator });
+
+    await host.triggerSessionStart();
+    const idCallsAfterStart = idGenerator.calls;
+    const registration = host.registerToolCalls.find(
+      (tool) => tool.name === "weave_delegate",
+    );
+    expect(registration).toBeDefined();
+
+    const result = await registration?.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      host.createSessionContext(),
+    );
+    expect(result).toBeDefined();
+    if (result === undefined) throw new Error("missing tool result");
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("PersistentParentSessionRequired");
+    expect(text.reason).toBe("host-reports-not-persisted");
+    expect(text.retryable).toBe(false);
+    expect(text.message).toContain("persistent Pi session");
+    expect(JSON.stringify(text)).not.toContain("ephemeral-session");
+    expect(idGenerator.calls).toBe(idCallsAfterStart);
+    expect(processPort.spawnedProcesses).toHaveLength(0);
+  });
+
+  it("delegates normally when the host reports a persistent sessionManager", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: persistentFakeSessionManager(),
+    });
+    const processPort = new FakeChildProcessPort();
+    installDelegationLifecycleExtension(host, processPort);
+
+    await host.triggerSessionStart();
+    await spawnLifecycleChild(host, processPort);
+    expect(processPort.spawnedProcesses).toHaveLength(1);
+  });
+
+  it("fails closed when ctx.sessionManager is absent (no-probe)", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: null,
+    });
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new TrackingIdGenerator();
+    installDelegationLifecycleExtension(host, processPort, { idGenerator });
+
+    await host.triggerSessionStart();
+    const idCallsAfterStart = idGenerator.calls;
+    const registration = host.registerToolCalls.find(
+      (tool) => tool.name === "weave_delegate",
+    );
+    expect(registration).toBeDefined();
+
+    const result = await registration?.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      host.createSessionContext(),
+    );
+    expect(result).toBeDefined();
+    if (result === undefined) throw new Error("missing tool result");
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("PersistentParentSessionRequired");
+    expect(text.reason).toBe("no-probe");
+    expect(idGenerator.calls).toBe(idCallsAfterStart);
+    expect(processPort.spawnedProcesses).toHaveLength(0);
+  });
+
+  it("fails closed when the host sessionManager probe throws (probe-failed)", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: {
+        getSessionId: () => "session-throw",
+        getSessionFile: () => "/sessions/throw.jsonl",
+        isPersisted: () => {
+          throw new Error("host probe exploded");
+        },
+      },
+    });
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new TrackingIdGenerator();
+    installDelegationLifecycleExtension(host, processPort, { idGenerator });
+
+    await host.triggerSessionStart();
+    const idCallsAfterStart = idGenerator.calls;
+    const registration = host.registerToolCalls.find(
+      (tool) => tool.name === "weave_delegate",
+    );
+    expect(registration).toBeDefined();
+
+    const result = await registration?.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      host.createSessionContext(),
+    );
+    expect(result).toBeDefined();
+    if (result === undefined) throw new Error("missing tool result");
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("PersistentParentSessionRequired");
+    expect(text.reason).toBe("probe-failed");
+    expect(JSON.stringify(text)).not.toContain("host probe exploded");
+    expect(idGenerator.calls).toBe(idCallsAfterStart);
+    expect(processPort.spawnedProcesses).toHaveLength(0);
+  });
+});
 
 describe("createPiExtension: delegation controller lifecycle across generations", () => {
   it("kills the previous generation's live children as soon as a trust-withheld generation takes authority, even though that generation returns before ever building a controller", async () => {

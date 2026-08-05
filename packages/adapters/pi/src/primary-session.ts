@@ -1,5 +1,16 @@
 import type { AgentDescriptor, ResolvedSkill } from "@weaveio/weave-engine";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  Result,
+  type ResultAsync,
+} from "neverthrow";
+import {
+  makePersistentParentSessionRequiredFailure,
+  type PiAdapterFailure,
+} from "./errors.js";
 import type {
   PiModelActivationOutcome,
   PiModelApplyPort,
@@ -7,7 +18,12 @@ import type {
 } from "./model-resolution.js";
 import { PiModelActivator } from "./model-resolution.js";
 import type { PiSkillCatalog } from "./skill-catalog.js";
-import type { PiAdapterLogger, PiModelInfo, PiSkillInfo } from "./types.js";
+import type {
+  PiAdapterLogger,
+  PiModelInfo,
+  PiSessionManagerPort,
+  PiSkillInfo,
+} from "./types.js";
 
 const WEAVE_BLOCK_START = "weave:agent:start";
 const WEAVE_BLOCK_END = "weave:agent:end";
@@ -70,6 +86,122 @@ export function appendWeaveBlockOnce(
   return `${systemPrompt}\n\n${block}`;
 }
 
+// ---------------------------------------------------------------------------
+// Parent session persistence
+// ---------------------------------------------------------------------------
+
+/**
+ * The narrow slice of Pi's parent `SessionManager` this module probes. Only
+ * the host answers whether the parent session is persisted; persistence is
+ * never inferred from an id, a path shape, or any other guess.
+ */
+export type PiParentSessionProbePort = PiSessionManagerPort;
+
+/**
+ * The parent TUI's host-probed session identity and persistence.
+ *
+ * `persistent` carries the real host-reported identity of a durable parent
+ * session. `ephemeral` is a parent Pi started without persistence (for
+ * example `--no-session`): it has no durable file for child sessions, parent
+ * refs, or leases to belong to. `unknown` means no probe was available or the
+ * probe threw — mutation boundaries fail closed until persistence is proven.
+ */
+export type PiParentSessionState =
+  | {
+      readonly persistence: "persistent";
+      readonly sessionId: string;
+      readonly sessionFile: string;
+    }
+  | {
+      readonly persistence: "ephemeral";
+      readonly reason: "host-reports-not-persisted" | "no-session-file";
+    }
+  | {
+      readonly persistence: "unknown";
+      readonly reason: "no-probe" | "probe-failed";
+    };
+
+export const UNKNOWN_PARENT_SESSION: PiParentSessionState = {
+  persistence: "unknown",
+  reason: "no-probe",
+};
+
+const probeParentSessionSafely = Result.fromThrowable(
+  (probe: PiParentSessionProbePort): PiParentSessionState => {
+    if (!probe.isPersisted()) {
+      return {
+        persistence: "ephemeral",
+        reason: "host-reports-not-persisted",
+      };
+    }
+    const sessionFile = probe.getSessionFile();
+    if (sessionFile === undefined || sessionFile.length === 0) {
+      return { persistence: "ephemeral", reason: "no-session-file" };
+    }
+    const sessionId = probe.getSessionId();
+    if (typeof sessionId !== "string" || sessionId.length === 0) {
+      return { persistence: "ephemeral", reason: "no-session-file" };
+    }
+    return { persistence: "persistent", sessionId, sessionFile };
+  },
+  () => undefined,
+);
+
+/**
+ * Reads the host's own answer for the parent session. A throwing or absent
+ * probe yields `unknown`, never a fabricated identity.
+ */
+export function probeParentSession(
+  probe: PiParentSessionProbePort | undefined,
+): PiParentSessionState {
+  if (probe === undefined) return UNKNOWN_PARENT_SESSION;
+  return probeParentSessionSafely(probe).unwrapOr({
+    persistence: "unknown",
+    reason: "probe-failed",
+  });
+}
+
+/** The mutation boundaries that require a durable parent session. */
+export type PiParentMutationOperation =
+  | "delegate"
+  | "steer"
+  | "follow-up"
+  | "retry"
+  | "continue"
+  | "delete";
+
+/**
+ * The single guard every child-owning mutation runs before it creates a child
+ * process, a native child session file, an execution lease, or a parent ref.
+ *
+ * Only a host-proven `persistent` parent may mutate. `ephemeral` and
+ * `unknown` (no probe / probe failed) both reject with
+ * `PersistentParentSessionRequired` — persistence cannot be assumed.
+ */
+export function requirePersistentParentSession(
+  state: PiParentSessionState,
+  operation: PiParentMutationOperation,
+): Result<PiParentSessionState, PiAdapterFailure> {
+  if (state.persistence === "persistent") {
+    return ok(state);
+  }
+  return err(
+    makePersistentParentSessionRequiredFailure(operation, state.reason),
+  );
+}
+
+/**
+ * Read-only child access (picker, history, doctor, source resolution over
+ * already-resolvable prior data) never depends on the current parent's
+ * persistence: prior child sessions and refs stay inspectable even from a
+ * `--no-session` parent, or with no parent identity at all.
+ */
+export function isReadOnlyChildAccessAllowed(
+  _state: PiParentSessionState,
+): boolean {
+  return true;
+}
+
 export type PiPrimaryActivationError =
   | {
       readonly type: "NotEligiblePrimary";
@@ -126,6 +258,8 @@ export interface PiPrimaryActivationContext {
 
 export interface PiPrimarySessionDeps {
   readonly skillCatalog: PiSkillCatalog;
+  /** Host probe for the parent session's identity and persistence. */
+  readonly parentSessionProbe?: PiParentSessionProbePort;
   readonly modelActivator?: PiModelActivator;
   readonly logger: PiAdapterLogger;
 }
@@ -149,13 +283,41 @@ export class PiPrimarySession {
   private previousDescriptorName: string | undefined;
   private readonly warnedKeys = new Set<string>();
   private readonly warnings: PiPrimaryCapabilityWarning[] = [];
+  private parentSession: PiParentSessionState = UNKNOWN_PARENT_SESSION;
 
   constructor(private readonly deps: PiPrimarySessionDeps) {
     this.modelActivator = deps.modelActivator ?? new PiModelActivator();
+    if (deps.parentSessionProbe !== undefined) {
+      this.parentSession = probeParentSession(deps.parentSessionProbe);
+    }
   }
 
   getCurrent(): PiActivePrimary | undefined {
     return this.current;
+  }
+
+  /** The last host-probed parent session identity and persistence. */
+  getParentSession(): PiParentSessionState {
+    return this.parentSession;
+  }
+
+  /**
+   * Re-probes the parent session from the host. Session transitions (new,
+   * resume, fork) replace the parent identity, so the recorded state is
+   * refreshed from the host rather than cached from activation time.
+   */
+  refreshParentSession(
+    probe: PiParentSessionProbePort | undefined = this.deps.parentSessionProbe,
+  ): PiParentSessionState {
+    this.parentSession = probeParentSession(probe);
+    return this.parentSession;
+  }
+
+  /** Runs the shared persistent-parent guard against the recorded state. */
+  requirePersistentParent(
+    operation: PiParentMutationOperation,
+  ): Result<PiParentSessionState, PiAdapterFailure> {
+    return requirePersistentParentSession(this.parentSession, operation);
   }
 
   /**

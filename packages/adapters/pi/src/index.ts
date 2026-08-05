@@ -381,6 +381,7 @@ export {
   makeHostVersionUnsupportedFailure,
   makeInteractiveTuiRequiredFailure,
   makeInvariantViolationFailure,
+  makePersistentParentSessionRequiredFailure,
   makeRequiredCapabilityUnavailableFailure,
   makeUiBridgeUnavailableFailure,
   PiAdapterFailureCodeSchema,
@@ -446,6 +447,9 @@ export type {
 export { PiModelActivator, PiModelResolver } from "./model-resolution.js";
 export type {
   PiActivePrimary,
+  PiParentMutationOperation,
+  PiParentSessionProbePort,
+  PiParentSessionState,
   PiPrimaryActivationContext,
   PiPrimaryActivationError,
   PiPrimaryCapabilityWarning,
@@ -454,9 +458,13 @@ export type {
 export {
   appendWeaveBlockOnce,
   DEFAULT_PRIMARY_AGENT_NAME,
+  isReadOnlyChildAccessAllowed,
   PiPrimarySession,
+  probeParentSession,
   renderRequiredSkillsPrompt,
   renderWeavePromptBlock,
+  requirePersistentParentSession,
+  UNKNOWN_PARENT_SESSION,
 } from "./primary-session.js";
 export {
   type PiRepeatedSettlementValidationError,
@@ -501,6 +509,7 @@ export type {
   PiResourceOrigin,
   PiResourceScope,
   PiSessionContext,
+  PiSessionManagerPort,
   PiSkillInfo,
   PiSourceInfo,
   PiToolRegistration,

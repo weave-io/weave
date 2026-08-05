@@ -12,6 +12,7 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "HostIdentityUnknown",
   "HostVersionUnsupported",
   "InteractiveTuiRequired",
+  "PersistentParentSessionRequired",
   "ActivationFailed",
   "CommandCollision",
   "RequiredCapabilityUnavailable",
@@ -231,6 +232,38 @@ export function makeInteractiveTuiRequiredFailure(
     recovery: "none",
     safeMessage: "Weave only activates in the interactive TUI mode.",
     correlation: { mode },
+  };
+}
+
+/**
+ * The parent Pi session is not persisted (for example, Pi started with
+ * `--no-session`), so no delegated child may be created and no child-owning
+ * mutation may run: a child session, its parent ref, and its execution lease
+ * all need a durable parent identity to belong to.
+ *
+ * `operation` names the blocked mutation boundary (`delegate`, `steer`,
+ * `follow-up`, `retry`, `continue`, `delete`) and `reason` is a closed
+ * detection reason - never a session id, path, or any host value.
+ */
+export function makePersistentParentSessionRequiredFailure(
+  operation: string,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "PersistentParentSessionRequired",
+    phase: "child",
+    scope: ADAPTER_SCOPE,
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "none",
+    safeMessage:
+      "Weave delegation requires a persistent Pi session. Start or reopen Pi with a persistent session (do not use --no-session), then retry.",
+    correlation: {
+      operation,
+      reason,
+      remediation:
+        "Start or reopen Pi with a persistent session (do not use --no-session).",
+    },
   };
 }
 
