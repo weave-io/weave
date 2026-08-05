@@ -44,6 +44,9 @@
     "openevals": "^0.2.0",
     "zod": "^4.4.3"
   },
+  "optionalDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.81.1"
+  },
   "devDependencies": {
     "@types/mustache": "^4.2.6",
     "typescript": "^5.4.5"

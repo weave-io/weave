@@ -84,6 +84,7 @@ describe("PublicManifestBuilder", () => {
         dependencies: {
           "@weaveio/weave-core": "workspace:*",
           "@weaveio/weave-adapter-claude-code": "workspace:*",
+          "@weaveio/weave-adapter-pi": "workspace:*",
           lodash: "^4.17.21",
         },
       }),
@@ -103,6 +104,27 @@ describe("PublicManifestBuilder", () => {
     }
     expect(JSON.stringify(result.value)).not.toContain(
       "@weaveio/weave-adapter-claude-code",
+    );
+    expect(JSON.stringify(result.value)).not.toContain(
+      "@weaveio/weave-adapter-pi",
+    );
+  });
+
+  it("omits the Pi adapter workspace build dependency from staged CLI manifests", () => {
+    const result = builder.build(
+      sourceManifest({
+        dependencies: {
+          "@weaveio/weave-adapter-pi": "workspace:*",
+          neverthrow: "^8.2.0",
+        },
+      }),
+      "packages/cli/package.json",
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+    expect(result.value.dependencies).toEqual({ neverthrow: "^8.2.0" });
+    expect(JSON.stringify(result.value)).not.toContain(
+      "@weaveio/weave-adapter-pi",
     );
   });
 
@@ -204,6 +226,11 @@ describe("PublicManifestBuilder", () => {
       if (result.value.name !== "@weaveio/weave-adapter-claude-code") {
         expect(JSON.stringify(result.value)).not.toContain(
           "@weaveio/weave-adapter-claude-code",
+        );
+      }
+      if (result.value.name !== "@weaveio/weave-adapter-pi") {
+        expect(JSON.stringify(result.value)).not.toContain(
+          "@weaveio/weave-adapter-pi",
         );
       }
     }

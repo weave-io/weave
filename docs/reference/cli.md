@@ -121,12 +121,12 @@ See [Runtime Store](runtime.md) and [`commands/runtime.ts`](../../packages/cli/s
 
 ## `weave adapter`
 
-`weave adapter <name> <command>` is a generic front end over the engine's opaque adapter-command dispatch. The CLI parses argv into an envelope, calls `dispatchAdapterCommand()`, and prints the adapter-owned result. It contains no harness-specific semantics. `pi` is the only registered adapter today; any other name exits `1` with `Unsupported adapter: <name>`.
+`weave adapter <name> <command>` is a generic front end over the engine's opaque adapter-command dispatch. The CLI parses argv into an envelope, calls `dispatchAdapterCommand()`, and prints the adapter-owned result. Production Pi command ports load through the thin `@weaveio/weave-adapter-pi/cli` registration boundary and are bundled into the CLI at build time the same way Claude Code materialization is; engine and core stay Pi-free. `pi` is the only registered adapter today; any other name exits `1` with `Unsupported adapter: <name>`.
 
 ```bash
 weave adapter pi children list [--json] [--diagnostic]
-weave adapter pi children show <id> [--json] [--diagnostic] [--cursor <c>]
-weave adapter pi children delete <id> [--yes] [--json]
+weave adapter pi children show <id> [--json] [--diagnostic] [--cursor <c>] [--parent-session <id>]
+weave adapter pi children delete <id> [--yes] [--json] [--parent-session <id>]
 weave adapter pi doctor [--json] [--diagnostic]
 ```
 
@@ -134,7 +134,7 @@ The workspace defaults to the current working directory.
 
 - `children list` returns the newest 50 children for the workspace, including tombstoned rows, each with child id, thread id, bounded title, status, timestamps, origin parent session, and the `tombstoned` and `stale` flags.
 - `children show` returns the child plus the newest 100 native entry descriptors (`index`, `id`, `type`) and a `nextCursor` when more remain. Pass `--cursor <c>` to page backward through older entries.
-- `children delete` appends a tombstone; it never rewrites or truncates stored session data. Without `--yes` it prompts `Delete child <id> and append a tombstone?`, defaulting to no. Declining prints `Delete cancelled.` and exits `0`. A non-interactive terminal without `--yes` exits with `Interactive mode is unavailable. Re-run with --yes to delete without a prompt.`
+- `children delete` appends a tombstone; it never rewrites or truncates stored session data. It resolves the child's immutable origin parent from list metadata and never invents a synthetic parent such as `current`. When the same child id exists under two parents, pass `--parent-session <id>`; a forged or mismatched parent scope is rejected. Without `--yes` it prompts `Delete child <id> and append a tombstone?`, defaulting to no. Declining prints `Delete cancelled.` and exits `0`. A non-interactive terminal without `--yes` exits with `Interactive mode is unavailable. Re-run with --yes to delete without a prompt.`
 - `doctor` runs the seven bounded storage checks and reports `ok`, `degraded`, `unavailable`, or `not_implemented`.
 
 `--json` prints stable JSON and suppresses decorative output. `--diagnostic` is the only way to see filesystem paths: without it every absolute path is replaced with `[path omitted]` and the `sessionPath` field is dropped entirely. Both flags are local-only inspection; neither starts, resumes, or mutates work.

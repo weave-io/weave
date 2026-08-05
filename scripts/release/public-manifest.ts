@@ -263,5 +263,10 @@ function isKnownWorkspaceBuildDependency(packageName: string): boolean {
   ) {
     return true;
   }
-  return packageName === "@weaveio/weave-adapter-claude-code";
+  // Bundled into `@weaveio/weave-cli` at build time (Claude compose + Pi adapter
+  // commands). Stripped from the published CLI manifest like private layers.
+  return (
+    packageName === "@weaveio/weave-adapter-claude-code" ||
+    packageName === "@weaveio/weave-adapter-pi"
+  );
 }

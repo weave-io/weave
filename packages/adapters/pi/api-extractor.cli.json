@@ -1,0 +1,16 @@
+{
+  "extends": "../../../config/api-extractor.base.json",
+  "mainEntryPointFilePath": "<projectFolder>/dist-types/cli.d.ts",
+  "compiler": {
+    "tsconfigFilePath": "<projectFolder>/tsconfig.build.json"
+  },
+  "dtsRollup": {
+    "publicTrimmedFilePath": "<projectFolder>/dist/cli.d.ts",
+    "untrimmedFilePath": "<projectFolder>/dist-types/untrimmed-cli.d.ts"
+  },
+  "bundledPackages": [
+    "@weaveio/weave-core",
+    "@weaveio/weave-config",
+    "@weaveio/weave-engine"
+  ]
+}

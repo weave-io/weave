@@ -3,26 +3,16 @@
  *
  * Parses argv into an opaque engine envelope, dispatches through
  * `dispatchAdapterCommand`, and renders human or stable `--json` output.
- * Payload semantics stay adapter-owned.
+ * Payload semantics stay adapter-owned. Production Pi registry composition is
+ * injected by the router via the thin `@weaveio/weave-adapter-pi/cli` boundary;
+ * this module stays free of harness package imports.
  */
 
 import {
   type AdapterCommandRegistry,
   dispatchAdapterCommand,
 } from "@weaveio/weave-engine";
-import {
-  createPiAdapterCommandRegistry,
-  PI_ADAPTER_COMMAND_BOUNDS,
-  PI_ADAPTER_COMMAND_NAMES,
-  PI_ADAPTER_NAME,
-  type PiAdapterChildrenPort,
-  type PiAdapterDoctorPort,
-  type PiChildrenDeleteResult,
-  type PiChildrenListResult,
-  type PiChildrenShowResult,
-  type PiDoctorResult,
-} from "@weaveio/weave-adapter-pi";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 import type { CliError } from "../errors.js";
 import type { TerminalIO } from "../io/terminal.js";
 import {
@@ -31,6 +21,19 @@ import {
   StaticPromptAdapter,
 } from "../prompt/index.js";
 import type { ThemeColors } from "../theme/colors.js";
+
+/** Spec 33 §15.3 list page size — mirrored locally so the CLI stays Pi-import free. */
+const ADAPTER_LIST_PAGE_SIZE = 50;
+/** Spec 33 §15.3 show entry page size. */
+const ADAPTER_SHOW_ENTRY_PAGE_SIZE = 100;
+
+const PI_ADAPTER = "pi" as const;
+const PI_COMMANDS = {
+  childrenList: "children.list",
+  childrenShow: "children.show",
+  childrenDelete: "children.delete",
+  doctor: "doctor",
+} as const;
 
 // ---------------------------------------------------------------------------
 // Context
@@ -52,7 +55,8 @@ export type AdapterCliTarget =
       readonly adapter: "pi";
       readonly action: "children.delete";
       readonly childId: string;
-      readonly parentSessionId: string;
+      /** Immutable origin parent; resolved from list/show metadata when omitted. */
+      readonly parentSessionId?: string;
     }
   | {
       readonly adapter: "pi";
@@ -68,13 +72,50 @@ export interface AdapterCommandContext {
   readonly diagnostic: boolean;
   /** Workspace key; defaults to process cwd. */
   readonly workspaceKey?: string;
-  /** Injected registry for tests; production builds the Pi registry. */
+  /** Injected registry; production builds pass the Pi CLI registration result. */
   readonly registry?: AdapterCommandRegistry;
-  /** Injected children port when building the default Pi registry. */
-  readonly childrenPort?: PiAdapterChildrenPort;
-  /** Injected doctor port (Task 15); defaults to the placeholder shell. */
-  readonly doctorPort?: PiAdapterDoctorPort;
   readonly prompt?: PromptAdapter;
+}
+
+interface AdapterChildListItem {
+  readonly childId: string;
+  readonly threadId: string;
+  readonly title: string;
+  readonly status: string;
+  readonly originParentSessionId: string;
+  readonly tombstoned: boolean;
+  readonly stale: boolean;
+}
+
+interface AdapterChildrenListResult {
+  readonly children: readonly AdapterChildListItem[];
+  readonly nextCursor?: string;
+}
+
+interface AdapterChildrenShowResult {
+  readonly child: AdapterChildListItem;
+  readonly entries: readonly {
+    readonly index: number;
+    readonly id: string;
+    readonly type: string;
+  }[];
+  readonly nextCursor?: string;
+  readonly sessionPath?: string;
+}
+
+interface AdapterChildrenDeleteResult {
+  readonly childId: string;
+  readonly tombstoned: true;
+  readonly deletedAt: string;
+}
+
+interface AdapterDoctorResult {
+  readonly status: string;
+  readonly checks: readonly {
+    readonly id: string;
+    readonly status: string;
+    readonly detail?: string;
+  }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -86,12 +127,14 @@ export function renderAdapterHelp(theme: ThemeColors): string {
     `${theme.boldYellow("Usage:")} weave adapter <adapter> <command>`,
     "",
     `  ${theme.cyan("weave adapter pi children list")} ${theme.dim("[--json] [--diagnostic]")}`,
-    `  ${theme.cyan("weave adapter pi children show <id>")} ${theme.dim("[--json] [--diagnostic] [--cursor <c>]")}`,
-    `  ${theme.cyan("weave adapter pi children delete <id>")} ${theme.dim("[--yes] [--json]")}`,
+    `  ${theme.cyan("weave adapter pi children show <id>")} ${theme.dim("[--json] [--diagnostic] [--cursor <c>] [--parent-session <id>]")}`,
+    `  ${theme.cyan("weave adapter pi children delete <id>")} ${theme.dim("[--yes] [--json] [--parent-session <id>]")}`,
     `  ${theme.cyan("weave adapter pi doctor")} ${theme.dim("[--json] [--diagnostic]")}`,
     "",
-    `  List returns the newest ${PI_ADAPTER_COMMAND_BOUNDS.listPageSize} children for the workspace.`,
-    `  Show returns the newest ${PI_ADAPTER_COMMAND_BOUNDS.showEntryPageSize} entries plus a cursor.`,
+    `  List returns the newest ${ADAPTER_LIST_PAGE_SIZE} children for the workspace.`,
+    `  Show returns the newest ${ADAPTER_SHOW_ENTRY_PAGE_SIZE} entries plus a cursor.`,
+    "  Delete resolves the child's immutable origin parent from list metadata;",
+    "  pass --parent-session when the same child id exists under two parents.",
     "  Delete requires interactive confirmation or --yes and appends a tombstone.",
     "  Paths appear only when --diagnostic is set.",
   ].join("\n");
@@ -104,7 +147,7 @@ export function renderAdapterHelp(theme: ThemeColors): string {
 export async function runAdapter(
   ctx: AdapterCommandContext,
 ): Promise<Result<number, CliError>> {
-  if (ctx.target.adapter !== PI_ADAPTER_NAME) {
+  if (ctx.target.adapter !== PI_ADAPTER) {
     ctx.terminal.stderr(
       formatCliMessage(`Unsupported adapter: ${ctx.target.adapter}`),
     );
@@ -112,17 +155,31 @@ export async function runAdapter(
   }
 
   const workspaceKey = ctx.workspaceKey ?? process.cwd();
-  const registry = ctx.registry ?? buildDefaultRegistry(ctx);
+  const registry = ctx.registry;
   if (registry === undefined) {
     ctx.terminal.stderr(
       formatCliMessage(
-        "Pi adapter command ports are unavailable. Production callers must pass a registry from createProductionPiAdapterCommandRegistry; tests may inject registry or childrenPort.",
+        "Adapter command registry is unavailable. Production callers must pass a registry from the Pi CLI registration boundary; tests may inject registry.",
       ),
     );
     return ok(1);
   }
 
-  if (ctx.target.action === "children.delete" && !ctx.yes) {
+  let target = ctx.target;
+  if (target.action === "children.delete") {
+    const scoped = await resolveDeleteParentScope(
+      registry,
+      workspaceKey,
+      target,
+    );
+    if (scoped.isErr()) {
+      ctx.terminal.stderr(formatCliMessage(scoped.error));
+      return ok(1);
+    }
+    target = scoped.value;
+  }
+
+  if (target.action === "children.delete" && !ctx.yes) {
     const prompt =
       ctx.prompt ??
       (process.stdin.isTTY
@@ -137,7 +194,7 @@ export async function runAdapter(
       return ok(1);
     }
     const confirmed = await prompt.confirm({
-      message: `Delete child ${ctx.target.childId} and append a tombstone?`,
+      message: `Delete child ${target.childId} and append a tombstone?`,
       initialValue: false,
     });
     if (confirmed.isErr()) {
@@ -150,7 +207,7 @@ export async function runAdapter(
     }
   }
 
-  const request = buildRequest(ctx.target, workspaceKey, ctx);
+  const request = buildRequest(target, workspaceKey, ctx);
   const dispatched = await dispatchAdapterCommand(registry, request);
   if (dispatched.isErr()) {
     ctx.terminal.stderr(formatDispatchError(dispatched.error));
@@ -163,20 +220,116 @@ export async function runAdapter(
     return ok(0);
   }
 
-  ctx.terminal.stdout(
-    renderHuman(ctx.target.action, resultJson, ctx.theme),
-  );
+  ctx.terminal.stdout(renderHuman(target.action, resultJson, ctx.theme));
   return ok(0);
 }
 
-function buildDefaultRegistry(
-  ctx: AdapterCommandContext,
-): AdapterCommandRegistry | undefined {
-  if (ctx.childrenPort === undefined) return undefined;
-  return createPiAdapterCommandRegistry({
-    children: ctx.childrenPort,
-    ...(ctx.doctorPort === undefined ? {} : { doctor: ctx.doctorPort }),
+/**
+ * Resolve the immutable origin parent for delete.
+ *
+ * Never invents a synthetic parent such as `current`. Uses scoped list
+ * metadata, accepts an explicit `--parent-session` only when it matches a
+ * listed row, and refuses ambiguous same-child-id / two-parent cases.
+ */
+export async function resolveDeleteParentScope(
+  registry: AdapterCommandRegistry,
+  workspaceKey: string,
+  target: Extract<AdapterCliTarget, { action: "children.delete" }>,
+): Promise<
+  Result<
+    Extract<AdapterCliTarget, { action: "children.delete" }> & {
+      readonly parentSessionId: string;
+    },
+    string
+  >
+> {
+  const listed = await dispatchAdapterCommand(registry, {
+    adapter: PI_ADAPTER,
+    command: PI_COMMANDS.childrenList,
+    payloadJson: JSON.stringify({
+      workspaceKey,
+      includeTombstoned: true,
+    }),
   });
+  if (listed.isErr()) {
+    return err(formatDispatchError(listed.error));
+  }
+
+  const body = parseListResult(listed.value.resultJson);
+  if (body === undefined) {
+    return err("children list returned an invalid payload");
+  }
+
+  const matches = body.children.filter(
+    (row) => row.childId === target.childId,
+  );
+  if (matches.length === 0) {
+    return err(`child not found: ${target.childId}`);
+  }
+
+  const requestedParent = target.parentSessionId;
+  if (requestedParent !== undefined) {
+    const scoped = matches.find(
+      (row) => row.originParentSessionId === requestedParent,
+    );
+    if (scoped === undefined) {
+      return err(
+        `parent session scope rejected: "${requestedParent}" is not the origin parent for child ${target.childId}`,
+      );
+    }
+    return ok({
+      ...target,
+      parentSessionId: scoped.originParentSessionId,
+    });
+  }
+
+  if (matches.length > 1) {
+    const parents = matches
+      .map((row) => row.originParentSessionId)
+      .join(", ");
+    return err(
+      `child id ${target.childId} exists under multiple parents (${parents}); pass --parent-session <id>`,
+    );
+  }
+
+  const only = matches[0];
+  if (only === undefined) {
+    return err(`child not found: ${target.childId}`);
+  }
+  return ok({
+    ...target,
+    parentSessionId: only.originParentSessionId,
+  });
+}
+
+function parseListResult(resultJson: string): AdapterChildrenListResult | undefined {
+  const parsed: Result<unknown, string> = Result.fromThrowable(
+    () => JSON.parse(resultJson) as unknown,
+    () => "invalid json",
+  )();
+  if (parsed.isErr()) return undefined;
+  if (
+    typeof parsed.value !== "object" ||
+    parsed.value === null ||
+    !("children" in parsed.value) ||
+    !Array.isArray((parsed.value as { children: unknown }).children)
+  ) {
+    return undefined;
+  }
+  const children: AdapterChildListItem[] = [];
+  for (const row of (parsed.value as { children: unknown[] }).children) {
+    if (
+      typeof row !== "object" ||
+      row === null ||
+      typeof (row as { childId?: unknown }).childId !== "string" ||
+      typeof (row as { originParentSessionId?: unknown }).originParentSessionId !==
+        "string"
+    ) {
+      return undefined;
+    }
+    children.push(row as AdapterChildListItem);
+  }
+  return { children };
 }
 
 function buildRequest(
@@ -191,8 +344,8 @@ function buildRequest(
   switch (target.action) {
     case "children.list":
       return {
-        adapter: PI_ADAPTER_NAME,
-        command: PI_ADAPTER_COMMAND_NAMES.childrenList,
+        adapter: PI_ADAPTER,
+        command: PI_COMMANDS.childrenList,
         payloadJson: JSON.stringify({
           workspaceKey,
           includeTombstoned: true,
@@ -200,8 +353,8 @@ function buildRequest(
       };
     case "children.show":
       return {
-        adapter: PI_ADAPTER_NAME,
-        command: PI_ADAPTER_COMMAND_NAMES.childrenShow,
+        adapter: PI_ADAPTER,
+        command: PI_COMMANDS.childrenShow,
         payloadJson: JSON.stringify({
           workspaceKey,
           childId: target.childId,
@@ -214,8 +367,8 @@ function buildRequest(
       };
     case "children.delete":
       return {
-        adapter: PI_ADAPTER_NAME,
-        command: PI_ADAPTER_COMMAND_NAMES.childrenDelete,
+        adapter: PI_ADAPTER,
+        command: PI_COMMANDS.childrenDelete,
         payloadJson: JSON.stringify({
           workspaceKey,
           childId: target.childId,
@@ -225,8 +378,8 @@ function buildRequest(
       };
     case "doctor":
       return {
-        adapter: PI_ADAPTER_NAME,
-        command: PI_ADAPTER_COMMAND_NAMES.doctor,
+        adapter: PI_ADAPTER,
+        command: PI_COMMANDS.doctor,
         payloadJson: JSON.stringify({
           ...(ctx.diagnostic ? { diagnostic: true } : {}),
         }),
@@ -245,14 +398,14 @@ function renderHuman(
   theme: ThemeColors,
 ): string {
   const parsed = JSON.parse(resultJson) as
-    | PiChildrenListResult
-    | PiChildrenShowResult
-    | PiChildrenDeleteResult
-    | PiDoctorResult;
+    | AdapterChildrenListResult
+    | AdapterChildrenShowResult
+    | AdapterChildrenDeleteResult
+    | AdapterDoctorResult;
 
   switch (action) {
     case "children.list": {
-      const body = parsed as PiChildrenListResult;
+      const body = parsed as AdapterChildrenListResult;
       if (body.children.length === 0) {
         return "No children found for this workspace.";
       }
@@ -266,7 +419,7 @@ function renderHuman(
       return lines.join("\n");
     }
     case "children.show": {
-      const body = parsed as PiChildrenShowResult;
+      const body = parsed as AdapterChildrenShowResult;
       const header = [
         `${theme.bold(body.child.childId)}  ${body.child.status}`,
         theme.dim(body.child.title),
@@ -283,11 +436,11 @@ function renderHuman(
       return [...header, ...entryLines].join("\n");
     }
     case "children.delete": {
-      const body = parsed as PiChildrenDeleteResult;
+      const body = parsed as AdapterChildrenDeleteResult;
       return `Tombstoned child ${theme.cyan(body.childId)} at ${body.deletedAt}.`;
     }
     case "doctor": {
-      const body = parsed as PiDoctorResult;
+      const body = parsed as AdapterDoctorResult;
       const lines = [
         `Doctor status: ${theme.bold(body.status)}`,
         ...body.checks.map(
@@ -361,12 +514,10 @@ export function parseAdapterTarget(
         message: "children delete requires a child id",
       });
     }
-    // Parent scope is required for delete; callers may override via flags later.
     return ok({
       adapter: "pi",
       action: "children.delete",
       childId: id,
-      parentSessionId: "current",
     });
   }
   return err({

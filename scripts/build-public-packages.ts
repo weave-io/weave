@@ -37,7 +37,8 @@ export type PublicPackageBuildError =
       output: string;
       privatePackageName:
         | PrivatePackageName
-        | "@weaveio/weave-adapter-claude-code";
+        | "@weaveio/weave-adapter-claude-code"
+        | "@weaveio/weave-adapter-pi";
     };
 
 export interface PublicPackageFileSystem {
@@ -361,6 +362,7 @@ export class PublicPackageBuilder {
       const sanitized = contents
         .replaceAll("@weaveio/weave-adapter-opencode", "the OpenCode adapter")
         .replaceAll("@weaveio/weave-adapter-claude-code", "the Claude adapter")
+        .replaceAll("@weaveio/weave-adapter-pi", "the Pi adapter")
         .replaceAll("@weaveio/weave-config", "the configuration package")
         .replaceAll("@weaveio/weave-engine", "the engine package")
         .replaceAll("@weaveio/weave-core", "the core package");
@@ -478,11 +480,21 @@ export class PublicPackageBuilder {
   private findPrivateReference(
     packageName: PublicPackageName,
     contents: string,
-  ): PrivatePackageName | "@weaveio/weave-adapter-claude-code" | undefined {
-    const names: (PrivatePackageName | "@weaveio/weave-adapter-claude-code")[] =
-      [...PRIVATE_PACKAGE_NAMES];
+  ):
+    | PrivatePackageName
+    | "@weaveio/weave-adapter-claude-code"
+    | "@weaveio/weave-adapter-pi"
+    | undefined {
+    const names: (
+      | PrivatePackageName
+      | "@weaveio/weave-adapter-claude-code"
+      | "@weaveio/weave-adapter-pi"
+    )[] = [...PRIVATE_PACKAGE_NAMES];
     if (packageName === "@weaveio/weave-cli") {
-      names.push("@weaveio/weave-adapter-claude-code");
+      names.push(
+        "@weaveio/weave-adapter-claude-code",
+        "@weaveio/weave-adapter-pi",
+      );
     }
     return names.find((name) => hasPrivateDependencyReference(contents, name));
   }
@@ -490,11 +502,21 @@ export class PublicPackageBuilder {
   private findPrivateDeclarationReference(
     packageName: PublicPackageName,
     contents: string,
-  ): PrivatePackageName | "@weaveio/weave-adapter-claude-code" | undefined {
-    const names: (PrivatePackageName | "@weaveio/weave-adapter-claude-code")[] =
-      [...PRIVATE_PACKAGE_NAMES];
+  ):
+    | PrivatePackageName
+    | "@weaveio/weave-adapter-claude-code"
+    | "@weaveio/weave-adapter-pi"
+    | undefined {
+    const names: (
+      | PrivatePackageName
+      | "@weaveio/weave-adapter-claude-code"
+      | "@weaveio/weave-adapter-pi"
+    )[] = [...PRIVATE_PACKAGE_NAMES];
     if (packageName === "@weaveio/weave-cli") {
-      names.push("@weaveio/weave-adapter-claude-code");
+      names.push(
+        "@weaveio/weave-adapter-claude-code",
+        "@weaveio/weave-adapter-pi",
+      );
     }
     return names.find((name) => hasPrivateDeclarationReference(contents, name));
   }

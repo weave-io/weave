@@ -8,7 +8,7 @@ import {
   PI_ADAPTER_COMMAND_BOUNDS,
   type PiAdapterChildListItem,
   type PiAdapterChildrenPort,
-} from "@weaveio/weave-adapter-pi";
+} from "@weaveio/weave-adapter-pi/cli";
 import { errAsync, okAsync } from "neverthrow";
 import { parseArgs } from "../../args.js";
 import { BufferTerminal } from "../../io/terminal.js";
@@ -16,6 +16,7 @@ import { StaticPromptAdapter } from "../../prompt/index.js";
 import { ThemeManager } from "../../theme/colors.js";
 import {
   parseAdapterTarget,
+  resolveDeleteParentScope,
   runAdapter,
   type AdapterCommandContext,
 } from "../adapter.js";
@@ -60,7 +61,11 @@ function makeChildrenPort(options: {
       });
     },
     show(input) {
-      const found = rows.find((row) => row.childId === input.childId);
+      const found = rows.find((row) => {
+        if (row.childId !== input.childId) return false;
+        if (input.parentSessionId === undefined) return true;
+        return row.originParentSessionId === input.parentSessionId;
+      });
       if (found === undefined) {
         return errAsync({
           type: "NotFound" as const,
@@ -93,7 +98,11 @@ function makeChildrenPort(options: {
           message: "delete requires confirmation or --yes",
         });
       }
-      const found = rows.find((row) => row.childId === input.childId);
+      const found = rows.find(
+        (row) =>
+          row.childId === input.childId &&
+          row.originParentSessionId === input.parentSessionId,
+      );
       if (found === undefined) {
         return errAsync({
           type: "NotFound" as const,
@@ -116,7 +125,6 @@ function makeCtx(
     Pick<AdapterCommandContext, "target">,
 ): { terminal: BufferTerminal; ctx: AdapterCommandContext } {
   const terminal = new BufferTerminal();
-  const childrenPort = overrides.childrenPort ?? makeChildrenPort({});
   const ctx: AdapterCommandContext = {
     terminal,
     theme,
@@ -125,11 +133,10 @@ function makeCtx(
     diagnostic: false,
     workspaceKey: "workspace-test",
     prompt: new StaticPromptAdapter({ confirm: [true] }),
+    registry: createPiAdapterCommandRegistry({
+      children: makeChildrenPort({}),
+    }),
     ...overrides,
-    childrenPort,
-    registry:
-      overrides.registry ??
-      createPiAdapterCommandRegistry({ children: childrenPort }),
   };
   return { terminal, ctx };
 }
@@ -147,11 +154,32 @@ describe("parseAdapterTarget", () => {
     ).toMatchObject({ action: "children.show", childId: "c1" });
     expect(
       parseAdapterTarget(["pi", "children", "delete", "c1"])._unsafeUnwrap(),
-    ).toMatchObject({ action: "children.delete", childId: "c1" });
+    ).toEqual({
+      adapter: "pi",
+      action: "children.delete",
+      childId: "c1",
+    });
     expect(parseAdapterTarget(["pi", "doctor"])._unsafeUnwrap()).toEqual({
       adapter: "pi",
       action: "doctor",
     });
+  });
+
+  it("does not invent a synthetic parentSessionId for delete", () => {
+    const target = parseAdapterTarget([
+      "pi",
+      "children",
+      "delete",
+      "child-1",
+    ])._unsafeUnwrap();
+    expect(target).toEqual({
+      adapter: "pi",
+      action: "children.delete",
+      childId: "child-1",
+    });
+    expect(
+      "parentSessionId" in target ? target.parentSessionId : undefined,
+    ).toBeUndefined();
   });
 
   it("parses adapter flags from argv", () => {
@@ -183,6 +211,78 @@ describe("parseAdapterTarget", () => {
   });
 });
 
+describe("resolveDeleteParentScope", () => {
+  it("resolves a unique origin parent from list metadata", async () => {
+    const registry = createPiAdapterCommandRegistry({
+      children: makeChildrenPort({
+        rows: [child({ childId: "child-1", originParentSessionId: "parent-a" })],
+      }),
+    });
+    const resolved = await resolveDeleteParentScope(registry, "ws", {
+      adapter: "pi",
+      action: "children.delete",
+      childId: "child-1",
+    });
+    expect(resolved._unsafeUnwrap().parentSessionId).toBe("parent-a");
+  });
+
+  it("requires --parent-session when the same child id exists under two parents", async () => {
+    const registry = createPiAdapterCommandRegistry({
+      children: makeChildrenPort({
+        rows: [
+          child({
+            childId: "shared-child",
+            threadId: "thread-a",
+            originParentSessionId: "parent-a",
+          }),
+          child({
+            childId: "shared-child",
+            threadId: "thread-b",
+            originParentSessionId: "parent-b",
+          }),
+        ],
+      }),
+    });
+    const ambiguous = await resolveDeleteParentScope(registry, "ws", {
+      adapter: "pi",
+      action: "children.delete",
+      childId: "shared-child",
+    });
+    expect(ambiguous.isErr()).toBe(true);
+    if (ambiguous.isOk()) return;
+    expect(ambiguous.error).toContain("multiple parents");
+    expect(ambiguous.error).toContain("--parent-session");
+
+    const scoped = await resolveDeleteParentScope(registry, "ws", {
+      adapter: "pi",
+      action: "children.delete",
+      childId: "shared-child",
+      parentSessionId: "parent-b",
+    });
+    expect(scoped._unsafeUnwrap().parentSessionId).toBe("parent-b");
+  });
+
+  it("rejects a forged parent session scope", async () => {
+    const registry = createPiAdapterCommandRegistry({
+      children: makeChildrenPort({
+        rows: [
+          child({ childId: "child-1", originParentSessionId: "parent-real" }),
+        ],
+      }),
+    });
+    const forged = await resolveDeleteParentScope(registry, "ws", {
+      adapter: "pi",
+      action: "children.delete",
+      childId: "child-1",
+      parentSessionId: "forged-parent",
+    });
+    expect(forged.isErr()).toBe(true);
+    if (forged.isOk()) return;
+    expect(forged.error).toContain("parent session scope rejected");
+    expect(forged.error).toContain("forged-parent");
+  });
+});
+
 describe("runAdapter", () => {
   it("bounds list to 50 and emits a stable JSON snapshot", async () => {
     const rows = Array.from({ length: 55 }, (_, index) =>
@@ -196,7 +296,9 @@ describe("runAdapter", () => {
     const { terminal, ctx } = makeCtx({
       target: { adapter: "pi", action: "children.list" },
       json: true,
-      childrenPort: makeChildrenPort({ rows }),
+      registry: createPiAdapterCommandRegistry({
+        children: makeChildrenPort({ rows }),
+      }),
     });
     const code = await runAdapter(ctx);
     expect(code._unsafeUnwrap()).toBe(0);
@@ -216,7 +318,9 @@ describe("runAdapter", () => {
         childId: "child-1",
       },
       json: true,
-      childrenPort: makeChildrenPort({ entryCount: 130, sessionPath: path }),
+      registry: createPiAdapterCommandRegistry({
+        children: makeChildrenPort({ entryCount: 130, sessionPath: path }),
+      }),
     });
     const code = await runAdapter(ctx);
     expect(code._unsafeUnwrap()).toBe(0);
@@ -240,7 +344,9 @@ describe("runAdapter", () => {
       },
       json: true,
       diagnostic: true,
-      childrenPort: makeChildrenPort({ sessionPath: path }),
+      registry: createPiAdapterCommandRegistry({
+        children: makeChildrenPort({ sessionPath: path }),
+      }),
     });
     await runAdapter(ctx);
     expect(terminal.out.join("\n")).toContain(path);
@@ -248,15 +354,15 @@ describe("runAdapter", () => {
 
   it("requires confirmation for delete unless --yes, then tombstones", async () => {
     const port = makeChildrenPort({});
+    const registry = createPiAdapterCommandRegistry({ children: port });
     const declined = makeCtx({
       target: {
         adapter: "pi",
         action: "children.delete",
         childId: "child-1",
-        parentSessionId: "parent-1",
       },
       yes: false,
-      childrenPort: port,
+      registry,
       prompt: new StaticPromptAdapter({ confirm: [false] }),
     });
     const declinedCode = await runAdapter(declined.ctx);
@@ -268,11 +374,10 @@ describe("runAdapter", () => {
         adapter: "pi",
         action: "children.delete",
         childId: "child-1",
-        parentSessionId: "parent-1",
       },
       yes: true,
       json: true,
-      childrenPort: port,
+      registry,
     });
     const code = await runAdapter(accepted.ctx);
     expect(code._unsafeUnwrap()).toBe(0);
@@ -286,7 +391,7 @@ describe("runAdapter", () => {
     const listed = makeCtx({
       target: { adapter: "pi", action: "children.list" },
       json: true,
-      childrenPort: port,
+      registry,
     });
     await runAdapter(listed.ctx);
     const listBody = JSON.parse(listed.terminal.out.join("\n")) as {
@@ -294,6 +399,71 @@ describe("runAdapter", () => {
     };
     expect(listBody.children[0]?.tombstoned).toBe(true);
     expect(listBody.children[0]?.status).toBe("tombstoned");
+  });
+
+  it("deletes only the scoped parent when the same child id exists twice", async () => {
+    const port = makeChildrenPort({
+      rows: [
+        child({
+          childId: "shared-child",
+          threadId: "thread-a",
+          originParentSessionId: "parent-a",
+        }),
+        child({
+          childId: "shared-child",
+          threadId: "thread-b",
+          originParentSessionId: "parent-b",
+        }),
+      ],
+    });
+    const registry = createPiAdapterCommandRegistry({ children: port });
+    const { terminal, ctx } = makeCtx({
+      target: {
+        adapter: "pi",
+        action: "children.delete",
+        childId: "shared-child",
+        parentSessionId: "parent-a",
+      },
+      yes: true,
+      json: true,
+      registry,
+    });
+    const code = await runAdapter(ctx);
+    expect(code._unsafeUnwrap()).toBe(0);
+    expect(JSON.parse(terminal.out.join("\n"))).toMatchObject({
+      childId: "shared-child",
+      tombstoned: true,
+    });
+
+    const listed = await port.list({
+      workspaceKey: "ws",
+      includeTombstoned: true,
+    });
+    const rows = listed._unsafeUnwrap().children;
+    expect(
+      rows.find((row) => row.originParentSessionId === "parent-a")?.tombstoned,
+    ).toBe(true);
+    expect(
+      rows.find((row) => row.originParentSessionId === "parent-b")?.tombstoned,
+    ).toBe(false);
+  });
+
+  it("rejects forged parent scope before delete dispatch", async () => {
+    const { terminal, ctx } = makeCtx({
+      target: {
+        adapter: "pi",
+        action: "children.delete",
+        childId: "child-1",
+        parentSessionId: "forged-parent",
+      },
+      yes: true,
+      registry: createPiAdapterCommandRegistry({
+        children: makeChildrenPort({}),
+      }),
+    });
+    const code = await runAdapter(ctx);
+    expect(code._unsafeUnwrap()).toBe(1);
+    expect(terminal.err.join("\n")).toContain("parent session scope rejected");
   });
 
   it("runs doctor through the injectable shell", async () => {

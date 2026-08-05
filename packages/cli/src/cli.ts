@@ -135,7 +135,7 @@ export async function run(
       const { parseAdapterTarget, renderAdapterHelp, runAdapter } =
         await import("./commands/adapter.js");
       const { createProductionPiAdapterCommandRegistry } = await import(
-        "@weaveio/weave-adapter-pi"
+        "@weaveio/weave-adapter-pi/cli"
       );
       if (rest.length === 0 || flags.help) {
         terminal.stdout(renderAdapterHelp(theme));

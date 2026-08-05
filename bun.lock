@@ -97,6 +97,9 @@
         "@types/mustache": "^4.2.6",
         "typescript": "^5.4.5",
       },
+      "optionalDependencies": {
+        "@earendil-works/pi-coding-agent": ">=0.81.1",
+      },
     },
     "packages/config": {
       "name": "@weaveio/weave-config",

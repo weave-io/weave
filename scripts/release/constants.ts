@@ -212,6 +212,10 @@ export const PUBLIC_PACKAGE_BUILDS = {
         output: "packages/adapters/pi/dist/index.js",
       },
       {
+        source: "packages/adapters/pi/src/cli.ts",
+        output: "packages/adapters/pi/dist/cli.js",
+      },
+      {
         source: "packages/adapters/pi/src/extension.ts",
         output: "packages/adapters/pi/dist/extension.js",
       },
@@ -220,6 +224,10 @@ export const PUBLIC_PACKAGE_BUILDS = {
       {
         config: "packages/adapters/pi/api-extractor.index.json",
         output: "packages/adapters/pi/dist/index.d.ts",
+      },
+      {
+        config: "packages/adapters/pi/api-extractor.cli.json",
+        output: "packages/adapters/pi/dist/cli.d.ts",
       },
       {
         config: "packages/adapters/pi/api-extractor.extension.json",
