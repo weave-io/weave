@@ -1025,6 +1025,13 @@ describe("PiDelegationController", () => {
     // an independent/untracked one (Pi adapter contract).
     expect(port.spawnedProcesses.length).toBe(1);
 
+    // The child result contract needs a terminal assistant response before a
+    // completed settlement counts (Pi adapter contract §10).
+    first.emitLine({
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+    });
+
     const settled = await signEnvelope(
       {
         childId: firstChildId,

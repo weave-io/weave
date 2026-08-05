@@ -54,6 +54,16 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** Parser-approved terminal assistant text that satisfies the result contract. */
+function terminalAssistantMessage(
+  text = "ordinary terminal assistant prose",
+): JsonValue {
+  return {
+    type: "message_end",
+    message: { role: "assistant", content: [{ type: "text", text }] },
+  };
+}
+
 function extractSecretFromSpawn(port: FakeChildProcessPort): Uint8Array {
   const hex = port.spawnInputs.at(-1)?.env[WEAVE_CHILD_SECRET_ENV];
   if (hex === undefined) throw new Error("test setup: secret env missing");
@@ -205,6 +215,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       secretBytes,
     );
     await flush();
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       expectedChildId,
@@ -225,7 +236,8 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     expect(settlement.isOk()).toBe(true);
     // PiRpcChild authenticates both fields. The transport preserves the
     // numeric metadata beside the candidate; it does not put the count into
-    // the completion authority.
+    // the completion authority. Direct-step settlement projects only the
+    // candidate (assistant text stays on the rpc-child path).
     expect(settlement._unsafeUnwrap()).toEqual({
       outcome: "completed",
       completionCandidate: serializeCompletionCandidate({
@@ -283,6 +295,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
 
     await responder.send("bootstrap-ack", expectedChildId, {}, secretBytes);
     await flush();
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       expectedChildId,
@@ -402,6 +415,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       },
     });
 
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       expectedChildId,
@@ -477,6 +491,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     await flush();
     expect(registration?.workflowInstanceId).toBe("wf-1");
     expect(registration?.stepName).toBe("verify");
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       childId,
@@ -533,6 +548,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       secretBytes,
     );
     await flush();
+    spawned.emitLine(terminalAssistantMessage("terminal"));
     await responder.send(
       "settled",
       childId,
@@ -594,6 +610,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       failedSecret,
     );
     await flush();
+    failedProcess.emitLine(terminalAssistantMessage());
     await failedResponder.send(
       "settled",
       childId,
@@ -652,6 +669,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       secretBytes,
     );
     await flush();
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       expectedChildId,

@@ -12,6 +12,7 @@ import {
   WEAVE_DELEGATION_TOOL_NAME,
 } from "../delegation-tool.js";
 import {
+  makeChildResponseMissingFailure,
   makeChildSpawnFailedFailure,
   type PiAdapterFailure,
 } from "../errors.js";
@@ -631,6 +632,42 @@ describe("buildDelegationToolRegistration", () => {
     expect(text.message).toBe(
       "Weave could not start the delegated child process.",
     );
+  });
+
+  it("execute: surfaces a ChildResponseMissing result failure as retryable structured output, never as transport corruption", async () => {
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getController: () =>
+          fakeController(() =>
+            errAsync(
+              makeChildResponseMissingFailure("child-1", {
+                reason: "thinking-only",
+                parentId: "root",
+                correlationId: "child-1",
+              }),
+            ),
+          ),
+      }),
+    );
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("ChildResponseMissing");
+    expect(text.retryable).toBe(true);
+    expect(text.recovery).toBe("retry");
+    expect(text.reason).toBe("thinking-only");
+    expect(text.message).toBe(
+      "The delegated child finished without a terminal assistant response.",
+    );
+    // A missing response is a result failure, never protocol corruption.
+    expect(JSON.stringify(text)).not.toContain("ChildEnvelopeMalformed");
+    expect(JSON.stringify(text)).not.toContain("ChildSettlementMissing");
   });
 
   it("execute: a signal that never aborts never touches cancelSubtree, and the once-listener never leaks past the settled call", async () => {

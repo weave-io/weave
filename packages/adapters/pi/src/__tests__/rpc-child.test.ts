@@ -78,6 +78,19 @@ function validAck(overrides: Record<string, unknown> = {}): JsonValue {
   return { ...overrides } as JsonValue;
 }
 
+/**
+ * The parent-observed terminal assistant response the child result contract
+ * requires (Pi adapter contract §10). A completed settlement without one is
+ * `ChildResponseMissing`, so every test whose subject is something else emits
+ * this first.
+ */
+function terminalAssistantMessage(text = "final answer"): JsonValue {
+  return {
+    type: "message_end",
+    message: { role: "assistant", content: [{ type: "text", text }] },
+  };
+}
+
 /** Plays the part of a well-behaved (or malicious, per test) child process. */
 class ScriptedChildResponder {
   private sequence = 1;
@@ -556,6 +569,7 @@ describe("PiRpcChild", () => {
               (line as Record<string, unknown>).message === "do the thing",
           ),
       ).toBe(true);
+      running.spawned.emitLine(terminalAssistantMessage());
       await running.responder.send(
         "settled",
         "child-1",
@@ -1078,6 +1092,7 @@ describe("PiRpcChild", () => {
       string,
       unknown
     >;
+    running.spawned.emitLine(terminalAssistantMessage());
     await running.responder.send(
       "settled",
       "child-1",
@@ -1327,6 +1342,7 @@ describe("PiRpcChild", () => {
     const taskLine = lines[1] as { type: string; message: string };
     expect(taskLine).toEqual({ type: "prompt", message: "do the thing" });
 
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       "child-1",
@@ -1337,6 +1353,7 @@ describe("PiRpcChild", () => {
     expect(settlement.isOk()).toBe(true);
     expect(settlement._unsafeUnwrap()).toEqual({
       outcome: "completed",
+      assistantOutput: "final answer",
       interventionCount: 0,
     });
   });
@@ -1396,6 +1413,7 @@ describe("PiRpcChild", () => {
       secretBytes,
     );
 
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       "child-1",
@@ -1611,6 +1629,7 @@ describe("PiRpcChild", () => {
 
     originalSettlementTimer?.fire();
     sessionEventTimer?.fire();
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       "child-1",
@@ -1619,6 +1638,7 @@ describe("PiRpcChild", () => {
     );
     expect((await runPromise)._unsafeUnwrap()).toEqual({
       outcome: "completed",
+      assistantOutput: "final answer",
       interventionCount: 0,
     });
   });
@@ -1990,6 +2010,7 @@ describe("PiRpcChild", () => {
     await flush();
     await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
     await flush();
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       "child-1",
@@ -2031,6 +2052,7 @@ describe("PiRpcChild", () => {
     // ChildReplyLate. Under install-before-send it must always be caught.
     await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
     await flushMs(150);
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       "child-1",
@@ -2063,6 +2085,7 @@ describe("PiRpcChild", () => {
     // No extra flush before settlement: the settlement resolver must
     // already be installed by the time the task prompt is sent, since it is
     // installed in the same synchronous step that sends the prompt.
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       "child-1",
@@ -2310,35 +2333,89 @@ describe("PiRpcChild", () => {
     });
   });
 
-  it("returns no final output for absent, nonassistant, and tool-only messages", async () => {
-    const messages: JsonValue[] = [
-      { type: "message_end" },
+  it("does not let control assistantOutput or completionCandidate alone satisfy the result contract", async () => {
+    const cases: ReadonlyArray<JsonValue> = [
+      { outcome: "completed", assistantOutput: "control-only summary" },
       {
-        type: "message_end",
-        message: { role: "user", content: "not assistant text" },
+        outcome: "completed",
+        completionCandidate: JSON.stringify({
+          outcome: "success",
+          message: "candidate-only",
+        }),
+      },
+    ];
+    for (const body of cases) {
+      const running = await startRunningChild({ responseDrainMs: 1 });
+      await running.responder.send("settled", "child-1", body, running.secretBytes);
+      const failure = (await running.runPromise)._unsafeUnwrapErr();
+      expect(failure.code).toBe("ChildResponseMissing");
+      expect(failure.retryable).toBe(true);
+      expect(failure.correlation?.reason).toBe("no-response");
+      running.child.dispose();
+    }
+  });
+
+  it("completes from an out-of-order terminal message_end inside the drain window", async () => {
+    const running = await startRunningChild({ responseDrainMs: 50 });
+    await running.responder.send(
+      "settled",
+      "child-1",
+      {
+        outcome: "completed",
+        assistantOutput: "ignored-control-summary",
+        completionCandidate: JSON.stringify({ outcome: "success" }),
+      },
+      running.secretBytes,
+    );
+    expect(running.child.snapshot().status).toBe("running");
+    running.spawned.emitLine(terminalAssistantMessage());
+    expect((await running.runPromise)._unsafeUnwrap()).toEqual({
+      outcome: "completed",
+      assistantOutput: "final answer",
+      completionCandidate: JSON.stringify({ outcome: "success" }),
+      interventionCount: 0,
+    });
+  });
+
+  it("settles absent, nonassistant, and tool-only messages as ChildResponseMissing", async () => {
+    const cases: ReadonlyArray<{
+      readonly message: JsonValue;
+      readonly reason: string;
+    }> = [
+      { message: { type: "message_end" }, reason: "no-response" },
+      {
+        message: {
+          type: "message_end",
+          message: { role: "user", content: "not assistant text" },
+        },
+        reason: "no-response",
       },
       {
-        type: "message_end",
         message: {
-          role: "assistant",
-          content: [{ type: "toolCall", name: "private-tool" }],
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "toolCall", name: "private-tool" }],
+          },
         },
+        reason: "empty",
       },
     ];
 
-    for (const message of messages) {
-      const running = await startRunningChild();
-      running.spawned.emitLine(message);
+    for (const testCase of cases) {
+      const running = await startRunningChild({ responseDrainMs: 1 });
+      running.spawned.emitLine(testCase.message);
       await running.responder.send(
         "settled",
         "child-1",
         { outcome: "completed", assistantOutput: "ignored-control-summary" },
         running.secretBytes,
       );
-      expect((await running.runPromise)._unsafeUnwrap()).toEqual({
-        outcome: "completed",
-        interventionCount: 0,
-      });
+      const failure = (await running.runPromise)._unsafeUnwrapErr();
+      expect(failure.code).toBe("ChildResponseMissing");
+      expect(failure.retryable).toBe(true);
+      expect(failure.correlation?.reason).toBe(testCase.reason);
+      running.child.dispose();
     }
   });
 
@@ -2360,6 +2437,7 @@ describe("PiRpcChild", () => {
     const late = running.child.steer("child-1", "gen-1", "late");
     await flush();
     const lateLine = running.spawned.writtenLines().at(-1) as { id: string };
+    running.spawned.emitLine(terminalAssistantMessage());
     await running.responder.send(
       "settled",
       "child-1",
@@ -2375,6 +2453,7 @@ describe("PiRpcChild", () => {
     });
     expect(settlement).toEqual({
       outcome: "completed",
+      assistantOutput: "final answer",
       interventionCount: 1,
     });
     expect(running.child.getInterventionCount()).toBe(1);
@@ -2588,6 +2667,7 @@ describe("PiRpcChild", () => {
     expect(observed[0]?.type).toBe("message_end");
     expect(JSON.stringify(observed)).toContain(rawPayload);
 
+    spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
       "child-1",
@@ -2728,6 +2808,7 @@ describe("PiRpcChild", () => {
       },
     });
 
+    running.spawned.emitLine(terminalAssistantMessage());
     await running.responder.send(
       "settled",
       "child-1",
@@ -2744,10 +2825,11 @@ describe("PiRpcChild", () => {
     expect(result).toEqual(
       ok({
         outcome: "completed",
+        assistantOutput: "final answer",
         interventionCount: 0,
       }),
     );
-    expect(captures).toEqual([{ output: "", byteLength: 0 }]);
+    expect(captures).toEqual([{ output: "final answer", byteLength: 12 }]);
     expect(running.spawned.forceKilled).toBe(true);
   });
 
@@ -2799,6 +2881,7 @@ describe("PiRpcChild", () => {
     );
     boundarySpawned.emit(new TextEncoder().encode(boundaryLine));
     expect(boundaryChild.snapshot().status).toBe("running");
+    boundarySpawned.emitLine(terminalAssistantMessage());
     await boundaryResponder.send(
       "settled",
       "child-1",
@@ -2810,6 +2893,7 @@ describe("PiRpcChild", () => {
     if (boundaryResult.isOk()) {
       expect(boundaryResult.value).toEqual({
         outcome: "completed",
+        assistantOutput: "final answer",
         interventionCount: 0,
       });
     }

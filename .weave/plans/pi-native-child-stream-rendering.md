@@ -173,7 +173,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
   - **Acceptance**:
     - Tests prove: non-persistent parent ⇒ delegation fails with `PersistentParentSessionRequired`, zero session files created; read-only surfaces still function against fixtures.
 
-- [ ] 8. Implement the child result contract (`ChildResponseMissing`)
+- [x] 8. Implement the child result contract (`ChildResponseMissing`)
   - **What**: A valid child result requires a parent-observed non-whitespace terminal assistant response. Empty/whitespace-only/thinking-only/tool-only completion becomes retryable `ChildResponseMissing`, preserving the transcript and releasing capacity.
   - **Files**: `packages/adapters/pi/src/errors.ts`, `packages/adapters/pi/src/delegation-controller.ts`, `packages/adapters/pi/src/rpc-child.ts`, `packages/adapters/pi/src/child-session-events.ts`; tests `packages/adapters/pi/src/__tests__/delegation-controller` / `rpc-child.test.ts` additions and a dedicated `child-response-contract.test.ts` (new).
   - **Depends on**: Task 4 (settlement writes against native sessions).

@@ -42,6 +42,7 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "ChildReplyLate",
   "ChildExitedUnexpectedly",
   "ChildSettlementMissing",
+  "ChildResponseMissing",
   "ChildAbortFailed",
   // transfer (chunked payload delivery in either direction)
   "ChildTransferTimedOut",
@@ -517,6 +518,82 @@ export function makeChildSettlementMissingFailure(
     recovery: "retry",
     safeMessage:
       "The delegated child did not send an authenticated settlement.",
+  };
+}
+
+/**
+ * The closed set of reasons a completed child failed the result contract
+ * (Pi adapter contract §10). Every value is an adapter-owned constant, so it is
+ * always safe to correlate and log.
+ */
+export const PI_CHILD_RESPONSE_MISSING_REASONS = [
+  "empty",
+  "whitespace-only",
+  "thinking-only",
+  "tool-only",
+  "no-response",
+] as const;
+export type PiChildResponseMissingReason =
+  (typeof PI_CHILD_RESPONSE_MISSING_REASONS)[number];
+
+/** Correlation a caller may attach to `ChildResponseMissing`. Identifiers only. */
+export interface PiChildResponseMissingCorrelation {
+  readonly reason: PiChildResponseMissingReason;
+  readonly parentId?: string;
+  readonly correlationId?: string;
+  readonly runId?: string;
+  readonly runNumber?: number;
+}
+
+/** Keeps correlated identifiers short; they are IDs, never payloads. */
+const MAX_CORRELATION_ID_LENGTH = 128;
+const MAX_CORRELATION_RUN_NUMBER = 1_000_000;
+
+const boundedCorrelationId = (value: string | undefined): string | undefined =>
+  value === undefined || value.length === 0
+    ? undefined
+    : value.slice(0, MAX_CORRELATION_ID_LENGTH);
+
+/**
+ * A child settled as completed without a parent-observed terminal assistant
+ * response holding non-whitespace text (Pi adapter contract §10).
+ *
+ * This is a *result* failure, not a transport one: the transcript stays intact,
+ * capacity is released like any other settlement, and the failure is retryable.
+ * Correlation carries bounded identifiers only - never the prompt, the
+ * transcript, or any session path.
+ */
+export function makeChildResponseMissingFailure(
+  childId: string,
+  correlation: PiChildResponseMissingCorrelation,
+): PiAdapterFailure {
+  const parentId = boundedCorrelationId(correlation.parentId);
+  const correlationId = boundedCorrelationId(correlation.correlationId);
+  const runId = boundedCorrelationId(correlation.runId);
+  const runNumber =
+    typeof correlation.runNumber === "number" &&
+    Number.isSafeInteger(correlation.runNumber) &&
+    correlation.runNumber >= 0 &&
+    correlation.runNumber <= MAX_CORRELATION_RUN_NUMBER
+      ? correlation.runNumber
+      : undefined;
+  return {
+    code: "ChildResponseMissing",
+    phase: "completion",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: true,
+    recovery: "retry",
+    safeMessage:
+      "The delegated child finished without a terminal assistant response.",
+    correlation: {
+      reason: correlation.reason,
+      childId: boundedCorrelationId(childId) ?? "",
+      ...(parentId === undefined ? {} : { parentId }),
+      ...(correlationId === undefined ? {} : { correlationId }),
+      ...(runId === undefined ? {} : { runId }),
+      ...(runNumber === undefined ? {} : { runNumber }),
+    },
   };
 }
 

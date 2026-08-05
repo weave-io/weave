@@ -626,7 +626,7 @@ test("the actual workflow resume controller completes the persisted step", async
         weaveResumePreviousAttemptId: "00000000-0000-4000-8000-000000000001",
       },
       recoveryTakeover: {
-        expectedLeaseId: started.isOk() ? started.value.leaseId ?? "" : "",
+        expectedLeaseId: started.isOk() ? (started.value.leaseId ?? "") : "",
         expectedControllerGeneration: "gen-1",
       },
     },
@@ -652,6 +652,9 @@ test("the real RPC child accepts a >1 MiB assistant record and settles without p
     message: {
       role: "assistant",
       id: "large",
+      // A terminal assistant response satisfies the child result contract; the
+      // oversized private payload rides alongside it (Pi adapter contract §10).
+      content: [{ type: "text", text: "done" }],
       details: { text: "x".repeat(1_050_000) + payload },
     },
   });

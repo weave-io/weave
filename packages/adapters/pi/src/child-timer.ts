@@ -19,5 +19,13 @@ export const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
 export const DEFAULT_REPLY_TIMEOUT_MS = 15_000;
 /** Maximum silence while awaiting settlement; parser-approved child activity renews this budget. */
 export const DEFAULT_SETTLEMENT_TIMEOUT_MS = 15 * 60 * 1000;
+/**
+ * Bounded window the parent keeps open after an authenticated `settled`
+ * envelope so final parser-approved session events already in flight are
+ * drained before the child result contract is classified (Pi adapter contract
+ * §10). Without it, an out-of-order terminal `message_end` would produce a
+ * false `ChildResponseMissing`.
+ */
+export const DEFAULT_RESPONSE_DRAIN_MS = 250;
 /** Bounded grace period cancellation waits for an authenticated `cancelled` ack or process exit before force-killing. */
 export const DEFAULT_CANCEL_GRACE_MS = 5_000;

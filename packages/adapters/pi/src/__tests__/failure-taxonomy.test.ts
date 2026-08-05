@@ -69,6 +69,7 @@ const FROZEN_FAILURE_CODES = [
   "ChildReplyLate",
   "ChildExitedUnexpectedly",
   "ChildSettlementMissing",
+  "ChildResponseMissing",
   "ChildAbortFailed",
   "ChildTransferTimedOut",
   "ChildTransferRejected",

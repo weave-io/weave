@@ -71,6 +71,7 @@ import {
   DEFAULT_CANCEL_GRACE_MS,
   DEFAULT_HANDSHAKE_TIMEOUT_MS,
   DEFAULT_REPLY_TIMEOUT_MS,
+  DEFAULT_RESPONSE_DRAIN_MS,
   DEFAULT_SETTLEMENT_TIMEOUT_MS,
   SystemTimerPort,
   type TimerHandle,
@@ -100,6 +101,7 @@ import {
   makeChildReplyDuplicateFailure,
   makeChildReplyLateFailure,
   makeChildReplyMissingFailure,
+  makeChildResponseMissingFailure,
   makeChildSettlementMissingFailure,
   makeChildSpawnFailedFailure,
   makeChildTransferRejectedFailure,
@@ -107,6 +109,7 @@ import {
   makeChildTransferTooLargeFailure,
   PI_TRANSPORT_LIMITS,
   type PiAdapterFailure,
+  type PiChildResponseMissingReason,
 } from "./errors.js";
 import {
   encodePromptChunksBounded,
@@ -148,6 +151,12 @@ export interface PiRpcChildDeps {
   readonly replyTimeoutMs?: number;
   /** Maximum silence while awaiting settlement; valid child activity renews it. */
   readonly settlementTimeoutMs?: number;
+  /**
+   * Bounded window kept open after a `completed` settlement that has not yet
+   * satisfied the child result contract, so final in-flight session events are
+   * drained before classification (Pi adapter contract §10).
+   */
+  readonly responseDrainMs?: number;
   readonly cancelGraceMs?: number;
   readonly now?: () => number;
   /**
@@ -555,6 +564,7 @@ export class PiRpcChild {
   private readonly command: readonly string[];
   private readonly handshakeTimeoutMs: number;
   private readonly settlementTimeoutMs: number;
+  private readonly responseDrainMs: number;
   private readonly now: () => number;
   private readonly onDelegationRequest:
     | ((
@@ -615,6 +625,17 @@ export class PiRpcChild {
   private latestThinking = "";
   private resetPreviewOnNextDelta = false;
   private latestCompletedAssistantOutput = "";
+  /**
+   * Result-contract observation, tracked separately from the parent-visible
+   * projection (Pi adapter contract §10). Only a terminal assistant message
+   * carrying non-whitespace text sets `terminalResponse`; thinking blocks and
+   * tool activity are recorded on their own so a failed contract can name its
+   * real reason without ever inspecting the transcript.
+   */
+  private terminalResponseObserved = false;
+  private terminalAssistantMessageObserved = false;
+  private thinkingObserved = false;
+  private toolActivityObserved = false;
   private readonly seenUsageMessageIds = new Set<string>();
   private readonly liveRpcPending = new Map<string, LiveRpcPending>();
   /** Native Pi sends no response acknowledgement, so successful writes consume these IDs. */
@@ -647,6 +668,16 @@ export class PiRpcChild {
     | undefined;
   private cancelResolvers: { resolve: () => void } | undefined;
   private settled = false;
+  /**
+   * True between an authenticated `completed` settlement that has not yet met
+   * the child result contract and the end of its bounded drain window. The
+   * child is no longer accepting work, so a second settlement in this window is
+   * still a duplicate reply.
+   */
+  private settlementDraining = false;
+  private drainCorrelationId = "";
+  private responseDrainTimer: TimerHandle | undefined;
+  private finishSettlement: (() => void) | undefined;
   private settlementTimer: TimerHandle | undefined;
   private readonly replyTimeoutMs: number;
   private readonly cancelGraceMs: number;
@@ -679,6 +710,7 @@ export class PiRpcChild {
       deps.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
     this.settlementTimeoutMs =
       deps.settlementTimeoutMs ?? DEFAULT_SETTLEMENT_TIMEOUT_MS;
+    this.responseDrainMs = deps.responseDrainMs ?? DEFAULT_RESPONSE_DRAIN_MS;
     this.replyTimeoutMs = deps.replyTimeoutMs ?? DEFAULT_REPLY_TIMEOUT_MS;
     this.cancelGraceMs = deps.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS;
     this.baseEnv = deps.baseEnv ?? {};
@@ -830,6 +862,14 @@ export class PiRpcChild {
 
   private handleProcessExit(exitCode: number | null): void {
     if (this.disposed || this.settled) return;
+    if (this.settlementDraining) {
+      // The child already sent its authenticated settlement; its exit ends the
+      // event stream, so every final event has now been drained and the result
+      // contract can be classified (Pi adapter contract §10).
+      this.clearResponseDrainTimer();
+      this.concludeResponseDrain(this.drainCorrelationId);
+      return;
+    }
     if (this.status === "cancelling") {
       // Exit during a cancellation in progress is the expected outcome,
       // not an unexpected-exit failure - complete the cancellation
@@ -1588,7 +1628,7 @@ export class PiRpcChild {
   }
 
   private completeSettlement(envelope: PiControlEnvelope): void {
-    if (this.settled) {
+    if (this.settled || this.settlementDraining) {
       this.failOutstanding(makeChildReplyDuplicateFailure(this.childId));
       return;
     }
@@ -1675,9 +1715,42 @@ export class PiRpcChild {
       this.terminateResources();
     };
 
+    /**
+     * Applies the child result contract (Pi adapter contract §10). A completed
+     * child is only successful once the parent has observed a terminal
+     * assistant response holding non-whitespace text. When it has not, the
+     * child keeps a bounded drain window open so a terminal event still in
+     * flight - settlement and message may be delivered out of order - is
+     * classified as the response it is rather than as a missing one.
+     */
+    const settleUnderResultContract = (): void => {
+      // Only a parser-approved terminal assistant `message_end` with
+      // non-whitespace text satisfies this contract. Control-envelope
+      // `assistantOutput` / `completionCandidate` are not authority here;
+      // structured workflow completion (`CompletionSignalMissing`) owns
+      // candidate validation on its own path and must not bypass this gate.
+      if (
+        parsed.value.outcome !== "completed" ||
+        this.terminalResponseObserved
+      ) {
+        finish();
+        return;
+      }
+      this.settlementDraining = true;
+      this.finishSettlement = finish;
+      this.drainCorrelationId = envelope.correlationId;
+      // The inactivity budget belongs to a running turn, not to this window.
+      this.clearSettlementTimeout();
+      const correlationId = envelope.correlationId;
+      this.responseDrainTimer = this.timerPort.schedule(() => {
+        this.responseDrainTimer = undefined;
+        this.concludeResponseDrain(correlationId);
+      }, this.responseDrainMs);
+    };
+
     const capture = this.onPrivateOutput;
     if (capture === undefined || parsed.value.outcome === "failed") {
-      finish();
+      settleUnderResultContract();
       return;
     }
     const invoked = Result.fromThrowable(
@@ -1694,7 +1767,7 @@ export class PiRpcChild {
     }
     if (invoked.value instanceof ResultAsync) {
       void invoked.value.match(
-        () => finish(),
+        () => settleUnderResultContract(),
         (failure) => this.failOutstanding(failure),
       );
       return;
@@ -1703,7 +1776,58 @@ export class PiRpcChild {
       this.failOutstanding(invoked.value.error);
       return;
     }
-    finish();
+    settleUnderResultContract();
+  }
+
+  /**
+   * Completes a drained settlement as soon as a terminal assistant response
+   * arrives inside the drain window (Pi adapter contract §10).
+   */
+  private maybeFinishDrainedSettlement(): void {
+    if (!this.settlementDraining || !this.terminalResponseObserved) return;
+    const finish = this.finishSettlement;
+    this.clearResponseDrainTimer();
+    this.settlementDraining = false;
+    this.finishSettlement = undefined;
+    finish?.();
+  }
+
+  /**
+   * Closes the drain window. Every final in-flight event has now been
+   * observed, so a still-missing terminal response is a real result-contract
+   * failure rather than a delivery race. The transcript and native history are
+   * left exactly as recorded; only the outstanding waiter is failed.
+   */
+  private concludeResponseDrain(correlationId: string): void {
+    if (!this.settlementDraining) return;
+    if (this.terminalResponseObserved) {
+      this.maybeFinishDrainedSettlement();
+      return;
+    }
+    this.settlementDraining = false;
+    this.finishSettlement = undefined;
+    this.failOutstanding(
+      makeChildResponseMissingFailure(this.childId, {
+        reason: this.responseMissingReason(),
+        parentId: this.parentId,
+        correlationId,
+      }),
+    );
+  }
+
+  /** Names the contract failure from adapter-owned constants only. */
+  private responseMissingReason(): PiChildResponseMissingReason {
+    if (this.latestCompletedAssistantOutput.length > 0)
+      return "whitespace-only";
+    if (this.toolActivityObserved) return "tool-only";
+    if (this.thinkingObserved) return "thinking-only";
+    if (this.terminalAssistantMessageObserved) return "empty";
+    return "no-response";
+  }
+
+  private clearResponseDrainTimer(): void {
+    this.responseDrainTimer?.cancel();
+    this.responseDrainTimer = undefined;
   }
 
   private normalizeUiRequestForSession(
@@ -1755,6 +1879,7 @@ export class PiRpcChild {
         );
       }
       this.forwardSessionEvent(parsed.data);
+      this.observeResultContractEvent(parsed.data);
     }
     const type = normalized.value.type;
     if (type === "turn_start") {
@@ -1830,11 +1955,39 @@ export class PiRpcChild {
           stopReason === "length")
       ) {
         this.latestCompletedAssistantOutput = assistantOutput;
+        this.terminalAssistantMessageObserved = true;
+        if (assistantOutput.trim().length > 0)
+          this.terminalResponseObserved = true;
       }
       this.projectUsageFromMessage(record);
+      // A terminal message may legitimately arrive after the authenticated
+      // settlement; classification waits for it (Pi adapter contract §10).
+      this.maybeFinishDrainedSettlement();
       return;
     }
     if (type === "agent_settled") this.projectUsageFromMessage(record);
+  }
+
+  /**
+   * Records what a parser-approved event contributes to the child result
+   * contract (Pi adapter contract §10). Thinking blocks and tool activity are
+   * tracked apart from assistant text so a contract failure can name its
+   * reason from adapter-owned constants alone.
+   */
+  private observeResultContractEvent(event: PiChildSessionEvent): void {
+    switch (event.type) {
+      case "thinking":
+        this.thinkingObserved = true;
+        return;
+      case "tool_call":
+      case "tool_partial_result":
+      case "tool_result":
+      case "tool_error":
+        this.toolActivityObserved = true;
+        return;
+      default:
+        return;
+    }
   }
 
   /**
@@ -2366,6 +2519,9 @@ export class PiRpcChild {
    */
   private terminateResources(): void {
     this.outstandingExtensionUiRequestIds.clear();
+    this.clearResponseDrainTimer();
+    this.settlementDraining = false;
+    this.finishSettlement = undefined;
     if (this.disposed) return;
     this.rejectLiveRpc(makeChildReplyLateFailure(this.childId));
     this.disposed = true;

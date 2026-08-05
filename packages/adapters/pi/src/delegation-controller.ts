@@ -73,6 +73,8 @@ export interface PiDelegationControllerDeps {
   readonly hmacPort: HmacPort;
   readonly timerPort?: TimerPort;
   readonly cancelGraceMs?: number;
+  /** Bounded post-settlement drain window for the child result contract. */
+  readonly responseDrainMs?: number;
   readonly baseEnv?: Readonly<Record<string, string>>;
   readonly now?: () => number;
   readonly command?: readonly string[];
@@ -534,6 +536,7 @@ export class PiDelegationController {
         hmacPort: this.deps.hmacPort,
         timerPort: this.deps.timerPort,
         cancelGraceMs: this.deps.cancelGraceMs,
+        responseDrainMs: this.deps.responseDrainMs,
         baseEnv: this.deps.baseEnv,
         logger: this.deps.logger,
         command: this.deps.command,
@@ -940,6 +943,7 @@ export class PiDelegationController {
             hmacPort: this.deps.hmacPort,
             timerPort: this.deps.timerPort,
             cancelGraceMs: this.deps.cancelGraceMs,
+            responseDrainMs: this.deps.responseDrainMs,
             baseEnv: this.deps.baseEnv,
             logger: this.deps.logger,
             command: this.deps.command,
