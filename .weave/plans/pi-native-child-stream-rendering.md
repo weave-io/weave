@@ -144,7 +144,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - `bun test packages/adapters/pi/src/__tests__/child-session-refs.test.ts` passes: schema bounds, origin mismatch exclusion, run metadata append, malformed-entry tolerance (skip + typed issue).
     - No transcript content appears in any serialized ref (asserted in tests).
 
-- [ ] 6. Implement the rebuildable metadata-only SQLite cache
+- [x] 6. Implement the rebuildable metadata-only SQLite cache
   - **What**: Adapter-owned `bun:sqlite` cache for bounded discovery (list newest N, cursor pagination, cross-session history) storing metadata only — never transcripts or parent content. Source entries first, cache second; cache rebuilds from parent entries + child session files and degrades (bypassed) without blocking execution. User-only permissions, strict root containment under the adapter XDG root.
   - **Files**: `packages/adapters/pi/src/child-metadata-cache.ts` (new); tests `packages/adapters/pi/src/__tests__/child-metadata-cache.test.ts` (new).
   - **Depends on**: Tasks 4–5.
