@@ -4,12 +4,15 @@ import {
   ResultAsync,
   type ResultAsync as ResultAsyncType,
 } from "neverthrow";
-import type {
-  PiChildHistoryKind,
-  PiChildHistoryRecord,
-} from "./child-history-schema.js";
-import { MAX_FINAL_OUTPUT_BYTES } from "./child-history-schema.js";
+import type { PiChildRefRecord } from "./child-session-refs.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
+import { MAX_FINAL_OUTPUT_BYTES } from "./child-tree.js";
+
+/**
+ * The durable child record recovery reads. Since ADR 0014 the authority is the
+ * parent session's `weave.child-ref.v1` ledger, not an adapter-owned store.
+ */
+export type PiChildRecoveryRecord = PiChildRefRecord;
 
 export const RECOVERY_CHOICES = ["Recover now", "Skip", "Inspect"] as const;
 export type PiRecoveryChoice = (typeof RECOVERY_CHOICES)[number];
@@ -21,14 +24,19 @@ export interface PiChildRecoveryUi {
     optionsConfig?: { timeout?: number },
   ): Promise<string | undefined>;
   notify(message: string, level?: "info" | "warning" | "error"): void;
-  inspect?(record: PiChildHistoryRecord): void | PromiseLike<void>;
+  inspect?(record: PiChildRecoveryRecord): void | PromiseLike<void>;
 }
 
+/**
+ * Recovery's read/write seam over the child-ref ledger. `list` returns the
+ * scanned refs for the live parent session; `updateStatus` appends one
+ * lifecycle entry. Neither ever touches child transcript content.
+ */
 export interface PiChildRecoveryHistory {
-  list(): ResultAsyncType<readonly PiChildHistoryRecord[], unknown>;
-  updateRecord(
-    childId: string,
-    patch: Partial<PiChildHistoryRecord>,
+  list(): ResultAsyncType<readonly PiChildRecoveryRecord[], unknown>;
+  updateStatus(
+    record: PiChildRecoveryRecord,
+    status: PiChildRefRecord["status"],
   ): ResultAsyncType<void, unknown>;
 }
 
@@ -38,7 +46,7 @@ export interface PiChildRecoveryDescriptor {
 }
 
 export interface PiChildRecoverySpawnInput {
-  readonly record: PiChildHistoryRecord;
+  readonly record: PiChildRecoveryRecord;
   readonly descriptor: PiChildRecoveryDescriptor;
   readonly generationId: string;
   readonly model?: string;
@@ -92,35 +100,33 @@ export type PiChildRecoveryFailure =
 export const RECOVERY_CONTINUATION =
   "Continue from the saved session. Review the current state and complete the original task. Do not repeat completed work.";
 
-function isSafeRecoveryMetadata(record: PiChildHistoryRecord): boolean {
+/**
+ * A ref record is recoverable only when it still names a usable native
+ * session and a descriptor title. The ref ledger never carries transcript
+ * content, so this is metadata-only validation.
+ */
+function isSafeRecoveryMetadata(record: PiChildRecoveryRecord): boolean {
   return (
-    record.sessionPath.length > 0 &&
-    record.activeLeaf !== undefined &&
-    record.activeLeaf.length > 0 &&
-    Number.isSafeInteger(record.checkpointCursor) &&
-    record.checkpointCursor >= 0 &&
-    record.branchAncestry.every(
-      (branch) =>
-        branch.childId.length > 0 &&
-        Number.isSafeInteger(branch.checkpoint) &&
-        branch.checkpoint >= 0,
-    )
+    record.sessionRef.length > 0 &&
+    record.nativeSessionId.length > 0 &&
+    record.threadId.length > 0 &&
+    record.title.length > 0
   );
 }
 
+/**
+ * An interrupted top-level child is one the ref ledger still shows as queued
+ * or running: the parent went away before any terminal lifecycle entry was
+ * appended. Settled, failed, cancelled and tombstoned refs are never
+ * candidates.
+ */
 export function findOrdinaryRecoveryCandidates(
-  records: readonly PiChildHistoryRecord[],
-): readonly PiChildHistoryRecord[] {
+  records: readonly PiChildRecoveryRecord[],
+): readonly PiChildRecoveryRecord[] {
   return records.filter(
     (record) =>
-      record.kind === "ordinary" &&
-      record.parentChildId === undefined &&
-      record.status === "interrupted" &&
-      record.quarantine.quarantined === false &&
-      record.clear.cleared === false &&
-      record.recovery.eligible &&
-      record.descriptorName !== undefined &&
-      record.descriptorName.length > 0 &&
+      (record.status === "running" || record.status === "queued") &&
+      record.settledAt === undefined &&
       isSafeRecoveryMetadata(record),
   );
 }
@@ -172,7 +178,7 @@ export class PiChildRecoveryCoordinator {
   }
 
   candidates(): ResultAsyncType<
-    readonly PiChildHistoryRecord[],
+    readonly PiChildRecoveryRecord[],
     PiChildRecoveryFailure
   > {
     if (!this.deps.recoveryEnabled) return okAsync([]);
@@ -183,7 +189,7 @@ export class PiChildRecoveryCoordinator {
   }
 
   private validate(
-    record: PiChildHistoryRecord,
+    record: PiChildRecoveryRecord,
   ): ResultAsyncType<PiChildRecoverySpawnInput, PiChildRecoveryFailure> {
     if (!this.deps.recoveryEnabled) return unavailable("Recovery is disabled.");
     if (!this.deps.trustedProject)
@@ -191,22 +197,15 @@ export class PiChildRecoveryCoordinator {
     if (!this.current(this.deps.generationId))
       return unavailable("The recovery generation is stale.");
     if (
-      record.kind !== "ordinary" ||
-      record.parentChildId !== undefined ||
-      record.status !== "interrupted"
+      (record.status !== "running" && record.status !== "queued") ||
+      record.settledAt !== undefined
     )
       return unavailable(
         "The child is not an interrupted top-level ordinary child.",
       );
-    if (
-      record.quarantine.quarantined ||
-      record.clear.cleared ||
-      !record.recovery.eligible ||
-      record.descriptorName === undefined ||
-      !isSafeRecoveryMetadata(record)
-    )
-      return unavailable("The child history is unavailable for recovery.");
-    const descriptorName = record.descriptorName;
+    if (!isSafeRecoveryMetadata(record))
+      return unavailable("The child record is unavailable for recovery.");
+    const descriptorName = record.title;
     return safely(
       () => okAsync(this.deps.resolveDescriptor(descriptorName)),
       "The trusted child descriptor is no longer available.",
@@ -232,18 +231,15 @@ export class PiChildRecoveryCoordinator {
   }
 
   recover(
-    record: PiChildHistoryRecord,
+    record: PiChildRecoveryRecord,
   ): ResultAsyncType<void, PiChildRecoveryFailure> {
     return this.validate(record).andThen((input) => {
       if (!this.current(input.generationId))
         return unavailable("The recovery generation is stale.");
       const running = safely(
         () =>
-          this.deps.history.updateRecord(record.childId, {
-            status: "running",
-            updatedAt: this.now(),
-          }),
-        "History update failed.",
+          this.deps.history.updateStatus(record, "running"),
+        "Child ref update failed.",
       );
       const spawned = running.andThen(() =>
         safely(() => this.deps.spawn(input), "Recovery process failed.")
@@ -260,11 +256,8 @@ export class PiChildRecoveryCoordinator {
           .orElse((failure) =>
             safely(
               () =>
-                this.deps.history.updateRecord(record.childId, {
-                  status: "interrupted",
-                  updatedAt: this.now(),
-                }),
-              "History rollback failed.",
+                this.deps.history.updateStatus(record, "failed"),
+              "Child ref rollback failed.",
             )
               .mapErr(() => failure)
               .andThen(() => errAsync(failure)),
@@ -286,19 +279,8 @@ export class PiChildRecoveryCoordinator {
         );
         return safely(
           () =>
-            this.deps.history.updateRecord(record.childId, {
-              status: "settled",
-              finalOutput: output,
-              interventionCount: count,
-              recovery: {
-                ...record.recovery,
-                eligible: false,
-                count: record.recovery.count + 1,
-                lastRecoveredAt: this.now(),
-              },
-              updatedAt: this.now(),
-            }),
-          "History settlement update failed.",
+            this.deps.history.updateStatus(record, "completed"),
+          "Child ref settlement update failed.",
         )
           .mapErr(() => ({ type: "ChildRecoverySpawnFailed" as const }))
           .andThen(() =>
@@ -401,22 +383,4 @@ export class PiChildRecoveryCoordinator {
       )
       .mapErr(() => ({ type: "ChildRecoverySpawnFailed" as const }));
   }
-
-  /** Compatibility entry point for callers that already hold an authenticated settlement. */
-  injectSettlement(
-    record: PiChildHistoryRecord,
-  ): ResultAsyncType<void, PiChildRecoveryFailure> {
-    return this.injectSettlementContent(
-      boundedRecoveryOutput(record.finalOutput),
-      Number.isSafeInteger(record.interventionCount) &&
-        record.interventionCount >= 0
-        ? record.interventionCount
-        : 0,
-      this.deps.generationId,
-    );
-  }
-}
-
-export function isRecoveryKind(kind: PiChildHistoryKind): boolean {
-  return kind === "ordinary";
 }

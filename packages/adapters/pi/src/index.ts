@@ -50,40 +50,6 @@ export {
   PiLineFramer,
 } from "./child-framing.js";
 export type {
-  HistoryIdentity,
-  PiChildHistoryDirectory,
-  PiChildHistoryFsError,
-  PiChildHistoryFsPort,
-} from "./child-history-fs.js";
-export {
-  BunPiChildHistoryFs,
-  MemoryPiChildHistoryFs,
-  resolvePiChildHistoryRoot,
-  safeChildHistoryComponent,
-  safeParentSessionComponent,
-} from "./child-history-fs.js";
-export type {
-  PiChildHistoryIndexV1,
-  PiChildHistoryKind,
-  PiChildHistoryRecord,
-  PiChildHistorySchemaError,
-  PiChildHistoryStatus,
-} from "./child-history-schema.js";
-export {
-  PI_CHILD_HISTORY_LAYOUT,
-  PiChildHistoryIndexV1Schema,
-  PiChildHistoryKindSchema,
-  PiChildHistoryLayoutSchema,
-  PiChildHistoryRecordSchema,
-  PiChildHistoryStatusSchema,
-  parsePiChildHistoryIndex,
-} from "./child-history-schema.js";
-export type {
-  PiChildHistoryStoreError,
-  PiChildHistoryStoreOptions,
-} from "./child-history-store.js";
-export { PiChildHistoryStore } from "./child-history-store.js";
-export type {
   PiChildInspectionEditorHost,
   PiChildInspectionEditorResult,
 } from "./child-inspection-editor.js";
@@ -281,8 +247,9 @@ export {
   verifyNativeSessionRef,
 } from "./child-native-sessions.js";
 export {
-  adaptPiNativeSessionFs,
+  BunPiNativeSessionFs,
   createBunPiNativeSessionFs,
+  MemoryPiNativeSessionFs,
 } from "./native-session-fs.js";
 export type {
   PiSessionManagerInstance,
@@ -611,10 +578,9 @@ export {
   makeChildCheckpointInvalidFailure,
   makeChildControlEnvelopeTooLargeFailure,
   makeChildExtensionUiRejectedFailure,
-  makeChildHistoryClearRefusedFailure,
-  makeChildHistoryCorruptFailure,
-  makeChildHistoryQuarantinedFailure,
-  makeChildHistoryQuotaExceededFailure,
+  makeChildRecordCorruptFailure,
+  makeChildRecordQuarantinedFailure,
+  makeChildRecordQuotaExceededFailure,
   makeChildInteractionUnavailableFailure,
   makeChildNativeRecordTooLargeFailure,
   makeChildOrphanReadOnlyFailure,

@@ -35,8 +35,7 @@ import {
   WEAVE_CONTROLLER_GENERATION_ENV,
 } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
-import type { PiChildHistoryRecord } from "../child-history-schema.js";
-import type { PiChildHistoryStore } from "../child-history-store.js";
+import type { PiChildRefRecord } from "../child-session-refs.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
 import type {
@@ -271,29 +270,25 @@ function allNativeWithRenderingFallback(): PiHostSurfaceReader {
   };
 }
 
+/**
+ * Since ADR 0014 recovery reads the parent session's child-ref ledger. An
+ * eligible root is a non-settled ordinary ref with complete native metadata.
+ */
 function eligibleOrdinaryRecoveryRecord(
-  overrides: Partial<PiChildHistoryRecord> = {},
-): PiChildHistoryRecord {
+  overrides: Partial<PiChildRefRecord> = {},
+): PiChildRefRecord {
   return {
     childId: "recover-me",
-    parentSessionId: "parent",
-    kind: "ordinary",
-    status: "interrupted",
-    workflow: {},
-    descriptorName: "loom",
-    sessionPath: "children/recover-me/session.jsonl",
-    activeLeaf: "leaf-1",
-    checkpointCursor: 1,
-    branchAncestry: [],
-    interventionCount: 0,
-    finalOutput: "",
-    trim: { trimmed: false, markerCount: 0 },
-    quarantine: { quarantined: false },
-    clear: { cleared: false },
-    recovery: { eligible: true, count: 0 },
-    bytes: { session: 1, checkpoint: 1, total: 2 },
+    threadId: "recover-me",
+    nativeSessionId: "native-recover-me",
+    sessionRef: "children/recover-me/session.jsonl",
+    originParentSessionId: "parent",
+    originEntryId: "entry-recover-me",
+    title: "loom",
+    status: "running",
     createdAt: 1,
     updatedAt: 1,
+    runs: [{ run: 1, action: "start", startedAt: 1 }],
     ...overrides,
   };
 }
@@ -314,72 +309,119 @@ function countedRuntimeStore() {
   };
 }
 
-function countedChildHistoryStore(
-  input: PiChildHistoryRecord | readonly PiChildHistoryRecord[] = [],
-) {
-  const history = mutableChildHistoryStore(input);
-  let closeCount = 0;
-  const store = history.store as PiChildHistoryStore & {
-    close: () => ResultAsync<void, never>;
-  };
-  store.close = () => {
-    closeCount += 1;
-    return okAsync(undefined);
-  };
-  return {
-    ...history,
-    get closeCount() {
-      return closeCount;
-    },
-  };
-}
-
-function mutableChildHistoryStore(
+/**
+ * Structural Task 4/5/6 thread sources backing recovery and child-inspection
+ * tests. The parent session's ref ledger is authoritative; status changes are
+ * lifecycle appends, and a tombstone removes the ref from the live view.
+ */
+function mutableChildRefSource(
   input:
-    | PiChildHistoryRecord
-    | readonly PiChildHistoryRecord[] = eligibleOrdinaryRecoveryRecord(),
+    | PiChildRefRecord
+    | readonly PiChildRefRecord[] = eligibleOrdinaryRecoveryRecord(),
 ): {
-  store: PiChildHistoryStore;
-  records: PiChildHistoryRecord[];
-  updates: Partial<PiChildHistoryRecord>[];
+  factory: PiThreadSourceFactory;
+  sources: PiThreadSources;
+  records: PiChildRefRecord[];
+  updates: Array<{
+    readonly childId: string;
+    readonly status: PiChildRefRecord["status"];
+  }>;
   cleared: string[];
+  openedParentSessionIds: string[];
 } {
   const records = [...(Array.isArray(input) ? input : [input])];
-  const updates: Partial<PiChildHistoryRecord>[] = [];
+  const updates: Array<{
+    readonly childId: string;
+    readonly status: PiChildRefRecord["status"];
+  }> = [];
   const cleared: string[] = [];
-  const clear = (childId: string) => {
-    const index = records.findIndex(
-      (candidate) => candidate.childId === childId,
-    );
-    if (index >= 0) {
-      records.splice(index, 1);
-      cleared.push(childId);
-    }
-    return okAsync(undefined);
+  const openedParentSessionIds: string[] = [];
+  let parentSessionId = "parent";
+  const indexOf = (childId: string) =>
+    records.findIndex((candidate) => candidate.childId === childId);
+  const refs = {
+    liveParentSessionId: () => parentSessionId,
+    readRefs: () =>
+      okAsync({
+        refs: [...records],
+        issues: [],
+        counts: {
+          scannedEntries: records.length,
+          candidateEntries: records.length,
+          malformedEntries: 0,
+          originMismatchedChildren: 0,
+          conflictingChildren: 0,
+          duplicateEntries: 0,
+          unusableSourceChildren: 0,
+          usableRefs: records.length,
+        },
+      }),
+    appendNewChild: (appended: Partial<PiChildRefRecord>) => {
+      const record = { ...eligibleOrdinaryRecoveryRecord(), ...appended };
+      records.push(record);
+      return okAsync(record);
+    },
+    appendRunDivider: (record: PiChildRefRecord) => okAsync(record),
+    appendLifecycle: (
+      record: PiChildRefRecord,
+      patch: { readonly status: PiChildRefRecord["status"] },
+    ) => {
+      updates.push({ childId: record.childId, status: patch.status });
+      const index = indexOf(record.childId);
+      const existing = index >= 0 ? records[index] : record;
+      const next = {
+        ...(existing as PiChildRefRecord),
+        status: patch.status,
+        updatedAt: 2,
+        ...(patch.status === "running" || patch.status === "queued"
+          ? {}
+          : { settledAt: 2 }),
+      };
+      if (patch.status === "tombstoned") {
+        if (index >= 0) records.splice(index, 1);
+        cleared.push(record.childId);
+      } else if (index >= 0) {
+        records[index] = next;
+      }
+      return okAsync(next);
+    },
+  } as unknown as PiThreadRefPort;
+  const sessionRecord = (ref: string, childId: string) => ({
+    childId,
+    sessionId: `native-${childId}`,
+    ref,
+    path: `/sessions/${childId}/session.jsonl`,
+    parentSession: parentSessionId,
+    cwd: "/project",
+  });
+  const sessions = {
+    createChildSession: (created: { readonly childId: string }) =>
+      okAsync(
+        sessionRecord(`children/${created.childId}/session.jsonl`, created.childId),
+      ),
+    establishThreadLeaf: (ref: string) =>
+      okAsync({ record: sessionRecord(ref, "recover-me"), leafId: "leaf-1" }),
+    appendTombstone: () => okAsync({ ref: "tombstoned" }),
+    openSession: (ref: string) => okAsync(sessionRecord(ref, "recover-me")),
+    readThreadMetadata: () => okAsync({ threadId: "recover-me" }),
+    readSessionEntries: (ref: string) =>
+      okAsync({
+        record: sessionRecord(ref, "recover-me"),
+        entries: [{ id: "leaf-1" }],
+      }),
+  } as unknown as PiThreadSessionPort;
+  const sources: PiThreadSources = {
+    refs,
+    sessions,
+    cache: { upsertRef: () => ok(undefined) } as PiThreadCachePort,
+    cacheMode: "active" as const,
   };
-  const store = {
-    getIndex: () => ({ records }),
-    clear,
-    clearTerminal: () => {
-      const terminal = records.filter((record) =>
-        ["settled", "interrupted", "quarantined", "cleared"].includes(
-          record.status,
-        ),
-      );
-      for (const record of terminal) void clear(record.childId);
-      return okAsync(terminal.length);
-    },
-    updateRecord: (childId: string, patch: Partial<PiChildHistoryRecord>) => {
-      updates.push(patch);
-      const index = records.findIndex(
-        (candidate) => candidate.childId === childId,
-      );
-      const existing = records[index];
-      if (existing !== undefined) records[index] = { ...existing, ...patch };
-      return okAsync(undefined);
-    },
-  } as unknown as PiChildHistoryStore;
-  return { store, records, updates, cleared };
+  const factory: PiThreadSourceFactory = (factoryInput) => {
+    parentSessionId = factoryInput.parentSessionId;
+    openedParentSessionIds.push(factoryInput.parentSessionId);
+    return okAsync(sources);
+  };
+  return { factory, sources, records, updates, cleared, openedParentSessionIds };
 }
 
 async function flushBackgroundWork(): Promise<void> {
@@ -506,7 +548,7 @@ function deferredResultAsync<T, E>(
 
 function installRecoveryExtension(
   host: RecordingFakePiHost,
-  store: PiChildHistoryStore,
+  source: ReturnType<typeof mutableChildRefSource>,
   restoreOrdinaryChild: NonNullable<PiExtensionDeps["restoreOrdinaryChild"]>,
   settings: { readonly recovery_countdown_seconds?: number } = {},
   overrides: Partial<PiExtensionDeps> = {},
@@ -535,7 +577,7 @@ function installRecoveryExtension(
     ),
     runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
     parentSessionId: () => "parent",
-    childHistoryStoreFactory: () => okAsync(store),
+    threadSourceFactory: source.factory,
     restoreOrdinaryChild,
     ...overrides,
   });
@@ -776,7 +818,6 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     for (const reader of readers) {
       const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
       let runtimeWrites = 0;
-      let historyWrites = 0;
       let processWrites = 0;
       installExtension(host, "0.81.1", {
         capabilityProber: allOkCapabilityProber(),
@@ -786,10 +827,6 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
             runtimeWrites += 1;
             return okAsync(createInMemoryRuntimeStore());
           },
-        },
-        childHistoryStoreFactory: () => {
-          historyWrites += 1;
-          return okAsync(undefined as never);
         },
         processPort: {
           spawn: () => {
@@ -808,7 +845,6 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
           .length,
       ).toBeLessThanOrEqual(2);
       expect(runtimeWrites).toBe(0);
-      expect(historyWrites).toBe(0);
       expect(processWrites).toBe(0);
       expect(
         host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value
@@ -1698,7 +1734,7 @@ describe("createPiExtension: startup generation races", () => {
       undefined as never,
     );
     let readCount = 0;
-    const history = mutableChildHistoryStore([]);
+    const history = mutableChildRefSource([]);
     const runtimeStore = createInMemoryRuntimeStore();
     installExtension(host, "0.81.1", {
       capabilityProber: allOkCapabilityProber(),
@@ -1719,7 +1755,7 @@ describe("createPiExtension: startup generation races", () => {
         errors: [],
       }),
       runtimeStoreFactory: { open: () => okAsync(runtimeStore) },
-      childHistoryStoreFactory: () => okAsync(history.store),
+      threadSourceFactory: history.factory,
     });
 
     const staleStartup = host.triggerSessionStart();
@@ -1838,7 +1874,7 @@ describe("createPiExtension: startup generation races", () => {
       undefined as never,
     );
     const currentStore = createInMemoryRuntimeStore();
-    const history = mutableChildHistoryStore([]);
+    const history = mutableChildRefSource([]);
     let openCount = 0;
     installExtension(host, "0.81.1", {
       capabilityProber: allOkCapabilityProber(),
@@ -1859,7 +1895,7 @@ describe("createPiExtension: startup generation races", () => {
           return openCount === 1 ? staleOpen.start() : okAsync(currentStore);
         },
       },
-      childHistoryStoreFactory: () => okAsync(history.store),
+      threadSourceFactory: history.factory,
     });
 
     const staleStartup = host.triggerSessionStart();
@@ -1891,9 +1927,9 @@ describe("createPiExtension: startup generation races", () => {
       status: "native" as const,
       details: `test-${surfaceId}`,
     }));
-    const staleHistory = mutableChildHistoryStore([]);
-    const currentHistory = mutableChildHistoryStore([]);
-    const staleOpen = deferredResultAsync<PiChildHistoryStore, never>(
+    const staleHistory = mutableChildRefSource([]);
+    const currentHistory = mutableChildRefSource([]);
+    const staleOpen = deferredResultAsync<PiThreadSources, never>(
       undefined as never,
     );
     let historyOpenCount = 0;
@@ -1918,7 +1954,6 @@ describe("createPiExtension: startup generation races", () => {
             adapters: {
               pi: {
                 child_inspection: {
-                  persist_history: true,
                   recovery_enabled: false,
                 },
               },
@@ -1928,11 +1963,11 @@ describe("createPiExtension: startup generation races", () => {
       ),
       runtimeStoreFactory: { open: () => okAsync(runtimeStore) },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => {
+      threadSourceFactory: (input) => {
         historyOpenCount += 1;
         return historyOpenCount === 1
           ? staleOpen.start()
-          : okAsync(currentHistory.store);
+          : currentHistory.factory(input);
       },
     });
 
@@ -1946,7 +1981,7 @@ describe("createPiExtension: startup generation races", () => {
     const currentUpdates = [...currentHistory.updates];
     const currentCleared = [...currentHistory.cleared];
 
-    staleOpen.settle(ok(staleHistory.store));
+    staleOpen.settle(ok(staleHistory.sources));
     await staleStartup;
 
     expect(host.statusCalls).toEqual(currentStatus);
@@ -2934,7 +2969,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       settings: {
         adapters: {
           pi: {
-            child_inspection: { max_bytes_per_child: 1 },
+            child_inspection: { recovery_countdown_seconds: 999 },
           },
         },
       },
@@ -2981,7 +3016,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       opts: undefined,
     });
     expect(host.settingsPopupCalls[0]?.title).toContain(
-      "settings.adapters.pi.child_inspection.max_bytes_per_child",
+      "settings.adapters.pi.child_inspection.recovery_countdown_seconds",
     );
     expect(host.registerToolCalls).toHaveLength(0);
     expect(runtimeStoreOpenCalls).toBe(0);
@@ -3056,14 +3091,21 @@ describe("createPiExtension: config activation, materialization consumption, pri
     });
   });
 
-  it("uses one trusted parent-session history identity across replacement generations and separates distinct sessions", async () => {
+  it("uses one trusted parent-session thread identity across replacement generations and separates distinct sessions", async () => {
     const opened: string[] = [];
-    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: persistentFakeSessionManager({ id: "parent-session-a" }),
+    });
     installExtension(host, "0.81.1", {
       parentSessionId: () => "parent-session-a",
-      childHistoryStoreFactory: (id) => {
-        opened.push(id);
-        return errAsync("not persisted" as unknown);
+      threadSourceFactory: (input) => {
+        opened.push(input.parentSessionId);
+        return errAsync({
+          type: "ParentSessionUnavailable" as const,
+          reason: "not persisted",
+        });
       },
     });
     await host.triggerSessionStart();
@@ -3071,12 +3113,19 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(opened).toEqual(["parent-session-a", "parent-session-a"]);
 
     const otherOpened: string[] = [];
-    const otherHost = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const otherHost = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: persistentFakeSessionManager({ id: "parent-session-b" }),
+    });
     installExtension(otherHost, "0.81.1", {
       parentSessionId: () => "parent-session-b",
-      childHistoryStoreFactory: (id) => {
-        otherOpened.push(id);
-        return errAsync("not persisted" as unknown);
+      threadSourceFactory: (input) => {
+        otherOpened.push(input.parentSessionId);
+        return errAsync({
+          type: "ParentSessionUnavailable" as const,
+          reason: "not persisted",
+        });
       },
     });
     await otherHost.triggerSessionStart();
@@ -3085,13 +3134,13 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("expires startup recovery countdown and restores one eligible root exactly once", async () => {
-    const history = mutableChildHistoryStore();
+    const history = mutableChildRefSource();
     let restores = 0;
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.scriptSelect(undefined);
     installRecoveryExtension(
       host,
-      history.store,
+      history,
       () => {
         restores += 1;
         return okAsync({ finalOutput: "done", interventionCount: 1 });
@@ -3101,24 +3150,28 @@ describe("createPiExtension: config activation, materialization consumption, pri
     await host.triggerSessionStart();
     await flushBackgroundWork();
     expect(restores).toBe(1);
-    expect(history.records[0]?.status).toBe("settled");
-    expect(history.records[0]?.recovery.eligible).toBe(false);
+    expect(history.records[0]?.status).toBe("completed");
+    expect(history.records[0]?.settledAt).toBeDefined();
+    expect(history.updates.map((update) => update.status)).toEqual([
+      "running",
+      "completed",
+    ]);
   });
 
   it("honors exact startup choices: Recover now recovers, while Skip and Inspect preserve eligibility", async () => {
     for (const choice of ["Recover now", "Skip", "Inspect"] as const) {
-      const history = mutableChildHistoryStore();
+      const history = mutableChildRefSource();
       let restores = 0;
       const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
       host.scriptSelect(choice);
-      installRecoveryExtension(host, history.store, () => {
+      installRecoveryExtension(host, history, () => {
         restores += 1;
         return okAsync({ finalOutput: "done", interventionCount: 0 });
       });
       await host.triggerSessionStart();
       await flushBackgroundWork();
       expect(restores).toBe(choice === "Recover now" ? 1 : 0);
-      expect(history.records[0]?.recovery.eligible).toBe(
+      expect(history.records[0]?.settledAt === undefined).toBe(
         choice !== "Recover now",
       );
       if (choice === "Inspect") {
@@ -3131,11 +3184,11 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("recovers skipped children on the command and registers that command only once across reloads", async () => {
-    const history = mutableChildHistoryStore();
+    const history = mutableChildRefSource();
     let restores = 0;
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.scriptSelect("Skip");
-    installRecoveryExtension(host, history.store, () => {
+    installRecoveryExtension(host, history, () => {
       restores += 1;
       return okAsync({ finalOutput: "done", interventionCount: 0 });
     });
@@ -3153,10 +3206,10 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("projects one bounded settlement message without creating a turn or leaking canaries", async () => {
-    const history = mutableChildHistoryStore();
+    const history = mutableChildRefSource();
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.scriptSelect("Recover now");
-    installRecoveryExtension(host, history.store, () =>
+    installRecoveryExtension(host, history, () =>
       okAsync({ finalOutput: "x".repeat(20_000), interventionCount: 7 }),
     );
     await host.triggerSessionStart();
@@ -3180,11 +3233,11 @@ describe("createPiExtension: config activation, materialization consumption, pri
 
   it("turns restore and send failures into one safe notification without a turn or raw canary", async () => {
     for (const failure of ["restore", "send"] as const) {
-      const history = mutableChildHistoryStore();
+      const history = mutableChildRefSource();
       const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
       host.scriptSelect("Recover now");
       if (failure === "send") host.poisonSendMessage();
-      installRecoveryExtension(host, history.store, () => {
+      installRecoveryExtension(host, history, () => {
         if (failure === "restore") throw new Error("raw restore secret");
         return okAsync({ finalOutput: "safe", interventionCount: 0 });
       });
@@ -3209,7 +3262,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("fails closed when recovery is disabled, with no startup or command spawn", async () => {
-    const history = mutableChildHistoryStore();
+    const history = mutableChildRefSource();
     let restores = 0;
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host, "0.81.1", {
@@ -3236,7 +3289,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
         open: () => okAsync(createInMemoryRuntimeStore()),
       },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => okAsync(history.store),
+      threadSourceFactory: history.factory,
       restoreOrdinaryChild: () => {
         restores += 1;
         return okAsync({ finalOutput: "leak", interventionCount: 0 });
@@ -3255,11 +3308,11 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("does not recover from an untrusted project and gives one safe command message", async () => {
-    const history = mutableChildHistoryStore();
+    const history = mutableChildRefSource();
     let restores = 0;
     const host = new RecordingFakePiHost({ mode: "tui", trusted: false });
     host.scriptSelect("Skip");
-    installRecoveryExtension(host, history.store, () => {
+    installRecoveryExtension(host, history, () => {
       restores += 1;
       return okAsync({ finalOutput: "leak", interventionCount: 0 });
     });
@@ -3278,7 +3331,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("fails closed for missing descriptors and history stores without leaking paths", async () => {
-    const missingDescriptor = mutableChildHistoryStore();
+    const missingDescriptor = mutableChildRefSource();
     let restores = 0;
     const descriptorHost = new RecordingFakePiHost({
       mode: "tui",
@@ -3291,7 +3344,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
         open: () => okAsync(createInMemoryRuntimeStore()),
       },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => okAsync(missingDescriptor.store),
+      threadSourceFactory: missingDescriptor.factory,
       restoreOrdinaryChild: () => {
         restores += 1;
         return okAsync({
@@ -3331,8 +3384,11 @@ describe("createPiExtension: config activation, materialization consumption, pri
         open: () => okAsync(createInMemoryRuntimeStore()),
       },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () =>
-        errAsync("/raw/history/store/path" as unknown),
+      threadSourceFactory: () =>
+        errAsync({
+          type: "ParentSessionUnavailable" as const,
+          reason: "/raw/history/store/path",
+        }),
     });
     await missingStoreHost.triggerSessionStart();
     missingStoreHost.notifyCalls.length = 0;
@@ -3346,16 +3402,14 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(missingStoreHost.notifyCalls[0]?.message).not.toContain("/raw/");
   });
 
-  it("never auto-recovers quarantined records, including from the command", async () => {
-    const history = mutableChildHistoryStore(
-      eligibleOrdinaryRecoveryRecord({
-        quarantine: { quarantined: true, reasonClass: "raw" },
-      }),
+  it("never auto-recovers tombstoned records, including from the command", async () => {
+    const history = mutableChildRefSource(
+      eligibleOrdinaryRecoveryRecord({ status: "tombstoned" }),
     );
     let restores = 0;
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.scriptSelect("Recover now");
-    installRecoveryExtension(host, history.store, () => {
+    installRecoveryExtension(host, history, () => {
       restores += 1;
       return okAsync({ finalOutput: "leak", interventionCount: 0 });
     });
@@ -3367,11 +3421,11 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("does not let a stale deferred startup recover or inject after a new generation starts", async () => {
-    const history = mutableChildHistoryStore();
+    const history = mutableChildRefSource();
     let restores = 0;
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     const deferred = host.deferNextSelect();
-    installRecoveryExtension(host, history.store, () => {
+    installRecoveryExtension(host, history, () => {
       restores += 1;
       return okAsync({ finalOutput: "stale canary", interventionCount: 0 });
     });
@@ -3387,11 +3441,11 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("clears recovery on shutdown after Skip", async () => {
-    const history = mutableChildHistoryStore();
+    const history = mutableChildRefSource();
     let restores = 0;
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.scriptSelect("Skip");
-    installRecoveryExtension(host, history.store, () => {
+    installRecoveryExtension(host, history, () => {
       restores += 1;
       return okAsync({ finalOutput: "leak", interventionCount: 0 });
     });
@@ -3408,12 +3462,12 @@ describe("createPiExtension: config activation, materialization consumption, pri
 
   it("turns selection failures into one safe notification without restore or raw canaries", async () => {
     for (const fail of ["throw", "reject"] as const) {
-      const history = mutableChildHistoryStore();
+      const history = mutableChildRefSource();
       let restores = 0;
       const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
       if (fail === "throw") host.poisonSelect();
       else host.rejectSelect();
-      installRecoveryExtension(host, history.store, () => {
+      installRecoveryExtension(host, history, () => {
         restores += 1;
         return okAsync({
           finalOutput: "raw turn canary",
@@ -3443,12 +3497,12 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("turns inspection failures into one safe notification without restore or raw canaries", async () => {
-    const history = mutableChildHistoryStore();
+    const history = mutableChildRefSource();
     let restores = 0;
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.scriptSelect("Inspect");
     host.poisonNextNotify();
-    installRecoveryExtension(host, history.store, () => {
+    installRecoveryExtension(host, history, () => {
       restores += 1;
       return okAsync({
         finalOutput: "raw inspection canary",
@@ -3468,24 +3522,27 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(safeNotifications[0]?.message).not.toContain("/Users/");
   });
 
-  it("proves inspect labels, terminal clearing, and bounded child clearing through registered commands", async () => {
+  it("proves bounded inspect labels and record-free clearing through registered commands", async () => {
     const live = eligibleOrdinaryRecoveryRecord({
       childId: "live-running",
+      threadId: "live-running",
+      title: "live canary",
       status: "running",
-      recovery: { eligible: false, count: 0 },
     });
     const interrupted = eligibleOrdinaryRecoveryRecord({
       childId: "ordinary-interrupted",
+      threadId: "ordinary-interrupted",
+      title: "ordinary canary",
     });
     const workflow = eligibleOrdinaryRecoveryRecord({
       childId: "workflow-interrupted",
-      kind: "workflow-step",
-      workflow: { workflow: "workflow-canary", step: "step-canary" },
+      threadId: "workflow-interrupted",
+      title: "workflow-canary step-canary",
     });
-    const history = mutableChildHistoryStore([live, interrupted, workflow]);
+    const history = mutableChildRefSource([live, interrupted, workflow]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.scriptSelect("Skip");
-    installRecoveryExtension(host, history.store, () =>
+    installRecoveryExtension(host, history, () =>
       okAsync({ finalOutput: "restored", interventionCount: 0 }),
     );
     await host.triggerSessionStart();
@@ -3500,43 +3557,47 @@ describe("createPiExtension: config activation, materialization consumption, pri
       ),
     ).toBe(true);
     expect(
-      options.some(
-        (label) =>
-          label.includes("children/live-running/session.jsonl") ||
-          label.includes("ordinary-interrupted"),
+      options.some((label) =>
+        label.includes("children/live-running/session.jsonl"),
       ),
     ).toBe(false);
     const clearLabel = options
-      .filter((label) => label.includes("clear history"))
+      .filter((label) => label.includes("clear"))
       .at(-1);
     expect(clearLabel).toBeDefined();
     deferred.settle(clearLabel);
     await inspect;
-    expect(history.cleared).toEqual(["ordinary-interrupted"]);
+    // Since ADR 0014 the parent session owns the refs, so nothing is deleted.
+    expect(history.cleared).toEqual([]);
     expect(history.records.map((record) => record.childId)).toContain(
       "live-running",
     );
+    expect(host.notifyCalls.at(-1)).toEqual({
+      message: "Child records are managed by Pi's session.",
+      level: "info",
+    });
     await host.invokeCommand("weave:clear-children");
-    expect(history.records.map((record) => record.childId)).toEqual([
-      "live-running",
-    ]);
-    expect(host.notifyCalls.at(-1)?.message).toContain("1");
+    expect(history.records).toHaveLength(3);
+    expect(host.notifyCalls.at(-1)?.message).toContain("terminal child");
   });
 
-  it("proves recover, workflow resume, and stale deferred actions are generation scoped", async () => {
+  it("proves recover and stale deferred actions are generation scoped", async () => {
+    // The ref title is the descriptor name, so both records name a live agent.
     const ordinary = eligibleOrdinaryRecoveryRecord({
       childId: "ordinary-recover",
+      threadId: "ordinary-recover",
+      title: "loom",
     });
-    const workflow = eligibleOrdinaryRecoveryRecord({
-      childId: "workflow-resume",
-      kind: "workflow-step",
-      workflow: { workflow: "workflow", step: "step" },
+    const other = eligibleOrdinaryRecoveryRecord({
+      childId: "other-child",
+      threadId: "other-child",
+      title: "loom",
     });
-    const history = mutableChildHistoryStore([ordinary, workflow]);
+    const history = mutableChildRefSource([ordinary, other]);
     const restores: string[] = [];
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.scriptSelect("Skip");
-    installRecoveryExtension(host, history.store, (input) => {
+    installRecoveryExtension(host, history, (input) => {
       restores.push(input.record.childId);
       return okAsync({ finalOutput: "restored", interventionCount: 0 });
     });
@@ -3544,33 +3605,27 @@ describe("createPiExtension: config activation, materialization consumption, pri
     const recoverPick = host.deferNextSelect();
     const recover = host.invokeCommand("weave:inspect");
     await flushBackgroundWork();
-    const recoverLabel = host.selectCalls
-      .at(-1)
-      ?.options.filter((label) => label.includes("recover"))
-      .at(-1);
+    const recoverOptions = host.selectCalls.at(-1)?.options ?? [];
+    const recoverLabel = recoverOptions.find((label) =>
+      label.includes("recover"),
+    );
     recoverPick.settle(recoverLabel);
     await recover;
     expect(restores).toEqual(["ordinary-recover"]);
-
-    const resumePick = host.deferNextSelect();
-    const resume = host.invokeCommand("weave:inspect");
-    await flushBackgroundWork();
-    const resumeLabel = host.selectCalls
-      .at(-1)
-      ?.options.filter((label) => label.includes("resume"))
-      .at(-1);
-    resumePick.settle(resumeLabel);
-    await resume;
     expect(host.sentUserMessages).toHaveLength(0);
     expect(host.generatedTurnCount).toBe(0);
 
     const stalePick = host.deferNextSelect();
     const stale = host.invokeCommand("weave:inspect");
     await flushBackgroundWork();
+    const staleOptions = host.selectCalls.at(-1)?.options ?? [];
+    // The replacement generation skips its own startup prompt, so any later
+    // restore could only come from the stale deferred pick.
+    host.scriptSelect("Skip");
     await host.triggerSessionStart();
-    const staleLabel = host.selectCalls
-      .at(-2)
-      ?.options.find((label) => label.includes("workflow-resume"));
+    const staleLabel = staleOptions
+      .filter((label) => label.includes("recover"))
+      .at(-1);
     stalePick.settle(staleLabel);
     await stale;
     expect(restores).toEqual(["ordinary-recover"]);
@@ -3581,14 +3636,14 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("proves the composed editor handles Alt+I and Alt+1 without global shortcut leakage", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: "live-child",
         status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
-    installRecoveryExtension(host, history.store, () =>
+    installRecoveryExtension(host, history, () =>
       okAsync({ finalOutput: "restored", interventionCount: 0 }),
     );
     await host.triggerSessionStart();
@@ -3618,7 +3673,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("leaves a foreign session editor installed across session_start and agent lifecycle events", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: "live-child",
         status: "running",
@@ -3633,7 +3688,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       keybindings: unknown,
     ) => ({ tui, theme, keybindings, handleInput: () => undefined });
     host.setEditorComponentForTest(modalFactory);
-    installRecoveryExtension(host, history.store, () =>
+    installRecoveryExtension(host, history, () =>
       okAsync({ finalOutput: "restored", interventionCount: 0 }),
     );
     await host.triggerSessionStart();
@@ -3650,11 +3705,10 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("borrows the session editor for child inspection and hands it back to the foreign owner", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: "ordinary-live-child",
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
+        status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -3664,7 +3718,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       keybindings: unknown,
     ) => ({ tui, theme, keybindings, handleInput: () => undefined });
     host.setEditorComponentForTest(modalFactory);
-    installRecoveryExtension(host, history.store, () =>
+    installRecoveryExtension(host, history, () =>
       okAsync({ finalOutput: "restored", interventionCount: 0 }),
     );
     await host.triggerSessionStart();
@@ -3693,11 +3747,10 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("settles child inspection before opening its nested picker and can reopen cleanly", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: "ordinary-live-child",
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
+        status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -3707,7 +3760,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       keybindings: unknown,
     ) => ({ tui, theme, keybindings, handleInput: () => undefined });
     host.setEditorComponentForTest(modalFactory);
-    installRecoveryExtension(host, history.store, () =>
+    installRecoveryExtension(host, history, () =>
       okAsync({ finalOutput: "restored", interventionCount: 0 }),
     );
     await host.triggerSessionStart();
@@ -3751,11 +3804,10 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("does not clobber a foreign editor installed while inspection is open", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: "ordinary-live-child",
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
+        status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -3765,7 +3817,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       keybindings: unknown,
     ) => ({ tui, theme, keybindings, handleInput: () => undefined });
     host.setEditorComponentForTest(modalFactory);
-    installRecoveryExtension(host, history.store, () =>
+    installRecoveryExtension(host, history, () =>
       okAsync({ finalOutput: "restored", interventionCount: 0 }),
     );
     await host.triggerSessionStart();
@@ -3810,14 +3862,14 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("never reclaims a session editor a foreign extension installs after Weave activates", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: "live-child",
         status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
-    installRecoveryExtension(host, history.store, () =>
+    installRecoveryExtension(host, history, () =>
       okAsync({ finalOutput: "restored", interventionCount: 0 }),
     );
     // Load order is not guaranteed: Weave may activate before `pi-vim`
@@ -3845,11 +3897,10 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("reproduces live child inspection no-op at the extension seam", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: "ordinary-live-child",
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
+        status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -3859,7 +3910,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       keybindings: unknown,
     ) => ({ tui, theme, keybindings, handleInput: () => undefined });
     host.setEditorComponentForTest(priorFactory);
-    installRecoveryExtension(host, history.store, () =>
+    installRecoveryExtension(host, history, () =>
       okAsync({ finalOutput: "restored", interventionCount: 0 }),
     );
     await host.triggerSessionStart();
@@ -3923,44 +3974,6 @@ describe("createPiExtension: config activation, materialization consumption, pri
     ).toBe(true);
   });
 
-  it("keeps persist_history=false write-free and never lets a fake host touch user data", async () => {
-    let writes = 0;
-    const fakeStore = {
-      upsertRecord: () => {
-        writes += 1;
-        return okAsync(undefined);
-      },
-      updateRecord: () => {
-        writes += 1;
-        return okAsync(undefined);
-      },
-      appendSessionEvent: () => {
-        writes += 1;
-        return okAsync(undefined);
-      },
-      clear: () => {
-        writes += 1;
-        return okAsync(undefined);
-      },
-    } as unknown as PiChildHistoryStore;
-    const config = {
-      ...EMPTY_CONFIG,
-      settings: {
-        adapters: { pi: { child_inspection: { persist_history: false } } },
-      },
-    } as unknown as WeaveConfig;
-    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
-    installExtension(host, "0.81.1", {
-      configActivator: fakeConfigActivator(undefined, config),
-      parentSessionId: () => "fake-parent",
-      childHistoryStoreFactory: () => okAsync(fakeStore),
-    });
-    await host.triggerSessionStart();
-    expect(writes).toBe(0);
-    expect(
-      host.notifyCalls.some((call) => String(call.message).includes("/Users/")),
-    ).toBe(false);
-  });
 });
 
 /**
@@ -4638,18 +4651,15 @@ describe("createPiExtension: delegation controller lifecycle across generations"
 });
 
 describe("strict generation ownership and stale async cleanup", () => {
-  it("closes each generation-owned store exactly once on replacement and repeated shutdown", async () => {
+  it("closes each generation-owned Runtime Store exactly once on replacement and repeated shutdown", async () => {
     const firstRuntimeStore = countedRuntimeStore();
     const secondRuntimeStore = countedRuntimeStore();
-    const firstHistoryStore = countedChildHistoryStore();
-    const secondHistoryStore = countedChildHistoryStore();
     const persistedConfig = {
       ...EMPTY_CONFIG,
       settings: {
         adapters: {
           pi: {
             child_inspection: {
-              persist_history: true,
               recovery_enabled: false,
             },
           },
@@ -4662,7 +4672,6 @@ describe("strict generation ownership and stale async cleanup", () => {
       systemPromptSkills: [],
     });
     let runtimeStoreOpenCount = 0;
-    let historyStoreOpenCount = 0;
     installExtension(host, "0.81.1", {
       capabilityProber: allOkCapabilityProber(),
       configActivator: fakeConfigActivator(
@@ -4688,14 +4697,6 @@ describe("strict generation ownership and stale async cleanup", () => {
           );
         },
       },
-      childHistoryStoreFactory: () => {
-        historyStoreOpenCount += 1;
-        return okAsync(
-          historyStoreOpenCount === 1
-            ? firstHistoryStore.store
-            : secondHistoryStore.store,
-        );
-      },
       parentSessionId: () => "parent",
       telemetryJournal: { write: (_entry: unknown) => okAsync(undefined) },
       telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
@@ -4706,18 +4707,14 @@ describe("strict generation ownership and stale async cleanup", () => {
     await flushBackgroundWork();
 
     expect(firstRuntimeStore.closeCount).toBe(1);
-    expect(firstHistoryStore.closeCount).toBe(1);
     expect(secondRuntimeStore.closeCount).toBe(0);
-    expect(secondHistoryStore.closeCount).toBe(0);
 
     await host.triggerSessionShutdown();
     await host.triggerSessionShutdown();
     await flushBackgroundWork();
 
     expect(firstRuntimeStore.closeCount).toBe(1);
-    expect(firstHistoryStore.closeCount).toBe(1);
     expect(secondRuntimeStore.closeCount).toBe(1);
-    expect(secondHistoryStore.closeCount).toBe(1);
   });
 
   it("closes an opened Runtime Store when primary activation fails during boot", async () => {
@@ -6790,12 +6787,10 @@ describe("createPiExtension: Task 12 native child overlay", () => {
   }
 
   it("opens the native overlay without borrowing the session editor (pi-vim coexistence)", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: OVERLAY_CHILD_ID,
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
-        descriptorName: "loom",
+        status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -6826,7 +6821,6 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       ),
       runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => okAsync(history.store),
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
       threadSourceFactory: overlayThreadFactory(),
@@ -6849,18 +6843,15 @@ describe("createPiExtension: Task 12 native child overlay", () => {
 
   it("swaps one native overlay instance instead of stacking custom promises", async () => {
     const secondId = "overlay-hist-child-2";
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: OVERLAY_CHILD_ID,
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
-        descriptorName: "loom",
+        status: "running",
       }),
       eligibleOrdinaryRecoveryRecord({
         childId: secondId,
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
-        descriptorName: "shuttle",
+        status: "running",
+        title: "shuttle",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -6988,7 +6979,6 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       ),
       runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => okAsync(history.store),
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
       threadSourceFactory: factory,
@@ -7014,12 +7004,10 @@ describe("createPiExtension: Task 12 native child overlay", () => {
   });
 
   it("uses the custom-editor path when capability selects custom-editor fallback", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: OVERLAY_CHILD_ID,
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
-        descriptorName: "loom",
+        status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -7043,7 +7031,6 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       ),
       runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => okAsync(history.store),
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
       threadSourceFactory: overlayThreadFactory(),
@@ -7060,12 +7047,10 @@ describe("createPiExtension: Task 12 native child overlay", () => {
   });
 
   it("settles the native overlay on session_shutdown and leaves the editor factory untouched", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: OVERLAY_CHILD_ID,
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
-        descriptorName: "loom",
+        status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -7089,7 +7074,6 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       ),
       runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => okAsync(history.store),
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
       threadSourceFactory: overlayThreadFactory(),
@@ -7105,12 +7089,10 @@ describe("createPiExtension: Task 12 native child overlay", () => {
   });
 
   it("hands off to custom-editor inspection when native open returns fallback-required", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: OVERLAY_CHILD_ID,
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
-        descriptorName: "loom",
+        status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -7134,7 +7116,6 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       ),
       runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => okAsync(history.store),
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
       threadSourceFactory: overlayThreadFactory({ failRead: true }),
@@ -7153,12 +7134,10 @@ describe("createPiExtension: Task 12 native child overlay", () => {
   });
 
   it("rejects stale-generation overlay activation after session replacement", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: OVERLAY_CHILD_ID,
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
-        descriptorName: "loom",
+        status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -7182,7 +7161,6 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       ),
       runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => okAsync(history.store),
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
       threadSourceFactory: overlayThreadFactory(),
@@ -7209,12 +7187,10 @@ describe("createPiExtension: Task 12 native child overlay", () => {
   });
 
   it("keeps primary editor input ownership isolated while the native overlay is mounted", async () => {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: OVERLAY_CHILD_ID,
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
-        descriptorName: "loom",
+        status: "running",
       }),
     ]);
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -7238,7 +7214,6 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       ),
       runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => okAsync(history.store),
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
       threadSourceFactory: overlayThreadFactory(),
@@ -7266,12 +7241,10 @@ describe("createPiExtension: Task 13 overlay keys and picker", () => {
     overrides: Partial<PiExtensionDeps> = {},
     config: WeaveConfig = EMPTY_CONFIG,
   ): void {
-    const history = mutableChildHistoryStore([
+    const history = mutableChildRefSource([
       eligibleOrdinaryRecoveryRecord({
         childId: TASK13_CHILD_ID,
-        status: "interrupted",
-        recovery: { eligible: false, count: 0 },
-        descriptorName: "loom",
+        status: "running",
       }),
     ]);
     installExtension(host, "0.81.1", {
@@ -7292,7 +7265,6 @@ describe("createPiExtension: Task 13 overlay keys and picker", () => {
       ),
       runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
       parentSessionId: () => "parent",
-      childHistoryStoreFactory: () => okAsync(history.store),
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
       threadSourceFactory: () =>

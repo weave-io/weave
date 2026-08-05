@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MemoryPiChildHistoryFs } from "../child-history-fs.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 import {
   FakePiChildMetadataCacheFs,
   openBunChildMetadataDatabase,
@@ -14,7 +14,6 @@ import type {
   PiChildRefAppendPort,
   PiChildRefEntryReadPort,
 } from "../child-session-refs.js";
-import { adaptPiNativeSessionFs } from "../native-session-fs.js";
 import { openPiThreadSources } from "../thread-sources.js";
 
 const ROOT = "/data/weave/adapters/pi/sessions";
@@ -94,11 +93,11 @@ class MemoryHost implements PiNativeSessionHostPort {
 }
 
 function memoryFs(): PiNativeSessionFsPort {
-  return adaptPiNativeSessionFs(new MemoryPiChildHistoryFs());
+  return new MemoryPiNativeSessionFs();
 }
 
 async function seedSessionFile(
-  fs: MemoryPiChildHistoryFs,
+  fs: MemoryPiNativeSessionFs,
   directoryPath: string,
 ): Promise<void> {
   const directory = (
@@ -117,7 +116,7 @@ async function seedSessionFile(
 describe("openPiThreadSources", () => {
   test("builds native store, parent ref store, and active cache from memory seams", async () => {
     const parent = new FakeParentEntries();
-    const historyFs = new MemoryPiChildHistoryFs();
+    const historyFs = new MemoryPiNativeSessionFs();
     await seedSessionFile(historyFs, `${ROOT}/child-1`);
     const result = await openPiThreadSources({
       workspaceKey: WORKSPACE,
@@ -125,7 +124,7 @@ describe("openPiThreadSources", () => {
       append: parent,
       read: parent,
       sessionRoot: ROOT,
-      fs: adaptPiNativeSessionFs(historyFs),
+      fs: historyFs,
       host: new MemoryHost(),
       cacheRoot: CACHE_ROOT,
       cacheFs: new FakePiChildMetadataCacheFs(),

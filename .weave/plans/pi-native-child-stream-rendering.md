@@ -299,7 +299,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
   - **Acceptance**:
     - `bun test packages/adapters/pi/src/__tests__/child-doctor.test.ts` passes: each check's pass/fail shape, sanitization (seeded transcript text never appears in report), health-only availability, orphan bound.
 
-- [ ] 16. Remove the JSONL child-history store and stale settings
+- [x] 16. Remove the JSONL child-history store and stale settings
   - **What**: Delete the legacy store and its configuration surface once all replacement paths are live: `child-history-fs.ts`, `child-history-schema.ts`, `child-history-store.ts`, `child-inspection-settings.ts` (quota/retention settings: `persist_history`, `max_bytes_per_child`, `max_bytes_total`, `orphan_retention_days`, `recovery_enabled`, `recovery_countdown_seconds`), the `childHistoryStoreFactory` wiring in `extension.ts` (~lines 548/657/3809), and JSONL-era code paths in `recovery-pointer.ts`, `child-session-checkpoint.ts`, `child-tree.ts`, `delegation-controller.ts`, `errors.ts`, `rpc-child.ts`, `child-framing.ts`. Remove or rewrite their tests. Remove any core/config schema keys that exist only for those settings.
   - **Files**: deletions above plus `packages/adapters/pi/src/index.ts` exports, corresponding `__tests__` files (`child-history-*`, `child-recovery.test.ts` portions, `child-inspection-*` where superseded), and — only if grep proves they carry the old settings — `packages/core/src/schema.ts` / `packages/config` surfaces.
   - **Depends on**: Tasks 4–15 (replacements complete).

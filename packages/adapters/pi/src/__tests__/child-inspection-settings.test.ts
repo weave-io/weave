@@ -20,10 +20,6 @@ describe("Pi child-inspection settings", () => {
 
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap()).toEqual({
-      persist_history: true,
-      max_bytes_per_child: 4_194_304,
-      max_bytes_total: 67_108_864,
-      orphan_retention_days: 30,
       recovery_enabled: true,
       recovery_countdown_seconds: 10,
     });
@@ -34,56 +30,60 @@ describe("Pi child-inspection settings", () => {
   });
 
   it("accepts boundary values and preserves valid Pi-local values", () => {
-    const result = parsePiChildInspectionSettings({
-      persist_history: false,
-      max_bytes_per_child: 65_536,
-      max_bytes_total: 1_073_741_824,
-      orphan_retention_days: 3_650,
+    const lower = parsePiChildInspectionSettings({
       recovery_enabled: false,
       recovery_countdown_seconds: 0,
     });
+    const upper = parsePiChildInspectionSettings({
+      recovery_countdown_seconds: 60,
+    });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().max_bytes_per_child).toBe(65_536);
-    expect(result._unsafeUnwrap().max_bytes_total).toBe(1_073_741_824);
+    expect(lower.isOk()).toBe(true);
+    expect(lower._unsafeUnwrap().recovery_enabled).toBe(false);
+    expect(lower._unsafeUnwrap().recovery_countdown_seconds).toBe(0);
+    expect(upper.isOk()).toBe(true);
+    expect(upper._unsafeUnwrap().recovery_countdown_seconds).toBe(60);
   });
 
-  it("aggregates unknown, type, range, and cross-field issues", () => {
+  it("aggregates unknown, type, and range issues", () => {
     const result = parsePiChildInspectionSettings({
-      persist_history: "yes",
-      max_bytes_per_child: 65_535,
-      max_bytes_total: 1_048_576,
-      orphan_retention_days: 3_651,
+      recovery_enabled: "yes",
       recovery_countdown_seconds: 61,
       typo: true,
     });
 
     expect(result.isErr()).toBe(true);
     const issues = result._unsafeUnwrapErr();
-    expect(issues.length).toBe(5);
+    expect(issues.length).toBe(3);
     expect(issues.map((issue) => issue.code)).toEqual(
       expect.arrayContaining([
         "invalid_type",
-        "too_small",
         "too_big",
         "unrecognized_keys",
       ]),
     );
     expect(formatPiChildInspectionSettingsIssues(issues)).toContain("typo");
     expect(formatPiChildInspectionSettingsIssues(issues)).toContain(
-      "max_bytes_per_child",
+      "recovery_countdown_seconds",
     );
   });
 
-  it("reports the total-size relation after applying field defaults", () => {
+  it("rejects removed quota and retention keys as unknown", () => {
     const result = parsePiChildInspectionSettings({
-      max_bytes_per_child: 67_108_864,
-      max_bytes_total: 1_048_576,
+      persist_history: true,
+      max_bytes_per_child: 65_536,
+      max_bytes_total: 1_073_741_824,
+      orphan_retention_days: 30,
     });
 
     expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr()).toHaveLength(1);
-    expect(result._unsafeUnwrapErr()[0]?.path).toEqual(["max_bytes_total"]);
+    const formatted = formatPiChildInspectionSettingsIssues(
+      result._unsafeUnwrapErr(),
+    );
+    expect(formatted).toContain("persist_history");
+    expect(formatted).toContain("max_bytes_per_child");
+    expect(formatted).toContain("max_bytes_total");
+    expect(formatted).toContain("orphan_retention_days");
   });
 
   it("validates only Pi's child block and leaves other adapters opaque", () => {
@@ -99,8 +99,8 @@ describe("Pi child-inspection settings", () => {
     expect(resolution.status).toBe("valid");
     if (resolution.status === "valid") {
       expect(resolution.settings.recovery_enabled).toBe(false);
-      expect(resolution.settings.max_bytes_total).toBe(
-        DEFAULT_PI_CHILD_INSPECTION_SETTINGS.max_bytes_total,
+      expect(resolution.settings.recovery_countdown_seconds).toBe(
+        DEFAULT_PI_CHILD_INSPECTION_SETTINGS.recovery_countdown_seconds,
       );
     }
   });

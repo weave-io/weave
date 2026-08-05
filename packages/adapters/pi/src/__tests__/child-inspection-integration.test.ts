@@ -15,7 +15,7 @@ import {
   signEnvelope,
 } from "../child-envelope.js";
 import { MAX_NATIVE_RECORD_BYTES } from "../child-framing.js";
-import type { PiChildHistoryRecord } from "../child-history-schema.js";
+import type { PiChildRecoveryRecord } from "../child-recovery.js";
 import { SystemTimerPort } from "../child-timer.js";
 import {
   type PiChildInspectionHistoryPort,
@@ -255,28 +255,48 @@ workflow recovery-flow {
 }
 `);
 
-function recoveryRecord(childId: string): PiChildHistoryRecord {
+/**
+ * Since ADR 0014 restores take the parent session's child-ref record and read
+ * the session location plus active leaf from the native session tree.
+ */
+function recoveryRecord(childId: string): PiChildRecoveryRecord {
   return {
     childId,
-    parentSessionId: "parent",
-    kind: "ordinary",
-    status: "interrupted",
-    workflow: {},
-    descriptorName: "shuttle",
-    sessionPath: `children/${childId}/session.jsonl`,
-    activeLeaf: "leaf-42",
-    checkpointCursor: 7,
-    branchAncestry: [],
-    interventionCount: 1,
-    finalOutput: "",
-    trim: { trimmed: false, markerCount: 0 },
-    quarantine: { quarantined: false },
-    clear: { cleared: false },
-    recovery: { eligible: true, count: 0 },
-    bytes: { session: 1, checkpoint: 1, total: 2 },
+    threadId: childId,
+    nativeSessionId: `native-${childId}`,
+    sessionRef: `children/${childId}/session.jsonl`,
+    originParentSessionId: "parent",
+    originEntryId: `entry-${childId}`,
+    title: "shuttle",
+    status: "running",
     createdAt: 1,
     updatedAt: 1,
+    runs: [{ run: 1, action: "start", startedAt: 1 }],
   };
+}
+
+/** Structural Task 4 native session source backing the restore path. */
+function restoreSessions(childId: string) {
+  const record = (ref: string) => ({
+    childId,
+    sessionId: `native-${childId}`,
+    ref,
+    path: `/history/children/${childId}/session.jsonl`,
+    parentSession: "parent",
+    cwd: "/project",
+  });
+  return () =>
+    ({
+      createChildSession: () =>
+        okAsync(record(`children/${childId}/session.jsonl`)),
+      establishThreadLeaf: (ref: string) =>
+        okAsync({ record: record(ref), leafId: "leaf-42" }),
+      appendTombstone: () => okAsync({ ref: "tombstoned" } as never),
+      openSession: (ref: string) => okAsync(record(ref)),
+      readThreadMetadata: () => okAsync({ threadId: childId } as never),
+      readSessionEntries: (ref: string) =>
+        okAsync({ record: record(ref), entries: [{ id: "leaf-42" }] }),
+    }) as never;
 }
 
 test("real ordinary, nested, and workflow execution retain only bounded topology metadata", async () => {
@@ -451,7 +471,7 @@ test("real RPC lifecycle supports steer, queued follow-up, UI response, interrup
     pathContainment: {
       verifyContainment: () => okAsync("/history/children/child-1"),
     },
-    historyRoot: () => "/history",
+    threadSessions: restoreSessions("child-1"),
     currentCwd: () => "/project",
     inspectionRegistry: restoreRegistry,
   });
@@ -503,7 +523,7 @@ test("real ordinary recovery resumes through the controller and preserves bounde
     pathContainment: {
       verifyContainment: () => okAsync("/history/children/recover-me"),
     },
-    historyRoot: () => "/history",
+    threadSessions: restoreSessions("recover-me"),
     currentCwd: () => "/project",
     inspectionRegistry: registry,
   });

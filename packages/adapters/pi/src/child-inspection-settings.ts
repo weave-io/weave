@@ -18,10 +18,6 @@ import {
  * here would make every existing config compare unequal to its own defaults.
  */
 export const DEFAULT_PI_CHILD_INSPECTION_SETTINGS = Object.freeze({
-  persist_history: true,
-  max_bytes_per_child: 4_194_304,
-  max_bytes_total: 67_108_864,
-  orphan_retention_days: 30,
   recovery_enabled: true,
   recovery_countdown_seconds: 10,
 } as const);
@@ -74,18 +70,6 @@ const PiChildOverlayKeysSchema = z
   .object(buildPiChildOverlayKeysShape())
   .strict();
 
-const MAX_BYTES_PER_CHILD = {
-  min: 65_536,
-  max: 67_108_864,
-} as const;
-const MAX_BYTES_TOTAL = {
-  min: 1_048_576,
-  max: 1_073_741_824,
-} as const;
-const ORPHAN_RETENTION_DAYS = {
-  min: 1,
-  max: 3_650,
-} as const;
 const RECOVERY_COUNTDOWN_SECONDS = {
   min: 0,
   max: 60,
@@ -98,30 +82,6 @@ const RECOVERY_COUNTDOWN_SECONDS = {
  */
 export const PiChildInspectionSettingsSchema = z
   .object({
-    persist_history: z
-      .boolean()
-      .default(DEFAULT_PI_CHILD_INSPECTION_SETTINGS.persist_history),
-    max_bytes_per_child: z
-      .number()
-      .int()
-      .finite()
-      .min(MAX_BYTES_PER_CHILD.min)
-      .max(MAX_BYTES_PER_CHILD.max)
-      .default(DEFAULT_PI_CHILD_INSPECTION_SETTINGS.max_bytes_per_child),
-    max_bytes_total: z
-      .number()
-      .int()
-      .finite()
-      .min(MAX_BYTES_TOTAL.min)
-      .max(MAX_BYTES_TOTAL.max)
-      .default(DEFAULT_PI_CHILD_INSPECTION_SETTINGS.max_bytes_total),
-    orphan_retention_days: z
-      .number()
-      .int()
-      .finite()
-      .min(ORPHAN_RETENTION_DAYS.min)
-      .max(ORPHAN_RETENTION_DAYS.max)
-      .default(DEFAULT_PI_CHILD_INSPECTION_SETTINGS.orphan_retention_days),
     recovery_enabled: z
       .boolean()
       .default(DEFAULT_PI_CHILD_INSPECTION_SETTINGS.recovery_enabled),
@@ -135,16 +95,7 @@ export const PiChildInspectionSettingsSchema = z
     // Optional so every pre-Task-13 config keeps parsing untouched.
     keys: PiChildOverlayKeysSchema.optional(),
   })
-  .strict()
-  .superRefine((settings, context) => {
-    if (settings.max_bytes_total < settings.max_bytes_per_child) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["max_bytes_total"],
-        message: "must be greater than or equal to max_bytes_per_child",
-      });
-    }
-  });
+  .strict();
 
 export type PiChildInspectionSettings = Readonly<
   z.infer<typeof PiChildInspectionSettingsSchema>

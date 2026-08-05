@@ -5,7 +5,7 @@ import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { WEAVE_CHILD_ID_ENV, WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
-import type { PiChildHistoryRecord } from "../child-history-schema.js";
+import type { PiChildRecoveryRecord } from "../child-recovery.js";
 import { SystemTimerPort } from "../child-timer.js";
 import {
   type PiChildInspectionHistoryError,
@@ -366,31 +366,103 @@ class DeterministicRandomPort {
   }
 }
 
+/**
+ * Since ADR 0014 the restore input is the parent session's child-ref record:
+ * metadata only, with the native session tree as the sole source of the
+ * session location and active leaf.
+ */
 function recoveryRecord(
-  overrides: Partial<PiChildHistoryRecord> = {},
-): PiChildHistoryRecord {
+  overrides: Partial<PiChildRecoveryRecord> = {},
+): PiChildRecoveryRecord {
   return {
     childId: "recover-me",
-    parentSessionId: "parent",
-    kind: "ordinary",
-    status: "interrupted",
-    workflow: {},
-    descriptorName: "shuttle",
-    sessionPath: "children/recover-me/session.jsonl",
-    activeLeaf: "leaf-42",
-    checkpointCursor: 7,
-    branchAncestry: [],
-    interventionCount: 2,
-    finalOutput: "",
-    trim: { trimmed: false, markerCount: 0 },
-    quarantine: { quarantined: false },
-    clear: { cleared: false },
-    recovery: { eligible: true, count: 0 },
-    bytes: { session: 1, checkpoint: 1, total: 2 },
+    threadId: "recover-me",
+    nativeSessionId: "native-recover-me",
+    sessionRef: "children/recover-me/session.jsonl",
+    originParentSessionId: "parent",
+    originEntryId: "entry-1",
+    title: "shuttle",
+    status: "running",
     createdAt: 1,
     updatedAt: 1,
+    runs: [{ run: 1, action: "start", startedAt: 1 }],
     ...overrides,
   };
+}
+
+/**
+ * Structural native-session source (Tasks 4-5). Restores read the session
+ * location and active leaf from here, never from the ref record.
+ */
+function recoverySessions(
+  overrides: {
+    readonly path?: string;
+    readonly entries?: readonly unknown[];
+    readonly fail?: boolean;
+  } = {},
+) {
+  const sessionRecord = (ref: string, childId = "recover-me") => ({
+    childId,
+    sessionId: `native-${childId}`,
+    ref,
+    path: overrides.path ?? "/history/children/safe/session.jsonl",
+    parentSession: "parent",
+    cwd: "/workspace/current",
+  });
+  return () =>
+    ({
+      createChildSession: (input: { readonly childId: string }) =>
+        okAsync(
+          sessionRecord(`children/${input.childId}/session.jsonl`, input.childId),
+        ),
+      establishThreadLeaf: (ref: string) =>
+        okAsync({ record: sessionRecord(ref), leafId: "leaf-42" }),
+      appendTombstone: () => okAsync({ ref: "tombstoned" } as never),
+      openSession: (ref: string) => okAsync(sessionRecord(ref)),
+      readThreadMetadata: () => okAsync({ threadId: "recover-me" } as never),
+      readSessionEntries: (ref: string, expectedParentSession?: string) => {
+        if (overrides.fail === true || ref.includes(".."))
+          return errAsync({ kind: "SessionMissing", ref } as never);
+        if (
+          expectedParentSession !== undefined &&
+          expectedParentSession !== "parent"
+        )
+          return errAsync({ kind: "SessionOwnership", ref } as never);
+        return okAsync({
+          record: sessionRecord(ref),
+          entries: overrides.entries ?? [{ id: "leaf-42" }],
+        });
+      },
+    }) as never;
+}
+
+/** Structural Task 5 ref ledger backing native spawns during restore tests. */
+function recoveryRefs() {
+  const refs: PiChildRecoveryRecord[] = [];
+  return () =>
+    ({
+      liveParentSessionId: () => "parent",
+      readRefs: () => okAsync({ refs, skipped: 0, truncated: false }),
+      appendNewChild: (input: {
+        readonly childId: string;
+        readonly threadId: string;
+        readonly nativeSessionId: string;
+        readonly sessionRef: string;
+        readonly title: string;
+      }) => {
+        const record = recoveryRecord({
+          childId: input.childId,
+          threadId: input.threadId,
+          nativeSessionId: input.nativeSessionId,
+          sessionRef: input.sessionRef,
+          title: input.title,
+        });
+        refs.push(record);
+        return okAsync(record);
+      },
+      appendRunDivider: (record: PiChildRecoveryRecord) => okAsync(record),
+      appendLifecycle: (record: PiChildRecoveryRecord) => okAsync(record),
+    }) as never;
 }
 
 function instrumentedRegistry(
@@ -449,7 +521,8 @@ function recoveryController(
     pathContainment: {
       verifyContainment: () => okAsync("/history/children/safe"),
     },
-    historyRoot: () => "/history",
+    threadSessions: recoverySessions(),
+    threadRefs: recoveryRefs(),
     currentCwd: () => "/workspace/current",
     currentEnv: () => ({ SAFE: "yes" }),
     ...overrides,
@@ -1416,7 +1489,7 @@ describe("PiDelegationController", () => {
     await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
     const result = await promise;
     expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().code).toBe("ChildHistoryQuotaExceeded");
+    expect(result._unsafeUnwrapErr().code).toBe("ChildRecordQuotaExceeded");
     expect(spawnedAt(port, 0).killed).toBe(true);
     expect(JSON.stringify(result)).not.toContain("ok");
     controller.disposeAll();
@@ -1573,46 +1646,64 @@ describe("PiDelegationController", () => {
 
   it("rejects every invalid restore before process spawn and bounds its error", async () => {
     const port = new FakeChildProcessPort();
-    const containment = {
-      verifyContainment: () => errAsync("path-component-missing" as const),
-    };
-    const controller = recoveryController(port, {
-      pathContainment: containment,
-    });
     const cases = [
-      { generationId: "old", record: recoveryRecord() },
+      { generationId: "old", record: recoveryRecord(), sessions: undefined },
       {
         generationId: "gen-1",
-        record: recoveryRecord({ parentChildId: "nested" }),
+        record: recoveryRecord({ sessionRef: "" }),
+        sessions: undefined,
       },
       {
         generationId: "gen-1",
         record: recoveryRecord({
-          sessionPath: "../old-task-canary/session.jsonl",
+          sessionRef: "../old-task-canary/session.jsonl",
         }),
+        sessions: undefined,
       },
       {
         generationId: "gen-1",
-        record: recoveryRecord({ sessionPath: "children/x/wrong.jsonl" }),
+        record: recoveryRecord({ originParentSessionId: "other-parent" }),
+        sessions: undefined,
       },
       {
         generationId: "gen-1",
-        record: recoveryRecord({ activeLeaf: undefined }),
+        record: recoveryRecord(),
+        sessions: recoverySessions({ entries: [] }),
       },
-      { generationId: "gen-1", record: recoveryRecord({ status: "settled" }) },
+      {
+        generationId: "gen-1",
+        record: recoveryRecord(),
+        sessions: recoverySessions({ path: "relative/session.jsonl" }),
+      },
+      {
+        generationId: "gen-1",
+        record: recoveryRecord({ status: "completed" }),
+        sessions: undefined,
+      },
+      {
+        generationId: "gen-1",
+        record: recoveryRecord({ settledAt: 5 }),
+        sessions: undefined,
+      },
     ];
     for (const item of cases) {
+      const controller = recoveryController(
+        port,
+        item.sessions === undefined
+          ? {}
+          : { threadSessions: item.sessions as never },
+      );
       const result = await controller.restoreOrdinaryChild({
         generationId: item.generationId,
         descriptor: { name: "shuttle" },
         continuation: "task-canary",
         record: item.record,
       });
+      controller.disposeAll();
       expect(result.isErr()).toBe(true);
       expect(JSON.stringify(result._unsafeUnwrapErr())).not.toContain("canary");
     }
     expect(port.spawnedProcesses).toHaveLength(0);
-    controller.disposeAll();
   });
 
   it("releases reservation after bootstrap failure, allowing the next restore", async () => {
@@ -1711,7 +1802,8 @@ describe("PiDelegationController", () => {
       continuation: "two",
       record: recoveryRecord({
         childId: "recover-next",
-        sessionPath: "children/recover-next/session.jsonl",
+        threadId: "recover-next",
+        sessionRef: "children/recover-next/session.jsonl",
       }),
     });
     await flush();

@@ -14,15 +14,6 @@
  */
 
 export type {
-  PiChildHistoryIndexV1,
-  PiChildHistoryKind,
-  PiChildHistoryLayout,
-  PiChildHistoryMigrationOutcome,
-  PiChildHistoryRecord,
-  PiChildHistorySchemaError,
-  PiChildHistoryStatus,
-} from "./child-history-schema.js";
-export type {
   PiChildSessionEvent,
   PiExtensionUiResponse,
 } from "./child-session-events.js";

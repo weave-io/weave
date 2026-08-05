@@ -6,11 +6,6 @@
  */
 
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
-import type { PiChildHistoryRecord } from "./child-history-schema.js";
-import type {
-  PiChildHistoryStore,
-  PiChildHistoryStoreError,
-} from "./child-history-store.js";
 import {
   parsePiChildSessionEvent,
   preserveUnknownChildEvent,
@@ -23,6 +18,12 @@ import {
 import type { JsonValue } from "./strict-json.js";
 
 export const ROOT_NODE_ID = "root";
+
+/**
+ * Byte bound on any child final output that crosses back into the parent.
+ * Owned here because both the artifact provider and recovery clamp to it.
+ */
+export const MAX_FINAL_OUTPUT_BYTES = 4_096;
 
 /**
  * Shared per-generation child registry. Execution owners keep their own
@@ -41,37 +42,6 @@ export type PiChildInspectionHistoryError = {
     | "clear";
   readonly reason: "unavailable" | "corrupt" | "quota" | "invalid";
 };
-
-function statusForSnapshot(
-  snapshot: PiChildTreeNode,
-):
-  | "queued"
-  | "running"
-  | "settled"
-  | "interrupted"
-  | "quarantined"
-  | "cleared" {
-  if (snapshot.status === "cancelled") return "interrupted";
-  if (snapshot.status === "completed") return "settled";
-  return "running";
-}
-
-function mapHistoryError(
-  operation: PiChildInspectionHistoryError["operation"],
-  error: PiChildHistoryStoreError,
-): PiChildInspectionHistoryError {
-  let reason: PiChildInspectionHistoryError["reason"];
-  if (error.type === "quota-exceeded") reason = "quota";
-  else if (error.type === "history-disabled") reason = "unavailable";
-  else if (
-    error.type === "history-json" ||
-    error.type === "history-schema" ||
-    error.type === "history-quarantined"
-  )
-    reason = "corrupt";
-  else reason = "invalid";
-  return { kind: "history-write-failed", operation, reason };
-}
 
 export interface PiChildInspectionHistoryPort {
   readonly register?: (
@@ -98,100 +68,6 @@ export interface PiChildInspectionHistoryPort {
   >;
 }
 
-/** Adapts the persistent Task 5 store without leaking store details into controllers. */
-export function createPiChildHistoryPort(
-  store: PiChildHistoryStore,
-  now: () => number = Date.now,
-): PiChildInspectionHistoryPort {
-  const base = (
-    registration: PiChildInspectionRegistration,
-    snapshot: PiChildTreeNode,
-  ): PiChildHistoryRecord => ({
-    childId: registration.id,
-    parentSessionId: store.parentSessionId,
-    parentChildId:
-      registration.parentId === ROOT_NODE_ID
-        ? undefined
-        : registration.parentId,
-    kind: registration.kind,
-    status: statusForSnapshot(snapshot),
-    workflow: {
-      workflow: registration.workflowInstanceId,
-      step: registration.stepName,
-    },
-    ...(registration.kind === "ordinary" &&
-    registration.parentId === ROOT_NODE_ID
-      ? { descriptorName: registration.name }
-      : {}),
-    sessionPath: `children/${registration.id}/session.jsonl`,
-    checkpointCursor: 0,
-    branchAncestry: [],
-    interventionCount: 0,
-    finalOutput: "",
-    trim: { trimmed: false, markerCount: 0 },
-    quarantine: { quarantined: false },
-    clear: { cleared: false },
-    recovery: { eligible: false, count: 0 },
-    bytes: { session: 0, checkpoint: 0, total: 0 },
-    createdAt: now(),
-    updatedAt: now(),
-  });
-  const registrations = new Map<string, PiChildInspectionRegistration>();
-  let checkpointSequence = 0;
-  const nextCheckpointId = (id: string) =>
-    `${id}-${now()}-${checkpointSequence++}`;
-  const mapped = <T>(
-    operation: PiChildInspectionHistoryError["operation"],
-    result: ResultAsync<T, PiChildHistoryStoreError>,
-  ) => result.mapErr((error) => mapHistoryError(operation, error));
-  return {
-    register: (registration) =>
-      mapped(
-        "register",
-        store
-          .upsertRecord(base(registration, registration.snapshot()))
-          .map(() => {
-            registrations.set(registration.id, registration);
-            return undefined;
-          }),
-      ),
-    checkpoint: (id, event) => {
-      const registration = registrations.get(id);
-      if (!registration) return okAsync(undefined);
-      const checkpoint =
-        event === undefined
-          ? store.updateRecord(id, {})
-          : (() => {
-              const normalized = preserveUnknownChildEvent(event);
-              return store
-                .appendSessionEvent(id, normalized)
-                .andThen(() =>
-                  store.appendCheckpoint(id, [
-                    {
-                      id: nextCheckpointId(id),
-                      kind: "session-event",
-                      payload: normalized as unknown as JsonValue,
-                    },
-                  ]),
-                )
-                .map(() => undefined);
-            })();
-      return mapped("checkpoint", checkpoint);
-    },
-    interrupted: (id) =>
-      mapped("interrupted", store.updateRecord(id, { status: "interrupted" })),
-    terminal: (id, snapshot, finalOutput) =>
-      mapped(
-        "terminal",
-        store.updateRecord(id, {
-          status: snapshot.status === "completed" ? "settled" : "interrupted",
-          ...(finalOutput === undefined ? {} : { finalOutput }),
-        }),
-      ),
-    clear: (id) => mapped("clear", store.clear(id)),
-    clearTerminal: () => mapped("clear", store.clearTerminal()),
-  };
-}
 export interface PiChildInspectionRegistration {
   readonly id: string;
   readonly parentId: string;

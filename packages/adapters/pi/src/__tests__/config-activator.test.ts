@@ -134,8 +134,7 @@ describe("PiConfigActivator (unit, fake ports)", () => {
           other_harness: { preserved: true },
           pi: {
             child_inspection: {
-              max_bytes_per_child: 65_536,
-              max_bytes_total: 65_535,
+              recovery_countdown_seconds: 600,
               unknown_limit: 1,
             },
           },

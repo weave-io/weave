@@ -1,22 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 import {
-  MemoryPiChildHistoryFs,
-  resolvePiChildHistoryRoot,
-} from "../child-history-fs.js";
-import { PI_CHILD_HISTORY_LAYOUT } from "../child-history-schema.js";
-import { PiChildHistoryStore } from "../child-history-store.js";
-import { DEFAULT_PI_CHILD_INSPECTION_SETTINGS } from "../child-inspection-settings.js";
-import {
   addUsage,
   applyTreeControlKey,
-  createPiChildHistoryPort,
   EMPTY_USAGE_AGGREGATE,
   extractAssistantStopReason,
   extractAssistantTextDeltaPreview,
   extractAssistantThinkingDeltaPreview,
   MAX_LATEST_OUTPUT_BYTES,
   PiChildInspectionRegistry,
+  type PiChildInspectionHistoryPort,
+  type PiChildInspectionRegistration,
   type PiChildTreeNode,
   ROOT_NODE_ID,
   subtreeIds,
@@ -356,33 +350,56 @@ describe("extractAssistantStopReason (Task 9 finding 2)", () => {
   });
 });
 
-async function openTestHistory(now: () => number) {
-  const fs = new MemoryPiChildHistoryFs();
-  const result = await PiChildHistoryStore.open(
-    "parent",
-    DEFAULT_PI_CHILD_INSPECTION_SETTINGS,
-    { fs, now, env: { XDG_DATA_HOME: "/tmp/weave-test" }, home: "/tmp/home" },
-  );
-  expect(result.isOk()).toBe(true);
-  if (result.isErr()) throw new Error("test history store failed to open");
-  return { fs, store: result.value };
+/**
+ * Since ADR 0014 there is no adapter-owned history store. The registry writes
+ * through an injected port, so tests observe the port calls directly.
+ */
+interface RecordedChild {
+  readonly childId: string;
+  workflow?: { workflow?: string; step?: string };
+  finalOutput: string;
+  status: string;
 }
 
-async function readTestIndex(fs: MemoryPiChildHistoryFs) {
-  const root = resolvePiChildHistoryRoot({
-    parentSessionId: "parent",
-    env: { XDG_DATA_HOME: "/tmp/weave-test" },
-    homeDir: "/tmp/home",
-  })._unsafeUnwrap();
-  const directory = (await fs.openDirectory(root, false))._unsafeUnwrap();
-  const bytes = (
-    await directory.readFile(PI_CHILD_HISTORY_LAYOUT.indexFile)
-  )._unsafeUnwrap();
-  directory.close();
-  if (!bytes) throw new Error("test history index missing");
-  return JSON.parse(new TextDecoder().decode(bytes)) as {
-    records: Array<Record<string, unknown>>;
+function recordingHistoryPort(): {
+  port: PiChildInspectionHistoryPort;
+  records: RecordedChild[];
+} {
+  const records: RecordedChild[] = [];
+  const registrations = new Map<string, PiChildInspectionRegistration>();
+  const find = (childId: string) =>
+    records.find((entry) => entry.childId === childId);
+  const port: PiChildInspectionHistoryPort = {
+    register: (registration) => {
+      registrations.set(registration.id, registration);
+      records.push({
+        childId: registration.id,
+        workflow: {
+          workflow: registration.workflowInstanceId,
+          step: registration.stepName,
+        },
+        finalOutput: "",
+        status: "running",
+      });
+      return okAsync(undefined);
+    },
+    checkpoint: () => okAsync(undefined),
+    interrupted: (id) => {
+      const record = find(id);
+      if (record) record.status = "interrupted";
+      return okAsync(undefined);
+    },
+    terminal: (id, snapshot, finalOutput) => {
+      const record = find(id);
+      if (record) {
+        record.status =
+          snapshot.status === "completed" ? "settled" : "interrupted";
+        if (finalOutput !== undefined) record.finalOutput = finalOutput;
+      }
+      return okAsync(undefined);
+    },
   };
+  return { port, records };
 }
 
 describe("PiChildInspectionRegistry persistence", () => {
@@ -455,11 +472,8 @@ describe("PiChildInspectionRegistry persistence", () => {
   });
 
   it("keeps trusted workflow metadata when checkpoint events contain forged fields", async () => {
-    const now = () => 10;
-    const { fs, store } = await openTestHistory(now);
-    const registry = new PiChildInspectionRegistry(
-      createPiChildHistoryPort(store, now),
-    );
+    const { port, records } = recordingHistoryPort();
+    const registry = new PiChildInspectionRegistry(port);
     await registry.register({
       id: "step",
       parentId: ROOT_NODE_ID,
@@ -476,41 +490,11 @@ describe("PiChildInspectionRegistry persistence", () => {
       stepName: "forged-step",
     });
     await registry.drain();
-    const record = (await readTestIndex(fs)).records.find(
-      (entry) => entry.childId === "step",
-    );
+    const record = records.find((entry) => entry.childId === "step");
     expect(record?.workflow).toEqual({
       workflow: "trusted-workflow",
       step: "trusted-step",
     });
-    store.close();
-  });
-
-  it("makes same-tick checkpoint IDs unique and preserves event order", async () => {
-    const now = () => 20;
-    const { store } = await openTestHistory(now);
-    const registry = new PiChildInspectionRegistry(
-      createPiChildHistoryPort(store, now),
-    );
-    await registry.register({
-      id: "child",
-      parentId: ROOT_NODE_ID,
-      name: "child",
-      kind: "ordinary",
-      snapshot: () => node({ id: "child" }),
-    });
-    await registry.checkpointEvent("child", { type: "text", text: "first" });
-    await registry.checkpointEvent("child", { type: "text", text: "second" });
-    await registry.drain();
-    const checkpoint = (await store.readCheckpointFor("child"))._unsafeUnwrap();
-    expect(checkpoint.entries.map((entry) => entry.payload)).toEqual([
-      { type: "unknown", originalType: "text", payload: { text: "first" } },
-      { type: "unknown", originalType: "text", payload: { text: "second" } },
-    ]);
-    expect(new Set(checkpoint.entries.map((entry) => entry.id)).size).toBe(2);
-    expect(checkpoint.entries[0]?.id).toBe("child-20-0");
-    expect(checkpoint.entries[1]?.id).toBe("child-20-1");
-    store.close();
   });
 
   it("notifies a transcript listener so a live inspection view can repaint", async () => {
@@ -537,11 +521,8 @@ describe("PiChildInspectionRegistry persistence", () => {
   });
 
   it("keeps intermediate latestOutput out of finalOutput and persists terminal output", async () => {
-    const now = () => 30;
-    const { fs, store } = await openTestHistory(now);
-    const registry = new PiChildInspectionRegistry(
-      createPiChildHistoryPort(store, now),
-    );
+    const { port, records } = recordingHistoryPort();
+    const registry = new PiChildInspectionRegistry(port);
     await registry.register({
       id: "child",
       parentId: ROOT_NODE_ID,
@@ -550,10 +531,9 @@ describe("PiChildInspectionRegistry persistence", () => {
       snapshot: () => node({ id: "child", latestOutput: "intermediate" }),
     });
     await registry.checkpoint("child");
+    await registry.drain();
     expect(
-      (await readTestIndex(fs)).records.find(
-        (entry) => entry.childId === "child",
-      )?.finalOutput,
+      records.find((entry) => entry.childId === "child")?.finalOutput,
     ).toBe("");
     await registry.retainTerminal(
       "child",
@@ -562,19 +542,13 @@ describe("PiChildInspectionRegistry persistence", () => {
     );
     await registry.drain();
     expect(
-      (await readTestIndex(fs)).records.find(
-        (entry) => entry.childId === "child",
-      )?.finalOutput,
+      records.find((entry) => entry.childId === "child")?.finalOutput,
     ).toBe("authenticated final");
-    store.close();
   });
 
   it("rejects registration after close while retaining terminal history", async () => {
-    const now = () => 40;
-    const { fs, store } = await openTestHistory(now);
-    const registry = new PiChildInspectionRegistry(
-      createPiChildHistoryPort(store, now),
-    );
+    const { port, records } = recordingHistoryPort();
+    const registry = new PiChildInspectionRegistry(port);
     await registry.register({
       id: "old",
       parentId: ROOT_NODE_ID,
@@ -597,10 +571,7 @@ describe("PiChildInspectionRegistry persistence", () => {
     });
     await registry.drain();
     expect(registry.snapshotLive()).toEqual([]);
-    expect(
-      (await readTestIndex(fs)).records.map((entry) => entry.childId),
-    ).toEqual(["old"]);
-    store.close();
+    expect(records.map((entry) => entry.childId)).toEqual(["old"]);
   });
 });
 

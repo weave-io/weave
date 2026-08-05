@@ -50,10 +50,9 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "ChildTransferTooLarge",
   "ChildDeliveryFailed",
   "RpcBridgeUnavailable",
-  "ChildHistoryCorrupt",
-  "ChildHistoryQuotaExceeded",
-  "ChildHistoryQuarantined",
-  "ChildHistoryClearRefused",
+  "ChildRecordCorrupt",
+  "ChildRecordQuotaExceeded",
+  "ChildRecordQuarantined",
   "ChildRecoveryUnavailable",
   "ChildInteractionUnavailable",
   "ChildExtensionUiRejected",
@@ -808,11 +807,11 @@ export function makeChildControlEnvelopeTooLargeFailure(
   };
 }
 
-export function makeChildHistoryCorruptFailure(
+export function makeChildRecordCorruptFailure(
   childId: string,
 ): PiAdapterFailure {
   return {
-    code: "ChildHistoryCorrupt",
+    code: "ChildRecordCorrupt",
     phase: "persistence",
     scope: childScope(childId),
     impact: "degraded",
@@ -822,11 +821,11 @@ export function makeChildHistoryCorruptFailure(
   };
 }
 
-export function makeChildHistoryQuotaExceededFailure(
+export function makeChildRecordQuotaExceededFailure(
   childId: string,
 ): PiAdapterFailure {
   return {
-    code: "ChildHistoryQuotaExceeded",
+    code: "ChildRecordQuotaExceeded",
     phase: "persistence",
     scope: childScope(childId),
     impact: "operation-stopped",
@@ -836,31 +835,17 @@ export function makeChildHistoryQuotaExceededFailure(
   };
 }
 
-export function makeChildHistoryQuarantinedFailure(
+export function makeChildRecordQuarantinedFailure(
   childId: string,
 ): PiAdapterFailure {
   return {
-    code: "ChildHistoryQuarantined",
+    code: "ChildRecordQuarantined",
     phase: "persistence",
     scope: childScope(childId),
     impact: "degraded",
     retryable: false,
     recovery: "none",
     safeMessage: "The private child history was quarantined for safety.",
-  };
-}
-
-export function makeChildHistoryClearRefusedFailure(
-  childId: string,
-): PiAdapterFailure {
-  return {
-    code: "ChildHistoryClearRefused",
-    phase: "persistence",
-    scope: childScope(childId),
-    impact: "degraded",
-    retryable: false,
-    recovery: "none",
-    safeMessage: "Weave refused to clear the private child history.",
   };
 }
 

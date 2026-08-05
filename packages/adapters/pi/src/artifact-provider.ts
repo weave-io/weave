@@ -17,8 +17,11 @@ import {
   type ResultAsync,
 } from "neverthrow";
 import { z } from "zod";
-import { MAX_FINAL_OUTPUT_BYTES } from "./child-history-schema.js";
-import type { PiChildStatus, PiChildUsageAggregate } from "./child-tree.js";
+import {
+  MAX_FINAL_OUTPUT_BYTES,
+  type PiChildStatus,
+  type PiChildUsageAggregate,
+} from "./child-tree.js";
 import {
   makeArtifactDigestFailedFailure,
   makeArtifactReadFailedFailure,
@@ -126,7 +129,7 @@ export type PiSanitizedChildIndexError =
   | { readonly type: "child-index-too-large" }
   | { readonly type: "child-export-too-large" };
 
-/** Input is a projection source, never a PiChildHistoryIndexV1 record. */
+/** Input is a projection source, never a durable child record. */
 export interface PiSanitizedChildIndexInput {
   readonly id: string;
   readonly parentId?: string;

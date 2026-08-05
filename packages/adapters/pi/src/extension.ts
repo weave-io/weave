@@ -53,8 +53,6 @@ import {
   sanitizedBaseEnv,
   WEAVE_CHILD_SECRET_ENV,
 } from "./child-env.js";
-import type { PiChildHistoryRecord } from "./child-history-schema.js";
-import { PiChildHistoryStore } from "./child-history-store.js";
 import { createChildInspectionCustomComponent } from "./child-inspection-custom.js";
 import {
   createChildInspectionEditor,
@@ -115,7 +113,10 @@ import {
   BunPiChildProcessPort,
   type PiChildProcessPort,
 } from "./child-process-port.js";
-import type { PiChildRecoverySpawnInput } from "./child-recovery.js";
+import type {
+  PiChildRecoveryRecord,
+  PiChildRecoverySpawnInput,
+} from "./child-recovery.js";
 import { PiChildRecoveryCoordinator } from "./child-recovery.js";
 import {
   type PiChildOutputError,
@@ -125,7 +126,6 @@ import {
 } from "./child-runtime.js";
 import {
   applyTreeControlKey,
-  createPiChildHistoryPort,
   EMPTY_USAGE_AGGREGATE,
   extractAssistantStopReason,
   extractAssistantTextDeltaPreview,
@@ -339,7 +339,6 @@ type PiPrimarySessionFailure =
 class PiGenerationResourceOwner {
   private disposed = false;
   private runtimeStore: RuntimeStore | undefined;
-  private historyStore: PiChildHistoryStore | undefined;
   private telemetry: PiTelemetry | undefined;
 
   constructor(readonly generationId: string) {}
@@ -353,14 +352,6 @@ class PiGenerationResourceOwner {
       return;
     }
     this.runtimeStore = store;
-  }
-
-  adoptHistoryStore(store: PiChildHistoryStore): void {
-    if (this.disposed) {
-      void this.closeHistoryStore(store);
-      return;
-    }
-    this.historyStore = store;
   }
 
   adoptTelemetry(telemetry: PiTelemetry): void {
@@ -378,18 +369,13 @@ class PiGenerationResourceOwner {
     if (this.disposed) return okAsync(undefined);
     this.disposed = true;
     const telemetry = this.telemetry;
-    const historyStore = this.historyStore;
     const runtimeStore = this.runtimeStore;
     this.telemetry = undefined;
-    this.historyStore = undefined;
     this.runtimeStore = undefined;
 
     return ResultAsync.fromThrowable(
       async () => {
         if (telemetry !== undefined) await telemetry.shutdown();
-        if (historyStore !== undefined) {
-          await this.closeHistoryStore(historyStore);
-        }
         if (runtimeStore !== undefined) await runtimeStore.close();
       },
       () => undefined,
@@ -398,24 +384,6 @@ class PiGenerationResourceOwner {
       .orElse(() => okAsync(undefined));
   }
 
-  private closeHistoryStore(
-    store: PiChildHistoryStore,
-  ): ResultAsync<void, never> {
-    const close = (
-      store as PiChildHistoryStore & {
-        close?: () => unknown;
-      }
-    ).close;
-    if (close === undefined) return okAsync(undefined);
-    return ResultAsync.fromThrowable(
-      async () => {
-        await close.call(store);
-      },
-      () => undefined,
-    )()
-      .map(() => undefined)
-      .orElse(() => okAsync(undefined));
-  }
 }
 
 function renderPlanStartPrompt(planName: string): string {
@@ -605,11 +573,6 @@ export interface PiExtensionDeps {
   readonly runtimeStoreFactory: PiRuntimeStoreFactory;
   /** Stable identity supplied by the host; unlike a generation ID it survives reload. */
   readonly parentSessionId?: (ctx: PiSessionContext) => string;
-  /** Opens the one per-parent-session child history store. Injectable for tests. */
-  readonly childHistoryStoreFactory?: (
-    parentSessionId: string,
-    settings: PiActiveSession["childInspectionSettings"],
-  ) => ResultAsync<PiChildHistoryStore, unknown>;
   /** Injectable ordinary-child recovery seam. Production falls back to the
    * authenticated delegation controller restore path. */
   readonly restoreOrdinaryChild?: (
@@ -736,8 +699,6 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     childCommand: buildDefaultPiChildCommand(envPort),
     childOutputPort: new StdoutChildOutputPort(),
     runtimeStoreFactory: new SqliteRuntimeStoreFactory(),
-    childHistoryStoreFactory: (parentSessionId, settings) =>
-      PiChildHistoryStore.open(parentSessionId, settings),
     pathContainmentPort: new BunPathContainmentPort(),
     planCatalogPort: new BunPiPlanCatalogPort(),
     threadSourceFactory: createProductionPiThreadSourceFactory(),
@@ -2462,9 +2423,6 @@ export function createPiExtension(
     editorInstall.previousFactory = currentFactory;
     ctx.ui.setEditorComponent?.(editorInstall.factory);
   };
-  const historyStoreCell: { store: PiChildHistoryStore | undefined } = {
-    store: undefined,
-  };
   // The controller performs read-only preflight, but invalid settings need an
   // explicit user choice. Keep the current UI only for the duration of one
   // activation so a retry cannot prompt twice or use stale session state.
@@ -2804,7 +2762,7 @@ export function createPiExtension(
   async function openChildInspector(
     ctx: PiSessionContext,
     registry: PiChildInspectionRegistry,
-    historyStore: PiChildHistoryStore | undefined,
+    refs: PiThreadRefPort | undefined,
     coordinator: PiChildRecoveryCoordinator | undefined,
     generationId: string,
     setSelection?: (childId: string) => void,
@@ -2825,48 +2783,42 @@ export function createPiExtension(
         stepName: registration.stepName,
       }),
     );
-    const indexResult =
-      historyStore === undefined
-        ? ok({ records: [] as const })
-        : Result.fromThrowable(
-            () => historyStore.getIndex(),
-            () => "history unavailable",
-          )();
-    if (indexResult.isErr()) {
+    // The parent session's child-ref ledger is the only durable source of
+    // non-live children. It carries metadata only, so no preview text exists
+    // for a child this generation never ran.
+    const scan =
+      refs === undefined
+        ? ok(undefined)
+        : await refs.readRefs().match(
+            (value) => ok(value),
+            () => err("refs unavailable" as const),
+          );
+    if (scan.isErr()) {
       ctx.ui.notify(
         "Child inspection is unavailable in this session.",
         "warning",
       );
       return;
     }
-    const records = indexResult.value.records;
+    const records = scan.value?.refs ?? [];
     const liveIds = new Set(live.map((node) => node.childId));
     const history = records
       .filter((record) => !liveIds.has(record.childId))
-      .map(
-        (record): PiChildPickerNode => ({
+      .map((record): PiChildPickerNode => {
+        const interrupted =
+          (record.status === "running" || record.status === "queued") &&
+          record.settledAt === undefined;
+        return {
           childId: record.childId,
-          name: record.descriptorName ?? record.childId,
-          kind: record.kind,
-          ...(record.parentChildId === undefined
-            ? {}
-            : { parentId: record.parentChildId }),
-          status: record.status,
-          preview: sanitizeChildPickerPreview(record.finalOutput),
+          name: record.title,
+          kind: "ordinary",
+          status: interrupted ? "interrupted" : "settled",
+          preview: sanitizeChildPickerPreview(undefined),
           live: false,
-          recoverable:
-            record.kind === "ordinary" &&
-            record.parentChildId === undefined &&
-            record.status === "interrupted" &&
-            record.recovery.eligible,
-          resumable:
-            record.kind === "workflow-step" &&
-            record.status === "interrupted" &&
-            record.recovery.eligible,
-          workflowInstanceId: record.workflow.workflow,
-          stepName: record.workflow.step,
-        }),
-      );
+          recoverable: interrupted,
+          resumable: false,
+        };
+      });
     const entries = buildChildPickerEntries({
       rootLabel: "Weave execution",
       live,
@@ -2899,17 +2851,10 @@ export function createPiExtension(
     if (entry === undefined || activeSession?.generationId !== generationId)
       return;
     if (entry.action === "clear") {
-      const clearNode = entry.node;
-      if (
-        historyStore === undefined ||
-        clearNode === undefined ||
-        activeSession?.generationId !== generationId
-      )
-        return;
-      const result = await historyStore.clear(clearNode.childId);
+      // Child refs are append-only observations in the parent session; there
+      // is no adapter-owned copy to clear.
       if (activeSession?.generationId !== generationId) return;
-      if (result.isErr())
-        ctx.ui.notify("Could not clear terminal child history.", "warning");
+      ctx.ui.notify("Child records are managed by Pi's session.", "info");
       return;
     }
     if (entry.action === "recover") {
@@ -3033,7 +2978,7 @@ export function createPiExtension(
       await openChildInspector(
         ctx,
         registry,
-        historyStoreCell.store,
+        threadSourcesCell.refs,
         recoveryCoordinatorCell.coordinator,
         activeSession?.generationId ?? "",
         (childId) => {
@@ -4353,7 +4298,6 @@ export function createPiExtension(
       recoveryCoordinatorCell.coordinator = undefined;
       inspectionRegistryCell.registry?.closeGeneration();
       inspectionRegistryCell.registry = undefined;
-      historyStoreCell.store = undefined;
       planStateProviderCell.value = undefined;
       activeWorkflowInstanceCell.value = undefined;
       currentWorkflows = {};
@@ -4646,38 +4590,14 @@ export function createPiExtension(
         }
       }
 
-      const parentSessionId =
-        deps.parentSessionId?.(ctx) ??
-        (ctx as PiSessionContext & { readonly sessionId?: string }).sessionId;
-      const historyStore =
-        deps.childHistoryStoreFactory === undefined ||
-        parentSessionId === undefined
-          ? undefined
-          : await deps.childHistoryStoreFactory(
-              parentSessionId,
-              generation.preflight.childInspection,
-            );
-      if (historyStore?.isOk()) {
-        generationResources.adoptHistoryStore(historyStore.value);
-      }
       if (!startupOwnsGeneration()) {
         void generationResources.dispose();
         return;
       }
-      if (historyStore?.isErr()) {
-        deps.logger.warn(
-          { failure: historyStore.error },
-          "child history store open failed; inspection remains memory-only",
-        );
-      }
-      historyStoreCell.store = historyStore?.isOk()
-        ? historyStore.value
-        : undefined;
-      const inspectionRegistry = new PiChildInspectionRegistry(
-        historyStore?.isOk()
-          ? createPiChildHistoryPort(historyStore.value)
-          : undefined,
-      );
+      // Durable child records live in the parent session's child-ref ledger
+      // and the native session tree, so the registry keeps no adapter-owned
+      // persistence port of its own.
+      const inspectionRegistry = new PiChildInspectionRegistry();
       inspectionRegistryCell.registry = inspectionRegistry;
       ctx.ui.setStatus(
         "weave",
@@ -4862,8 +4782,6 @@ export function createPiExtension(
           // or this adapter's own private child-bootstrap variables.
           baseEnv: buildPiChildBaseEnv(),
           pathContainment: deps.pathContainmentPort,
-          historyRoot: () =>
-            historyStore?.isOk() ? historyStore.value.getRootPath() : "",
           currentCwd: () => ctx.cwd,
           currentEnv: () => buildPiChildBaseEnv(),
           // Thread ownership is measured against the live persistent parent
@@ -5088,16 +5006,18 @@ export function createPiExtension(
         );
         }
 
-        // Child recovery is generation-scoped. Construct it only after history
-        // is open, then prompt exactly once for this stable parent session.
-        if (historyStore?.isOk()) {
-          const history = historyStore.value;
+        // Child recovery is generation-scoped. Construct it only after the
+        // child-ref ledger is open, then prompt exactly once for this stable
+        // parent session.
+        const recoveryRefs = threadSourcesCell.refs;
+        if (recoveryRefs !== undefined) {
           const historyPort = {
-            list: () => okAsync(history.getIndex().records),
-            updateRecord: (
-              childId: string,
-              patch: Partial<PiChildHistoryRecord>,
-            ) => history.updateRecord(childId, patch),
+            list: () =>
+              recoveryRefs.readRefs().map((scan) => scan.refs),
+            updateStatus: (
+              record: PiChildRecoveryRecord,
+              status: PiChildRecoveryRecord["status"],
+            ) => recoveryRefs.appendLifecycle(record, { status }).map(() => undefined),
           };
           const recovery = new PiChildRecoveryCoordinator({
             history: historyPort,
@@ -6034,7 +5954,6 @@ export function createPiExtension(
       currentWorkflows = {};
       treeSelectionCell.selectedId = ROOT_NODE_ID;
       telemetryCell.telemetry = undefined;
-      historyStoreCell.store = undefined;
       const cancelDirectStep =
         directStepChildRegistry.cancel() ?? okAsync(undefined);
       void cancelDirectStep.match(

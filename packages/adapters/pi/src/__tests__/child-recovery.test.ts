@@ -1,35 +1,32 @@
 import { describe, expect, test } from "bun:test";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import type { PiChildHistoryRecord } from "../child-history-schema.js";
+import type { PiChildRefRecord, PiChildRefStatus } from "../child-session-refs.js";
 import {
   findOrdinaryRecoveryCandidates,
+  type PiChildRecoveryRecord,
   PiChildRecoveryCoordinator,
   RECOVERY_CHOICES,
   RECOVERY_CONTINUATION,
 } from "../child-recovery.js";
 
+/**
+ * Since ADR 0014 the recovery record is the parent session's child-ref record.
+ * It is metadata only: no transcript, no checkpoint cursor, no byte budgets.
+ */
 const record = (
-  overrides: Partial<PiChildHistoryRecord> = {},
-): PiChildHistoryRecord => ({
+  overrides: Partial<PiChildRecoveryRecord> = {},
+): PiChildRecoveryRecord => ({
   childId: "child-1",
-  parentSessionId: "parent-1",
-  kind: "ordinary",
-  status: "interrupted",
-  workflow: { workflow: "workflow", step: "step" },
-  descriptorName: "loom",
-  sessionPath: "children/child-1/session.jsonl",
-  activeLeaf: "leaf-1",
-  checkpointCursor: 2,
-  branchAncestry: [{ childId: "child-1", checkpoint: 2 }],
-  interventionCount: 3,
-  finalOutput: "done",
-  trim: { trimmed: false, markerCount: 0 },
-  quarantine: { quarantined: false },
-  clear: { cleared: false },
-  recovery: { eligible: true, count: 0 },
-  bytes: { session: 1, checkpoint: 1, total: 2 },
+  threadId: "child-1",
+  nativeSessionId: "native-1",
+  sessionRef: "children/child-1/session.json",
+  originParentSessionId: "parent-1",
+  originEntryId: "entry-1",
+  title: "loom",
+  status: "running",
   createdAt: 1,
   updatedAt: 1,
+  runs: [{ run: 1, action: "start", startedAt: 1 }],
   ...overrides,
 });
 
@@ -42,7 +39,7 @@ function coordinator(
   return new PiChildRecoveryCoordinator({
     history: {
       list: () => okAsync([child]),
-      updateRecord: () => okAsync(undefined),
+      updateStatus: () => okAsync(undefined),
     },
     ui: {
       select: async (_title, options) => {
@@ -86,13 +83,13 @@ describe("PiChildRecoveryCoordinator", () => {
 
   test("settles with bounded authenticated output and never starts a turn", async () => {
     const calls: Array<{ content: string; triggerTurn: false }> = [];
-    const updates: Array<Partial<PiChildHistoryRecord>> = [];
-    const child = record({ finalOutput: "stale persisted output" });
+    const updates: PiChildRefStatus[] = [];
+    const child = record();
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([child]),
-        updateRecord: (_id, patch) => {
-          updates.push(patch);
+        updateStatus: (_record, status) => {
+          updates.push(status);
           return okAsync(undefined);
         },
       },
@@ -111,17 +108,13 @@ describe("PiChildRecoveryCoordinator", () => {
       },
     }).recover(child);
     expect(result.isOk()).toBe(true);
-    expect(updates[1]?.status).toBe("settled");
-    expect(
-      new TextEncoder().encode(updates[1]?.finalOutput as string).byteLength,
-    ).toBeLessThanOrEqual(4_096);
-    expect(updates[1]?.finalOutput).not.toBe("stale persisted output");
-    expect(updates[1]?.interventionCount).toBe(9);
+    expect(updates).toEqual(["running", "completed"]);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.triggerTurn).toBe(false);
     expect(new TextEncoder().encode(calls[0]?.content).byteLength).toBeLessThan(
       4_200,
     );
+    expect(calls[0]?.content).toContain("Interventions: 9");
   });
 
   test("Skip and Inspect do not spawn or consume eligibility", async () => {
@@ -135,27 +128,34 @@ describe("PiChildRecoveryCoordinator", () => {
     }
   });
 
-  test("filters old, nested, quarantined, cleared, and unsafe records", () => {
+  test("filters settled, tombstoned, and metadata-incomplete refs", () => {
     expect(
       findOrdinaryRecoveryCandidates([
         record(),
-        record({ descriptorName: undefined }),
-        record({ parentChildId: "parent-child" }),
-        record({ quarantine: { quarantined: true } }),
-        record({ clear: { cleared: true } }),
-        record({ activeLeaf: undefined }),
-        record({ status: "settled" }),
+        record({ title: "" }),
+        record({ sessionRef: "" }),
+        record({ nativeSessionId: "" }),
+        record({ threadId: "" }),
+        record({ status: "completed" }),
+        record({ status: "tombstoned" }),
+        record({ settledAt: 9 }),
       ]),
     ).toHaveLength(1);
   });
 
-  test("spawn rejection fails closed and does not update history", async () => {
-    let updates = 0;
+  test("keeps a queued ref as a recovery candidate", () => {
+    expect(
+      findOrdinaryRecoveryCandidates([record({ status: "queued" })]),
+    ).toHaveLength(1);
+  });
+
+  test("spawn rejection fails closed and rolls the ref back", async () => {
+    const updates: PiChildRefStatus[] = [];
     const deps = {
       history: {
         list: () => okAsync([record()]),
-        updateRecord: () => {
-          updates += 1;
+        updateStatus: (_record: PiChildRefRecord, status: PiChildRefStatus) => {
+          updates.push(status);
           return okAsync(undefined);
         },
       },
@@ -171,17 +171,17 @@ describe("PiChildRecoveryCoordinator", () => {
       "child-1",
     );
     expect(result.isErr()).toBe(true);
-    expect(updates).toBe(2);
+    expect(updates).toEqual(["running", "failed"]);
   });
 
   test("recovers later picker targets by ID and all", async () => {
-    const first = record({ childId: "child-1" });
-    const second = record({ childId: "child-2" });
+    const first = record({ childId: "child-1", threadId: "child-1" });
+    const second = record({ childId: "child-2", threadId: "child-2" });
     let spawned = 0;
     const coordinator = new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([first, second]),
-        updateRecord: () => okAsync(undefined),
+        updateStatus: () => okAsync(undefined),
       },
       ui: { select: async () => "Recover now", notify: () => undefined },
       generationId: "generation-1",
@@ -207,7 +207,7 @@ describe("PiChildRecoveryCoordinator", () => {
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([child]),
-        updateRecord: () => okAsync(undefined),
+        updateStatus: () => okAsync(undefined),
       },
       ui: { select: async () => "Recover now", notify: () => undefined },
       generationId: "generation-1",
@@ -262,16 +262,14 @@ describe("PiChildRecoveryCoordinator", () => {
         }),
       },
     ],
-    [
-      "quarantined history",
-      { child: record({ quarantine: { quarantined: true } }) },
-    ],
-    ["missing history", { child: undefined }],
+    ["tombstoned ref", { child: record({ status: "tombstoned" }) }],
+    ["settled ref", { child: record({ status: "completed", settledAt: 5 }) }],
+    ["missing ref", { child: undefined }],
     ["stale generation", { isGenerationCurrent: () => false }],
   ] as const)("fails closed for %s", async (_name, options) => {
     let spawned = 0;
     const config = options as {
-      child?: PiChildHistoryRecord;
+      child?: PiChildRecoveryRecord;
       recoveryEnabled?: boolean;
       trustedProject?: boolean;
       isGenerationCurrent?: () => boolean;
@@ -283,7 +281,7 @@ describe("PiChildRecoveryCoordinator", () => {
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync(child === undefined ? [] : [child]),
-        updateRecord: () => okAsync(undefined),
+        updateStatus: () => okAsync(undefined),
       },
       ui: { select: async () => "Recover now", notify: () => undefined },
       generationId: "generation-1",
@@ -309,12 +307,12 @@ describe("PiChildRecoveryCoordinator", () => {
     expect(spawned).toBe(0);
   });
 
-  test("history list failure is typed and happens before spawn", async () => {
+  test("ref list failure is typed and happens before spawn", async () => {
     let spawned = 0;
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => errAsync(new Error("private history")),
-        updateRecord: () => okAsync(undefined),
+        updateStatus: () => okAsync(undefined),
       },
       ui: { select: async () => "Recover now", notify: () => undefined },
       generationId: "generation-1",
@@ -337,12 +335,12 @@ describe("PiChildRecoveryCoordinator", () => {
     expect(spawned).toBe(0);
   });
 
-  test("initial history update failure prevents spawn", async () => {
+  test("initial ref update failure prevents spawn", async () => {
     let spawned = 0;
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([record()]),
-        updateRecord: () => errAsync(new Error("secret history")),
+        updateStatus: () => errAsync(new Error("secret history")),
       },
       ui: { select: async () => "Recover now", notify: () => undefined },
       generationId: "generation-1",
@@ -364,7 +362,7 @@ describe("PiChildRecoveryCoordinator", () => {
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([record()]),
-        updateRecord: () => {
+        updateStatus: () => {
           updates += 1;
           return updates === 1
             ? okAsync(undefined)
@@ -390,12 +388,12 @@ describe("PiChildRecoveryCoordinator", () => {
     expect(updates).toBe(2);
   });
 
-  test("terminal history update failure is reported after valid settlement", async () => {
+  test("terminal ref update failure is reported after valid settlement", async () => {
     let updates = 0;
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([record()]),
-        updateRecord: () => {
+        updateStatus: () => {
           updates += 1;
           return updates === 2
             ? errAsync(new Error("terminal secret"))
@@ -434,7 +432,7 @@ describe("PiChildRecoveryCoordinator", () => {
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([record()]),
-        updateRecord: () => okAsync(undefined),
+        updateStatus: () => okAsync(undefined),
       },
       ui: { ...ui, notify: () => undefined },
       generationId: "generation-1",
@@ -467,7 +465,7 @@ describe("PiChildRecoveryCoordinator", () => {
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([record()]),
-        updateRecord: () => okAsync(undefined),
+        updateStatus: () => okAsync(undefined),
       },
       ui: {
         select: async () => "Inspect",
@@ -504,7 +502,7 @@ describe("PiChildRecoveryCoordinator", () => {
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([record()]),
-        updateRecord: () => okAsync(undefined),
+        updateStatus: () => okAsync(undefined),
       },
       ui: { select: async () => "Recover now", notify: () => undefined },
       generationId: "generation-1",
@@ -520,15 +518,15 @@ describe("PiChildRecoveryCoordinator", () => {
     );
   });
 
-  test("successful terminal history remains settled when injection fails or generation goes stale", async () => {
+  test("successful terminal ref stays completed when injection fails or generation goes stale", async () => {
     for (const mode of ["injection", "stale"] as const) {
       let current = true;
-      const updates: Array<Partial<PiChildHistoryRecord>> = [];
+      const updates: PiChildRefStatus[] = [];
       const result = await new PiChildRecoveryCoordinator({
         history: {
           list: () => okAsync([record()]),
-          updateRecord: (_id, patch) => {
-            updates.push(patch);
+          updateStatus: (_record, status) => {
+            updates.push(status);
             return okAsync(undefined);
           },
         },
@@ -551,20 +549,19 @@ describe("PiChildRecoveryCoordinator", () => {
         },
       }).recoverByChildId("child-1");
       expect(result.isErr()).toBe(true);
-      expect(updates[1]?.status).toBe("settled");
-      expect(updates[1]?.finalOutput).toBe("terminal");
+      expect(updates).toEqual(["running", "completed"]);
     }
   });
 
-  test("privacy boundary excludes stale fields and bounds final output", async () => {
+  test("privacy boundary bounds injected final output and omits ref metadata", async () => {
     const canary = "STALE_TRANSCRIPT_TOOL_THINKING_UI_INTERVENTION_SECRET";
     const injected: string[] = [];
-    const updates: Array<Partial<PiChildHistoryRecord>> = [];
+    const updates: PiChildRefStatus[] = [];
     const result = await new PiChildRecoveryCoordinator({
       history: {
-        list: () => okAsync([record({ finalOutput: canary })]),
-        updateRecord: (_id, patch) => {
-          updates.push(patch);
+        list: () => okAsync([record({ nativeSessionId: canary })]),
+        updateStatus: (_record, status) => {
+          updates.push(status);
           return okAsync(undefined);
         },
       },
@@ -585,21 +582,21 @@ describe("PiChildRecoveryCoordinator", () => {
     expect(injected[0]).not.toContain(canary);
     expect(injected[0]).toContain("Interventions: 12|false");
     expect(
-      new TextEncoder().encode(updates[1]?.finalOutput as string).byteLength,
-    ).toBeLessThanOrEqual(4_096);
-    expect(updates[1]?.interventionCount).toBe(12);
+      new TextEncoder().encode(injected[0] ?? "").byteLength,
+    ).toBeLessThanOrEqual(4_200);
+    expect(updates).toEqual(["running", "completed"]);
     expect(injected[0]).not.toContain("transcript");
   });
 
   test("startup prompts once and recover-all follows candidate order", async () => {
-    const first = record({ childId: "z-child" });
-    const second = record({ childId: "a-child" });
+    const first = record({ childId: "z-child", threadId: "z-child" });
+    const second = record({ childId: "a-child", threadId: "a-child" });
     let prompts = 0;
     const order: string[] = [];
     const result = await new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([first, second]),
-        updateRecord: () => okAsync(undefined),
+        updateStatus: () => okAsync(undefined),
       },
       ui: {
         select: async () => {
@@ -633,7 +630,7 @@ describe("PiChildRecoveryCoordinator", () => {
     const recovery = new PiChildRecoveryCoordinator({
       history: {
         list: () => okAsync([record()]),
-        updateRecord: () => okAsync(undefined),
+        updateStatus: () => okAsync(undefined),
       },
       ui: { select: async () => "Recover now", notify: () => undefined },
       generationId: "generation-1",

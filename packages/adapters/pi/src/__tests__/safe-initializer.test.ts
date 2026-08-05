@@ -168,8 +168,7 @@ describe("PiSafeInitializer.preflight", () => {
           adapters: {
             pi: {
               child_inspection: {
-                max_bytes_per_child: 65_535,
-                max_bytes_total: 1_048_576,
+                recovery_countdown_seconds: 600,
               },
             },
           },
@@ -185,8 +184,8 @@ describe("PiSafeInitializer.preflight", () => {
     const preflight = result._unsafeUnwrap();
     expect(preflight.healthOnlyMode).toBe(false);
     expect(preflight.childInspection.mode).toBe("defaults");
-    expect(preflight.childInspection.settings.max_bytes_per_child).toBe(
-      4_194_304,
+    expect(preflight.childInspection.settings.recovery_countdown_seconds).toBe(
+      10,
     );
     expect(Object.isFrozen(preflight.childInspection)).toBe(true);
     expect(Object.isFrozen(preflight.childInspection.settings)).toBe(true);
@@ -204,7 +203,7 @@ describe("PiSafeInitializer.preflight", () => {
         disabled: { agents: [], skills: [] },
         settings: {
           adapters: {
-            pi: { child_inspection: { max_bytes_total: 0 } },
+            pi: { child_inspection: { recovery_countdown_seconds: 600 } },
           },
         },
       } as never),

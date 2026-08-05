@@ -21,9 +21,9 @@ import type {
   PiDirectDispatchInput,
 } from "./direct-dispatch.js";
 import {
-  makeChildHistoryCorruptFailure,
-  makeChildHistoryQuarantinedFailure,
-  makeChildHistoryQuotaExceededFailure,
+  makeChildRecordCorruptFailure,
+  makeChildRecordQuarantinedFailure,
+  makeChildRecordQuotaExceededFailure,
   makeChildRecoveryUnavailableFailure,
   type PiAdapterFailure,
 } from "./errors.js";
@@ -280,12 +280,12 @@ export function createDirectDispatchTransport(
       readonly reason: "unavailable" | "corrupt" | "quota" | "invalid";
     }): PiAdapterFailure => {
       if (failure.reason === "quota")
-        return makeChildHistoryQuotaExceededFailure(childId);
+        return makeChildRecordQuotaExceededFailure(childId);
       if (failure.reason === "corrupt")
-        return makeChildHistoryCorruptFailure(childId);
+        return makeChildRecordCorruptFailure(childId);
       if (failure.reason === "unavailable")
         return makeChildRecoveryUnavailableFailure(childId);
-      return makeChildHistoryQuarantinedFailure(childId);
+      return makeChildRecordQuarantinedFailure(childId);
     };
     return registration.mapErr(historyFailure).andThen(() => {
       deps.registry?.setActive(child);

@@ -33,7 +33,6 @@ import type {
 } from "../child-session-refs.js";
 import type { JsonValue } from "../strict-json.js";
 import { PiConfigActivator } from "../config-activator.js";
-import { PiChildHistoryStore } from "../child-history-store.js";
 import {
   authorizeChildAccess,
   classifyChildAccess,
@@ -712,7 +711,6 @@ describe("Pi session transition contracts", () => {
 
     // Classification is pure: it never deletes or mutates the child record.
     expect(deleted.value).toBe(false);
-    expect(PiChildHistoryStore).toBeDefined();
   });
 
   it("does not treat fork/clone origin mismatch as a transition mutation", async () => {

@@ -62,9 +62,9 @@ import {
 import {
   makeChildAbortFailedFailure,
   makeChildCapacityExceededFailure,
-  makeChildHistoryCorruptFailure,
-  makeChildHistoryQuarantinedFailure,
-  makeChildHistoryQuotaExceededFailure,
+  makeChildRecordCorruptFailure,
+  makeChildRecordQuarantinedFailure,
+  makeChildRecordQuotaExceededFailure,
   makeChildInteractionUnavailableFailure,
   makeChildRecoveryUnavailableFailure,
   makeChildSpawnFailedFailure,
@@ -180,7 +180,6 @@ export interface PiDelegationControllerDeps {
   ) => void;
   readonly inspectionRegistry?: PiChildInspectionRegistry;
   readonly pathContainment?: PathContainmentPort;
-  readonly historyRoot?: () => string;
   readonly currentCwd?: () => string;
   readonly currentEnv?: () => Readonly<Record<string, string>>;
   readonly resolveRootDelegationTarget?: (
@@ -518,6 +517,7 @@ type PiChildRestoreUnavailableReason =
   | "active leaf is missing"
   | "restore dependencies unavailable"
   | "root authority unavailable"
+  | "session reference is missing"
   | "invalid session path"
   | "invalid session directory"
   | "containment failed"
@@ -1147,12 +1147,12 @@ export class PiDelegationController {
     failure: PiChildInspectionHistoryError,
   ): PiAdapterFailure {
     if (failure.reason === "quota")
-      return makeChildHistoryQuotaExceededFailure(childId);
+      return makeChildRecordQuotaExceededFailure(childId);
     if (failure.reason === "corrupt")
-      return makeChildHistoryCorruptFailure(childId);
+      return makeChildRecordCorruptFailure(childId);
     if (failure.reason === "unavailable")
       return makeChildRecoveryUnavailableFailure(childId);
-    return makeChildHistoryQuarantinedFailure(childId);
+    return makeChildRecordQuarantinedFailure(childId);
   }
 
   private finalizeChild(
@@ -2148,12 +2148,12 @@ export class PiDelegationController {
     return registration
       .mapErr((failure): PiAdapterFailure => {
         if (failure.reason === "quota")
-          return makeChildHistoryQuotaExceededFailure(childId);
+          return makeChildRecordQuotaExceededFailure(childId);
         if (failure.reason === "corrupt")
-          return makeChildHistoryCorruptFailure(childId);
+          return makeChildRecordCorruptFailure(childId);
         if (failure.reason === "unavailable")
           return makeChildRecoveryUnavailableFailure(childId);
-        return makeChildHistoryQuarantinedFailure(childId);
+        return makeChildRecordQuarantinedFailure(childId);
       })
       .andThen(() => {
         this.children.set(childId, child);
@@ -2647,53 +2647,65 @@ export class PiDelegationController {
       return unavailable("stale generation");
     const record = input.record;
     if (
-      record.parentChildId !== undefined ||
-      record.kind !== "ordinary" ||
-      record.status !== "interrupted"
+      (record.status !== "running" && record.status !== "queued") ||
+      record.settledAt !== undefined
     )
       return unavailable("record is not an interrupted ordinary child");
     if (this.children.has(record.childId))
       return unavailable("duplicate live child");
-    if (record.activeLeaf === undefined || record.activeLeaf.length === 0)
-      return unavailable("active leaf is missing");
-    const activeLeaf = record.activeLeaf;
+    if (record.sessionRef.length === 0)
+      return unavailable("session reference is missing");
     const target = this.deps.resolveRootDelegationTarget?.(
       input.descriptor.name,
     );
     const buildBootstrap = this.deps.buildBootstrap;
-    const rootPath = this.deps.historyRoot?.();
-    const containment = this.deps.pathContainment;
+    const sessions = this.deps.threadSessions?.();
     const rootAgentName = this.deps.rootAgentName?.();
     if (
       target === undefined ||
       buildBootstrap === undefined ||
-      rootPath === undefined ||
-      containment === undefined
+      sessions === undefined
     )
       return unavailable("restore dependencies unavailable");
     if (rootAgentName === undefined)
       return unavailable("root authority unavailable");
 
-    // The history record is the only source of the session location. Check its
-    // canonical relative path, then prove only its parent directory with the
-    // no-follow port. Never turn childId into a path.
-    const sessionPath = record.sessionPath;
-    if (
-      isAbsolute(sessionPath) ||
-      !isLexicallyContained(sessionPath) ||
-      basename(sessionPath) !== "session.jsonl"
-    )
-      return unavailable("invalid session path");
-    const relativeDir = dirname(sessionPath);
-    if (relativeDir === "." || !isLexicallyContained(relativeDir))
-      return unavailable("invalid session directory");
-    return containment
-      .verifyContainment(rootPath, relativeDir)
+    // The native session tree is the only source of the session location. The
+    // ref carries the root-relative reference; the store proves containment,
+    // ownership and no-follow safety before returning an absolute path.
+    // Never turn childId into a path.
+    return sessions
+      .readSessionEntries(record.sessionRef, record.originParentSessionId)
       .mapErr(() => ({
         type: "ChildRecoveryUnavailable" as const,
         reason: "containment failed" as const,
       }))
-      .andThen((sessionDir) => {
+      .andThen((opened) => {
+        const activeLeaf = readActiveLeafId(opened.entries);
+        const sessionPath = opened.record.path;
+        const sessionDir = dirname(sessionPath);
+        type RestoreSession = {
+          readonly sessionDir: string;
+          readonly sessionPath: string;
+          readonly activeLeaf: string;
+        };
+        if (
+          activeLeaf === undefined ||
+          activeLeaf.length === 0 ||
+          !isAbsolute(sessionPath) ||
+          sessionDir === "."
+        )
+          return errAsync<RestoreSession, PiChildRestoreFailure>({
+            type: "ChildRecoveryUnavailable",
+            reason: "active leaf is missing",
+          });
+        return okAsync<RestoreSession, PiChildRestoreFailure>({
+          sessionDir,
+          sessionPath,
+          activeLeaf,
+        });
+      })
+      .andThen(({ sessionDir, sessionPath, activeLeaf }) => {
         const authorization = this.authorize({
           parentId: ROOT_NODE_ID,
           parentDepth: 0,
@@ -2788,9 +2800,8 @@ export class PiDelegationController {
           session: {
             mode: "restore" as const,
             sessionDir,
-            sessionPath: join(sessionDir, "session.jsonl"),
+            sessionPath,
             activeLeafId: activeLeaf,
-            checkpointCursor: record.checkpointCursor,
           },
         };
         this.restoreReservations.add(childId);

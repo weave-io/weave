@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MemoryPiChildHistoryFs } from "../child-history-fs.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 import {
   isDisjointFromDefaultSessionTree,
   nativeSessionDeletionToken,
@@ -131,7 +131,7 @@ class FakeHost implements PiNativeSessionHostPort {
 
 /** Writes a 0600 session file where the real `SessionManager` would write it. */
 async function seedSessionFile(
-  fs: MemoryPiChildHistoryFs,
+  fs: MemoryPiNativeSessionFs,
   directoryPath: string,
   fileName = "session.jsonl",
 ): Promise<void> {
@@ -150,7 +150,7 @@ async function seedSessionFile(
 
 interface Harness {
   readonly store: PiNativeSessionStore;
-  readonly fs: MemoryPiChildHistoryFs;
+  readonly fs: MemoryPiNativeSessionFs;
   readonly host: FakeHost;
   create(
     childId?: string,
@@ -158,7 +158,7 @@ interface Harness {
 }
 
 function harness(options: FakeHostOptions = {}): Harness {
-  const fs = new MemoryPiChildHistoryFs();
+  const fs = new MemoryPiNativeSessionFs();
   const host = new FakeHost(options);
   const store = new PiNativeSessionStore({
     root: ROOT,

@@ -1,8 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { MemoryPiChildHistoryFs } from "../child-history-fs.js";
-import type { PiChildHistoryRecord } from "../child-history-schema.js";
-import { PiChildHistoryStore } from "../child-history-store.js";
-import { DEFAULT_PI_CHILD_INSPECTION_SETTINGS } from "../child-inspection-settings.js";
 import {
   buildChildPickerEntries,
   sanitizeChildPickerPreview,
@@ -14,44 +10,6 @@ import {
   WEAVE_INSPECT_COMMAND_NAME,
   WEAVE_RECOVERY_COMMAND_NAME,
 } from "../commands.js";
-
-const record = (
-  childId: string,
-  status: PiChildHistoryRecord["status"],
-): PiChildHistoryRecord => ({
-  childId,
-  parentSessionId: "parent",
-  kind: "ordinary",
-  status,
-  workflow: {},
-  descriptorName: "loom",
-  sessionPath: `children/${childId}/session.jsonl`,
-  activeLeaf: "leaf",
-  checkpointCursor: 0,
-  branchAncestry: [],
-  interventionCount: 0,
-  finalOutput: "output",
-  trim: { trimmed: false, markerCount: 0 },
-  quarantine: { quarantined: false },
-  clear: { cleared: false },
-  recovery: { eligible: status === "interrupted", count: 0 },
-  bytes: { session: 0, checkpoint: 0, total: 0 },
-  createdAt: 1,
-  updatedAt: 1,
-});
-
-async function openStore(
-  fs = new MemoryPiChildHistoryFs(),
-): Promise<PiChildHistoryStore> {
-  const result = await PiChildHistoryStore.open(
-    "parent",
-    DEFAULT_PI_CHILD_INSPECTION_SETTINGS,
-    { fs, now: () => 2 },
-  );
-  expect(result.isOk()).toBe(true);
-  if (result.isErr()) throw new Error("store failed to open");
-  return result.value;
-}
 
 describe("Pi command, history, and picker integration proof", () => {
   it("has one exact command tuple with classifications", async () => {
@@ -85,36 +43,7 @@ describe("Pi command, history, and picker integration proof", () => {
     expect(classifyWeaveCommand("weave:recover-children")).toBe("mutating");
   });
 
-  it("clears terminal bytes and index references while preserving live records", async () => {
-    const fs = new MemoryPiChildHistoryFs();
-    const store = await openStore(fs);
-    for (const item of [
-      record("done", "settled"),
-      record("stopped", "interrupted"),
-      record("live", "running"),
-      record("waiting", "queued"),
-    ]) {
-      const result = await store.upsertRecord(item);
-      expect(result.isOk()).toBe(true);
-    }
-    const cleared = await store.clearTerminal();
-    expect(cleared._unsafeUnwrap()).toBe(2);
-    expect(store.getIndex().records.map((item) => item.childId)).toEqual([
-      "live",
-      "waiting",
-    ]);
-    expect(fs.files(`${store.getRootPath()}/children/done`).size).toBe(0);
-    expect(fs.files(`${store.getRootPath()}/children/stopped`).size).toBe(0);
-  });
 
-  it("keeps clear errors bounded for missing and live children", async () => {
-    const store = await openStore();
-    const missing = await store.clear("missing");
-    expect(missing.isErr() && missing.error.type).toBe("clear-refused");
-    await store.upsertRecord(record("live", "running"));
-    const running = await store.clear("live");
-    expect(running.isErr() && running.error.type).toBe("clear-refused");
-  });
 
   it("builds inspect options from trusted live and history breadcrumbs only", async () => {
     await Promise.resolve();
@@ -226,11 +155,4 @@ describe("Pi command, history, and picker integration proof", () => {
     expect(result.isErr()).toBe(true);
   });
 
-  it("preserves live records when terminal cleanup is repeated", async () => {
-    const store = await openStore();
-    await store.upsertRecord(record("live", "running"));
-    expect((await store.clearTerminal())._unsafeUnwrap()).toBe(0);
-    expect((await store.clearTerminal())._unsafeUnwrap()).toBe(0);
-    expect(store.getIndex().records[0]?.childId).toBe("live");
-  });
 });
