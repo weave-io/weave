@@ -1493,56 +1493,53 @@ export class ChildOverlayController {
     }
 
     if (mode === "prepend") {
-      const merged = dedupEntries([...incoming, ...state.entries]);
+      // Prepend only entries not already retained. Middle-overlapping pages
+      // (resume from a page newer/older boundary inside the window) must not
+      // reorder the chronological window via naive [...incoming, ...state].
+      const existingIds = new Set(state.entries.map((entry) => entry.id));
+      const uniqueOlder = incoming.filter((entry) => !existingIds.has(entry.id));
+      const merged = dedupEntries([...uniqueOlder, ...state.entries]);
       // Keep fetched older entries; trim the newest tail when over cap.
       const retained = merged.slice(0, this.windowCap);
       const trimmedNewest = merged.length - retained.length;
-      const keptOlderEdge =
-        incoming.length === 0 ||
-        (retained[0] !== undefined && retained[0].id === incoming[0]?.id);
 
       state.entries = retained;
-      if (keptOlderEdge) {
-        // Page older-edge was retained — advance cursor for the consumed page.
-        state.olderCursor = page.olderCursor;
-        state.hasOlderFlag = page.hasOlder;
-      }
-      // If the older edge was not retained, leave olderCursor unchanged so the
-      // unconsumed page remains reachable (no history gap).
+      // Always adopt the page older boundary. Overlapping pages must still
+      // advance the opaque cursor so loadOlder can reach the start.
+      state.olderCursor = page.olderCursor;
+      state.hasOlderFlag = page.hasOlder;
       if (trimmedNewest > 0) {
-        const newestRetained = retained[retained.length - 1];
-        if (newestRetained !== undefined) {
-          state.newerCursor = newestRetained.id;
-          state.hasNewerFlag = true;
-        }
+        // Never substitute retained entry ids for source opaque cursors.
+        // The page newer cursor is the boundary that can reload trimmed newer
+        // entries; when nothing was trimmed, keep the existing newer cursor.
+        state.newerCursor = page.newerCursor;
+        state.hasNewerFlag = true;
         state.liveTail = false;
       }
       restoreScrollAnchor(state, priorAnchor);
       return;
     }
 
-    const merged = dedupEntries([...state.entries, ...incoming]);
+    const existingIds = new Set(state.entries.map((entry) => entry.id));
+    const uniqueNewer = incoming.filter((entry) => !existingIds.has(entry.id));
+    const merged = dedupEntries([...state.entries, ...uniqueNewer]);
     // Append keeps the newest side; trim the oldest head when over cap.
     const retained = merged.slice(-this.windowCap);
     const trimmedOldest = merged.length - retained.length;
-    const keptNewerEdge =
-      incoming.length === 0 ||
-      (retained[retained.length - 1] !== undefined &&
-        retained[retained.length - 1]?.id ===
-          incoming[incoming.length - 1]?.id);
 
     state.entries = retained;
     if (trimmedOldest > 0) {
-      const oldestRetained = retained[0];
-      if (oldestRetained !== undefined) {
-        state.olderCursor = oldestRetained.id;
-        state.hasOlderFlag = true;
-      }
+      // Never substitute retained entry ids for source opaque cursors.
+      // The page older cursor reloads trimmed older entries; when nothing was
+      // trimmed, keep the existing older cursor.
+      state.olderCursor = page.olderCursor;
+      state.hasOlderFlag = true;
     }
-    if (keptNewerEdge) {
-      state.newerCursor = page.newerCursor;
-      state.hasNewerFlag = page.hasNewer;
-    }
+    // Always adopt the page newer boundary. Overlapping pages (common after
+    // prepend trim, which resumes from the older page's newer cursor) must
+    // still advance the opaque cursor so loadNewer can reach the tip.
+    state.newerCursor = page.newerCursor;
+    state.hasNewerFlag = page.hasNewer;
     restoreScrollAnchor(state, priorAnchor);
   }
 

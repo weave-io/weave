@@ -918,6 +918,266 @@ describe("ChildOverlayController", () => {
     expect(calls).toBe(0);
   });
 
+  it("preserves Task 4 opaque cursors across overlay window trimming both ways", async () => {
+    const entryCount = 120;
+    const pageSize = 20;
+    const windowCap = 50;
+    const ROOT = "/data/weave/adapters/pi/sessions";
+    const PARENT = "parent-session-trim";
+    const REF = "child-trim/session.jsonl";
+    const DIR = `${ROOT}/child-trim`;
+    const FILE = "session.jsonl";
+    const textEncoder = new TextEncoder();
+    const fs = new MemoryPiNativeSessionFs();
+    const lines = [
+      JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "native-session-trim",
+        cwd: "/repo",
+        parentSession: PARENT,
+        timestamp: "2026-01-01T00:00:00.000Z",
+      }),
+    ];
+    for (let index = 0; index < entryCount; index += 1) {
+      lines.push(
+        JSON.stringify({
+          type: "message",
+          id: `entry-${index}`,
+          parentId: index === 0 ? null : `entry-${index - 1}`,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "assistant", content: `n=${index}` },
+        }),
+      );
+    }
+    const directory = (await fs.openDirectory(DIR, true))._unsafeUnwrap();
+    (
+      await directory.appendFile(
+        FILE,
+        textEncoder.encode(`${lines.join("\n")}\n`),
+        0o600,
+      )
+    )._unsafeUnwrap();
+    directory.close();
+
+    class ForbiddenHost implements PiNativeSessionHostPort {
+      create(): PiNativeSessionHandle {
+        throw new Error("host.create must not be called");
+      }
+      open(): PiNativeSessionHandle {
+        throw new Error("host.open must not be called");
+      }
+    }
+    const store = new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host: new ForbiddenHost(),
+    });
+
+    const source = createReadSessionEntryPageOverlaySource({
+      describe: (childId) =>
+        okAsync({
+          childId,
+          threadId: childId,
+          status: "settled" as const,
+          runs: [],
+          branchIds: ["main"],
+          descendantChildIds: [],
+        }),
+      readSessionEntryPage: (_childId, options) =>
+        store.readSessionEntryPage(REF, PARENT, options),
+    });
+
+    const assertContiguousNoGapsOrDups = (view: ChildOverlayView): void => {
+      const ids = view.entries.map((entry) => entry.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      const indexes = ids.map((id) => {
+        expect(id.startsWith("entry-")).toBe(true);
+        return Number(id.slice("entry-".length));
+      });
+      for (let i = 1; i < indexes.length; i += 1) {
+        expect(indexes[i]).toBe((indexes[i - 1] ?? 0) + 1);
+      }
+    };
+
+    const assertOpaqueCursor = (
+      cursor: string | undefined,
+      retainedIds: readonly string[],
+    ): void => {
+      expect(cursor).toBeDefined();
+      expect(typeof cursor).toBe("string");
+      expect(retainedIds.includes(cursor as string)).toBe(false);
+    };
+
+    // --- older trim then load newer back ---
+    const overlayOlder = createChildOverlayController(source, {
+      pageSize,
+      windowCap,
+    });
+    await mustOpen(overlayOlder, "trim-older");
+    // Fill the window to the cap with contiguous older pages.
+    for (let step = 0; step < 4; step += 1) {
+      const filled = (await overlayOlder.loadOlder())._unsafeUnwrap();
+      expect(filled.entries.length).toBeLessThanOrEqual(windowCap);
+      assertContiguousNoGapsOrDups(filled);
+    }
+    const atCap = overlayOlder.view()._unsafeUnwrap();
+    expect(atCap.entries.length).toBe(windowCap);
+    overlayOlder
+      .setScrollOffset(Math.max(0, atCap.entries.length - 3))
+      ._unsafeUnwrap();
+    const pinnedOlder = overlayOlder.view()._unsafeUnwrap();
+    const anchorOlder = pinnedOlder.anchor?.entryId;
+    expect(anchorOlder).toBeDefined();
+
+    const afterOlderTrim = (await overlayOlder.loadOlder())._unsafeUnwrap();
+    expect(afterOlderTrim.entries.length).toBe(windowCap);
+    expect(afterOlderTrim.hasNewer).toBe(true);
+    assertOpaqueCursor(
+      afterOlderTrim.newerCursor,
+      afterOlderTrim.entries.map((entry) => entry.id),
+    );
+    expect(afterOlderTrim.anchor?.entryId).toBe(anchorOlder);
+    assertContiguousNoGapsOrDups(afterOlderTrim);
+
+    let newerWalk = afterOlderTrim;
+    let newerGuard = 0;
+    const tipText = `n=${entryCount - 1}`;
+    while (
+      newerWalk.hasNewer &&
+      newerWalk.newerCursor !== undefined &&
+      newerGuard < 30
+    ) {
+      const next = await overlayOlder.loadNewer();
+      expect(next.isOk()).toBe(true);
+      newerWalk = next._unsafeUnwrap();
+      assertContiguousNoGapsOrDups(newerWalk);
+      expect(newerWalk.entries.length).toBeLessThanOrEqual(windowCap);
+      newerGuard += 1;
+    }
+    expect(
+      newerWalk.entries.some((entry) => entry.text === tipText),
+    ).toBe(true);
+
+    // --- inverse: newer trim then load older back ---
+    const overlayNewer = createChildOverlayController(source, {
+      pageSize,
+      windowCap,
+    });
+    await mustOpen(overlayNewer, "trim-newer");
+    // Walk to the oldest edge first so append+trim has older content to drop.
+    for (let step = 0; step < 8; step += 1) {
+      const view = overlayNewer.view()._unsafeUnwrap();
+      if (!view.hasOlder || view.olderCursor === undefined) break;
+      (await overlayNewer.loadOlder())._unsafeUnwrap();
+    }
+    const oldestEdge = overlayNewer.view()._unsafeUnwrap();
+    expect(oldestEdge.hasNewer).toBe(true);
+    // Pin near the newest retained edge so append+oldest trim keeps the anchor.
+    overlayNewer.setScrollOffset(2)._unsafeUnwrap();
+    const pinnedNewer = overlayNewer.view()._unsafeUnwrap();
+    const anchorNewer = pinnedNewer.anchor?.entryId;
+    expect(anchorNewer).toBeDefined();
+
+    // Load newer until the window trims oldest entries.
+    let afterNewerTrim = pinnedNewer;
+    let trimmedOldest = false;
+    for (let step = 0; step < 12; step += 1) {
+      if (!afterNewerTrim.hasNewer || afterNewerTrim.newerCursor === undefined) {
+        break;
+      }
+      const beforeOldest = afterNewerTrim.entries[0]?.id;
+      const next = await overlayNewer.loadNewer();
+      expect(next.isOk()).toBe(true);
+      afterNewerTrim = next._unsafeUnwrap();
+      assertContiguousNoGapsOrDups(afterNewerTrim);
+      expect(afterNewerTrim.entries.length).toBeLessThanOrEqual(windowCap);
+      if (
+        beforeOldest !== undefined &&
+        !afterNewerTrim.entries.some((entry) => entry.id === beforeOldest)
+      ) {
+        trimmedOldest = true;
+        assertOpaqueCursor(
+          afterNewerTrim.olderCursor,
+          afterNewerTrim.entries.map((entry) => entry.id),
+        );
+        expect(afterNewerTrim.hasOlder).toBe(true);
+        break;
+      }
+    }
+    expect(trimmedOldest).toBe(true);
+    expect(afterNewerTrim.entries.some((entry) => entry.id === anchorNewer)).toBe(
+      true,
+    );
+    expect(afterNewerTrim.anchor?.entryId).toBe(anchorNewer);
+
+    let olderWalk = afterNewerTrim;
+    let olderGuard = 0;
+    const oldestSeen = new Set<string>();
+    while (
+      olderWalk.hasOlder &&
+      olderWalk.olderCursor !== undefined &&
+      olderGuard < 30
+    ) {
+      const next = await overlayNewer.loadOlder();
+      expect(next.isOk()).toBe(true);
+      olderWalk = next._unsafeUnwrap();
+      assertContiguousNoGapsOrDups(olderWalk);
+      expect(olderWalk.entries.length).toBeLessThanOrEqual(windowCap);
+      const oldest = olderWalk.entries[0]?.id;
+      if (oldest !== undefined) oldestSeen.add(oldest);
+      olderGuard += 1;
+    }
+    expect(oldestSeen.size).toBeGreaterThan(0);
+    expect(olderWalk.entries.some((entry) => entry.text === "n=0")).toBe(true);
+  });
+
+  it("preserves opposite overlay cursors when a page does not trim", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "no-trim", entries: entries(80) }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 10,
+      windowCap: 60,
+    });
+    const opened = await mustOpen(overlay, "no-trim");
+    const newerBeforeOlder = opened.newerCursor;
+    const olderBeforeOlder = opened.olderCursor;
+    const afterOlder = (await overlay.loadOlder())._unsafeUnwrap();
+    // Window still under cap — newer cursor must stay untouched.
+    expect(afterOlder.entries.length).toBe(20);
+    expect(afterOlder.newerCursor).toBe(newerBeforeOlder);
+    expect(afterOlder.olderCursor).not.toBe(olderBeforeOlder);
+
+    // Reach the tip again with room remaining, then append without trimming:
+    // older cursor must stay when the newest page fits under the cap.
+    const wide = createChildOverlayController(source, {
+      pageSize: 15,
+      windowCap: 40,
+    });
+    await mustOpen(wide, "no-trim");
+    (await wide.loadOlder())._unsafeUnwrap();
+    (await wide.loadOlder())._unsafeUnwrap();
+    const trimmed = (await wide.loadOlder())._unsafeUnwrap();
+    expect(trimmed.entries.length).toBe(40);
+    expect(trimmed.hasNewer).toBe(true);
+    // Grow capacity by opening a fresh controller that starts near the tip with
+    // spare room, then append a small newer page that does not drop oldest.
+    const spare = createChildOverlayController(source, {
+      pageSize: 10,
+      windowCap: 50,
+    });
+    await mustOpen(spare, "no-trim");
+    const afterOneOlder = (await spare.loadOlder())._unsafeUnwrap();
+    expect(afterOneOlder.entries.length).toBe(20);
+    const olderBeforeAppend = afterOneOlder.olderCursor;
+    // Still holding the tip — no newer page to append; older cursor stays put.
+    expect(afterOneOlder.hasNewer).toBe(false);
+    const afterNoopNewer = (await spare.loadNewer())._unsafeUnwrap();
+    expect(afterNoopNewer.olderCursor).toBe(olderBeforeAppend);
+    expect(afterNoopNewer.newerCursor).toBe(afterOneOlder.newerCursor);
+  });
+
   it("keeps production overlay/extension free of full-read overlay sources", async () => {
     const overlaySrc = await Bun.file(
       new URL("../child-overlay.ts", import.meta.url),
