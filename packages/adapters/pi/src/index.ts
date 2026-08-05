@@ -217,6 +217,38 @@ export {
   parsePiChildSessionEvent,
   preserveUnknownChildEvent,
 } from "./child-session-events.js";
+export type {
+  AppendChildRefLifecycleInput,
+  AppendChildRefRunInput,
+  AppendNewChildRefInput,
+  PiChildRefAppendPort,
+  PiChildRefEntryKind,
+  PiChildRefEntryReadPort,
+  PiChildRefError,
+  PiChildRefIssue,
+  PiChildRefNativeSessionReader,
+  PiChildRefRecord,
+  PiChildRefRun,
+  PiChildRefRunAction,
+  PiChildRefScan,
+  PiChildRefScanCounts,
+  PiChildRefSourceAuthority,
+  PiChildRefSourceState,
+  PiChildRefStatus,
+  PiChildSessionRefStoreOptions,
+} from "./child-session-refs.js";
+export {
+  createNativeChildRefSourceAuthority,
+  hasNoTranscriptFields,
+  PI_CHILD_REF_BOUNDS,
+  PI_CHILD_REF_ENTRY_TYPE,
+  PI_CHILD_REF_FORBIDDEN_FIELDS,
+  PI_CHILD_REF_SCHEMA_VERSION,
+  PiChildSessionRefStore,
+  parseChildRefEnvelope,
+  parseChildRefRecord,
+  serializeChildRefEnvelope,
+} from "./child-session-refs.js";
 export {
   DEFAULT_HANDSHAKE_TIMEOUT_MS,
   DEFAULT_REPLY_TIMEOUT_MS,

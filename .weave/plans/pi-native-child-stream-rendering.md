@@ -128,7 +128,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - New test file passes under `bun test packages/adapters/pi/src/__tests__/child-native-sessions.test.ts`: containment rejection, permission modes, parentSession link, tombstone append, corrupt/missing typed states, no-default-tree visibility.
     - `bun run typecheck` passes.
 
-- [ ] 5. Implement parent custom-entry child refs with origin authority
+- [x] 5. Implement parent custom-entry child refs with origin authority
   - **What**: New module writing/reading validated bounded child refs and lifecycle metadata into the parent session's custom entries via `appendEntry`: opaque child/thread ID, native session ID, root-relative ref, immutable originating parent session + entry IDs, title/status/times/runs. Fork/clone-copied refs whose recorded origin does not match the current parent session are ignored and confer no history or authority.
   - **Files**: `packages/adapters/pi/src/child-session-refs.ts` (new), Zod schema colocated or in `packages/adapters/pi/src/types.ts`; tests `packages/adapters/pi/src/__tests__/child-session-refs.test.ts` (new).
   - **Depends on**: Task 4.
