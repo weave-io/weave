@@ -188,6 +188,37 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** A timer captured from an injected `timerPort`, fired only on demand. */
+interface ScheduledTestTimer {
+  readonly fire: () => void;
+  cancelled: boolean;
+}
+
+interface TestDeferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+}
+
+/**
+ * Injected synchronization point for tests that must act at one exact moment
+ * in an asynchronous production path. Resolving is idempotent, so a seam that
+ * fires more than once still yields the first observation.
+ */
+function createDeferred<T>(): TestDeferred<T> {
+  let settle: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    settle = resolve;
+  });
+  return {
+    promise,
+    resolve: (value) => {
+      const resolver = settle;
+      settle = undefined;
+      resolver?.(value);
+    },
+  };
+}
+
 async function waitFor(
   predicate: () => boolean,
   timeoutMs = 2_000,
@@ -1858,12 +1889,36 @@ describe("PiRpcChild", () => {
     // all. weave_delegate previously surfaced this as
     // {ok:false,error:"ChildEnvelopeMalformed"} instead of a structured
     // cancelled result (Pi adapter contract).
+    //
+    // Synchronization is injected, never timed: the child's bounded grace
+    // timer is the observable seam that proves `cancel()` has finished
+    // writing the raw abort and registered its bounded wait, so the raced
+    // `settled` report is delivered at exactly the contested moment on
+    // every run. No real sleeps and no ordering assumption are involved.
     const processPort = new FakeChildProcessPort();
+    let cancelRequested = false;
+    const graceScheduled = createDeferred<ScheduledTestTimer>();
+    const graceCancelled = createDeferred<void>();
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
       randomPort,
       hmacPort,
       logger: noopLogger(),
+      timerPort: {
+        schedule: (cb) => {
+          const timer: ScheduledTestTimer = { fire: cb, cancelled: false };
+          // Only a timer scheduled after cancellation starts is the bounded
+          // grace timer; earlier ones are handshake / bootstrap-ack.
+          const isGraceTimer = cancelRequested;
+          if (isGraceTimer) graceScheduled.resolve(timer);
+          return {
+            cancel: () => {
+              timer.cancelled = true;
+              if (isGraceTimer) graceCancelled.resolve(undefined);
+            },
+          };
+        },
+      },
     });
     const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
     await flush();
@@ -1879,11 +1934,17 @@ describe("PiRpcChild", () => {
     await flush();
 
     const cancelPromise = child.cancel();
-    await flush();
+    cancelRequested = true;
+    // Deterministic rendezvous: the bounded grace timer is registered only
+    // after the authenticated cancel and the raw abort have been written,
+    // so awaiting it puts the raced "settled" report at the exact contested
+    // point without polling, sleeping, or assuming a tick count.
+    const graceTimer = await graceScheduled.promise;
     const lines = spawned.writtenLines();
     expect(
       lines.some((line) => (line as { type: string }).type === "abort"),
     ).toBe(true);
+    expect(graceTimer.cancelled).toBe(false);
 
     // The child's own "cancelled" ack never arrives - only the ordinary
     // "settled" report for the turn the raw abort just ended, exactly as
@@ -1894,6 +1955,10 @@ describe("PiRpcChild", () => {
       { outcome: "failed", reason: "assistant stop reason: aborted" },
       secretBytes,
     );
+    // The raced report - not the bounded timeout - must conclude the
+    // cancellation, so the grace timer is cancelled rather than fired.
+    // Awaiting that seam keeps the rendezvous injected instead of timed.
+    await graceCancelled.promise;
 
     const result = await runPromise;
     await cancelPromise;
@@ -1903,6 +1968,9 @@ describe("PiRpcChild", () => {
     expect(child.snapshot().status).toBe("cancelled");
     expect(spawned.killed).toBe(true);
     expect(spawned.forceKilled).toBe(true);
+    // The raced settled report - not the grace timeout - concluded the
+    // cancellation, so the bounded timer was cancelled and never fired.
+    expect(graceTimer.cancelled).toBe(true);
 
     child.dispose();
     child.dispose(); // idempotent
