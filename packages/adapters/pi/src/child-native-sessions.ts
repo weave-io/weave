@@ -162,6 +162,31 @@ export type PiNativeSessionFsError =
  */
 export const PI_NATIVE_SESSION_MAX_RANGE_LENGTH = 64 * 1024;
 
+/**
+ * Optional test-only ceiling used by paging scans. Production always uses
+ * {@link PI_NATIVE_SESSION_MAX_RANGE_LENGTH}. Values above the production
+ * ceiling are clamped; `undefined` clears the override.
+ */
+let piNativeSessionMaxRangeLengthForTests: number | undefined;
+
+/** Sets or clears the test-only `readFileRange` chunk ceiling for paging. */
+export function setPiNativeSessionMaxRangeLengthForTests(
+  length: number | undefined,
+): void {
+  if (length === undefined) {
+    piNativeSessionMaxRangeLengthForTests = undefined;
+    return;
+  }
+  piNativeSessionMaxRangeLengthForTests = Math.max(
+    1,
+    Math.min(Math.floor(length), PI_NATIVE_SESSION_MAX_RANGE_LENGTH),
+  );
+}
+
+function effectiveMaxRangeLength(): number {
+  return piNativeSessionMaxRangeLengthForTests ?? PI_NATIVE_SESSION_MAX_RANGE_LENGTH;
+}
+
 /** Stable regular-file identity used by bounded range reads. */
 export interface PiNativeSessionFileStat {
   readonly dev: number;
@@ -788,11 +813,7 @@ function readRangeExact(
       reason: "unreadable",
     });
   }
-  const capped = Math.min(
-    length,
-    remaining,
-    PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
-  );
+  const capped = Math.min(length, remaining, effectiveMaxRangeLength());
   return directory
     .readFileRange(fileName, offset, capped)
     .mapErr((error) => fromFsError(error, ref))
@@ -867,7 +888,7 @@ function readLinesForward(
     }
 
     const want = Math.min(
-      PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+      effectiveMaxRangeLength(),
       endExclusive - cursor,
       PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned - state.bytesRead,
     );
@@ -1033,7 +1054,7 @@ function readLinesBackward(
     }
 
     const want = Math.min(
-      PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+      effectiveMaxRangeLength(),
       pos - startFloor,
       PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned - state.bytesRead,
     );
@@ -1065,10 +1086,11 @@ function readLinesBackward(
       const base = offset;
 
       // Split merged into newline-terminated segments.
-      // parts[0] may still be incomplete (needs bytes to the left).
-      // parts[1..] are definitely complete.
-      // The fragment after the final newline stays as the next right buffer
-      // (empty when merged ends with \n).
+      // segments[0] may still be incomplete (needs bytes to the left).
+      // segments[1..] are definitely complete.
+      // The fragment after the final newline is newer than every segment and
+      // must be emitted before them (newest-first). It is empty when merged
+      // ends with \n.
       const segments: LocatedLine[] = [];
       let start = 0;
       const newlineAt: number[] = [];
@@ -1092,8 +1114,20 @@ function readLinesBackward(
       }
       const rightFragment = merged.subarray(start);
 
-      // segments[0] is incomplete unless we have reached startFloor.
-      // segments[1..] are complete — emit newest-first.
+      // Newest-first: rightFragment (unterminated or carried right tail) is
+      // newer than every newline-terminated segment in this merge.
+      if (rightFragment.length > 0) {
+        const pushedTail = pushCollectedLine(
+          collected,
+          state,
+          maxLines,
+          { offset: base + start, bytes: rightFragment.slice() },
+          ref,
+        );
+        if (pushedTail.isErr()) return errAsync(pushedTail.error);
+        if (pushedTail.value === "full") return okAsync(collected);
+      }
+
       const definite = segments.slice(1);
       for (let index = definite.length - 1; index >= 0; index -= 1) {
         const line = definite[index];
@@ -1111,20 +1145,6 @@ function readLinesBackward(
 
       const head = segments[0];
       if (head === undefined) return okAsync(collected);
-
-      // Unterminated final line at EOF (no trailing newline): emit once as the
-      // newest line, then continue carrying only the incomplete left head.
-      if (rightFragment.length > 0) {
-        const pushedTail = pushCollectedLine(
-          collected,
-          state,
-          maxLines,
-          { offset: base + start, bytes: rightFragment.slice() },
-          ref,
-        );
-        if (pushedTail.isErr()) return errAsync(pushedTail.error);
-        if (pushedTail.value === "full") return okAsync(collected);
-      }
 
       if (offset === startFloor) {
         const pushedHead = pushCollectedLine(
@@ -1509,6 +1529,8 @@ export class PiNativeSessionStore {
       directory,
       fileName,
       0,
+      // Header scan window stays at the production ceiling; only per-read
+      // chunking uses the test override via effectiveMaxRangeLength().
       Math.min(identity.size, PI_NATIVE_SESSION_MAX_RANGE_LENGTH),
       ref,
       state,

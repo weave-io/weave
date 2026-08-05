@@ -4747,7 +4747,7 @@ export function createPiExtension(
             if (
               canList &&
               typeof sessionStore.openSession === "function" &&
-              typeof sessionStore.readSessionEntries === "function" &&
+              typeof sessionStore.readSessionEntryPage === "function" &&
               typeof sessionStore.deleteSession === "function"
             ) {
               refreshAdapterCommandHandlers(

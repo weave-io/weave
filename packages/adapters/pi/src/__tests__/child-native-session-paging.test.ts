@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 import {
   decodePiNativeSessionEntryCursor,
@@ -11,6 +11,7 @@ import {
   type PiNativeSessionHostPort,
   type PiNativeSessionPagedEntry,
   PiNativeSessionStore,
+  setPiNativeSessionMaxRangeLengthForTests,
 } from "../child-native-sessions.js";
 
 const ROOT = "/data/weave/adapters/pi/sessions";
@@ -511,5 +512,167 @@ describe("readSessionEntryPage", () => {
       if (entry.kind !== "entry") continue;
       expect((entry.value as { type?: unknown }).type).not.toBe("session");
     }
+  });
+
+  describe("small-chunk backward assembly", () => {
+    afterEach(() => {
+      setPiNativeSessionMaxRangeLengthForTests(undefined);
+    });
+
+    test("eight-entry newest page stays chronological under forced 7-byte chunks", async () => {
+      // Pre-fix multi-chunk assembly returned a scrambled page (e.g. 3,2,4,6,5,7
+      // after reverse) because the unterminated right fragment was emitted after
+      // older newline-terminated segments in the same merge.
+      setPiNativeSessionMaxRangeLengthForTests(7);
+      const fs = new MemoryPiNativeSessionFs();
+      await seedJsonl(fs, buildSession(8));
+      const store = pagingStore(fs);
+      const page = (
+        await store.readSessionEntryPage(REF, PARENT, {
+          direction: "newest",
+          limit: 8,
+        })
+      )._unsafeUnwrap();
+      expect(entryIds(page.entries)).toEqual([
+        "entry-0",
+        "entry-1",
+        "entry-2",
+        "entry-3",
+        "entry-4",
+        "entry-5",
+        "entry-6",
+        "entry-7",
+      ]);
+    });
+
+    test("property-ish: chunk and page sizes preserve order without dup/gap", async () => {
+      const entryCount = 24;
+      const expectedAll = Array.from(
+        { length: entryCount },
+        (_, index) => `entry-${index}`,
+      );
+      const fs = new MemoryPiNativeSessionFs();
+      await seedJsonl(fs, buildSession(entryCount));
+      const store = pagingStore(fs);
+
+      for (const chunkSize of [1, 2, 3, 4, 5, 7, 8, 11, 16, 32, 64, 128]) {
+        setPiNativeSessionMaxRangeLengthForTests(chunkSize);
+        for (const pageSize of [1, 2, 3, 5, 8, 13, entryCount]) {
+          const newest = (
+            await store.readSessionEntryPage(REF, PARENT, {
+              direction: "newest",
+              limit: pageSize,
+            })
+          )._unsafeUnwrap();
+          const newestIds = entryIds(newest.entries);
+          expect(newestIds).toEqual(expectedAll.slice(entryCount - pageSize));
+
+          if (newest.olderCursor === undefined) {
+            expect(pageSize).toBeGreaterThanOrEqual(entryCount);
+            continue;
+          }
+
+          const older = (
+            await store.readSessionEntryPage(REF, PARENT, {
+              direction: "older",
+              cursor: newest.olderCursor,
+              limit: pageSize,
+            })
+          )._unsafeUnwrap();
+          const olderIds = entryIds(older.entries);
+          const newestSet = new Set(newestIds);
+          for (const id of olderIds) {
+            expect(newestSet.has(id)).toBe(false);
+          }
+          if (olderIds.length > 0) {
+            const olderStart = expectedAll.indexOf(olderIds[0]!);
+            expect(olderIds).toEqual(
+              expectedAll.slice(olderStart, olderStart + olderIds.length),
+            );
+            expect(olderIds[olderIds.length - 1]).toBe(
+              expectedAll[entryCount - pageSize - 1],
+            );
+          }
+
+          const newer = (
+            await store.readSessionEntryPage(REF, PARENT, {
+              direction: "newer",
+              cursor: older.newerCursor ?? newest.newerCursor,
+              limit: pageSize,
+            })
+          )._unsafeUnwrap();
+          if (olderIds.length > 0) {
+            expect(entryIds(newer.entries)).toEqual(newestIds);
+          }
+        }
+      }
+    });
+
+    test("UTF-8 straddling forced small chunks keeps chronological pages", async () => {
+      setPiNativeSessionMaxRangeLengthForTests(5);
+      const fs = new MemoryPiNativeSessionFs();
+      const emoji = "😀";
+      const body = [
+        headerLine(),
+        entryLine(0),
+        JSON.stringify({
+          type: "message",
+          id: "utf8-mid",
+          parentId: "entry-0",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "user", content: `pre${emoji}post` },
+        }),
+        entryLine(2),
+      ].join("\n");
+      await seedJsonl(fs, `${body}\n`);
+      const store = pagingStore(fs);
+      const page = (
+        await store.readSessionEntryPage(REF, PARENT, {
+          direction: "newest",
+          limit: 10,
+        })
+      )._unsafeUnwrap();
+      expect(entryIds(page.entries)).toEqual([
+        "entry-0",
+        "utf8-mid",
+        "entry-2",
+      ]);
+      const mid = page.entries[1];
+      expect(mid?.kind).toBe("entry");
+      if (mid?.kind === "entry") {
+        const content = (
+          mid.value as { message?: { content?: string } }
+        ).message?.content;
+        expect(content).toBe(`pre${emoji}post`);
+      }
+    });
+
+    test("sessions without trailing newline stay ordered under tiny chunks", async () => {
+      setPiNativeSessionMaxRangeLengthForTests(3);
+      const fs = new MemoryPiNativeSessionFs();
+      const lines = [headerLine()];
+      for (let index = 0; index < 8; index += 1) {
+        lines.push(entryLine(index));
+      }
+      // No final newline — unterminated last line must still be newest.
+      await seedJsonl(fs, lines.join("\n"));
+      const store = pagingStore(fs);
+      const page = (
+        await store.readSessionEntryPage(REF, PARENT, {
+          direction: "newest",
+          limit: 8,
+        })
+      )._unsafeUnwrap();
+      expect(entryIds(page.entries)).toEqual([
+        "entry-0",
+        "entry-1",
+        "entry-2",
+        "entry-3",
+        "entry-4",
+        "entry-5",
+        "entry-6",
+        "entry-7",
+      ]);
+    });
   });
 });

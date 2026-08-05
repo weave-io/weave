@@ -258,6 +258,7 @@ export {
   readNativeThreadMetadata,
   resolvePiNativeSessionRoot,
   safeNativeSessionComponent,
+  setPiNativeSessionMaxRangeLengthForTests,
   verifyNativeSessionRef,
 } from "./child-native-sessions.js";
 export {

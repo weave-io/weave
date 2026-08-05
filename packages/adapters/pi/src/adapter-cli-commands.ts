@@ -28,6 +28,8 @@ import {
 } from "./child-metadata-cache.js";
 import {
   nativeSessionDeletionToken,
+  type PiNativeSessionEntryPage,
+  type PiNativeSessionPagedEntry,
   type PiNativeSessionStore,
 } from "./child-native-sessions.js";
 
@@ -377,71 +379,31 @@ function summarizeEntry(
   return { index, id, type };
 }
 
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
-
-function encodeBase64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
+function summarizePagedEntry(
+  entry: PiNativeSessionPagedEntry,
+  index: number,
+): PiAdapterChildEntrySummary {
+  if (entry.kind === "corrupt") {
+    return {
+      index,
+      id: `corrupt-${entry.offset}`,
+      type: "corrupt",
+    };
   }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/u, "");
+  return summarizeEntry(entry.value, index);
 }
 
-function decodeBase64Url(value: string): Uint8Array {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padLength = (4 - (padded.length % 4)) % 4;
-  const binary = atob(padded + "=".repeat(padLength));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-function encodeEntryCursor(olderThanIndex: number): string {
-  return encodeBase64Url(
-    textEncoder.encode(JSON.stringify({ v: 1 as const, i: olderThanIndex })),
-  );
-}
-
-function decodeEntryCursor(cursor: string): number | undefined {
-  const parsed = Result.fromThrowable(
-    () => JSON.parse(textDecoder.decode(decodeBase64Url(cursor))) as unknown,
-    () => undefined as undefined,
-  )();
-  if (parsed.isErr()) return undefined;
-  const shape = z
-    .object({ v: z.literal(1), i: z.number().int().nonnegative() })
-    .strict()
-    .safeParse(parsed.value);
-  return shape.success ? shape.data.i : undefined;
-}
-
-function summarizeEntries(
-  entries: readonly unknown[],
-  cursor: string | undefined,
-): {
+function pageToShowEntries(page: PiNativeSessionEntryPage): {
   readonly entries: readonly PiAdapterChildEntrySummary[];
   readonly nextCursor?: string;
 } {
-  const pageSize = PI_ADAPTER_COMMAND_BOUNDS.showEntryPageSize;
-  const endExclusive =
-    cursor === undefined
-      ? entries.length
-      : (decodeEntryCursor(cursor) ?? entries.length);
-  const end = Math.max(0, Math.min(entries.length, endExclusive));
-  const start = Math.max(0, end - pageSize);
-  const page = entries.slice(start, end);
-  const summaries = page.map((entry, offset) =>
-    summarizeEntry(entry, start + offset),
-  );
   return {
-    entries: summaries,
-    ...(start > 0 ? { nextCursor: encodeEntryCursor(start) } : {}),
+    entries: page.entries.map((entry, index) =>
+      summarizePagedEntry(entry, index),
+    ),
+    ...(page.olderCursor === undefined
+      ? {}
+      : { nextCursor: page.olderCursor }),
   };
 }
 
@@ -453,7 +415,7 @@ export interface PiChildrenCommandPortOptions {
   readonly cache: Pick<PiChildMetadataCache, "list" | "get" | "tombstone">;
   readonly sessions: Pick<
     PiNativeSessionStore,
-    "openSession" | "readSessionEntries" | "deleteSession"
+    "openSession" | "readSessionEntryPage" | "deleteSession"
   >;
   readonly now?: () => Date;
 }
@@ -559,25 +521,44 @@ export function createPiChildrenCommandPort(
           });
         }
         return options.sessions
-          .readSessionEntries(record.sessionRef, record.originParentSessionId)
+          .readSessionEntryPage(
+            record.sessionRef,
+            record.originParentSessionId,
+            {
+              direction: cursor === undefined ? "newest" : "older",
+              ...(cursor === undefined ? {} : { cursor }),
+              limit: PI_ADAPTER_COMMAND_BOUNDS.showEntryPageSize,
+            },
+          )
           .mapErr(
             (error): PiAdapterCommandPortError => ({
               type: "Unavailable",
               message: error.type,
             }),
           )
-          .map(({ record: session, entries }) => {
-            const page = summarizeEntries(entries, cursor);
-            return {
+          .andThen((page) => {
+            const summarized = pageToShowEntries(page);
+            const base = {
               child: toListItem(record),
-              entries: page.entries,
-              ...(page.nextCursor === undefined
+              entries: summarized.entries,
+              ...(summarized.nextCursor === undefined
                 ? {}
-                : { nextCursor: page.nextCursor }),
-              ...(diagnostic
-                ? { sessionPath: session.path, sessionRef: record.sessionRef }
-                : {}),
+                : { nextCursor: summarized.nextCursor }),
             };
+            if (!diagnostic) return okAsync(base);
+            return options.sessions
+              .openSession(record.sessionRef, record.originParentSessionId)
+              .mapErr(
+                (error): PiAdapterCommandPortError => ({
+                  type: "Unavailable",
+                  message: error.type,
+                }),
+              )
+              .map((session) => ({
+                ...base,
+                sessionPath: session.path,
+                sessionRef: record.sessionRef,
+              }));
           });
       }
     },
