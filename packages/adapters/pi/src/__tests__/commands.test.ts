@@ -70,11 +70,15 @@ describe("Pi command, history, and picker integration proof", () => {
       "weave:plan",
       "weave:artifact",
       "weave:inspect",
+      "weave:history",
+      "weave:doctor",
       "weave:clear-children",
       "weave:recover-children",
     ]);
-    expect(new Set(WEAVE_COMMAND_NAMES).size).toBe(12);
+    expect(new Set(WEAVE_COMMAND_NAMES).size).toBe(14);
     expect(classifyWeaveCommand("weave:inspect")).toBe("read-only");
+    expect(classifyWeaveCommand("weave:history")).toBe("read-only");
+    expect(classifyWeaveCommand("weave:doctor")).toBe("read-only");
     expect(classifyWeaveCommand("weave:clear-children")).toBe(
       "idempotent-cleanup",
     );

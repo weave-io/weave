@@ -5,6 +5,8 @@ import type { PiSourceInfo } from "./types.js";
  * inspection commands.
  */
 export const WEAVE_INSPECT_COMMAND_NAME = "weave:inspect" as const;
+export const WEAVE_HISTORY_COMMAND_NAME = "weave:history" as const;
+export const WEAVE_DOCTOR_COMMAND_NAME = "weave:doctor" as const;
 export const WEAVE_CLEAR_CHILDREN_COMMAND_NAME =
   "weave:clear-children" as const;
 /** @deprecated Use the canonical entry in WEAVE_COMMAND_NAMES. */
@@ -21,6 +23,8 @@ export const WEAVE_COMMAND_NAMES = [
   "weave:plan",
   "weave:artifact",
   WEAVE_INSPECT_COMMAND_NAME,
+  WEAVE_HISTORY_COMMAND_NAME,
+  WEAVE_DOCTOR_COMMAND_NAME,
   WEAVE_CLEAR_CHILDREN_COMMAND_NAME,
   WEAVE_RECOVERY_COMMAND_NAME,
 ] as const;
@@ -54,8 +58,8 @@ const IDEMPOTENT_CLEANUP_COMMANDS: ReadonlySet<WeaveCommandName> = new Set([
 
 /**
  * Health-only mode blocks `mutating` commands only. `read-only` (status,
- * health, plan, inspect) and `idempotent-cleanup` (abort, clear-children)
- * remain available (Pi adapter contract).
+ * health, plan, inspect, history, doctor) and `idempotent-cleanup` (abort,
+ * clear-children) remain available (Pi adapter contract).
  */
 export function classifyWeaveCommand(
   name: WeaveCommandName,

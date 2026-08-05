@@ -131,6 +131,51 @@ export async function run(
       });
     }
 
+    case "adapter": {
+      const { parseAdapterTarget, renderAdapterHelp, runAdapter } =
+        await import("./commands/adapter.js");
+      if (rest.length === 0 || flags.help) {
+        terminal.stdout(renderAdapterHelp(theme));
+        return ok(rest.length === 0 ? 1 : 0);
+      }
+      const target = parseAdapterTarget(rest);
+      if (target.isErr()) {
+        terminal.stderr(formatCliError(target.error));
+        terminal.stderr(renderAdapterHelp(theme));
+        return ok(1);
+      }
+      let resolved = target.value;
+      if (
+        resolved.action === "children.show" &&
+        (flags.cursor !== undefined || flags.parentSession !== undefined)
+      ) {
+        resolved = {
+          ...resolved,
+          ...(flags.cursor === undefined ? {} : { cursor: flags.cursor }),
+          ...(flags.parentSession === undefined
+            ? {}
+            : { parentSessionId: flags.parentSession }),
+        };
+      }
+      if (
+        resolved.action === "children.delete" &&
+        flags.parentSession !== undefined
+      ) {
+        resolved = {
+          ...resolved,
+          parentSessionId: flags.parentSession,
+        };
+      }
+      return runAdapter({
+        terminal,
+        theme,
+        target: resolved,
+        json: flags.json,
+        yes: flags.yes,
+        diagnostic: flags.diagnostic === true,
+      });
+    }
+
     case "prompt": {
       const { runPrompt } = await import("./commands/prompt.js");
       const subcommand = flags.promptSubcommand;

@@ -139,6 +139,12 @@ import {
   classifyChildTreeKey,
 } from "./child-tree-keys.js";
 import { renderChildTreeLines } from "./child-tree-render.js";
+import type { AdapterCommandHandler } from "@weaveio/weave-engine";
+import {
+  createPiAdapterCommandHandlers,
+  createPlaceholderDoctorPort,
+  type PiAdapterChildrenPort,
+} from "./adapter-cli-commands.js";
 import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
 import {
   logMaterializationErrors,
@@ -1691,6 +1697,10 @@ function commandDescription(name: WeaveCommandName): string {
       return "Approve or reject a pending artifact revision";
     case "weave:inspect":
       return "Inspect the Weave child hierarchy and history";
+    case "weave:history":
+      return "Show bounded cross-session Weave child history";
+    case "weave:doctor":
+      return "Run Weave Pi adapter diagnostics";
     case "weave:clear-children":
       return "Clear terminal Weave child history";
     case "weave:recover-children":
@@ -2267,6 +2277,27 @@ export function createPiExtension(
     registry: PiChildInspectionRegistry | undefined;
   } = {
     registry: undefined,
+  };
+  const unavailableChildrenPort: PiAdapterChildrenPort = {
+    list: () => okAsync({ children: [] }),
+    show: () =>
+      errAsync({
+        type: "Unavailable",
+        message: "native child stores are not ready",
+      }),
+    delete: () =>
+      errAsync({
+        type: "Unavailable",
+        message: "native child stores are not ready",
+      }),
+  };
+  const adapterCommandHandlersCell: {
+    handlers: Readonly<Record<string, AdapterCommandHandler>>;
+  } = {
+    handlers: createPiAdapterCommandHandlers({
+      children: unavailableChildrenPort,
+      doctor: createPlaceholderDoctorPort(),
+    }),
   };
   const workflowControllerCell: {
     controller: PiWorkflowController | undefined;
@@ -2975,6 +3006,78 @@ export function createPiExtension(
         },
         () => dispatchWeaveCommand(pi, "weave:resume", "", ctx),
       );
+      return;
+    }
+    if (name === "weave:history") {
+      const handlers = adapterCommandHandlersCell.handlers;
+      if (handlers === undefined) {
+        ctx.ui.notify(
+          "Child history is unavailable in this session.",
+          "info",
+        );
+        return;
+      }
+      const listed = await handlers["children.list"]?.(
+        JSON.stringify({
+          workspaceKey: ctx.cwd,
+          includeTombstoned: true,
+        }),
+      );
+      if (listed === undefined || listed.isErr()) {
+        ctx.ui.notify("Could not load bounded child history.", "warning");
+        return;
+      }
+      const body = JSON.parse(listed.value) as {
+        readonly children: readonly {
+          readonly childId: string;
+          readonly status: string;
+          readonly title: string;
+          readonly tombstoned: boolean;
+        }[];
+        readonly nextCursor?: string;
+      };
+      if (body.children.length === 0) {
+        ctx.ui.notify("No child history for this workspace.", "info");
+        return;
+      }
+      const lines = body.children.map(
+        (row) =>
+          `${row.childId}  ${row.status}${row.tombstoned ? " (tombstone)" : ""}  ${row.title}`,
+      );
+      if (body.nextCursor !== undefined) {
+        lines.push(`next cursor: ${body.nextCursor}`);
+      }
+      ctx.ui.notify(lines.join("\n"), "info");
+      return;
+    }
+    if (name === "weave:doctor") {
+      const handlers = adapterCommandHandlersCell.handlers;
+      const doctor = handlers?.["doctor"];
+      if (doctor === undefined) {
+        ctx.ui.notify("Doctor is unavailable in this session.", "info");
+        return;
+      }
+      const report = await doctor(JSON.stringify({}));
+      if (report.isErr()) {
+        ctx.ui.notify(`Doctor failed: ${report.error.message}`, "warning");
+        return;
+      }
+      const body = JSON.parse(report.value) as {
+        readonly status: string;
+        readonly checks: readonly {
+          readonly id: string;
+          readonly status: string;
+          readonly detail?: string;
+        }[];
+      };
+      const lines = [
+        `Doctor status: ${body.status}`,
+        ...body.checks.map(
+          (check) =>
+            `${check.id}: ${check.status}${check.detail ? ` — ${check.detail}` : ""}`,
+        ),
+      ];
+      ctx.ui.notify(lines.join("\n"), "info");
       return;
     }
     if (name === "weave:clear-children") {
@@ -4621,6 +4724,9 @@ export function createPiExtension(
             threadSourcesCell.cache = opened.value.cache;
             threadSourcesCell.cacheMode = opened.value.cacheMode;
             threadSourcesRequired = true;
+            // Task 14 keeps slash routing on the injectable handler cell.
+            // Full Task 4–6 port wiring for live history lands with doctor
+            // (Task 15) once the thread ports expose list/show/delete shapes.
           }
         }
 

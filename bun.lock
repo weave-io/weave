@@ -81,6 +81,7 @@
         "@langchain/core": "^1.1.48",
         "@langchain/openai": "^1.4.7",
         "@weaveio/weave-adapter-claude-code": "workspace:*",
+        "@weaveio/weave-adapter-pi": "workspace:*",
         "@weaveio/weave-config": "workspace:*",
         "@weaveio/weave-core": "workspace:*",
         "@weaveio/weave-engine": "workspace:*",

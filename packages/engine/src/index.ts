@@ -9,6 +9,20 @@ export {
 } from "@weaveio/weave-core";
 export type { HarnessAdapter } from "./adapter.js";
 export type {
+  AdapterCommandError,
+  AdapterCommandHandler,
+  AdapterCommandRegistry,
+  AdapterCommandRequest,
+  AdapterCommandResult,
+} from "./adapter-command.js";
+export {
+  AdapterCommandRequestSchema,
+  AdapterCommandResultSchema,
+  createAdapterCommandRegistry,
+  dispatchAdapterCommand,
+  parseAdapterCommandRequest,
+} from "./adapter-command.js";
+export type {
   AdapterCapabilityContract,
   AdapterHealthReport,
   CapabilityEntry,

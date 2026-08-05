@@ -12,6 +12,11 @@ import type { SkillInfo } from "./skill-resolution.js";
  * skills live, how lifecycle hooks are registered, or how selected model state
  * is queried. Adapters own those details and provide explicit context to engine
  * composition helpers.
+ *
+ * Opaque adapter CLI/extension commands are not members of this interface.
+ * They route through the harness-neutral envelope and registry in
+ * `adapter-command.ts` (`dispatchAdapterCommand`), which validates shape only
+ * and never parses adapter payloads.
  */
 export interface HarnessAdapter {
   /**
