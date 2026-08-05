@@ -70,6 +70,25 @@ import {
   type PiChildOverlayCustomComponent,
 } from "./child-overlay.js";
 import {
+  applyChildOverlayKeyPlan,
+  captureChildOverlayKeybindings,
+  CHILD_OVERLAY_CANCEL_CHOICES,
+  CHILD_OVERLAY_ESCAPE_HINT,
+  childOverlayConflictPortFromHost,
+  createChildOverlayKeyInterceptor,
+  createChildOverlayKeyMachine,
+  PI_CHILD_OVERLAY_KEY_BOUNDS,
+  PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
+  planChildOverlayKeyRegistrations,
+  resolveChildOverlayCancelChoice,
+  type PiChildOverlayAction,
+  type PiChildOverlayHierarchyNode,
+  type PiChildOverlayKeyInterceptor,
+  type PiChildOverlayKeyMachine,
+  type PiChildOverlayKeyPlan,
+} from "./child-overlay-keys.js";
+import {
+  childInspectionOverlayKeyOverrides,
   formatPiChildInspectionSettingsIssues,
   type PiChildInspectionEffectiveSettings,
   type PiChildInspectionSettingsChoice,
@@ -82,7 +101,14 @@ import {
 } from "./child-inspector.js";
 import {
   buildChildPickerEntries,
+  buildChildPickerMetadataEntries,
+  collectChildPickerCandidates,
+  type PiChildPickerActiveChild,
+  type PiChildPickerCachePort,
   type PiChildPickerNode,
+  type PiChildPickerRefPort,
+  type PiChildPickerSourceState,
+  type PiChildPickerStatus,
   sanitizeChildPickerPreview,
 } from "./child-picker.js";
 import {
@@ -1692,6 +1718,7 @@ function renderHealthMessage(
   controller: PiExtensionController,
   activeSession: PiActiveSession | undefined,
   bootActivationFailure: PiPrimarySessionFailure | undefined,
+  overlayKeyDiagnostics: readonly string[] = [],
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
@@ -1726,6 +1753,12 @@ function renderHealthMessage(
   result.push(
     `child inspection: ${generation.preflight.childInspectionFallback}`,
   );
+  for (const diagnostic of overlayKeyDiagnostics.slice(
+    0,
+    PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics,
+  )) {
+    result.push(`overlay keys: ${diagnostic}`);
+  }
 
   if (activeSession?.generationId === generation.id) {
     for (const warning of activeSession.primarySession.getCapabilityWarnings()) {
@@ -2127,11 +2160,18 @@ export function createPiExtension(
     refs: PiThreadRefPort | undefined;
     sessions: PiThreadSessionPort | undefined;
     cache: PiThreadCachePort | undefined;
-  } = { refs: undefined, sessions: undefined, cache: undefined };
+    cacheMode: "active" | "degraded" | undefined;
+  } = {
+    refs: undefined,
+    sessions: undefined,
+    cache: undefined,
+    cacheMode: undefined,
+  };
   const clearThreadSources = (): void => {
     threadSourcesCell.refs = undefined;
     threadSourcesCell.sessions = undefined;
     threadSourcesCell.cache = undefined;
+    threadSourcesCell.cacheMode = undefined;
   };
   /** Production sets true only after a successful required factory open. */
   let threadSourcesRequired = false;
@@ -2166,12 +2206,34 @@ export function createPiExtension(
     open: false,
     generationId: undefined,
   };
+  /**
+   * Task 13 overlay-key registration. Applied exactly once when the composed
+   * editor factory first receives a keybindings object that exposes
+   * `getEffectiveConfig()`. Otherwise every shortcut is skipped and the gap
+   * is reported through the bounded health diagnostic list.
+   */
+  const overlayKeysCell: {
+    status: "pending" | "applied";
+    plan: PiChildOverlayKeyPlan | undefined;
+    machine: PiChildOverlayKeyMachine;
+    interceptor: PiChildOverlayKeyInterceptor | undefined;
+    diagnostics: readonly string[];
+    generationId: string | undefined;
+  } = {
+    status: "pending",
+    plan: undefined,
+    machine: createChildOverlayKeyMachine({ now: () => Date.now() }),
+    interceptor: undefined,
+    diagnostics: Object.freeze([PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC]),
+    generationId: undefined,
+  };
   const closeChildOverlay = (): void => {
     const settle = childOverlayCell.settle;
     childOverlayCell.settle = undefined;
     childOverlayCell.open = false;
     childOverlayCell.component = undefined;
     childOverlayCell.tui = undefined;
+    overlayKeysCell.machine.disarmEscape();
     const overlay = childOverlayCell.controller;
     if (overlay?.isOpen()) {
       Result.fromThrowable(
@@ -2188,6 +2250,11 @@ export function createPiExtension(
     closeChildOverlay();
     childOverlayCell.controller = undefined;
     childOverlayCell.generationId = undefined;
+    overlayKeysCell.interceptor = undefined;
+    overlayKeysCell.plan = undefined;
+    overlayKeysCell.generationId = undefined;
+    // Registration is exactly-once for the extension lifetime once applied;
+    // a replaced generation keeps the already-registered raw shortcuts.
   };
   // One allocator lives for the extension instance, so editor replacement does
   // not renumber live children.
@@ -2841,6 +2908,7 @@ export function createPiExtension(
           controller,
           activeSession,
           lastBootActivationFailure,
+          overlayKeysCell.diagnostics,
         ),
         "info",
       );
@@ -3564,6 +3632,431 @@ export function createPiExtension(
     await observeActiveLeaseBestEffort(next.name, "active");
   }
 
+  const formatChildPickerTimestamp = (epochMs: number): string =>
+    Result.fromThrowable(
+      () => new Date(epochMs).toLocaleString(),
+      () => `${epochMs}`,
+    )().match(
+      (label) => label,
+      (fallback) => fallback,
+    );
+
+  const mapLiveStatusToPicker = (
+    status: PiChildTreeNode["status"],
+  ): PiChildPickerStatus => {
+    if (status === "queued") return "queued";
+    if (status === "completed") return "completed";
+    if (status === "cancelled") return "cancelled";
+    if (status === "failed") return "failed";
+    return "running";
+  };
+
+  const buildOverlayHierarchy = (
+    registry: PiChildInspectionRegistry,
+  ): readonly PiChildOverlayHierarchyNode[] =>
+    registry.snapshotLive().map((node) => ({
+      childId: node.id,
+      ...(node.parentId === undefined || node.parentId === ROOT_NODE_ID
+        ? {}
+        : { parentId: node.parentId }),
+      active: !["completed", "cancelled", "failed"].includes(node.status),
+      order: node.startedAtMs,
+    }));
+
+  const reportOverlayKeyDiagnostic = (detail: string): void => {
+    const next = [...overlayKeysCell.diagnostics, detail];
+    overlayKeysCell.diagnostics = Object.freeze(
+      next.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
+    );
+    const ctx = latestSessionCtx;
+    if (ctx !== undefined && ctx.hasUI) {
+      ctx.ui.notify(detail, "warning");
+    }
+  };
+
+  const focusOverlayChild = (childId: string): void => {
+    const activate = childInspectionEditorCell.activate;
+    if (activate === undefined) return;
+    activate(childId);
+  };
+
+  const openTask13ChildPicker = async (
+    ctx: PiSessionContext,
+    generationId: string,
+  ): Promise<void> => {
+    const registry = inspectionRegistryCell.registry;
+    if (registry === undefined || activeSession?.generationId !== generationId) {
+      return;
+    }
+    const ordered = buildOverlayHierarchy(registry);
+    const orderById = new Map(
+      ordered.map((node) => [node.childId, node.order] as const),
+    );
+    const active: PiChildPickerActiveChild[] = registry
+      .snapshotLiveRegistrations()
+      .map(({ registration, snapshot }) => ({
+        childId: snapshot.id,
+        threadId:
+          delegationControllerCell.controller?.resolveThreadIdForLiveChild(
+            snapshot.id,
+          ) ?? snapshot.id,
+        ...(snapshot.parentId === undefined ||
+        snapshot.parentId === ROOT_NODE_ID
+          ? {}
+          : { parentId: snapshot.parentId }),
+        status: mapLiveStatusToPicker(snapshot.status),
+        agent: registration.name,
+        createdAt: snapshot.startedAtMs,
+        updatedAt: snapshot.startedAtMs + snapshot.elapsedMs,
+        treeOrder: orderById.get(snapshot.id) ?? snapshot.startedAtMs,
+        ...(registration.stepName === undefined
+          ? {}
+          : { workflowStep: registration.stepName }),
+      }));
+
+    const parentState = activeSession.primarySession.getParentSession();
+    const parentSessionId =
+      threadSourcesCell.refs?.liveParentSessionId() ??
+      (parentState.persistence === "persistent"
+        ? parentState.sessionId
+        : "");
+    type CacheListPage = {
+      readonly records: readonly {
+        readonly childId: string;
+        readonly threadId: string;
+        readonly title: string;
+        readonly status: string;
+        readonly createdAt: number;
+        readonly updatedAt: number;
+        readonly originParentSessionId: string;
+        readonly stale: boolean;
+        readonly tombstoned: boolean;
+      }[];
+    };
+    const cacheCandidate = threadSourcesCell.cache as
+      | {
+          list?: (input: {
+            readonly workspaceKey: string;
+            readonly parentSessionId?: string;
+            readonly limit: number;
+          }) => Result<CacheListPage, unknown>;
+          get?: (
+            scope: {
+              readonly workspaceKey: string;
+              readonly parentSessionId: string;
+            },
+            childId: string,
+          ) => ResultAsync<
+            unknown,
+            { readonly type?: string; readonly state?: string }
+          >;
+        }
+      | undefined;
+    const canUseCache =
+      parentSessionId.length > 0 &&
+      threadSourcesCell.cacheMode === "active" &&
+      typeof cacheCandidate?.list === "function" &&
+      typeof cacheCandidate.get === "function";
+    const cachePort: PiChildPickerCachePort | undefined = canUseCache
+      ? {
+          list: (input) => {
+            const listed = cacheCandidate.list?.(input);
+            if (listed === undefined || listed.isErr()) {
+              return errAsync({
+                type: "invalid-picker-input" as const,
+                detail: "cache list unavailable",
+              });
+            }
+            return okAsync(listed.value);
+          },
+          validate: (childId) => {
+            const got = cacheCandidate.get?.(
+              { workspaceKey: ctx.cwd, parentSessionId },
+              childId,
+            );
+            if (got === undefined) return okAsync("unavailable" as const);
+            return got
+              .map((): PiChildPickerSourceState => "available")
+              .orElse((failure) => {
+                if (failure.state === "orphan") {
+                  return okAsync("orphan" as const);
+                }
+                if (failure.state === "stale") {
+                  return okAsync("stale" as const);
+                }
+                return okAsync("unavailable" as const);
+              });
+          },
+        }
+      : undefined;
+
+    const refsPort: PiChildPickerRefPort | undefined =
+      threadSourcesCell.refs === undefined
+        ? undefined
+        : {
+            readRefs: (input) =>
+              threadSourcesCell.refs!.readRefs({ limit: input.limit }).map(
+                (scan) =>
+                  scan.refs.map((record) => ({
+                    childId: record.childId,
+                    threadId: record.threadId,
+                    title: record.title,
+                    status: record.status,
+                    createdAt: record.createdAt,
+                    updatedAt: record.updatedAt,
+                    originParentSessionId: record.originParentSessionId,
+                  })),
+              ),
+          };
+
+    const candidates = await collectChildPickerCandidates({
+      active,
+      workspaceKey: ctx.cwd,
+      parentSessionId: parentSessionId.length > 0 ? parentSessionId : ctx.cwd,
+      ...(cachePort === undefined ? {} : { cache: cachePort }),
+      cacheDegraded: !canUseCache,
+      ...(refsPort === undefined ? {} : { refs: refsPort }),
+    });
+    if (candidates.isErr()) {
+      ctx.ui.notify("Child picker is unavailable in this session.", "warning");
+      return;
+    }
+    const entries = buildChildPickerMetadataEntries({
+      candidates: candidates.value,
+      formatTimestamp: formatChildPickerTimestamp,
+    });
+    if (entries.isErr()) {
+      ctx.ui.notify("Child picker is unavailable in this session.", "warning");
+      return;
+    }
+    if (entries.value.length === 0) {
+      ctx.ui.notify("No Weave children are available to inspect.", "info");
+      return;
+    }
+    const labels = entries.value.map(
+      (entry) =>
+        `${entry.active ? "●" : "○"} ${entry.title} [${entry.status}] ${entry.timestampLabel}`,
+    );
+    const selected = await ResultAsync.fromThrowable(
+      () => ctx.ui.select("Weave children", labels),
+      () => "picker unavailable",
+    )();
+    if (selected.isErr() || selected.value === undefined) return;
+    if (activeSession?.generationId !== generationId) return;
+    const index = labels.indexOf(selected.value);
+    const entry = entries.value[index];
+    if (entry === undefined || entry.readOnly) return;
+    focusOverlayChild(entry.childId);
+  };
+
+  const dispatchOverlayAction = (
+    action: PiChildOverlayAction,
+    generationId: string,
+  ): void => {
+    const ctx = latestSessionCtx;
+    if (ctx === undefined || activeSession?.generationId !== generationId) {
+      return;
+    }
+    const registry = inspectionRegistryCell.registry;
+    if (registry === undefined) return;
+    const plan = overlayKeysCell.plan;
+    if (plan === undefined) return;
+    const focused =
+      childOverlayCell.controller?.view().match(
+        (view) => view.child.childId,
+        () => treeSelectionCell.selectedId,
+      ) ?? treeSelectionCell.selectedId;
+    const focusedId =
+      focused === ROOT_NODE_ID ? undefined : focused;
+    const draft =
+      childOverlayCell.controller?.view().match(
+        (view) => view.draft,
+        () => "",
+      ) ?? "";
+    const outcome = overlayKeysCell.machine.handleAction(action, {
+      plan,
+      nodes: buildOverlayHierarchy(registry),
+      focusedChildId: focusedId,
+      draft,
+    });
+    if (outcome.isErr()) {
+      reportOverlayKeyDiagnostic(
+        `weave overlay key failed: ${outcome.error.detail}`,
+      );
+      return;
+    }
+    switch (outcome.value.kind) {
+      case "open-picker":
+        void openTask13ChildPicker(ctx, generationId);
+        return;
+      case "focus-child":
+        focusOverlayChild(outcome.value.childId);
+        return;
+      case "no-target":
+        reportOverlayKeyDiagnostic(
+          "weave overlay key ignored: no matching child",
+        );
+        return;
+      default:
+        return;
+    }
+  };
+
+  const bindOverlayKeyInterceptor = (generationId: string): void => {
+    const plan = overlayKeysCell.plan;
+    if (plan === undefined) {
+      overlayKeysCell.interceptor = undefined;
+      return;
+    }
+    overlayKeysCell.interceptor = createChildOverlayKeyInterceptor({
+      machine: overlayKeysCell.machine,
+      context: () => {
+        if (activeSession?.generationId !== generationId) return undefined;
+        const registry = inspectionRegistryCell.registry;
+        if (registry === undefined) return undefined;
+        const focused =
+          childOverlayCell.controller?.view().match(
+            (view) => view.child.childId,
+            () => undefined,
+          ) ?? undefined;
+        const draft =
+          childOverlayCell.controller?.view().match(
+            (view) => view.draft,
+            () => "",
+          ) ?? "";
+        return {
+          plan,
+          nodes: buildOverlayHierarchy(registry),
+          focusedChildId: focused,
+          draft,
+        };
+      },
+      openPicker: () => {
+        const ctx = latestSessionCtx;
+        if (ctx === undefined) return;
+        void openTask13ChildPicker(ctx, generationId);
+      },
+      focusChild: (childId) => focusOverlayChild(childId),
+      closeOverlay: () => closeChildOverlay(),
+      updateDraft: (draft) => {
+        const overlay = childOverlayCell.controller;
+        if (overlay === undefined) return;
+        Result.fromThrowable(
+          () => overlay.updateDraft(draft),
+          () => "overlay_draft_failed" as const,
+        )().match(
+          () => {
+            childOverlayCell.component?.invalidate();
+            childOverlayCell.tui?.requestRender();
+          },
+          () => undefined,
+        );
+      },
+      showHint: (hint) => {
+        reportOverlayKeyDiagnostic(hint);
+      },
+      confirmCancelSubtree: (childId) => {
+        const ctx = latestSessionCtx;
+        if (ctx === undefined || activeSession?.generationId !== generationId) {
+          return;
+        }
+        void (async () => {
+          const choice = await ResultAsync.fromThrowable(
+            () =>
+              ctx.ui.select(
+                CHILD_OVERLAY_ESCAPE_HINT,
+                [...CHILD_OVERLAY_CANCEL_CHOICES],
+              ),
+            () => "cancel confirm unavailable",
+          )();
+          if (activeSession?.generationId !== generationId) return;
+          const decision = resolveChildOverlayCancelChoice(
+            childId,
+            choice.isOk() ? choice.value : undefined,
+          );
+          if (decision.kind !== "cancel-subtree") return;
+          const controller = delegationControllerCell.controller;
+          if (controller === undefined) return;
+          await controller.cancelSubtree(decision.childId);
+        })();
+      },
+      report: (detail) => reportOverlayKeyDiagnostic(detail),
+    });
+  };
+
+  /**
+   * Captures the live keybindings from the composed editor factory (or the
+   * overlay custom factory) and registers Task 13 shortcuts exactly once.
+   */
+  const maybeRegisterOverlayKeys = (
+    pi: PiExtensionApi,
+    keybindings: unknown,
+    generationId: string,
+  ): void => {
+    if (overlayKeysCell.status === "applied") return;
+    const diagnostics: string[] = [PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC];
+    const captured = captureChildOverlayKeybindings(keybindings);
+    const conflictPort = childOverlayConflictPortFromHost(captured);
+    if (conflictPort === undefined) {
+      diagnostics.push(
+        "weave overlay keys skipped: host keybindings do not expose getEffectiveConfig()",
+      );
+      overlayKeysCell.diagnostics = Object.freeze(
+        diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
+      );
+      return;
+    }
+    const generation = controller.getCurrentGeneration();
+    const settings =
+      generation?.id === generationId
+        ? generation.preflight.childInspection.settings
+        : undefined;
+    const overrides =
+      settings === undefined
+        ? undefined
+        : Object.fromEntries(childInspectionOverlayKeyOverrides(settings));
+    const plan = planChildOverlayKeyRegistrations({
+      ...(overrides === undefined ? {} : { overrides }),
+      conflicts: conflictPort,
+    });
+    if (plan.isErr()) {
+      diagnostics.push(`weave overlay keys failed: ${plan.error.detail}`);
+      overlayKeysCell.diagnostics = Object.freeze(
+        diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
+      );
+      return;
+    }
+    diagnostics.push(...plan.value.diagnostics);
+    const applied = applyChildOverlayKeyPlan(
+      {
+        registerShortcut: (key, options) => {
+          pi.registerShortcut?.(key, options);
+        },
+      },
+      plan.value,
+      (action) => {
+        dispatchOverlayAction(action, generationId);
+      },
+    );
+    if (applied.isErr()) {
+      diagnostics.push(`weave overlay keys failed: ${applied.error.detail}`);
+      overlayKeysCell.diagnostics = Object.freeze(
+        diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
+      );
+      return;
+    }
+    overlayKeysCell.status = "applied";
+    overlayKeysCell.plan = plan.value;
+    overlayKeysCell.generationId = generationId;
+    overlayKeysCell.diagnostics = Object.freeze(
+      diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
+    );
+    bindOverlayKeyInterceptor(generationId);
+    for (const diagnostic of plan.value.diagnostics) {
+      reportOverlayKeyDiagnostic(diagnostic);
+    }
+  };
+
   return function piAdapterExtension(pi: PiExtensionApi): void {
     pi.registerShortcut?.(PI_PRIMARY_AGENT_CYCLE_SHORTCUT, {
       description: "Cycle Weave primary agent",
@@ -3693,6 +4186,7 @@ export function createPiExtension(
     });
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
+      latestSessionCtx = ctx;
       // First action of replacement: an overlay owned by the outgoing
       // generation is settled before any stale work can run, so the user is
       // never left in front of a mounted, uncancellable plan list.
@@ -4125,6 +4619,7 @@ export function createPiExtension(
             threadSourcesCell.refs = opened.value.refs;
             threadSourcesCell.sessions = opened.value.sessions;
             threadSourcesCell.cache = opened.value.cache;
+            threadSourcesCell.cacheMode = opened.value.cacheMode;
             threadSourcesRequired = true;
           }
         }
@@ -4732,16 +5227,9 @@ export function createPiExtension(
               // back to its previous owner (possibly `pi-vim`) and no stale
               // component/editor state survives into the next activation.
               settleCustomInspection?.();
+              closeChildOverlay();
               childSlots.assignTree(inspectionRegistry.snapshotLive());
-              void openChildInspector(
-                ctx,
-                inspectionRegistry,
-                historyStoreCell.store,
-                recoveryCoordinatorCell.coordinator,
-                generation.id,
-                (childId) => activateChild(childId),
-                () => dispatchWeaveCommand(pi, "weave:resume", "", ctx),
-              );
+              void openTask13ChildPicker(ctx, generation.id);
             },
             onViewChange: () => {
               customInspectionComponent?.invalidate();
@@ -4755,13 +5243,17 @@ export function createPiExtension(
           tui: unknown,
           theme: unknown,
           keybindings: unknown,
-        ) =>
-          new WeaveChildInspectionEditor(
+        ) => {
+          // Task 13: capture the public live keybindings object. Shortcuts are
+          // planned/applied exactly once when getEffectiveConfig() is present.
+          maybeRegisterOverlayKeys(pi, keybindings, generation.id);
+          return new WeaveChildInspectionEditor(
             tui,
             theme,
             keybindings,
             inspectionEditor,
           );
+        };
         let customInspectionOpen = false;
         const isFallbackRequired = (
           error: unknown,
@@ -4859,6 +5351,10 @@ export function createPiExtension(
           void ctx.ui
             .custom<void>((tui, theme, keybindings, done) => {
               childOverlayCell.tui = tui as { requestRender(): void };
+              // Also capture keybindings here so pi-vim-yielded sessions still
+              // register Task 13 shortcuts the first time the overlay mounts.
+              maybeRegisterOverlayKeys(pi, keybindings, generation.id);
+              bindOverlayKeyInterceptor(generation.id);
               const settle = (): void => {
                 if (finished) return;
                 finish();
@@ -4880,6 +5376,7 @@ export function createPiExtension(
                   activateCustomEditorInspection(fallback.metadata.childId);
                 },
                 { cwd: ctx.cwd },
+                overlayKeysCell.interceptor,
               );
               childOverlayCell.component = mounted;
               return mounted;

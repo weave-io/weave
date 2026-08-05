@@ -7256,3 +7256,236 @@ describe("createPiExtension: Task 12 native child overlay", () => {
     expect(host.getEditorComponentForTest()).toBe(modalFactory);
   });
 });
+
+describe("createPiExtension: Task 13 overlay keys and picker", () => {
+  const TASK13_CHILD_ID = "overlay-hist-child";
+
+  function installTask13Extension(
+    host: RecordingFakePiHost,
+    overrides: Partial<PiExtensionDeps> = {},
+    config: WeaveConfig = EMPTY_CONFIG,
+  ): void {
+    const history = mutableChildHistoryStore([
+      eligibleOrdinaryRecoveryRecord({
+        childId: TASK13_CHILD_ID,
+        status: "interrupted",
+        recovery: { eligible: false, count: 0 },
+        descriptorName: "loom",
+      }),
+    ]);
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        config,
+      ),
+      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () => okAsync(history.store),
+      restoreOrdinaryChild: () =>
+        okAsync({ finalOutput: "restored", interventionCount: 0 }),
+      threadSourceFactory: () =>
+        okAsync({
+          refs: {
+            liveParentSessionId: () => "fake-session-1",
+            readRefs: () =>
+              okAsync({
+                refs: [
+                  {
+                    childId: TASK13_CHILD_ID,
+                    threadId: TASK13_CHILD_ID,
+                    nativeSessionId: "ns-overlay",
+                    sessionRef: `${TASK13_CHILD_ID}/session.jsonl`,
+                    originParentSessionId: "parent",
+                    originEntryId: "entry-overlay",
+                    title: "loom",
+                    status: "completed" as const,
+                    createdAt: 1,
+                    updatedAt: 2,
+                    settledAt: 3,
+                    runs: [{ run: 1, action: "start" as const, startedAt: 1 }],
+                  },
+                ],
+                issues: [],
+                counts: {
+                  scannedEntries: 1,
+                  candidateEntries: 1,
+                  malformedEntries: 0,
+                  originMismatchedChildren: 0,
+                  conflictingChildren: 0,
+                  duplicateEntries: 0,
+                  unusableSourceChildren: 0,
+                  usableRefs: 1,
+                },
+              }),
+            appendNewChild: () =>
+              errAsync({ type: "ChildRefParentUnavailable" as const }),
+            appendRunDivider: () =>
+              errAsync({ type: "ChildRefParentUnavailable" as const }),
+            appendLifecycle: () =>
+              errAsync({ type: "ChildRefParentUnavailable" as const }),
+          } as unknown as PiThreadRefPort,
+          sessions: {
+            createChildSession: () =>
+              errAsync({
+                type: "SessionCreateFailed" as const,
+                reason: "host-threw" as const,
+              }),
+            establishThreadLeaf: () =>
+              errAsync({
+                type: "SessionCreateFailed" as const,
+                reason: "host-threw" as const,
+              }),
+            appendTombstone: () =>
+              errAsync({ type: "SessionMissing" as const, ref: "x" }),
+            openSession: () =>
+              errAsync({ type: "SessionMissing" as const, ref: "x" }),
+            readSessionEntries: () =>
+              okAsync({
+                header: {
+                  type: "session",
+                  id: "s",
+                  version: 3,
+                  parentId: null,
+                  timestamp: "t",
+                  cwd: "/p",
+                },
+                entries: [
+                  {
+                    type: "message",
+                    id: "m1",
+                    message: {
+                      role: "assistant",
+                      content: [{ type: "text", text: "body" }],
+                    },
+                  },
+                ],
+                tree: [],
+              }),
+            readThreadMetadata: () =>
+              errAsync({ type: "SessionMissing" as const, ref: "x" }),
+          } as unknown as PiThreadSessionPort,
+          cache: { upsertRef: () => ok(undefined) },
+          cacheMode: "active" as const,
+        }),
+      ...overrides,
+    });
+  }
+
+  it("skips shortcut registration without getEffectiveConfig and reports the gap", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installTask13Extension(host);
+    await host.triggerSessionStart();
+    expect(typeof host.getEditorComponentForTest()).toBe("function");
+    host.createEditor({}, {}, {});
+    expect(host.registerShortcutCalls.map((call) => call.shortcut)).toEqual([
+      "alt+a",
+      "alt+t",
+    ]);
+    await host.invokeCommand("weave:health");
+    const health = host.notifyCalls.at(-1)?.message ?? "";
+    expect(health).toContain("overlay keys:");
+    expect(health).toContain("registerShortcut takes a key");
+    expect(health).toContain("getEffectiveConfig()");
+  });
+
+  it("registers overlay shortcuts exactly once and never overwrites conflicts", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.effectiveKeybindingConfig = {
+      "tui.app.example": "alt+i",
+    };
+    installTask13Extension(host);
+    await host.triggerSessionStart();
+    host.createEditor();
+    host.createEditor();
+    const shortcuts = host.registerShortcutCalls.map((call) => call.shortcut);
+    expect(shortcuts.filter((key) => key === "alt+i")).toHaveLength(0);
+    expect(shortcuts.filter((key) => key === "alt+1").length).toBe(1);
+    expect(shortcuts.filter((key) => key === "alt+a")).toHaveLength(1);
+    await host.invokeCommand("weave:health");
+    const health = host.notifyCalls.at(-1)?.message ?? "";
+    expect(health).toContain("already bound to tui.app.example");
+  });
+
+  it("applies child_inspection.keys overrides when registering", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.effectiveKeybindingConfig = {};
+    installTask13Extension(host, {}, {
+      ...EMPTY_CONFIG,
+      settings: {
+        adapters: {
+          pi: {
+            child_inspection: {
+              keys: {
+                "weave.child.picker.open": "ctrl+p",
+              },
+            },
+          },
+        },
+      },
+    } as unknown as WeaveConfig);
+    await host.triggerSessionStart();
+    host.createEditor();
+    const shortcuts = host.registerShortcutCalls.map((call) => call.shortcut);
+    expect(shortcuts).toContain("ctrl+p");
+    expect(shortcuts).not.toContain("alt+i");
+  });
+
+  it("double-escape confirms cancel with Keep running first and cancels only on explicit choice", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.effectiveKeybindingConfig = {};
+    const modalFactory = () => ({ handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+    installTask13Extension(host);
+    await host.triggerSessionStart();
+    const before = host.customCalls.length;
+    const picker = host.deferNextSelect();
+    const inspect = host.invokeCommand("weave:inspect");
+    await flushBackgroundWork();
+    const childLabel = host.selectCalls
+      .at(-1)
+      ?.options.find(
+        (label) =>
+          label.includes(TASK13_CHILD_ID) || label.includes("history: loom"),
+      );
+    expect(childLabel).toBeDefined();
+    picker.settle(childLabel);
+    await inspect;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (host.customCalls.length > before) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    expect(host.customCalls.length).toBeGreaterThan(before);
+
+    const doneBeforeEscape = host.customDoneCalls;
+    const selectsBeforeEscape = host.selectCalls.length;
+    host.inputCustom("\u001b");
+    // Task 13 consumes the first Escape: overlay stays mounted and a hint is shown.
+    expect(host.customDoneCalls).toBe(doneBeforeEscape);
+    expect(
+      host.notifyCalls.some((call) =>
+        call.message.includes("Press Escape again"),
+      ),
+    ).toBe(true);
+    const cancelConfirm = host.deferNextSelect();
+    host.inputCustom("\u001b");
+    await flushBackgroundWork();
+    expect(host.selectCalls.length).toBeGreaterThan(selectsBeforeEscape);
+    const confirmCall = host.selectCalls.at(-1);
+    expect(confirmCall?.options[0]).toBe("Keep running");
+    expect(confirmCall?.options[1]).toBe("Cancel subtree");
+    cancelConfirm.settle("Keep running");
+    await flushBackgroundWork();
+    expect(host.customDoneCalls).toBe(doneBeforeEscape);
+  });
+});

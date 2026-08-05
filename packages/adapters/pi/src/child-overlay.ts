@@ -22,6 +22,7 @@ import {
   type TUI,
 } from "@earendil-works/pi-tui";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import type { PiChildOverlayKeyInterceptor } from "./child-overlay-keys.js";
 import { z } from "zod";
 import {
   createChildCompactState,
@@ -1728,6 +1729,12 @@ export function createChildOverlayCustomComponent(
   done: () => void,
   onFallback: (fallback: ChildOverlayFallbackRequired) => void,
   nativeDeps?: Omit<PiNativeTranscriptComponentDeps, "tui">,
+  /**
+   * Task 13 owns the keyboard first. Anything it consumes never reaches the
+   * Task 12 input path below, and nothing here ever forwards a key to Pi or
+   * the primary editor while the overlay is mounted.
+   */
+  keyInterceptor?: PiChildOverlayKeyInterceptor,
 ): PiChildOverlayCustomComponent {
   const draftEditor = new CustomEditor(tui, theme, keybindings);
   const transcriptRenderer = createPiChildTranscriptRenderer();
@@ -1985,10 +1992,19 @@ export function createChildOverlayCustomComponent(
       if (finished || inputBusy) return;
       Result.fromThrowable(
         () => {
-          if (
+          if (keyInterceptor !== undefined) {
+            const consumed = Result.fromThrowable(
+              () => keyInterceptor(data),
+              () => "overlay_key_interceptor_failed" as const,
+              // A failing interceptor must not leak the key onward, so an
+              // exception is treated as "consumed" rather than "ignored".
+            )().unwrapOr(true);
+            if (consumed) return;
+          } else if (
             keybindings.matches(data, "tui.select.cancel") ||
             data === "\x1b"
           ) {
+            // Without Task 13 mounted, Escape keeps its Task 12 meaning.
             finish();
             return;
           }

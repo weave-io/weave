@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { WeaveConfig } from "@weaveio/weave-core";
 
 import {
+  childInspectionOverlayKeyOverrides,
   DEFAULT_PI_CHILD_INSPECTION_SETTINGS,
   effectivePiChildInspectionSettings,
   formatPiChildInspectionSettingsIssues,
@@ -149,5 +150,27 @@ describe("Pi child-inspection settings", () => {
         },
       ]),
     ).toBe("settings.adapters.pi: expected an object");
+  });
+
+  it("accepts Task 13 key overrides and rejects unknown action ids", () => {
+    const parsed = parsePiChildInspectionSettings({
+      keys: {
+        "weave.child.picker.open": "ctrl+p",
+        "weave.child.slot.1": ["alt+1", "ctrl+1"],
+      },
+    });
+    expect(parsed.isOk()).toBe(true);
+    const overrides = childInspectionOverlayKeyOverrides(parsed._unsafeUnwrap());
+    expect(overrides.get("weave.child.picker.open")).toEqual(["ctrl+p"]);
+    expect(overrides.get("weave.child.slot.1")).toEqual(["alt+1", "ctrl+1"]);
+    expect(overrides.has("weave.child.sibling.next")).toBe(false);
+
+    const unknown = parsePiChildInspectionSettings({
+      keys: { "tui.escape": "escape" },
+    });
+    expect(unknown.isErr()).toBe(true);
+    expect(
+      unknown._unsafeUnwrapErr().some((issue) => issue.code === "unrecognized_keys"),
+    ).toBe(true);
   });
 });

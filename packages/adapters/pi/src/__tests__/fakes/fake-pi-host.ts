@@ -206,6 +206,13 @@ export class RecordingFakePiHost {
   /** Per-binding key overrides, so tests can prove alternate keybindings. */
   readonly customKeybindingKeys: Record<string, readonly string[] | undefined> =
     {};
+  /**
+   * When set, custom/editor keybindings expose `getEffectiveConfig()` so Task
+   * 13 conflict inspection and shortcut registration can run.
+   */
+  effectiveKeybindingConfig:
+    | Readonly<Record<string, string | readonly string[] | undefined>>
+    | undefined = undefined;
   private nextCustomCalled: (() => void) | undefined;
   private activeCustomDone: (() => void) | undefined;
   private activeCustom:
@@ -693,12 +700,7 @@ export class RecordingFakePiHost {
             terminal: { rows: this.terminalRows },
           },
           {},
-          {
-            matches: () => false,
-            getKeys: (binding: string) =>
-              this.customKeybindingKeys[binding] ??
-              DEFAULT_FAKE_KEYBINDING_KEYS[binding],
-          },
+          this.buildKeybindingsPort(),
           (value) => {
             this.customDoneCalls += 1;
             resolve(value);
@@ -882,10 +884,34 @@ export class RecordingFakePiHost {
     if (typeof this.editorFactory !== "function") {
       throw new Error("editor factory not installed");
     }
+    const resolvedArgs =
+      args.length >= 3
+        ? args
+        : ([{}, {}, this.buildKeybindingsPort()] as const);
     return (this.editorFactory as (...values: readonly unknown[]) => unknown)(
-      ...args,
+      ...resolvedArgs,
     ) as {
       handleInput(input: string): void | Promise<void>;
+    };
+  }
+
+  private buildKeybindingsPort(): {
+    matches: () => boolean;
+    getKeys: (binding: string) => readonly string[] | undefined;
+    getEffectiveConfig?: () => Readonly<
+      Record<string, string | readonly string[] | undefined>
+    >;
+  } {
+    return {
+      matches: () => false,
+      getKeys: (binding: string) =>
+        this.customKeybindingKeys[binding] ??
+        DEFAULT_FAKE_KEYBINDING_KEYS[binding],
+      ...(this.effectiveKeybindingConfig === undefined
+        ? {}
+        : {
+            getEffectiveConfig: () => this.effectiveKeybindingConfig ?? {},
+          }),
     };
   }
 }

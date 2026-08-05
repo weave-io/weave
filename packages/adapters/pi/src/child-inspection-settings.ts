@@ -1,8 +1,22 @@
 import type { WeaveConfig } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
+import {
+  PI_CHILD_OVERLAY_ACTION_IDS,
+  PI_CHILD_OVERLAY_KEY_BOUNDS,
+  isPiChildOverlayKeySyntax,
+  type PiChildOverlayActionId,
+  type PiChildOverlayKey,
+} from "./child-overlay-keys.js";
 
-/** Pi adapter contract child-inspection defaults. */
+/**
+ * Pi adapter contract child-inspection defaults.
+ *
+ * `keys` is deliberately absent from the defaults object: an empty override
+ * map and "no `keys` block at all" mean exactly the same thing (every Task 13
+ * action keeps its declared default key), and materializing an empty object
+ * here would make every existing config compare unequal to its own defaults.
+ */
 export const DEFAULT_PI_CHILD_INSPECTION_SETTINGS = Object.freeze({
   persist_history: true,
   max_bytes_per_child: 4_194_304,
@@ -11,6 +25,54 @@ export const DEFAULT_PI_CHILD_INSPECTION_SETTINGS = Object.freeze({
   recovery_enabled: true,
   recovery_countdown_seconds: 10,
 } as const);
+
+/**
+ * One configured key list for one stable Task 13 action id.
+ *
+ * A bare string is accepted as the one-key shorthand; both forms normalize to
+ * a frozen array so downstream planning has a single shape to reason about.
+ */
+const OverlayKeySchema = z
+  .string()
+  .min(1)
+  .max(PI_CHILD_OVERLAY_KEY_BOUNDS.maxKeyLength)
+  .refine(isPiChildOverlayKeySyntax, "unsupported key syntax");
+
+const OverlayKeyListSchema = z
+  .union([
+    OverlayKeySchema.transform((key) => [key]),
+    z
+      .array(OverlayKeySchema)
+      .min(1)
+      .max(PI_CHILD_OVERLAY_KEY_BOUNDS.maxKeysPerAction),
+  ])
+  .transform((keys) => Object.freeze([...new Set(keys)]) as readonly string[]);
+
+type PiChildOverlayKeysShape = {
+  [K in PiChildOverlayActionId]: z.ZodOptional<typeof OverlayKeyListSchema>;
+};
+
+/**
+ * Builds the closed action-id shape without a fromEntries cast. Each key is
+ * optional so an absent override keeps the declared default; `.strict()` on
+ * the object still rejects misspelled action ids.
+ */
+function buildPiChildOverlayKeysShape(): PiChildOverlayKeysShape {
+  const shape = {} as PiChildOverlayKeysShape;
+  for (const id of PI_CHILD_OVERLAY_ACTION_IDS) {
+    shape[id] = OverlayKeyListSchema.optional();
+  }
+  return shape;
+}
+
+/**
+ * The override map is keyed by the closed set of Task 13 action ids and is
+ * `.strict()` for the same reason the surrounding block is: silently ignoring
+ * a misspelled action id would leave the user believing a rebind took effect.
+ */
+const PiChildOverlayKeysSchema = z
+  .object(buildPiChildOverlayKeysShape())
+  .strict();
 
 const MAX_BYTES_PER_CHILD = {
   min: 65_536,
@@ -70,6 +132,8 @@ export const PiChildInspectionSettingsSchema = z
       .min(RECOVERY_COUNTDOWN_SECONDS.min)
       .max(RECOVERY_COUNTDOWN_SECONDS.max)
       .default(DEFAULT_PI_CHILD_INSPECTION_SETTINGS.recovery_countdown_seconds),
+    // Optional so every pre-Task-13 config keeps parsing untouched.
+    keys: PiChildOverlayKeysSchema.optional(),
   })
   .strict()
   .superRefine((settings, context) => {
@@ -85,6 +149,27 @@ export const PiChildInspectionSettingsSchema = z
 export type PiChildInspectionSettings = Readonly<
   z.infer<typeof PiChildInspectionSettingsSchema>
 >;
+
+/**
+ * Resolved override map for the Task 13 actions. Absent `keys` yields an empty
+ * map, which planning reads as "use every declared default".
+ */
+export function childInspectionOverlayKeyOverrides(
+  settings: Pick<PiChildInspectionSettings, "keys">,
+): ReadonlyMap<PiChildOverlayActionId, readonly PiChildOverlayKey[]> {
+  const overrides = new Map<
+    PiChildOverlayActionId,
+    readonly PiChildOverlayKey[]
+  >();
+  const configured = settings.keys;
+  if (configured === undefined) return overrides;
+  for (const actionId of PI_CHILD_OVERLAY_ACTION_IDS) {
+    const keys = configured[actionId];
+    if (keys === undefined || keys.length === 0) continue;
+    overrides.set(actionId, keys as readonly PiChildOverlayKey[]);
+  }
+  return overrides;
+}
 
 export interface PiChildInspectionSettingsIssue {
   readonly code: string;

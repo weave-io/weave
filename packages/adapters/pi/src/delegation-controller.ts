@@ -18,8 +18,12 @@ import {
   resolveEffectiveDelegationLimits,
 } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
-import type { PiDelegateRequestBody } from "./child-control-bodies.js";
-import { MAX_CWD_LENGTH, MAX_NAME_LENGTH } from "./child-control-bodies.js";
+import {
+  MAX_CWD_LENGTH,
+  MAX_NAME_LENGTH,
+  type PiDelegateRequestBody,
+} from "./child-control-bodies.js";
+import { childPickerTaskFirstLine } from "./child-picker.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type {
   CreateNativeChildSessionInput,
@@ -854,7 +858,9 @@ export class PiDelegationController {
                 threadId: childId,
                 nativeSessionId: record.sessionId,
                 sessionRef: record.ref,
-                title: request.agentName,
+                // Task 13 / Spec 33 §8.2: persist only the bounded task-first-line
+                // title. Never store the remainder of a multi-line task.
+                title: childPickerTaskFirstLine(request.task),
                 status: "running",
                 run: {
                   action: "start",

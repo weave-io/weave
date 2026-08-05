@@ -1131,7 +1131,7 @@ describe("thread lifecycle: authoritative start provisioning", () => {
       childId: "child-1",
       threadId: "child-1",
       sessionRef: SESSION_REF,
-      title: "shuttle",
+      title: "do the thing",
       status: "running",
     });
     const command = h.port.spawnInputs[0]?.command ?? [];
@@ -1142,9 +1142,13 @@ describe("thread lifecycle: authoritative start provisioning", () => {
     expect((await settlement).isOk()).toBe(true);
   });
 
-  it("writes rebuildable native leaf metadata without task text or paths", async () => {
+  it("writes rebuildable native leaf metadata with only the bounded task-first-line title", async () => {
     const h = harness();
-    const settlement = h.controller.delegate(request());
+    const settlement = h.controller.delegate(
+      request({
+        task: "First line only\nSECRET_TASK_REMAINDER must not persist",
+      }),
+    );
     await flush();
     const leaf = h.sessions?.leaves[0];
     expect(leaf?.metadata).toMatchObject({
@@ -1164,12 +1168,14 @@ describe("thread lifecycle: authoritative start provisioning", () => {
     const metadata = readNativeThreadMetadata(entries);
     expect(metadata?.schemaVersion).toBe(PI_NATIVE_THREAD_SCHEMA_VERSION);
     expect(metadata?.threadId).toBe("child-1");
+    expect(h.refs.newChildren[0]?.title).toBe("First line only");
     const serialized = JSON.stringify({
       leaf: leaf?.metadata,
       entries,
       refs: h.refs.newChildren,
     });
-    expect(serialized).not.toContain("do the thing");
+    expect(serialized).toContain("First line only");
+    expect(serialized).not.toContain("SECRET_TASK_REMAINDER");
     expect(serialized).not.toContain(SESSION_PATH);
     await settleChild(spawnedAt(h.port, 0), h.port, "completed");
     await settlement;

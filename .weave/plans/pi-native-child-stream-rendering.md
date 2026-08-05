@@ -253,7 +253,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - `bun test packages/adapters/pi/src/__tests__/child-overlay.test.ts` passes: live vs historical, pagination both directions, search paging, live-tail/scroll rules, resize, expansion, branch navigation, read-only settled, input isolation (no leakage events reach primary editor fake), draft/scroll preservation, fallback trigger.
     - pi-vim coexistence covered by an extension-level test (mode restored after unmount).
 
-- [ ] 13. Implement overlay keys, picker, and hierarchy navigation
+- [x] 13. Implement overlay keys, picker, and hierarchy navigation
   - **What**: Named configurable Pi actions: Alt+I picker; Alt+1..9 active children; Alt+Left/Right and Alt+H/L siblings; empty Backspace = parent (or close overlay when direct); single Escape consumed and arms a hint; double Escape within 750 ms opens cancel-subtree confirmation defaulting **Keep running**. Conflicts with existing user keybindings are reported, never overwritten. Picker lists all statuses with title + local timestamp, active first then newest settled; title precedence: explicit child title, then task first line, then workflow step, then agent.
   - **Files**: `packages/adapters/pi/src/child-picker.ts`, `packages/adapters/pi/src/child-overlay-keys.ts` (new), `packages/adapters/pi/src/child-tree-keys.ts` (extend/replace), wiring in `extension.ts`; tests `child-picker.test.ts` (new/extended), `child-overlay-keys.test.ts` (new).
   - **Depends on**: Tasks 6 (picker data), 12 (overlay).
