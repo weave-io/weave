@@ -30,6 +30,7 @@ import {
   mergeChildOverlayReplaySteps,
   transcriptFromOverlayEntries,
 } from "../child-overlay.js";
+import { boundText } from "../child-overlay-replay.js";
 import { parsePiChildSessionEvent } from "../child-session-events.js";
 import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 
@@ -260,6 +261,47 @@ function pageMemoryEntries(
     linesScanned: slice.length,
   };
 }
+
+describe("boundText", () => {
+  it("strips C0 controls in U+0000–U+0008, VT, FF, U+000E–U+001F, and DEL", () => {
+    const nulThroughBs = Array.from({ length: 9 }, (_, i) =>
+      String.fromCodePoint(i),
+    ).join("");
+    const soThroughUs = Array.from({ length: 0x1f - 0x0e + 1 }, (_, i) =>
+      String.fromCodePoint(0x0e + i),
+    ).join("");
+    const dirty = `keep${nulThroughBs}\u000b\u000c${soThroughUs}\u007ftext`;
+
+    const cleaned = boundText(dirty);
+    expect(cleaned).toBe("keeptext");
+    for (const ch of cleaned) {
+      const cp = ch.codePointAt(0) ?? -1;
+      const stripped =
+        (cp >= 0x00 && cp <= 0x08) ||
+        cp === 0x0b ||
+        cp === 0x0c ||
+        (cp >= 0x0e && cp <= 0x1f) ||
+        cp === 0x7f;
+      expect(stripped).toBe(false);
+    }
+  });
+
+  it("preserves TAB, LF, and CR while still stripping neighboring C0 controls", () => {
+    const value = "a\u0008\t\nb\u000c\rc\u001b[31md\u007f";
+    expect(boundText(value)).toBe("a\t\nb\rc[31md");
+  });
+
+  it("does not strip C1 controls (outside the boundText C0/DEL pattern)", () => {
+    expect(boundText("a\u009bb")).toBe("a\u009bb");
+    expect(boundText("x\u0080y\u009fz")).toBe("x\u0080y\u009fz");
+  });
+
+  it("bounds length after control sanitization", () => {
+    const max = CHILD_OVERLAY_BOUNDS.maxTextLength;
+    const padded = `${"\u0000".repeat(8)}${"x".repeat(max + 10)}`;
+    expect(boundText(padded)).toBe("x".repeat(max));
+  });
+});
 
 describe("mapNativeSessionEntryToOverlay", () => {
   it("maps user/assistant messages and run dividers without retaining paths", () => {
