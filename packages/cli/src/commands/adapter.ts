@@ -116,7 +116,7 @@ export async function runAdapter(
   if (registry === undefined) {
     ctx.terminal.stderr(
       formatCliMessage(
-        "Pi adapter command ports are unavailable. Provide an injected registry in tests or wire Task 4–6 stores.",
+        "Pi adapter command ports are unavailable. Production callers must pass a registry from createProductionPiAdapterCommandRegistry; tests may inject registry or childrenPort.",
       ),
     );
     return ok(1);

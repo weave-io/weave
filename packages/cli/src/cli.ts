@@ -134,6 +134,9 @@ export async function run(
     case "adapter": {
       const { parseAdapterTarget, renderAdapterHelp, runAdapter } =
         await import("./commands/adapter.js");
+      const { createProductionPiAdapterCommandRegistry } = await import(
+        "@weaveio/weave-adapter-pi"
+      );
       if (rest.length === 0 || flags.help) {
         terminal.stdout(renderAdapterHelp(theme));
         return ok(rest.length === 0 ? 1 : 0);
@@ -166,6 +169,20 @@ export async function run(
           parentSessionId: flags.parentSession,
         };
       }
+      const workspaceKey = process.cwd();
+      const productionRegistry =
+        await createProductionPiAdapterCommandRegistry({
+          workspaceKey,
+        });
+      if (productionRegistry.isErr()) {
+        terminal.stderr(
+          formatCliError({
+            type: "InvalidArgs",
+            message: `Pi adapter command ports unavailable: ${productionRegistry.error.type} (${productionRegistry.error.reason})`,
+          }),
+        );
+        return ok(1);
+      }
       return runAdapter({
         terminal,
         theme,
@@ -173,6 +190,8 @@ export async function run(
         json: flags.json,
         yes: flags.yes,
         diagnostic: flags.diagnostic === true,
+        workspaceKey,
+        registry: productionRegistry.value,
       });
     }
 

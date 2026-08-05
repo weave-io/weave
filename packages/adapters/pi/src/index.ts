@@ -495,6 +495,15 @@ export {
   stripPathsUnlessDiagnostic,
 } from "./adapter-cli-commands.js";
 export type {
+  CreateProductionPiAdapterCommandPortsOptions,
+  PiProductionAdapterCommandError,
+  PiProductionAdapterCommandPorts,
+} from "./adapter-cli-production.js";
+export {
+  createProductionPiAdapterCommandRegistry,
+  openProductionPiAdapterCommandPorts,
+} from "./adapter-cli-production.js";
+export type {
   PiConfigActivationInput,
   PiConfigActivationResult,
   PiConfigActivatorDeps,

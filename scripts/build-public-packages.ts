@@ -193,6 +193,13 @@ export class PublicPackageBuilder {
   constructor(private readonly fileSystem: PublicPackageFileSystem) {}
 
   buildAll(): ResultAsync<void, PublicPackageBuildError> {
+    // Pi must finish declarations before CLI: CLI imports Pi public types.
+    const packageBuildOrder: readonly PublicPackageName[] = [
+      "@weaveio/weave-adapter-claude-code",
+      "@weaveio/weave-adapter-opencode",
+      "@weaveio/weave-adapter-pi",
+      "@weaveio/weave-cli",
+    ];
     let result = this.emitPrivateDeclarations()
       .andThen(() => {
         const build =
@@ -203,9 +210,7 @@ export class PublicPackageBuilder {
         );
       })
       .andThen(() => this.emitPublicDeclarations());
-    for (const packageName of Object.keys(
-      PUBLIC_PACKAGE_BUILDS,
-    ) as PublicPackageName[]) {
+    for (const packageName of packageBuildOrder) {
       result = result.andThen(() => this.build(packageName));
     }
     return result;
@@ -234,11 +239,23 @@ export class PublicPackageBuilder {
   }
 
   private emitPublicDeclarations(): ResultAsync<void, PublicPackageBuildError> {
+    // CLI resolves `@weaveio/weave-adapter-pi` via rolled-up `dist/index.d.ts`,
+    // so Pi's tsc + api-extractor rollup must finish before CLI declarations.
     return this.runTypeScriptProjects([
-      "packages/cli/tsconfig.build.json",
-      "packages/adapters/opencode/tsconfig.build.json",
       "packages/adapters/pi/tsconfig.build.json",
-    ]);
+    ])
+      .andThen(() =>
+        this.rollupDeclarations(
+          "@weaveio/weave-adapter-pi",
+          PUBLIC_PACKAGE_BUILDS["@weaveio/weave-adapter-pi"].declarations,
+        ),
+      )
+      .andThen(() =>
+        this.runTypeScriptProjects([
+          "packages/adapters/opencode/tsconfig.build.json",
+          "packages/cli/tsconfig.build.json",
+        ]),
+      );
   }
 
   private runTypeScriptProjects(

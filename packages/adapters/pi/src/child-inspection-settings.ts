@@ -70,6 +70,23 @@ const PiChildOverlayKeysSchema = z
   .object(buildPiChildOverlayKeysShape())
   .strict();
 
+/**
+ * Explicit override-map shape. Declared by hand so the exported schema below
+ * can carry a nameable annotation: the inferred Zod type of a closed action-id
+ * object with transforms exceeds what TypeScript will serialize into a
+ * declaration file (TS7056).
+ */
+export type PiChildOverlayKeyOverrideMap = {
+  readonly [K in PiChildOverlayActionId]?: readonly string[];
+};
+
+/** Explicit parsed shape of one `child_inspection` block. */
+export interface PiChildInspectionSettingsShape {
+  readonly recovery_enabled: boolean;
+  readonly recovery_countdown_seconds: number;
+  readonly keys?: PiChildOverlayKeyOverrideMap;
+}
+
 const RECOVERY_COUNTDOWN_SECONDS = {
   min: 0,
   max: 60,
@@ -80,7 +97,10 @@ const RECOVERY_COUNTDOWN_SECONDS = {
  * misspelled key would make the operator believe a safety limit was active
  * when Pi was using its default instead.
  */
-export const PiChildInspectionSettingsSchema = z
+export const PiChildInspectionSettingsSchema: z.ZodType<
+  PiChildInspectionSettingsShape,
+  unknown
+> = z
   .object({
     recovery_enabled: z
       .boolean()
@@ -97,9 +117,8 @@ export const PiChildInspectionSettingsSchema = z
   })
   .strict();
 
-export type PiChildInspectionSettings = Readonly<
-  z.infer<typeof PiChildInspectionSettingsSchema>
->;
+export type PiChildInspectionSettings =
+  Readonly<PiChildInspectionSettingsShape>;
 
 /**
  * Resolved override map for the Task 13 actions. Absent `keys` yields an empty
@@ -156,7 +175,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 function freezeSettings(
-  settings: z.infer<typeof PiChildInspectionSettingsSchema>,
+  settings: PiChildInspectionSettingsShape,
 ): PiChildInspectionSettings {
   return Object.isFrozen(settings) ? settings : Object.freeze({ ...settings });
 }

@@ -2510,8 +2510,8 @@ export class PiDelegationController {
 
   /**
    * Session-transition cancel: same subtree walk and forced cleanup as
-   * {@link cancelSubtree}, but each live child uses
-   * {@link PiRpcChild.cancelForTransition} so an undelivered cancel/abort
+   * `cancelSubtree`, but each live child uses
+   * `PiRpcChild.cancelForTransition` so an undelivered cancel/abort
    * becomes a typed veto instead of a soft warning.
    */
   private cancelSubtreeForTransition(

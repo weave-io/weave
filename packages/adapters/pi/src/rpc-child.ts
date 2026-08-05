@@ -2543,17 +2543,17 @@ export class PiRpcChild {
    * Delivery failures are swallowed after forced cleanup so ordinary
    * Escape/subtree cancellation still resolves cleanly. Session transitions
    * that must veto on an undelivered cancel use
-   * {@link cancelForTransition} instead.
+   * `cancelForTransition` instead.
    */
   cancel(): ResultAsync<void, PiAdapterFailure> {
     return this.runCancellation({ reportDeliveryFailure: false });
   }
 
   /**
-   * Session-transition cancel path: same forced cleanup as {@link cancel},
+   * Session-transition cancel path: same forced cleanup as `cancel`,
    * but an undelivered authenticated cancel or raw abort surfaces as a
    * closed `ChildAbortFailed` so the transition guard can veto. Ordinary
-   * cleanup callers must keep using {@link cancel}.
+   * cleanup callers must keep using `cancel`.
    */
   cancelForTransition(): ResultAsync<void, PiAdapterFailure> {
     return this.runCancellation({ reportDeliveryFailure: true });

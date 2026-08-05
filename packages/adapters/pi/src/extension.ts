@@ -624,21 +624,21 @@ export interface PiExtensionDeps {
   readonly telemetryRetention?: PiRetentionPort;
   /**
    * Opens Task 4/5/6 thread sources for a persistent trusted generation.
-   * Production wiring MUST use {@link createProductionPiThreadSourceFactory}.
+   * Production wiring MUST use `createProductionPiThreadSourceFactory`.
    * Unit embeddings opt out by setting this to `undefined` so tests keep
    * legacy ephemeral start semantics without a real session host.
    */
   readonly threadSourceFactory: PiThreadSourceFactory | undefined;
   /**
    * Optional post-settlement response-drain budget forwarded to
-   * {@link PiDelegationController}. Absent keeps the production default.
+   * `PiDelegationController`. Absent keeps the production default.
    * Tests that exercise session-transition cancellation set a short value
    * so they finish under the normal Bun timeout.
    */
   readonly childResponseDrainMs?: number;
   /**
    * Optional cancel-ack grace budget forwarded to
-   * {@link PiDelegationController}. Absent keeps the production default.
+   * `PiDelegationController`. Absent keeps the production default.
    * Session-transition unit tests set a short value because fakes never
    * emit an authenticated `cancelled` ack.
    */
