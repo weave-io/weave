@@ -69,7 +69,12 @@ function entries(count: number, prefix = "e"): MemoryOverlaySourceEntry[] {
   const result: MemoryOverlaySourceEntry[] = [];
   for (let i = 0; i < count; i += 1) {
     const id = `${prefix}${i}`;
-    const role = i === 0 ? "user" : i % 2 === 0 ? "user" : "assistant";
+    let role: "user" | "assistant";
+    if (i === 0 || i % 2 === 0) {
+      role = "user";
+    } else {
+      role = "assistant";
+    }
     result.push({
       id,
       payload: message(id, role, `${prefix}-text-${i}`),

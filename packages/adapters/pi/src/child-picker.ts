@@ -202,11 +202,15 @@ function compareMetadataCandidates(
   if (a.active !== b.active) return a.active ? -1 : 1;
   if (a.active && b.active) {
     if (a.treeOrder !== b.treeOrder) return a.treeOrder - b.treeOrder;
-    return a.childId < b.childId ? -1 : a.childId > b.childId ? 1 : 0;
+    if (a.childId < b.childId) return -1;
+    if (a.childId > b.childId) return 1;
+    return 0;
   }
   if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt;
   if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
-  return a.childId < b.childId ? -1 : a.childId > b.childId ? 1 : 0;
+  if (a.childId < b.childId) return -1;
+  if (a.childId > b.childId) return 1;
+  return 0;
 }
 
 function validateMetadataCandidate(

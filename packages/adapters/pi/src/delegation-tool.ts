@@ -517,13 +517,15 @@ function parseRelaySettlement(body: JsonValue): PiChildSettlement | undefined {
   }
   const s = settlement as Record<string, unknown>;
   if (s.outcome === "completed") {
+    let assistantOutput: string | undefined;
+    if (typeof s.assistantOutput === "string") {
+      assistantOutput = s.assistantOutput;
+    } else if (typeof s.finalOutput === "string") {
+      assistantOutput = s.finalOutput;
+    }
     return {
       outcome: "completed",
-      ...(typeof s.assistantOutput === "string"
-        ? { assistantOutput: s.assistantOutput }
-        : typeof s.finalOutput === "string"
-          ? { assistantOutput: s.finalOutput }
-          : {}),
+      ...(assistantOutput === undefined ? {} : { assistantOutput }),
     };
   }
   if (s.outcome === "failed" && typeof s.reason === "string") {

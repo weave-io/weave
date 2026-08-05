@@ -366,16 +366,20 @@ function summarizeEntry(
     parsed.success && parsed.data.id !== undefined && parsed.data.id.length > 0
       ? parsed.data.id
       : `entry-${index}`;
-  const type =
+  let type = "unknown";
+  if (
     parsed.success &&
     parsed.data.type !== undefined &&
     parsed.data.type.length > 0
-      ? parsed.data.type
-      : parsed.success &&
-          parsed.data.role !== undefined &&
-          parsed.data.role.length > 0
-        ? parsed.data.role
-        : "unknown";
+  ) {
+    type = parsed.data.type;
+  } else if (
+    parsed.success &&
+    parsed.data.role !== undefined &&
+    parsed.data.role.length > 0
+  ) {
+    type = parsed.data.role;
+  }
   return { index, id, type };
 }
 

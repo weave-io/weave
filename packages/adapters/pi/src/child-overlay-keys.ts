@@ -539,7 +539,9 @@ function compareNodes(
   b: PiChildOverlayHierarchyNode,
 ): number {
   if (a.order !== b.order) return a.order - b.order;
-  return a.childId < b.childId ? -1 : a.childId > b.childId ? 1 : 0;
+  if (a.childId < b.childId) return -1;
+  if (a.childId > b.childId) return 1;
+  return 0;
 }
 
 /** Depth-first stable tree order: parents before their children. */

@@ -1082,11 +1082,14 @@ export class PiDelegationController {
       record?.title ??
       treeChild?.snapshot().name ??
       state.agentName;
-    const status: PiOverlayChildDescriptor["status"] = state.running
-      ? "live"
-      : state.status === "tombstoned"
-        ? "orphan"
-        : "settled";
+    let status: PiOverlayChildDescriptor["status"];
+    if (state.running) {
+      status = "live";
+    } else if (state.status === "tombstoned") {
+      status = "orphan";
+    } else {
+      status = "settled";
+    }
     return {
       childId: state.latestChildId,
       threadId: state.threadId,
@@ -1944,6 +1947,7 @@ export class PiDelegationController {
         .map((next) => {
           this.threadSettlementWritten.add(key);
           this.rememberThreadRecord(next);
+          return undefined;
         })
         .mapErr(() =>
           // Closed reason string: never the ref store's own error text.

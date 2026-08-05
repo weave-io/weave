@@ -351,8 +351,14 @@ const RunDividerDataSchema = z.looseObject({
     .optional(),
 });
 
+/** C0 controls except TAB/LF/CR, plus DEL — built via String.raw for Biome. */
+const BOUND_TEXT_CONTROL_PATTERN = new RegExp(
+  String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]`,
+  "gu",
+);
+
 function boundText(value: string): string {
-  const clean = value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "");
+  const clean = value.replace(BOUND_TEXT_CONTROL_PATTERN, "");
   if (clean.length <= CHILD_OVERLAY_BOUNDS.maxTextLength) return clean;
   return [...clean].slice(0, CHILD_OVERLAY_BOUNDS.maxTextLength).join("");
 }
@@ -1635,17 +1641,15 @@ function projectLiveEntry(
     case "message_start":
     case "message_update":
     case "message_end": {
-      const text =
-        event.type === "message_end"
-          ? messageText(event.message).text
-          : event.type === "message_update"
-            ? typeof (event as { delta?: { text?: string } }).delta?.text ===
-              "string"
-              ? boundText(
-                  (event as { delta: { text: string } }).delta.text,
-                )
-              : ""
-            : "";
+      let text = "";
+      if (event.type === "message_end") {
+        text = messageText(event.message).text;
+      } else if (event.type === "message_update") {
+        const deltaText = (event as { delta?: { text?: string } }).delta?.text;
+        if (typeof deltaText === "string") {
+          text = boundText(deltaText);
+        }
+      }
       const id =
         event.type === "message_end" &&
         typeof event.message === "object" &&

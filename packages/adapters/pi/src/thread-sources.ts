@@ -192,18 +192,21 @@ export function openPiThreadSources(
     ...(now === undefined ? {} : { now }),
   });
 
-  const cacheRootResult =
-    input.cacheRoot !== undefined
-      ? input.cacheRoot.length === 0
-        ? err({
-            type: "CacheRootViolation" as const,
-            reason: "empty-cache-root" as const,
-          })
-        : ok(input.cacheRoot)
-      : resolvePiChildMetadataCacheRoot({
-          env: input.env,
-          homeDir: input.homeDir,
+  const cacheRootResult = (() => {
+    if (input.cacheRoot !== undefined) {
+      if (input.cacheRoot.length === 0) {
+        return err({
+          type: "CacheRootViolation" as const,
+          reason: "empty-cache-root" as const,
         });
+      }
+      return ok(input.cacheRoot);
+    }
+    return resolvePiChildMetadataCacheRoot({
+      env: input.env,
+      homeDir: input.homeDir,
+    });
+  })();
 
   const metadataSource = {
     workspaceKey: input.workspaceKey,
