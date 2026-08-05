@@ -21,10 +21,9 @@ import {
   type ResultAsync,
 } from "neverthrow";
 import { z } from "zod";
-import {
-  PI_CHILD_METADATA_CACHE_BOUNDS,
-  type PiChildMetadataCache,
-  type PiChildMetadataRecord,
+import type {
+  PiChildMetadataCache,
+  PiChildMetadataRecord,
 } from "./child-metadata-cache.js";
 import {
   nativeSessionDeletionToken,
@@ -43,6 +42,11 @@ export const PI_ADAPTER_COMMAND_BOUNDS = Object.freeze({
   listPageSize: 50,
   /** Newest entries returned by `children.show`. */
   showEntryPageSize: 100,
+  /**
+   * Max origin-parent matches returned by `children.resolve` for one child id.
+   * Prevents unbounded index scans while allowing duplicate-parent detection.
+   */
+  resolveMatchCap: 16,
   /** Ceiling on opaque payload/result JSON characters. */
   maxJsonCharacters: 256_000,
   /** Ceiling on child/parent identifiers. */
@@ -52,6 +56,7 @@ export const PI_ADAPTER_COMMAND_BOUNDS = Object.freeze({
 export const PI_ADAPTER_COMMAND_NAMES = Object.freeze({
   childrenList: "children.list",
   childrenShow: "children.show",
+  childrenResolve: "children.resolve",
   childrenDelete: "children.delete",
   doctor: "doctor",
 } as const);
@@ -120,6 +125,21 @@ export const PiChildrenShowResultSchema = z
   .strict();
 
 export type PiChildrenShowResult = z.infer<typeof PiChildrenShowResultSchema>;
+
+export const PiChildrenResolveResultSchema = z
+  .object({
+    kind: z.literal("children.resolve"),
+    workspaceKey: idSchema,
+    childId: idSchema,
+    matches: z
+      .array(ChildListItemSchema)
+      .max(PI_ADAPTER_COMMAND_BOUNDS.resolveMatchCap),
+  })
+  .strict();
+
+export type PiChildrenResolveResult = z.infer<
+  typeof PiChildrenResolveResultSchema
+>;
 
 export const PiChildrenDeleteResultSchema = z
   .object({
@@ -200,6 +220,21 @@ export interface PiAdapterChildrenPort {
     PiAdapterCommandPortError
   >;
 
+  /**
+   * Bounded authoritative lookup by child id over the metadata index/source.
+   * Returns immutable origin-parent matches without transcripts or paths.
+   */
+  resolve(input: {
+    readonly workspaceKey: string;
+    readonly childId: string;
+    readonly includeTombstoned?: boolean;
+  }): ResultAsync<
+    {
+      readonly matches: readonly PiAdapterChildListItem[];
+    },
+    PiAdapterCommandPortError
+  >;
+
   delete(input: {
     readonly workspaceKey: string;
     readonly childId: string;
@@ -267,6 +302,14 @@ const ShowPayloadSchema = z
     parentSessionId: idSchema.optional(),
     cursor: z.string().max(512).optional(),
     diagnostic: z.boolean().optional(),
+  })
+  .strict();
+
+const ResolvePayloadSchema = z
+  .object({
+    workspaceKey: idSchema,
+    childId: idSchema,
+    includeTombstoned: z.boolean().optional(),
   })
   .strict();
 
@@ -416,7 +459,10 @@ function pageToShowEntries(page: PiNativeSessionEntryPage): {
 // ---------------------------------------------------------------------------
 
 export interface PiChildrenCommandPortOptions {
-  readonly cache: Pick<PiChildMetadataCache, "list" | "get" | "tombstone">;
+  readonly cache: Pick<
+    PiChildMetadataCache,
+    "list" | "get" | "findByChildId" | "tombstone"
+  >;
   readonly sessions: Pick<
     PiNativeSessionStore,
     "openSession" | "readSessionEntryPage" | "deleteSession"
@@ -458,21 +504,20 @@ export function createPiChildrenCommandPort(
     show(input) {
       const parentSessionId = input.parentSessionId;
       if (parentSessionId === undefined) {
-        // Cross-session show: list then resolve first matching child id.
-        const listed = options.cache.list({
+        // Cross-session show: authoritative child-id index lookup (bounded).
+        const found = options.cache.findByChildId({
           workspaceKey: input.workspaceKey,
-          limit: PI_CHILD_METADATA_CACHE_BOUNDS.maxPageSize,
+          childId: input.childId,
+          limit: PI_ADAPTER_COMMAND_BOUNDS.resolveMatchCap,
           includeTombstoned: true,
         });
-        if (listed.isErr()) {
+        if (found.isErr()) {
           return errAsync({
             type: "Unavailable" as const,
-            message: listed.error.type,
+            message: found.error.type,
           });
         }
-        const match = listed.value.records.find(
-          (row) => row.childId === input.childId,
-        );
+        const match = found.value[0];
         if (match === undefined) {
           return errAsync({
             type: "NotFound" as const,
@@ -565,6 +610,24 @@ export function createPiChildrenCommandPort(
               }));
           });
       }
+    },
+
+    resolve(input) {
+      const found = options.cache.findByChildId({
+        workspaceKey: input.workspaceKey,
+        childId: input.childId,
+        limit: PI_ADAPTER_COMMAND_BOUNDS.resolveMatchCap,
+        includeTombstoned: input.includeTombstoned ?? true,
+      });
+      if (found.isErr()) {
+        return errAsync({
+          type: "Unavailable" as const,
+          message: found.error.type,
+        });
+      }
+      return okAsync({
+        matches: found.value.map(toListItem),
+      });
     },
 
     delete(input) {
@@ -733,6 +796,23 @@ export function createPiAdapterCommandHandlers(
     );
   };
 
+  const childrenResolve: AdapterCommandHandler = (payloadJson) => {
+    const payload = parsePayload(ResolvePayloadSchema, payloadJson);
+    if (payload.isErr()) return errAsync(payload.error);
+    return handlerFromPortResult(
+      options.children.resolve(payload.value).map((resolved) => ({
+        kind: "children.resolve" as const,
+        workspaceKey: payload.value.workspaceKey,
+        childId: payload.value.childId,
+        matches: resolved.matches.slice(
+          0,
+          PI_ADAPTER_COMMAND_BOUNDS.resolveMatchCap,
+        ),
+      })),
+      false,
+    );
+  };
+
   const childrenDelete: AdapterCommandHandler = (payloadJson) => {
     const payload = parsePayload(DeletePayloadSchema, payloadJson);
     if (payload.isErr()) return errAsync(payload.error);
@@ -757,6 +837,7 @@ export function createPiAdapterCommandHandlers(
   return {
     [PI_ADAPTER_COMMAND_NAMES.childrenList]: childrenList,
     [PI_ADAPTER_COMMAND_NAMES.childrenShow]: childrenShow,
+    [PI_ADAPTER_COMMAND_NAMES.childrenResolve]: childrenResolve,
     [PI_ADAPTER_COMMAND_NAMES.childrenDelete]: childrenDelete,
     [PI_ADAPTER_COMMAND_NAMES.doctor]: doctorHandler,
   };

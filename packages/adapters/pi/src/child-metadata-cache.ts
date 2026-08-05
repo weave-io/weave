@@ -401,6 +401,18 @@ export interface PiChildMetadataListInput extends PiChildMetadataScope {
   readonly includeTombstoned?: boolean;
 }
 
+/** Bounded index lookup by child id (metadata only; no transcripts/paths). */
+export interface PiChildMetadataFindByChildIdInput {
+  readonly workspaceKey: string;
+  readonly childId: string;
+  /** When set, only that immutable origin parent may match. */
+  readonly parentSessionId?: string;
+  /** Tombstoned rows are included only when asked for. */
+  readonly includeTombstoned?: boolean;
+  /** Clamped to {@link PI_CHILD_METADATA_CACHE_BOUNDS.maxPageSize}. */
+  readonly limit?: number;
+}
+
 /** One deterministic page of newest-first cache rows. */
 export interface PiChildMetadataPage {
   readonly records: readonly PiChildMetadataRecord[];
@@ -946,6 +958,12 @@ export interface PiChildMetadataBypass {
   list(
     input: PiChildMetadataListInput,
   ): ResultAsync<PiChildMetadataPage, PiChildMetadataCacheError>;
+  findByChildId(
+    input: PiChildMetadataFindByChildIdInput,
+  ): ResultAsync<
+    readonly PiChildMetadataRecord[],
+    PiChildMetadataCacheError
+  >;
 }
 
 /**
@@ -958,49 +976,70 @@ export function createChildMetadataBypass(
   reason: PiChildMetadataCacheDegradeReason,
   now: () => number = () => Date.now(),
 ): PiChildMetadataBypass {
+  function loadScopedRecords(input: {
+    readonly workspaceKey: string;
+    readonly parentSessionId?: string;
+    readonly includeTombstoned?: boolean;
+  }): ResultAsync<
+    readonly PiChildMetadataRecord[],
+    PiChildMetadataCacheError
+  > {
+    if (input.workspaceKey !== source.workspaceKey) {
+      return okAsync([]);
+    }
+    if (
+      input.parentSessionId !== undefined &&
+      input.parentSessionId !== source.parentSessionId
+    ) {
+      return okAsync([]);
+    }
+    const at = now();
+    return source.readRefs().map((refs) => {
+      const records: PiChildMetadataRecord[] = [];
+      for (const ref of refs.slice(
+        0,
+        PI_CHILD_METADATA_CACHE_BOUNDS.maxRebuildRefs,
+      )) {
+        const record = childMetadataRecordFromRef({
+          ref,
+          workspaceKey: source.workspaceKey,
+          cachedAt: at,
+        });
+        if (record.isErr()) continue;
+        if (record.value.tombstoned && input.includeTombstoned !== true) {
+          continue;
+        }
+        records.push(record.value);
+      }
+      records.sort(newestFirst);
+      return records;
+    });
+  }
+
   return {
     degraded: true,
     reason,
     list(input) {
-      if (input.workspaceKey !== source.workspaceKey) {
-        return okAsync({ records: [] });
-      }
-      if (
-        input.parentSessionId !== undefined &&
-        input.parentSessionId !== source.parentSessionId
-      ) {
-        return okAsync({ records: [] });
-      }
       const decoded =
         input.cursor === undefined
           ? ok(undefined)
           : decodeCursor(input, input.cursor).map((value) => value);
       if (decoded.isErr()) return errAsync(decoded.error);
       const cursor = decoded.value;
-      const at = now();
-      return source.readRefs().andThen((refs) => {
-        const records: PiChildMetadataRecord[] = [];
-        for (const ref of refs.slice(
-          0,
-          PI_CHILD_METADATA_CACHE_BOUNDS.maxRebuildRefs,
-        )) {
-          const record = childMetadataRecordFromRef({
-            ref,
-            workspaceKey: source.workspaceKey,
-            cachedAt: at,
-          });
-          if (record.isErr()) continue;
-          if (record.value.tombstoned && input.includeTombstoned !== true) {
-            continue;
-          }
-          records.push(record.value);
-        }
-        records.sort(newestFirst);
+      return loadScopedRecords(input).map((records) => {
         const after =
           cursor === undefined
             ? records
             : records.filter((record) => isAfterCursor(record, cursor));
-        return okAsync(paginate(input, after));
+        return paginate(input, after);
+      });
+    },
+    findByChildId(input) {
+      return loadScopedRecords(input).map((records) => {
+        const limit = clampLimit(input.limit);
+        return records
+          .filter((record) => record.childId === input.childId)
+          .slice(0, limit);
       });
     },
   };
@@ -1566,6 +1605,37 @@ export class PiChildMetadataCache {
         records: page,
         nextCursor: encodeCursor(input, last),
       });
+    });
+  }
+
+  /**
+   * Bounded metadata-index lookup by child id. Returns at most `limit` rows
+   * (clamped). Never walks transcripts or returns filesystem paths. Optional
+   * `parentSessionId` scopes to one immutable origin parent.
+   */
+  findByChildId(
+    input: PiChildMetadataFindByChildIdInput,
+  ): Result<readonly PiChildMetadataRecord[], PiChildMetadataCacheError> {
+    const limit = clampLimit(input.limit);
+    const params: unknown[] = [input.workspaceKey, input.childId];
+    let sql = `SELECT ${ROW_COLUMNS} FROM children WHERE workspace_key = ? AND child_id = ?`;
+    if (input.parentSessionId !== undefined) {
+      sql += " AND origin_parent_session = ?";
+      params.push(input.parentSessionId);
+    }
+    if (input.includeTombstoned !== true) {
+      sql += " AND tombstoned = 0";
+    }
+    sql += " ORDER BY updated_at DESC, created_at DESC, child_id ASC LIMIT ?";
+    params.push(limit);
+    return this.query(sql, params).andThen((rows) => {
+      const records: PiChildMetadataRecord[] = [];
+      for (const row of rows) {
+        const record = rowToRecord(row);
+        if (record.isErr()) return err(record.error);
+        records.push(record.value);
+      }
+      return ok(records);
     });
   }
 

@@ -2261,6 +2261,11 @@ export function createPiExtension(
         type: "Unavailable",
         message: "native child stores are not ready",
       }),
+    resolve: () =>
+      errAsync({
+        type: "Unavailable",
+        message: "native child stores are not ready",
+      }),
     delete: () =>
       errAsync({
         type: "Unavailable",

@@ -31,6 +31,7 @@ const PI_ADAPTER = "pi" as const;
 const PI_COMMANDS = {
   childrenList: "children.list",
   childrenShow: "children.show",
+  childrenResolve: "children.resolve",
   childrenDelete: "children.delete",
   doctor: "doctor",
 } as const;
@@ -133,7 +134,7 @@ export function renderAdapterHelp(theme: ThemeColors): string {
     "",
     `  List returns the newest ${ADAPTER_LIST_PAGE_SIZE} children for the workspace.`,
     `  Show returns the newest ${ADAPTER_SHOW_ENTRY_PAGE_SIZE} entries plus a cursor.`,
-    "  Delete resolves the child's immutable origin parent from list metadata;",
+    "  Delete resolves the child's immutable origin parent via children.resolve;",
     "  pass --parent-session when the same child id exists under two parents.",
     "  Delete requires interactive confirmation or --yes and appends a tombstone.",
     "  Paths appear only when --diagnostic is set.",
@@ -227,9 +228,10 @@ export async function runAdapter(
 /**
  * Resolve the immutable origin parent for delete.
  *
- * Never invents a synthetic parent such as `current`. Uses scoped list
- * metadata, accepts an explicit `--parent-session` only when it matches a
- * listed row, and refuses ambiguous same-child-id / two-parent cases.
+ * Never invents a synthetic parent such as `current`. Uses the adapter-owned
+ * `children.resolve` index lookup (not the newest-50 list page), accepts an
+ * explicit `--parent-session` only when it matches a resolved row, and refuses
+ * ambiguous same-child-id / two-parent cases.
  */
 export async function resolveDeleteParentScope(
   registry: AdapterCommandRegistry,
@@ -243,26 +245,23 @@ export async function resolveDeleteParentScope(
     string
   >
 > {
-  const listed = await dispatchAdapterCommand(registry, {
+  const resolved = await dispatchAdapterCommand(registry, {
     adapter: PI_ADAPTER,
-    command: PI_COMMANDS.childrenList,
+    command: PI_COMMANDS.childrenResolve,
     payloadJson: JSON.stringify({
       workspaceKey,
+      childId: target.childId,
       includeTombstoned: true,
     }),
   });
-  if (listed.isErr()) {
-    return err(formatDispatchError(listed.error));
+  if (resolved.isErr()) {
+    return err(formatDispatchError(resolved.error));
   }
 
-  const body = parseListResult(listed.value.resultJson);
-  if (body === undefined) {
-    return err("children list returned an invalid payload");
+  const matches = parseResolveMatches(resolved.value.resultJson);
+  if (matches === undefined) {
+    return err("children resolve returned an invalid payload");
   }
-
-  const matches = body.children.filter(
-    (row) => row.childId === target.childId,
-  );
   if (matches.length === 0) {
     return err(`child not found: ${target.childId}`);
   }
@@ -302,7 +301,9 @@ export async function resolveDeleteParentScope(
   });
 }
 
-function parseListResult(resultJson: string): AdapterChildrenListResult | undefined {
+function parseResolveMatches(
+  resultJson: string,
+): readonly AdapterChildListItem[] | undefined {
   const parsed: Result<unknown, string> = Result.fromThrowable(
     () => JSON.parse(resultJson) as unknown,
     () => "invalid json",
@@ -311,13 +312,13 @@ function parseListResult(resultJson: string): AdapterChildrenListResult | undefi
   if (
     typeof parsed.value !== "object" ||
     parsed.value === null ||
-    !("children" in parsed.value) ||
-    !Array.isArray((parsed.value as { children: unknown }).children)
+    !("matches" in parsed.value) ||
+    !Array.isArray((parsed.value as { matches: unknown }).matches)
   ) {
     return undefined;
   }
-  const children: AdapterChildListItem[] = [];
-  for (const row of (parsed.value as { children: unknown[] }).children) {
+  const matches: AdapterChildListItem[] = [];
+  for (const row of (parsed.value as { matches: unknown[] }).matches) {
     if (
       typeof row !== "object" ||
       row === null ||
@@ -327,9 +328,9 @@ function parseListResult(resultJson: string): AdapterChildrenListResult | undefi
     ) {
       return undefined;
     }
-    children.push(row as AdapterChildListItem);
+    matches.push(row as AdapterChildListItem);
   }
-  return { children };
+  return matches;
 }
 
 function buildRequest(

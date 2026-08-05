@@ -85,6 +85,11 @@ function unavailableChildrenPort(
         type: "Unavailable" as const,
         message,
       }),
+    resolve: () =>
+      errAsync({
+        type: "Unavailable" as const,
+        message,
+      }),
     delete: () =>
       errAsync({
         type: "Unavailable" as const,

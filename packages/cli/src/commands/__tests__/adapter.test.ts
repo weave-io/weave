@@ -91,6 +91,16 @@ function makeChildrenPort(options: {
           : {}),
       });
     },
+    resolve(input) {
+      const matches = rows
+        .filter((row) => {
+          if (row.childId !== input.childId) return false;
+          if (input.includeTombstoned === true) return true;
+          return !row.tombstoned;
+        })
+        .slice(0, PI_ADAPTER_COMMAND_BOUNDS.resolveMatchCap);
+      return okAsync({ matches });
+    },
     delete(input) {
       if (!input.confirmed) {
         return errAsync({
@@ -212,7 +222,7 @@ describe("parseAdapterTarget", () => {
 });
 
 describe("resolveDeleteParentScope", () => {
-  it("resolves a unique origin parent from list metadata", async () => {
+  it("resolves a unique origin parent via children.resolve", async () => {
     const registry = createPiAdapterCommandRegistry({
       children: makeChildrenPort({
         rows: [child({ childId: "child-1", originParentSessionId: "parent-a" })],
@@ -224,6 +234,37 @@ describe("resolveDeleteParentScope", () => {
       childId: "child-1",
     });
     expect(resolved._unsafeUnwrap().parentSessionId).toBe("parent-a");
+  });
+
+  it("resolves a child older than the newest list page of 50", async () => {
+    const rows = Array.from({ length: 55 }, (_, index) =>
+      child({
+        childId: `child-${String(index).padStart(2, "0")}`,
+        threadId: `thread-${index}`,
+        originParentSessionId: `parent-${index}`,
+        updatedAt: 10_000 - index,
+      }),
+    );
+    const older = rows[54];
+    if (older === undefined) throw new Error("expected older child");
+    expect(older.childId).toBe("child-54");
+
+    const port = makeChildrenPort({ rows });
+    const listed = await port.list({
+      workspaceKey: "ws",
+      includeTombstoned: true,
+    });
+    expect(
+      listed._unsafeUnwrap().children.some((row) => row.childId === "child-54"),
+    ).toBe(false);
+
+    const registry = createPiAdapterCommandRegistry({ children: port });
+    const resolved = await resolveDeleteParentScope(registry, "ws", {
+      adapter: "pi",
+      action: "children.delete",
+      childId: "child-54",
+    });
+    expect(resolved._unsafeUnwrap().parentSessionId).toBe("parent-54");
   });
 
   it("requires --parent-session when the same child id exists under two parents", async () => {
@@ -464,6 +505,64 @@ describe("runAdapter", () => {
     const code = await runAdapter(ctx);
     expect(code._unsafeUnwrap()).toBe(1);
     expect(terminal.err.join("\n")).toContain("parent session scope rejected");
+  });
+
+  it("deletes a scoped child older than the newest list page of 50", async () => {
+    const rows = Array.from({ length: 55 }, (_, index) =>
+      child({
+        childId: `child-${String(index).padStart(2, "0")}`,
+        threadId: `thread-${index}`,
+        originParentSessionId: `parent-${index}`,
+        updatedAt: 10_000 - index,
+      }),
+    );
+    const port = makeChildrenPort({ rows });
+    const registry = createPiAdapterCommandRegistry({ children: port });
+    const { terminal, ctx } = makeCtx({
+      target: {
+        adapter: "pi",
+        action: "children.delete",
+        childId: "child-54",
+        parentSessionId: "parent-54",
+      },
+      yes: true,
+      json: true,
+      registry,
+    });
+    const code = await runAdapter(ctx);
+    expect(code._unsafeUnwrap()).toBe(0);
+    expect(JSON.parse(terminal.out.join("\n"))).toMatchObject({
+      childId: "child-54",
+      tombstoned: true,
+    });
+    expect(rows[54]?.tombstoned).toBe(true);
+  });
+
+  it("rejects forged scope for an older child that exists under another parent", async () => {
+    const rows = Array.from({ length: 55 }, (_, index) =>
+      child({
+        childId: `child-${String(index).padStart(2, "0")}`,
+        threadId: `thread-${index}`,
+        originParentSessionId: `parent-${index}`,
+        updatedAt: 10_000 - index,
+      }),
+    );
+    const { terminal, ctx } = makeCtx({
+      target: {
+        adapter: "pi",
+        action: "children.delete",
+        childId: "child-54",
+        parentSessionId: "forged-parent",
+      },
+      yes: true,
+      registry: createPiAdapterCommandRegistry({
+        children: makeChildrenPort({ rows }),
+      }),
+    });
+    const code = await runAdapter(ctx);
+    expect(code._unsafeUnwrap()).toBe(1);
+    expect(terminal.err.join("\n")).toContain("parent session scope rejected");
+    expect(rows[54]?.tombstoned).toBe(false);
   });
 
   it("runs doctor through the injectable shell", async () => {

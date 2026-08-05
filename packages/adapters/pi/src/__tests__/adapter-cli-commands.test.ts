@@ -88,6 +88,16 @@ function fakeChildren(options: {
           : {}),
       });
     },
+    resolve(input) {
+      const matches = rows
+        .filter((row) => {
+          if (row.childId !== input.childId) return false;
+          if (input.includeTombstoned === true) return true;
+          return !row.tombstoned;
+        })
+        .slice(0, PI_ADAPTER_COMMAND_BOUNDS.resolveMatchCap);
+      return okAsync({ matches });
+    },
     delete(input) {
       if (!input.confirmed) {
         return errAsync({
@@ -193,6 +203,85 @@ describe("Pi adapter-cli-commands", () => {
       }),
     });
     expect(diagnosticShow._unsafeUnwrap().resultJson).toContain(path);
+  });
+
+  it("resolves a child older than the newest list page without paths", async () => {
+    const many = Array.from({ length: 55 }, (_, index) =>
+      child({
+        childId: `child-${String(index).padStart(2, "0")}`,
+        threadId: `thread-${index}`,
+        originParentSessionId: `parent-${index}`,
+        updatedAt: 3_000 - index,
+      }),
+    );
+    const registry = createPiAdapterCommandRegistry({
+      children: fakeChildren({ list: many }),
+    });
+    const listed = await dispatchAdapterCommand(registry, {
+      adapter: "pi",
+      command: PI_ADAPTER_COMMAND_NAMES.childrenList,
+      payloadJson: JSON.stringify({ workspaceKey: "ws" }),
+    });
+    const listBody = JSON.parse(listed._unsafeUnwrap().resultJson) as {
+      children: PiAdapterChildListItem[];
+    };
+    expect(
+      listBody.children.some((row) => row.childId === "child-54"),
+    ).toBe(false);
+
+    const resolved = await dispatchAdapterCommand(registry, {
+      adapter: "pi",
+      command: PI_ADAPTER_COMMAND_NAMES.childrenResolve,
+      payloadJson: JSON.stringify({
+        workspaceKey: "ws",
+        childId: "child-54",
+        includeTombstoned: true,
+      }),
+    });
+    const body = JSON.parse(resolved._unsafeUnwrap().resultJson) as {
+      kind: string;
+      matches: PiAdapterChildListItem[];
+      sessionPath?: string;
+    };
+    expect(body.kind).toBe("children.resolve");
+    expect(body.matches).toHaveLength(1);
+    expect(body.matches[0]?.originParentSessionId).toBe("parent-54");
+    expect(body.sessionPath).toBeUndefined();
+    expect(resolved._unsafeUnwrap().resultJson).not.toContain("/tmp/");
+  });
+
+  it("resolves duplicate-parent child ids as multiple matches", async () => {
+    const registry = createPiAdapterCommandRegistry({
+      children: fakeChildren({
+        list: [
+          child({
+            childId: "shared-child",
+            threadId: "thread-a",
+            originParentSessionId: "parent-a",
+          }),
+          child({
+            childId: "shared-child",
+            threadId: "thread-b",
+            originParentSessionId: "parent-b",
+          }),
+        ],
+      }),
+    });
+    const resolved = await dispatchAdapterCommand(registry, {
+      adapter: "pi",
+      command: PI_ADAPTER_COMMAND_NAMES.childrenResolve,
+      payloadJson: JSON.stringify({
+        workspaceKey: "ws",
+        childId: "shared-child",
+      }),
+    });
+    const body = JSON.parse(resolved._unsafeUnwrap().resultJson) as {
+      matches: PiAdapterChildListItem[];
+    };
+    expect(body.matches).toHaveLength(2);
+    expect(
+      body.matches.map((row) => row.originParentSessionId).sort(),
+    ).toEqual(["parent-a", "parent-b"]);
   });
 
   it("requires confirmation for delete and tombstones on confirm", async () => {
@@ -348,6 +437,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     return {
       list: () => ok({ records: [record], nextCursor: undefined }),
       get: () => okAsync(record),
+      findByChildId: () => ok([record]),
       tombstone: () =>
         err({ type: "CacheUnavailable" as const, reason: "io" as const }),
     };

@@ -558,6 +558,63 @@ describe("child metadata cache — scoping and pagination", () => {
     cache.close();
   });
 
+  it("findByChildId returns bounded matches including older rows and duplicate parents", async () => {
+    const refs = Array.from({ length: 55 }, (_, index) =>
+      makeRef({
+        childId: `child-${String(index).padStart(2, "0")}`,
+        originParentSessionId: `parent-${index}`,
+        updatedAt: 10_000 - index,
+      }),
+    );
+    refs.push(
+      makeRef({
+        childId: "child-54",
+        originParentSessionId: "parent-duplicate",
+        updatedAt: 1,
+        title: "Duplicate older",
+      }),
+    );
+    const { cache } = await openHarness();
+    seed(cache, refs);
+
+    const page = cache.list({ workspaceKey: WORKSPACE, limit: 50 });
+    expect(
+      page
+        ._unsafeUnwrap()
+        .records.some((record) => record.childId === "child-54"),
+    ).toBe(false);
+
+    const found = cache.findByChildId({
+      workspaceKey: WORKSPACE,
+      childId: "child-54",
+      includeTombstoned: true,
+      limit: 16,
+    });
+    expect(found.isOk()).toBe(true);
+    if (found.isErr()) return;
+    expect(found.value).toHaveLength(2);
+    expect(
+      found.value.map((record) => record.originParentSessionId).sort(),
+    ).toEqual(["parent-54", "parent-duplicate"]);
+
+    const scoped = cache.findByChildId({
+      workspaceKey: WORKSPACE,
+      childId: "child-54",
+      parentSessionId: "parent-54",
+      includeTombstoned: true,
+    });
+    expect(scoped._unsafeUnwrap()).toHaveLength(1);
+    expect(scoped._unsafeUnwrap()[0]?.originParentSessionId).toBe("parent-54");
+
+    const forged = cache.findByChildId({
+      workspaceKey: WORKSPACE,
+      childId: "child-54",
+      parentSessionId: "forged-parent",
+      includeTombstoned: true,
+    });
+    expect(forged._unsafeUnwrap()).toHaveLength(0);
+  });
+
   it("keeps the same child id under two parents without cross-contamination", async () => {
     const parentA = "parent-session-a";
     const parentB = "parent-session-b";
