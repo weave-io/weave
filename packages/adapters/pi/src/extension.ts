@@ -101,6 +101,8 @@ import {
 } from "./child-inspector.js";
 import type { PiChildMetadataCache } from "./child-metadata-cache.js";
 import type {
+  PiNativeSessionEntryPage,
+  PiNativeSessionEntryPageOptions,
   PiNativeSessionError,
   PiNativeSessionStore,
 } from "./child-native-sessions.js";
@@ -158,6 +160,7 @@ import {
 import {
   type PiDelegationContext,
   PiDelegationController,
+  type PiOverlayChildDescriptor,
   type PiThreadRefPort,
 } from "./delegation-controller.js";
 import {
@@ -977,6 +980,82 @@ export function delegationControllerGenerationsAgree(
     controllerGenerationId === activeSessionGenerationId &&
     controllerGenerationId === currentGenerationId
   );
+}
+
+/**
+ * Minimal delegation-controller surface the overlay page reader needs.
+ */
+export interface PiOverlaySessionPageControllerPort {
+  readonly resolveOverlayChild: (
+    childId: string,
+  ) => ResultAsync<PiOverlayChildDescriptor, PiAdapterFailure>;
+}
+
+/** Injected sources for {@link readOverlaySessionEntryPage}. */
+export interface PiOverlaySessionPageDeps {
+  /** Present only while a delegation controller owns this generation. */
+  readonly controller: () => PiOverlaySessionPageControllerPort | undefined;
+  /** Present only while native thread sources are open for this generation. */
+  readonly sessions: () =>
+    | Partial<Pick<PiNativeSessionStore, "readSessionEntryPage">>
+    | undefined;
+  /** Parent session id when the parent session is persistent. */
+  readonly parentSessionId: () => string | undefined;
+}
+
+function unreadableSessionError(ref: string): PiNativeSessionError {
+  return { type: "SessionCorrupt", ref, reason: "unreadable" };
+}
+
+/**
+ * Reads one bounded native entry page for an overlay child.
+ *
+ * Exactly one failure here is a recoverable startup gap: a native
+ * `SessionMissing` raised while reading a session ref the resolved child
+ * already claims to own. Downstream that becomes `SourceStartupNotReady`, and
+ * a live child opens on an empty live-tail page instead of borrowing the
+ * primary editor.
+ *
+ * Every other condition is a wiring or integrity defect and stays fail-closed:
+ * an absent controller, an unresolvable child, and absent session
+ * infrastructure for a child that does have a session ref. A resolved child
+ * with no session ref has nothing persisted to read, so it returns the empty
+ * native page without consulting session infrastructure at all.
+ */
+export function readOverlaySessionEntryPage(
+  deps: PiOverlaySessionPageDeps,
+  childId: string,
+  options: PiNativeSessionEntryPageOptions,
+): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
+  const controller = deps.controller();
+  if (controller === undefined) {
+    return errAsync(unreadableSessionError(childId));
+  }
+  return controller
+    .resolveOverlayChild(childId)
+    .mapErr(() => unreadableSessionError(childId))
+    .andThen(
+      (
+        descriptor,
+      ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> => {
+        const ref = descriptor.sessionRef;
+        if (ref === undefined) {
+          return okAsync({ entries: [], bytesRead: 0, linesScanned: 0 });
+        }
+        const sessions = deps.sessions();
+        if (
+          sessions === undefined ||
+          typeof sessions.readSessionEntryPage !== "function"
+        ) {
+          return errAsync(unreadableSessionError(ref));
+        }
+        return sessions.readSessionEntryPage(
+          ref,
+          deps.parentSessionId(),
+          options,
+        );
+      },
+    );
 }
 
 export function buildChildBootstrapBody(
@@ -4460,51 +4539,21 @@ export function createPiExtension(
                     childId: id,
                   }));
               },
-              readSessionEntryPage: (id, options) => {
-                const ctrl = delegationControllerCell.controller;
-                const sessions = threadSourcesCell.sessions;
-                if (
-                  ctrl === undefined ||
-                  sessions === undefined ||
-                  typeof sessions.readSessionEntryPage !== "function"
-                ) {
-                  // Thread sources are not wired yet for this generation, so
-                  // no persisted native page can exist. This is the same
-                  // transient startup gap as a missing session file, not a
-                  // corrupt source.
-                  return errAsync({
-                    type: "SessionMissing" as const,
-                    ref: id,
-                  } satisfies PiNativeSessionError);
-                }
-                return ctrl
-                  .resolveOverlayChild(id)
-                  .mapErr(
-                    (): PiNativeSessionError => ({
-                      type: "SessionMissing",
-                      ref: id,
-                    }),
-                  )
-                  .andThen((descriptor) => {
-                    if (descriptor.sessionRef === undefined) {
-                      return okAsync({
-                        entries: [],
-                        bytesRead: 0,
-                        linesScanned: 0,
-                      });
-                    }
-                    const parent = session.primarySession.getParentSession();
-                    const parentId =
-                      parent.persistence === "persistent"
+              readSessionEntryPage: (id, options) =>
+                readOverlaySessionEntryPage(
+                  {
+                    controller: () => delegationControllerCell.controller,
+                    sessions: () => threadSourcesCell.sessions,
+                    parentSessionId: () => {
+                      const parent = session.primarySession.getParentSession();
+                      return parent.persistence === "persistent"
                         ? parent.sessionId
                         : undefined;
-                    return sessions.readSessionEntryPage(
-                      descriptor.sessionRef,
-                      parentId,
-                      options,
-                    );
-                  });
-              },
+                    },
+                  },
+                  id,
+                  options,
+                ),
             }),
             {},
             {

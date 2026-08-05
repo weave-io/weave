@@ -39,6 +39,7 @@ import type { PiChildRefRecord } from "../child-session-refs.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
 import type {
+  PiOverlayChildDescriptor,
   PiThreadCachePort,
   PiThreadRefPort,
   PiThreadSessionPort,
@@ -49,6 +50,7 @@ import {
   PI_SHARED_LOG_PATH,
   type PiExtensionDeps,
   parsePiSkillsFromSystemPrompt,
+  readOverlaySessionEntryPage,
   resolveDirectStepBadgeAgent,
 } from "../extension.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
@@ -7893,5 +7895,226 @@ describe("createPiExtension: real-dispatch active-child shortcut", () => {
     host.finishCustom();
     await flushBackgroundWork();
     expect(host.getEditorComponentForTest()).toBe(modalFactory);
+  });
+});
+
+describe("readOverlaySessionEntryPage: extension source boundary", () => {
+  const pageOptions = { direction: "newest" as const, limit: 10 };
+
+  const descriptor = (
+    overrides: Partial<PiOverlayChildDescriptor> = {},
+  ): PiOverlayChildDescriptor => ({
+    childId: "child-1",
+    threadId: "thread-1",
+    activeChildId: "child-1",
+    status: "live",
+    title: "shuttle",
+    generationId: "gen-1",
+    parentChildId: undefined,
+    runs: [{ run: 1, action: "start" }],
+    branchIds: ["main"],
+    descendantChildIds: [],
+    sessionRef: undefined,
+    ...overrides,
+  });
+
+  const controllerFor = (
+    result: ResultAsync<PiOverlayChildDescriptor, PiAdapterFailure>,
+  ) => ({ resolveOverlayChild: () => result });
+
+  const unreadable = (ref: string) =>
+    ({
+      type: "SessionCorrupt",
+      ref,
+      reason: "unreadable",
+    }) as const;
+
+  it("fails closed when no delegation controller owns this generation", async () => {
+    // An absent controller is a wiring defect, not the persisted startup gap.
+    // Mapping it to `SessionMissing` would let a live child silently open an
+    // empty overlay while delegation is broken.
+    let sessionsRead = 0;
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () => undefined,
+        sessions: () => {
+          sessionsRead += 1;
+          return undefined;
+        },
+        parentSessionId: () => "parent-1",
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(unreadable("child-1"));
+    expect(sessionsRead).toBe(0);
+  });
+
+  it("fails closed when the controller cannot resolve the overlay child", async () => {
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(
+            errAsync({
+              kind: "thread-not-found",
+              code: "unknown-thread",
+            } as unknown as PiAdapterFailure),
+          ),
+        sessions: () => undefined,
+        parentSessionId: () => "parent-1",
+      },
+      "child-unknown",
+      pageOptions,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(unreadable("child-unknown"));
+  });
+
+  it("opens the empty native page for a resolved live child with no session ref", async () => {
+    // Nothing is persisted yet, so the truthful answer is the empty live-tail
+    // page. Session infrastructure must not be consulted at all.
+    let sessionsRead = 0;
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(okAsync(descriptor({ sessionRef: undefined }))),
+        sessions: () => {
+          sessionsRead += 1;
+          return undefined;
+        },
+        parentSessionId: () => "parent-1",
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toEqual({
+      entries: [],
+      bytesRead: 0,
+      linesScanned: 0,
+    });
+    expect(sessionsRead).toBe(0);
+  });
+
+  it("fails closed when a child with a session ref has no session source", async () => {
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(okAsync(descriptor({ sessionRef: "ref-1" }))),
+        sessions: () => undefined,
+        parentSessionId: () => "parent-1",
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(unreadable("ref-1"));
+  });
+
+  it("fails closed when a child with a session ref has no page read API", async () => {
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(okAsync(descriptor({ sessionRef: "ref-1" }))),
+        sessions: () => ({}),
+        parentSessionId: () => "parent-1",
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(unreadable("ref-1"));
+  });
+
+  it("preserves an actual SessionMissing for a known session ref", async () => {
+    // Only this case is the recoverable startup gap; the controller decides
+    // whether the child's live status allows an empty page.
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(okAsync(descriptor({ sessionRef: "ref-1" }))),
+        sessions: () => ({
+          readSessionEntryPage: () =>
+            errAsync({ type: "SessionMissing" as const, ref: "ref-1" }),
+        }),
+        parentSessionId: () => "parent-1",
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionMissing",
+      ref: "ref-1",
+    });
+  });
+
+  it.each([
+    [
+      "SessionPermissionError",
+      { type: "SessionPermissionError" as const, kind: "file" as const },
+    ],
+    [
+      "SessionRootViolation",
+      {
+        type: "SessionRootViolation" as const,
+        reason: "path-escape" as const,
+      },
+    ],
+    [
+      "SessionCorrupt/missing-header",
+      {
+        type: "SessionCorrupt" as const,
+        ref: "ref-1",
+        reason: "missing-header" as const,
+      },
+    ],
+    [
+      "SessionCorrupt/parent-session-mismatch",
+      {
+        type: "SessionCorrupt" as const,
+        ref: "ref-1",
+        reason: "parent-session-mismatch" as const,
+      },
+    ],
+  ])("preserves the native %s failure verbatim", async (_label, native) => {
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(okAsync(descriptor({ sessionRef: "ref-1" }))),
+        sessions: () => ({ readSessionEntryPage: () => errAsync(native) }),
+        parentSessionId: () => "parent-1",
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(native);
+  });
+
+  it("reads the resolved session ref with the persistent parent session id", async () => {
+    const calls: {
+      ref: string;
+      parent: string | undefined;
+      limit: number;
+    }[] = [];
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(okAsync(descriptor({ sessionRef: "ref-9" }))),
+        sessions: () => ({
+          readSessionEntryPage: (ref, parent, options) => {
+            calls.push({ ref, parent, limit: options.limit ?? 0 });
+            return okAsync({ entries: [], bytesRead: 4, linesScanned: 1 });
+          },
+        }),
+        parentSessionId: () => "parent-7",
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(calls).toEqual([{ ref: "ref-9", parent: "parent-7", limit: 10 }]);
   });
 });
