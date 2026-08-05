@@ -254,7 +254,7 @@ describe("buildDelegationToolRegistration", () => {
     expect(capturedRequest?.cwd).toBe("/project");
   });
 
-  it("execute: pushes bounded child output as a valid partial tool result", async () => {
+  it("execute: pushes compact live updates from session events, not tree snapshots", async () => {
     let capturedRequest: PiDelegationRequest | undefined;
     const updates: PiToolResult[] = [];
     const registration = buildDelegationToolRegistration(
@@ -267,58 +267,100 @@ describe("buildDelegationToolRegistration", () => {
       }),
     );
 
-    await registration.execute(
+    const executePromise = registration.execute(
       "call-1",
       { agent: "shuttle", task: "do it" },
       undefined,
       (update) => updates.push(update),
       ctx(),
     );
-    capturedRequest?.onUpdate?.({
-      id: "child-1",
-      parentId: "root",
-      name: "shuttle",
-      status: "running",
-      currentTurn: 1,
-      currentTool: "read",
-      startedAtMs: 0,
-      elapsedMs: 10,
-      usage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        cost: 0,
+    // Start run emits the initial compact block before delegate resolves.
+    expect(updates.length).toBeGreaterThanOrEqual(1);
+    const startDetails = updates[0]?.details as {
+      kind?: string;
+      lines?: string[];
+    };
+    expect(startDetails?.kind).toBe("weave-delegation-compact");
+    expect(startDetails?.lines).toHaveLength(3);
+    expect(startDetails?.lines?.[0]).toContain("shuttle");
+    expect(startDetails?.lines?.[2]).toContain("run 1");
+    expect(capturedRequest?.onUpdate).toBeUndefined();
+    expect(capturedRequest?.onSessionEvent).toBeDefined();
+
+    capturedRequest?.onSessionEvent?.({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "Inspecting the adapter" },
+    } as never);
+    expect(updates.length).toBeGreaterThanOrEqual(2);
+    const live = updates[updates.length - 1];
+    const liveDetails = live?.details as {
+      kind?: string;
+      lines?: [string, string, string];
+      expandedCurrentItem?: string;
+    };
+    expect(liveDetails?.kind).toBe("weave-delegation-compact");
+    expect(liveDetails?.lines?.[1]).toContain("Inspecting the adapter");
+    // Model-visible content stays the activity fragment, not the three-line chrome.
+    expect(live?.content[0]?.type).toBe("text");
+    expect((live?.content[0] as { text: string }).text).toContain(
+      "Inspecting the adapter",
+    );
+    expect((live?.content[0] as { text: string }).text).not.toContain(
+      "weave_delegate ·",
+    );
+
+    const result = await executePromise;
+    const finalDetails = result.details as {
+      kind?: string;
+      lines?: [string, string, string];
+    };
+    expect(finalDetails?.kind).toBe("weave-delegation-compact");
+    expect(finalDetails?.lines?.[1]).toContain("done");
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
+      ok: true,
+      settlement: {
+        outcome: "completed",
+        finalOutput: "done",
+        interventionCount: 0,
       },
-      latestOutput: "Inspecting the adapter",
     });
 
-    expect(updates).toHaveLength(1);
-    expect(updates[0]?.content).toEqual([
-      { type: "text", text: "Inspecting the adapter" },
-    ]);
     const renderer = registration.renderResult;
     expect(renderer).toBeDefined();
     const theme: PiUiThemePort = {
       fg: (_color, text) => text,
       bold: (text) => text,
     };
-    const firstUpdate = updates[0];
-    expect(firstUpdate).toBeDefined();
-    if (firstUpdate === undefined) return;
-    const rendered = renderer?.(
-      firstUpdate,
+    const collapsed = renderer?.(
+      live!,
+      { expanded: false, isPartial: true },
+      theme,
+      { args: { agent: "shuttle", task: "do it" } },
+    )
+      .render(80)
+      .join("\n");
+    expect(collapsed?.split("\n").filter((line) => line.length > 0).length).toBe(
+      3,
+    );
+    expect(collapsed).toContain("Inspecting the adapter");
+    expect(collapsed).not.toContain("\u2500");
+
+    const expanded = renderer?.(
+      {
+        ...live!,
+        details: {
+          ...(liveDetails as object),
+          expandedCurrentItem: "Inspecting the adapter in full",
+        },
+      },
       { expanded: true, isPartial: true },
       theme,
       { args: { agent: "shuttle", task: "do it" } },
     )
       .render(80)
       .join("\n");
-    expect(rendered).not.toContain("Shuttle");
-    expect(rendered).toContain("\u2500");
-    expect(rendered).toContain("Inspecting the adapter");
+    expect(expanded).toContain("Inspecting the adapter in full");
 
-    // The agent, model, and reasoning level belong to the call line.
     const call = registration
       .renderCall?.({ agent: "shuttle", task: "do it" }, theme, {
         args: { agent: "shuttle", task: "do it" },
@@ -326,16 +368,71 @@ describe("buildDelegationToolRegistration", () => {
       ?.render(80)
       .join("\n");
     expect(call).toContain("Shuttle");
+  });
 
-    const collapsed = renderer?.(
-      firstUpdate,
-      { expanded: false, isPartial: true },
-      theme,
-      { args: { agent: "shuttle", task: "do it" } },
-    )
-      .render(80)
+  it("renderResult: falls back to legacy snapshot details", () => {
+    const registration = buildDelegationToolRegistration(baseDeps());
+    const theme: PiUiThemePort = {
+      fg: (_color, text) => text,
+      bold: (text) => text,
+    };
+    const rendered = registration
+      .renderResult?.(
+        {
+          content: [{ type: "text", text: "legacy" }],
+          details: {
+            kind: "weave-delegation",
+            agent: "shuttle",
+            displayName: "Shuttle",
+            status: "running",
+            latestOutput: "old snapshot text",
+          },
+        },
+        { expanded: false, isPartial: true },
+        theme,
+        { args: { agent: "shuttle" } },
+      )
+      ?.render(80)
       .join("\n");
-    expect(collapsed).toContain("Inspecting the adapter");
+    expect(rendered).toContain("\u2500");
+    expect(rendered).toContain("old snapshot text");
+  });
+
+  it("renderResult: degrades when the theme helper throws", () => {
+    const codes: string[] = [];
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        onCompactRenderFailure: (code) => {
+          codes.push(code);
+        },
+      }),
+    );
+    const theme: PiUiThemePort = {
+      fg: () => {
+        throw new Error("/secret/path must not escape");
+      },
+      bold: (text) => text,
+    };
+    const rendered = registration
+      .renderResult?.(
+        {
+          content: [{ type: "text", text: "x" }],
+          details: {
+            kind: "weave-delegation-compact",
+            lines: ["a", "b", "c"],
+            expandedCurrentItem: undefined,
+            degraded: false,
+          },
+        },
+        { expanded: false, isPartial: false },
+        theme,
+        { args: {} },
+      )
+      ?.render(80)
+      .join("\n");
+    expect(rendered).toContain("render unavailable");
+    expect(codes).toEqual(["ChildCompactRenderFailed"]);
+    expect(JSON.stringify(codes)).not.toContain("/secret");
   });
 
   it("renderCall: names the agent with the model and reasoning level it will run on", () => {
@@ -1096,5 +1193,129 @@ describe("weave_delegate thread lifecycle", () => {
       ok: false,
       error: "invalid-delegation-target",
     });
+  });
+
+  it("retry/continue: starts compact projection from onRunAssigned run number/action", async () => {
+    const updates: PiToolResult[] = [];
+    let seen: PiThreadRunRequest | undefined;
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getController: () =>
+          threadController((request) => {
+            seen = request;
+            request.onRunAssigned?.({
+              threadId: request.threadId,
+              runNumber: 3,
+              action: request.action,
+              agentName: "shuttle",
+              childId: "child-run-3",
+            });
+            request.onSessionEvent?.({
+              type: "message_update",
+              assistantMessageEvent: {
+                type: "text_delta",
+                delta: "retrying work",
+              },
+            } as never);
+            return okAsync({
+              threadId: request.threadId,
+              run: 3,
+              settlement: {
+                outcome: "completed",
+                assistantOutput: "retry done",
+              } as PiChildSettlement,
+            });
+          }),
+      }),
+    );
+    const result = await registration.execute(
+      "call-1",
+      { action: "retry", thread: "thread-opaque" },
+      undefined,
+      (update) => updates.push(update),
+      ctx(),
+    );
+    expect(seen?.onRunAssigned).toBeDefined();
+    expect(seen?.onSessionEvent).toBeDefined();
+    expect(updates.length).toBeGreaterThanOrEqual(2);
+    const first = updates[0]?.details as {
+      lines?: [string, string, string];
+    };
+    expect(first?.lines?.[2]).toContain("run 3");
+    expect(first?.lines?.[2]).toContain("retry");
+    expect(first?.lines?.join("\n")).not.toContain("thread-opaque");
+    expect(first?.lines?.join("\n")).not.toContain("child-run-3");
+    const details = result.details as {
+      kind?: string;
+      lines?: [string, string, string];
+    };
+    expect(details.kind).toBe("weave-delegation-compact");
+    expect(details.lines?.[1]).toBe("retry done");
+    expect(
+      JSON.parse((result.content[0] as { text: string }).text),
+    ).toMatchObject({
+      ok: true,
+      thread: "thread-opaque",
+      run: 3,
+      status: "completed",
+    });
+  });
+
+  it("nested/relayed: final compact three-line parity from structured settlement only", async () => {
+    const registration = buildRelayedDelegationToolRegistration({
+      targets: TARGETS,
+      getRuntime: () =>
+        ({
+          requestDelegation: () =>
+            okAsync({
+              ok: true,
+              settlement: {
+                outcome: "completed",
+                assistantOutput: "nested-final",
+              },
+            }),
+        }) as never,
+    });
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "nested" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    const details = result.details as {
+      kind?: string;
+      lines?: [string, string, string];
+      degraded?: boolean;
+    };
+    expect(details.kind).toBe("weave-delegation-compact");
+    expect(details.lines).toHaveLength(3);
+    expect(details.lines?.[0]).toContain("shuttle");
+    expect(details.lines?.[0]).toContain("completed");
+    expect(details.lines?.[1]).toBe("nested-final");
+    expect(details.lines?.[2]).toContain("run 1");
+    expect(details.lines?.join("\n")).not.toContain("/sessions");
+    expect(details.degraded).toBe(false);
+    // Structured model output unchanged.
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
+      ok: true,
+      settlement: {
+        outcome: "completed",
+        assistantOutput: "nested-final",
+      },
+    });
+    const theme: PiUiThemePort = {
+      fg: (_color, text) => text,
+      bold: (text) => text,
+    };
+    const rendered = registration
+      .renderResult?.(result, { expanded: false, isPartial: false }, theme, {
+        args: { agent: "shuttle" },
+      })
+      ?.render(80)
+      .join("\n");
+    expect(rendered?.split("\n").filter((line) => line.length > 0)).toHaveLength(
+      3,
+    );
   });
 });

@@ -1998,4 +1998,115 @@ describe("PiDelegationController", () => {
     expect(controller.snapshotTree()).toHaveLength(0);
     controller.disposeAll();
   });
+
+  it("forwards parser-approved session events to onSessionEvent while preserving inspection checkpoints", async () => {
+    const sessionEvents: string[] = [];
+    const checkpointEvents: string[] = [];
+    const registry = new PiChildInspectionRegistry({
+      register: () => okAsync(undefined),
+      checkpoint: (id, event) => {
+        const type =
+          typeof event === "object" &&
+          event !== null &&
+          "type" in event &&
+          typeof (event as { type?: unknown }).type === "string"
+            ? (event as { type: string }).type
+            : String(event);
+        checkpointEvents.push(`${id}:${type}`);
+        return okAsync(undefined);
+      },
+      terminal: () => okAsync(undefined),
+      interrupted: () => okAsync(undefined),
+    });
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port, {
+      inspectionRegistry: registry,
+    });
+    const promise = controller.delegate(
+      request({
+        onSessionEvent: (event) => {
+          sessionEvents.push(event.type);
+        },
+      }),
+    );
+    await flush();
+    const child = spawnedAt(port, 0);
+    await sendChildToRunning(child, port, "gen-1");
+    child.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "stream" },
+    });
+    await flush();
+    expect(sessionEvents).toContain("message_update");
+    expect(
+      checkpointEvents.some((entry) => entry.endsWith(":message_update")),
+    ).toBe(true);
+    await settleRunningChild(child, port, "gen-1", 3);
+    expect((await promise).isOk()).toBe(true);
+    controller.disposeAll();
+  });
+
+  it("isolates onSessionEvent exceptions from child execution on spawn and restore", async () => {
+    const warns: Array<{ code?: unknown; msg?: string }> = [];
+    const logger = {
+      ...noopLogger,
+      warn: (obj: Record<string, unknown>, msg?: string) => {
+        warns.push({ code: obj.code, msg });
+      },
+    };
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port, { logger });
+    const promise = controller.delegate(
+      request({
+        onSessionEvent: () => {
+          throw new Error("/secret/path must not escape");
+        },
+      }),
+    );
+    await flush();
+    const child = spawnedAt(port, 0);
+    await sendChildToRunning(child, port, "gen-1");
+    child.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "x" },
+    });
+    await flush();
+    await settleRunningChild(child, port, "gen-1", 3);
+    const result = await promise;
+    expect(result.isOk()).toBe(true);
+    expect(warns.some((entry) => entry.code === "onSessionEvent_failed")).toBe(
+      true,
+    );
+    expect(JSON.stringify(warns)).not.toContain("/secret/path");
+    controller.disposeAll();
+
+    const restorePort = new FakeChildProcessPort();
+    const restoreWarns: Array<{ code?: unknown }> = [];
+    const restoreController = recoveryController(restorePort, {
+      logger: {
+        ...noopLogger,
+        warn: (obj: Record<string, unknown>) => {
+          restoreWarns.push({ code: obj.code });
+        },
+      },
+    });
+    const restorePromise = restoreController.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "Continue safely.",
+      record: recoveryRecord(),
+      onSessionEvent: () => {
+        throw new Error("restore callback boom");
+      },
+    });
+    await flush();
+    // respondHandshakeAndSettle emits message_end (parser-approved) before
+    // settlement; a throwing sink must not prevent restore success.
+    await respondHandshakeAndSettle(spawnedAt(restorePort, 0), restorePort, "gen-1");
+    expect((await restorePromise).isOk()).toBe(true);
+    expect(
+      restoreWarns.some((entry) => entry.code === "onSessionEvent_failed"),
+    ).toBe(true);
+    restoreController.disposeAll();
+  });
 });

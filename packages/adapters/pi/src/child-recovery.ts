@@ -9,6 +9,7 @@ import type {
   PiChildHistoryRecord,
 } from "./child-history-schema.js";
 import { MAX_FINAL_OUTPUT_BYTES } from "./child-history-schema.js";
+import type { PiChildSessionEvent } from "./child-session-events.js";
 
 export const RECOVERY_CHOICES = ["Recover now", "Skip", "Inspect"] as const;
 export type PiRecoveryChoice = (typeof RECOVERY_CHOICES)[number];
@@ -44,6 +45,12 @@ export interface PiChildRecoverySpawnInput {
   readonly policy?: unknown;
   readonly limits?: unknown;
   readonly continuation: string;
+  /**
+   * Optional parser-approved session-event sink for restore spawns. Invoked
+   * from the authenticated child observer; exceptions are isolated and must
+   * never affect child execution.
+   */
+  readonly onSessionEvent?: (event: PiChildSessionEvent) => void;
 }
 
 /** The only recovered data that may cross back into the parent model. */

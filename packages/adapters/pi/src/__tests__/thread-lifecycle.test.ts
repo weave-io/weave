@@ -697,6 +697,43 @@ describe("thread lifecycle: retry", () => {
     });
   });
 
+  it("reports assigned run number/agent/action before spawn via onRunAssigned", async () => {
+    const h = harness();
+    await startThread(h, "failed");
+    const assignments: Array<{
+      runNumber: number;
+      action: string;
+      agentName: string;
+      childId: string;
+    }> = [];
+    const run = h.controller.resumeThread(
+      resume({
+        onRunAssigned: (assignment) => {
+          assignments.push({
+            runNumber: assignment.runNumber,
+            action: assignment.action,
+            agentName: assignment.agentName,
+            childId: assignment.childId,
+          });
+          // Assignment must precede the second spawn.
+          expect(h.port.spawnInputs.length).toBe(1);
+        },
+      }),
+    );
+    await flush();
+    expect(assignments).toEqual([
+      {
+        runNumber: 2,
+        action: "retry",
+        agentName: "shuttle",
+        childId: "child-2",
+      },
+    ]);
+    const second = spawnedAt(h.port, 1);
+    await settleChild(second, h.port, "completed");
+    expect((await run).isOk()).toBe(true);
+  });
+
   it("reopens the same native session at its newest leaf", async () => {
     const h = harness();
     await startThread(h, "failed");

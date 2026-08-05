@@ -106,6 +106,46 @@ export {
   renderChildInspection,
 } from "./child-inspection-render.js";
 export type {
+  ChildCompactDegradedReason,
+  ChildCompactError,
+  ChildCompactItem,
+  ChildCompactItemKind,
+  ChildCompactReducerInput,
+  ChildCompactRenderOptions,
+  ChildCompactRenderOutput,
+  ChildCompactRunAction,
+  ChildCompactRunBlock,
+  ChildCompactRunStatus,
+  ChildCompactState,
+  PiChildCompactProjectionConfig,
+  PiChildCompactStartRunInput,
+} from "./child-compact-render.js";
+export {
+  CHILD_COMPACT_COLLAPSED_CODE_POINTS,
+  CHILD_COMPACT_EXPANDED_CODE_POINTS,
+  CHILD_COMPACT_MAX_DEDUP_KEYS,
+  CHILD_COMPACT_MAX_ITEMS,
+  CHILD_COMPACT_MAX_RUNS,
+  childCompactLineCount,
+  createChildCompactState,
+  degradedChildCompactRender,
+  mapPiChildSessionEventToCompactInput,
+  parseReducerInput,
+  PiChildCompactProjection,
+  projectChildCompact,
+  reduceChildCompact,
+  reduceChildCompactSafe,
+  renderChildCompact,
+  renderChildCompactSafe,
+  sanitizeChildCompactText,
+} from "./child-compact-render.js";
+export type { PiNativeTranscriptComponentDeps } from "./child-native-components.js";
+export {
+  CHILD_COMPACT_NATIVE_RENDER_FAILED,
+  createPiNativeTranscriptComponentFactory,
+  renderPiChildCompactComponent,
+} from "./child-native-components.js";
+export type {
   PiChildInspectionEffectiveSettings,
   PiChildInspectionSettings,
   PiChildInspectionSettingsChoice,
@@ -388,6 +428,7 @@ export {
   type PiThreadCachePort,
   type PiThreadInitiator,
   type PiThreadRefPort,
+  type PiThreadRunAssignment,
   type PiThreadRunOutcome,
   type PiThreadRunRequest,
   type PiThreadSessionPort,

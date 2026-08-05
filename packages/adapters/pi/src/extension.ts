@@ -1198,6 +1198,12 @@ async function applyChildBootstrap(
           buildRelayedDelegationToolRegistration({
             targets: parsed.delegationTargets,
             getRuntime: () => state.runtime,
+            onCompactRenderFailure: (code) => {
+              deps.logger.warn(
+                { code },
+                "weave_delegate compact render failed",
+              );
+            },
           }),
         ]),
     // Only a direct-step child (Pi adapter contract) ever receives
@@ -2381,6 +2387,12 @@ export function createPiExtension(
                     agentName,
                     latestSessionCtx,
                   ),
+            onCompactRenderFailure: (code) => {
+              deps.logger.warn(
+                { code },
+                "weave_delegate compact render failed",
+              );
+            },
           }),
         ];
       },

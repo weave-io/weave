@@ -220,7 +220,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
   - **Acceptance**:
     - `bun test packages/adapters/pi/src/__tests__/session-transition.test.ts` passes: Stay default, cancel-then-transition ordering, veto on failure, no old-child data post-transition, quit force-stop bound, orphan read-only access.
 
-- [ ] 11. Implement compact `weave_delegate` tool-block rendering
+- [x] 11. Implement compact `weave_delegate` tool-block rendering
   - **What**: Replace the current compact rendering with the native-style block: native header; while running, only the latest meaningful raw non-whitespace activity fragment in a 3-line collapsed tail (expanded current item when the block is expanded); on settlement, final assembled response tail or error. Uses Pi normal render scheduling, parser-approved event flow, stable IDs/dedup/out-of-order placeholders, terminal control sanitization; settlement drains final events. Nested delegation renders the same compact block. UI errors are isolated from execution.
   - **Files**: `packages/adapters/pi/src/child-compact-render.ts` (new), `packages/adapters/pi/src/child-session-events.ts`, `packages/adapters/pi/src/child-native-components.ts`, wiring in `packages/adapters/pi/src/extension.ts` and `delegation-controller.ts`; tests `child-compact-render.test.ts` (new).
   - **Depends on**: Tasks 8–9 (event/settlement shapes).

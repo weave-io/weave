@@ -9,10 +9,19 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import type { DelegationTarget } from "@weaveio/weave-engine";
-import type { ResultAsync } from "neverthrow";
+import { Result, type ResultAsync } from "neverthrow";
 import { Type } from "typebox";
+import {
+  type ChildCompactRenderOutput,
+  degradedChildCompactRender,
+  PiChildCompactProjection,
+} from "./child-compact-render.js";
+import {
+  CHILD_COMPACT_NATIVE_RENDER_FAILED,
+  renderPiChildCompactComponent,
+} from "./child-native-components.js";
 import type { PiChildRuntime, PiChildRuntimeError } from "./child-runtime.js";
-import type { PiChildTreeNode } from "./child-tree.js";
+import type { PiChildSessionEvent } from "./child-session-events.js";
 import { truncateLatestOutput } from "./child-tree.js";
 import type {
   PiDelegationController,
@@ -32,10 +41,16 @@ import type {
   IdGenerator,
   PiSessionContext,
   PiToolRegistration,
+  PiToolRenderComponent,
+  PiToolRenderContext,
+  PiToolRenderOptions,
   PiToolResult,
   PiToolResultContent,
   PiUiThemePort,
 } from "./types.js";
+
+/** Stable logger code when compact native theming fails. */
+export const COMPACT_RENDER_FAILED_CODE = CHILD_COMPACT_NATIVE_RENDER_FAILED;
 
 export const WEAVE_DELEGATION_TOOL_NAME = "weave_delegate";
 // The raw `task` tool argument validation (Pi adapter contract) lives in
@@ -152,9 +167,27 @@ export interface PiDelegationToolDeps {
     readonly model?: string;
     readonly reasoningLevel?: string;
   };
+  /**
+   * Reports a stable compact-render failure code. Never receives paths,
+   * exception text, or child content. Wired from `extension.ts` to the
+   * adapter logger.
+   */
+  readonly onCompactRenderFailure?: (code: string) => void;
 }
 
-interface PiDelegationRenderDetails {
+/**
+ * Strict §6 compact projection payload carried on tool-result details.
+ * Prefer this over the legacy snapshot details shape.
+ */
+export interface PiDelegationCompactDetails {
+  readonly kind: "weave-delegation-compact";
+  readonly lines: readonly [string, string, string];
+  readonly expandedCurrentItem: string | undefined;
+  readonly degraded: boolean;
+}
+
+/** Legacy snapshot-driven details retained only as a render fallback. */
+interface PiDelegationLegacyRenderDetails {
   readonly kind: "weave-delegation";
   readonly agent: string;
   readonly displayName: string;
@@ -162,6 +195,10 @@ interface PiDelegationRenderDetails {
   readonly currentTool?: string;
   readonly latestOutput: string;
 }
+
+type PiDelegationRenderDetails =
+  | PiDelegationCompactDetails
+  | PiDelegationLegacyRenderDetails;
 
 function formatNamePart(part: string): string {
   if (part.length === 0) return part;
@@ -189,12 +226,42 @@ function toolResult(
   return { content: [{ type: "text", text }], details };
 }
 
-function settlementOutput(settlement: PiChildSettlement): string {
-  if (settlement.outcome === "completed") {
-    return settlement.assistantOutput ?? settlement.completionCandidate ?? "";
-  }
-  if (settlement.outcome === "failed") return settlement.reason;
-  return "Cancelled";
+function compactDetailsFrom(
+  output: ChildCompactRenderOutput,
+): PiDelegationCompactDetails {
+  return {
+    kind: "weave-delegation-compact",
+    lines: output.lines,
+    expandedCurrentItem: output.expandedCurrentItem,
+    degraded: output.degraded,
+  };
+}
+
+/** Always stores both collapsed lines and the bounded expanded item. */
+function projectCompactDetails(
+  projection: PiChildCompactProjection,
+): PiDelegationCompactDetails {
+  const collapsed = projection.render();
+  const expanded = projection.render({ expanded: true });
+  return {
+    kind: "weave-delegation-compact",
+    lines: collapsed.lines,
+    expandedCurrentItem: expanded.expandedCurrentItem,
+    degraded: collapsed.degraded || expanded.degraded,
+  };
+}
+
+function compactPartialResult(
+  modelVisibleText: string,
+  details: PiDelegationCompactDetails,
+): PiToolResult {
+  return toolResult(modelVisibleText, details);
+}
+
+function modelVisibleFromCompact(details: PiDelegationCompactDetails): string {
+  // Keep model-visible partial content as the activity line, never chrome.
+  const activity = details.lines[1];
+  return activity.length > 0 ? activity : "…";
 }
 
 /**
@@ -244,21 +311,15 @@ function parentVisibleSettlement(
  * that already list them.
  */
 function successResult(
-  agent: string,
   settlement: PiChildSettlement,
+  compact?: PiDelegationCompactDetails,
 ): PiToolResult {
   return toolResult(
     JSON.stringify({
       ok: true,
       settlement: parentVisibleSettlement(settlement),
     }),
-    {
-      kind: "weave-delegation",
-      agent,
-      displayName: formatDelegationAgentName(agent),
-      status: settlement.outcome,
-      latestOutput: settlementOutput(settlement),
-    },
+    compact,
   );
 }
 
@@ -268,7 +329,10 @@ function successResult(
  * response. It never carries a session path, a native session id, a ref, or
  * any part of the child transcript beyond the bounded terminal response.
  */
-function threadResult(outcome: PiThreadRunOutcome): PiToolResult {
+function threadResult(
+  outcome: PiThreadRunOutcome,
+  compact?: PiDelegationCompactDetails,
+): PiToolResult {
   const settlement = outcome.settlement;
   const status = settlement.outcome;
   const response =
@@ -286,6 +350,7 @@ function threadResult(outcome: PiThreadRunOutcome): PiToolResult {
       retryable: status !== "completed",
       ...(response.length > 0 ? { response } : {}),
     }),
+    compact,
   );
 }
 
@@ -334,28 +399,41 @@ function failureResult(
   return toolResult(text);
 }
 
-function streamingResult(
-  agent: string,
-  snapshot: PiChildTreeNode,
-): PiToolResult {
-  const details: PiDelegationRenderDetails = {
-    kind: "weave-delegation",
-    agent,
-    displayName: formatDelegationAgentName(agent),
-    status: snapshot.status,
-    currentTool: snapshot.currentTool,
-    latestOutput: snapshot.latestOutput,
-  };
-  const text = snapshot.latestOutput || `Status: ${snapshot.status}`;
-  return toolResult(text, details);
-}
-
-function readRenderDetails(
+function readCompactDetails(
   details: unknown,
-): PiDelegationRenderDetails | undefined {
+): PiDelegationCompactDetails | undefined {
   if (typeof details !== "object" || details === null || Array.isArray(details))
     return undefined;
-  const candidate = details as Partial<PiDelegationRenderDetails>;
+  const candidate = details as Partial<PiDelegationCompactDetails>;
+  if (candidate.kind !== "weave-delegation-compact") return undefined;
+  if (
+    !Array.isArray(candidate.lines) ||
+    candidate.lines.length !== 3 ||
+    typeof candidate.lines[0] !== "string" ||
+    typeof candidate.lines[1] !== "string" ||
+    typeof candidate.lines[2] !== "string" ||
+    typeof candidate.degraded !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    kind: "weave-delegation-compact",
+    lines: [candidate.lines[0], candidate.lines[1], candidate.lines[2]],
+    expandedCurrentItem:
+      typeof candidate.expandedCurrentItem === "string"
+        ? candidate.expandedCurrentItem
+        : undefined,
+    degraded: candidate.degraded,
+  };
+}
+
+/** Legacy snapshot details — fallback only for older stored results. */
+function readLegacyRenderDetails(
+  details: unknown,
+): PiDelegationLegacyRenderDetails | undefined {
+  if (typeof details !== "object" || details === null || Array.isArray(details))
+    return undefined;
+  const candidate = details as Partial<PiDelegationLegacyRenderDetails>;
   if (candidate.kind !== "weave-delegation") return undefined;
   if (
     typeof candidate.agent !== "string" ||
@@ -364,11 +442,11 @@ function readRenderDetails(
     typeof candidate.latestOutput !== "string"
   )
     return undefined;
-  return candidate as PiDelegationRenderDetails;
+  return candidate as PiDelegationLegacyRenderDetails;
 }
 
 function renderStatus(
-  details: PiDelegationRenderDetails,
+  details: PiDelegationLegacyRenderDetails,
   theme: PiUiThemePort,
 ): string {
   const tool =
@@ -390,6 +468,143 @@ function collapsedPreview(output: string): string {
   return `…${codePoints
     .slice(-(COLLAPSED_PREVIEW_CODE_POINT_LIMIT - 1))
     .join("")}`;
+}
+
+function pushCompactUpdate(
+  onUpdate: ((update: PiToolResult) => void) | undefined,
+  projection: PiChildCompactProjection,
+): PiDelegationCompactDetails {
+  const details = projectCompactDetails(projection);
+  onUpdate?.(compactPartialResult(modelVisibleFromCompact(details), details));
+  return details;
+}
+
+function settleCompactProjection(
+  projection: PiChildCompactProjection | undefined,
+  settlement: PiChildSettlement,
+  agentName: string,
+  threadId: string,
+  runNumber: number,
+  action: "start" | "retry" | "continue",
+): PiDelegationCompactDetails {
+  if (projection !== undefined) {
+    projection.settle(settlement);
+    return projectCompactDetails(projection);
+  }
+  // Nested/relay fallback: build the final three-line block from settlement.
+  const fallback = new PiChildCompactProjection({
+    threadId,
+    agentName,
+  });
+  fallback.startRun({ runNumber, action, agentName });
+  fallback.settle(settlement);
+  return projectCompactDetails(fallback);
+}
+
+function parseRelaySettlement(body: JsonValue): PiChildSettlement | undefined {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return undefined;
+  }
+  const record = body as Record<string, unknown>;
+  if (record.ok !== true) return undefined;
+  const settlement = record.settlement;
+  if (
+    typeof settlement !== "object" ||
+    settlement === null ||
+    Array.isArray(settlement)
+  ) {
+    return undefined;
+  }
+  const s = settlement as Record<string, unknown>;
+  if (s.outcome === "completed") {
+    return {
+      outcome: "completed",
+      ...(typeof s.assistantOutput === "string"
+        ? { assistantOutput: s.assistantOutput }
+        : typeof s.finalOutput === "string"
+          ? { assistantOutput: s.finalOutput }
+          : {}),
+    };
+  }
+  if (s.outcome === "failed" && typeof s.reason === "string") {
+    return { outcome: "failed", reason: s.reason };
+  }
+  if (s.outcome === "cancelled") {
+    return { outcome: "cancelled" };
+  }
+  return undefined;
+}
+
+/**
+ * Shared compact `renderResult` for root and relayed `weave_delegate` tools.
+ * Prefer strict compact details; fall back to legacy snapshot details; theme
+ * failures degrade without affecting execution.
+ */
+export function renderDelegationCompactResult(
+  result: PiToolResult,
+  options: PiToolRenderOptions,
+  theme: PiUiThemePort,
+  context: PiToolRenderContext,
+  onCompactRenderFailure?: (code: string) => void,
+): PiToolRenderComponent {
+  const degrade = (code: string): PiToolRenderComponent => {
+    onCompactRenderFailure?.(code);
+    const degraded = degradedChildCompactRender("render_failed");
+    return new Text(degraded.lines.join("\n"), 0, 0);
+  };
+
+  const compact = readCompactDetails(result.details);
+  if (compact !== undefined) {
+    return renderPiChildCompactComponent(
+      {
+        lines: compact.lines,
+        expandedCurrentItem: compact.expandedCurrentItem,
+        degraded: compact.degraded,
+      },
+      { expanded: options.expanded },
+      theme,
+    ).match(
+      (component) => component,
+      (code) => degrade(code),
+    );
+  }
+
+  return Result.fromThrowable(
+    () => {
+      const legacy = readLegacyRenderDetails(result.details);
+      const agent =
+        legacy?.agent ??
+        (typeof context.args?.agent === "string"
+          ? context.args.agent
+          : "delegate");
+      if (legacy === undefined) {
+        const fallback = result.content[0]?.text ?? "";
+        return new Text(
+          theme.fg(
+            "toolOutput",
+            fallback === "" ? formatDelegationAgentName(agent) : fallback,
+          ),
+          0,
+          0,
+        );
+      }
+      const rule = theme.fg("muted", "\u2500".repeat(DELEGATION_RULE_WIDTH));
+      const body =
+        legacy.latestOutput.length === 0
+          ? renderStatus(legacy, theme)
+          : theme.fg(
+              "toolOutput",
+              options.expanded
+                ? legacy.latestOutput
+                : collapsedPreview(legacy.latestOutput),
+            );
+      return new Text(`${rule}\n${body}`, 0, 0);
+    },
+    () => COMPACT_RENDER_FAILED_CODE,
+  )().match(
+    (component) => component,
+    (code) => degrade(code),
+  );
 }
 
 /**
@@ -558,38 +773,14 @@ export function buildDelegationToolRegistration(
         0,
       );
     },
-    renderResult: (result, options, theme, context) => {
-      const details = readRenderDetails(result.details);
-      const agent =
-        details?.agent ??
-        (typeof context.args?.agent === "string"
-          ? context.args.agent
-          : "delegate");
-      if (details === undefined) {
-        const fallback = result.content[0]?.text ?? "";
-        return new Text(
-          theme.fg(
-            "toolOutput",
-            fallback === "" ? formatDelegationAgentName(agent) : fallback,
-          ),
-          0,
-          0,
-        );
-      }
-      // The call line already names the agent, model, and reasoning level, so
-      // the result body is a rule and the child's latest thought.
-      const rule = theme.fg("muted", "\u2500".repeat(DELEGATION_RULE_WIDTH));
-      const body =
-        details.latestOutput.length === 0
-          ? renderStatus(details, theme)
-          : theme.fg(
-              "toolOutput",
-              options.expanded
-                ? details.latestOutput
-                : collapsedPreview(details.latestOutput),
-            );
-      return new Text(`${rule}\n${body}`, 0, 0);
-    },
+    renderResult: (result, options, theme, context) =>
+      renderDelegationCompactResult(
+        result,
+        options,
+        theme,
+        context,
+        deps.onCompactRenderFailure,
+      ),
     execute: async (_toolCallId, params, signal, onUpdate, ctx) => {
       // The persistent-parent guard runs first, before this call parses
       // arguments, reads the controller, generates a child id, or touches any
@@ -613,9 +804,12 @@ export function buildDelegationToolRegistration(
       if (parsed.kind !== "start") {
         // A thread run reuses the thread's own recorded agent, model, and
         // native session; the caller supplies only the opaque thread id and,
-        // for a continue, the new task.
+        // for a continue, the new task. Each tool call opens a new compact
+        // block; prior Pi tool blocks stay frozen.
         const instruction =
           parsed.kind === "retry" ? parsed.instruction : parsed.task;
+        let projection: PiChildCompactProjection | undefined;
+        let assignedAgent = "delegate";
         return controller
           .resumeThread({
             threadId: parsed.threadId,
@@ -628,9 +822,37 @@ export function buildDelegationToolRegistration(
                   ? guard.value.sessionId
                   : "",
             },
+            onRunAssigned: (assignment) => {
+              assignedAgent = assignment.agentName;
+              projection = new PiChildCompactProjection({
+                threadId: assignment.threadId,
+                agentName: assignment.agentName,
+              });
+              projection.startRun({
+                runNumber: assignment.runNumber,
+                action: assignment.action,
+                agentName: assignment.agentName,
+              });
+              pushCompactUpdate(onUpdate, projection);
+            },
+            onSessionEvent: (event: PiChildSessionEvent) => {
+              if (projection === undefined) return;
+              projection.applySessionEvent(event);
+              pushCompactUpdate(onUpdate, projection);
+            },
           })
           .match(
-            (outcome) => threadResult(outcome),
+            (outcome) => {
+              const compact = settleCompactProjection(
+                projection,
+                outcome.settlement,
+                assignedAgent,
+                parsed.threadId,
+                outcome.run,
+                parsed.kind,
+              );
+              return threadResult(outcome, compact);
+            },
             (failure) => threadFailureResult(parsed.threadId, failure),
           );
       }
@@ -662,6 +884,17 @@ export function buildDelegationToolRegistration(
         );
         return failureResult(aborted.code, aborted);
       }
+      // Root start: child id is also the opaque thread id (controller provision).
+      const projection = new PiChildCompactProjection({
+        threadId: childId,
+        agentName: parsed.agent,
+      });
+      projection.startRun({
+        runNumber: 1,
+        action: "start",
+        agentName: parsed.agent,
+      });
+      pushCompactUpdate(onUpdate, projection);
       const request: PiDelegationRequest = {
         parentId: deps.parentId,
         parentDepth: deps.parentDepth,
@@ -677,14 +910,26 @@ export function buildDelegationToolRegistration(
           ctx,
           invocation.parentAgentName,
         ),
-        onUpdate:
-          onUpdate === undefined
-            ? undefined
-            : (snapshot) => onUpdate(streamingResult(parsed.agent, snapshot)),
+        // Compact live updates come only from parser-approved session events.
+        // Tree-snapshot onUpdate must not overwrite compact event output.
+        onSessionEvent: (event: PiChildSessionEvent) => {
+          projection.applySessionEvent(event);
+          pushCompactUpdate(onUpdate, projection);
+        },
         childId,
       };
       const settlement = controller.delegate(request).match(
-        (value) => successResult(parsed.agent, value),
+        (value) => {
+          const compact = settleCompactProjection(
+            projection,
+            value,
+            parsed.agent,
+            childId,
+            1,
+            "start",
+          );
+          return successResult(value, compact);
+        },
         (failure) => failureResult(failure.code, failure),
       );
       if (signal === undefined) return settlement;
@@ -715,6 +960,11 @@ export interface PiRelayedDelegationToolDeps {
   readonly targets: readonly DelegationTarget[];
   /** Lazily reads this child's own private-control runtime; `undefined` before bootstrap has applied (fails closed). */
   readonly getRuntime: () => PiChildRuntime | undefined;
+  /**
+   * Reports a stable compact-render failure code. Same contract as the root
+   * tool; never receives paths or exception text.
+   */
+  readonly onCompactRenderFailure?: (code: string) => void;
 }
 
 /**
@@ -728,6 +978,10 @@ export interface PiRelayedDelegationToolDeps {
  * this child's own identity/depth against the exact same global
  * tree/process budget as every other delegation - nested delegation is
  * never a second, independent, untracked budget.
+ *
+ * Live session events are unavailable across the relay control channel, so
+ * the compact block is built from the structured settlement only. Final
+ * appearance and the three-line contract match the root tool.
  */
 export function buildRelayedDelegationToolRegistration(
   deps: PiRelayedDelegationToolDeps,
@@ -743,6 +997,14 @@ export function buildRelayedDelegationToolRegistration(
     promptGuidelines: [
       "Use only an `agent` name listed as an eligible delegation target for this session.",
     ],
+    renderResult: (result, options, theme, context) =>
+      renderDelegationCompactResult(
+        result,
+        options,
+        theme,
+        context,
+        deps.onCompactRenderFailure,
+      ),
     execute: async (_toolCallId, params) => {
       const parsed = parseDelegationCall(params);
       // A relayed child may only start a new delegation. Thread lifecycle
@@ -785,9 +1047,24 @@ export function buildRelayedDelegationToolRegistration(
           task: parsed.task,
         });
       return reply.match(
-        (body) => ({
-          content: [{ type: "text", text: JSON.stringify(body) }],
-        }),
+        (body) => {
+          const settlement = parseRelaySettlement(body);
+          const compact =
+            settlement === undefined
+              ? compactDetailsFrom(degradedChildCompactRender("invalid_input"))
+              : settleCompactProjection(
+                  undefined,
+                  settlement,
+                  parsed.agent,
+                  "nested",
+                  1,
+                  "start",
+                );
+          return {
+            content: [{ type: "text", text: JSON.stringify(body) }],
+            details: compact,
+          };
+        },
         (failure) => ({
           content: [
             {
