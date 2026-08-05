@@ -283,7 +283,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
         T007: {
           file: "packages/cli/src/commands/__tests__/adapter.test.ts",
-          name: "resolves a unique origin parent from list metadata",
+          name: "resolves a unique origin parent via children.resolve",
         },
         T008: {
           file: "packages/cli/src/commands/__tests__/adapter.test.ts",
