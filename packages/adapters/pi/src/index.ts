@@ -250,6 +250,11 @@ export {
   type PiSpawnedChildProcess,
 } from "./child-process-port.js";
 export {
+  authorizeChildAccess,
+  classifyChildAccess,
+  type PiChildAccessDenial,
+  type PiChildAccessOperation,
+  type PiChildAccessState,
   type PiChildBootstrapHandlers,
   type PiChildOutputPort,
   PiChildRuntime,
@@ -411,6 +416,7 @@ export {
   makeChildHistoryQuotaExceededFailure,
   makeChildInteractionUnavailableFailure,
   makeChildNativeRecordTooLargeFailure,
+  makeChildOrphanReadOnlyFailure,
   makeChildRecoveryUnavailableFailure,
   makeChildSchemaInvalidFailure,
   makeCommandCollisionFailure,

@@ -83,6 +83,7 @@ const FROZEN_FAILURE_CODES = [
   "ChildRecoveryUnavailable",
   "ChildInteractionUnavailable",
   "ChildExtensionUiRejected",
+  "ChildOrphanReadOnly",
   // thread lifecycle
   "ThreadNotFound",
   "ThreadAuthorityDenied",

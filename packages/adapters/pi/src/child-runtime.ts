@@ -48,7 +48,12 @@ import {
 import { SystemTimerPort, type TimerPort } from "./child-timer.js";
 import { encodeTransferChunks } from "./child-transfer.js";
 import { encodeDelegateRequestChunks } from "./delegate-request-chunking.js";
-import { PI_TRANSPORT_LIMITS } from "./errors.js";
+import {
+  makeChildInteractionUnavailableFailure,
+  makeChildOrphanReadOnlyFailure,
+  makeThreadNotFoundFailure,
+  PI_TRANSPORT_LIMITS,
+} from "./errors.js";
 import type { JsonValue } from "./strict-json.js";
 import type { PiAdapterLogger, PiEnvPort } from "./types.js";
 
@@ -747,4 +752,83 @@ export class PiChildRuntime {
     this.authState?.dispose();
     this.authState = undefined;
   }
+}
+
+/**
+ * Parent-side access states for an existing child after its origin parent
+ * may have been deleted or replaced. Classification is pure: it never
+ * deletes, tombstones, or mutates child storage.
+ */
+export type PiChildAccessState =
+  | "owned"
+  | "read-only-orphan"
+  | "unavailable"
+  | "origin-mismatch";
+
+/** Operations gated by {@link authorizeChildAccess}. */
+export type PiChildAccessOperation =
+  | "read"
+  | "history"
+  | "doctor"
+  | "steer"
+  | "follow-up"
+  | "retry"
+  | "continue"
+  | "delete";
+
+const READ_ONLY_CHILD_ACCESS_OPERATIONS: ReadonlySet<PiChildAccessOperation> =
+  new Set(["read", "history", "doctor"]);
+
+export type PiChildAccessDenial =
+  | ReturnType<typeof makeChildOrphanReadOnlyFailure>
+  | ReturnType<typeof makeThreadNotFoundFailure>
+  | ReturnType<typeof makeChildInteractionUnavailableFailure>;
+
+/**
+ * Classifies whether a child is still owned by the live parent, is a
+ * read-only orphan (child exists but origin parent is gone), is an
+ * origin-mismatched branch copy, or is simply unavailable. Never deletes.
+ */
+export function classifyChildAccess(input: {
+  readonly childExists: boolean;
+  readonly originParentSessionId: string | undefined;
+  readonly liveParentSessionId: string | undefined;
+}): PiChildAccessState {
+  if (!input.childExists) return "unavailable";
+  if (
+    input.originParentSessionId === undefined ||
+    input.originParentSessionId.length === 0
+  ) {
+    return "read-only-orphan";
+  }
+  if (
+    input.liveParentSessionId === undefined ||
+    input.liveParentSessionId !== input.originParentSessionId
+  ) {
+    return "origin-mismatch";
+  }
+  return "owned";
+}
+
+/**
+ * Authorizes one child operation against a classified access state.
+ * Read/history/doctor remain available for owned, read-only-orphan, and
+ * origin-mismatch children. Mutations require `owned`.
+ */
+export function authorizeChildAccess(
+  childId: string,
+  state: PiChildAccessState,
+  operation: PiChildAccessOperation,
+): Result<void, PiChildAccessDenial> {
+  if (state === "owned") return ok(undefined);
+  if (state === "unavailable") {
+    return err(makeChildInteractionUnavailableFailure(childId));
+  }
+  if (READ_ONLY_CHILD_ACCESS_OPERATIONS.has(operation)) {
+    return ok(undefined);
+  }
+  if (state === "origin-mismatch") {
+    return err(makeThreadNotFoundFailure(childId, "origin-mismatch"));
+  }
+  return err(makeChildOrphanReadOnlyFailure(childId));
 }

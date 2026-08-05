@@ -44,7 +44,7 @@ import type {
   PiChildRefScan,
   PiChildRefStatus,
 } from "./child-session-refs.js";
-import type { TimerHandle, TimerPort } from "./child-timer.js";
+import { type TimerHandle, type TimerPort, SystemTimerPort } from "./child-timer.js";
 import {
   addUsage,
   EMPTY_USAGE_AGGREGATE,
@@ -294,6 +294,25 @@ export interface PiThreadCachePort {
   ): Result<unknown, unknown>;
 }
 
+/**
+ * Result of one confirmed session-transition settlement: how many owned
+ * subtree roots were cancelled and how many origin settlement appends landed.
+ */
+export interface PiTransitionSettlementReport {
+  readonly cancelled: number;
+  readonly settlementsWritten: number;
+}
+
+/** Outcome of a bounded quit/reload shutdown. */
+export interface PiShutdownReport {
+  readonly gracefullyCancelled: number;
+  readonly forceStopped: number;
+  readonly timedOut: boolean;
+}
+
+/** Default graceful-cancel budget before quit/reload force-stops what remains. */
+export const DEFAULT_TRANSITION_SHUTDOWN_BUDGET_MS = 10_000;
+
 /** Adapter-tracked state of one logical thread across all of its runs. */
 interface PiThreadState {
   readonly threadId: string;
@@ -456,6 +475,31 @@ export class PiDelegationController {
   private readonly threads = new Map<string, PiThreadState>();
   /** Explicit thread transfers: thread id to the ancestor child id granted it. */
   private readonly threadTransfers = new Map<string, string>();
+  /**
+   * Newest parent ref record seen for each logical thread. A session
+   * transition writes settlement metadata back through these records, so the
+   * append always lands in the origin parent that owns the thread and never
+   * in a destination/new session.
+   */
+  private readonly threadRecords = new Map<string, PiChildRefRecord>();
+  /**
+   * `thread\0status` keys whose settlement metadata has already landed in the
+   * origin refs. Keeps the transition write-back and the ordinary in-flight
+   * settlement write from double-appending the same outcome.
+   */
+  private readonly threadSettlementWritten = new Set<string>();
+  /**
+   * In-flight settlement appends keyed by `thread\0status`. Both the ordinary
+   * asynchronous settlement path and the session-transition path route
+   * through this map, so a race shares one write promise instead of
+   * producing two entries, and a transition can await a write the ordinary
+   * path already started. A failed write is removed so it stays retryable,
+   * and its failure is returned to every joined caller.
+   */
+  private readonly threadSettlementWrites = new Map<
+    string,
+    Promise<Result<void, PiAdapterFailure>>
+  >();
 
   constructor(private readonly deps: PiDelegationControllerDeps) {}
 
@@ -710,7 +754,7 @@ export class PiDelegationController {
                 );
               })
               .map((ref) => {
-                this.updateThreadCache(ref);
+                this.rememberThreadRecord(ref);
                 return {
                   session: {
                     mode: "restore" as const,
@@ -1574,7 +1618,7 @@ export class PiDelegationController {
         ),
       )
       .map((next) => {
-        this.updateThreadCache(next);
+        this.rememberThreadRecord(next);
         return next;
       });
   }
@@ -1598,10 +1642,77 @@ export class PiDelegationController {
     const refs = this.deps.threadRefs?.();
     if (refs === undefined || record === undefined || state === undefined)
       return;
-    void refs.appendLifecycle(record, { status: state.status }).match(
-      (next) => this.updateThreadCache(next),
-      () => undefined,
-    );
+    this.rememberThreadRecord(record);
+    // Shared with the session-transition write-back: whichever path gets there
+    // first owns the single append, and the other joins the same promise.
+    void this.settlementWrite(state.threadId, record, refs, state.status);
+  }
+
+  /**
+   * The single exactly-once settlement append for one `thread + status`.
+   *
+   * Returns the shared in-flight promise when one exists, so the ordinary
+   * asynchronous settlement path and the session-transition path never append
+   * the same outcome twice and either one can await the other. Resolves `true`
+   * only for the caller whose call actually performed the append, so a
+   * transition can report a truthful write count.
+   */
+  private settlementWrite(
+    threadId: string,
+    record: PiChildRefRecord,
+    refs: PiThreadRefPort,
+    status: PiChildRefStatus,
+  ): ResultAsync<boolean, PiAdapterFailure> {
+    const key = `${threadId}\u0000${status}`;
+    if (this.threadSettlementWritten.has(key)) return okAsync(false);
+    const joined = this.threadSettlementWrites.get(key);
+    // A second caller never issues its own append: it observes the first
+    // caller's outcome, including its failure.
+    if (joined !== undefined)
+      return new ResultAsync(joined.then((result) => result.map(() => false)));
+    const pending = (async (): Promise<Result<void, PiAdapterFailure>> => {
+      const result = await refs
+        .appendLifecycle(record, { status })
+        .map((next) => {
+          this.threadSettlementWritten.add(key);
+          this.rememberThreadRecord(next);
+        })
+        .mapErr(() =>
+          // Closed reason string: never the ref store's own error text.
+          makeChildAbortFailedFailure(threadId, "settlement-writeback-failed"),
+        );
+      this.threadSettlementWrites.delete(key);
+      return result;
+    })();
+    this.threadSettlementWrites.set(key, pending);
+    return new ResultAsync(pending.then((result) => result.map(() => true)));
+  }
+
+  /**
+   * Awaits every settlement append currently in flight. A transition runs this
+   * before it classifies threads, so an ordinary settlement write that is
+   * still landing is never duplicated and its failure is never swallowed.
+   */
+  private async drainSettlementWrites(): Promise<
+    Result<void, PiAdapterFailure>
+  > {
+    while (this.threadSettlementWrites.size > 0) {
+      const inflight = [...this.threadSettlementWrites.values()];
+      const results = await Promise.all(inflight);
+      const failure = results.find((result) => result.isErr());
+      if (failure !== undefined && failure.isErr()) return err(failure.error);
+    }
+    return ok(undefined);
+  }
+
+  /**
+   * Keeps the newest ref record for a thread and projects it into the cache.
+   * Every ref-producing path routes through here so a later transition
+   * write-back always has the current record to append against.
+   */
+  private rememberThreadRecord(record: PiChildRefRecord): void {
+    this.threadRecords.set(record.threadId, record);
+    this.updateThreadCache(record);
   }
 
   /**
@@ -1847,9 +1958,233 @@ export class PiDelegationController {
     }
   }
 
+  /**
+   * Bounded count of owned descendants that still occupy capacity: every live
+   * child that has not reached a terminal state, plus every not-yet-spawned
+   * queued request. Session-transition guards read this to decide whether a
+   * transition needs confirmation at all - a zero count must allow the
+   * transition immediately, with no prompt and no data copied anywhere.
+   */
+  countUnsettledDescendants(): number {
+    if (this.disposedAll) return 0;
+    let count = 0;
+    for (const child of this.children.values())
+      if (!this.isTerminal(child)) count += 1;
+    return count + this.queue.length;
+  }
+
+  /**
+   * Confirmed session-transition path (Pi adapter contract): cancels the full
+   * owned subtree - live descendants and not-yet-spawned queued requests
+   * alike - waits for every child process and its bounded final-event drain
+   * to settle, then appends the settlement metadata to the *origin* parent's
+   * refs before resolving.
+   *
+   * The order is deliberate and observable: cancel, then drain, then origin
+   * write-back, then (for the caller) allow the transition. The origin ref
+   * port is captured before any cancellation runs, so a destination session
+   * activated afterwards can never receive another parent's write-back.
+   *
+   * Any cancellation or write-back failure resolves to a bounded, secret-free
+   * `PiAdapterFailure` the caller turns into a veto.
+   */
+  settleForTransition(): ResultAsync<
+    PiTransitionSettlementReport,
+    PiAdapterFailure
+  > {
+    if (this.disposedAll)
+      return okAsync({ cancelled: 0, settlementsWritten: 0 });
+    const originRefs = this.deps.threadRefs?.();
+    const roots = this.transitionCancellationRoots();
+    if (roots.length === 0)
+      return okAsync({ cancelled: 0, settlementsWritten: 0 });
+    return new ResultAsync(
+      (async (): Promise<
+        Result<PiTransitionSettlementReport, PiAdapterFailure>
+      > => {
+        // A generation that captured origin records must still be able to
+        // reach them. Losing the port mid-transition means the settlement can
+        // never be written back, so the transition is refused rather than
+        // reported as a success with nothing written.
+        if (originRefs === undefined && this.threadRecords.size > 0)
+          return err(
+            makeChildAbortFailedFailure(
+              roots[0] ?? "",
+              "settlement-refs-unavailable",
+            ),
+          );
+        const drained = await this.drainSettlementWrites();
+        if (drained.isErr()) return err(drained.error);
+        for (const rootId of roots) {
+          // Transition cancels must surface undelivered cancel/abort writes as
+          // `ChildAbortFailed` after forced cleanup. Ordinary Escape cleanup
+          // keeps using `cancelSubtree` so delivery failures stay soft.
+          const cancelled = await this.cancelSubtreeForTransition(rootId);
+          if (cancelled.isErr()) {
+            const first = cancelled.error[0];
+            return err(
+              first ??
+                makeChildAbortFailedFailure(rootId, "transition-cancel-failed"),
+            );
+          }
+        }
+        const settled = this.markTransitionCancelledThreads();
+        let written = 0;
+        for (const threadId of settled) {
+          const appended = await this.appendThreadSettlement(
+            threadId,
+            originRefs,
+          );
+          if (appended.isErr()) return err(appended.error);
+          if (appended.value) written += 1;
+        }
+        const settling = await this.drainSettlementWrites();
+        if (settling.isErr()) return err(settling.error);
+        return ok({ cancelled: roots.length, settlementsWritten: written });
+      })(),
+    );
+  }
+
+  /**
+   * Quit/reload path: a bounded graceful cancellation window followed by an
+   * unconditional force-stop of whatever is still alive. Expected stop
+   * failures are counted in the report, never thrown and never surfaced as a
+   * rejected result - shutdown must always complete.
+   */
+  shutdownWithinBudget(
+    budgetMs?: number,
+  ): ResultAsync<PiShutdownReport, never> {
+    if (this.disposedAll)
+      return okAsync({
+        gracefullyCancelled: 0,
+        forceStopped: 0,
+        timedOut: false,
+      });
+    const budget = budgetMs ?? DEFAULT_TRANSITION_SHUTDOWN_BUDGET_MS;
+    const timerPort = this.deps.timerPort ?? new SystemTimerPort();
+    const roots = this.transitionCancellationRoots();
+    return ResultAsync.fromSafePromise(
+      (async (): Promise<PiShutdownReport> => {
+        let timedOut = false;
+        if (roots.length > 0) {
+          const graceful = Promise.all(
+            roots.map(async (rootId) => {
+              await this.cancelSubtree(rootId);
+            }),
+          ).then(() => false);
+          const bounded = new Promise<boolean>((resolve) => {
+            const handle = timerPort.schedule(() => resolve(true), budget);
+            void graceful.then(() => handle.cancel());
+          });
+          timedOut = await Promise.race([graceful, bounded]);
+        }
+        let alive = 0;
+        for (const child of this.children.values())
+          if (!this.isTerminal(child)) alive += 1;
+        // Force-stop is unconditional: `disposeAll()` kills every remaining
+        // process and zeroes its secret, so no residual process, lease, or
+        // capacity survives quit/reload.
+        this.disposeAll();
+        return {
+          gracefullyCancelled: Math.max(roots.length - alive, 0),
+          forceStopped: alive,
+          timedOut,
+        };
+      })(),
+    );
+  }
+
+  /**
+   * Top-of-subtree node ids for a whole-tree cancellation: every live or
+   * queued node whose parent is the synthetic root or is not itself part of
+   * the snapshot. Cancelling these covers the entire owned forest exactly
+   * once, because `cancelSubtree` already walks descendants.
+   */
+  private transitionCancellationRoots(): readonly string[] {
+    const nodes = this.snapshotTree();
+    const present = new Set(nodes.map((node) => node.id));
+    return nodes
+      .filter((node) => {
+        const parentId = node.parentId;
+        return parentId === undefined || !present.has(parentId);
+      })
+      .map((node) => node.id);
+  }
+
+  /**
+   * Marks every thread whose run was still in flight as cancelled, so the
+   * transition write-back records a deterministic outcome instead of racing
+   * the run promise's own `settleThread` call. Returns the thread ids whose
+   * settlement still needs to reach the origin parent.
+   */
+  private markTransitionCancelledThreads(): readonly string[] {
+    const pending: string[] = [];
+    for (const state of this.threads.values()) {
+      if (state.running) {
+        state.running = false;
+        state.status = "cancelled";
+        state.lastRetryable = true;
+      }
+      if (
+        !this.threadSettlementWritten.has(
+          `${state.threadId}\u0000${state.status}`,
+        )
+      ) {
+        pending.push(state.threadId);
+      }
+    }
+    return pending;
+  }
+
+  /**
+   * Appends one thread's settled status to the supplied origin ref store.
+   * Resolves `false` when there is nothing to write (no store, no record, or
+   * this exact status already recorded) and `true` when an append landed.
+   */
+  private appendThreadSettlement(
+    threadId: string,
+    originRefs: PiThreadRefPort | undefined,
+  ): ResultAsync<boolean, PiAdapterFailure> {
+    const state = this.threads.get(threadId);
+    if (state === undefined) return okAsync(false);
+    // No ref store is wired for this generation at all, so this thread never
+    // captured an origin record and none is owed.
+    if (originRefs === undefined) return okAsync(false);
+    const record = this.threadRecords.get(threadId);
+    // A ref store exists but this pending thread has no authoritative record to
+    // append against. Guessing one would write settlement metadata into the
+    // wrong place, so the transition is vetoed instead.
+    if (record === undefined)
+      return errAsync(
+        makeChildAbortFailedFailure(threadId, "settlement-record-missing"),
+      );
+    return this.settlementWrite(threadId, record, originRefs, state.status);
+  }
+
   /** Cancels a node and every descendant, removing any not-yet-spawned queued requests under that subtree. */
   cancelSubtree(
     nodeId: string,
+  ): ResultAsync<void, readonly PiAdapterFailure[]> {
+    return this.cancelSubtreeWith(nodeId, (child) => child.cancel());
+  }
+
+  /**
+   * Session-transition cancel: same subtree walk and forced cleanup as
+   * {@link cancelSubtree}, but each live child uses
+   * {@link PiRpcChild.cancelForTransition} so an undelivered cancel/abort
+   * becomes a typed veto instead of a soft warning.
+   */
+  private cancelSubtreeForTransition(
+    nodeId: string,
+  ): ResultAsync<void, readonly PiAdapterFailure[]> {
+    return this.cancelSubtreeWith(nodeId, (child) =>
+      child.cancelForTransition(),
+    );
+  }
+
+  private cancelSubtreeWith(
+    nodeId: string,
+    cancelChild: (child: PiRpcChild) => ResultAsync<void, PiAdapterFailure>,
   ): ResultAsync<void, readonly PiAdapterFailure[]> {
     if (this.disposedAll) return ResultAsync.fromSafePromise(Promise.resolve());
     const ids = subtreeIds(this.snapshotNodesForSubtreeLookup(), nodeId);
@@ -1872,7 +2207,7 @@ export class PiDelegationController {
                         (error) => err(error),
                       );
               // Never leave a process alive because history persistence failed.
-              const cancelled = await child.cancel();
+              const cancelled = await cancelChild(child);
               if (marked.isErr())
                 return err(this.historyFailure(child.getId(), marked.error));
               return cancelled;

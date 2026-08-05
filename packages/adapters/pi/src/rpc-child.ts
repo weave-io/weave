@@ -2539,15 +2539,38 @@ export class PiRpcChild {
    * then force-kills if neither arrived in time. Guarantees termination of
    * the underlying process on every path - authenticated notice delivered
    * or not.
+   *
+   * Delivery failures are swallowed after forced cleanup so ordinary
+   * Escape/subtree cancellation still resolves cleanly. Session transitions
+   * that must veto on an undelivered cancel use
+   * {@link cancelForTransition} instead.
    */
   cancel(): ResultAsync<void, PiAdapterFailure> {
+    return this.runCancellation({ reportDeliveryFailure: false });
+  }
+
+  /**
+   * Session-transition cancel path: same forced cleanup as {@link cancel},
+   * but an undelivered authenticated cancel or raw abort surfaces as a
+   * closed `ChildAbortFailed` so the transition guard can veto. Ordinary
+   * cleanup callers must keep using {@link cancel}.
+   */
+  cancelForTransition(): ResultAsync<void, PiAdapterFailure> {
+    return this.runCancellation({ reportDeliveryFailure: true });
+  }
+
+  private runCancellation(options: {
+    readonly reportDeliveryFailure: boolean;
+  }): ResultAsync<void, PiAdapterFailure> {
     if (this.disposed || this.settled)
       return new ResultAsync(Promise.resolve(ok(undefined)));
     this.status = "cancelling";
+    let deliveryFailed = false;
     return this.sendControl("cancel", this.childId, {
       reason: "cancelled-by-parent",
     })
       .orElse((failure) => {
+        deliveryFailed = true;
         this.logger.warn(
           { childId: this.childId, code: failure.code },
           "authenticated cancel notice failed to deliver; proceeding to raw abort and bounded force-kill",
@@ -2566,6 +2589,7 @@ export class PiRpcChild {
                   ),
                 )
                 .orElse((failure) => {
+                  deliveryFailed = true;
                   this.logger.warn(
                     { childId: this.childId, code: failure.type },
                     "raw abort command failed to write; proceeding to bounded force-kill regardless",
@@ -2573,6 +2597,17 @@ export class PiRpcChild {
                   return okAsync(undefined);
                 });
         return abortWrite.andThen(() => this.waitBoundedThenForceKill());
+      })
+      .andThen(() => {
+        if (options.reportDeliveryFailure && deliveryFailed) {
+          return errAsync(
+            makeChildAbortFailedFailure(
+              this.childId,
+              "transition-cancel-delivery-failed",
+            ),
+          );
+        }
+        return okAsync(undefined);
       });
   }
 

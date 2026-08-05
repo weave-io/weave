@@ -614,6 +614,20 @@ export interface PiExtensionDeps {
    * legacy ephemeral start semantics without a real session host.
    */
   readonly threadSourceFactory: PiThreadSourceFactory | undefined;
+  /**
+   * Optional post-settlement response-drain budget forwarded to
+   * {@link PiDelegationController}. Absent keeps the production default.
+   * Tests that exercise session-transition cancellation set a short value
+   * so they finish under the normal Bun timeout.
+   */
+  readonly childResponseDrainMs?: number;
+  /**
+   * Optional cancel-ack grace budget forwarded to
+   * {@link PiDelegationController}. Absent keeps the production default.
+   * Session-transition unit tests set a short value because fakes never
+   * emit an authenticated `cancelled` ack.
+   */
+  readonly childCancelGraceMs?: number;
 }
 
 /** Production child-side stdout writer: writes directly to this process's own real stdout, interleaved with Pi's own event/response lines. */
@@ -1587,6 +1601,13 @@ function asJsonRecord(event: unknown): Record<string, JsonValue> | undefined {
   return event as Record<string, JsonValue>;
 }
 
+/** Reads one string field from an event payload, or `undefined`. Never throws. */
+function readStringField(event: unknown, field: string): string | undefined {
+  const record = asJsonRecord(event);
+  const value = record?.[field];
+  return typeof value === "string" ? value : undefined;
+}
+
 /** Extracts only assistant text blocks; thinking, tool calls, and results stay private events. */
 function extractFullAssistantText(message: JsonValue): string | undefined {
   const record = asJsonRecord(message);
@@ -1739,6 +1760,32 @@ function renderStatusMessage(
 const WEAVE_AGENT_STATUS_KEY = "weave-agent";
 const WEAVE_CHILD_TREE_WIDGET_KEY = "weave-children";
 const WEAVE_PLAN_WIDGET_KEY = "weave-plan";
+
+/**
+ * Session-transition prompt options. `Stay` is listed first so it is the
+ * pre-selected default, and every non-`Proceed` answer - including cancel and
+ * dialog timeout - is treated as `Stay`.
+ */
+const SESSION_TRANSITION_STAY = "Stay";
+const SESSION_TRANSITION_PROCEED = "Proceed";
+const SESSION_TRANSITION_NO_UI_NOTICE =
+  "Weave: delegated children are still active and no dialog is available; the session transition was refused.";
+const SESSION_TRANSITION_PROMPT_FAILED_NOTICE =
+  "Weave: the session-transition prompt failed, so the transition was refused.";
+const SESSION_TRANSITION_GUARD_FAILED_NOTICE =
+  "Weave: the session-transition guard failed, so the transition was refused.";
+
+/** Shows one fixed transition notice, ignoring a UI that cannot show it. */
+function notifySessionTransition(
+  ctx: PiSessionContext | undefined,
+  notice: string,
+): void {
+  if (ctx === undefined) return;
+  void ResultAsync.fromPromise(
+    Promise.resolve(ctx.ui.notify(notice, "error")),
+    () => undefined,
+  );
+}
 
 /** Shows one exact normalized descriptor name in Pi's persistent footer. */
 function setActiveAgentStatus(
@@ -2043,6 +2090,14 @@ export function createPiExtension(
   } = {
     controller: undefined,
     generationId: undefined,
+  };
+  /**
+   * Last session-transition diagnostic shown to the user. Generation-scoped:
+   * a fresh destination session must never inherit an origin session's
+   * old-child notice.
+   */
+  const sessionTransitionNoticeCell: { value: string | undefined } = {
+    value: undefined,
   };
   /**
    * Generation-scoped thread sources: the parent ref store (Task 5), the
@@ -3596,6 +3651,8 @@ export function createPiExtension(
       delegationControllerCell.generationId = undefined;
       clearThreadSources();
       threadSourcesRequired = false;
+      // A fresh destination generation starts with no old-child notice.
+      sessionTransitionNoticeCell.value = undefined;
       workflowControllerCell.controller = undefined;
       recoveryCoordinatorCell.coordinator = undefined;
       inspectionRegistryCell.registry?.closeGeneration();
@@ -4019,6 +4076,12 @@ export function createPiExtension(
           processPort: deps.processPort,
           randomPort: deps.randomPort,
           hmacPort: deps.hmacPort,
+          ...(deps.childResponseDrainMs === undefined
+            ? {}
+            : { responseDrainMs: deps.childResponseDrainMs }),
+          ...(deps.childCancelGraceMs === undefined
+            ? {}
+            : { cancelGraceMs: deps.childCancelGraceMs }),
           // The exact executable that launched this host, never a bare
           // "pi" a spawner would have to re-resolve via `PATH` (Pi adapter contract
           //).
@@ -4788,6 +4851,127 @@ export function createPiExtension(
       return undefined;
     });
 
+    /**
+     * Guards one awaited, vetoable Pi session-transition surface.
+     *
+     * Order is fixed and observable: count owned descendants, prompt (default
+     * **Stay**), cancel the whole owned subtree, drain final child events,
+     * write settlement metadata back to the *origin* parent, and only then
+     * allow the transition. Anything that fails vetoes with a bounded,
+     * secret-free diagnostic and leaves the destination untouched.
+     *
+     * Resolves `true` to allow the transition and `false` to veto it.
+     */
+    const guardSessionTransition = async (
+      surface: string,
+      ctx: PiSessionContext | undefined,
+    ): Promise<boolean> => {
+      const controller = delegationControllerCell.controller;
+      if (controller === undefined) return true;
+      const pending = controller.countUnsettledDescendants();
+      // Fast path: nothing owned is running or queued, so the transition is
+      // allowed immediately - no prompt, no notice, and nothing copied into
+      // the destination session.
+      if (pending === 0) return true;
+      if (ctx === undefined || !ctx.hasUI) {
+        // No dialog-capable UI to ask through. Fail closed: silently killing a
+        // live subtree is worse than refusing the transition.
+        sessionTransitionNoticeCell.value = SESSION_TRANSITION_NO_UI_NOTICE;
+        notifySessionTransition(ctx, SESSION_TRANSITION_NO_UI_NOTICE);
+        return false;
+      }
+      // `Stay` is listed first so it is the pre-selected default; the prompt
+      // text carries the description the two short choices deliberately omit.
+      const asked = await ResultAsync.fromPromise(
+        Promise.resolve(
+          ctx.ui.select(
+            `Weave: ${pending} delegated ${pending === 1 ? "child is" : "children are"} still active (${surface}). Proceed cancels them; Stay keeps this session.`,
+            [SESSION_TRANSITION_STAY, SESSION_TRANSITION_PROCEED],
+          ),
+        ),
+        () => SESSION_TRANSITION_PROMPT_FAILED_NOTICE,
+      );
+      if (asked.isErr()) {
+        // A rejected prompt is never an approval. Fail closed with a bounded,
+        // secret-free notice built from a fixed string, never the rejection.
+        sessionTransitionNoticeCell.value = asked.error;
+        notifySessionTransition(ctx, asked.error);
+        return false;
+      }
+      // `select` resolves `undefined` on cancel or timeout. Both mean Stay:
+      // Stay is the default and never cancels anything.
+      if (asked.value !== SESSION_TRANSITION_PROCEED) return false;
+      const settled = await ResultAsync.fromPromise(
+        Promise.resolve(controller.settleForTransition()),
+        () =>
+          // A rejected controller call is a failed settlement, never a silent
+          // allow. The rejection value itself never reaches the user.
+          makeChildAbortFailedFailure("", "transition-settlement-rejected"),
+      ).andThen((result) => result);
+      return settled.match(
+        () => {
+          sessionTransitionNoticeCell.value = undefined;
+          return true;
+        },
+        (failure) => {
+          // `safeMessage` and `code` are the closed, secret-free diagnostic
+          // surface of every adapter failure.
+          const notice = `Weave: ${failure.safeMessage} (${failure.code})`;
+          sessionTransitionNoticeCell.value = notice;
+          notifySessionTransition(ctx, notice);
+          return false;
+        },
+      );
+    };
+
+    /**
+     * Wraps one Pi transition pre-hook. A rejection anywhere inside the guard
+     * vetoes: an unhandled pre-hook rejection must never be read by Pi as
+     * permission to transition.
+     */
+    const guardedTransitionHook =
+      (surface: (event: unknown) => string) =>
+      async (
+        event: unknown,
+        ctx?: PiSessionContext,
+      ): Promise<{ readonly cancel: true } | undefined> => {
+        const guarded = await ResultAsync.fromPromise(
+          guardSessionTransition(surface(event), ctx),
+          () => SESSION_TRANSITION_GUARD_FAILED_NOTICE,
+        );
+        if (guarded.isErr()) {
+          sessionTransitionNoticeCell.value = guarded.error;
+          notifySessionTransition(ctx, guarded.error);
+          return { cancel: true };
+        }
+        return guarded.value ? undefined : { cancel: true };
+      };
+
+    // Every Pi 0.83 session-transition surface that exposes an awaited,
+    // vetoable pre-event is registered here: `/new` and `/resume`
+    // (`session_before_switch`), `/fork` and `/clone` (`session_before_fork`,
+    // distinguished by `position`), and `/tree` branch navigation
+    // (`session_before_tree`). Pi exposes no other awaited pre-transition
+    // event, so no surface is left silently unguarded.
+    pi.on(
+      "session_before_switch",
+      guardedTransitionHook(
+        (event) => readStringField(event, "reason") ?? "new session",
+      ),
+    );
+
+    pi.on(
+      "session_before_fork",
+      guardedTransitionHook((event) =>
+        readStringField(event, "position") === "at" ? "clone" : "fork",
+      ),
+    );
+
+    pi.on(
+      "session_before_tree",
+      guardedTransitionHook(() => "tree navigation"),
+    );
+
     pi.on("session_shutdown", async (_event, ctx?: PiSessionContext) => {
       // Revoke synchronously. Everything used after the first await is a local
       // snapshot of the generation being shut down, so a replacement startup
@@ -4808,11 +4992,15 @@ export function createPiExtension(
       inspectionRegistryCell.registry?.closeGeneration();
       inspectionRegistryCell.registry = undefined;
       recoveryCoordinatorCell.coordinator = undefined;
-      delegationControllerCell.controller?.disposeAll();
+      // Captured before the cell is revoked: the bounded graceful-cancel and
+      // force-stop below runs on this snapshot, so a replacement startup can
+      // publish a new controller while the old tree is still being stopped.
+      const shuttingDelegation = delegationControllerCell.controller;
       delegationControllerCell.controller = undefined;
       delegationControllerCell.generationId = undefined;
       clearThreadSources();
       threadSourcesRequired = false;
+      sessionTransitionNoticeCell.value = undefined;
       workflowControllerCell.controller = undefined;
       planStateProviderCell.value = undefined;
       activeWorkflowInstanceCell.value = undefined;
@@ -4844,6 +5032,17 @@ export function createPiExtension(
         editorInstallCell = undefined;
       }
       childModeState.runtime?.dispose();
+
+      // Quit/reload shutdown bound: a graceful cancellation window for the
+      // whole owned subtree, then an unconditional force-stop of whatever is
+      // left, so no residual child process, lease, or capacity survives. The
+      // report is a value; expected stop failures are never thrown.
+      if (shuttingDelegation !== undefined) {
+        await shuttingDelegation.shutdownWithinBudget().match(
+          () => undefined,
+          () => undefined,
+        );
+      }
 
       if (
         shuttingWorkflowInstance?.leaseId !== undefined &&

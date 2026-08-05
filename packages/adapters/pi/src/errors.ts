@@ -57,6 +57,7 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "ChildRecoveryUnavailable",
   "ChildInteractionUnavailable",
   "ChildExtensionUiRejected",
+  "ChildOrphanReadOnly",
   // thread lifecycle (retry/continue of an existing child thread)
   "ThreadNotFound",
   "ThreadAuthorityDenied",
@@ -876,6 +877,26 @@ export function makeChildExtensionUiRejectedFailure(
     recovery: "abort",
     safeMessage: "The delegated child rejected an extension UI response.",
     correlation: { reason },
+  };
+}
+
+/**
+ * Closed failure for a mutating operation against a read-only orphan child
+ * (parent origin missing or no longer authoritative). Classification never
+ * deletes the child; callers keep history/doctor reads available.
+ */
+export function makeChildOrphanReadOnlyFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildOrphanReadOnly",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "degraded",
+    retryable: false,
+    recovery: "none",
+    safeMessage:
+      "The delegated child is a read-only orphan and cannot accept this mutation.",
   };
 }
 

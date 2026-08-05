@@ -620,6 +620,9 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       "before_agent_start",
       "input",
       "message_end",
+      "session_before_fork",
+      "session_before_switch",
+      "session_before_tree",
       "session_shutdown",
       "session_start",
     ]);

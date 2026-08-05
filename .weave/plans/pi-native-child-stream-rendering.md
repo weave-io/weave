@@ -205,7 +205,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - `bun test packages/adapters/pi/src/__tests__/thread-lifecycle.test.ts` passes: start/retry/continue happy paths, each structured error, capacity hold/release, divider content, policy revalidation, ancestor-transfer authority, no-path leakage.
     - Existing `delegation-tool.test.ts` start-path tests pass unchanged (compatibility).
 
-- [ ] 10. Implement session-transition pre-hooks and shutdown semantics
+- [x] 10. Implement session-transition pre-hooks and shutdown semantics
   - **What**: Awaited pre-hooks on parent session/new/resume/fork/clone and branch/tree changes: prompt with default **Stay**; on confirmed transition cancel all active/queued owned descendants and await origin settlement metadata before the transition proceeds; veto the transition on hook failure. New parent sessions see no old-child notice or data. Quit/reload performs bounded cancel then force-stop. Parent deletion leaves orphan read-only history. Fork/clone ref-origin rejection (Task 5) keeps new branches authority-free.
   - **Files**: `packages/adapters/pi/src/extension.ts` (hook registration), `packages/adapters/pi/src/delegation-controller.ts` (cancel-all/await-settlement API), `packages/adapters/pi/src/child-runtime.ts`; tests in `extension.test.ts`, `delegation-controller` tests, new `session-transition.test.ts`.
   - **Depends on**: Tasks 5, 8, 9.
