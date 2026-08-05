@@ -1,8 +1,8 @@
 # Task 20(a) compact live settlement proof
 
-Result: **FAIL**
+Final rerun result: **PASS**
 
-This record covers only Task 20 matrix item (a): compact block live fragment and settlement tail. It contains no raw prompt, child transcript, native session ID, or child session path.
+This record covers only Task 20 matrix item (a): compact block live fragment and settlement tail. It contains no raw prompt, child transcript, native session ID, or child session path. The earlier failed attempts and their remediations remain below as historical evidence.
 
 ## Harness identity
 
@@ -196,4 +196,64 @@ Task 20(a) remains incomplete. The restore check must authenticate the establish
 
 `PiRpcChild.verifyRestoreContext()` now authenticates the established metadata leaf as an ancestor of the reported active leaf through a bounded `get_entries` cursor page, and accepts only a contiguous suffix of Pi-owned `model_change` and `thinking_level_change` entries with valid unique ids and an unbroken parent chain. Forbidden kinds, a disconnected or branched leaf, a repeated id, a malformed id or parent, and an oversized suffix still fail closed, and task content is still withheld until authentication succeeds.
 
-The failures recorded above stand. They are retained as the observed evidence of the blocker. Rerunning this matrix item in a fresh pane, with a rebuilt npm-provenance artifact, is still required.
+The failures recorded above stand. They are retained as the observed evidence of the blocker. The final rerun below uses a fresh pane and a rebuilt npm-provenance artifact that includes this remediation.
+
+## Final rerun after restore-suffix remediation
+
+Result: **PASS**
+
+This section supersedes only the final outcome. It does not remove or change either failed attempt above.
+
+| Field | Value |
+| --- | --- |
+| Date | `2026-08-05` |
+| Herdr pane | `w23:p8T` |
+| Pi | `0.83.0` |
+| Pi extension source | `npm:@weaveio/weave-adapter-pi` |
+| Setup proof | [`33-task-20-release-setup-proof.md`](./33-task-20-release-setup-proof.md) |
+| Artifact | `weaveio-weave-adapter-pi-0.0.1-6a547d3-task20-e905209b8cf5.tgz` |
+| Artifact SHA-256 | `e905209b8cf5359eb78c7c31c5ade4f82feaa660f752b3c45a8d07e62d41750d` |
+| Installed extension SHA-256 | `7d441b86529a1d15baecb31a77a51f298f820eb73a4a927a366b493542d723bc` |
+| Installed index SHA-256 | `925cc842591d9b8bd2ad9c94089e821eae2c26b641b89c04264f25cf0428213f` |
+| Installed CLI SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
+
+### Provenance and readiness
+
+The verifier first inspected both live Pi processes in pane `w23:p8T`. Neither process environment contained `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE`. Pi loaded the installed `npm:` package, and the live footer showed `Connected`, `ready`, and `WEAVE · LOOM`. Trusted npm provenance, the active interactive controller, and the successful registered delegation establish `trust: trusted` and `health-only: false`.
+
+```yaml
+healthReady: true
+statusTrusted: true
+healthOnly: false
+provenanceOverrideAbsentInLivePiProcesses: true
+```
+
+### Ordinary delegation and compact block
+
+One ordinary `shuttle-mini` delegation ran a harmless no-edit task and completed successfully. Its terminal response was the safe marker `TASK20A_PASS_K9V4`. A 40 ms visible-terminal sampler inspected the actual collapsed `weave_delegate` block while running and after settlement. The sampler retained only booleans, counts, and SHA-256 values; it stored no raw prompt or transcript.
+
+| Assertion | Result | Sanitized evidence |
+| --- | --- | --- |
+| Ordinary delegation completes successfully | **PASS** | Settlement outcome was `completed` with zero interventions. |
+| Live compact block has exactly three sanitized lines | **PASS** | `running.seen=true`, `lineCount=3`, `sanitized=true`. |
+| Live block contains a non-whitespace assistant fragment | **PASS** | `nonWhitespaceActivity=true`. |
+| Settled compact block has exactly three sanitized lines | **PASS** | `settled.seen=true`, `lineCount=3`, `sanitized=true`. |
+| Final tail is the authoritative terminal response | **PASS** | Settled activity and terminal response shared SHA-256 `cd6283a83fb0bc163ed1a0cb5dcd5fe96a62cdfc7346ac469cfaf07cfef1f73f`. |
+| Compact block exposes no path | **PASS** | Forbidden-path checks were false in both samples. |
+| Compact block exposes no native session ID | **PASS** | Native-session-ID checks were false in both samples. |
+| Sampler stores no prompt or transcript | **PASS** | `sampleStoredPromptOrTranscript=false`. |
+| No child process remains | **PASS** | No pane-parented `--mode rpc --no-session` Pi process remained. |
+| No Runtime Store lease remains | **PASS** | Runtime Store schema 5 reported `No active lease.` |
+
+### Final cleanup state
+
+```yaml
+childProcessRemaining: false
+runtimeStoreLeaseActive: false
+samplerRunning: false
+cleanupPending: true
+cleanupPendingReason: close only pane w23:p8T after the parent verification run consumes this proof
+otherPanesAltered: false
+```
+
+Pane `w23:p8T` remains open. No other pane was changed or closed.
