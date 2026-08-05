@@ -32,23 +32,23 @@ export const PACKED_PROOF_REGISTRY: Readonly<Record<string, TestEvidence>> = {
   },
   P005: {
     file: "packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts",
-    name: "private canaries stay out of every parent-facing history projection",
+    name: "private canaries stay out of every parent-facing projection",
   },
   P006: {
     file: "packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts",
-    name: "parent result is the store's terminal projection plus numeric metadata",
+    name: "parent result is the bounded terminal projection plus numeric metadata",
   },
   P007: {
     file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts",
     name: "the real RPC child accepts a >1 MiB assistant record and settles without poison",
   },
   P008: {
-    file: "packages/adapters/pi/src/__tests__/child-history-store.test.ts",
-    name: "enforces the per-child ceiling from persisted bytes and records a trim marker",
+    file: "packages/adapters/pi/src/__tests__/child-native-sessions.test.ts",
+    name: "deletes with the confirmation token and appends a tombstone",
   },
   P009: {
     file: "packages/adapters/pi/src/__tests__/child-inspection-settings.test.ts",
-    name: "aggregates unknown, type, range, and cross-field issues",
+    name: "aggregates unknown, type, and range issues",
   },
   P010: {
     file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts",
@@ -576,7 +576,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-INS",
-      contractReferences: ["docs/adapters/pi.md#child-inspection"],
+      contractReferences: ["docs/adapters/pi.md#private-child-inspection"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/child-inspection-render.test.ts",
@@ -593,7 +593,10 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-INT",
-      contractReferences: ["docs/adapters/pi.md#child-inspection-controls"],
+      contractReferences: [
+        "docs/adapters/pi.md#full-screen-child-overlay",
+        "docs/adapters/pi.md#overlay-keys",
+      ],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts",
@@ -606,30 +609,38 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-PRI",
-      contractReferences: ["docs/reference/runtime.md#private-child-history"],
+      contractReferences: [
+        "docs/adapters/pi.md#private-children",
+        "docs/adapters/pi.md#no-migration-from-the-jsonl-store",
+        "docs/adr/0014-pi-native-child-sessions.md",
+      ],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts",
-          name: "private canaries stay out of every parent-facing history projection",
+          name: "private canaries stay out of every parent-facing projection",
         },
         T002: {
-          file: "packages/adapters/pi/src/__tests__/child-inspection-migration.test.ts",
-          name: "missing adapter settings and history root retain ephemeral behavior",
+          file: "packages/adapters/pi/src/__tests__/child-native-sessions.test.ts",
+          name: "the Weave root is disjoint from Pi's default session directory",
+        },
+        T003: {
+          file: "packages/adapters/pi/src/__tests__/child-session-refs.test.ts",
+          name: "serialized envelopes contain no transcript-like fields",
         },
       },
       packedProof: { required: true, evidenceIds: ["P005"] },
       liveSmoke: { required: true, checklistIds: ["S029", "S030"] },
       result: "pending",
+      notes:
+        "ADR 0014 replaces JSONL private-history migration with native Pi child sessions and an explicit no-migration decision. Privacy evidence is parent-facing projection exclusion, default-tree isolation, and metadata-only refs.",
     },
     {
       id: "PI-BND",
-      contractReferences: [
-        "docs/reference/execution-lifecycle.md#parent-result-boundary",
-      ],
+      contractReferences: ["docs/adapters/pi.md#settlement-and-output"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts",
-          name: "parent result is the store's terminal projection plus numeric metadata",
+          name: "parent result is the bounded terminal projection plus numeric metadata",
         },
       },
       packedProof: { required: true, evidenceIds: ["P006"] },
@@ -638,9 +649,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-OVR",
-      contractReferences: [
-        "docs/reference/execution-lifecycle.md#native-output",
-      ],
+      contractReferences: ["docs/adapters/pi.md#settlement-and-output"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts",
@@ -657,30 +666,40 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-QUO",
-      contractReferences: ["docs/reference/runtime.md#child-history-quotas"],
+      contractReferences: [
+        "docs/adapters/pi.md#cleanup-tombstones-and-orphans",
+        "docs/adr/0014-pi-native-child-sessions.md",
+      ],
       tests: {
         T001: {
-          file: "packages/adapters/pi/src/__tests__/child-history-store.test.ts",
-          name: "enforces the per-child ceiling from persisted bytes and records a trim marker",
+          file: "packages/adapters/pi/src/__tests__/child-native-sessions.test.ts",
+          name: "deletes with the confirmation token and appends a tombstone",
         },
         T002: {
-          file: "packages/adapters/pi/src/__tests__/child-history-store.test.ts",
-          name: "physically clears terminal history but refuses running and queued children",
+          file: "packages/adapters/pi/src/__tests__/child-native-sessions.test.ts",
+          name: "refuses deletion without the confirmation token",
+        },
+        T003: {
+          file: "packages/adapters/pi/src/__tests__/child-inspection-settings.test.ts",
+          name: "rejects removed quota and retention keys as unknown",
         },
       },
       packedProof: { required: true, evidenceIds: ["P008"] },
       liveSmoke: { required: true, checklistIds: ["S033"] },
       result: "pending",
+      notes:
+        "ADR 0014 removes byte quotas, trimming, and automatic pruning. PI-QUO now proves explicit cleanup with tombstones and rejection of the removed quota/retention settings keys.",
     },
     {
       id: "PI-SET",
       contractReferences: [
-        "docs/reference/configuration.md#pi-child-inspection",
+        "docs/adapters/pi.md#private-child-inspection",
+        "docs/reference/configuration.md#harness-adapter-settings",
       ],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/child-inspection-settings.test.ts",
-          name: "aggregates unknown, type, range, and cross-field issues",
+          name: "aggregates unknown, type, and range issues",
         },
         T002: {
           file: "packages/adapters/pi/src/__tests__/child-inspection-settings.test.ts",
@@ -693,7 +712,10 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-RCV",
-      contractReferences: ["docs/reference/execution-lifecycle.md#recovery"],
+      contractReferences: [
+        "docs/adapters/pi.md#private-child-inspection",
+        "docs/reference/execution-lifecycle.md#leases-and-recovery",
+      ],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts",

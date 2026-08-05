@@ -26,9 +26,10 @@ import {
 } from "./smoke-checklist.js";
 
 /**
- * Regenerates `scripts/release/pi-acceptance/acceptance-manifest.json`
- * (Pi adapter contract) from the source-controlled requirement rows in
- * `acceptance-manifest-data.ts`.
+ * Regenerates both committed acceptance manifests from the source-controlled
+ * requirement rows in `acceptance-manifest-data.ts`:
+ * - `scripts/release/pi-acceptance/acceptance-manifest.json`
+ * - `docs/specs/33-spec-pi-adapter/acceptance-manifest.json`
  *
  * The `artifactBinding` this script produces is computed from a *real* local
  * pack of the current working tree (a genuine sha256 of an actually-built
@@ -199,9 +200,15 @@ if (import.meta.main) {
         process.exitCode = 1;
         return;
       }
-      const path = `${root}/scripts/release/pi-acceptance/acceptance-manifest.json`;
-      await Bun.write(path, `${JSON.stringify(manifest, null, 2)}\n`);
-      log.info({ path }, "wrote acceptance manifest");
+      const body = `${JSON.stringify(manifest, null, 2)}\n`;
+      const paths = [
+        `${root}/scripts/release/pi-acceptance/acceptance-manifest.json`,
+        `${root}/docs/specs/33-spec-pi-adapter/acceptance-manifest.json`,
+      ] as const;
+      for (const path of paths) {
+        await Bun.write(path, body);
+        log.info({ path }, "wrote acceptance manifest");
+      }
     },
     (error) => {
       log.error({ error }, "failed to generate acceptance manifest");

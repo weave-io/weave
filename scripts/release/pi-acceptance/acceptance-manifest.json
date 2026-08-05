@@ -10,8 +10,8 @@
   "artifactBinding": {
     "packageVersion": "0.0.1",
     "payloadArtifactId": "local-dev-pack",
-    "sha256": "d8b142bbabaa46e294d0ceaf6f5b2d79e2efeb0d2401c7e073458d33977d2b9f",
-    "subjectSha": "2bc4ef65559c56064546426e1e879c10cad5238f",
+    "sha256": "bd85d9b35d359c94b5b4b732ae67567c5079dbecf5e21c8be7175e69bb7e4250",
+    "subjectSha": "7ff2b4147a308781402480ab99a457fcad519b69",
     "runAttempt": 1,
     "checklistVersion": "1"
   },
@@ -755,7 +755,7 @@
     {
       "id": "PI-INS",
       "contractReferences": [
-        "docs/adapters/pi.md#child-inspection"
+        "docs/adapters/pi.md#private-child-inspection"
       ],
       "tests": {
         "T001": {
@@ -785,7 +785,8 @@
     {
       "id": "PI-INT",
       "contractReferences": [
-        "docs/adapters/pi.md#child-inspection-controls"
+        "docs/adapters/pi.md#full-screen-child-overlay",
+        "docs/adapters/pi.md#overlay-keys"
       ],
       "tests": {
         "T001": {
@@ -812,16 +813,22 @@
     {
       "id": "PI-PRI",
       "contractReferences": [
-        "docs/reference/runtime.md#private-child-history"
+        "docs/adapters/pi.md#private-children",
+        "docs/adapters/pi.md#no-migration-from-the-jsonl-store",
+        "docs/adr/0014-pi-native-child-sessions.md"
       ],
       "tests": {
         "T001": {
           "file": "packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts",
-          "name": "private canaries stay out of every parent-facing history projection"
+          "name": "private canaries stay out of every parent-facing projection"
         },
         "T002": {
-          "file": "packages/adapters/pi/src/__tests__/child-inspection-migration.test.ts",
-          "name": "missing adapter settings and history root retain ephemeral behavior"
+          "file": "packages/adapters/pi/src/__tests__/child-native-sessions.test.ts",
+          "name": "the Weave root is disjoint from Pi's default session directory"
+        },
+        "T003": {
+          "file": "packages/adapters/pi/src/__tests__/child-session-refs.test.ts",
+          "name": "serialized envelopes contain no transcript-like fields"
         }
       },
       "packedProof": {
@@ -837,17 +844,18 @@
           "S030"
         ]
       },
-      "result": "pending"
+      "result": "pending",
+      "notes": "ADR 0014 replaces JSONL private-history migration with native Pi child sessions and an explicit no-migration decision. Privacy evidence is parent-facing projection exclusion, default-tree isolation, and metadata-only refs."
     },
     {
       "id": "PI-BND",
       "contractReferences": [
-        "docs/reference/execution-lifecycle.md#parent-result-boundary"
+        "docs/adapters/pi.md#settlement-and-output"
       ],
       "tests": {
         "T001": {
           "file": "packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts",
-          "name": "parent result is the store's terminal projection plus numeric metadata"
+          "name": "parent result is the bounded terminal projection plus numeric metadata"
         }
       },
       "packedProof": {
@@ -867,7 +875,7 @@
     {
       "id": "PI-OVR",
       "contractReferences": [
-        "docs/reference/execution-lifecycle.md#native-output"
+        "docs/adapters/pi.md#settlement-and-output"
       ],
       "tests": {
         "T001": {
@@ -896,16 +904,21 @@
     {
       "id": "PI-QUO",
       "contractReferences": [
-        "docs/reference/runtime.md#child-history-quotas"
+        "docs/adapters/pi.md#cleanup-tombstones-and-orphans",
+        "docs/adr/0014-pi-native-child-sessions.md"
       ],
       "tests": {
         "T001": {
-          "file": "packages/adapters/pi/src/__tests__/child-history-store.test.ts",
-          "name": "enforces the per-child ceiling from persisted bytes and records a trim marker"
+          "file": "packages/adapters/pi/src/__tests__/child-native-sessions.test.ts",
+          "name": "deletes with the confirmation token and appends a tombstone"
         },
         "T002": {
-          "file": "packages/adapters/pi/src/__tests__/child-history-store.test.ts",
-          "name": "physically clears terminal history but refuses running and queued children"
+          "file": "packages/adapters/pi/src/__tests__/child-native-sessions.test.ts",
+          "name": "refuses deletion without the confirmation token"
+        },
+        "T003": {
+          "file": "packages/adapters/pi/src/__tests__/child-inspection-settings.test.ts",
+          "name": "rejects removed quota and retention keys as unknown"
         }
       },
       "packedProof": {
@@ -920,17 +933,19 @@
           "S033"
         ]
       },
-      "result": "pending"
+      "result": "pending",
+      "notes": "ADR 0014 removes byte quotas, trimming, and automatic pruning. PI-QUO now proves explicit cleanup with tombstones and rejection of the removed quota/retention settings keys."
     },
     {
       "id": "PI-SET",
       "contractReferences": [
-        "docs/reference/configuration.md#pi-child-inspection"
+        "docs/adapters/pi.md#private-child-inspection",
+        "docs/reference/configuration.md#harness-adapter-settings"
       ],
       "tests": {
         "T001": {
           "file": "packages/adapters/pi/src/__tests__/child-inspection-settings.test.ts",
-          "name": "aggregates unknown, type, range, and cross-field issues"
+          "name": "aggregates unknown, type, and range issues"
         },
         "T002": {
           "file": "packages/adapters/pi/src/__tests__/child-inspection-settings.test.ts",
@@ -954,7 +969,8 @@
     {
       "id": "PI-RCV",
       "contractReferences": [
-        "docs/reference/execution-lifecycle.md#recovery"
+        "docs/adapters/pi.md#private-child-inspection",
+        "docs/reference/execution-lifecycle.md#leases-and-recovery"
       ],
       "tests": {
         "T001": {

@@ -92,11 +92,11 @@ verification.
 | S026 | Interaction | Steer a running child through the native control path. | Pending |
 | S027 | Interaction | Complete a queued follow-up and extension UI response. | Pending |
 | S028 | Interaction | Interrupt and restart a child without losing authenticated state. | Pending |
-| S029 | Privacy | Persist private history only under disposable isolated data roots. | Pending |
+| S029 | Privacy | Persist native child sessions only under disposable isolated XDG data roots, outside Pi's default `/resume` tree. | Pending |
 | S030 | Privacy | Keep private content out of every parent-facing projection. | Pending |
 | S031 | Boundary | Return only bounded terminal output and numeric metadata to the parent. | Pending |
 | S032 | Native output | Return unique sentinels for >1 MiB output ten times sequentially and once at maximum child parallelism. | Pending |
-| S033 | Quotas | Enforce quotas and clear terminal history without exposing bytes. | Pending |
+| S033 | Cleanup | Explicit delete requires confirmation, appends a tombstone, and never enforces byte quotas or auto-pruning (ADR 0014). | Pending |
 | S034 | Settings | Reject invalid settings with structured validation issues. | Pending |
 | S035 | Recovery | Resume ordinary work after restart. | Pending |
 | S036 | Settlement | Reject exact structured `ChildSettlementMissing`, even when logs are clean. | Pending |

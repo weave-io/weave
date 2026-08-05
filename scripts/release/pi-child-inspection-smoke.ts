@@ -49,7 +49,7 @@ const SMOKE_ROWS = [
   "S030-private-projection",
   "S031-bounded-result",
   "S032-oversized-native-record",
-  "S033-quota-trim-clear",
+  "S033-explicit-cleanup-tombstone",
   "S034-invalid-settings",
   "S035-fresh-resume",
   "S036-structured-settlement-failure",
