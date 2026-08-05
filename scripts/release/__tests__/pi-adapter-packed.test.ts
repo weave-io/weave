@@ -44,6 +44,8 @@ describe("pi adapter packed artifact (Pi adapter contract, PI-PKG)", () => {
       expect(paths).toEqual(
         [
           "package/README.md",
+          "package/dist/cli.d.ts",
+          "package/dist/cli.js",
           "package/dist/extension.d.ts",
           "package/dist/extension.js",
           "package/dist/index.d.ts",

@@ -54,6 +54,14 @@ export const PACKED_PROOF_REGISTRY: Readonly<Record<string, TestEvidence>> = {
     file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts",
     name: "real ordinary recovery resumes through the controller and preserves bounded result",
   },
+  P011: {
+    file: "packages/adapters/pi/src/__tests__/child-native-session-paging.test.ts",
+    name: "pages newest/older/newer across >10k entries without duplicates",
+  },
+  P012: {
+    file: "packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts",
+    name: "pages >10k entries through readSessionEntryPage only with opaque cursors",
+  },
 };
 
 export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequirement[] =
@@ -243,7 +251,11 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-CMD",
-      contractReferences: ["docs/adapters/pi.md#user-surface"],
+      contractReferences: [
+        "docs/adapters/pi.md#user-surface",
+        "docs/adapters/pi.md#child-session-commands",
+        "docs/reference/cli.md#weave-adapter",
+      ],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/extension.test.ts",
@@ -261,12 +273,28 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
           file: "packages/adapters/pi/src/__tests__/controller.test.ts",
           name: "blocks mutating commands but allows read-only and idempotent-cleanup commands in health-only mode",
         },
+        T005: {
+          file: "packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts",
+          name: "pages >10k entries through readSessionEntryPage only with opaque cursors",
+        },
+        T006: {
+          file: "packages/adapters/pi/src/__tests__/adapter-cli-production.test.ts",
+          name: "opens XDG-rooted ports and lists an empty workspace page",
+        },
+        T007: {
+          file: "packages/cli/src/commands/__tests__/adapter.test.ts",
+          name: "resolves a unique origin parent from list metadata",
+        },
+        T008: {
+          file: "packages/cli/src/commands/__tests__/adapter.test.ts",
+          name: "rejects a forged parent session scope",
+        },
       },
-      packedProof: { required: true, evidenceIds: ["P001"] },
+      packedProof: { required: true, evidenceIds: ["P001", "P012"] },
       liveSmoke: { required: true, checklistIds: ["S016"] },
       result: "pass",
       notes:
-        "Closed-set check verifies all 9 WEAVE_COMMAND_NAMES and all 3 WEAVE_COMMAND_CLASSIFICATIONS (mutating, read-only, idempotent-cleanup — the invalid-state gating dimension in health-only mode) appear across the referenced tests.",
+        "Closed-set check verifies all 9 WEAVE_COMMAND_NAMES and all 3 WEAVE_COMMAND_CLASSIFICATIONS (mutating, read-only, idempotent-cleanup — the invalid-state gating dimension in health-only mode) appear across the referenced tests. CLI children show pages through readSessionEntryPage only (max 100 + opaque cursor); delete resolves immutable origin parent scope without a synthetic current parent and without a published CLI→Pi runtime dependency.",
     },
     {
       id: "PI-LIF",
@@ -576,7 +604,10 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-INS",
-      contractReferences: ["docs/adapters/pi.md#private-child-inspection"],
+      contractReferences: [
+        "docs/adapters/pi.md#private-child-inspection",
+        "docs/adapters/pi.md#native-child-sessions",
+      ],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/child-inspection-render.test.ts",
@@ -586,10 +617,20 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
           file: "packages/adapters/pi/src/__tests__/child-inspection-render.test.ts",
           name: "renders at every width including width=1",
         },
+        T003: {
+          file: "packages/adapters/pi/src/__tests__/child-native-session-paging.test.ts",
+          name: "pages newest/older/newer across >10k entries without duplicates",
+        },
+        T004: {
+          file: "packages/adapters/pi/src/__tests__/child-native-session-paging.test.ts",
+          name: "eight-entry newest page stays chronological under forced 7-byte chunks",
+        },
       },
-      packedProof: { required: true, evidenceIds: ["P003"] },
+      packedProof: { required: true, evidenceIds: ["P003", "P011"] },
       liveSmoke: { required: true, checklistIds: ["S024", "S025"] },
       result: "pending",
+      notes:
+        "Native child session paging proves bounded bidirectional reads without full materialization; multi-chunk backward assembly stays chronological (Weft follow-up after fb7a9e9).",
     },
     {
       id: "PI-INT",

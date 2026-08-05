@@ -10,8 +10,8 @@
   "artifactBinding": {
     "packageVersion": "0.0.1",
     "payloadArtifactId": "local-dev-pack",
-    "sha256": "bd85d9b35d359c94b5b4b732ae67567c5079dbecf5e21c8be7175e69bb7e4250",
-    "subjectSha": "7ff2b4147a308781402480ab99a457fcad519b69",
+    "sha256": "9d22927365789f3b0228acd19a504670dc58ffcb057ed0b72f410df01146267f",
+    "subjectSha": "fb7a9e95fc2bc5674c0d807aacacc0ff04eddc18",
     "runAttempt": 1,
     "checklistVersion": "1"
   },
@@ -282,7 +282,9 @@
     {
       "id": "PI-CMD",
       "contractReferences": [
-        "docs/adapters/pi.md#user-surface"
+        "docs/adapters/pi.md#user-surface",
+        "docs/adapters/pi.md#child-session-commands",
+        "docs/reference/cli.md#weave-adapter"
       ],
       "tests": {
         "T001": {
@@ -300,12 +302,29 @@
         "T004": {
           "file": "packages/adapters/pi/src/__tests__/controller.test.ts",
           "name": "blocks mutating commands but allows read-only and idempotent-cleanup commands in health-only mode"
+        },
+        "T005": {
+          "file": "packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts",
+          "name": "pages >10k entries through readSessionEntryPage only with opaque cursors"
+        },
+        "T006": {
+          "file": "packages/adapters/pi/src/__tests__/adapter-cli-production.test.ts",
+          "name": "opens XDG-rooted ports and lists an empty workspace page"
+        },
+        "T007": {
+          "file": "packages/cli/src/commands/__tests__/adapter.test.ts",
+          "name": "resolves a unique origin parent from list metadata"
+        },
+        "T008": {
+          "file": "packages/cli/src/commands/__tests__/adapter.test.ts",
+          "name": "rejects a forged parent session scope"
         }
       },
       "packedProof": {
         "required": true,
         "evidenceIds": [
-          "P001"
+          "P001",
+          "P012"
         ]
       },
       "liveSmoke": {
@@ -315,7 +334,7 @@
         ]
       },
       "result": "pass",
-      "notes": "Closed-set check verifies all 9 WEAVE_COMMAND_NAMES and all 3 WEAVE_COMMAND_CLASSIFICATIONS (mutating, read-only, idempotent-cleanup — the invalid-state gating dimension in health-only mode) appear across the referenced tests."
+      "notes": "Closed-set check verifies all 9 WEAVE_COMMAND_NAMES and all 3 WEAVE_COMMAND_CLASSIFICATIONS (mutating, read-only, idempotent-cleanup — the invalid-state gating dimension in health-only mode) appear across the referenced tests. CLI children show pages through readSessionEntryPage only (max 100 + opaque cursor); delete resolves immutable origin parent scope without a synthetic current parent and without a published CLI→Pi runtime dependency."
     },
     {
       "id": "PI-LIF",
@@ -755,7 +774,8 @@
     {
       "id": "PI-INS",
       "contractReferences": [
-        "docs/adapters/pi.md#private-child-inspection"
+        "docs/adapters/pi.md#private-child-inspection",
+        "docs/adapters/pi.md#native-child-sessions"
       ],
       "tests": {
         "T001": {
@@ -765,12 +785,21 @@
         "T002": {
           "file": "packages/adapters/pi/src/__tests__/child-inspection-render.test.ts",
           "name": "renders at every width including width=1"
+        },
+        "T003": {
+          "file": "packages/adapters/pi/src/__tests__/child-native-session-paging.test.ts",
+          "name": "pages newest/older/newer across >10k entries without duplicates"
+        },
+        "T004": {
+          "file": "packages/adapters/pi/src/__tests__/child-native-session-paging.test.ts",
+          "name": "eight-entry newest page stays chronological under forced 7-byte chunks"
         }
       },
       "packedProof": {
         "required": true,
         "evidenceIds": [
-          "P003"
+          "P003",
+          "P011"
         ]
       },
       "liveSmoke": {
@@ -780,7 +809,8 @@
           "S025"
         ]
       },
-      "result": "pending"
+      "result": "pending",
+      "notes": "Native child session paging proves bounded bidirectional reads without full materialization; multi-chunk backward assembly stays chronological (Weft follow-up after fb7a9e9)."
     },
     {
       "id": "PI-INT",
