@@ -6972,6 +6972,30 @@ describe("createPiExtension: Task 12 native child overlay", () => {
     await pressed;
     await flushBackgroundWork();
 
+    // Task 20(b) blocker: a replacement session installs a new generation.
+    // Raw keys stay registered exactly once, so the shortcut planned for the
+    // first generation must serve the replacement instead of going inert on
+    // the generation guard.
+    const shortcutCallsBeforeReplacement = host.registerShortcutCalls.length;
+    await host.triggerSessionStart();
+    expect(host.registerShortcutCalls.length).toBe(
+      shortcutCallsBeforeReplacement,
+    );
+
+    const selectsBeforeReplacement = host.selectCalls.length;
+    const replacementPicker = host.deferNextSelect();
+    const replacementPressed = host.invokeShortcut("alt+i");
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (host.selectCalls.length > selectsBeforeReplacement) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    expect(host.selectCalls.length).toBe(selectsBeforeReplacement + 1);
+    expect(host.selectCalls.at(-1)?.title).toBe("Weave children");
+    expect(host.selectCalls.at(-1)?.options.length).toBeGreaterThan(0);
+    replacementPicker.settle(undefined);
+    await replacementPressed;
+    await flushBackgroundWork();
+
     expect(host.editorFactoryCalls.length).toBe(0);
     expect(host.getEditorComponentForTest()).toBe(modalFactory);
   });

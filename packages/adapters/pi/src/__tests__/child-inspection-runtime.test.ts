@@ -126,6 +126,7 @@ describe("overlay key registration independent of editor ownership", () => {
     registry?: PiChildInspectionRegistry,
   ): {
     readonly runtime: ReturnType<typeof createChildInspectionRuntime>;
+    readonly overlayCell: ReturnType<typeof createChildOverlayCell>;
     readonly overlayKeysCell: ReturnType<typeof createChildOverlayKeysCell>;
     readonly focused: string[];
     readonly notices: string[];
@@ -163,7 +164,7 @@ describe("overlay key registration independent of editor ownership", () => {
       closeOverlay: () => closeChildOverlay(overlayCell, overlayKeysCell),
       ...(hostKeybindings === undefined ? {} : { hostKeybindings }),
     });
-    return { runtime, overlayKeysCell, focused, notices };
+    return { runtime, overlayCell, overlayKeysCell, focused, notices };
   }
 
   test("registers overlay shortcuts from the host keybindings port with no editor factory", () => {
@@ -174,7 +175,7 @@ describe("overlay key registration independent of editor ownership", () => {
       getResolvedBindings: () => ({ "app.interrupt": "ctrl+c" }),
     }));
 
-    runtime.ensureOverlayKeysRegistered(pi);
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
 
     expect(overlayKeysCell.status).toBe("applied");
     expect(registered.has("alt+i")).toBe(true);
@@ -188,7 +189,7 @@ describe("overlay key registration independent of editor ownership", () => {
       getEffectiveConfig: () => ({ "app.interrupt": "ctrl+c" }),
     }));
 
-    runtime.ensureOverlayKeysRegistered(pi);
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
 
     expect(overlayKeysCell.status).toBe("applied");
     expect(registered.has("alt+i")).toBe(true);
@@ -200,7 +201,7 @@ describe("overlay key registration independent of editor ownership", () => {
       getResolvedBindings: () => ({ "app.message.followUp": ["alt+i"] }),
     }));
 
-    runtime.ensureOverlayKeysRegistered(pi);
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
 
     expect(registered.has("alt+i")).toBe(false);
     expect(registered.has("alt+1")).toBe(true);
@@ -218,7 +219,7 @@ describe("overlay key registration independent of editor ownership", () => {
     const { pi, registered } = recordingPi();
     const { runtime, overlayKeysCell } = runtimeWithHostKeybindings(undefined);
 
-    runtime.ensureOverlayKeysRegistered(pi);
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
 
     expect(registered.size).toBe(0);
     expect(overlayKeysCell.status).toBe("pending");
@@ -235,13 +236,13 @@ describe("overlay key registration independent of editor ownership", () => {
       throw new Error("host exploded");
     });
 
-    runtime.ensureOverlayKeysRegistered(pi);
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
 
     expect(registered.size).toBe(0);
     expect(overlayKeysCell.status).toBe("pending");
   });
 
-  test("boot-time registration resolves the live generation at key-press time", async () => {
+  test("a shortcut registered for one generation serves its replacement", async () => {
     const { pi, registered } = recordingPi();
     let generationId: string | undefined;
     const registry = new PiChildInspectionRegistry();
@@ -263,34 +264,44 @@ describe("overlay key registration independent of editor ownership", () => {
         latestOutput: "",
       }),
     });
-    const { runtime, focused } = runtimeWithHostKeybindings(
-      () => ({ getResolvedBindings: () => ({}) }),
-      () => generationId,
-      registry,
-    );
+    const { runtime, overlayCell, overlayKeysCell, focused } =
+      runtimeWithHostKeybindings(
+        () => ({ getResolvedBindings: () => ({}) }),
+        () => generationId,
+        registry,
+      );
 
-    // Registered before any generation exists, exactly as extension boot does.
-    runtime.ensureOverlayKeysRegistered(pi);
+    // Registration happens during session activation, exactly as the
+    // extension does, while the first generation is live.
+    generationId = "gen-old";
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-old");
     const slotOne = registered.get("alt+1");
     expect(slotOne).toBeDefined();
+    const afterFirstGeneration = registered.size;
 
-    // No generation yet: the shortcut is inert rather than misdirected.
+    // Generation teardown drops the plan but keeps the host registrations.
+    clearChildOverlayGeneration(overlayCell, overlayKeysCell);
+    generationId = undefined;
     await slotOne?.(undefined as never);
     expect(focused).toEqual([]);
 
-    // Once a generation is live the same registration focuses its first child.
-    generationId = "gen-live";
+    // The replacement generation re-plans behind the very same raw key.
+    generationId = "gen-new";
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-new");
+    expect(registered.size).toBe(afterFirstGeneration);
+    expect(overlayKeysCell.generationId).toBe("gen-new");
+
     await slotOne?.(undefined as never);
     expect(focused).toEqual(["child-1"]);
   });
 
-  test("registration is exactly once across boot and later factory offers", () => {
+  test("registration is exactly once across activation and later factory offers", () => {
     const { pi, registered } = recordingPi();
     const { runtime } = runtimeWithHostKeybindings(() => ({
       getResolvedBindings: () => ({}),
     }));
 
-    runtime.ensureOverlayKeysRegistered(pi);
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
     const afterBoot = registered.size;
     runtime.maybeRegisterOverlayKeys(
       pi,

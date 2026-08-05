@@ -4907,6 +4907,9 @@ export function createPiExtension(
         // here, from the host keybindings port, keeps Alt+I / Alt+1..Alt+9 a
         // real route to the overlay under any editor ownership, while still
         // honouring this generation's `child_inspection.keys` overrides.
+        // Raw keys are handed to the host exactly once; the handlers resolve
+        // the live generation at key-press time, so this call only re-plans
+        // for a replacement generation.
         childInspectionRuntime.maybeRegisterOverlayKeys(
           pi,
           undefined,
