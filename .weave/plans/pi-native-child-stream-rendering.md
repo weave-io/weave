@@ -111,7 +111,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - `bun test packages/adapters/pi/src/__tests__/capability-prober.test.ts` (and compat tests) pass with new cases: each probe missing ⇒ correct mode + diagnostic fields; all present ⇒ ready.
     - Health-only diagnostics name the missing capability, version, contract, probe, mode, and remediation.
 
-- [ ] 4. Implement the native child session manager
+- [x] 4. Implement the native child session manager
   - **What**: New adapter module owning child native Pi v3 sessions: create under `$XDG_DATA_HOME/weave/adapters/pi/sessions/` (user-only permissions, strict root containment), set `parentSession` to the parent session, resolve/open for read (live and historical), explicit delete-with-confirmation producing an appended tombstone record, and missing/corrupt detection surfacing repair/remove options. No auto pruning, no transcript duplication.
   - **Files**: `packages/adapters/pi/src/child-native-sessions.ts` (new), reuse `packages/adapters/pi/src/path-containment.ts`; tests `packages/adapters/pi/src/__tests__/child-native-sessions.test.ts` (new).
   - **Depends on**: Tasks 1–3.

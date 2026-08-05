@@ -1,0 +1,781 @@
+import { describe, expect, test } from "bun:test";
+import { MemoryPiChildHistoryFs } from "../child-history-fs.js";
+import {
+  isDisjointFromDefaultSessionTree,
+  nativeSessionDeletionToken,
+  PI_NATIVE_SESSION_LAYOUT,
+  type PiNativeSessionFsPort,
+  type PiNativeSessionHandle,
+  type PiNativeSessionHeader,
+  type PiNativeSessionHostPort,
+  type PiNativeSessionRecord,
+  PiNativeSessionStore,
+  resolvePiNativeSessionRoot,
+  safeNativeSessionComponent,
+  verifyNativeSessionRef,
+} from "../child-native-sessions.js";
+
+const ROOT = "/data/weave/adapters/pi/sessions";
+const PARENT = "parent-session-1";
+
+const RECORD: PiNativeSessionRecord = {
+  childId: "child-1",
+  sessionId: "native-session-1",
+  ref: "child-1/session.jsonl",
+  path: `${ROOT}/child-1/session.jsonl`,
+  parentSession: PARENT,
+  cwd: "/repo",
+};
+
+interface FakeHostOptions {
+  readonly fileName?: string;
+  readonly persisted?: boolean;
+  readonly header?: PiNativeSessionHeader | null;
+  readonly headerForOpen?: PiNativeSessionHeader | null;
+  readonly createThrows?: boolean;
+  readonly openThrows?: boolean;
+  readonly entriesThrow?: boolean;
+  readonly entries?: readonly unknown[];
+  readonly fileOverride?: string;
+}
+
+function handleFor(
+  file: string | undefined,
+  dir: string,
+  header: PiNativeSessionHeader | null,
+  persisted: boolean,
+  entries: readonly unknown[] = [],
+  entriesThrow = false,
+): PiNativeSessionHandle {
+  return {
+    getSessionId: () => header?.id ?? "",
+    getSessionFile: () => file,
+    getSessionDir: () => dir,
+    getHeader: () => header,
+    getEntries: () => {
+      if (entriesThrow) throw new Error("entries failed");
+      return entries;
+    },
+    isPersisted: () => persisted,
+  };
+}
+
+/**
+ * Scripted stand-in for Pi's `SessionManager`. It never starts a real harness
+ * and never touches a real filesystem; the session file itself is seeded into
+ * the in-memory no-follow filesystem by {@link seedSessionFile}.
+ */
+class FakeHost implements PiNativeSessionHostPort {
+  readonly created: {
+    cwd: string;
+    dir: string;
+    options: { parentSession?: string; id?: string };
+  }[] = [];
+  readonly opened: { path: string; dir: string }[] = [];
+
+  constructor(private readonly options: FakeHostOptions = {}) {}
+
+  create(
+    cwd: string,
+    sessionDir: string,
+    options: { parentSession?: string; id?: string },
+  ): PiNativeSessionHandle {
+    this.created.push({ cwd, dir: sessionDir, options });
+    if (this.options.createThrows) throw new Error("host failure");
+    const persisted = this.options.persisted ?? true;
+    const fileName = this.options.fileName ?? "session.jsonl";
+    const file =
+      this.options.fileOverride ??
+      (persisted ? `${sessionDir}/${fileName}` : undefined);
+    const header =
+      this.options.header === undefined
+        ? {
+            id: "native-session-1",
+            cwd,
+            version: 3,
+            parentSession: options.parentSession,
+          }
+        : this.options.header;
+    return handleFor(
+      file,
+      sessionDir,
+      header,
+      persisted,
+      this.options.entries ?? [],
+      this.options.entriesThrow ?? false,
+    );
+  }
+
+  open(path: string, sessionDir: string): PiNativeSessionHandle {
+    this.opened.push({ path, dir: sessionDir });
+    if (this.options.openThrows) throw new Error("unreadable");
+    const header =
+      this.options.headerForOpen === undefined
+        ? {
+            id: "native-session-1",
+            cwd: "/repo",
+            version: 3,
+            parentSession: PARENT,
+          }
+        : this.options.headerForOpen;
+    return handleFor(
+      path,
+      sessionDir,
+      header,
+      true,
+      this.options.entries ?? [],
+      this.options.entriesThrow ?? false,
+    );
+  }
+}
+
+/** Writes a 0600 session file where the real `SessionManager` would write it. */
+async function seedSessionFile(
+  fs: MemoryPiChildHistoryFs,
+  directoryPath: string,
+  fileName = "session.jsonl",
+): Promise<void> {
+  const directory = (
+    await fs.openDirectory(directoryPath, true)
+  )._unsafeUnwrap();
+  (
+    await directory.appendFile(
+      fileName,
+      new TextEncoder().encode('{"type":"session"}\n'),
+      0o600,
+    )
+  )._unsafeUnwrap();
+  directory.close();
+}
+
+interface Harness {
+  readonly store: PiNativeSessionStore;
+  readonly fs: MemoryPiChildHistoryFs;
+  readonly host: FakeHost;
+  create(
+    childId?: string,
+  ): Promise<Awaited<ReturnType<PiNativeSessionStore["createChildSession"]>>>;
+}
+
+function harness(options: FakeHostOptions = {}): Harness {
+  const fs = new MemoryPiChildHistoryFs();
+  const host = new FakeHost(options);
+  const store = new PiNativeSessionStore({
+    root: ROOT,
+    // Structural stand-in until Task 16 removes the legacy JSONL FS module.
+    fs: fs as unknown as PiNativeSessionFsPort,
+    host,
+    now: () => new Date("2026-01-01T00:00:00.000Z"),
+  });
+  return {
+    store,
+    fs,
+    host,
+    async create(childId = "child-1") {
+      await seedSessionFile(
+        fs,
+        `${ROOT}/${childId}`,
+        options.fileName ?? "session.jsonl",
+      );
+      return store.createChildSession({
+        childId,
+        parentSession: PARENT,
+        cwd: "/repo",
+      });
+    },
+  };
+}
+
+describe("resolvePiNativeSessionRoot", () => {
+  test("uses XDG_DATA_HOME when absolute", () => {
+    const resolved = resolvePiNativeSessionRoot({
+      env: { XDG_DATA_HOME: "/xdg" },
+      homeDir: "/home/user",
+    });
+    expect(resolved._unsafeUnwrap()).toBe("/xdg/weave/adapters/pi/sessions");
+  });
+
+  test("defaults to ~/.local/share", () => {
+    const resolved = resolvePiNativeSessionRoot({
+      env: {},
+      homeDir: "/home/user",
+    });
+    expect(resolved._unsafeUnwrap()).toBe(
+      "/home/user/.local/share/weave/adapters/pi/sessions",
+    );
+  });
+
+  test("rejects a relative XDG_DATA_HOME", () => {
+    const resolved = resolvePiNativeSessionRoot({
+      env: { XDG_DATA_HOME: "relative/data" },
+      homeDir: "/home/user",
+    });
+    expect(resolved._unsafeUnwrapErr()).toEqual({
+      type: "SessionRootViolation",
+      reason: "relative-xdg-data-home",
+    });
+  });
+
+  test("rejects an empty home with no XDG_DATA_HOME", () => {
+    const resolved = resolvePiNativeSessionRoot({ env: {}, homeDir: "" });
+    expect(resolved._unsafeUnwrapErr()).toEqual({
+      type: "SessionRootViolation",
+      reason: "empty-home",
+    });
+  });
+});
+
+describe("containment", () => {
+  test.each([
+    ["../escape/session.jsonl"],
+    ["child/../../escape/session.jsonl"],
+    ["/absolute/session.jsonl"],
+    [""],
+  ])("rejects unsafe ref %p", (ref) => {
+    const verified = verifyNativeSessionRef(ref);
+    expect(verified.isErr()).toBe(true);
+    expect(verified._unsafeUnwrapErr().type).toBe("SessionRootViolation");
+  });
+
+  test("accepts a safe root-relative ref", () => {
+    expect(
+      verifyNativeSessionRef("child-1/session.jsonl")._unsafeUnwrap(),
+    ).toBe("child-1/session.jsonl");
+  });
+
+  test("hashes an unsafe child id into one safe component", () => {
+    expect(
+      safeNativeSessionComponent("../../etc/passwd")._unsafeUnwrap(),
+    ).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("rejects an empty child id", () => {
+    expect(safeNativeSessionComponent("")._unsafeUnwrapErr()).toEqual({
+      type: "SessionRootViolation",
+      reason: "unsafe-component",
+    });
+  });
+
+  test("rejects a symlinked child directory", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    fs.simulateDirectorySymlink(`${ROOT}/child-1`);
+    const result = await store.openSession("child-1/session.jsonl");
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionRootViolation",
+      reason: "symlink-rejected",
+    });
+  });
+
+  test("rejects a session file the host places outside the child directory", async () => {
+    const { create } = harness({ fileOverride: "/elsewhere/session.jsonl" });
+    const result = await create();
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionRootViolation",
+      reason: "path-escape",
+    });
+  });
+
+  test("keeps an unsafe child id inside the root", async () => {
+    const { store, fs, host } = harness();
+    const component =
+      safeNativeSessionComponent("../../escape")._unsafeUnwrap();
+    await seedSessionFile(fs, `${ROOT}/${component}`);
+    const record = (
+      await store.createChildSession({
+        childId: "../../escape",
+        parentSession: PARENT,
+        cwd: "/repo",
+      })
+    )._unsafeUnwrap();
+    expect(record.path).toBe(`${ROOT}/${component}/session.jsonl`);
+    expect(host.created[0]?.dir).toBe(`${ROOT}/${component}`);
+  });
+});
+
+describe("createChildSession", () => {
+  test("persists under the isolated root with an immutable parentSession", async () => {
+    const { host, create } = harness();
+    const record = (await create())._unsafeUnwrap();
+
+    expect(host.created).toHaveLength(1);
+    expect(host.created[0]?.dir).toBe(`${ROOT}/child-1`);
+    expect(host.created[0]?.cwd).toBe("/repo");
+    expect(host.created[0]?.options.parentSession).toBe(PARENT);
+    expect(record.ref).toBe("child-1/session.jsonl");
+    expect(record.path).toBe(`${ROOT}/child-1/session.jsonl`);
+    expect(record.parentSession).toBe(PARENT);
+    expect(record.sessionId).toBe("native-session-1");
+  });
+
+  test("fails when the host did not persist the session", async () => {
+    const { create } = harness({ persisted: false });
+    expect((await create())._unsafeUnwrapErr()).toEqual({
+      type: "SessionCreateFailed",
+      reason: "not-persisted",
+    });
+  });
+
+  test("fails when the created file is absent from storage", async () => {
+    const { store } = harness();
+    const result = await store.createChildSession({
+      childId: "child-1",
+      parentSession: PARENT,
+      cwd: "/repo",
+    });
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionCreateFailed",
+      reason: "not-persisted",
+    });
+  });
+
+  test("fails when the host throws", async () => {
+    const { create } = harness({ createThrows: true });
+    expect((await create())._unsafeUnwrapErr()).toEqual({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    });
+  });
+
+  test("rejects a header without a parentSession link", async () => {
+    const { create } = harness({
+      header: { id: "native-session-1", cwd: "/repo", version: 3 },
+    });
+    expect((await create())._unsafeUnwrapErr()).toEqual({
+      type: "SessionCorrupt",
+      ref: "child-1",
+      reason: "parent-session-mismatch",
+    });
+  });
+
+  test("rejects a non-v3 session header", async () => {
+    const { create } = harness({
+      header: {
+        id: "native-session-1",
+        cwd: "/repo",
+        version: 2,
+        parentSession: PARENT,
+      },
+    });
+    expect((await create())._unsafeUnwrapErr()).toEqual({
+      type: "SessionCorrupt",
+      ref: "child-1",
+      reason: "unsupported-version",
+    });
+  });
+
+  test("rejects an empty parent session before touching storage", async () => {
+    const { store, host } = harness();
+    const result = await store.createChildSession({
+      childId: "child-1",
+      parentSession: "",
+      cwd: "/repo",
+    });
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionCreateFailed",
+      reason: "not-persisted",
+    });
+    expect(host.created).toHaveLength(0);
+  });
+});
+
+describe("permission modes", () => {
+  test("layout pins user-only modes", () => {
+    expect(PI_NATIVE_SESSION_LAYOUT.directoryMode).toBe(0o700);
+    expect(PI_NATIVE_SESSION_LAYOUT.fileMode).toBe(0o600);
+  });
+
+  test("reports a permissive child directory instead of repairing it", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    fs.simulatePermissiveDirectory(`${ROOT}/child-1`);
+    const result = await store.openSession("child-1/session.jsonl");
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionPermissionError",
+      kind: "directory",
+    });
+  });
+
+  test("reports a permissive session file", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    fs.simulatePermissiveFile(`${ROOT}/child-1`, "session.jsonl");
+    const result = await store.openSession("child-1/session.jsonl");
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionPermissionError",
+      kind: "file",
+    });
+  });
+
+  test("reports a permissive tombstone ledger", async () => {
+    const { store, fs } = harness();
+    (await store.appendTombstone(RECORD))._unsafeUnwrap();
+    fs.simulatePermissiveFile(ROOT, PI_NATIVE_SESSION_LAYOUT.tombstoneFile);
+    const appended = await store.appendTombstone(RECORD);
+    expect(appended._unsafeUnwrapErr()).toEqual({
+      type: "TombstoneAppendFailed",
+      reason: "permission",
+    });
+  });
+});
+
+describe("openSession", () => {
+  test("reads a persisted session through the host open API", async () => {
+    const { store, host, create } = harness();
+    (await create())._unsafeUnwrap();
+    const record = (
+      await store.openSession("child-1/session.jsonl", PARENT)
+    )._unsafeUnwrap();
+    expect(record.sessionId).toBe("native-session-1");
+    expect(record.parentSession).toBe(PARENT);
+    expect(host.opened).toEqual([
+      { path: `${ROOT}/child-1/session.jsonl`, dir: `${ROOT}/child-1` },
+    ]);
+  });
+
+  test("returns SessionMissing for an unknown child directory", async () => {
+    const { store } = harness();
+    expect(
+      (await store.openSession("child-9/session.jsonl"))._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionMissing", ref: "child-9/session.jsonl" });
+  });
+
+  test("returns SessionMissing when the directory exists but the file does not", async () => {
+    const { store, create } = harness();
+    (await create())._unsafeUnwrap();
+    expect(
+      (await store.openSession("child-1/other.jsonl"))._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionMissing", ref: "child-1/other.jsonl" });
+  });
+
+  test("returns SessionCorrupt when the host cannot read the file", async () => {
+    const { store, create } = harness({ openThrows: true });
+    (await create())._unsafeUnwrap();
+    expect(
+      (await store.openSession("child-1/session.jsonl"))._unsafeUnwrapErr(),
+    ).toEqual({
+      type: "SessionCorrupt",
+      ref: "child-1/session.jsonl",
+      reason: "unreadable",
+    });
+  });
+
+  test("returns SessionCorrupt when the header is absent", async () => {
+    const { store, create } = harness({ headerForOpen: null });
+    (await create())._unsafeUnwrap();
+    expect(
+      (await store.openSession("child-1/session.jsonl"))._unsafeUnwrapErr(),
+    ).toEqual({
+      type: "SessionCorrupt",
+      ref: "child-1/session.jsonl",
+      reason: "missing-header",
+    });
+  });
+
+  test("returns SessionCorrupt when the parent link does not match", async () => {
+    const { store, create } = harness();
+    (await create())._unsafeUnwrap();
+    const result = await store.openSession(
+      "child-1/session.jsonl",
+      "other-parent",
+    );
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionCorrupt",
+      ref: "child-1/session.jsonl",
+      reason: "parent-session-mismatch",
+    });
+  });
+
+  test("rejects a traversal ref before any storage access", async () => {
+    const { store, host } = harness();
+    const result = await store.openSession("../escape/session.jsonl");
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionRootViolation",
+      reason: "path-escape",
+    });
+    expect(host.opened).toHaveLength(0);
+  });
+});
+
+describe("readSessionEntries", () => {
+  const liveEntries = Object.freeze([
+    { type: "message", role: "user", content: "live" },
+    { type: "message", role: "assistant", content: "ok" },
+  ]);
+
+  test("returns host getEntries output for a live session without adapter copies", async () => {
+    const { store, fs, host, create } = harness({ entries: liveEntries });
+    const created = (await create())._unsafeUnwrap();
+    const filesBefore = new Map(fs.files(`${ROOT}/child-1`));
+    const result = (
+      await store.readSessionEntries(created.ref, PARENT)
+    )._unsafeUnwrap();
+
+    expect(result.record.sessionId).toBe("native-session-1");
+    expect(result.entries).toEqual(liveEntries);
+    expect(result.entries).toBe(liveEntries);
+    expect(host.opened).toHaveLength(1);
+    expect(fs.files(`${ROOT}/child-1`)).toEqual(filesBefore);
+    expect(fs.files(ROOT).has("transcript-copy.jsonl")).toBe(false);
+  });
+
+  test("returns host getEntries output for a historical reopen", async () => {
+    const historical = Object.freeze([{ type: "custom", name: "done" }]);
+    const { store, create } = harness({ entries: historical });
+    (await create())._unsafeUnwrap();
+    const first = (
+      await store.readSessionEntries("child-1/session.jsonl", PARENT)
+    )._unsafeUnwrap();
+    const second = (
+      await store.readSessionEntries("child-1/session.jsonl", PARENT)
+    )._unsafeUnwrap();
+
+    expect(first.entries).toEqual(historical);
+    expect(second.entries).toEqual(historical);
+    expect(second.record.ref).toBe("child-1/session.jsonl");
+  });
+
+  test("maps getEntries throws to SessionCorrupt", async () => {
+    const { store, create } = harness({ entriesThrow: true });
+    (await create())._unsafeUnwrap();
+    expect(
+      (
+        await store.readSessionEntries("child-1/session.jsonl", PARENT)
+      )._unsafeUnwrapErr(),
+    ).toEqual({
+      type: "SessionCorrupt",
+      ref: "child-1/session.jsonl",
+      reason: "unreadable",
+    });
+  });
+
+  test("returns SessionMissing for an absent historical session", async () => {
+    const { store } = harness({ entries: liveEntries });
+    expect(
+      (
+        await store.readSessionEntries("child-9/session.jsonl", PARENT)
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionMissing", ref: "child-9/session.jsonl" });
+  });
+
+  test("returns SessionCorrupt when the historical header is absent", async () => {
+    const { store, create } = harness({
+      headerForOpen: null,
+      entries: liveEntries,
+    });
+    (await create())._unsafeUnwrap();
+    expect(
+      (
+        await store.readSessionEntries("child-1/session.jsonl", PARENT)
+      )._unsafeUnwrapErr(),
+    ).toEqual({
+      type: "SessionCorrupt",
+      ref: "child-1/session.jsonl",
+      reason: "missing-header",
+    });
+  });
+
+  test("returns SessionCorrupt when the parent link does not match", async () => {
+    const { store, create } = harness({ entries: liveEntries });
+    (await create())._unsafeUnwrap();
+    expect(
+      (
+        await store.readSessionEntries("child-1/session.jsonl", "other-parent")
+      )._unsafeUnwrapErr(),
+    ).toEqual({
+      type: "SessionCorrupt",
+      ref: "child-1/session.jsonl",
+      reason: "parent-session-mismatch",
+    });
+  });
+});
+
+describe("listByRef", () => {
+  test("returns typed states per ref and never scans the tree", async () => {
+    const { store, create } = harness();
+    (await create())._unsafeUnwrap();
+    const states = (
+      await store.listByRef(["child-1/session.jsonl", "child-2/session.jsonl"])
+    )._unsafeUnwrap();
+    expect(states).toHaveLength(2);
+    expect(states[0]?.state).toBe("available");
+    expect(states[1]).toEqual({
+      state: "missing",
+      ref: "child-2/session.jsonl",
+    });
+  });
+
+  test("reports corrupt refs without failing the whole listing", async () => {
+    const { store, create } = harness({ headerForOpen: null });
+    (await create())._unsafeUnwrap();
+    const states = (
+      await store.listByRef(["child-1/session.jsonl"])
+    )._unsafeUnwrap();
+    expect(states[0]).toEqual({
+      state: "corrupt",
+      ref: "child-1/session.jsonl",
+      reason: "missing-header",
+    });
+  });
+
+  test("bounds the listing by the caller limit", async () => {
+    const { store } = harness();
+    const refs = Array.from(
+      { length: 10 },
+      (_, index) => `child-${index}/session.jsonl`,
+    );
+    expect(
+      (await store.listByRef(refs, { limit: 3 }))._unsafeUnwrap(),
+    ).toHaveLength(3);
+  });
+
+  test("clamps to the hard ceiling regardless of the caller limit", async () => {
+    const { store } = harness();
+    const refs = Array.from(
+      { length: PI_NATIVE_SESSION_LAYOUT.maxListedSessions + 25 },
+      (_, index) => `child-${index}/session.jsonl`,
+    );
+    const states = (
+      await store.listByRef(refs, { limit: 10_000 })
+    )._unsafeUnwrap();
+    expect(states).toHaveLength(PI_NATIVE_SESSION_LAYOUT.maxListedSessions);
+  });
+
+  test("marks an unsafe ref unavailable instead of resolving it", async () => {
+    const { store } = harness();
+    const states = (
+      await store.listByRef(["../escape/session.jsonl"])
+    )._unsafeUnwrap();
+    expect(states[0]?.state).toBe("unavailable");
+  });
+});
+
+describe("deletion and tombstones", () => {
+  test("refuses deletion without the confirmation token", async () => {
+    const { store, create } = harness();
+    (await create())._unsafeUnwrap();
+    const result = await store.deleteSession(RECORD, "wrong-token");
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionConfirmationRequired",
+      ref: RECORD.ref,
+    });
+    expect((await store.openSession(RECORD.ref, PARENT)).isOk()).toBe(true);
+    expect((await store.readTombstones())._unsafeUnwrap()).toEqual([]);
+  });
+
+  test("deletes with the confirmation token and appends a tombstone", async () => {
+    const { store, create } = harness();
+    (await create())._unsafeUnwrap();
+    const token = nativeSessionDeletionToken(RECORD.ref);
+    const tombstone = (
+      await store.deleteSession(RECORD, token)
+    )._unsafeUnwrap();
+    expect(tombstone).toEqual({
+      version: 1,
+      ref: RECORD.ref,
+      childId: "child-1",
+      parentSession: PARENT,
+      deletedAt: "2026-01-01T00:00:00.000Z",
+      reason: "explicit-user-deletion",
+    });
+    expect(
+      (await store.openSession(RECORD.ref, PARENT))._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionMissing", ref: RECORD.ref });
+  });
+
+  test("appends without rewriting prior tombstone records", async () => {
+    const { store, fs } = harness();
+    (await store.appendTombstone(RECORD))._unsafeUnwrap();
+    (
+      await store.appendTombstone({ ...RECORD, childId: "child-2" })
+    )._unsafeUnwrap();
+    const raw = fs.files(ROOT).get(PI_NATIVE_SESSION_LAYOUT.tombstoneFile);
+    const lines = new TextDecoder()
+      .decode(raw ?? new Uint8Array())
+      .split("\n")
+      .filter((line) => line.length > 0);
+    expect(lines).toHaveLength(2);
+    const ledger = (await store.readTombstones())._unsafeUnwrap();
+    expect(ledger.map((entry) => entry.childId)).toEqual([
+      "child-1",
+      "child-2",
+    ]);
+  });
+
+  test("reads an empty ledger when nothing was ever deleted", async () => {
+    const { store } = harness();
+    expect((await store.readTombstones())._unsafeUnwrap()).toEqual([]);
+  });
+
+  test("skips malformed tombstone lines without throwing", async () => {
+    const { store, fs } = harness();
+    (await store.appendTombstone(RECORD))._unsafeUnwrap();
+    const directory = (await fs.openDirectory(ROOT, true))._unsafeUnwrap();
+    (
+      await directory.appendFile(
+        PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+        new TextEncoder().encode("not json\n"),
+        0o600,
+      )
+    )._unsafeUnwrap();
+    directory.close();
+    expect((await store.readTombstones())._unsafeUnwrap()).toHaveLength(1);
+  });
+
+  test("refuses to delete through an unsafe ref", async () => {
+    const { store } = harness();
+    const unsafe = { ...RECORD, ref: "../escape/session.jsonl" };
+    const result = await store.deleteSession(
+      unsafe,
+      nativeSessionDeletionToken(unsafe.ref),
+    );
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionRootViolation",
+      reason: "path-escape",
+    });
+  });
+
+  test("confirmation tokens are ref-specific and stable", () => {
+    const token = nativeSessionDeletionToken("child-1/session.jsonl");
+    expect(token).toBe(nativeSessionDeletionToken("child-1/session.jsonl"));
+    expect(token).not.toBe(nativeSessionDeletionToken("child-2/session.jsonl"));
+  });
+});
+
+describe("default session tree isolation", () => {
+  test("the Weave root is disjoint from Pi's default session directory", () => {
+    const root = resolvePiNativeSessionRoot({
+      env: {},
+      homeDir: "/home/user",
+    })._unsafeUnwrap();
+    expect(
+      isDisjointFromDefaultSessionTree(
+        root,
+        "/home/user/.pi/agent/sessions/-home-user-repo",
+      ),
+    ).toBe(true);
+  });
+
+  test("a root nested in the default tree is reported as visible", () => {
+    expect(
+      isDisjointFromDefaultSessionTree(
+        "/home/user/.pi/agent/sessions/weave",
+        "/home/user/.pi/agent/sessions",
+      ),
+    ).toBe(false);
+  });
+
+  test("created sessions live under the Weave root, never the default tree", async () => {
+    const { store, host, create } = harness();
+    const record = (await create())._unsafeUnwrap();
+    expect(record.path.startsWith(`${ROOT}/`)).toBe(true);
+    expect(store.sessionRoot()).toBe(ROOT);
+    expect(host.created[0]?.dir.startsWith(`${ROOT}/`)).toBe(true);
+    expect(
+      isDisjointFromDefaultSessionTree(
+        store.sessionRoot(),
+        "/home/user/.pi/agent/sessions",
+      ),
+    ).toBe(true);
+  });
+});

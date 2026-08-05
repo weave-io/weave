@@ -139,6 +139,32 @@ export {
   PiChildSlots,
 } from "./child-inspector.js";
 export type {
+  CreateNativeChildSessionInput,
+  PiNativeSessionCorruption,
+  PiNativeSessionDirectory,
+  PiNativeSessionEntries,
+  PiNativeSessionError,
+  PiNativeSessionFsError,
+  PiNativeSessionFsPort,
+  PiNativeSessionHandle,
+  PiNativeSessionHeader,
+  PiNativeSessionHostPort,
+  PiNativeSessionRecord,
+  PiNativeSessionRootViolation,
+  PiNativeSessionState,
+  PiNativeSessionStoreOptions,
+  PiNativeSessionTombstone,
+} from "./child-native-sessions.js";
+export {
+  isDisjointFromDefaultSessionTree,
+  nativeSessionDeletionToken,
+  PI_NATIVE_SESSION_LAYOUT,
+  PiNativeSessionStore,
+  resolvePiNativeSessionRoot,
+  safeNativeSessionComponent,
+  verifyNativeSessionRef,
+} from "./child-native-sessions.js";
+export type {
   PiChildPickerEntry,
   PiChildPickerError,
   PiChildPickerInput,
