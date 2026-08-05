@@ -1,10 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import type { CapabilityProbeResult } from "@weaveio/weave-engine";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
+import { ok, okAsync, type Result, ResultAsync } from "neverthrow";
 import type { PiCapabilityProbeSource } from "../capability-prober.js";
 import { ADAPTER_PACKAGE_IDENTITY, WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiExtensionController } from "../controller.js";
-import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
+import {
+  HOST_PACKAGE_NAME,
+  type HostPackageInfo,
+  type HostPackageReader,
+} from "../host-compatibility.js";
 import { PiSafeInitializer } from "../safe-initializer.js";
 import type { PiCommandInfo } from "../types.js";
 import { FakeHostPackageReader } from "./fakes/fake-host-package-reader.js";
@@ -71,6 +76,37 @@ function trustedTuiSession() {
     isProjectTrusted: () => true,
     cwd: "/fake/project",
     modelRegistry: { getAvailable: () => [] },
+  };
+}
+
+function deferredResultAsync<T, E>(
+  fallbackError: E,
+): {
+  readonly called: Promise<void>;
+  readonly start: () => ResultAsync<T, E>;
+  readonly settle: (result: Result<T, E>) => void;
+} {
+  let resolveCalled!: () => void;
+  let resolveResult!: (result: Result<T, E>) => void;
+  let result: ResultAsync<T, E> | undefined;
+  const called = new Promise<void>((resolve) => {
+    resolveCalled = resolve;
+  });
+
+  return {
+    called,
+    start: () => {
+      if (result !== undefined) return result;
+      result = ResultAsync.fromPromise(
+        new Promise<Result<T, E>>((resolve) => {
+          resolveResult = resolve;
+        }),
+        () => fallbackError,
+      ).andThen((settled) => settled);
+      resolveCalled();
+      return result;
+    },
+    settle: (settled) => resolveResult(settled),
   };
 }
 
@@ -144,6 +180,55 @@ describe("PiExtensionController command gating", () => {
 });
 
 describe("PiExtensionController generation replacement and staleness", () => {
+  it("returns ControllerGenerationStale when the first activation settles after the second", async () => {
+    const hostInfo: HostPackageInfo = {
+      name: HOST_PACKAGE_NAME,
+      version: "0.81.1",
+    };
+    const firstRead = deferredResultAsync<typeof hostInfo, never>(
+      undefined as never,
+    );
+    let readCount = 0;
+    const hostPackageReader: HostPackageReader = {
+      read: () => {
+        readCount += 1;
+        return readCount === 1 ? firstRead.start() : okAsync(hostInfo);
+      },
+    };
+    const controller = new PiExtensionController({
+      safeInitializer: new PiSafeInitializer({
+        hostPackageReader,
+        capabilityProber: new FixedProber(allOkProbes()),
+        configActivator: fakeConfigActivator(),
+      }),
+      idGenerator: new FakeIdGenerator(),
+      clock: new FakeClock(),
+      logger: new RecordingLogger(),
+    });
+
+    const firstActivation = controller.activate(
+      trustedTuiSession(),
+      ALL_OWNED_COMMANDS,
+    );
+    await firstRead.called;
+
+    const secondActivation = await controller.activate(
+      trustedTuiSession(),
+      ALL_OWNED_COMMANDS,
+    );
+    expect(secondActivation.isOk()).toBe(true);
+
+    firstRead.settle(ok(hostInfo));
+    const firstResult = await firstActivation;
+    expect(firstResult.isErr()).toBe(true);
+    expect(firstResult._unsafeUnwrapErr().code).toBe(
+      "ControllerGenerationStale",
+    );
+    expect(controller.getCurrentGeneration()?.id).toBe(
+      secondActivation._unsafeUnwrap().id,
+    );
+  });
+
   it("rejects an operation handle captured before a replacement as ControllerGenerationStale", async () => {
     const controller = makeController(allOkProbes());
     await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS);

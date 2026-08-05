@@ -230,7 +230,64 @@ describe("getBuiltinConfig", () => {
     }
   });
 
-  it("(k) each specialist trigger has non-empty domain and trigger strings", () => {
+  // ---------------------------------------------------------------------------
+  // Descriptions are routing metadata: they are rendered into the delegation
+  // tables of Loom and Tapestry, so a bare role label is not enough.
+  // ---------------------------------------------------------------------------
+
+  const ALL_BUILTIN_AGENTS = [
+    ...ORCHESTRATOR_AGENTS,
+    ...SPECIALIST_AGENTS,
+  ] as const;
+
+  /** Role labels that used to be the entire description. */
+  const ROLE_LABEL_ONLY = [
+    "Loom (Main Orchestrator)",
+    "Tapestry (Plan Execution)",
+    "Shuttle (Domain Specialist)",
+    "Pattern (Strategic Planner)",
+    "Thread (Codebase Explorer)",
+    "Spindle (External Researcher)",
+    "Weft (Reviewer)",
+    "Warp (Security Auditor)",
+  ];
+
+  it("(k1) every builtin agent has a substantive routing description, not a bare role label", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    for (const name of ALL_BUILTIN_AGENTS) {
+      const description = config.agents[name]?.description;
+      expect(description).toBeDefined();
+      const text = description ?? "";
+      // Substantive: a routing description must exist and say more than a label.
+      expect(text.trim().length).toBeGreaterThan(0);
+      expect(ROLE_LABEL_ONLY).not.toContain(text);
+      // Single-line DSL string: no embedded newlines, no unescaped quotes.
+      expect(text).not.toContain("\n");
+      expect(text).not.toContain('"');
+    }
+  });
+
+  it("(k2) builtin agent descriptions are distinct from one another", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const descriptions = ALL_BUILTIN_AGENTS.map(
+      (name) => config.agents[name]?.description ?? "",
+    );
+    expect(new Set(descriptions).size).toBe(descriptions.length);
+  });
+
+  it("(k3) constrained specialists name their read-only or no-delegation limits", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    for (const name of ["thread", "spindle", "weft", "warp"] as const) {
+      const text = (config.agents[name]?.description ?? "").toLowerCase();
+      expect(text).toContain("delegat");
+    }
+    for (const name of ["thread", "weft", "warp"] as const) {
+      const text = (config.agents[name]?.description ?? "").toLowerCase();
+      expect(text).toContain("read-only");
+    }
+  });
+
+  it("(k4) each specialist trigger has non-empty domain and trigger strings", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     for (const name of SPECIALIST_AGENTS) {
       const agent = config.agents[name];
@@ -242,5 +299,41 @@ describe("getBuiltinConfig", () => {
         expect(t.trigger.trim().length).toBeGreaterThan(0);
       }
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // The generic shuttle competes with generated category shuttles for the same
+  // work, so its triggers must read as a scoped fallback, never as a claim on
+  // whole domains such as testing or refactoring.
+  // -------------------------------------------------------------------------
+
+  it("(k5) generic shuttle triggers describe a fallback, not broad domains", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const triggers = config.agents.shuttle?.triggers ?? [];
+
+    expect(triggers.length).toBeGreaterThan(0);
+
+    // Every trigger carries an explicit routing hint.
+    for (const t of triggers) {
+      expect((t.routing_hint ?? "").trim().length).toBeGreaterThan(0);
+    }
+
+    // Domains are unique and none of them claims a broad specialism that a
+    // category shuttle (e.g. shuttle-tests) would own.
+    const domains = triggers.map((t) => t.domain.toLowerCase());
+    expect(new Set(domains).size).toBe(domains.length);
+    for (const forbidden of ["testing", "debugging", "refactoring"]) {
+      expect(domains).not.toContain(forbidden);
+    }
+
+    // At least one hint states the fallback rule explicitly.
+    const hints = triggers.map((t) => (t.routing_hint ?? "").toLowerCase());
+    expect(
+      hints.some(
+        (h) =>
+          h.includes("no listed category shuttle") ||
+          h.includes("no category shuttle"),
+      ),
+    ).toBe(true);
   });
 });

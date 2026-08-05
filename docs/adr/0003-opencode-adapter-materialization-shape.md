@@ -91,13 +91,13 @@ Skill discovery is harness-owned. The OpenCode SDK/runtime knows which skills ar
 
 1. Accept the harness-provided `SkillInfo[]` list via `OpenCodeAdapterOptions.availableSkills`.
 2. Return it from `loadAvailableSkills()` without any filesystem scanning.
-3. Let the engine's `resolveSkillsForAgent()` match declared skill names against the list and emit `MissingSkill` errors for unresolved names.
+3. Let the engine's `resolveSkillsForAgent()` match declared skill names against the list and emit warnings for unresolved names.
 
-`skill-discovery.ts` provides only two helpers:
+`skill-discovery.ts` provides two compatibility helpers:
 - `buildSkillInfoList(names)` — wraps harness-provided skill names as `SkillInfo[]`.
-- `validateDeclaredSkills(declared, available, disabled)` — validates declared names against the harness-provided list; returns `err(string[])` for missing skills.
+- `validateDeclaredSkills(declared, available, disabled)` — reports missing names to callers that need a strict validation result. Adapter activation must convert this diagnostic into warnings rather than fail an agent.
 
-The module contains no filesystem I/O. When no skills are injected, `loadAvailableSkills()` returns `[]` and the engine hard-errors on any declared skills — no silent skips.
+The module contains no filesystem I/O. When no skills are injected, `loadAvailableSkills()` returns `[]`; each declared skill is reported as unavailable and agent activation continues without it.
 
 ### 5. Ownership-safe upsert via `[weave-managed]` tag
 

@@ -304,8 +304,18 @@ describe("buildDelegationToolRegistration", () => {
     )
       .render(80)
       .join("\n");
-    expect(rendered).toContain("Shuttle");
+    expect(rendered).not.toContain("Shuttle");
+    expect(rendered).toContain("\u2500");
     expect(rendered).toContain("Inspecting the adapter");
+
+    // The agent, model, and reasoning level belong to the call line.
+    const call = registration
+      .renderCall?.({ agent: "shuttle", task: "do it" }, theme, {
+        args: { agent: "shuttle", task: "do it" },
+      })
+      ?.render(80)
+      .join("\n");
+    expect(call).toContain("Shuttle");
 
     const collapsed = renderer?.(
       firstUpdate,
@@ -316,6 +326,43 @@ describe("buildDelegationToolRegistration", () => {
       .render(80)
       .join("\n");
     expect(collapsed).toContain("Inspecting the adapter");
+  });
+
+  it("renderCall: names the agent with the model and reasoning level it will run on", () => {
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        resolveAgentRuntime: (agentName) =>
+          agentName === "shuttle"
+            ? { model: "gpt-5.6-terra", reasoningLevel: "high" }
+            : {},
+      }),
+    );
+    const theme: PiUiThemePort = {
+      fg: (_color, text) => text,
+      bold: (text) => text,
+    };
+    const rendered = registration
+      .renderCall?.({ agent: "shuttle", task: "do it" }, theme, {
+        args: { agent: "shuttle", task: "do it" },
+      })
+      ?.render(80)
+      .join("\n");
+    expect(rendered).toContain("Shuttle gpt-5.6-terra high");
+  });
+
+  it("renderCall: names the agent alone when no model is resolved", () => {
+    const registration = buildDelegationToolRegistration(baseDeps());
+    const theme: PiUiThemePort = {
+      fg: (_color, text) => text,
+      bold: (text) => text,
+    };
+    const rendered = registration
+      .renderCall?.({ agent: "shuttle", task: "do it" }, theme, {
+        args: { agent: "shuttle", task: "do it" },
+      })
+      ?.render(80)
+      .join("\n");
+    expect(rendered?.trim()).toBe("Shuttle");
   });
 
   it("execute: reads the active primary identity and targets after a primary switch", async () => {

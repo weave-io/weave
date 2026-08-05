@@ -59,7 +59,7 @@ Agents are the primary declaration unit. Each agent block declares a named agent
 
 ```weave
 agent loom {
-  description "Loom (Main Orchestrator)"
+  description "Main orchestrator: classifies open-ended requests, routes bounded work straight to specialists, and hands plan-sized work to pattern; may read, write, execute, and delegate; select for open-ended user requests that need coordination across several agents"
   prompt_file "loom.md"
   models ["claude-sonnet-4-5", "gpt-4o"]
   mode primary
@@ -94,7 +94,7 @@ agent my-helper {
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `description` | string | Human-readable label shown in harness UI |
+| `description` | string | Routing metadata, not branding. Shown to delegating orchestrators (Loom, Tapestry) in their delegation tables and rendered by `{{description}}` inside `delegation.targets`, so it should state what work the agent handles, its key constraints, and when to select it. Harnesses may also show it in their UI. |
 | `prompt` | string | Inline prompt text. Mutually exclusive with `prompt_file`. |
 | `prompt_file` | string | Path to a `.md` file, resolved relative to the config scope's `prompts/` directory. Mutually exclusive with `prompt`. |
 | `prompt_append` | string | Inline text appended after the primary prompt source. Rendered as a Mustache template. Mutually exclusive with `prompt_append_file`. |
@@ -119,6 +119,7 @@ agent shuttle {
 }
 
 category backend {
+  description "Backend APIs and services"
   patterns ["src/server/**"]
   models ["anthropic/claude-sonnet-4-5#minimal"]
 }
@@ -218,7 +219,7 @@ category frontend {
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `description` | string | Human-readable label |
+| `description` | string | **Required and non-blank.** Routing metadata for the generated `shuttle-{category}` agent. It appears wherever that agent is shown, including the delegation tables of Loom and Tapestry, so describe the category's domain and when to select it. |
 | `models` | string[] | Model preference list for this category's shuttle agent |
 | `patterns` | string[] | Glob patterns that route files to this category |
 | `prompt_append` | string | Text appended to the base shuttle prompt for this category |
@@ -227,6 +228,10 @@ category frontend {
 | `tool_policy` | block | Tool policy overrides for this category's shuttle agent |
 
 Generated shuttle agent names follow the pattern `shuttle-{category-name}` (e.g. `shuttle-backend`, `shuttle-frontend`). Adapters decide how those descriptors are materialised in a concrete harness.
+
+Requiring `description` is a breaking config change. Every existing `category` block must add a non-blank routing description. `weave init migrate` skips legacy categories without descriptions and reports a warning rather than writing invalid DSL.
+
+Generated category shuttles never inherit the base shuttle's `triggers`. Delegation triggers describe the generic fallback worker, so a generated shuttle is routed by its category `description` and `patterns` alone; its delegation target carries an empty trigger list, and delegator prompts render no routing hints beneath it. Declare the base `shuttle` triggers for work that no category claims.
 
 ---
 

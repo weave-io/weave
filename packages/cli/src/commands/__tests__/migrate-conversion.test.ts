@@ -1100,6 +1100,7 @@ describe("convertLegacyJsonc — model + fallback_models → ordered models [...
       JSON.stringify({
         categories: {
           backend: {
+            description: "Backend APIs",
             patterns: ["src/api/**"],
             model: "gpt-4o",
             fallback_models: ["claude-sonnet-4-5"],
@@ -1135,7 +1136,10 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
-          backend: { patterns: ["src/api/**"] },
+          backend: {
+            description: "Backend APIs",
+            patterns: ["src/api/**"],
+          },
         },
       }),
     );
@@ -1148,8 +1152,14 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
-          backend: { patterns: ["src/api/**"] },
-          frontend: { patterns: ["src/components/**"] },
+          backend: {
+            description: "Backend APIs",
+            patterns: ["src/api/**"],
+          },
+          frontend: {
+            description: "Frontend UI",
+            patterns: ["src/components/**"],
+          },
         },
       }),
     );
@@ -1163,6 +1173,7 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
       JSON.stringify({
         categories: {
           backend: {
+            description: "Backend APIs",
             patterns: ["src/api/**"],
             temperature: 0.2,
             prompt_append: "Focus on API contracts.",
@@ -1175,7 +1186,7 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     expect(result.dsl).toContain('prompt_append "Focus on API contracts."');
   });
 
-  it("warns when patterns is not an array", () => {
+  it("warns and skips a category when patterns is not an array", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
@@ -1185,7 +1196,90 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     );
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]!.field).toBe("categories.backend.patterns");
-    expect(result.warnings[0]!.reason).toContain("expected an array");
+    expect(result.warnings[0]!.reason).toContain("non-empty array");
+    expect(result.dsl).not.toContain("category backend");
+  });
+
+  it("warns and skips a category when patterns is missing", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          mini: {
+            description: "Fast mechanical changes",
+            model: "openai/gpt-5.3-codex-spark",
+          },
+        },
+      }),
+    );
+
+    expect(result.warnings).toEqual([
+      {
+        field: "categories.mini.patterns",
+        reason:
+          "a non-empty array of glob patterns is required; category skipped",
+      },
+    ]);
+    expect(result.dsl).not.toContain("category mini");
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+
+  it("warns and skips a category when patterns has no string entries", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          tests: { patterns: [null, 42] },
+        },
+      }),
+    );
+
+    expect(result.warnings[0]).toEqual({
+      field: "categories.tests.patterns",
+      reason:
+        "a non-empty array of glob patterns is required; category skipped",
+    });
+    expect(result.dsl).not.toContain("category tests");
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+
+  it.each([
+    ["a missing", undefined],
+    ["an empty", ""],
+    ["a whitespace-only", "   "],
+  ])("warns and skips a category with %s description", (_, description) => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          backend: { description, patterns: ["src/api/**"] },
+        },
+      }),
+    );
+
+    expect(result.warnings).toEqual([
+      {
+        field: "categories.backend.description",
+        reason: "a non-empty string is required; category skipped",
+      },
+    ]);
+    expect(result.dsl).not.toContain("category backend");
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+
+  it("preserves Mustache-shaped category descriptions verbatim", () => {
+    const description = "Literal {{agent.name}} docs";
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          docs: { description, patterns: ["docs/**"] },
+        },
+      }),
+    );
+
+    expect(result.warnings).toEqual([]);
+    const parsed = parseConfig(result.dsl);
+    expect(parsed.isOk()).toBe(true);
+    expect(parsed._unsafeUnwrap().categories.docs?.description).toBe(
+      description,
+    );
   });
 
   it("warns when categories value is not an object", () => {
@@ -1342,6 +1436,7 @@ describe("convertLegacyJsonc — tool_policy mapping", () => {
       JSON.stringify({
         categories: {
           backend: {
+            description: "Backend APIs",
             patterns: ["src/api/**"],
             tools: { write: true, read: true },
           },
@@ -1525,7 +1620,10 @@ describe("convertLegacyJsonc — full agent/category fixture", () => {
         "my-helper": { prompt: "I help." }, // non-collision
       },
       categories: {
-        backend: { patterns: ["src/api/**"] },
+        backend: {
+          description: "Backend APIs",
+          patterns: ["src/api/**"],
+        },
       },
     });
     const result = convertLegacyJsonc(source);
@@ -1651,7 +1749,10 @@ describe("runInit migration — agent/category conversion written to destination
             "my-helper": { prompt: "I help.", mode: "subagent" },
           },
           categories: {
-            backend: { patterns: ["src/api/**"] },
+            backend: {
+              description: "Backend APIs",
+              patterns: ["src/api/**"],
+            },
           },
         }),
       },
@@ -1935,7 +2036,10 @@ describe("convertLegacyJsonc — control character escaping in string fields", (
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
-          backend: { description: "APIs\x02services", patterns: [] },
+          backend: {
+            description: "APIs\x02services",
+            patterns: ["src/api/**"],
+          },
         },
       }),
     );

@@ -1,4 +1,22 @@
-export { PI_ADAPTER_CAPABILITY_CONTRACT } from "./capability-declarations.js";
+export type {
+  PiSanitizedChildIndex,
+  PiSanitizedChildIndexEntry,
+  PiSanitizedChildIndexError,
+  PiSanitizedChildIndexInput,
+} from "./artifact-provider.js";
+export {
+  createPiSanitizedChildIndex,
+  MAX_SANITIZED_CHILD_EXPORT_BYTES,
+  MAX_SANITIZED_CHILD_INDEX_ENTRIES,
+  PiSanitizedChildIndexEntrySchema,
+  PiSanitizedChildIndexExporter,
+  PiSanitizedChildIndexSchema,
+} from "./artifact-provider.js";
+export {
+  PI_ADAPTER_CAPABILITY_CONTRACT,
+  PI_HOST_SURFACE_DECLARATIONS,
+  type PiHostSurfaceDeclaration,
+} from "./capability-declarations.js";
 export type {
   PiCandidatePlanContext,
   PiCapabilityProbeSource,
@@ -31,6 +49,110 @@ export {
   type FramingError as PiFramingError,
   PiLineFramer,
 } from "./child-framing.js";
+export type {
+  HistoryIdentity,
+  PiChildHistoryDirectory,
+  PiChildHistoryFsError,
+  PiChildHistoryFsPort,
+} from "./child-history-fs.js";
+export {
+  BunPiChildHistoryFs,
+  MemoryPiChildHistoryFs,
+  resolvePiChildHistoryRoot,
+  safeChildHistoryComponent,
+  safeParentSessionComponent,
+} from "./child-history-fs.js";
+export type {
+  PiChildHistoryIndexV1,
+  PiChildHistoryKind,
+  PiChildHistoryRecord,
+  PiChildHistorySchemaError,
+  PiChildHistoryStatus,
+} from "./child-history-schema.js";
+export {
+  PI_CHILD_HISTORY_LAYOUT,
+  PiChildHistoryIndexV1Schema,
+  PiChildHistoryKindSchema,
+  PiChildHistoryLayoutSchema,
+  PiChildHistoryRecordSchema,
+  PiChildHistoryStatusSchema,
+  parsePiChildHistoryIndex,
+} from "./child-history-schema.js";
+export type {
+  PiChildHistoryStoreError,
+  PiChildHistoryStoreOptions,
+} from "./child-history-store.js";
+export { PiChildHistoryStore } from "./child-history-store.js";
+export type {
+  PiChildInspectionEditorHost,
+  PiChildInspectionEditorResult,
+} from "./child-inspection-editor.js";
+export {
+  createChildInspectionEditor,
+  PiChildInspectionEditor,
+} from "./child-inspection-editor.js";
+export type {
+  InspectionBreadcrumbSegment,
+  InspectionCacheKey,
+  InspectionSummary,
+  InspectionWorkflowMeta,
+  PiChildInspectionRenderError,
+  PiChildInspectionRenderInput,
+  PiChildInspectionRenderOutput,
+} from "./child-inspection-render.js";
+export {
+  createChildInspectionRenderer,
+  PiChildInspectionRenderer,
+  renderChildInspection,
+} from "./child-inspection-render.js";
+export type {
+  PiChildInspectionEffectiveSettings,
+  PiChildInspectionSettings,
+  PiChildInspectionSettingsChoice,
+  PiChildInspectionSettingsIssue,
+  PiChildInspectionSettingsMode,
+  PiChildInspectionSettingsResolution,
+} from "./child-inspection-settings.js";
+export {
+  DEFAULT_PI_CHILD_INSPECTION_SETTINGS,
+  effectivePiChildInspectionSettings,
+  formatPiChildInspectionSettingsIssues,
+  PiChildInspectionSettingsSchema,
+  parsePiChildInspectionSettings,
+  resolvePiChildInspectionSettings,
+} from "./child-inspection-settings.js";
+export type {
+  PiChildSlashCommand,
+  PiInspectorChild,
+  PiInspectorConfirmation,
+  PiInspectorError,
+  PiInspectorRpc,
+  PiInspectorStatus,
+  PiInspectorView,
+  PiInspectorViewState,
+  PiInspectorViewStateUpdate,
+} from "./child-inspector.js";
+export {
+  EMPTY_INSPECTOR_VIEW_STATE,
+  interceptChildSlashCommand,
+  PiChildInspector,
+  PiChildSlots,
+} from "./child-inspector.js";
+export type {
+  PiChildPickerEntry,
+  PiChildPickerError,
+  PiChildPickerInput,
+  PiChildPickerKind,
+  PiChildPickerNode,
+  PiChildPickerState,
+} from "./child-picker.js";
+export {
+  buildChildPickerEntries,
+  createChildPickerEntries,
+  moveChildPicker,
+  sanitizeChildPickerPreview,
+  selectedChildPickerEntry,
+} from "./child-picker.js";
 export {
   BunPiChildProcessPort,
   type ChildProcessError as PiChildProcessError,
@@ -44,6 +166,31 @@ export {
   PiChildRuntime,
   type PiChildRuntimeDeps,
 } from "./child-runtime.js";
+export type {
+  PiChildCheckpointError,
+  PiChildSessionCheckpoint,
+  PiChildSessionCheckpointEntry,
+} from "./child-session-checkpoint.js";
+export {
+  appendUnseenCheckpointEntries,
+  createEmptyPiChildSessionCheckpoint,
+  decodePiChildSessionCheckpoint,
+  encodePiChildSessionCheckpoint,
+  MAX_CHECKPOINT_BYTES,
+  PiChildSessionCheckpointSchema,
+  parsePiChildSessionCheckpoint,
+} from "./child-session-checkpoint.js";
+export type {
+  PiChildEventType,
+  PiChildSessionEvent,
+  PiExtensionUiResponse,
+} from "./child-session-events.js";
+export {
+  PiChildSessionEventSchema,
+  PiExtensionUiResponseSchema,
+  parsePiChildSessionEvent,
+  preserveUnknownChildEvent,
+} from "./child-session-events.js";
 export {
   DEFAULT_HANDSHAKE_TIMEOUT_MS,
   DEFAULT_REPLY_TIMEOUT_MS,
@@ -115,117 +262,6 @@ export {
   type PiDelegationToolDeps,
   WEAVE_DELEGATION_TOOL_NAME,
 } from "./delegation-tool.js";
-export {
-  DEFAULT_PI_CHILD_INSPECTION_SETTINGS,
-  effectivePiChildInspectionSettings,
-  formatPiChildInspectionSettingsIssues,
-  parsePiChildInspectionSettings,
-  PiChildInspectionSettingsSchema,
-  resolvePiChildInspectionSettings,
-} from "./child-inspection-settings.js";
-export type {
-  PiChildInspectionEffectiveSettings,
-  PiChildInspectionSettings,
-  PiChildInspectionSettingsChoice,
-  PiChildInspectionSettingsIssue,
-  PiChildInspectionSettingsMode,
-  PiChildInspectionSettingsResolution,
-} from "./child-inspection-settings.js";
-export {
-  parsePiChildHistoryIndex,
-  PiChildHistoryIndexV1Schema,
-  PiChildHistoryLayoutSchema,
-  PiChildHistoryKindSchema,
-  PiChildHistoryRecordSchema,
-  PiChildHistoryStatusSchema,
-  PI_CHILD_HISTORY_LAYOUT,
-} from "./child-history-schema.js";
-export type {
-  PiChildHistoryIndexV1,
-  PiChildHistoryKind,
-  PiChildHistoryRecord,
-  PiChildHistorySchemaError,
-  PiChildHistoryStatus,
-} from "./child-history-schema.js";
-export {
-  EMPTY_INSPECTOR_VIEW_STATE,
-  interceptChildSlashCommand,
-  PiChildInspector,
-  PiChildSlots,
-} from "./child-inspector.js";
-export type {
-  PiChildSlashCommand,
-  PiInspectorChild,
-  PiInspectorConfirmation,
-  PiInspectorError,
-  PiInspectorRpc,
-  PiInspectorStatus,
-  PiInspectorView,
-  PiInspectorViewState,
-  PiInspectorViewStateUpdate,
-} from "./child-inspector.js";
-export {
-  buildChildPickerEntries,
-  createChildPickerEntries,
-  moveChildPicker,
-  sanitizeChildPickerPreview,
-  selectedChildPickerEntry,
-} from "./child-picker.js";
-export type {
-  PiChildPickerEntry,
-  PiChildPickerError,
-  PiChildPickerInput,
-  PiChildPickerKind,
-  PiChildPickerNode,
-  PiChildPickerState,
-} from "./child-picker.js";
-export {
-  createChildInspectionEditor,
-  PiChildInspectionEditor,
-} from "./child-inspection-editor.js";
-export type {
-  PiChildInspectionEditorHost,
-  PiChildInspectionEditorResult,
-} from "./child-inspection-editor.js";
-export {
-  createChildInspectionRenderer,
-  PiChildInspectionRenderer,
-  renderChildInspection,
-} from "./child-inspection-render.js";
-export type {
-  InspectionBreadcrumbSegment,
-  InspectionCacheKey,
-  InspectionSummary,
-  InspectionWorkflowMeta,
-  PiChildInspectionRenderError,
-  PiChildInspectionRenderInput,
-  PiChildInspectionRenderOutput,
-} from "./child-inspection-render.js";
-export {
-  MAX_SANITIZED_CHILD_EXPORT_BYTES,
-  MAX_SANITIZED_CHILD_INDEX_ENTRIES,
-  PiSanitizedChildIndexEntrySchema,
-  PiSanitizedChildIndexSchema,
-  createPiSanitizedChildIndex,
-  PiSanitizedChildIndexExporter,
-} from "./artifact-provider.js";
-export type {
-  PiSanitizedChildIndex,
-  PiSanitizedChildIndexEntry,
-  PiSanitizedChildIndexError,
-  PiSanitizedChildIndexInput,
-} from "./artifact-provider.js";
-export {
-  parsePiChildSessionEvent,
-  preserveUnknownChildEvent,
-  PiChildSessionEventSchema,
-  PiExtensionUiResponseSchema,
-} from "./child-session-events.js";
-export type {
-  PiChildEventType,
-  PiChildSessionEvent,
-  PiExtensionUiResponse,
-} from "./child-session-events.js";
 export type {
   PiAdapterFailure,
   PiAdapterFailureCode,
@@ -241,13 +277,12 @@ export {
   makeChildExtensionUiRejectedFailure,
   makeChildHistoryClearRefusedFailure,
   makeChildHistoryCorruptFailure,
-  makeChildHistoryQuotaExceededFailure,
   makeChildHistoryQuarantinedFailure,
+  makeChildHistoryQuotaExceededFailure,
   makeChildInteractionUnavailableFailure,
   makeChildNativeRecordTooLargeFailure,
-  makeChildSchemaInvalidFailure,
   makeChildRecoveryUnavailableFailure,
-  makeUiBridgeUnavailableFailure,
+  makeChildSchemaInvalidFailure,
   makeCommandCollisionFailure,
   makeControllerGenerationStaleFailure,
   makeHostIdentityUnknownFailure,
@@ -255,6 +290,7 @@ export {
   makeInteractiveTuiRequiredFailure,
   makeInvariantViolationFailure,
   makeRequiredCapabilityUnavailableFailure,
+  makeUiBridgeUnavailableFailure,
   PiAdapterFailureCodeSchema,
   PiAdapterFailureImpactSchema,
   PiAdapterFailurePhaseSchema,
@@ -278,36 +314,35 @@ export {
   isSupportedHostVersion,
   parseSemver,
 } from "./host-compatibility.js";
-export {
-  DefaultPiHostSurfaceReader,
-  PI_HOST_SURFACE_IDS,
-  readHostSurfaceReport,
-  safeReadHostSurfaceReport,
-  readValidatedCommands,
-  type PiHostSurfaceId,
-  type PiHostSurfaceProbe,
-  type PiHostSurfaceReader,
-  type PiHostSurfaceReadInput,
-  type PiHostSurfaceReport,
-  type PiHostSurfaceStatus,
-  type PiHostSurfaceReadError,
-} from "./host-inventory.js";
-export {
-  PI_HOST_COMPATIBILITY_MATRIX,
-  validateHostCompatibilityMatrix,
-} from "./host-compatibility-matrix.js";
 export type {
   HostCompatibilityMatrixError,
   PiHostCompatibilityMatrix,
 } from "./host-compatibility-matrix.js";
-export { PI_HOST_SURFACE_DECLARATIONS, type PiHostSurfaceDeclaration } from "./capability-declarations.js";
+export {
+  PI_HOST_COMPATIBILITY_MATRIX,
+  validateHostCompatibilityMatrix,
+} from "./host-compatibility-matrix.js";
+export {
+  DefaultPiHostSurfaceReader,
+  PI_HOST_SURFACE_IDS,
+  type PiHostSurfaceId,
+  type PiHostSurfaceProbe,
+  type PiHostSurfaceReadError,
+  type PiHostSurfaceReader,
+  type PiHostSurfaceReadInput,
+  type PiHostSurfaceReport,
+  type PiHostSurfaceStatus,
+  readHostSurfaceReport,
+  readValidatedCommands,
+  safeReadHostSurfaceReport,
+} from "./host-inventory.js";
 export type {
   PiModelActivationOutcome,
   PiModelApplyPort,
   PiModelInfo,
-  PiThinkingApplyPort,
   PiModelResolution,
   PiModelResolutionSource,
+  PiThinkingApplyPort,
 } from "./model-resolution.js";
 export { PiModelActivator, PiModelResolver } from "./model-resolution.js";
 export type {
@@ -321,8 +356,17 @@ export {
   appendWeaveBlockOnce,
   DEFAULT_PRIMARY_AGENT_NAME,
   PiPrimarySession,
+  renderRequiredSkillsPrompt,
   renderWeavePromptBlock,
 } from "./primary-session.js";
+export {
+  type PiRepeatedSettlementValidationError,
+  type PiRepeatedSettlementValidationOptions,
+  type PiRepeatedSettlementValidationReport,
+  type PiSettlementValidationObservation,
+  type PiSettlementValidationRun,
+  validateRepeatedSettlements,
+} from "./repeated-settlement-validator.js";
 export {
   type PiChildSettlement,
   PiRpcChild,
@@ -336,52 +380,12 @@ export type {
 export { PiSafeInitializer } from "./safe-initializer.js";
 export { PiSkillCatalog, toEngineSkillInfo } from "./skill-catalog.js";
 export {
-  BunPiChildHistoryFs,
-  MemoryPiChildHistoryFs,
-  resolvePiChildHistoryRoot,
-  safeChildHistoryComponent,
-  safeParentSessionComponent,
-} from "./child-history-fs.js";
-export type {
-  HistoryIdentity,
-  PiChildHistoryDirectory,
-  PiChildHistoryFsError,
-  PiChildHistoryFsPort,
-} from "./child-history-fs.js";
-export { PiChildHistoryStore } from "./child-history-store.js";
-export type {
-  PiChildHistoryStoreError,
-  PiChildHistoryStoreOptions,
-} from "./child-history-store.js";
-export {
-  appendUnseenCheckpointEntries,
-  createEmptyPiChildSessionCheckpoint,
-  decodePiChildSessionCheckpoint,
-  encodePiChildSessionCheckpoint,
-  MAX_CHECKPOINT_BYTES,
-  parsePiChildSessionCheckpoint,
-  PiChildSessionCheckpointSchema,
-} from "./child-session-checkpoint.js";
-export type {
-  PiChildCheckpointError,
-  PiChildSessionCheckpoint,
-  PiChildSessionCheckpointEntry,
-} from "./child-session-checkpoint.js";
-export {
   type CanonicalizeError,
   canonicalizeToBytes,
   type JsonValue as PiJsonValue,
   parseStrictJson,
   type StrictJsonParseError,
 } from "./strict-json.js";
-export {
-  validateRepeatedSettlements,
-  type PiRepeatedSettlementValidationError,
-  type PiRepeatedSettlementValidationOptions,
-  type PiRepeatedSettlementValidationReport,
-  type PiSettlementValidationObservation,
-  type PiSettlementValidationRun,
-} from "./repeated-settlement-validator.js";
 export type {
   Clock,
   IdGenerator,

@@ -69,7 +69,7 @@ export const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>> = {
  */
 export const BUILTIN_WEAVE_SOURCE = `
 agent loom {
-  description "Loom (Main Orchestrator)"
+  description "Main orchestrator: classifies open-ended requests, routes bounded work straight to specialists, and hands plan-sized work to pattern; may read, write, execute, and delegate; select for open-ended user requests that need coordination across several agents"
   prompt_file "loom.md"
   models ["claude-sonnet-4-5"]
   mode primary
@@ -86,7 +86,7 @@ agent loom {
 
 
 agent tapestry {
-  description "Tapestry (Plan Execution)"
+  description "Plan execution coordinator: drives an existing plan file task by task, delegating every step and verifying acceptance criteria; may read, write, execute, and delegate, but never implements itself; select when an approved plan must be executed end to end"
   prompt_file "tapestry.md"
   models ["claude-sonnet-4-5"]
   mode primary
@@ -102,7 +102,7 @@ agent tapestry {
 }
 
 agent shuttle {
-  description "Shuttle (Domain Specialist)"
+  description "General implementation worker: bounded coding, testing, debugging, and refactoring tasks; may read, write, and run commands, but cannot delegate; select for scoped changes when no category shuttle matches the files"
   prompt_file "shuttle.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -117,15 +117,14 @@ agent shuttle {
   }
 
   triggers [
-    { domain "Implementation" trigger "Bounded coding tasks, file edits, feature work" routing_hint "Use for single-file changes, bug fixes, or clearly scoped implementation tasks" }
-    { domain "Testing" trigger "Writing and running tests" routing_hint "Use when tests need to be written, updated, or debugged" }
-    { domain "Debugging" trigger "Diagnosing and fixing bugs in a specific area" routing_hint "Use when a bug needs investigation and fixing in a known area" }
-    { domain "Refactoring" trigger "Improving code structure without changing behavior" routing_hint "Use for code cleanup, renaming, or restructuring without functional changes" }
+    { domain "Uncategorized Implementation" trigger "A bounded code change whose files no declared category claims" routing_hint "Use for a scoped change only when no listed category shuttle clearly matches the files" }
+    { domain "Cross-Category Change" trigger "One small change that spans several categories and cannot be assigned to a single one" routing_hint "Use when an edit crosses category boundaries and splitting it would cost more than doing it once" }
+    { domain "Repository Tooling" trigger "Edits to build files, scripts, CI config, or dependency manifests" routing_hint "Use for build, script, CI, and manifest files that no category pattern covers" }
   ]
 }
 
 agent pattern {
-  description "Pattern (Strategic Planner)"
+  description "Strategic planner: turns a goal into a file-backed, sequenced plan with per-task acceptance criteria; writes plan files only, cannot execute commands or delegate; select before multi-file features or refactors that span five or more steps"
   prompt_file "pattern.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -147,7 +146,7 @@ agent pattern {
 }
 
 agent thread {
-  description "Thread (Codebase Explorer)"
+  description "Codebase explorer: traces symbols, call graphs, and data flow to answer where-is and how-does-this-work questions with exact file and line evidence; read-only, cannot execute or delegate; select for cheap internal investigation before planning or editing"
   prompt_file "thread.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -169,7 +168,7 @@ agent thread {
 }
 
 agent spindle {
-  description "Spindle (External Researcher)"
+  description "External researcher: fetches and synthesizes official documentation, specifications, and library APIs with citations; network access but no writes, execution, or delegation; select when a decision depends on facts outside this repository"
   prompt_file "spindle.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -191,7 +190,7 @@ agent spindle {
 }
 
 agent weft {
-  description "Weft (Reviewer)"
+  description "Code reviewer: judges correctness, quality, and maintainability of a changeset and returns an approve or request-changes verdict; read-only, cannot execute or delegate; select as a quality gate after non-trivial changes"
   prompt_file "weft.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -213,7 +212,7 @@ agent weft {
 }
 
 agent warp {
-  description "Warp (Security Auditor)"
+  description "Security auditor: audits a changeset for vulnerabilities, unsafe patterns, and specification compliance, returning an approve or block verdict; read-only, cannot execute or delegate; select whenever changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation"
   prompt_file "warp.md"
   models ["claude-sonnet-4-5"]
   mode subagent

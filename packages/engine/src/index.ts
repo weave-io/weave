@@ -486,6 +486,8 @@ export type {
   SkillResolutionConfigInput,
   SkillResolutionError,
   SkillResolutionInput,
+  SkillResolutionResult,
+  SkillResolutionWarning,
 } from "./skill-resolution.js";
 export {
   resolveSkillsForAgent,

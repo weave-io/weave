@@ -642,7 +642,6 @@ export type PiPaletteActionId =
   | "weave.start"
   | "weave.run"
   | "weave.status"
-  | "weave.goal"
   | "weave.abort"
   | "weave.advance"
   | "weave.health"
@@ -680,7 +679,6 @@ export function buildPaletteActions(input: {
       disabledReason,
     },
     { id: "weave.status", label: "Weave: Status", visible: true },
-    { id: "weave.goal", label: "Weave: Goal", visible: true },
     {
       id: "weave.abort",
       label: "Weave: Abort",

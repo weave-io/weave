@@ -77,6 +77,10 @@ export interface PiChildInspectionRenderInput {
   readonly workflowMeta?: InspectionWorkflowMeta;
   /** Current child lifecycle status. */
   readonly status: PiChildStatus;
+  /** Concrete model the child runs on, when the parent resolved one. */
+  readonly model?: string;
+  /** Thinking/reasoning intent the child was started with. */
+  readonly reasoningLevel?: string;
   /** Currently executing tool, if any. */
   readonly currentTool?: string;
   /** Count of user interventions (steering/follow-up). */
@@ -140,6 +144,8 @@ export interface InspectionCacheKey {
   readonly generationId: string;
   readonly width: number;
   readonly status: PiChildStatus;
+  readonly model: string | undefined;
+  readonly reasoningLevel: string | undefined;
   readonly currentTool: string | undefined;
   readonly interventionCount: number;
   readonly queueSize: number;
@@ -332,6 +338,12 @@ function buildBreadcrumb(
 function buildStatusLine(input: PiChildInspectionRenderInput): string {
   const parts: string[] = [`[${input.status}]`];
 
+  if (input.model !== undefined) {
+    parts.push(`model:${sanitizeText(input.model)}`);
+  }
+  if (input.reasoningLevel !== undefined) {
+    parts.push(`reasoning:${sanitizeText(input.reasoningLevel)}`);
+  }
   if (input.currentTool !== undefined) {
     parts.push(`tool:${sanitizeText(input.currentTool)}`);
   }
@@ -411,6 +423,8 @@ function computeCacheKey(
     generationId: input.generationId,
     width,
     status: input.status,
+    model: input.model,
+    reasoningLevel: input.reasoningLevel,
     currentTool: input.currentTool,
     interventionCount: input.interventionCount,
     queueSize: input.summary.queueSize,
@@ -442,6 +456,8 @@ function cacheKeysEqual(a: InspectionCacheKey, b: InspectionCacheKey): boolean {
     a.generationId === b.generationId &&
     a.width === b.width &&
     a.status === b.status &&
+    a.model === b.model &&
+    a.reasoningLevel === b.reasoningLevel &&
     a.currentTool === b.currentTool &&
     a.interventionCount === b.interventionCount &&
     a.queueSize === b.queueSize &&

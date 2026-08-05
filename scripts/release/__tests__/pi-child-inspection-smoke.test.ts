@@ -11,7 +11,7 @@ const binding = {
   artifactSha256: "a".repeat(64),
   subjectSha: "b".repeat(40),
   hostVersion: "0.81.1",
-  checklistVersion: 1,
+  checklistVersion: 2,
   runAttempt: 17,
 } as const;
 

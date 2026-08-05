@@ -64,6 +64,7 @@ export interface PiExtensionControllerDeps {
  */
 export class PiExtensionController {
   private currentGeneration: PiGeneration | undefined;
+  private activationSequence = 0;
 
   constructor(private readonly deps: PiExtensionControllerDeps) {}
 
@@ -76,9 +77,13 @@ export class PiExtensionController {
     hostSurface?: PiHostSurfaceReport,
   ): ResultAsync<PiGeneration, PiAdapterFailure> {
     const id = this.deps.idGenerator.next();
+    const activationSequence = ++this.activationSequence;
     return this.deps.safeInitializer
       .preflight(session, commands, hostSurface)
-      .map((preflight) => {
+      .andThen((preflight) => {
+        if (activationSequence !== this.activationSequence) {
+          return err(makeControllerGenerationStaleFailure(id));
+        }
         const generation: PiGeneration = {
           id,
           createdAt: this.deps.clock.now(),
@@ -95,7 +100,7 @@ export class PiExtensionController {
           },
           "pi-adapter generation activated",
         );
-        return generation;
+        return ok(generation);
       });
   }
 
@@ -148,6 +153,7 @@ export class PiExtensionController {
 
   /** Idempotent: safe to call more than once, e.g. from repeated shutdown events. */
   shutdown(): Result<void, PiAdapterFailure> {
+    this.activationSequence += 1;
     this.currentGeneration = undefined;
     return ok(undefined);
   }

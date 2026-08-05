@@ -184,6 +184,31 @@ interface QueuedDelegation {
 
 const DEFAULT_TREE_REFRESH_INTERVAL_MS = 500;
 
+/**
+ * Reads the concrete model identity and thinking intent out of a bootstrap body
+ * so the inspection view can name what the child is actually running on.
+ */
+function bootstrapRuntimeMeta(bootstrap: unknown): {
+  readonly model?: string;
+  readonly thinkingLevel?: string;
+} {
+  if (typeof bootstrap !== "object" || bootstrap === null) return {};
+  const record = bootstrap as Record<string, unknown>;
+  const resolved = record.resolvedModel;
+  const identity =
+    typeof resolved === "object" && resolved !== null
+      ? (resolved as Record<string, unknown>)
+      : undefined;
+  const id = identity?.id;
+  const thinkingLevel = record.thinkingLevel;
+  return {
+    ...(typeof id === "string" && id !== "" ? { model: id } : {}),
+    ...(typeof thinkingLevel === "string" && thinkingLevel !== ""
+      ? { thinkingLevel }
+      : {}),
+  };
+}
+
 type PiChildRestoreUnavailableReason =
   | "stale generation"
   | "record is not an interrupted ordinary child"
@@ -561,6 +586,7 @@ export class PiDelegationController {
         name: request.agentName,
         kind: request.parentId === ROOT_NODE_ID ? "ordinary" : "nested",
         snapshot: () => child.snapshot(),
+        ...bootstrapRuntimeMeta(request.bootstrap),
       }) ?? okAsync<void, never>(undefined);
     return registration
       .mapErr((failure): PiAdapterFailure => {

@@ -200,6 +200,10 @@ export interface PiChildInspectionRegistration {
   readonly snapshot: () => PiChildTreeNode;
   readonly workflowInstanceId?: string;
   readonly stepName?: string;
+  /** Concrete model the child was bootstrapped with, when the parent resolved one. */
+  readonly model?: string;
+  /** Core-owned thinking intent sent alongside the model. */
+  readonly thinkingLevel?: string;
   readonly onInterrupted?: () => void;
   readonly onTerminal?: (snapshot: PiChildTreeNode) => void;
 }
@@ -212,6 +216,7 @@ export class PiChildInspectionRegistry {
     PiChildTranscriptReducer
   >();
   private generationOpen = true;
+  private transcriptListener: ((childId: string) => void) | undefined;
   private tail: ResultAsync<void, PiChildInspectionHistoryError> =
     okAsync(undefined);
   private firstFailure: PiChildInspectionHistoryError | undefined;
@@ -298,6 +303,14 @@ export class PiChildInspectionRegistry {
     );
   }
 
+  /**
+   * Observes transcript growth so a live inspection view can repaint while the
+   * child streams. The registry stays the single writer of transcript state.
+   */
+  onTranscriptUpdate(listener: ((childId: string) => void) | undefined): void {
+    this.transcriptListener = listener;
+  }
+
   checkpointEvent(
     id: string,
     event: unknown,
@@ -309,6 +322,7 @@ export class PiChildInspectionRegistry {
         this.transcriptStates.get(id) ?? new PiChildTranscriptReducer();
       reducer.applyEvent(parsed.data);
       this.transcriptStates.set(id, reducer);
+      this.transcriptListener?.(id);
     }
     return this.enqueue(() =>
       (this.history?.checkpoint?.(id, event) ?? okAsync(undefined)).map(
@@ -323,6 +337,23 @@ export class PiChildInspectionRegistry {
       this.transcriptStates.get(id)?.getState() ??
       EMPTY_PI_CHILD_TRANSCRIPT_STATE
     );
+  }
+
+  /** Model and thinking intent the child was bootstrapped with, when known. */
+  getChildRuntimeMeta(id: string): {
+    readonly model?: string;
+    readonly thinkingLevel?: string;
+  } {
+    const registration = this.live.get(id);
+    if (registration === undefined) return {};
+    return {
+      ...(registration.model === undefined
+        ? {}
+        : { model: registration.model }),
+      ...(registration.thinkingLevel === undefined
+        ? {}
+        : { thinkingLevel: registration.thinkingLevel }),
+    };
   }
 
   checkpoint(id: string): ResultAsync<void, PiChildInspectionHistoryError> {

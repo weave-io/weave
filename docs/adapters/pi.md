@@ -45,14 +45,15 @@ Local extension development may set `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE=
 
 ## Agents, prompts, models, and skills
 
-The first `before_agent_start` event supplies Pi's loaded skill catalog. The adapter:
+During `session_start`, the adapter reads Pi's host-owned skill catalog from the public `getSystemPrompt()` surface. This preserves Pi's settings, package, CLI, trust-boundary, path, and collision decisions. In host contexts that expose `getSystemPromptOptions()`, it uses that live snapshot instead. Before it reports ready or exposes delegation authority, it:
 
 - resolves requested skills through the engine matcher;
 - resolves ordered model intent against `ctx.modelRegistry.getAvailable()`;
-- preserves a native model selected with Pi's set/cycle controls after startup instead of replacing it on the first prompt;
-- applies a valid thinking suffix separately from model identity when Weave applies the model;
-- appends one delimited composed-prompt block without replacing Pi or other-extension context;
+- applies the selected model and a valid thinking suffix separately;
+- commits the selected primary agent atomically;
 - reports model or temperature degradation once per generation.
+
+If boot activation fails, the adapter remains unavailable and does not retry when a message arrives. The later `before_agent_start` event only appends the committed agent's delimited prompt block without replacing Pi or other-extension context. A native model change after boot governs the active period until an explicit agent switch applies new model intent.
 
 Alt+A cycles healthy `primary` and `all` descriptors in materialization order while Pi is idle. It skips subagents and switches atomically. The footer shows `◆ WEAVE · <NORMALIZED-NAME>`, follows a direct workflow agent while it runs, restores the primary after settlement, and clears in health-only mode or at shutdown.
 
@@ -147,9 +148,28 @@ The inspector is adapter-owned. It may retain sensitive raw prompts, responses, 
 
 Recovery is deliberately narrow: it may recover an interrupted ordinary top-level child when the canonical evidence permits it. It does not recursively recover nested children, recover a workflow process, or turn `/weave:resume` into automatic workflow continuation. A workflow resume is a fresh engine-authorized attempt, and engine-owned leases and workflow state remain the engine's concern. See [ADR 0013](../adr/0013-pi-private-child-sessions.md) for the ownership decision and [Spec 33 §6](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#6-child-recovery-contract) for the limits.
 
+The inspection view renders with Pi's own chat components, so a streamed child reads like a native Pi session: user and task blocks, markdown answer text, italic reasoning, and Pi's tool-execution blocks with real diffs and bash output. Tool calls render through Pi's builtin tool definitions, so a row reads `read <path>` rather than a bare tool name. The adapter injects those components through a narrow port (`PiTranscriptComponentFactory`); the transcript reducer and its dependency-free fallback renderer stay pure, and the fallback text still renders when a component cannot be built. Bookkeeping facts Pi never shows — usage, queue, status, retry, extension-UI requests, and unknown events — are suppressed instead of printed as event prose.
+
+A pinned header names the child and its runtime: status, the concrete model, the reasoning level it was bootstrapped with, turn and queue counts, and token cost. Messages sit one blank row apart. Below the header the transcript scrolls: PageUp and PageDown move a page, Shift+Up and Shift+Down a line, Home jumps to the oldest output, and End follows the live tail again. While scrolled back, the view says how many newer lines wait below. Escape leaves the view at the root or in a completed child, and leaving returns the tree editor to the root so typing goes to the parent session again, not to the child.
+
+The session editor is a single shared Pi surface, so Weave never claims it away from another extension. If a foreign editor factory (for example `pi-vim`'s modal editor) is already installed, Weave leaves it in place for the rest of the generation and does not reassert its own on `session_start`, `before_agent_start`, or `agent_start`. If a foreign factory appears after Weave activated, Weave yields on the next lifecycle event instead of reclaiming. Child inspection still works: it borrows the editor only while the overlay is mounted, and every teardown path hands the editor back to the previous owner. The overlay carries its own local editor, so inspection input does not depend on owning the session surface. Root-level child-tree keys are the only optional convenience lost when Weave yields.
+
 For troubleshooting, start with `/weave:health`, then inspect the private-child failure code and the adapter's bounded diagnostics. A missing or corrupt private-history record is quarantined or reported according to [Spec 33 §7.4](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#74-quarantine-and-corruption-handling); it does not authorize a guessed resume. The complete command and key map is [Spec 33 §10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#10-control-surface).
 
 ### Settlement and output
+
+The delegation tool entry names its child on the call line and shows the child's
+latest output below a rule:
+
+```
+Shuttle gpt-5.6-terra high
+──────────────────────────────────────────────────
+<latest thought or answer text>
+```
+
+The model and reasoning level come from the same resolution the child's
+bootstrap carries, so the entry names what the child will actually run on before
+it exists. When no output has streamed yet, the body shows the child's status.
 
 While a child runs, `weave_delegate` updates its tool entry from Pi's streamed
 `message_update` events. Before answer text starts, the entry shows the latest

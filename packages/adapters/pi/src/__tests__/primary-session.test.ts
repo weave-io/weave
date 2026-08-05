@@ -90,6 +90,52 @@ describe("renderWeavePromptBlock / appendWeaveBlockOnce", () => {
   });
 });
 
+describe("PiPrimarySession.prepareComposedPrompt", () => {
+  it("loads available skills for a delegated agent and warns for missing ones", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([{ name: "tdd" }]),
+      logger: new RecordingLogger(),
+    });
+
+    const prompt = session.prepareComposedPrompt(
+      descriptor({
+        name: "shuttle",
+        mode: "subagent",
+        skills: ["tdd", "missing-skill"],
+      }),
+    );
+
+    expect(prompt).toContain(
+      'Required skill names to load before work: ["tdd"]',
+    );
+    expect(prompt).not.toContain('["tdd","missing-skill"]');
+    expect(prompt).toContain("You are Loom, the orchestrator.");
+    expect(session.getCapabilityWarnings()).toEqual([
+      {
+        capability: "skill",
+        agentName: "shuttle",
+        detail:
+          'required skill "missing-skill" is unavailable in Pi; continuing without it',
+      },
+    ]);
+  });
+
+  it("silently filters a disabled delegated skill", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+
+    expect(
+      session.prepareComposedPrompt(
+        descriptor({ name: "shuttle", skills: ["disabled-skill"] }),
+        ["disabled-skill"],
+      ),
+    ).toBe("You are Loom, the orchestrator.");
+    expect(session.getCapabilityWarnings()).toEqual([]);
+  });
+});
+
 describe("PiPrimarySession.activate", () => {
   it("atomically activates a primary-mode descriptor: identity, prompt, applied model, skills", async () => {
     const applier = fakeApplier();
@@ -107,6 +153,9 @@ describe("PiPrimarySession.activate", () => {
     const active = result._unsafeUnwrap();
     expect(active.descriptor.name).toBe("loom");
     expect(active.promptBlock).toContain("You are Loom, the orchestrator.");
+    expect(active.promptBlock).toContain(
+      'Required skill names to load before work: ["tdd"]',
+    );
     expect(active.modelActivation).toEqual({
       status: "applied",
       model: CATALOG[0],
@@ -179,10 +228,10 @@ describe("PiPrimarySession.activate", () => {
     expect(session.getCurrent()?.descriptor.name).toBe("loom");
   });
 
-  it("fails atomically when a requested skill is missing, without applying a model or mutating current state", async () => {
+  it("activates with available skills and emits one visible warning for each missing skill", async () => {
     const applier = fakeApplier();
     const session = new PiPrimarySession({
-      skillCatalog: new PiSkillCatalog([]),
+      skillCatalog: new PiSkillCatalog([{ name: "tdd" }]),
       logger: new RecordingLogger(),
     });
     const first = await session.activate(
@@ -191,25 +240,27 @@ describe("PiPrimarySession.activate", () => {
     );
     expect(first.isOk()).toBe(true);
 
-    const failed = await session.activate(
-      descriptor({ name: "loom-v2", skills: ["missing-skill"] }),
+    const activated = await session.activate(
+      descriptor({
+        name: "loom-v2",
+        skills: ["tdd", "missing-skill", "missing-skill"],
+      }),
       context({ modelApplier: applier }),
     );
-    expect(failed.isErr()).toBe(true);
-    expect(failed._unsafeUnwrapErr()).toEqual({
-      type: "SkillResolutionFailed",
-      agentName: "loom-v2",
-      errors: [
-        {
-          type: "MissingSkill",
-          agentName: "loom-v2",
-          skillName: "missing-skill",
-        },
-      ],
-    });
-    expect(session.getCurrent()?.descriptor.name).toBe("loom");
-    // The failed candidate's model must never have been applied.
-    expect(applier.calls).toEqual([CATALOG[0]]);
+    expect(activated.isOk()).toBe(true);
+    expect(
+      activated._unsafeUnwrap().resolvedSkills.map((skill) => skill.name),
+    ).toEqual(["tdd"]);
+    expect(session.getCurrent()?.descriptor.name).toBe("loom-v2");
+    expect(applier.calls).toEqual([CATALOG[0], CATALOG[0]]);
+    expect(session.getCapabilityWarnings()).toEqual([
+      {
+        capability: "skill",
+        agentName: "loom-v2",
+        detail:
+          'required skill "missing-skill" is unavailable in Pi; continuing without it',
+      },
+    ]);
   });
 
   it("reports the model degraded (unresolved) when nothing in the intent matches, but still commits the descriptor", async () => {

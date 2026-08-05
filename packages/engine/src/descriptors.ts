@@ -54,7 +54,13 @@ export function generateCategoryShuttles(
 
     if (config.disabled.agents.includes(shuttleName)) continue;
 
-    const overrides: Partial<AgentConfig> = {};
+    const overrides: Partial<AgentConfig> = {
+      // A category description describes the generated shuttle's domain, so it
+      // always replaces the base shuttle description everywhere the agent
+      // config is read (descriptors, delegation targets, prompts). The DSL
+      // requires a non-blank category description, so there is no fallback.
+      description: category.description,
+    };
     if (category.models !== undefined) overrides.models = category.models;
     if (category.temperature !== undefined) {
       overrides.temperature = category.temperature;
@@ -77,6 +83,17 @@ export function generateCategoryShuttles(
         ...base,
         name: shuttleName,
         mode: "subagent",
+        // Delegation triggers are never inherited. The base shuttle's triggers
+        // describe the generic fallback worker; a generated category shuttle is
+        // routed by its category description and patterns only. An explicit
+        // empty array (rather than deleting the key) is the correct
+        // representation: `triggers` is optional in AgentConfigSchema and
+        // `composeDelegationTargets` reads `triggers ?? []`, so both are
+        // equivalent downstream, while `[]` records the intent at the point of
+        // generation and cannot be silently reintroduced by a later spread.
+        // Config-layer array union-merge does not apply here — generation runs
+        // after `mergeConfigs`.
+        triggers: [],
         ...overrides,
       },
       categoryMeta: {

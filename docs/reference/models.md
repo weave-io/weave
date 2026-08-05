@@ -17,6 +17,7 @@ agent loom {
 }
 
 category frontend {
+  description "Frontend components and interfaces"
   patterns ["src/components/**", "**/*.tsx"]
   models ["gpt-5", "claude-sonnet-4-5"]
 }

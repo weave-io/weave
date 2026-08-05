@@ -805,6 +805,43 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     });
   });
 
+  it("uses the prepared required-skill prompt for an ordinary child", () => {
+    const targetDescriptor = {
+      name: "shuttle",
+      composedPrompt: "You are Shuttle, a delegated specialist.",
+      models: [],
+      mode: "subagent" as const,
+      effectiveToolPolicy: {
+        read: "allow" as const,
+        write: "allow" as const,
+        execute: "allow" as const,
+        delegate: "allow" as const,
+        network: "ask" as const,
+      },
+      rawToolPolicy: undefined,
+      delegationTargets: [],
+      skills: ["tdd"],
+    };
+    const bootstrapBody = buildChildBootstrapBody(
+      new Map([[targetDescriptor.name, targetDescriptor]]),
+      {
+        name: targetDescriptor.name,
+        description: "A delegated specialist.",
+        triggers: [],
+        isCategory: false,
+      },
+      "child-1",
+      { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
+      undefined,
+      (descriptor) =>
+        `Required skill names to load before work: ${JSON.stringify(descriptor.skills)}\n${descriptor.composedPrompt}`,
+    ) as unknown as Record<string, unknown>;
+
+    expect(bootstrapBody.composedPrompt).toBe(
+      'Required skill names to load before work: ["tdd"]\nYou are Shuttle, a delegated specialist.',
+    );
+  });
+
   it("applies transported thinking intent after ordinary child model activation", async () => {
     const catalogModel = {
       provider: "fake",

@@ -514,7 +514,7 @@ describe("Pi child transcript reducer", () => {
     expect(JSON.stringify(requests)).not.toContain("private:payload");
   });
 
-  it("caches components, invalidates changed facts, and enforces native width", () => {
+  it("caches components, keeps native styling, and passes the render width through", () => {
     const reducer = new PiChildTranscriptReducer();
     expect(reducer.addTask("first").isOk()).toBe(true);
     applyAll(reducer, [
@@ -565,14 +565,9 @@ describe("Pi child transcript reducer", () => {
     expect(createCount).toBe(first.rows.length);
     expect(renderedWidths).toContain(7);
     expect(
-      renderer.render(state, 7).lines.every((line) => {
-        let width = 0;
-        for (const character of line) {
-          const codePoint = character.codePointAt(0) ?? 0;
-          width += codePoint >= 0x1100 && codePoint <= 0x1faff ? 2 : 1;
-        }
-        return !line.includes("\\u001b") && width <= 7;
-      }),
+      renderer
+        .render(state, 7)
+        .lines.every((line) => line.includes("\u001b[31m")),
     ).toBe(true);
 
     applyAll(reducer, [
@@ -647,5 +642,184 @@ describe("Pi child transcript reducer", () => {
     expect(tooLarge.isErr()).toBe(true);
     expect(reducer.selectBranch("missing").isErr()).toBe(true);
     expect(reducer.selectMessage("missing").isErr()).toBe(true);
+  });
+
+  it("hands native components the structured fact instead of fallback prose", () => {
+    const reducer = new PiChildTranscriptReducer();
+    expect(reducer.addTask("first line\nsecond line").isOk()).toBe(true);
+    applyAll(reducer, [
+      { type: "message_start", message: { id: "payload-message" } },
+      {
+        type: "message_update",
+        delta: {
+          messageId: "payload-message",
+          text: "visible answer",
+          thinking: "reasoning",
+        },
+      },
+      {
+        type: "tool_call",
+        toolCallId: "payload-tool",
+        toolName: "read",
+        arguments: { path: "file" },
+      },
+      {
+        type: "tool_result",
+        toolCallId: "payload-tool",
+        result: { content: [{ type: "text", text: "file body" }] },
+      },
+    ]);
+
+    const requests: PiTranscriptComponentRequest[] = [];
+    const factory: PiTranscriptComponentFactory = {
+      create(request) {
+        requests.push(request);
+        return { render: () => [request.kind], invalidate: () => undefined };
+      },
+    };
+    new PiChildTranscriptRenderer({ componentFactory: factory }).render(
+      reducer.getState(),
+      80,
+    );
+
+    const task = requests.find((request) => request.kind === "task");
+    expect(task?.payload).toEqual({
+      type: "text",
+      text: "first line\nsecond line",
+    });
+    expect(task?.content).toContain("\n");
+    expect(task?.content).not.toContain("\\n");
+    const assistant = requests.find(
+      (request) =>
+        request.kind === "assistant" && request.payload !== undefined,
+    );
+    expect(assistant?.payload).toMatchObject({
+      type: "assistant",
+      text: "visible answer",
+      thinking: "reasoning",
+      streaming: true,
+    });
+    const tool = requests.find((request) => request.kind === "tool");
+    expect(tool?.payload).toMatchObject({
+      type: "tool",
+      toolName: "read",
+      toolCallId: "payload-tool",
+      state: "result",
+      knownTool: true,
+      argumentsKnown: true,
+      arguments: { path: "file" },
+      result: { content: [{ type: "text", text: "file body" }] },
+    });
+  });
+
+  it("drops suppressed facts from native rows and lines", () => {
+    const reducer = new PiChildTranscriptReducer();
+    expect(reducer.addTask("keep this").isOk()).toBe(true);
+    applyAll(reducer, [
+      { type: "status", status: "running" },
+      { type: "usage", usage: { inputTokens: 1, outputTokens: 2 } },
+      {
+        type: "extension_ui_request",
+        requestType: "widget",
+        requestId: "suppressed-widget",
+        widget: {},
+      },
+    ]);
+
+    let invalidateCount = 0;
+    const factory: PiTranscriptComponentFactory = {
+      suppress: (request) =>
+        request.kind === "status" ||
+        request.kind === "usage" ||
+        request.kind === "extension_ui",
+      create: (request) => ({
+        render: () => [`native:${request.kind}`],
+        invalidate: () => {
+          invalidateCount += 1;
+        },
+      }),
+    };
+    const renderer = new PiChildTranscriptRenderer({
+      componentFactory: factory,
+    });
+    const rendered = renderer.render(reducer.getState(), 80);
+
+    expect(rendered.rows.map((row) => row.kind)).toEqual(["task"]);
+    expect(rendered.lines).toEqual(["native:task"]);
+    expect(rendered.lines.join("\n")).not.toContain("extension ui");
+    expect(invalidateCount).toBe(0);
+  });
+
+  it("clips styled native lines to the render width so rows cannot wrap", () => {
+    const reducer = new PiChildTranscriptReducer();
+    expect(reducer.addTask("clip me").isOk()).toBe(true);
+    const long = `\u001b[31m${"x".repeat(200)}\u001b[0m`;
+    const factory: PiTranscriptComponentFactory = {
+      create: () => ({
+        render: () => [long, `\u001b[1m${"\u754c".repeat(80)}\u001b[0m`],
+        invalidate: () => undefined,
+      }),
+    };
+    const rendered = new PiChildTranscriptRenderer({
+      componentFactory: factory,
+    }).render(reducer.getState(), 40);
+
+    const visible = (line: string): number => {
+      let width = 0;
+      const ansiCsi = new RegExp(
+        `${String.fromCharCode(0x1b)}\\[[0-9;:?]*[ -/]*[@-~]`,
+        "g",
+      );
+      const stripped = line.replace(ansiCsi, "");
+      for (const char of stripped) {
+        const code = char.codePointAt(0) ?? 0;
+        width += code >= 0x1100 && code <= 0x1faff ? 2 : 1;
+      }
+      return width;
+    };
+    expect(rendered.lines.length).toBeGreaterThan(0);
+    expect(rendered.lines.every((line) => visible(line) <= 40)).toBe(true);
+    expect(rendered.lines.some((line) => line.includes("\u001b[31m"))).toBe(
+      true,
+    );
+  });
+
+  it("does not spend visible width on hyperlink targets", () => {
+    const reducer = new PiChildTranscriptReducer();
+    expect(reducer.addTask("link").isOk()).toBe(true);
+    const link =
+      "\u001b]8;;file:///a/very/long/absolute/path/that/exceeds/the/width.ts\u001b\\short.ts\u001b]8;;\u001b\\ done";
+    const factory: PiTranscriptComponentFactory = {
+      create: () => ({
+        render: () => [link],
+        invalidate: () => undefined,
+      }),
+    };
+    const rendered = new PiChildTranscriptRenderer({
+      componentFactory: factory,
+    }).render(reducer.getState(), 30);
+
+    const line = rendered.lines[0] ?? "";
+    expect(line).toContain("short.ts");
+    expect(line).toContain("done");
+    expect(line).toContain("file:///a/very/long");
+  });
+
+  it("treats a throwing suppress hook as no suppression", () => {
+    const reducer = new PiChildTranscriptReducer();
+    expect(reducer.addTask("survives").isOk()).toBe(true);
+    const factory: PiTranscriptComponentFactory = {
+      suppress: () => {
+        throw new Error("suppress exploded");
+      },
+      create: () => ({
+        render: () => ["native"],
+        invalidate: () => undefined,
+      }),
+    };
+    const rendered = new PiChildTranscriptRenderer({
+      componentFactory: factory,
+    }).render(reducer.getState(), 80);
+    expect(rendered.lines).toEqual(["native"]);
   });
 });

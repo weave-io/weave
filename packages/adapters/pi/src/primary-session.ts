@@ -1,8 +1,4 @@
-import type {
-  AgentDescriptor,
-  ResolvedSkill,
-  SkillResolutionError,
-} from "@weaveio/weave-engine";
+import type { AgentDescriptor, ResolvedSkill } from "@weaveio/weave-engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type {
   PiModelActivationOutcome,
@@ -22,10 +18,26 @@ const WEAVE_BLOCK_END = "weave:agent:end";
  * verbatim. Descriptors' `composedPrompt` is already final (Pi adapter contract) —
  * this function never re-renders or re-templates it.
  */
-export function renderWeavePromptBlock(descriptor: AgentDescriptor): string {
+export function renderRequiredSkillsPrompt(
+  composedPrompt: string,
+  resolvedSkills: readonly ResolvedSkill[],
+): string {
+  const requiredSkillNames = resolvedSkills.map((skill) => skill.name);
+  if (requiredSkillNames.length === 0) return composedPrompt;
+  return [
+    `Required skill names to load before work: ${JSON.stringify(requiredSkillNames)}`,
+    "Load each required skill with Pi's skill-loading mechanism before you start the task.",
+    composedPrompt,
+  ].join("\n");
+}
+
+export function renderWeavePromptBlock(
+  descriptor: AgentDescriptor,
+  resolvedSkills: readonly ResolvedSkill[] = [],
+): string {
   return [
     `<!-- ${WEAVE_BLOCK_START} name="${descriptor.name}" -->`,
-    descriptor.composedPrompt,
+    renderRequiredSkillsPrompt(descriptor.composedPrompt, resolvedSkills),
     `<!-- ${WEAVE_BLOCK_END} name="${descriptor.name}" -->`,
   ].join("\n");
 }
@@ -50,9 +62,10 @@ function hasWeaveBlockFor(
 export function appendWeaveBlockOnce(
   systemPrompt: string,
   descriptor: AgentDescriptor,
+  resolvedSkills: readonly ResolvedSkill[] = [],
 ): string {
   if (hasWeaveBlockFor(systemPrompt, descriptor.name)) return systemPrompt;
-  const block = renderWeavePromptBlock(descriptor);
+  const block = renderWeavePromptBlock(descriptor, resolvedSkills);
   if (systemPrompt.length === 0) return block;
   return `${systemPrompt}\n\n${block}`;
 }
@@ -62,11 +75,6 @@ export type PiPrimaryActivationError =
       readonly type: "NotEligiblePrimary";
       readonly agentName: string;
       readonly mode: string;
-    }
-  | {
-      readonly type: "SkillResolutionFailed";
-      readonly agentName: string;
-      readonly errors: readonly SkillResolutionError[];
     }
   | { readonly type: "DescriptorNotFound"; readonly agentName: string }
   | { readonly type: "NoPriorPrimary" };
@@ -78,7 +86,7 @@ export type PiPrimaryActivationError =
  * capability probing) read this instead of relying on log lines alone.
  */
 export interface PiPrimaryCapabilityWarning {
-  readonly capability: "temperature" | "model";
+  readonly capability: "temperature" | "model" | "skill";
   readonly agentName: string;
   readonly detail: string;
 }
@@ -132,8 +140,8 @@ export const DEFAULT_PRIMARY_AGENT_NAME = "loom";
  * leaves the session at its prior valid state (Pi adapter contract). Skill
  * resolution and model application must both *settle* — succeed, or (for
  * the model) settle into an accepted degraded state — before anything is
- * committed; a `SkillResolutionFailed`/`NotEligiblePrimary` error never
- * mutates `getCurrent()`.
+ * committed. Missing skills emit warnings while available skills remain
+ * usable. A `NotEligiblePrimary` error never mutates `getCurrent()`.
  */
 export class PiPrimarySession {
   private readonly modelActivator: PiModelActivator;
@@ -152,9 +160,9 @@ export class PiPrimarySession {
 
   /**
    * Replaces the Pi-owned skill discovery snapshot used by the next
-   * `activate()` call (Pi adapter contract). Pi only exposes its loaded skill
-   * catalog via `before_agent_start`'s `systemPromptOptions.skills`, so
-   * callers refresh this immediately before activating.
+   * `activate()` call. Boot activation reads this snapshot from
+   * `PiSessionContext.getSystemPromptOptions()`; explicit later switches
+   * refresh it from the same current session context.
    */
   refreshSkills(availableSkills: readonly PiSkillInfo[]): void {
     this.deps.skillCatalog.refresh(availableSkills);
@@ -176,6 +184,41 @@ export class PiPrimarySession {
     );
   }
 
+  private resolveDescriptorSkills(
+    descriptor: AgentDescriptor,
+    disabledSkills: readonly string[] = [],
+  ): readonly ResolvedSkill[] {
+    const resolution = this.deps.skillCatalog
+      .resolveForAgent(descriptor.name, descriptor.skills, disabledSkills)
+      .match(
+        (value) => value,
+        (impossible) => impossible,
+      );
+    for (const warning of resolution.warnings) {
+      this.recordWarning({
+        capability: "skill",
+        agentName: warning.agentName,
+        detail: `required skill ${JSON.stringify(warning.skillName)} is unavailable in Pi; continuing without it`,
+      });
+    }
+    return resolution.resolvedSkills;
+  }
+
+  /**
+   * Adds Pi skill-loading instructions to a delegated agent's prompt.
+   * Missing skills produce the same visible, deduplicated warnings as primary
+   * activation and are omitted from the required list.
+   */
+  prepareComposedPrompt(
+    descriptor: AgentDescriptor,
+    disabledSkills: readonly string[] = [],
+  ): string {
+    return renderRequiredSkillsPrompt(
+      descriptor.composedPrompt,
+      this.resolveDescriptorSkills(descriptor, disabledSkills),
+    );
+  }
+
   /**
    * Activates `descriptor` as the primary. `mode: "primary"` and
    * `mode: "all"` descriptors are eligible; `mode: "subagent"` is rejected
@@ -185,8 +228,9 @@ export class PiPrimarySession {
    * `context.modelApplier` (Pi's real `setModel`) before committing
    * anything. A resolved-but-unresolvable model, or a model the host
    * rejects, degrades this descriptor's model health but does not fail the
-   * activation (Pi adapter contract); only an ineligible mode or a missing
-   * skill fails it, leaving the prior primary untouched.
+   * activation (Pi adapter contract). Missing skills emit warnings and do
+   * not prevent activation; an ineligible mode leaves the prior primary
+   * untouched.
    */
   activate(
     descriptor: AgentDescriptor,
@@ -200,18 +244,10 @@ export class PiPrimarySession {
       });
     }
 
-    const skillsResult = this.deps.skillCatalog.resolveForAgent(
-      descriptor.name,
-      descriptor.skills,
+    const resolvedSkills = this.resolveDescriptorSkills(
+      descriptor,
       context.disabledSkills,
     );
-    if (skillsResult.isErr()) {
-      return errAsyncActivation({
-        type: "SkillResolutionFailed",
-        agentName: descriptor.name,
-        errors: skillsResult.error,
-      });
-    }
 
     const temperatureDeclared = descriptor.temperature !== undefined;
     if (temperatureDeclared) {
@@ -238,29 +274,29 @@ export class PiPrimarySession {
         );
 
     return modelActivation.map((modelActivation) => {
-        if (modelActivation.status === "degraded") {
-          this.recordWarning({
-            capability: "model",
-            agentName: descriptor.name,
-            detail:
-              modelActivation.reason === "unresolved"
-                ? "no entry in the descriptor's model intent resolved against the authenticated Pi catalog"
-                : "the host rejected applying the resolved model",
-          });
-        }
+      if (modelActivation.status === "degraded") {
+        this.recordWarning({
+          capability: "model",
+          agentName: descriptor.name,
+          detail:
+            modelActivation.reason === "unresolved"
+              ? "no entry in the descriptor's model intent resolved against the authenticated Pi catalog"
+              : "the host rejected applying the resolved model",
+        });
+      }
 
-        const activePrimary: PiActivePrimary = {
-          descriptor,
-          promptBlock: renderWeavePromptBlock(descriptor),
-          modelActivation,
-          resolvedSkills: skillsResult.value,
-          temperatureDegraded: temperatureDeclared,
-        };
+      const activePrimary: PiActivePrimary = {
+        descriptor,
+        promptBlock: renderWeavePromptBlock(descriptor, resolvedSkills),
+        modelActivation,
+        resolvedSkills,
+        temperatureDegraded: temperatureDeclared,
+      };
 
-        this.previousDescriptorName = this.current?.descriptor.name;
-        this.current = activePrimary;
-        return activePrimary;
-      });
+      this.previousDescriptorName = this.current?.descriptor.name;
+      this.current = activePrimary;
+      return activePrimary;
+    });
   }
 
   /**
@@ -290,7 +326,11 @@ export class PiPrimarySession {
   /** Appends the current primary's composed-prompt block (Pi adapter contract). No-op if there is no active primary. */
   appendToSystemPrompt(systemPrompt: string): string {
     if (this.current === undefined) return systemPrompt;
-    return appendWeaveBlockOnce(systemPrompt, this.current.descriptor);
+    return appendWeaveBlockOnce(
+      systemPrompt,
+      this.current.descriptor,
+      this.current.resolvedSkills,
+    );
   }
 }
 

@@ -39,9 +39,8 @@ const ACCEPTANCE_FIXTURE_SMOKE = join(
 /**
  * Minimal stub bodies for the handful of runtime *value* imports the
  * compiled pi adapter bundle actually references from each Pi-provided
- * peer package (`import { CustomEditor } from "@earendil-works/pi-coding-agent"`,
- * `import { StringEnum } from "@earendil-works/pi-ai"`, and `matchesKey` plus
- * `Text` from `@earendil-works/pi-tui` - verified directly against
+ * peer package (editor, tool-component, tool-definition, enum, text, Markdown,
+ * key-match, and display-width exports). The list is verified directly against
  * packages/adapters/pi/dist/{index,extension}.js). These exist only so a
  * clean-room `import()` can link without starting Pi or touching the
  * network; they carry no adapter behavior of their own.
@@ -50,7 +49,19 @@ const FAKE_HOST_PACKAGES: Record<string, { version: string; source: string }> =
   {
     "@earendil-works/pi-coding-agent": {
       version: EXACT_TESTED_HOST_VERSION,
-      source: `export const VERSION = "${EXACT_TESTED_HOST_VERSION}";\nexport class CustomEditor {}\n`,
+      source: `export const VERSION = "${EXACT_TESTED_HOST_VERSION}";
+export class CustomEditor {}
+export class ToolExecutionComponent {}
+export class UserMessageComponent {}
+export function getMarkdownTheme() { return {}; }
+export function createBashToolDefinition() {}
+export function createEditToolDefinition() {}
+export function createFindToolDefinition() {}
+export function createGrepToolDefinition() {}
+export function createLsToolDefinition() {}
+export function createReadToolDefinition() {}
+export function createWriteToolDefinition() {}
+`,
     },
     "@earendil-works/pi-ai": {
       version: EXACT_TESTED_HOST_VERSION,
@@ -59,7 +70,7 @@ const FAKE_HOST_PACKAGES: Record<string, { version: string; source: string }> =
     "@earendil-works/pi-tui": {
       version: EXACT_TESTED_HOST_VERSION,
       source:
-        "export function matchesKey() { return false; }\nexport class Text {}\n",
+        "export function matchesKey() { return false; }\nexport function truncateToWidth(text) { return text; }\nexport function visibleWidth(text) { return text.length; }\nexport class Markdown {}\nexport class Text {}\n",
     },
   };
 

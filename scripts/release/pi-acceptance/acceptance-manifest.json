@@ -143,7 +143,7 @@
         },
         "T002": {
           "file": "packages/adapters/pi/src/__tests__/skill-catalog.test.ts",
-          "name": "isolates a missing skill to this agent's result only (no global failure shape)"
+          "name": "returns available skills and warns for missing skills without failing the agent"
         },
         "T003": {
           "file": "packages/adapters/pi/src/__tests__/skill-catalog.test.ts",

@@ -86,7 +86,12 @@ Describe these as behavioral boundaries; the engine and adapter enforce them.
 Use Mustache context rather than copying a target table into the prompt:
 
 ```md
-{{{delegation.section}}}
+{{#delegation.targets}}
+- **{{name}}** — {{description}}
+{{#triggers}}
+  - {{routing_hint}}
+{{/triggers}}
+{{/delegation.targets}}
 ```
 
 The engine renders only eligible targets after filtering disabled agents, modes, budgets, and caller identity. A primary prompt that references any real `delegation.*` path suppresses automatic fallback placement.

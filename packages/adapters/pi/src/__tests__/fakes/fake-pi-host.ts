@@ -25,7 +25,18 @@ import type {
   PiUiDialogOptions,
   PiUiNotifyLevel,
   PiUiPort,
+  PiUiThemePort,
 } from "../../types.js";
+
+/**
+ * Pi's own documented default keys for the bindings custom components read.
+ * Mirrors `TUI_KEYBINDINGS` so a fake host behaves like an unconfigured one.
+ */
+const DEFAULT_FAKE_KEYBINDING_KEYS: Record<string, readonly string[]> = {
+  "tui.select.up": ["up"],
+  "tui.select.down": ["down"],
+  "tui.select.cancel": ["escape", "ctrl+c"],
+};
 
 export interface RecordedCommandRegistration {
   readonly name: string;
@@ -93,8 +104,16 @@ export interface FakePiHostOptions {
   readonly installPath?: string;
   readonly currentModel?: PiModelInfo;
   readonly availableModels?: readonly PiModelInfo[];
+  readonly systemPromptSkills?: readonly PiSkillInfo[];
+  readonly systemPromptOptionsAvailable?: boolean;
   readonly hasUI?: boolean;
   readonly idle?: boolean;
+  /**
+   * Optional Pi theme stand-in. Absent by default so existing assertions keep
+   * observing the plain foreground-only badge text; supply one to observe the
+   * themed active-agent badge exactly as the real host would render it.
+   */
+  readonly theme?: PiUiThemePort;
 }
 
 /**
@@ -142,9 +161,24 @@ export class RecordingFakePiHost {
     };
   }[] = [];
   readonly sendMessageCalls: RecordedSendMessage[] = [];
+  beforeAgentStartCalls = 0;
+  getSystemPromptOptionsCalls = 0;
+  getSystemPromptCalls = 0;
   generatedTurnCount = 0;
   readonly customCalls: unknown[] = [];
   readonly customRenderedLines: string[][] = [];
+  readonly customComponents: {
+    render(width: number): string[];
+    handleInput(data: string): void;
+  }[] = [];
+  customRequestRenderCalls = 0;
+  customDoneCalls = 0;
+  /** Terminal height reported to `ctx.ui.custom()` components. */
+  terminalRows: number | undefined = 24;
+  /** Per-binding key overrides, so tests can prove alternate keybindings. */
+  readonly customKeybindingKeys: Record<string, readonly string[] | undefined> =
+    {};
+  private nextCustomCalled: (() => void) | undefined;
   private activeCustomDone: (() => void) | undefined;
   private activeCustom:
     | { render(width: number): string[]; handleInput(data: string): void }
@@ -162,13 +196,21 @@ export class RecordingFakePiHost {
     return [...this.activeTools];
   }
 
+  waitForNextCustomCall(): Promise<void> {
+    return new Promise((resolve) => {
+      this.nextCustomCalled = resolve;
+    });
+  }
+
   private mode: PiMode;
+  private readonly theme: PiUiThemePort | undefined;
   private trusted: boolean;
   private hasUI: boolean;
   private idle: boolean;
   private pendingMessages = false;
   private readonly cwd: string;
   private readonly installPath: string;
+  private readonly systemPromptOptionsAvailable: boolean;
   private commandsInventory: PiCommandInfo[] = [];
   private selectResponses: (
     | string
@@ -179,7 +221,7 @@ export class RecordingFakePiHost {
   private confirmResponses: (boolean | Promise<boolean>)[] = [];
   private currentModel: PiModelInfo | undefined;
   private availableModels: readonly PiModelInfo[];
-  private currentSkills: readonly PiSkillInfo[] = [];
+  private currentSkills: readonly PiSkillInfo[];
   private readonly handlers = new Map<string, PiEventHandler[]>();
   private getCommandsOverride: (() => readonly PiCommandInfo[]) | undefined;
   private setModelOverride:
@@ -204,6 +246,7 @@ export class RecordingFakePiHost {
 
   constructor(options: FakePiHostOptions = {}) {
     this.mode = options.mode ?? "tui";
+    this.theme = options.theme;
     this.trusted = options.trusted ?? true;
     this.hasUI = options.hasUI ?? true;
     this.idle = options.idle ?? true;
@@ -211,6 +254,9 @@ export class RecordingFakePiHost {
     this.installPath = options.installPath ?? "/fake/node_modules";
     this.currentModel = options.currentModel;
     this.availableModels = options.availableModels ?? [];
+    this.currentSkills = options.systemPromptSkills ?? [];
+    this.systemPromptOptionsAvailable =
+      options.systemPromptOptionsAvailable ?? true;
     this.api = this.buildApi();
   }
 
@@ -449,13 +495,26 @@ export class RecordingFakePiHost {
    * settles once `settle()` is invoked, letting tests exercise a session
    * replacement while a model application is still in flight.
    */
-  deferNextSetModel(): { settle: (succeeded: boolean) => void } {
+  deferNextSetModel(): {
+    called: Promise<void>;
+    settle: (succeeded: boolean) => void;
+  } {
+    let resolveCalled!: () => void;
     let resolveFn!: (value: boolean) => void;
+    const called = new Promise<void>((resolve) => {
+      resolveCalled = resolve;
+    });
     const promise = new Promise<boolean>((resolve) => {
       resolveFn = resolve;
     });
-    this.setModelOverride = () => promise;
+    const previousOverride = this.setModelOverride;
+    this.setModelOverride = () => {
+      this.setModelOverride = previousOverride;
+      resolveCalled();
+      return promise;
+    };
     return {
+      called,
       settle: (succeeded: boolean) => resolveFn(succeeded),
     };
   }
@@ -545,6 +604,7 @@ export class RecordingFakePiHost {
       },
     };
     const ui: PiUiPort = {
+      ...(this.theme === undefined ? {} : { theme: this.theme }),
       notify: (message, level) => {
         const failure = this.notifyFailure;
         this.notifyFailure = undefined;
@@ -576,20 +636,40 @@ export class RecordingFakePiHost {
       },
       custom: async (factory) => {
         this.customCalls.push(factory);
+        this.nextCustomCalled?.();
+        this.nextCustomCalled = undefined;
         let resolve!: (value: unknown) => void;
         const result = new Promise<unknown>((res) => {
           resolve = res;
         });
-        this.activeCustomDone = () => resolve(undefined);
+        this.activeCustomDone = () => {
+          this.customDoneCalls += 1;
+          resolve(undefined);
+        };
         const component = factory(
-          { width: 80, requestRender: () => undefined },
+          {
+            width: 80,
+            requestRender: () => {
+              this.customRequestRenderCalls += 1;
+            },
+            terminal: { rows: this.terminalRows },
+          },
           {},
-          { matches: () => false },
-          (value) => resolve(value),
+          {
+            matches: () => false,
+            getKeys: (binding: string) =>
+              this.customKeybindingKeys[binding] ??
+              DEFAULT_FAKE_KEYBINDING_KEYS[binding],
+          },
+          (value) => {
+            this.customDoneCalls += 1;
+            resolve(value);
+          },
         ) as {
           render(width: number): string[];
           handleInput(data: string): void;
         };
+        this.customComponents.push(component);
         this.activeCustom = component;
         this.customRenderedLines.push(component.render(80));
         return (await result) as never;
@@ -605,8 +685,38 @@ export class RecordingFakePiHost {
         hasUI: this.hasUI,
         model,
         modelRegistry,
-        getSystemPromptOptions: () => ({ skills: this.currentSkills }),
+        getSystemPrompt: () => {
+          this.getSystemPromptCalls += 1;
+          if (this.currentSkills.length === 0) return "native-system-prompt";
+          const escapeXml = (value: string): string =>
+            value
+              .replace(/&/gu, "&amp;")
+              .replace(/</gu, "&lt;")
+              .replace(/>/gu, "&gt;")
+              .replace(/"/gu, "&quot;")
+              .replace(/'/gu, "&apos;");
+          return [
+            "native-system-prompt",
+            "<available_skills>",
+            ...this.currentSkills.flatMap((skill) => [
+              "  <skill>",
+              `    <name>${escapeXml(skill.name)}</name>`,
+              "    <description>Fake skill</description>",
+              `    <location>${escapeXml(skill.filePath ?? `/fake/skills/${skill.name}/SKILL.md`)}</location>`,
+              "  </skill>",
+            ]),
+            "</available_skills>",
+          ].join("\n");
+        },
       },
+      this.systemPromptOptionsAvailable
+        ? {
+            getSystemPromptOptions: () => {
+              this.getSystemPromptOptionsCalls += 1;
+              return { skills: this.currentSkills };
+            },
+          }
+        : {},
       { hasPendingMessages: () => this.pendingMessages },
     ) as PiSessionContext;
   }
@@ -670,6 +780,7 @@ export class RecordingFakePiHost {
     event: Record<string, unknown> = {},
     skills: readonly PiSkillInfo[] = [],
   ): Promise<{ systemPrompt: string | undefined; results: unknown[] }> {
+    this.beforeAgentStartCalls += 1;
     this.currentSkills = skills;
     const ctx = this.createSessionContext();
     const handlers = this.handlers.get("before_agent_start") ?? [];

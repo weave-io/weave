@@ -177,9 +177,93 @@ const KNOWN_CHILD_EVENT_TYPES = new Set([
   "extension_ui_response",
 ]);
 
+const MAX_CHILD_EVENT_DEPTH = 16;
+
+const boundNativeToolValue = (value: unknown, depth = 0): unknown => {
+  if (typeof value === "string") return value.slice(0, MAX_CHILD_EVENT_STRING);
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean" || value === null) return value;
+  if (depth >= MAX_CHILD_EVENT_DEPTH) return "[truncated]";
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, MAX_CHILD_EVENT_ITEMS)
+      .map((item) => boundNativeToolValue(item, depth + 1))
+      .filter((item) => item !== undefined);
+  }
+  if (typeof value !== "object") return undefined;
+
+  const bounded: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (Object.keys(bounded).length >= MAX_CHILD_EVENT_KEYS) break;
+    const boundedKey = key.slice(0, 256);
+    const boundedItem = boundNativeToolValue(item, depth + 1);
+    if (boundedKey && boundedItem !== undefined)
+      bounded[boundedKey] = boundedItem;
+  }
+  return bounded;
+};
+
+const nativeToolErrorMessage = (value: unknown): string | undefined => {
+  if (typeof value === "string") return value.slice(0, MAX_CHILD_EVENT_STRING);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const content = (value as Record<string, unknown>)["content"];
+  if (!Array.isArray(content)) return undefined;
+  for (const item of content) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      continue;
+    }
+    const text = (item as Record<string, unknown>)["text"];
+    if (typeof text === "string") return text.slice(0, MAX_CHILD_EVENT_STRING);
+  }
+  return undefined;
+};
+
+const normalizeNativeToolEvent = (value: unknown): unknown => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  switch (record["type"]) {
+    case "tool_execution_start":
+      return {
+        type: "tool_call",
+        toolCallId: record["toolCallId"],
+        toolName: record["toolName"],
+        arguments: boundNativeToolValue(record["args"]),
+      };
+    case "tool_execution_update":
+      return {
+        type: "tool_partial_result",
+        toolCallId: record["toolCallId"],
+        toolName: record["toolName"],
+        partialResult: boundNativeToolValue(record["partialResult"]),
+      };
+    case "tool_execution_end":
+      if (record["isError"] === true) {
+        return {
+          type: "tool_error",
+          toolCallId: record["toolCallId"],
+          toolName: record["toolName"],
+          error: nativeToolErrorMessage(record["result"]),
+        };
+      }
+      return {
+        type: "tool_result",
+        toolCallId: record["toolCallId"],
+        toolName: record["toolName"],
+        result: boundNativeToolValue(record["result"]),
+      };
+    default:
+      return value;
+  }
+};
+
 /** Validate known events; preserve only genuinely unknown event kinds. */
 export const parsePiChildSessionEvent = (value: unknown) => {
-  const parsed = PiChildSessionEventSchema.safeParse(value);
+  const normalized = normalizeNativeToolEvent(value);
+  const parsed = PiChildSessionEventSchema.safeParse(normalized);
   if (parsed.success) return parsed;
   const eventType =
     typeof value === "object" &&

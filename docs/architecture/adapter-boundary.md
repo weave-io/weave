@@ -63,7 +63,7 @@ The adapter decides how to activate `result`; the engine does not call a harness
 
 ### Skills
 
-The adapter discovers and loads skill descriptors, then passes them to the engine matcher. The engine never scans OpenCode, Claude Code, Pi, XDG, or home-directory skill paths.
+The adapter discovers skill descriptors and passes them to the engine matcher. The engine returns the available requested skills and non-fatal warnings for requested names that are absent. The adapter reports those warnings, asks the harness to load the resolved skill names before agent work starts, and continues with the available set. Disabled skills are silently filtered. The engine never scans OpenCode, Claude Code, Pi, XDG, or home-directory skill paths.
 
 ### Lifecycle
 

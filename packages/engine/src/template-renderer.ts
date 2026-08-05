@@ -11,8 +11,12 @@
  * - Reject unsafe paths (prototype traversal: __proto__, prototype, constructor)
  * - Reject function/callable values in the template context
  * - Render with default HTML escaping (double braces) and raw output (triple braces)
- * - Post-render unresolved-tag check
  * - Restore escaped literal tags after rendering
+ *
+ * Validation is source-aware only: it inspects the parsed template tokens, never
+ * the rendered output. Interpolated context values are opaque payload — a
+ * category description like `Literal {{agent.name}} docs` must survive rendering
+ * verbatim, so the renderer never rescans its own output for Mustache syntax.
  *
  * This module has NO filesystem, environment, process, helper, lambda, or
  * partial-loading behavior. All functions return neverthrow Result types.
@@ -116,11 +120,6 @@ export type RendererError =
   | {
       type: "FunctionValue";
       path: string;
-      message: string;
-    }
-  | {
-      type: "UnresolvedTag";
-      tag: string;
       message: string;
     };
 
@@ -456,64 +455,6 @@ function validateNoFunctionValues(
 }
 
 // ---------------------------------------------------------------------------
-// Post-render unresolved-tag check
-// ---------------------------------------------------------------------------
-
-/**
- * After rendering, scan for any remaining unresolved Mustache tags.
- *
- * Allows:
- * - Restored escaped literals (which produce literal `{{` or `{{{` text)
- *
- * Rejects:
- * - Any remaining `{{...}}` or `{{{...}}}` that were not resolved
- *
- * Strategy: after restoreEscapedLiterals(), the output may contain literal
- * `{{` sequences that came from escaped inputs. We need to distinguish those
- * from real unresolved tags.
- *
- * We do this by checking the rendered output BEFORE restoration for any
- * remaining `{{` patterns (excluding our placeholders).
- */
-function checkUnresolvedTags(
-  renderedBeforeRestore: string,
-): Result<void, RendererError> {
-  // After Mustache renders, any remaining {{ or {{{ are unresolved tags.
-  // Our placeholders don't contain {{ so they won't match.
-  //
-  // We use a precise regex that matches only Mustache-style identifiers:
-  // - Optional section/partial/comment prefix: #, ^, /, !, >, &
-  // - Followed by an identifier: letters, digits, underscores, dots, hyphens
-  //
-  // This avoids false positives from Mermaid hexagon node syntax like
-  // {{"weft"}} which contains quotes and is not a Mustache tag.
-  const mustacheTagPattern = /\{\{[#^/!>&]?[\w.-][\w.-]*\}\}/;
-  const unresolvedMatch = renderedBeforeRestore.match(mustacheTagPattern);
-  if (unresolvedMatch !== null) {
-    const tag = unresolvedMatch[0];
-    return err({
-      type: "UnresolvedTag",
-      tag,
-      message: `Unresolved template tag "${tag}" after rendering — check that all referenced paths have values`,
-    });
-  }
-
-  // Also check for triple-brace unresolved (same precision)
-  const mustacheTriplePattern = /\{\{\{[#^/!>&]?[\w.-][\w.-]*\}\}\}/;
-  const unresolvedTriple = renderedBeforeRestore.match(mustacheTriplePattern);
-  if (unresolvedTriple !== null) {
-    const tag = unresolvedTriple[0];
-    return err({
-      type: "UnresolvedTag",
-      tag,
-      message: `Unresolved template tag "${tag}" after rendering — check that all referenced paths have values`,
-    });
-  }
-
-  return ok(undefined);
-}
-
-// ---------------------------------------------------------------------------
 // Main render function
 // ---------------------------------------------------------------------------
 
@@ -534,8 +475,13 @@ export interface RenderOptions {
  * 3. Validate tokens (unsupported features, unsafe paths, unknown paths)
  * 4. Validate no function/callable values in context
  * 5. Render with Mustache (HTML escaping for {{...}}, raw for {{{...}}})
- * 6. Check for unresolved tags in rendered output (before restoration)
- * 7. Restore escaped literal placeholders
+ * 6. Restore escaped literal placeholders
+ *
+ * There is deliberately no post-render scan of the output. Every tag that the
+ * template itself contains has already been validated against `allowedPaths`,
+ * so anything Mustache-shaped left in the output came from a context value and
+ * is preserved verbatim. Paths that are allowed but absent from the context
+ * render empty, by design.
  *
  * Returns Result<string, RendererError> — never throws for expected failures.
  */
@@ -575,11 +521,7 @@ export function renderTemplate(
     });
   }
 
-  // Step 6: Check for unresolved tags (before restoration)
-  const unresolvedCheck = checkUnresolvedTags(rendered);
-  if (unresolvedCheck.isErr()) return err(unresolvedCheck.error);
-
-  // Step 7: Restore escaped literals
+  // Step 6: Restore escaped literals
   const final = restoreEscapedLiterals(rendered);
 
   log.debug({ outputLength: final.length }, "Template rendered successfully");

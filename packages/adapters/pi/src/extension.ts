@@ -20,6 +20,12 @@ import {
 } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
+  type ActivePlanReadPort,
+  type ActivePlanUiError,
+  type ActivePlanView,
+  createActivePlanUiState,
+} from "./active-plan-ui-state.js";
+import {
   listCycleablePrimaryAgents,
   nextCycleablePrimaryAgent,
   PI_PRIMARY_AGENT_CYCLE_SHORTCUT,
@@ -99,10 +105,7 @@ import {
   classifyChildTreeKey,
 } from "./child-tree-keys.js";
 import { renderChildTreeLines } from "./child-tree-render.js";
-import {
-  WEAVE_COMMAND_NAMES,
-  type WeaveCommandName,
-} from "./commands.js";
+import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
 import {
   logMaterializationErrors,
   PiConfigActivator,
@@ -158,6 +161,12 @@ import {
 } from "./plan-catalog.js";
 import { createPiPlanStateProvider } from "./plan-provider.js";
 import { renderPlanWidgetLines } from "./plan-render.js";
+import {
+  createPlanTaskListComponent,
+  PI_PLAN_TASK_LIST_SHORTCUT,
+  type PlanTaskListKeybindingsPort,
+  type PlanTaskListThemePort,
+} from "./plan-task-list.js";
 import { safelyListAvailableModels } from "./port-safety.js";
 import {
   DEFAULT_PRIMARY_AGENT_NAME,
@@ -174,6 +183,7 @@ import {
   activeInstanceFromRecoveryPointer,
   BunJsonlRecoveryPointerStore,
   isPointerEligibleForExplicitResume,
+  type PiRecoveryPointerStore,
 } from "./recovery-pointer.js";
 import {
   type PiRuntimeStoreFactory,
@@ -223,6 +233,10 @@ import {
   type PiPaletteAction,
 } from "./workflow-commands.js";
 import { PiWorkflowController } from "./workflow-controller.js";
+import {
+  renderWorkflowTaskFooter,
+  WEAVE_WORKFLOW_TASK_STATUS_KEY,
+} from "./workflow-task-status.js";
 
 export const PI_SHARED_LOG_PATH = ".weave/weave.log";
 const TAPESTRY_PRIMARY_AGENT_NAME = "tapestry";
@@ -240,6 +254,109 @@ type PiPrimarySwitchFailure =
       readonly cause: PiPrimaryActivationError;
     };
 
+type PiBootPrimaryActivationFailure =
+  | { readonly type: "PrimaryDescriptorMissing"; readonly agentName: string }
+  | {
+      readonly type: "PrimarySkillCatalogUnavailable";
+      readonly agentName: string;
+    }
+  | {
+      readonly type: "PrimaryModelCatalogUnavailable";
+      readonly agentName: string;
+    }
+  | { readonly type: "PrimaryActivationStale"; readonly agentName: string }
+  | {
+      readonly type: "PrimaryActivationFailed";
+      readonly agentName: string;
+      readonly cause: PiPrimaryActivationError;
+    };
+
+type PiPrimarySessionFailure =
+  | PiPrimaryActivationError
+  | PiBootPrimaryActivationFailure;
+
+class PiGenerationResourceOwner {
+  private disposed = false;
+  private runtimeStore: RuntimeStore | undefined;
+  private historyStore: PiChildHistoryStore | undefined;
+  private telemetry: PiTelemetry | undefined;
+
+  constructor(readonly generationId: string) {}
+
+  adoptRuntimeStore(store: RuntimeStore): void {
+    if (this.disposed) {
+      void store.close().match(
+        () => undefined,
+        () => undefined,
+      );
+      return;
+    }
+    this.runtimeStore = store;
+  }
+
+  adoptHistoryStore(store: PiChildHistoryStore): void {
+    if (this.disposed) {
+      void this.closeHistoryStore(store);
+      return;
+    }
+    this.historyStore = store;
+  }
+
+  adoptTelemetry(telemetry: PiTelemetry): void {
+    if (this.disposed) {
+      void telemetry.shutdown().match(
+        () => undefined,
+        () => undefined,
+      );
+      return;
+    }
+    this.telemetry = telemetry;
+  }
+
+  dispose(): ResultAsync<void, never> {
+    if (this.disposed) return okAsync(undefined);
+    this.disposed = true;
+    const telemetry = this.telemetry;
+    const historyStore = this.historyStore;
+    const runtimeStore = this.runtimeStore;
+    this.telemetry = undefined;
+    this.historyStore = undefined;
+    this.runtimeStore = undefined;
+
+    return ResultAsync.fromThrowable(
+      async () => {
+        if (telemetry !== undefined) await telemetry.shutdown();
+        if (historyStore !== undefined) {
+          await this.closeHistoryStore(historyStore);
+        }
+        if (runtimeStore !== undefined) await runtimeStore.close();
+      },
+      () => undefined,
+    )()
+      .map(() => undefined)
+      .orElse(() => okAsync(undefined));
+  }
+
+  private closeHistoryStore(
+    store: PiChildHistoryStore,
+  ): ResultAsync<void, never> {
+    const close = (
+      store as PiChildHistoryStore & {
+        close?: () => unknown;
+      }
+    ).close;
+    if (close === undefined) return okAsync(undefined);
+    return ResultAsync.fromThrowable(
+      async () => {
+        await close.call(store);
+      },
+      () => undefined,
+    )()
+      .map(() => undefined)
+      .orElse(() => okAsync(undefined));
+  }
+}
+
 function renderPlanStartPrompt(planName: string): string {
   return `Execute the existing Weave plan at \`.weave/plans/${planName}.md\`. Begin with the first unchecked task and continue until every task is complete.`;
 }
@@ -250,6 +367,132 @@ interface PiGenerationGuard {
 
 export interface PiSharedLogRedirector {
   redirect(filePath: string): ResultAsync<void, PiAdapterFailure>;
+}
+
+const PI_SKILL_CATALOG_ERROR = "boot-skill-catalog-malformed" as const;
+const PI_SKILL_CATALOG_START = "<available_skills>";
+const PI_SKILL_CATALOG_END = "</available_skills>";
+const MAX_PI_SYSTEM_PROMPT_CHARS = 4 * 1024 * 1024;
+const MAX_PI_SKILL_COUNT = 2_048;
+const MAX_PI_SKILL_NAME_CHARS = 256;
+const MAX_PI_SKILL_DESCRIPTION_CHARS = 64 * 1024;
+const MAX_PI_SKILL_LOCATION_CHARS = 16 * 1024;
+
+type PiSkillCatalogParseError = typeof PI_SKILL_CATALOG_ERROR;
+
+function decodePiSkillXml(
+  value: string,
+  maxChars: number,
+): Result<string, PiSkillCatalogParseError> {
+  if (value.length > maxChars || /&(?!(?:amp|apos|gt|lt|quot);)/u.test(value)) {
+    return err(PI_SKILL_CATALOG_ERROR);
+  }
+  const entities: Readonly<Record<string, string>> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    quot: '"',
+  };
+  return ok(
+    value.replace(
+      /&(amp|apos|gt|lt|quot);/gu,
+      (_match, entity: string) => entities[entity] ?? "",
+    ),
+  );
+}
+
+function findPiSkillCatalogStarts(systemPrompt: string): readonly number[] {
+  const positions: number[] = [];
+  let cursor = 0;
+  while (cursor < systemPrompt.length) {
+    const position = systemPrompt.indexOf(PI_SKILL_CATALOG_START, cursor);
+    if (position === -1) break;
+    const remainder = systemPrompt.slice(
+      position + PI_SKILL_CATALOG_START.length,
+    );
+    if (/^[\t \r\n]*(?:<skill>|<\/available_skills>|$)/u.test(remainder)) {
+      positions.push(position);
+    }
+    cursor = position + PI_SKILL_CATALOG_START.length;
+  }
+  return positions;
+}
+
+export function parsePiSkillsFromSystemPrompt(
+  systemPrompt: string,
+): Result<readonly PiSkillInfo[], PiSkillCatalogParseError> {
+  if (systemPrompt.length > MAX_PI_SYSTEM_PROMPT_CHARS) {
+    return err(PI_SKILL_CATALOG_ERROR);
+  }
+
+  const catalogStarts = findPiSkillCatalogStarts(systemPrompt);
+  if (catalogStarts.length === 0) {
+    return systemPrompt.includes(PI_SKILL_CATALOG_END)
+      ? err(PI_SKILL_CATALOG_ERROR)
+      : ok([]);
+  }
+  const catalogStart = catalogStarts[0];
+  if (catalogStarts.length !== 1 || catalogStart === undefined) {
+    return err(PI_SKILL_CATALOG_ERROR);
+  }
+  const catalogEnd = systemPrompt.indexOf(
+    PI_SKILL_CATALOG_END,
+    catalogStart + PI_SKILL_CATALOG_START.length,
+  );
+  if (
+    catalogEnd === -1 ||
+    systemPrompt.indexOf(
+      PI_SKILL_CATALOG_END,
+      catalogEnd + PI_SKILL_CATALOG_END.length,
+    ) !== -1
+  ) {
+    return err(PI_SKILL_CATALOG_ERROR);
+  }
+
+  const bodyStart = catalogStart + PI_SKILL_CATALOG_START.length;
+  const body = systemPrompt.slice(bodyStart, catalogEnd);
+  const blockPattern =
+    /<skill>\s*<name>([^<]*)<\/name>\s*<description>([^<]*)<\/description>\s*<location>([^<]*)<\/location>\s*<\/skill>/gu;
+  const skills: PiSkillInfo[] = [];
+  const names = new Set<string>();
+  let cursor = 0;
+  for (const block of body.matchAll(blockPattern)) {
+    if ((block.index ?? -1) < cursor) return err(PI_SKILL_CATALOG_ERROR);
+    if (body.slice(cursor, block.index).trim().length !== 0) {
+      return err(PI_SKILL_CATALOG_ERROR);
+    }
+    if (skills.length >= MAX_PI_SKILL_COUNT) {
+      return err(PI_SKILL_CATALOG_ERROR);
+    }
+
+    const name = decodePiSkillXml(block[1] ?? "", MAX_PI_SKILL_NAME_CHARS);
+    const description = decodePiSkillXml(
+      block[2] ?? "",
+      MAX_PI_SKILL_DESCRIPTION_CHARS,
+    );
+    const filePath = decodePiSkillXml(
+      block[3] ?? "",
+      MAX_PI_SKILL_LOCATION_CHARS,
+    );
+    if (
+      name.isErr() ||
+      description.isErr() ||
+      filePath.isErr() ||
+      name.value.length === 0 ||
+      filePath.value.length === 0 ||
+      names.has(name.value)
+    ) {
+      return err(PI_SKILL_CATALOG_ERROR);
+    }
+    names.add(name.value);
+    skills.push({ name: name.value, filePath: filePath.value });
+    cursor = (block.index ?? 0) + block[0].length;
+  }
+  if (body.slice(cursor).trim().length !== 0) {
+    return err(PI_SKILL_CATALOG_ERROR);
+  }
+  return ok(skills);
 }
 
 class DefaultPiSharedLogRedirector implements PiSharedLogRedirector {
@@ -333,6 +576,16 @@ export interface PiExtensionDeps {
   readonly planStateProviderFactory?: (
     projectRoot: string,
   ) => PlanStateProvider;
+  /**
+   * Adapter-local recovery-pointer seam. Absent means "append to the real
+   * `.weave/runtime` JSONL file" (production default). Tests MUST override
+   * with `InMemoryRecoveryPointerStore` or a failing fake, because the
+   * startup banner and the read-only active-plan resolver both read this
+   * store and a unit test may not touch a real filesystem.
+   */
+  readonly recoveryPointerStoreFactory?: (
+    projectRoot: string,
+  ) => PiRecoveryPointerStore;
   /**
    * Injectable telemetry seams (Pi adapter contract) — journal/usage/retention
    * ports and the rotating log-sink filesystem. Absent means "construct
@@ -419,12 +672,14 @@ function buildPiChildBaseEnv(): Record<string, string> {
  * `PiExtensionController`'s own `PiGeneration` type to keep the controller
  * contract stable; a future change may fold this in.
  *
- * Primary activation (skills + model, together) is deferred from
- * `session_start` to the *first* `before_agent_start` on purpose: Pi only
- * exposes its loaded skill catalog via `systemPromptOptions.skills` at that
- * point (not at `session_start`), and the Pi adapter contract requires activation
- * to be atomic across skills and model together - so neither can be
- * committed before both are knowable.
+ * Primary activation (skills + model, together) is committed during
+ * `session_start` itself: the boot skill catalog comes from Pi's host-owned
+ * system prompt (or the command-context snapshot when the host exposes one),
+ * preserving Pi's own discovery, collision, trust, and package decisions.
+ * Nothing else in the generation (ready status, active-agent badge, tool
+ * registration, delegation transport) is granted until that single atomic
+ * activation succeeds.
+ * `before_agent_start` only appends the already committed prompt.
  */
 interface PiActiveSession {
   readonly generationId: string;
@@ -435,9 +690,7 @@ interface PiActiveSession {
   readonly disabledSkills: readonly string[];
   pendingPrimaryName: string | undefined;
   primaryActivationAttempted: boolean;
-  /** A native set/cycle made before first activation owns that first turn's model. */
-  userSelectedModelBeforeActivation: boolean;
-  primaryActivationFailure: PiPrimaryActivationError | undefined;
+  primaryActivationFailure: PiPrimarySessionFailure | undefined;
 }
 
 /** Reads `event.systemPrompt` (Pi adapter contract) without assuming any other event shape. */
@@ -447,26 +700,6 @@ function readSystemPrompt(event: unknown): string {
     if (typeof value === "string") return value;
   }
   return "";
-}
-
-/**
- * Reads `event.systemPromptOptions.skills` (Pi's real, already-loaded skill
- * catalog for this turn under the Pi adapter contract without assuming any other shape.
- * Malformed or missing entries are dropped rather than throwing.
- */
-function readBeforeAgentStartSkills(event: unknown): readonly PiSkillInfo[] {
-  if (typeof event !== "object" || event === null) return [];
-  const options = (event as { systemPromptOptions?: unknown })
-    .systemPromptOptions;
-  if (typeof options !== "object" || options === null) return [];
-  const skills = (options as { skills?: unknown }).skills;
-  if (!Array.isArray(skills)) return [];
-  return skills.filter(
-    (skill): skill is PiSkillInfo =>
-      typeof skill === "object" &&
-      skill !== null &&
-      typeof (skill as { name?: unknown }).name === "string",
-  );
 }
 
 /**
@@ -562,12 +795,155 @@ type PiChildBootstrapBody =
  * (root-level delegation only), it also carries a concrete parent-resolved
  * model identity.
  */
+/**
+ * Resolves the concrete model identity and thinking intent a delegated agent
+ * will run with. The delegation tool shows this before a child exists, so it
+ * has to come from the same resolution the bootstrap will carry.
+ */
+export function resolveAgentRuntimeMeta(
+  descriptorsByName: ReadonlyMap<string, AgentDescriptor>,
+  agentName: string,
+  ctx?: PiSessionContext,
+): { readonly model?: string; readonly reasoningLevel?: string } {
+  if (ctx === undefined) return {};
+  const models = descriptorsByName.get(agentName)?.models ?? [];
+  const availableModels = safelyListAvailableModels(ctx.modelRegistry).unwrapOr(
+    [],
+  );
+  const resolution = new PiModelResolver().resolve(models, availableModels);
+  if (resolution.resolved !== true) return {};
+  return {
+    ...(resolution.model.id === undefined
+      ? {}
+      : { model: resolution.model.id }),
+    ...(resolution.thinkingLevel === undefined
+      ? {}
+      : { reasoningLevel: resolution.thinkingLevel }),
+  };
+}
+
+/**
+ * The generation-scoped primary-activation state the delegation tool needs to
+ * decide, at call time, which agent is delegating and which targets it may
+ * reach. Structural on purpose so the resolution rule can be tested without
+ * constructing a whole Pi session.
+ */
+export interface PiDelegationInvocationSource {
+  readonly generationId: string;
+  /** The primary committed atomically during `session_start`. */
+  readonly activeDescriptor: AgentDescriptor | undefined;
+  /** The configured primary this generation intends to activate. */
+  readonly pendingPrimaryName: string | undefined;
+  readonly descriptors: ReadonlyMap<string, AgentDescriptor>;
+  readonly primaryActivationAttempted: boolean;
+  readonly primaryActivationFailure: PiPrimarySessionFailure | undefined;
+}
+
+/**
+ * Resolves the delegation tool's runtime invocation context.
+ *
+ * Primary activation normally commits before tool registration during
+ * `session_start`. The pending-primary branch remains a fail-closed guard for
+ * lifecycle transitions where Pi retains an older tool registration while a
+ * replacement generation is still booting; it never widens authority to the
+ * static union advertised by the tool schema.
+ *
+ * Fail-closed rules:
+ * - A superseded (or unknown) generation never delegates. This is checked
+ *   first, so even a committed active primary loses delegation authority the
+ *   moment its generation is no longer current.
+ * - Once `primaryActivationAttempted` is set, that attempt's outcome is
+ *   authoritative: a missing active primary means activation failed or was
+ *   declined, so the pending name must not resurrect delegation authority.
+ *   A recorded `primaryActivationFailure` blocks the fallback for the same
+ *   reason.
+ * - The pending descriptor must exist, be eligible as a primary, and declare
+ *   at least one delegation target.
+ *
+ * Once a primary is active, that descriptor stays authoritative regardless of
+ * any earlier attempt or failure - but only within the current generation.
+ */
+export function resolveDelegationInvocationContext(
+  source: PiDelegationInvocationSource | undefined,
+  currentGenerationId: string | undefined,
+):
+  | {
+      readonly parentAgentName: string;
+      readonly targets: readonly DelegationTarget[];
+    }
+  | undefined {
+  if (source === undefined) return undefined;
+
+  if (
+    currentGenerationId === undefined ||
+    currentGenerationId !== source.generationId
+  ) {
+    return undefined;
+  }
+
+  const active = source.activeDescriptor;
+  if (active !== undefined) {
+    return { parentAgentName: active.name, targets: active.delegationTargets };
+  }
+
+  if (
+    source.primaryActivationAttempted ||
+    source.primaryActivationFailure !== undefined
+  ) {
+    return undefined;
+  }
+
+  const pendingName = source.pendingPrimaryName;
+  if (pendingName === undefined) return undefined;
+  const pending = source.descriptors.get(pendingName);
+  if (pending === undefined || pending.mode === "subagent") return undefined;
+  if (pending.delegationTargets.length === 0) return undefined;
+
+  return {
+    parentAgentName: pending.name,
+    targets: pending.delegationTargets,
+  };
+}
+
+/**
+ * Synchronous, fail-closed agreement check for the delegation controller's
+ * generation identity.
+ *
+ * A live controller belongs to exactly one generation. Session/generation
+ * replacement must never let a prior generation's controller keep answering
+ * `weave_delegate`, especially when the *new* generation is health-only or
+ * trust-withheld and therefore constructs no controller at all. Delegation is
+ * only permitted when all three views of "which generation is in charge" agree:
+ * the controller the cell holds, the active session, and the runtime's own
+ * current generation.
+ *
+ * Any undefined view means authority cannot be proven, so delegation is denied.
+ */
+export function delegationControllerGenerationsAgree(
+  controllerGenerationId: string | undefined,
+  activeSessionGenerationId: string | undefined,
+  currentGenerationId: string | undefined,
+): boolean {
+  if (
+    controllerGenerationId === undefined ||
+    activeSessionGenerationId === undefined ||
+    currentGenerationId === undefined
+  ) {
+    return false;
+  }
+  return (
+    controllerGenerationId === activeSessionGenerationId &&
+    controllerGenerationId === currentGenerationId
+  );
+}
+
 export function buildChildBootstrapBody(
   descriptorsByName: ReadonlyMap<string, AgentDescriptor>,
   target: DelegationTarget,
   childId: string,
   context: PiDelegationContext,
   ctx?: PiSessionContext,
+  prepareComposedPrompt?: (descriptor: AgentDescriptor) => string,
 ): JsonValue {
   const full = descriptorsByName.get(target.name);
   const resolution = ((): PiModelResolution | undefined => {
@@ -592,7 +968,10 @@ export function buildChildBootstrapBody(
   const bootstrap: PiChildBootstrapBody = {
     mode: "ordinary",
     agentName: target.name,
-    composedPrompt: full?.composedPrompt ?? "",
+    composedPrompt:
+      full === undefined
+        ? ""
+        : (prepareComposedPrompt?.(full) ?? full.composedPrompt),
     models: full?.models ?? [],
     delegationTargets: full?.delegationTargets ?? [],
     correlationId: childId,
@@ -1254,10 +1633,13 @@ function effectiveHealthOnly(generation: {
 function renderHealthMessage(
   controller: PiExtensionController,
   activeSession: PiActiveSession | undefined,
+  bootActivationFailure: PiPrimarySessionFailure | undefined,
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
-    return "Weave has not completed activation yet.";
+    return bootActivationFailure === undefined
+      ? "Weave has not completed activation yet."
+      : `Weave adapter mode: unavailable\nprimary activation failed: ${bootActivationFailure.type}`;
   }
   const { healthReport } = generation.preflight;
   const lines = healthReport.effectiveCapabilities.map(
@@ -1328,40 +1710,120 @@ function setActiveAgentStatus(
   );
 }
 
+function setWeaveUnavailableStatus(ctx: PiSessionContext): void {
+  ctx.ui.setStatus("weave", "unavailable - run /weave:health for details");
+}
+
+function bootActivationSafeMessage(
+  failure: PiBootPrimaryActivationFailure,
+): string {
+  switch (failure.type) {
+    case "PrimaryDescriptorMissing":
+      return `The default Weave primary agent (${failure.agentName}) is not configured.`;
+    case "PrimarySkillCatalogUnavailable":
+      return "Pi did not provide the skill catalog needed to load the default Weave primary agent.";
+    case "PrimaryModelCatalogUnavailable":
+      return "Pi did not provide the model catalog needed to load the default Weave primary agent.";
+    case "PrimaryActivationStale":
+      return "The Pi session changed before the default Weave primary agent finished loading.";
+    case "PrimaryActivationFailed":
+      return "The default Weave primary agent could not load during session startup.";
+  }
+}
+
 /**
- * Renders the bounded compact plan widget (Pi adapter contract) via the real,
- * always-available `ctx.ui.setWidget` surface. Read-only: resolves the
- * active workflow instance's plan name via `inspect()`/`InspectExecutionOutput.slug`
- * (never assumes a name), then reads that plan's snapshot via
- * `readPlanSnapshot()` - a thin passthrough to `PlanStateProvider.readSnapshot`.
- * Hides the widget entirely (`undefined`) whenever there is no controller,
- * no tracked workflow instance, or the lookup fails for any reason (a
- * missing/unreadable plan is never surfaced as an error here - `/weave:plan`
- * is the place for that).
+ * The narrow read port the direct-step badge decision needs: only the
+ * *committed* primary this session actually holds. Deliberately exposes no
+ * pending selection at all, so a pending name cannot be painted by mistake.
  */
-async function refreshPlanWidget(
-  ctx: PiSessionContext,
+export interface PiCommittedPrimaryReadPort {
+  getCurrent(): { readonly descriptor: { readonly name: string } } | undefined;
+}
+
+/**
+ * Resolves the exact badge name a direct-step activity change must paint.
+ *
+ * While a direct step is active the badge names that step's own agent. When
+ * it ends, the badge falls back to the *committed* primary only: a merely
+ * pending primary selection is never restored, because the badge names only
+ * what Pi actually holds (`getCurrent()`), never what a session intends to
+ * activate later.
+ */
+export function resolveDirectStepBadgeAgent(
+  active: boolean,
+  directStepAgentName: string | undefined,
+  committedPrimary: PiCommittedPrimaryReadPort | undefined,
+): string | undefined {
+  if (active) return directStepAgentName;
+  return committedPrimary?.getCurrent()?.descriptor.name;
+}
+
+/**
+ * Builds the narrow read-only port the one active-plan resolver needs from a
+ * workflow controller. `undefined` whenever this session has no controller at
+ * all, which the caller renders as "nothing to show" rather than an error.
+ *
+ * `currentWorkflowInstanceId` is always the session's own authoritative tracker
+ * state. Nothing else - not a lifecycle callback's argument, not a previously
+ * painted identity - may name the workflow the UI resolves; when the tracker
+ * holds nothing the resolver may fall back to an eligible recovery pointer.
+ */
+function buildActivePlanReadPort(
   controller: PiWorkflowController | undefined,
-  workflowInstanceId: string | undefined,
-): Promise<void> {
-  if (controller === undefined || workflowInstanceId === undefined) {
-    ctx.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
-    return;
-  }
-  const inspected = await controller.inspect(workflowInstanceId);
-  if (inspected.isErr()) {
-    ctx.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
-    return;
-  }
-  const snapshot = await controller.readPlanSnapshot(inspected.value.slug);
-  const lines = renderPlanWidgetLines(
-    snapshot.isOk() ? snapshot.value : undefined,
-  );
+  currentWorkflowInstanceId: string | undefined,
+): ActivePlanReadPort | undefined {
+  if (controller === undefined) return undefined;
+  return {
+    currentWorkflowInstanceId,
+    inspect: (workflowInstanceId) =>
+      controller.inspect(workflowInstanceId).map((snapshot) => ({
+        slug: snapshot.slug,
+        status: snapshot.status as string,
+      })),
+    readPlanSnapshot: (planName) => controller.readPlanSnapshot(planName),
+    readRecoveryPointer: () => controller.readRecoveryPointer(),
+  };
+}
+
+/**
+ * Paints the compact plan widget and the durable current-task footer from one
+ * resolved view, so the two surfaces are physically incapable of showing
+ * different workflows. `undefined` clears both.
+ */
+function applyActivePlanSurfaces(
+  ctx: PiSessionContext,
+  view: ActivePlanView | undefined,
+): void {
+  const snapshot = view?.kind === "active" ? view.snapshot : undefined;
+  const activeTask = view?.kind === "active" ? view.activeTask : undefined;
+  const lines = renderPlanWidgetLines(snapshot);
   ctx.ui.setWidget(
     WEAVE_PLAN_WIDGET_KEY,
     lines.length === 0 ? undefined : lines,
     { placement: "belowEditor" },
   );
+  ctx.ui.setStatus(
+    WEAVE_WORKFLOW_TASK_STATUS_KEY,
+    renderWorkflowTaskFooter({ activeTask, theme: ctx.ui.theme }),
+  );
+}
+
+/**
+ * Narrow projection of the `tui` object Pi injects into `ctx.ui.custom()`.
+ * Only the two capabilities this read-only overlay needs are named:
+ * re-render requests and the current terminal height.
+ */
+interface PiCustomOverlayTui {
+  requestRender(): void;
+  readonly terminal?: { readonly rows?: number };
+}
+
+/** Reads the live terminal height, or `undefined` when the host has none. */
+function overlayTerminalRows(tui: unknown): number | undefined {
+  const rows = (tui as PiCustomOverlayTui | undefined)?.terminal?.rows;
+  return typeof rows === "number" && Number.isFinite(rows) && rows > 0
+    ? rows
+    : undefined;
 }
 
 /** Renders the bounded child-tree widget (Pi adapter contract) via the real, always-available `ctx.ui.setWidget` surface. Hides the widget entirely (empty array) once there are no children left. */
@@ -1525,8 +1987,12 @@ export function createPiExtension(
   // is populated.
   const delegationControllerCell: {
     controller: PiDelegationController | undefined;
+    // The generation the held controller belongs to. Kept beside the instance
+    // so replacement and authority checks can never drift apart.
+    generationId: string | undefined;
   } = {
     controller: undefined,
+    generationId: undefined,
   };
   const recoveryCoordinatorCell: {
     coordinator: PiChildRecoveryCoordinator | undefined;
@@ -1581,14 +2047,104 @@ export function createPiExtension(
   const telemetryCell: { telemetry: PiTelemetry | undefined } = {
     telemetry: undefined,
   };
+  const generationResourcesCell: {
+    owner: PiGenerationResourceOwner | undefined;
+  } = { owner: undefined };
   let currentWorkflows: Record<
     string,
     import("@weaveio/weave-engine").WorkflowExecutionContext["workflows"][string]
   > = {};
   let activeSession: PiActiveSession | undefined;
+  /**
+   * Settlement handle for the Alt+T overlay that is currently mounted, if any.
+   *
+   * `ctx.ui.custom()` returns a promise that only settles when the component
+   * calls `done()`. A generation guard that renders `[]` and ignores input is
+   * therefore not enough on its own: replacement or shutdown would leave the
+   * overlay mounted and its promise pending forever. This cell is the one
+   * place that knows how to settle it, so lifecycle events can close it
+   * exactly once without reaching into component internals.
+   */
+  const planTaskOverlayCell: { close: (() => void) | undefined } = {
+    close: undefined,
+  };
+
+  /**
+   * Closes the open Alt+T overlay if there is one. Idempotent by construction:
+   * the handle is cleared before it is invoked, and each handle is itself
+   * single-shot, so replacement, shutdown, a user cancel, and a stale callback
+   * can all race without settling the same promise twice.
+   */
+  function closePlanTaskOverlay(): void {
+    const close = planTaskOverlayCell.close;
+    planTaskOverlayCell.close = undefined;
+    close?.();
+  }
+  let lastBootActivationFailure: PiPrimarySessionFailure | undefined;
+  let sessionStartSequence = 0;
+  let primaryActivationTail: Promise<void> = Promise.resolve();
+  const reservePrimaryActivation = (): {
+    readonly waitForPrior: Promise<void>;
+    readonly release: () => void;
+  } => {
+    const waitForPrior = primaryActivationTail;
+    let release = (): void => undefined;
+    primaryActivationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { waitForPrior, release };
+  };
+  /**
+   * The most recent session context. Tool renderers run outside any call, so
+   * naming a target's model needs a context the extension already holds.
+   */
+  let latestSessionCtx: PiSessionContext | undefined;
   let editorInstallCell:
-    | { generationId: string; ctx: PiSessionContext; previousFactory: unknown }
+    | {
+        generationId: string;
+        ctx: PiSessionContext;
+        previousFactory: unknown;
+        factory: unknown;
+        /**
+         * The session editor is a single, shared Pi surface. Another
+         * extension (for example `pi-vim`'s modal editor) may own it, and
+         * Weave's root-level child-tree keys are a convenience, not a
+         * requirement. Once a foreign factory is observed, Weave yields the
+         * session editor for the rest of the generation instead of
+         * reasserting its own on every lifecycle event.
+         */
+        yielded: boolean;
+      }
     | undefined;
+  /**
+   * Yields the session editor to a foreign owner, recording it as the factory
+   * to hand back when a child-inspection view closes.
+   */
+  const yieldSessionEditor = (
+    editorInstall: NonNullable<typeof editorInstallCell>,
+    foreignFactory: unknown,
+  ): void => {
+    editorInstall.yielded = true;
+    editorInstall.previousFactory = foreignFactory;
+  };
+  const ensureInspectionEditor = (
+    ctx: PiSessionContext,
+    generationId: string,
+  ): void => {
+    const editorInstall = editorInstallCell;
+    if (editorInstall?.generationId !== generationId) return;
+    if (editorInstall.yielded) return;
+    const currentFactory = ctx.ui.getEditorComponent?.();
+    if (currentFactory === editorInstall.factory) return;
+    // Only Pi's own default (no installed factory) may be reclaimed. Anything
+    // else belongs to another extension and must survive this turn.
+    if (currentFactory !== undefined) {
+      yieldSessionEditor(editorInstall, currentFactory);
+      return;
+    }
+    editorInstall.previousFactory = currentFactory;
+    ctx.ui.setEditorComponent?.(editorInstall.factory);
+  };
   const historyStoreCell: { store: PiChildHistoryStore | undefined } = {
     store: undefined,
   };
@@ -1640,16 +2196,31 @@ export function createPiExtension(
         return [
           buildDelegationToolRegistration({
             targets,
-            getInvocationContext: () => {
-              const descriptor =
-                activeSession?.primarySession.getCurrent()?.descriptor;
-              if (descriptor === undefined) return undefined;
-              return {
-                parentAgentName: descriptor.name,
-                targets: descriptor.delegationTargets,
-              };
-            },
-            getController: () => delegationControllerCell.controller,
+            getInvocationContext: () =>
+              resolveDelegationInvocationContext(
+                activeSession === undefined
+                  ? undefined
+                  : {
+                      generationId: activeSession.generationId,
+                      activeDescriptor:
+                        activeSession.primarySession.getCurrent()?.descriptor,
+                      pendingPrimaryName: activeSession.pendingPrimaryName,
+                      descriptors: activeSession.descriptors,
+                      primaryActivationAttempted:
+                        activeSession.primaryActivationAttempted,
+                      primaryActivationFailure:
+                        activeSession.primaryActivationFailure,
+                    },
+                controller.getCurrentGeneration()?.id,
+              ),
+            getController: () =>
+              delegationControllerGenerationsAgree(
+                delegationControllerCell.generationId,
+                activeSession?.generationId,
+                controller.getCurrentGeneration()?.id,
+              )
+                ? delegationControllerCell.controller
+                : undefined,
             parentId: ROOT_NODE_ID,
             parentDepth: 0,
             parentAgentName: primary.name,
@@ -1665,8 +2236,21 @@ export function createPiExtension(
                   cwd: ctx.cwd,
                 },
                 ctx,
+                (descriptor) =>
+                  activeSession?.primarySession.prepareComposedPrompt(
+                    descriptor,
+                    activeSession.disabledSkills,
+                  ) ?? descriptor.composedPrompt,
               ),
             buildEnv: () => ({}),
+            resolveAgentRuntime: (agentName) =>
+              latestSessionCtx === undefined
+                ? {}
+                : resolveAgentRuntimeMeta(
+                    activation.descriptors.byName,
+                    agentName,
+                    latestSessionCtx,
+                  ),
           }),
         ];
       },
@@ -1677,6 +2261,158 @@ export function createPiExtension(
   };
   const controller = new PiExtensionController(controllerDeps);
   const childModeState = createChildModeState();
+
+  /**
+   * The one active-plan resolution/state path for this session.
+   *
+   * Widget, footer, and the Alt+T popup all read through this object, so they
+   * resolve one identity and one `PlanTaskSnapshot` per repaint and cannot
+   * retain different workflows across a current/recovery transition.
+   */
+  const activePlanUiState = createActivePlanUiState();
+
+  /**
+   * Resolves the active plan once and repaints both always-on surfaces from
+   * that single result, returning the outcome for callers (Alt+T) that need to
+   * say something about it.
+   *
+   * The identity comes only from authoritative state: this session's own
+   * workflow tracker, or - when the tracker holds nothing - an eligible
+   * recovery pointer. There is deliberately no way for a caller to pass in the
+   * workflow to paint, so a lifecycle callback carrying a just-settled instance
+   * cannot force a dead workflow back onto the screen.
+   *
+   * Read-only: it may surface an eligible recoverable plan, but it never
+   * starts, resumes, or authorizes execution. Every empty or failed outcome
+   * clears the retained identity and both surfaces first, so nothing stale can
+   * survive a transition.
+   */
+  async function syncActivePlanSurfaces(
+    ctx: PiSessionContext,
+    authorityIsCurrent: () => boolean = () => true,
+    allowRecoveryRerun = true,
+  ): Promise<Result<ActivePlanView, ActivePlanUiError>> {
+    if (!authorityIsCurrent()) {
+      return ok({ kind: "empty", reason: "no-controller" });
+    }
+    const tracker = buildWorkflowTracker(ctx.cwd);
+    const currentWorkflowInstanceId =
+      tracker.getActiveInstance()?.workflowInstanceId;
+    const port = buildActivePlanReadPort(
+      workflowControllerCell.controller,
+      currentWorkflowInstanceId,
+    );
+    if (port === undefined) {
+      activePlanUiState.clear();
+      applyActivePlanSurfaces(ctx, undefined);
+      return ok({ kind: "empty", reason: "no-controller" });
+    }
+    const resolution = await activePlanUiState.resolve(port);
+    if (!authorityIsCurrent()) {
+      return ok({ kind: "empty", reason: "no-controller" });
+    }
+    // Last request wins. Two repaints started in the same generation can
+    // overlap (every caller is fire-and-forget), so an older lookup that
+    // finishes after a newer one must paint nothing at all - not an empty
+    // view, which would blank the surfaces the newer lookup just filled.
+    if (resolution.isOk() && resolution.value.status === "superseded") {
+      return ok({ kind: "empty", reason: "no-controller" });
+    }
+    // Same race, seen from the authoritative side: the identity this lookup
+    // was started for must still be the one the session tracks. If the
+    // tracker moved on (or picked up a workflow while this recovery-sourced
+    // lookup was in flight), this result describes a workflow that is no
+    // longer current and may neither paint nor clear anything.
+    if (
+      tracker.getActiveInstance()?.workflowInstanceId !==
+      currentWorkflowInstanceId
+    ) {
+      return ok({ kind: "empty", reason: "no-controller" });
+    }
+    if (resolution.isErr()) {
+      applyActivePlanSurfaces(ctx, undefined);
+      return err(resolution.error);
+    }
+    const view =
+      resolution.value.status === "applied"
+        ? resolution.value.view
+        : ({ kind: "empty", reason: "no-controller" } as const);
+    // A settled execution stops being this session's tracked instance the
+    // moment the resolver observes the settlement, so the next repaint (and
+    // every command that reads the tracker) starts from nothing rather than
+    // from a workflow that can never advance again. Only the workflow this
+    // lookup actually inspected may be cleared: the tracker was rechecked
+    // above, so an older terminal result can never drop a newer workflow.
+    if (
+      view.kind === "empty" &&
+      view.reason === "workflow-terminal" &&
+      currentWorkflowInstanceId !== undefined
+    ) {
+      tracker.setActiveInstance(undefined);
+    }
+    // Recovery-sourced identity carries no tracker id, so the tracker recheck
+    // above compares `undefined` with `undefined` and proves nothing: the
+    // recovery pointer itself could have moved from workflow A to workflow B
+    // while A's snapshot read was still pending. Confirm the pointer one last
+    // time, through the same read-only port, before A's paint is final.
+    if (view.kind === "active" && view.identity.source === "recovery") {
+      const pointerState = await recheckRecoveryPointer(
+        port,
+        view.identity.workflowInstanceId,
+      );
+      // Ownership recheck. `resolve()` and `clear()` both drop the retained
+      // view immediately, so a retained view that is still this exact object
+      // is proof that no newer resolution took over during the await. If one
+      // did, this result may neither paint nor clear.
+      if (!authorityIsCurrent() || activePlanUiState.view() !== view) {
+        return ok({ kind: "empty", reason: "no-controller" });
+      }
+      if (pointerState !== "confirmed") {
+        clearActivePlanSurfaces(ctx);
+        // The pointer now names a different eligible workflow. Resolve that
+        // one instead, exactly once: the fresh resolution takes a newer token,
+        // so last-request-wins still holds and the retry cannot recurse.
+        if (pointerState === "changed" && allowRecoveryRerun) {
+          return syncActivePlanSurfaces(ctx, authorityIsCurrent, false);
+        }
+        return ok({ kind: "empty", reason: "no-eligible-recovery-pointer" });
+      }
+    }
+    applyActivePlanSurfaces(ctx, view);
+    return ok(view);
+  }
+
+  /**
+   * Re-reads the recovery pointer through the read-only port and reports
+   * whether it still names the workflow a completed resolution wants to paint.
+   *
+   * Read-only by construction: it reads one pointer and starts, resumes, and
+   * acquires nothing. An unreadable pointer is reported as `gone` rather than
+   * as an error, because the only safe response is to show nothing, and the
+   * raw failure (which can carry a filesystem path) must not reach the UI.
+   */
+  async function recheckRecoveryPointer(
+    port: ActivePlanReadPort,
+    workflowInstanceId: string,
+  ): Promise<"confirmed" | "changed" | "gone"> {
+    const read = await port.readRecoveryPointer();
+    if (read.isErr()) return "gone";
+    const pointer = read.value;
+    if (
+      pointer === undefined ||
+      pointer.workflowId === undefined ||
+      !isPointerEligibleForExplicitResume(pointer)
+    ) {
+      return "gone";
+    }
+    return pointer.workflowId === workflowInstanceId ? "confirmed" : "changed";
+  }
+
+  /** Drops the retained active-plan identity and clears both surfaces. */
+  function clearActivePlanSurfaces(ctx: PiSessionContext | undefined): void {
+    activePlanUiState.clear();
+    if (ctx !== undefined) applyActivePlanSurfaces(ctx, undefined);
+  }
 
   function buildWorkflowTracker(projectRoot: string): PiActiveWorkflowTracker {
     return {
@@ -1905,6 +2641,19 @@ export function createPiExtension(
       ctx.ui.notify("Child recovery is unavailable in this session.", "info");
       return;
     }
+    // Health is the one command that must remain available when boot failed
+    // before a generation could retain authority. It reads diagnostics only.
+    if (name === "weave:health") {
+      ctx.ui.notify(
+        renderHealthMessage(
+          controller,
+          activeSession,
+          lastBootActivationFailure,
+        ),
+        "info",
+      );
+      return;
+    }
     const gate = controller.evaluateCommandGate(name);
     if (gate.isErr()) {
       ctx.ui.notify(gate.error.safeMessage, "error");
@@ -1918,10 +2667,10 @@ export function createPiExtension(
       }
       return;
     }
-    if (name === "weave:health") {
-      ctx.ui.notify(renderHealthMessage(controller, activeSession), "info");
-      return;
-    }
+    const commandSession = activeSession;
+    const commandOwnsGeneration = (): boolean =>
+      commandSession !== undefined && activeSession === commandSession;
+
     if (name === "weave:status") {
       ctx.ui.notify(
         renderStatusMessage(
@@ -2062,6 +2811,10 @@ export function createPiExtension(
     }
     if (name === "weave:run") {
       await handleWeaveRun(_rawArgs, ctx.ui, workflowController, tracker);
+      // The tracker is authoritative again the instant the command returns:
+      // a successful start has an instance to paint, and a refused start
+      // leaves nothing, which clears both surfaces.
+      await syncActivePlanSurfaces(ctx, commandOwnsGeneration);
       return;
     }
     if (name === "weave:abort") {
@@ -2073,10 +2826,16 @@ export function createPiExtension(
       ) {
         await delegationController.cancelSubtree(ROOT_NODE_ID);
       }
+      // Both the "no active execution to abort" refusal and a successful
+      // cancellation must end with nothing painted: the first because there
+      // was never anything to show, the second because the tracker has just
+      // been emptied.
+      await syncActivePlanSurfaces(ctx, commandOwnsGeneration);
       return;
     }
     if (name === "weave:advance") {
       await handleWeaveAdvance(ctx.ui, workflowController, tracker);
+      await syncActivePlanSurfaces(ctx, commandOwnsGeneration);
       return;
     }
     if (name === "weave:resume") {
@@ -2128,6 +2887,7 @@ export function createPiExtension(
         }
       }
       await handleWeaveResume(ctx.ui, workflowController, tracker);
+      await syncActivePlanSurfaces(ctx, commandOwnsGeneration);
       return;
     }
     if (name === "weave:plan") {
@@ -2187,7 +2947,10 @@ export function createPiExtension(
       session.pendingPrimaryName = descriptor.name;
       session.primaryActivationAttempted = false;
       session.primaryActivationFailure = undefined;
-      setActiveAgentStatus(ctx, descriptor.name);
+      // A pending selection is not a committed primary. This branch grants
+      // no authority and paints no badge; a caller must request explicit
+      // immediate activation before the selection can become active.
+      setActiveAgentStatus(ctx, undefined);
       return okAsync(undefined);
     }
     if (
@@ -2200,49 +2963,77 @@ export function createPiExtension(
       session.primarySession.refreshSkills(options.availableSkills);
     }
 
-    const operation = controller.beginOperation();
-    if (operation.isErr()) {
-      return errAsync({ type: "PrimarySwitchGenerationStale" });
-    }
+    const activationReservation = reservePrimaryActivation();
+    return ResultAsync.fromPromise(
+      activationReservation.waitForPrior,
+      (): PiPrimarySwitchFailure => ({
+        type: "PrimarySwitchGenerationStale",
+      }),
+    ).andThen(() => {
+      if (
+        activeSession !== session ||
+        controller.getCurrentGeneration()?.id !== session.generationId
+      ) {
+        activationReservation.release();
+        return errAsync<void, PiPrimarySwitchFailure>({
+          type: "PrimarySwitchGenerationStale",
+        });
+      }
+      const operation = controller.beginOperation();
+      if (operation.isErr()) {
+        activationReservation.release();
+        return errAsync<void, PiPrimarySwitchFailure>({
+          type: "PrimarySwitchGenerationStale",
+        });
+      }
 
-    const availableModels = safelyListAvailableModels(ctx.modelRegistry);
-    if (availableModels.isErr()) {
-      deps.logger.warn(
-        { agentName: descriptor.name, reason: availableModels.error },
-        "ctx.modelRegistry.getAvailable() threw while switching primary agents; treating as no available models",
-      );
-    }
+      const availableModels = safelyListAvailableModels(ctx.modelRegistry);
+      if (availableModels.isErr()) {
+        deps.logger.warn(
+          { agentName: descriptor.name, reason: availableModels.error },
+          "ctx.modelRegistry.getAvailable() threw while switching primary agents; treating as no available models",
+        );
+      }
 
-    return session.primarySession
-      .activate(descriptor, {
-        availableModels: availableModels.unwrapOr([]),
-        currentModel: ctx.model,
-        modelApplier: createPiModelApplyPort(pi),
-        thinkingApplier: createPiThinkingApplyPort(pi),
-        disabledSkills: session.disabledSkills,
-      })
-      .mapErr((cause): PiPrimarySwitchFailure => {
-        session.primaryActivationFailure = cause;
-        return {
-          type: "PrimaryActivationFailed",
-          agentName: descriptor.name,
-          cause,
-        };
-      })
-      .andThen(() =>
-        operation.value.assertStillCurrent().mapErr(
-          (): PiPrimarySwitchFailure => ({
-            type: "PrimarySwitchGenerationStale",
-          }),
-        ),
-      )
-      .map(() => {
-        session.pendingPrimaryName = descriptor.name;
-        session.primaryActivationAttempted = true;
-        session.primaryActivationFailure = undefined;
-        setActiveAgentStatus(ctx, descriptor.name);
-        return undefined;
-      });
+      return session.primarySession
+        .activate(descriptor, {
+          availableModels: availableModels.unwrapOr([]),
+          currentModel: ctx.model,
+          modelApplier: createPiModelApplyPort(pi),
+          thinkingApplier: createPiThinkingApplyPort(pi),
+          disabledSkills: session.disabledSkills,
+        })
+        .mapErr((cause): PiPrimarySwitchFailure => {
+          session.primaryActivationFailure = cause;
+          return {
+            type: "PrimaryActivationFailed",
+            agentName: descriptor.name,
+            cause,
+          };
+        })
+        .andThen(() =>
+          operation.value.assertStillCurrent().mapErr(
+            (): PiPrimarySwitchFailure => ({
+              type: "PrimarySwitchGenerationStale",
+            }),
+          ),
+        )
+        .map(() => {
+          session.pendingPrimaryName = descriptor.name;
+          session.primaryActivationAttempted = true;
+          session.primaryActivationFailure = undefined;
+          setActiveAgentStatus(ctx, descriptor.name);
+          return undefined;
+        })
+        .map((value) => {
+          activationReservation.release();
+          return value;
+        })
+        .mapErr((failure) => {
+          activationReservation.release();
+          return failure;
+        });
+    });
   }
 
   function primarySwitchSafeMessage(failure: PiPrimarySwitchFailure): string {
@@ -2315,6 +3106,88 @@ export function createPiExtension(
     return readOptions().map((options) => options.skills ?? []);
   }
 
+  function activateBootPrimary(
+    pi: PiExtensionApi,
+    ctx: PiSessionContext,
+    session: PiActiveSession,
+  ): ResultAsync<void, PiBootPrimaryActivationFailure> {
+    const agentName = session.pendingPrimaryName ?? DEFAULT_PRIMARY_AGENT_NAME;
+    session.primaryActivationAttempted = true;
+
+    const fail = (
+      failure: PiBootPrimaryActivationFailure,
+    ): ResultAsync<void, PiBootPrimaryActivationFailure> => {
+      session.primaryActivationFailure = failure;
+      return errAsync(failure);
+    };
+
+    const descriptor = session.descriptors.get(agentName);
+    if (descriptor === undefined) {
+      return fail({ type: "PrimaryDescriptorMissing", agentName });
+    }
+
+    const readSystemPromptOptions = ctx.getSystemPromptOptions;
+    let skills: Result<readonly PiSkillInfo[], PiSkillCatalogParseError>;
+    if (readSystemPromptOptions !== undefined) {
+      skills = Result.fromThrowable(
+        () => readSystemPromptOptions.call(ctx).skills ?? [],
+        () => PI_SKILL_CATALOG_ERROR,
+      )();
+    } else if (ctx.getSystemPrompt !== undefined) {
+      skills = Result.fromThrowable(
+        () => ctx.getSystemPrompt?.() ?? "",
+        () => PI_SKILL_CATALOG_ERROR,
+      )().andThen(parsePiSkillsFromSystemPrompt);
+    } else {
+      skills = err(PI_SKILL_CATALOG_ERROR);
+    }
+    if (skills.isErr()) {
+      return fail({ type: "PrimarySkillCatalogUnavailable", agentName });
+    }
+
+    const availableModels = safelyListAvailableModels(ctx.modelRegistry);
+    if (availableModels.isErr()) {
+      return fail({ type: "PrimaryModelCatalogUnavailable", agentName });
+    }
+
+    const operation = controller.beginOperation();
+    if (operation.isErr()) {
+      return fail({ type: "PrimaryActivationStale", agentName });
+    }
+
+    session.primarySession.refreshSkills(skills.value);
+    return session.primarySession
+      .activate(descriptor, {
+        availableModels: availableModels.value,
+        currentModel: ctx.model,
+        modelApplier: createPiModelApplyPort(pi),
+        thinkingApplier: createPiThinkingApplyPort(pi),
+        disabledSkills: session.disabledSkills,
+      })
+      .mapErr((cause): PiBootPrimaryActivationFailure => {
+        const failure: PiBootPrimaryActivationFailure = {
+          type: "PrimaryActivationFailed",
+          agentName,
+          cause,
+        };
+        session.primaryActivationFailure = failure;
+        return failure;
+      })
+      .andThen(() =>
+        operation.value.assertStillCurrent().mapErr(
+          (): PiBootPrimaryActivationFailure => ({
+            type: "PrimaryActivationStale",
+            agentName,
+          }),
+        ),
+      )
+      .map(() => {
+        session.pendingPrimaryName = descriptor.name;
+        session.primaryActivationFailure = undefined;
+        return undefined;
+      });
+  }
+
   function startPlanInForeground(
     pi: PiExtensionApi,
     ctx: PiSessionContext,
@@ -2349,6 +3222,97 @@ export function createPiExtension(
         );
         return sendStartPrompt();
       });
+  }
+
+  /**
+   * Opens the read-only Alt+T plan-task popup over the active durable
+   * workflow's plan.
+   *
+   * Every outcome says something: no workflow, an unreadable plan, and a plan
+   * with no tasks each produce their own message rather than an empty overlay.
+   * The popup itself needs Pi's real custom-UI surface, so non-TUI sessions are
+   * told that instead of silently doing nothing.
+   */
+  async function openPlanTaskList(ctx: PiSessionContext): Promise<void> {
+    if (childModeState.active) return;
+    const session = activeSession;
+    const operation = controller.beginOperation();
+    if (session === undefined || operation.isErr()) return;
+    const authorityIsCurrent = (): boolean =>
+      activeSession?.generationId === session.generationId &&
+      operation.value.assertStillCurrent().isOk();
+    // Exactly the resolution the widget and footer just used, through the same
+    // state object, so the popup can never open on a different workflow.
+    const resolved = await syncActivePlanSurfaces(ctx, authorityIsCurrent);
+    if (!authorityIsCurrent()) return;
+    if (resolved.isErr()) {
+      ctx.ui.notify(resolved.error.safeMessage, "warning");
+      return;
+    }
+    if (resolved.value.kind === "empty") {
+      ctx.ui.notify(
+        "No Weave workflow is active, so there is no plan to show.",
+        "info",
+      );
+      return;
+    }
+    if (ctx.mode !== "tui" || ctx.ui.custom === undefined) {
+      ctx.ui.notify("The Weave plan task list requires Pi TUI mode.", "info");
+      return;
+    }
+
+    const snapshot = resolved.value.snapshot;
+    if (!authorityIsCurrent()) return;
+    // Opening replaces any overlay that is still mounted: the prior promise is
+    // settled first, so at most one Alt+T overlay is ever outstanding.
+    closePlanTaskOverlay();
+    await ctx.ui.custom<void>(
+      (tui, theme, keybindings, done) => {
+        const host = tui as PiCustomOverlayTui;
+        let settled = false;
+        // The single settlement path for this overlay. User cancel, a stale
+        // callback, generation replacement, and shutdown all funnel through
+        // it, and only the first caller ever reaches `done()`.
+        const settle = (): void => {
+          if (settled) return;
+          settled = true;
+          if (planTaskOverlayCell.close === settle) {
+            planTaskOverlayCell.close = undefined;
+          }
+          done(undefined);
+        };
+        planTaskOverlayCell.close = settle;
+        const component = createPlanTaskListComponent({
+          snapshot,
+          // Pi hands the live theme and keybindings to the factory; using them
+          // (rather than importing globals) is what makes theme changes and
+          // user keybinding configuration take effect here.
+          theme: theme as PlanTaskListThemePort | undefined,
+          keybindings: keybindings as PlanTaskListKeybindingsPort | undefined,
+          getTerminalRows: () => overlayTerminalRows(tui),
+          isCurrent: authorityIsCurrent,
+          // A replaced generation must never act on a workflow, but the
+          // overlay it left behind still has to close. Settling is the only
+          // effect a stale generation is allowed to have here, and it is
+          // single-shot, so a stale render cannot loop.
+          onStale: settle,
+          onCancel: settle,
+          onChange: () => {
+            host.requestRender?.();
+          },
+        });
+        return {
+          render: (width: number) => component.render(width),
+          handleInput: (data: string) => {
+            component.handleInput(data);
+          },
+          invalidate: () => {
+            component.invalidate();
+          },
+        };
+      },
+      { overlay: true },
+    );
   }
 
   async function cyclePrimaryAgent(
@@ -2413,6 +3377,18 @@ export function createPiExtension(
       description: "Cycle Weave primary agent",
       handler: async (ctx: PiSessionContext) => {
         await cyclePrimaryAgent(pi, ctx);
+      },
+    });
+
+    // Read-only companion to the always-on compact plan widget: the widget is
+    // deliberately tiny, so Alt+T is where the whole plan can be read. It never
+    // mutates a workflow, never resumes anything, and is unavailable in child
+    // mode, where the session belongs to the parent's dispatch rather than the
+    // user.
+    pi.registerShortcut?.(PI_PLAN_TASK_LIST_SHORTCUT, {
+      description: "Show Weave plan tasks",
+      handler: async (ctx: PiSessionContext) => {
+        await openPlanTaskList(ctx);
       },
     });
 
@@ -2525,10 +3501,75 @@ export function createPiExtension(
     });
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
+      // First action of replacement: an overlay owned by the outgoing
+      // generation is settled before any stale work can run, so the user is
+      // never left in front of a mounted, uncancellable plan list.
+      closePlanTaskOverlay();
+      const startupSequence = ++sessionStartSequence;
+      const startupStillCurrent = (): boolean =>
+        sessionStartSequence === startupSequence;
+
+      // Revoke the prior generation synchronously, before the first await.
+      // A retained tool registration or late callback must lose every live
+      // authority cell as soon as Pi announces replacement, even if this new
+      // startup later fails.
+      controller.shutdown();
+      activeSession = undefined;
+      lastBootActivationFailure = undefined;
+      delegationControllerCell.controller?.disposeAll();
+      delegationControllerCell.controller = undefined;
+      delegationControllerCell.generationId = undefined;
+      workflowControllerCell.controller = undefined;
+      recoveryCoordinatorCell.coordinator = undefined;
+      inspectionRegistryCell.registry?.closeGeneration();
+      inspectionRegistryCell.registry = undefined;
+      historyStoreCell.store = undefined;
+      planStateProviderCell.value = undefined;
+      activeWorkflowInstanceCell.value = undefined;
+      currentWorkflows = {};
+      treeSelectionCell.selectedId = ROOT_NODE_ID;
+      const priorResources = generationResourcesCell.owner;
+      generationResourcesCell.owner = undefined;
+      const priorTelemetry = telemetryCell.telemetry;
+      telemetryCell.telemetry = undefined;
+      if (priorResources !== undefined) {
+        void priorResources.dispose();
+      } else if (priorTelemetry !== undefined) {
+        void priorTelemetry.shutdown().match(
+          () => undefined,
+          () => undefined,
+        );
+      }
+      const cancelPriorDirectStep =
+        directStepChildRegistry.cancel() ?? okAsync(undefined);
+      void cancelPriorDirectStep.match(
+        () => undefined,
+        () => undefined,
+      );
+      ctx.ui.setStatus("weave", "starting");
+
+      // First statement of the generation, before log redirect, child-mode
+      // activation, command validation, preflight, config activation, tool
+      // registration, and every early return below. Any of those can end this
+      // handler without ever reaching the render path, and the previous
+      // generation's identity and painted surfaces would otherwise survive
+      // into a session that has no controller to back them.
+      clearActivePlanSurfaces(ctx);
+      // The active-agent badge is generation-scoped exactly like those
+      // surfaces. A prior generation may have committed a primary and
+      // painted its name; nothing in *this* generation is committed yet, so
+      // the badge starts hidden and is only repainted once this generation's
+      // boot activation commits. Clearing here - ahead of child-mode
+      // activation, command validation, preflight, config
+      // activation and every early return - is what stops a stale badge from
+      // outliving the session that earned it. Child sessions have painted
+      // nothing at this point, so this is a no-op for them.
+      setActiveAgentStatus(ctx, undefined);
       if (ctx.mode === "tui" && shouldRedirectSharedLogs) {
         const redirected = await deps.logRedirector.redirect(
           join(ctx.cwd, PI_SHARED_LOG_PATH),
         );
+        if (!startupStillCurrent()) return;
         if (redirected.isErr()) {
           ctx.ui.notify(redirected.error.safeMessage, "error");
           return;
@@ -2540,6 +3581,10 @@ export function createPiExtension(
         deps,
         childModeState,
       );
+      if (!startupStillCurrent()) {
+        childModeState.runtime?.dispose();
+        return;
+      }
       if (isChild) return;
       const commands = readValidatedCommands(pi);
       if (commands.isErr()) {
@@ -2563,23 +3608,38 @@ export function createPiExtension(
         (report) => report,
         () => emptyHostSurfaceReport(),
       );
+      if (!startupStillCurrent()) return;
       const activation = await controller.activate(
         ctx,
         commands.value,
         hostSurface,
       );
       childInspectionSettingsUi.ui = undefined;
+      if (!startupStillCurrent()) return;
       if (activation.isErr()) {
         ctx.ui.notify(activation.error.safeMessage, "error");
         return;
       }
       const generation = activation.value;
-      ctx.ui.setStatus(
-        "weave",
-        generation.healthOnlyMode
-          ? "health-only - run /weave:health for details"
-          : "ready",
-      );
+      const startupOperation = controller.beginOperation();
+      if (startupOperation.isErr()) return;
+      const startupHandle = startupOperation.value;
+      const startupOwnsGeneration = (): boolean =>
+        startupStillCurrent() && startupHandle.assertStillCurrent().isOk();
+      const generationResources = new PiGenerationResourceOwner(generation.id);
+      const generationTelemetryCell: { telemetry: PiTelemetry | undefined } = {
+        telemetry: undefined,
+      };
+      generationResourcesCell.owner = generationResources;
+      // Strict boot: `ready` is not a preflight outcome, it is the reward
+      // for a committed primary. Only the closed states can be painted
+      // before boot activation has settled below.
+      if (generation.healthOnlyMode) {
+        ctx.ui.setStatus(
+          "weave",
+          "health-only - run /weave:health for details",
+        );
+      }
 
       // Pi adapter contract: wrong mode/host/version blocks config activation
       // entirely - `PiSafeInitializer.preflight` never calls
@@ -2595,6 +3655,7 @@ export function createPiExtension(
 
       if (generation.preflight.configActivationFailure !== undefined) {
         const failure = generation.preflight.configActivationFailure;
+        setWeaveUnavailableStatus(ctx);
         deps.logger.warn(
           { code: failure.code, safeMessage: failure.safeMessage },
           "config activation failed",
@@ -2603,7 +3664,10 @@ export function createPiExtension(
       }
 
       const configActivation = generation.preflight.configActivation;
-      if (configActivation === undefined) return;
+      if (configActivation === undefined) {
+        setWeaveUnavailableStatus(ctx);
+        return;
+      }
 
       logMaterializationErrors(
         configActivation.descriptors.errors,
@@ -2618,6 +3682,11 @@ export function createPiExtension(
         generation.preflight.trust === "trusted"
       ) {
         const opened = await deps.runtimeStoreFactory.open(ctx.cwd);
+        if (opened.isOk()) generationResources.adoptRuntimeStore(opened.value);
+        if (!startupOwnsGeneration()) {
+          void generationResources.dispose();
+          return;
+        }
         if (opened.isErr()) {
           deps.logger.warn(
             { failure: opened.error },
@@ -2625,6 +3694,81 @@ export function createPiExtension(
           );
         } else {
           runtimeStore = opened.value;
+        }
+      }
+
+      currentWorkflows = configActivation.config.workflows ?? {};
+      planStateProviderCell.value =
+        deps.planStateProviderFactory?.(ctx.cwd) ??
+        createPiPlanStateProvider(ctx.cwd);
+
+      const session: PiActiveSession = {
+        generationId: generation.id,
+        childInspectionSettings: generation.preflight.childInspection,
+        primarySession: new PiPrimarySession({
+          skillCatalog: new PiSkillCatalog([]),
+          logger: deps.logger,
+        }),
+        descriptors: configActivation.descriptors.byName,
+        disabledSkills: configActivation.config.disabled?.skills ?? [],
+        pendingPrimaryName: DEFAULT_PRIMARY_AGENT_NAME,
+        primaryActivationAttempted: false,
+        primaryActivationFailure: undefined,
+      };
+      activeSession = session;
+
+      const sessionHealthOnly = effectiveHealthOnly(generation);
+
+      // Strict boot activation (Pi adapter contract): the default primary is
+      // resolved, skill-resolved and model-applied *here*, atomically, before
+      // this generation is granted any primary authority. Nothing downstream -
+      // tool registration, the delegation transport, the `ready` status or the
+      // active-agent badge - exists for a generation whose primary never
+      // committed, and no later turn retries it.
+      if (!sessionHealthOnly) {
+        const activationReservation = reservePrimaryActivation();
+        await activationReservation.waitForPrior;
+        if (!startupOwnsGeneration()) {
+          activationReservation.release();
+          void generationResources.dispose();
+          return;
+        }
+        const booted = await activateBootPrimary(pi, ctx, session);
+        activationReservation.release();
+        if (!startupOwnsGeneration()) {
+          void generationResources.dispose();
+          return;
+        }
+        if (booted.isErr()) {
+          if (booted.error.type === "PrimaryActivationStale") {
+            // A newer generation already owns every session-scoped surface.
+            // Painting anything here would erase a newer, correct badge.
+            return;
+          }
+          lastBootActivationFailure = booted.error;
+          activeSession = undefined;
+          controller.shutdown();
+          currentWorkflows = {};
+          planStateProviderCell.value = undefined;
+          activeWorkflowInstanceCell.value = undefined;
+          setActiveAgentStatus(ctx, undefined);
+          setWeaveUnavailableStatus(ctx);
+          deps.logger.warn(
+            {
+              agentName:
+                booted.error.type === "PrimarySkillCatalogUnavailable"
+                  ? DEFAULT_PRIMARY_AGENT_NAME
+                  : booted.error.agentName,
+              failure: booted.error.type,
+            },
+            "boot primary activation failed; this generation has no active Weave primary",
+          );
+          ctx.ui.notify(bootActivationSafeMessage(booted.error), "error");
+          void generationResources.dispose();
+          if (generationResourcesCell.owner === generationResources) {
+            generationResourcesCell.owner = undefined;
+          }
+          return;
         }
       }
 
@@ -2642,35 +3786,22 @@ export function createPiExtension(
             error instanceof Error ? error : new Error(String(error)),
         );
         if (registerTools().isErr()) {
+          activeSession = undefined;
+          controller.shutdown();
+          setActiveAgentStatus(ctx, undefined);
           ctx.ui.setStatus(
             "weave",
             "health-only - run /weave:health for details",
           );
           ctx.ui.notify("Weave tool registration failed.", "error");
+          void generationResources.dispose();
+          if (generationResourcesCell.owner === generationResources) {
+            generationResourcesCell.owner = undefined;
+          }
           return;
         }
       }
 
-      currentWorkflows = configActivation.config.workflows ?? {};
-      planStateProviderCell.value =
-        deps.planStateProviderFactory?.(ctx.cwd) ??
-        createPiPlanStateProvider(ctx.cwd);
-      activeSession = {
-        generationId: generation.id,
-        childInspectionSettings: generation.preflight.childInspection,
-        primarySession: new PiPrimarySession({
-          skillCatalog: new PiSkillCatalog([]),
-          logger: deps.logger,
-        }),
-        descriptors: configActivation.descriptors.byName,
-        disabledSkills: configActivation.config.disabled?.skills ?? [],
-        pendingPrimaryName: DEFAULT_PRIMARY_AGENT_NAME,
-        primaryActivationAttempted: false,
-        userSelectedModelBeforeActivation: false,
-        primaryActivationFailure: undefined,
-      };
-
-      const sessionHealthOnly = effectiveHealthOnly(generation);
       const parentSessionId =
         deps.parentSessionId?.(ctx) ??
         (ctx as PiSessionContext & { readonly sessionId?: string }).sessionId;
@@ -2682,6 +3813,13 @@ export function createPiExtension(
               parentSessionId,
               generation.preflight.childInspection,
             );
+      if (historyStore?.isOk()) {
+        generationResources.adoptHistoryStore(historyStore.value);
+      }
+      if (!startupOwnsGeneration()) {
+        void generationResources.dispose();
+        return;
+      }
       if (historyStore?.isErr()) {
         deps.logger.warn(
           { failure: historyStore.error },
@@ -2703,9 +3841,15 @@ export function createPiExtension(
           ? "health-only - run /weave:health for details"
           : "ready",
       );
+      // The badge names the *committed* primary this generation actually
+      // holds. Boot activation above has already committed it for every
+      // non-health-only generation that reached this point; health-only
+      // generations never commit one, so their badge stays hidden.
       setActiveAgentStatus(
         ctx,
-        sessionHealthOnly ? undefined : activeSession.pendingPrimaryName,
+        sessionHealthOnly
+          ? undefined
+          : session.primarySession.getCurrent()?.descriptor.name,
       );
 
       // The delegation transport is only ever constructed for a fully
@@ -2717,6 +3861,7 @@ export function createPiExtension(
         !effectiveHealthOnly(generation) &&
         generation.preflight.trust !== "withheld"
       ) {
+        delegationControllerCell.generationId = generation.id;
         delegationControllerCell.controller = new PiDelegationController({
           config: configActivation.config,
           generationId: generation.id,
@@ -2762,8 +3907,14 @@ export function createPiExtension(
               childId,
               context,
               ctx,
+              (descriptor) =>
+                session.primarySession.prepareComposedPrompt(
+                  descriptor,
+                  session.disabledSkills,
+                ),
             ),
           onTreeChanged: () => {
+            if (!startupOwnsGeneration()) return;
             renderChildTreeWidget(
               ctx,
               delegationControllerCell.controller,
@@ -2781,7 +3932,8 @@ export function createPiExtension(
           // rather than blocking child settlement.
           telemetry: {
             recordAssistantUsage: (input) => {
-              const telemetry = telemetryCell.telemetry;
+              if (!startupOwnsGeneration()) return okAsync("noop" as const);
+              const telemetry = generationTelemetryCell.telemetry;
               if (telemetry === undefined) return okAsync("noop" as const);
               return telemetry.recordAssistantUsage(input).mapErr((failure) => {
                 telemetry.recordDegradation(failure);
@@ -2837,13 +3989,14 @@ export function createPiExtension(
                   ) ?? errAsync({ type: "unavailable" })),
             injectParentContext: (content, _options) => {
               const sendMessage = pi.sendMessage;
-              if (
-                activeSession?.generationId !== generation.id ||
-                sendMessage === undefined
-              )
+              if (!startupOwnsGeneration() || sendMessage === undefined) {
                 return errAsync<void, unknown>({ type: "stale" });
+              }
               return ResultAsync.fromPromise(
                 Promise.resolve().then(() => {
+                  if (!startupOwnsGeneration()) {
+                    throw new Error("stale-recovery-generation");
+                  }
                   sendMessage(
                     {
                       customType: "weave-child-recovery",
@@ -2860,11 +4013,14 @@ export function createPiExtension(
           recoveryCoordinatorCell.coordinator = recovery;
           void recovery.startup().match(
             () => undefined,
-            () =>
-              ctx.ui.notify(
-                "Child recovery is unavailable in this session.",
-                "info",
-              ),
+            () => {
+              if (startupOwnsGeneration()) {
+                ctx.ui.notify(
+                  "Child recovery is unavailable in this session.",
+                  "info",
+                );
+              }
+            },
           );
         }
         // Workflow lifecycle projection reuses the trusted Runtime Store.
@@ -2886,20 +4042,34 @@ export function createPiExtension(
             usage: deps.telemetryUsage,
             retention: deps.telemetryRetention,
           });
+          if (!telemetryResult.isErr()) {
+            generationResources.adoptTelemetry(telemetryResult.value.telemetry);
+          }
+          if (!startupOwnsGeneration()) {
+            void generationResources.dispose();
+            return;
+          }
           // `createPiTelemetry`'s error type is `never` - it always
           // degrades internally rather than failing. `.isErr()` is checked
           // only to satisfy Result narrowing, never expected to be true.
           if (!telemetryResult.isErr()) {
             const { telemetry, logDegradation } = telemetryResult.value;
+            generationTelemetryCell.telemetry = telemetry;
             telemetryCell.telemetry = telemetry;
             const ui: PiTelemetryUiPort = {
-              notify: (message, level) => ctx.ui.notify(message, level),
+              notify: (message, level) => {
+                if (startupOwnsGeneration()) ctx.ui.notify(message, level);
+              },
             };
             if (logDegradation !== undefined) {
               telemetry.recordDegradation(logDegradation);
               telemetry.notifyFailureOnce(ui, logDegradation);
             }
             const retentionActivation = await telemetry.activate();
+            if (!startupOwnsGeneration()) {
+              void generationResources.dispose();
+              return;
+            }
             if (retentionActivation.isErr()) {
               telemetry.recordDegradation(retentionActivation.error);
               telemetry.notifyFailureOnce(ui, retentionActivation.error);
@@ -2916,6 +4086,10 @@ export function createPiExtension(
                 },
               })
               .orElse(() => okAsync(undefined));
+            if (!startupOwnsGeneration()) {
+              void generationResources.dispose();
+              return;
+            }
           }
           const directStepDelegationController =
             delegationControllerCell.controller;
@@ -2958,21 +4132,39 @@ export function createPiExtension(
             // generation's own activated catalog by name (Pi adapter contract,
             //) - never the engine effect's own always-empty
             // `agentDescriptor` fields.
-            resolveAgentDescriptor: (agentName) =>
-              configActivation.descriptors.byName.get(agentName),
-            onDirectStepActiveChange: (active, agentName) => {
-              if (active) {
-                setActiveAgentStatus(ctx, agentName);
-                return;
-              }
-              const currentPrimaryName =
-                activeSession?.primarySession.getCurrent()?.descriptor.name ??
-                activeSession?.pendingPrimaryName;
-              setActiveAgentStatus(ctx, currentPrimaryName);
+            resolveAgentDescriptor: (agentName) => {
+              const descriptor =
+                configActivation.descriptors.byName.get(agentName);
+              if (descriptor === undefined) return undefined;
+              return {
+                ...descriptor,
+                composedPrompt: session.primarySession.prepareComposedPrompt(
+                  descriptor,
+                  session.disabledSkills,
+                ),
+              };
             },
-            recoveryPointerStore: new BunJsonlRecoveryPointerStore(
-              join(ctx.cwd, ".weave", "runtime", "pi-recovery-pointer.ndjson"),
-            ),
+            onDirectStepActiveChange: (active, agentName) => {
+              if (!startupOwnsGeneration()) return;
+              setActiveAgentStatus(
+                ctx,
+                resolveDirectStepBadgeAgent(
+                  active,
+                  agentName,
+                  session.primarySession,
+                ),
+              );
+            },
+            recoveryPointerStore:
+              deps.recoveryPointerStoreFactory?.(ctx.cwd) ??
+              new BunJsonlRecoveryPointerStore(
+                join(
+                  ctx.cwd,
+                  ".weave",
+                  "runtime",
+                  "pi-recovery-pointer.ndjson",
+                ),
+              ),
             clock: deps.clock,
             idGenerator: deps.idGenerator,
             logger: deps.logger,
@@ -3009,20 +4201,30 @@ export function createPiExtension(
             // Best-effort and fire-and-forget - this class never reads plan
             // state itself, and a rendering failure must never affect the
             // lifecycle result it is reacting to.
-            onPlanSnapshotChanged: (workflowInstanceId) => {
-              void refreshPlanWidget(
-                ctx,
-                workflowControllerCell.controller,
-                workflowInstanceId,
-              );
+            onPlanSnapshotChanged: () => {
+              if (!startupOwnsGeneration()) return;
+              // Deliberately ignores the callback's own workflow id. The
+              // callback fires for settlements too, so trusting its argument
+              // would repaint a workflow that has just gone terminal or been
+              // aborted. Re-reading authoritative tracker/recovery state is
+              // what makes a settlement clear the surfaces instead of
+              // freezing them. One resolution, both surfaces: the widget and
+              // the durable current-task footer are painted from the same
+              // view, so they can never lag behind or disagree.
+              void syncActivePlanSurfaces(ctx, startupOwnsGeneration);
             },
           });
+          // Nothing resolved before this point may survive into recovery: the
+          // retained identity and both surfaces are cleared first, so a stale
+          // workflow can never be shown beside a recovered one.
+          clearActivePlanSurfaces(ctx);
           // Recovery banner (Pi adapter contract): read-only on every session start.
           // Never resumes anything itself - only `/weave:resume` (with its
           // own fresh confirm and generation/lease recheck, above) may ever
           // reacquire a paused execution.
           const recoveryPointer =
             await workflowControllerCell.controller.readRecoveryPointer();
+          if (!startupOwnsGeneration()) return;
           if (recoveryPointer.isOk() && recoveryPointer.value !== undefined) {
             const pointer = recoveryPointer.value;
             ctx.ui.notify(
@@ -3034,24 +4236,33 @@ export function createPiExtension(
               "info",
             );
           }
-          // Pi adapter contract: initial compact plan widget render at session
+          // Pi adapter contract: initial plan widget/footer render at session
           // start/recovery - shows the recovered pending workflow's plan
-          // immediately, or hides the widget when nothing is recoverable.
-          // Never auto-resumes anything itself.
-          await refreshPlanWidget(
-            ctx,
-            workflowControllerCell.controller,
-            recoveryPointer.isOk()
-              ? recoveryPointer.value?.workflowId
-              : undefined,
-          );
+          // immediately, or hides both surfaces when nothing is recoverable.
+          // The resolver observes the eligible pointer itself; it never
+          // auto-resumes anything.
+          await syncActivePlanSurfaces(ctx, startupOwnsGeneration);
+          if (!startupOwnsGeneration()) return;
         }
         treeSelectionCell.selectedId = ROOT_NODE_ID;
+        const rootChild: PiInspectorChild = {
+          childId: ROOT_NODE_ID,
+          name: "Weave execution",
+          kind: "ordinary",
+          live: true,
+          status: "running",
+        };
         let customInspectionComponent:
           | ReturnType<typeof createChildInspectionCustomComponent>
           | undefined;
         let customInspectionTui: { requestRender(): void } | undefined;
-        childInspectionEditorCell.editor = createChildInspectionEditor(
+        // Settles the currently mounted inspection overlay: releases the
+        // borrowed session editor, returns the view to the root, and resolves
+        // the host `custom()` promise exactly once. `undefined` whenever no
+        // overlay is mounted.
+        let settleCustomInspection: (() => void) | undefined;
+        let inspectionEditor: PiChildInspectionEditor | undefined;
+        inspectionEditor = createChildInspectionEditor(
           new PiChildInspector(ROOT_NODE_ID, {
             steer: () => errAsync("child steering unavailable"),
             followUp: () => errAsync("child follow-up unavailable"),
@@ -3063,7 +4274,27 @@ export function createPiExtension(
                 : errAsync("stale child view"),
           }),
           {
+            beforeInput: () => {
+              inspectionEditor?.syncChildren([
+                rootChild,
+                ...inspectionRegistry.snapshotLive().map((item) => ({
+                  childId: item.id,
+                  name: item.name,
+                  kind: "ordinary" as PiInspectorChild["kind"],
+                  live: true,
+                  status: item.status as PiInspectorChild["status"],
+                  parentId: item.parentId,
+                  generationId: generation.id,
+                })),
+              ]);
+            },
             openPicker: () => {
+              // Pi's selector is a nested overlay: mounting it removes this
+              // custom component without ever settling its promise. Settle the
+              // mounted inspection first, so the borrowed session editor goes
+              // back to its previous owner (possibly `pi-vim`) and no stale
+              // component/editor state survives into the next activation.
+              settleCustomInspection?.();
               childSlots.assignTree(inspectionRegistry.snapshotLive());
               void openChildInspector(
                 ctx,
@@ -3082,7 +4313,7 @@ export function createPiExtension(
             defaultInput: (data) => undefined,
           },
         );
-        const inspectionEditor = childInspectionEditorCell.editor;
+        childInspectionEditorCell.editor = inspectionEditor;
         const editorFactory = (
           tui: unknown,
           theme: unknown,
@@ -3132,6 +4363,16 @@ export function createPiExtension(
           ];
           inspectionEditor.open(child, known);
           treeSelectionCell.selectedId = childId;
+          // Explicit user action: Weave borrows the session editor for the
+          // duration of the inspection view. Whoever owns it right now
+          // (possibly another extension) gets it back when the view closes.
+          const ownerBeforeInspection = ctx.ui.getEditorComponent?.();
+          if (
+            editorInstallCell !== undefined &&
+            ownerBeforeInspection !== editorFactory
+          ) {
+            editorInstallCell.previousFactory = ownerBeforeInspection;
+          }
           ctx.ui.setEditorComponent?.(editorFactory);
           openCustomInspection();
         };
@@ -3140,8 +4381,11 @@ export function createPiExtension(
             ctx.ui.notify("Child inspection requires Pi TUI mode.", "warning");
             return;
           }
-          if (customInspectionOpen) {
-            customInspectionComponent?.invalidate();
+          // A picker opened from inside the view can tear the overlay down
+          // without settling its promise, so trust the mounted component
+          // rather than the open flag alone.
+          if (customInspectionOpen && customInspectionComponent !== undefined) {
+            customInspectionComponent.invalidate();
             customInspectionTui?.requestRender();
             return;
           }
@@ -3151,11 +4395,52 @@ export function createPiExtension(
             if (finished) return;
             finished = true;
             customInspectionOpen = false;
+            inspectionRegistry.onTranscriptUpdate(undefined);
+            // Every teardown path (Esc, an inner picker, a settled `done`)
+            // must hand the borrowed session editor back to whoever owned it,
+            // which may be another extension such as `pi-vim`. Release it only
+            // while Weave still owns it, so a foreign owner installed during
+            // the overlay's lifetime is never clobbered.
+            if (ctx.ui.getEditorComponent?.() === editorFactory) {
+              ctx.ui.setEditorComponent?.(editorInstallCell?.previousFactory);
+            }
           };
+          inspectionRegistry.onTranscriptUpdate((childId) => {
+            if (inspectionEditor.currentView()?.childId !== childId) return;
+            customInspectionComponent?.invalidate();
+            customInspectionTui?.requestRender();
+          });
+          let mountedComponent:
+            | ReturnType<typeof createChildInspectionCustomComponent>
+            | undefined;
+          let settleMountedInspection: (() => void) | undefined;
           void ctx.ui
             .custom<void>((tui, theme, keybindings, done) => {
               customInspectionTui = tui as { requestRender(): void };
-              customInspectionComponent = createChildInspectionCustomComponent(
+              const settle = (): void => {
+                if (finished) return;
+                finish();
+                // Leaving the child view must also leave the child's input:
+                // the tree editor stays installed, so its view has to return
+                // to the root or keystrokes keep steering the child.
+                inspectionEditor.open(rootChild, [
+                  rootChild,
+                  ...inspectionRegistry.snapshotLive().map((item) => ({
+                    childId: item.id,
+                    name: item.name,
+                    kind: "ordinary" as PiInspectorChild["kind"],
+                    live: true,
+                    status: item.status as PiInspectorChild["status"],
+                    parentId: item.parentId,
+                    generationId: generation.id,
+                  })),
+                ]);
+                treeSelectionCell.selectedId = ROOT_NODE_ID;
+                done(undefined);
+              };
+              settleMountedInspection = settle;
+              settleCustomInspection = settle;
+              mountedComponent = createChildInspectionCustomComponent(
                 customInspectionTui as never,
                 theme as never,
                 keybindings as never,
@@ -3171,9 +4456,18 @@ export function createPiExtension(
                           view?.childId ?? "",
                         )
                       : inspectionRegistry.getTranscriptState(node.id);
+                  const runtimeMeta = inspectionRegistry.getChildRuntimeMeta(
+                    node?.id ?? view?.childId ?? "",
+                  );
                   return {
-                    topologyPath: [{ name: view?.childId ?? "child" }],
+                    topologyPath: [],
                     childName: node?.name ?? view?.childId ?? "child",
+                    ...(runtimeMeta.model === undefined
+                      ? {}
+                      : { model: runtimeMeta.model }),
+                    ...(runtimeMeta.thinkingLevel === undefined
+                      ? {}
+                      : { reasoningLevel: runtimeMeta.thinkingLevel }),
                     status: (node?.status ??
                       "running") as PiChildInspectionRenderInput["status"],
                     currentTool: node?.currentTool,
@@ -3194,31 +4488,24 @@ export function createPiExtension(
                 },
                 () => inspectionEditor.currentView()?.state.draft ?? "",
                 (draft) => inspectionEditor.updateDraft(draft),
-                () => {
-                  if (finished) return;
-                  finish();
-                  ctx.ui.setEditorComponent?.(
-                    editorInstallCell?.previousFactory,
-                  );
-                  done(undefined);
-                },
+                settle,
+                { cwd: ctx.cwd },
               );
-              return customInspectionComponent;
+              customInspectionComponent = mountedComponent;
+              return mountedComponent;
             })
             .finally(() => {
-              customInspectionComponent = undefined;
-              customInspectionTui = undefined;
+              if (customInspectionComponent === mountedComponent) {
+                customInspectionComponent = undefined;
+                customInspectionTui = undefined;
+              }
+              if (settleCustomInspection === settleMountedInspection) {
+                settleCustomInspection = undefined;
+              }
               finish();
             });
         };
         childInspectionEditorCell.activate = activateChild;
-        const rootChild: PiInspectorChild = {
-          childId: ROOT_NODE_ID,
-          name: "Weave execution",
-          kind: "ordinary",
-          live: true,
-          status: "running",
-        };
         inspectionEditor.open(rootChild, [rootChild]);
         renderChildTreeWidget(
           ctx,
@@ -3230,159 +4517,59 @@ export function createPiExtension(
         // Alt+1..Alt+9/Backspace/Esc against the live child tree while
         // preserving every Pi host default (see `WeaveChildTreeEditor`).
         if (editorInstallCell !== undefined) {
-          editorInstallCell.ctx.ui.setEditorComponent?.(
-            editorInstallCell.previousFactory,
-          );
+          if (
+            editorInstallCell.ctx.ui.getEditorComponent?.() ===
+            editorInstallCell.factory
+          ) {
+            editorInstallCell.ctx.ui.setEditorComponent?.(
+              editorInstallCell.previousFactory,
+            );
+          }
           editorInstallCell = undefined;
         }
         const previousFactory = ctx.ui.getEditorComponent?.();
+        // Another extension already owns the session editor (for example
+        // `pi-vim`'s modal editor). Weave never claims it globally: the
+        // root-level child-tree keys are optional, while replacing a foreign
+        // editor would silently break the harness the user configured.
+        const yielded = previousFactory !== undefined;
         editorInstallCell = {
           generationId: generation.id,
           ctx,
           previousFactory,
+          factory: editorFactory,
+          yielded,
         };
-        ctx.ui.setEditorComponent?.(editorFactory);
+        if (!yielded) ctx.ui.setEditorComponent?.(editorFactory);
       }
     });
 
-    pi.on("model_select", (event) => {
-      if (childModeState.active || activeSession === undefined) return;
-      if (
-        activeSession.primaryActivationAttempted ||
-        activeSession.primarySession.getCurrent() !== undefined
-      ) {
-        return;
-      }
-      if (typeof event !== "object" || event === null) return;
-      const source = (event as { source?: unknown }).source;
-      if (source === "set" || source === "cycle") {
-        activeSession.userSelectedModelBeforeActivation = true;
-      }
-    });
-
-    pi.on("before_agent_start", async (event, ctx: PiSessionContext) => {
+    pi.on("before_agent_start", (event, ctx: PiSessionContext) => {
+      latestSessionCtx = ctx;
       if (childModeState.active) return undefined;
-      if (activeSession === undefined) return undefined;
+      const session = activeSession;
       if (
-        activeSession.generationId !== controller.getCurrentGeneration()?.id
+        session === undefined ||
+        session.generationId !== controller.getCurrentGeneration()?.id
       ) {
         return undefined;
       }
 
-      const session = activeSession;
-      const systemPrompt = readSystemPrompt(event);
-
-      // Already committed this generation: just append. Re-resolving here
-      // would silently override a native mid-session user model change
-      // (Pi adapter contract "a native user model change governs the current
-      // active period"), so activation only happens once per generation.
-      if (session.primarySession.getCurrent() !== undefined) {
-        return {
-          systemPrompt:
-            session.primarySession.appendToSystemPrompt(systemPrompt),
-        };
-      }
-
-      if (session.primaryActivationAttempted) return undefined;
-      session.primaryActivationAttempted = true;
-
-      const pendingName = session.pendingPrimaryName;
-      if (pendingName === undefined) return undefined;
-      const descriptor = session.descriptors.get(pendingName);
-      if (descriptor === undefined) {
-        deps.logger.warn(
-          { agentName: pendingName },
-          "default primary descriptor unavailable; ordinary chat has no active Weave primary",
-        );
-        return undefined;
-      }
-
-      // Pi only exposes its loaded skill catalog here, at the first turn
-      // (Pi adapter contract) - refresh the catalog immediately before the
-      // atomic activation that depends on it.
-      session.primarySession.refreshSkills(readBeforeAgentStartSkills(event));
-
-      // Capture a staleness handle *before* the await below: activation
-      // (including `pi.setModel`) can take an arbitrary amount of time, and
-      // a session replacement (reload/fork/switch/new session_start) can
-      // install a fresh generation and a fresh `activeSession` while this
-      // call is still in flight.
-      const operation = controller.beginOperation();
-      if (operation.isErr()) return undefined;
-      const handle = operation.value;
-
-      // `ctx.modelRegistry` is host-supplied; a throwing `getAvailable()`
-      // must not crash this turn - fall back to an empty catalog, which
-      // safely degrades model resolution rather than failing activation.
-      const availableModelsResult = safelyListAvailableModels(
-        ctx.modelRegistry,
-      );
-      if (availableModelsResult.isErr()) {
-        // `availableModelsResult.error` is always the fixed, closed-set
-        // `MODEL_REGISTRY_THREW_REASON` literal - never anything derived
-        // from what the host actually threw, since that content cannot be
-        // trusted not to contain private paths, environment values, or
-        // secrets (Pi adapter contract closed-failure contract).
-        deps.logger.warn(
-          {
-            agentName: descriptor.name,
-            reason: availableModelsResult.error,
-          },
-          "ctx.modelRegistry.getAvailable() threw; treating as no available models this turn",
-        );
-      }
-
-      const activationResult = await session.primarySession.activate(
-        descriptor,
-        {
-          availableModels: availableModelsResult.unwrapOr([]),
-          currentModel: ctx.model,
-          modelApplier: createPiModelApplyPort(pi),
-          thinkingApplier: createPiThinkingApplyPort(pi),
-          disabledSkills: session.disabledSkills,
-          preserveCurrentModel: session.userSelectedModelBeforeActivation,
-        },
-      );
-
-      if (handle.assertStillCurrent().isErr()) {
-        // A newer generation replaced this one while we were awaiting
-        // skill/model activation. `pi.setModel` may already have been
-        // applied against a session that is no longer current and cannot
-        // safely be undone - surface that as a visible degradation rather
-        // than silently dropping it, but never return this stale call's
-        // descriptor prompt as authoritative for the new generation.
-        if (activationResult.isOk()) {
-          deps.logger.warn(
-            { agentName: descriptor.name, generationId: session.generationId },
-            "primary activation settled after session replacement; discarding stale authority (a model change may already be applied and cannot be safely restored)",
-          );
-        }
-        return undefined;
-      }
-
-      if (activationResult.isErr()) {
-        session.primaryActivationFailure = activationResult.error;
-        deps.logger.warn(
-          { agentName: descriptor.name, error: activationResult.error.type },
-          "primary activation failed; prompt not appended this turn",
-        );
-        return undefined;
-      }
-
-      // Pi adapter contract: a primary activation that actually took authority this
-      // generation (Loom/Tapestry becoming the active primary) is one of
-      // the required `observeSession` trigger points, when a workflow lease
-      // is presently active (e.g. Loom re-activating while a workflow is
-      // paused). A no-op when no lease is tracked.
-      await observeActiveLeaseBestEffort(descriptor.name, "active");
+      ensureInspectionEditor(ctx, session.generationId);
+      if (session.primarySession.getCurrent() === undefined) return undefined;
 
       return {
-        systemPrompt: session.primarySession.appendToSystemPrompt(systemPrompt),
+        systemPrompt: session.primarySession.appendToSystemPrompt(
+          readSystemPrompt(event),
+        ),
       };
     });
 
-    pi.on("agent_start", () => {
+    pi.on("agent_start", (_event, ctx) => {
       if (childModeState.active) return;
+      if (activeSession !== undefined) {
+        ensureInspectionEditor(ctx, activeSession.generationId);
+      }
     });
 
     // Pi adapter contract: one exact-once usage observation per settled primary
@@ -3393,9 +4580,12 @@ export function createPiExtension(
     // failure) or when the generation has already been replaced.
     pi.on("message_end", async (event, ctx) => {
       if (childModeState.active) return undefined;
-      if (activeSession === undefined) return undefined;
+      const session = activeSession;
+      if (session === undefined) return undefined;
+      const operation = controller.beginOperation();
       if (
-        activeSession.generationId !== controller.getCurrentGeneration()?.id
+        operation.isErr() ||
+        session.generationId !== controller.getCurrentGeneration()?.id
       ) {
         return undefined;
       }
@@ -3406,7 +4596,7 @@ export function createPiExtension(
       const telemetry = telemetryCell.telemetry;
       if (telemetry === undefined) return undefined;
       const agentName =
-        activeSession.primarySession.getCurrent()?.descriptor.name ??
+        session.primarySession.getCurrent()?.descriptor.name ??
         DEFAULT_PRIMARY_AGENT_NAME;
       const recorded = await telemetry.recordAssistantUsage({
         id: extracted.id,
@@ -3414,6 +4604,12 @@ export function createPiExtension(
         agentName,
         ...extracted.usage,
       });
+      if (
+        activeSession !== session ||
+        operation.value.assertStillCurrent().isErr()
+      ) {
+        return undefined;
+      }
       if (recorded.isErr()) {
         telemetry.recordDegradation(recorded.error);
         telemetry.notifyFailureOnce(
@@ -3425,62 +4621,95 @@ export function createPiExtension(
     });
 
     pi.on("session_shutdown", async (_event, ctx?: PiSessionContext) => {
-      // Pi adapter contract: termination while a lease is active is a required
-      // `observeSession` trigger point - observe *before* clearing the
-      // tracked instance/controller below (a no-op when no lease is
-      // tracked). Best-effort only: shutdown must still proceed even if
-      // this fails.
-      await observeActiveLeaseBestEffort(
-        activeSession?.primarySession.getCurrent()?.descriptor.name ??
-          "workflow-controller",
-        "terminated",
-      );
+      // Revoke synchronously. Everything used after the first await is a local
+      // snapshot of the generation being shut down, so a replacement startup
+      // can safely publish new state while best-effort cleanup continues.
+      sessionStartSequence += 1;
+      // Settled here for the same reason as in `session_start`: a shutdown
+      // that leaves the overlay mounted would also leave its promise pending.
+      closePlanTaskOverlay();
+      controller.shutdown();
+      lastBootActivationFailure = undefined;
+      const shuttingSession = activeSession;
+      const shuttingWorkflowController = workflowControllerCell.controller;
+      const shuttingWorkflowInstance = activeWorkflowInstanceCell.value;
+      const shuttingTelemetry = telemetryCell.telemetry;
+      const shuttingResources = generationResourcesCell.owner;
       activeSession = undefined;
+      generationResourcesCell.owner = undefined;
       inspectionRegistryCell.registry?.closeGeneration();
       inspectionRegistryCell.registry = undefined;
       recoveryCoordinatorCell.coordinator = undefined;
       delegationControllerCell.controller?.disposeAll();
       delegationControllerCell.controller = undefined;
+      delegationControllerCell.generationId = undefined;
       workflowControllerCell.controller = undefined;
       planStateProviderCell.value = undefined;
       activeWorkflowInstanceCell.value = undefined;
       currentWorkflows = {};
       treeSelectionCell.selectedId = ROOT_NODE_ID;
-      // Adapter telemetry cleanup (Pi adapter contract): records one best-effort
-      // shutdown journal entry, then stops retention scheduling and
-      // releases the rotating log sink. Idempotent - a repeated
-      // `session_shutdown` (or one with no telemetry ever constructed)
-      // is a no-op.
-      if (telemetryCell.telemetry !== undefined) {
-        await telemetryCell.telemetry
+      telemetryCell.telemetry = undefined;
+      historyStoreCell.store = undefined;
+      const cancelDirectStep =
+        directStepChildRegistry.cancel() ?? okAsync(undefined);
+      void cancelDirectStep.match(
+        () => undefined,
+        () => undefined,
+      );
+
+      ctx?.ui.setStatus("weave", undefined);
+      ctx?.ui.setStatus(WEAVE_AGENT_STATUS_KEY, undefined);
+      clearActivePlanSurfaces(ctx);
+      ctx?.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
+      ctx?.ui.setStatus(WEAVE_WORKFLOW_TASK_STATUS_KEY, undefined);
+      const editorInstall = editorInstallCell;
+      if (editorInstall !== undefined) {
+        if (
+          editorInstall.ctx.ui.getEditorComponent?.() === editorInstall.factory
+        ) {
+          editorInstall.ctx.ui.setEditorComponent?.(
+            editorInstall.previousFactory,
+          );
+        }
+        editorInstallCell = undefined;
+      }
+      childModeState.runtime?.dispose();
+
+      if (
+        shuttingWorkflowInstance?.leaseId !== undefined &&
+        shuttingWorkflowController !== undefined
+      ) {
+        const observed = await shuttingWorkflowController.observe({
+          workflowInstanceId: shuttingWorkflowInstance.workflowInstanceId,
+          leaseId: shuttingWorkflowInstance.leaseId,
+          harnessName: "pi",
+          agentName:
+            shuttingSession?.primarySession.getCurrent()?.descriptor.name ??
+            "workflow-controller",
+          sessionStatus: "terminated",
+        });
+        if (observed.isErr()) {
+          deps.logger.warn(
+            { failure: observed.error },
+            "observeSession failed; degrading",
+          );
+        }
+      }
+
+      if (shuttingTelemetry !== undefined) {
+        await shuttingTelemetry
           .recordJournalEvent({
             family: "generation",
             event: "shutdown",
             severity: "info",
           })
           .orElse(() => okAsync(undefined));
-        await telemetryCell.telemetry
-          .shutdown()
-          .orElse(() => okAsync(undefined));
-        telemetryCell.telemetry = undefined;
       }
-      // Bounded child-tree widget/editor state must never survive past this
-      // generation (Pi adapter contract cleanup-idempotence) - clear it even
-      // though `disposeAll()` above already terminated every child.
-      ctx?.ui.setStatus(WEAVE_AGENT_STATUS_KEY, undefined);
-      ctx?.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
-      const editorInstall = editorInstallCell;
-      if (editorInstall !== undefined) {
-        editorInstall.ctx.ui.setEditorComponent?.(
-          editorInstall.previousFactory,
-        );
-        editorInstallCell = undefined;
+      if (shuttingResources !== undefined) {
+        await shuttingResources.dispose();
+      } else if (shuttingTelemetry !== undefined) {
+        await shuttingTelemetry.shutdown().orElse(() => okAsync(undefined));
       }
-      historyStoreCell.store = undefined;
-      controller.shutdown();
-      // Idempotent regardless of role: a no-op for an ordinary parent
-      // session, and terminal secret/process cleanup for a private child.
-      childModeState.runtime?.dispose();
     });
   };
 }

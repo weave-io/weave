@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 250 lib files | 37 env vars | 10 middleware | 0% test coverage
-> **Token savings:** this file is ~25,000 tokens. Without it, AI exploration would cost ~81,500 tokens. **Saves ~56,500 tokens per conversation.**
-> **Last scanned:** 2026-07-29 19:04 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 244 lib files | 37 env vars | 10 middleware | 0% test coverage
+> **Token savings:** this file is ~24,700 tokens. Without it, AI exploration would cost ~80,000 tokens. **Saves ~55,200 tokens per conversation.**
+> **Last scanned:** 2026-08-05 03:20 — re-run after significant changes
 
 ---
 
@@ -78,11 +78,22 @@
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/pi/src/active-plan-ui-state.ts`
+  - function isTerminalWorkflowStatus: (status) => boolean
+  - function resolveActivePlanIdentity: (port) => ResultAsync<ActivePlanIdentity | ActivePlanEmptyReason, ActivePlanUiError>
+  - function resolveActivePlanView: (port) => ResultAsync<ActivePlanView, ActivePlanUiError>
+  - function createActivePlanUiState: () => ActivePlanUiState
+  - interface ActivePlanIdentity
+  - interface ActivePlanUiError
+  - _...7 more_
 - `packages/adapters/pi/src/agent-cycle.ts`
+  - function normalizeAgentBadgeKey: (agentName) => string
+  - function selectAgentBadgeBg: (agentName) => PiUiThemeBgColor
   - function listCycleablePrimaryAgents: (descriptors, AgentDescriptor>) => readonly AgentDescriptor[]
   - function nextCycleablePrimaryAgent: (descriptors, AgentDescriptor>, currentName) => AgentDescriptor | undefined
   - function renderActiveAgentBadge: (agentName, theme?) => string
   - const PI_PRIMARY_AGENT_CYCLE_SHORTCUT
+  - _...1 more_
 - `packages/adapters/pi/src/artifact-provider.ts`
   - function createPiSanitizedChildIndex: (entries) => Result<PiSanitizedChildIndex, PiSanitizedChildIndexError>
   - class PiSanitizedChildIndexExporter
@@ -199,6 +210,7 @@
   - interface PiInspectorViewState
   - interface PiInspectorView
   - _...7 more_
+- `packages/adapters/pi/src/child-native-components.ts` — function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory, interface PiNativeTranscriptComponentDeps
 - `packages/adapters/pi/src/child-picker.ts`
   - function buildChildPickerEntries: (input) => Result<readonly PiChildPickerEntry[], PiChildPickerError>
   - function sanitizeChildPickerPreview: (value) => string
@@ -262,7 +274,7 @@
   - function renderPiChildTranscript: (state, width, input?) => PiChildTranscriptRender
   - function renderPiChildTranscriptRows: (state, width, input?) => readonly PiChildTranscriptRenderedRow[]
   - function renderPiChildTranscriptLines: (state, width, input?) => string[]
-  - _...45 more_
+  - _...46 more_
 - `packages/adapters/pi/src/child-transfer.ts`
   - function encodeTransferChunks: (payload, transferId, overrides?) => Result<readonly TransferChunk[], TransferEncodeError>
   - class ChunkTransferAssembler
@@ -289,12 +301,12 @@
   - _...15 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
-  - function classifyWeaveGoalInvocation: (parsed) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
   - function isOwnSourceInfo: (sourceInfo) => boolean
   - type WeaveCommandName
   - type WeaveCommandClassification
-  - _...6 more_
+  - const WEAVE_INSPECT_COMMAND_NAME
+  - _...5 more_
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -353,42 +365,13 @@
   - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
   - _...70 more_
 - `packages/adapters/pi/src/extension.ts`
+  - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
-  - function buildChildBootstrapBody: (descriptorsByName, AgentDescriptor>, target, childId, context, ctx?) => JsonValue
-  - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
-  - interface PiSharedLogRedirector
-  - interface PiExtensionDeps
-  - const PI_SHARED_LOG_PATH
-- `packages/adapters/pi/src/goal-args.ts` — function parseWeaveGoalArgs: (raw) => WeaveGoalArgs, type WeaveGoalArgs
-- `packages/adapters/pi/src/goal-commands.ts`
-  - function handleWeaveGoal: (rawArgs, ui, deps) => Promise<void>
-  - interface WeaveGoalFooterPort
-  - interface WeaveGoalCommandPiPort
-  - interface WeaveGoalCommandDependencies
-- `packages/adapters/pi/src/goal-footer-controller.ts`
-  - class PiGoalFooterController
-  - interface PiGoalFooterCache
-  - interface PiGoalFooterTimerHandle
-  - interface PiGoalFooterTimerPort
-  - interface PiGoalFooterControllerDependencies
-  - const GOAL_FOOTER_REFRESH_INTERVAL_MS
-- `packages/adapters/pi/src/goal-plan-resolver.ts` — function resolveGoalPlan: ({...}, catalog, projectRoot, readSnapshot, }) => ResultAsync<PlanTaskSnapshot, PiAdapterFailure>, interface ResolveGoalPlanInput
-- `packages/adapters/pi/src/goal-session.ts`
-  - function persistGoalState: (pi, controller, "serialize">) => void
-  - function restoreGoalState: (ctx, controller, "restore">) => Result<void, SessionGoalError>
-  - const WEAVE_GOAL_STATE_ENTRY_TYPE
-- `packages/adapters/pi/src/goal-status.ts`
-  - function renderGoalFooter: (input) => string | undefined
-  - interface RenderGoalFooterInput
-  - const WEAVE_GOAL_STATUS_KEY
-  - const WEAVE_GOAL_STATUS_MAX_WIDTH
-- `packages/adapters/pi/src/goal-tool.ts`
-  - function syncWeaveGoalReportToolAvailability: (pi, "getActiveTools" | "setActiveTools">, controller, "isPursuing">) => void
-  - function buildWeaveGoalReportToolRegistration: (deps) => WeaveGoalReportToolRegistration
-  - function registerWeaveGoalReportTool: (deps) => void
-  - interface WeaveGoalReportToolDependencies
-  - type WeaveGoalReportToolRegistration
-  - const WEAVE_GOAL_REPORT_TOOL_NAME
+  - function resolveAgentRuntimeMeta: (descriptorsByName, AgentDescriptor>, agentName, ctx?) => void
+  - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
+  - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
+  - function buildChildBootstrapBody: (descriptorsByName, AgentDescriptor>, target, childId, context, ctx?, prepareComposedPrompt?) => void
+  - _...7 more_
 - `packages/adapters/pi/src/host-compatibility-matrix.ts`
   - function validateHostCompatibilityMatrix: (matrix) => Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>
   - interface PiHostSurfaceDeclaration
@@ -435,18 +418,26 @@
   - interface PiPlanCatalogPort
 - `packages/adapters/pi/src/plan-provider.ts` — function createPiPlanStateProvider: (projectRoot) => PlanStateProvider, const PI_PLAN_COORDINATOR_AGENT
 - `packages/adapters/pi/src/plan-render.ts` — function renderPlanWidgetLines: (snapshot) => string[]
+- `packages/adapters/pi/src/plan-task-list.ts`
+  - function planTaskListVisibleRows: (rows) => number
+  - function planTaskListRowBudget: (terminalRows) => number
+  - function planTaskListMaxScroll: (taskCount, rows) => number
+  - function planTaskListOffsetForIndex: (index, taskCount, rows) => number
+  - function renderPlanTaskListLines: (input) => string[]
+  - function createPlanTaskListComponent: (input) => PlanTaskListComponent
+  - _...8 more_
 - `packages/adapters/pi/src/port-safety.ts`
   - function safelyAwaitPortResult: (call) => void
   - function safelyListAvailableModels: (modelRegistry, "getAvailable">) => Result<readonly PiModelInfo[], string>
   - const MODEL_REGISTRY_THREW_REASON
 - `packages/adapters/pi/src/primary-session.ts`
-  - function renderWeavePromptBlock: (descriptor) => string
-  - function appendWeaveBlockOnce: (systemPrompt, descriptor) => string
+  - function renderRequiredSkillsPrompt: (composedPrompt, resolvedSkills) => string
+  - function renderWeavePromptBlock: (descriptor, resolvedSkills) => string
+  - function appendWeaveBlockOnce: (systemPrompt, descriptor, resolvedSkills) => string
   - class PiPrimarySession
   - interface PiPrimaryCapabilityWarning
   - interface PiActivePrimary
-  - interface PiPrimaryActivationContext
-  - _...4 more_
+  - _...5 more_
 - `packages/adapters/pi/src/prompt-chunking.ts`
   - function promptTransferNackReason: (error) => PromptTransferNackReason
   - function encodePromptChunksBounded: (task, transferId) => Result<readonly PromptChunk[], PromptChunkError>
@@ -527,6 +518,11 @@
   - interface PiStartWorkflowInput
   - interface PiResumeWorkflowInput
   - _...2 more_
+- `packages/adapters/pi/src/workflow-task-status.ts`
+  - function renderWorkflowTaskFooter: (input) => string | undefined
+  - interface RenderWorkflowTaskFooterInput
+  - const WEAVE_WORKFLOW_TASK_STATUS_KEY
+  - const WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -1142,34 +1138,14 @@
   - interface WorkflowRunnerInput
   - interface WorkflowRunnerOutput
   - type WorkflowRunnerError
-- `packages/engine/src/session-goal-continuation.ts`
-  - function decideSessionGoalContinuation: (input) => SessionGoalContinuationDecision
-  - interface SessionGoalContinuationInput
-  - type SessionGoalContinuationDecision
-- `packages/engine/src/session-goal-plan.ts`
-  - function countIncompleteLeaves: (parents) => number
-  - function adjudicateSessionGoalCompletion: ({...}, reportedStatus, evidence, }) => Result<
-  - function renderGoalPlanBlock: ({...}, snapshot, }) => string
-  - interface AdjudicateSessionGoalCompletionInput
-  - type SessionGoalReportedStatus
-  - type SessionGoalVerdict
-  - _...1 more_
-- `packages/engine/src/session-goal.ts`
-  - function parseSessionGoalSnapshot: (value) => Result<SessionGoalState | null, SessionGoalError>
-  - function formatDuration: (milliseconds) => string
-  - function formatTokenCount: (tokens) => string
-  - class SessionGoalController
-  - interface SessionGoalState
-  - interface SessionGoalSnapshot
-  - _...6 more_
 - `packages/engine/src/skill-resolution.ts`
-  - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
-  - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
+  - function resolveSkillsForAgent: (input) => Result<SkillResolutionResult, never>
+  - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, CategoryShuttleConflictError>
   - interface SkillInfo
   - interface ResolvedSkill
+  - interface SkillResolutionResult
   - interface SkillResolutionInput
-  - interface SkillResolutionConfigInput
-  - _...2 more_
+  - _...4 more_
 - `packages/engine/src/template-context.ts`
   - function buildTemplateContext: (input) => Result<AgentPromptTemplateContext, TemplateContextError>
   - interface AgentContextEntry
@@ -1453,13 +1429,13 @@
 ## Most Imported Files (change these carefully)
 
 - `packages/cli/src/evals/types.ts` — imported by **39** files
-- `packages/adapters/pi/src/types.ts` — imported by **29** files
+- `packages/adapters/pi/src/types.ts` — imported by **28** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
-- `packages/adapters/pi/src/strict-json.ts` — imported by **20** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **21** files
 - `packages/cli/src/theme/colors.ts` — imported by **20** files
-- `packages/adapters/pi/src/errors.ts` — imported by **19** files
 - `packages/cli/src/io/terminal.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
+- `packages/adapters/pi/src/errors.ts` — imported by **17** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `scripts/release/stable-train.ts` — imported by **16** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
@@ -1471,18 +1447,18 @@
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
 - `scripts/release/clock.ts` — imported by **13** files
-- `packages/cli/src/fs/file-system.ts` — imported by **12** files
+- `packages/adapters/pi/src/child-tree.ts` — imported by **12** files
 
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts` +24 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts` +23 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
-- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-session-checkpoint.test.ts` +15 more
+- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-session-checkpoint.test.ts` +16 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
-- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts`, `packages/adapters/pi/src/__tests__/runtime-store-port.test.ts` +14 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
+- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts` +12 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 - `scripts/release/stable-train.ts` ← `scripts/release/__tests__/artifact-manifest.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts` +11 more
 
@@ -1491,7 +1467,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 255 test files found
+> 252 test files found
 
 ---
 

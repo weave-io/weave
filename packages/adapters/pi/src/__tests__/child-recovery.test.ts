@@ -622,4 +622,45 @@ describe("PiChildRecoveryCoordinator", () => {
     expect(prompts).toBe(1);
     expect(order).toEqual(["z-child", "a-child"]);
   });
+
+  test("does not inject queued recovery into a replacement session", async () => {
+    let current = true;
+    let resolveInjectionCalled!: () => void;
+    const injectionCalled = new Promise<void>((resolve) => {
+      resolveInjectionCalled = resolve;
+    });
+    const sentMessages: string[] = [];
+    const recovery = new PiChildRecoveryCoordinator({
+      history: {
+        list: () => okAsync([record()]),
+        updateRecord: () => okAsync(undefined),
+      },
+      ui: { select: async () => "Recover now", notify: () => undefined },
+      generationId: "generation-1",
+      isGenerationCurrent: () => current,
+      trustedProject: true,
+      recoveryEnabled: true,
+      countdownSeconds: 0,
+      resolveDescriptor: (name) => ({ name, current: true }),
+      spawn: () =>
+        okAsync({ finalOutput: "replacement-safe", interventionCount: 1 }),
+      injectParentContext: (content) => {
+        resolveInjectionCalled();
+        return ResultAsync.fromPromise(
+          Promise.resolve().then(() => {
+            if (!current) throw new Error("stale generation");
+            sentMessages.push(content);
+          }),
+          () => new Error("stale generation"),
+        );
+      },
+    }).recoverByChildId("child-1");
+
+    await injectionCalled;
+    current = false;
+    const result = await recovery;
+
+    expect(result.isErr()).toBe(true);
+    expect(sentMessages).toEqual([]);
+  });
 });

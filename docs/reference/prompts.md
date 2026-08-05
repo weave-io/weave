@@ -86,7 +86,7 @@ interface AgentDescriptor {
 
 interface AgentDescriptorCategory {
   name: string;
-  description?: string;
+  description: string;
   patterns: string[];
 }
 
@@ -103,8 +103,8 @@ interface DelegationTarget {
 | --- | --- |
 | `name` | Stable harness-neutral internal id for the logical agent being composed. |
 | `displayName` | Optional presentation metadata from agent `display_name`; not a stable id. |
-| `description` | Optional agent description passed through from config. |
-| `category` | Optional metadata for generated category shuttles: category name, optional description, and declared patterns only. Omitted for regular agents. |
+| `description` | Optional agent description passed through from config. Treated as routing metadata: it is what delegating orchestrators see for this agent in their delegation tables. |
+| `category` | Optional metadata for generated category shuttles: category name, required non-blank description, and declared patterns only. Omitted for regular agents. |
 | `composedPrompt` | Final prompt text after prompt loading, template rendering, and `prompt_append` composition. |
 | `models` | Ordered model preference intent from config, defaulting to `[]`; availability and selected-model lookup are adapter-owned. |
 | `mode` | Adapter-facing mode hint, defaulting to `"subagent"` when omitted. |
@@ -279,6 +279,13 @@ target name. Scalar lists such as `agent.skills` can render items with `{{.}}`.
 When at least one delegation target survives filtering, the engine populates
 `delegation.targets` in the Template Context. Prompt templates can iterate over
 this list to render routing guidance in any format they choose.
+
+A target's `description` is routing metadata, not branding: it is the text a
+delegating orchestrator reads when deciding where to send work. Write it to say
+what work the agent handles, its key constraints (read-only, write, delegation),
+and when to select it. For generated category shuttles, the required category
+description supplies this text. Generated category shuttles do not inherit the
+base Shuttle's triggers; their category description and patterns provide routing.
 
 Example using a `{{#delegation.targets}}` loop:
 
@@ -499,7 +506,7 @@ allowed-path set applies to both.
 
 Template failures are reported as `ComposeError` with a `PromptTemplateError`
 variant and a nested reason such as malformed syntax, unsupported tag, unknown
-path, unsafe path, function value, section mismatch, or unresolved rendered tag.
+path, unsafe path, or function value.
 
 Template errors include:
 
@@ -520,8 +527,9 @@ Because rendering uses schema-aware strict paths:
 - `{{#category}}...{{/category}}` is valid and falsey for non-category agents
 - `{{agent.__proto__}}` and `{{constructor.name}}` fail as unsafe paths
 
-Rendered output is also checked for unresolved unescaped Mustache tags. Escaped
-literal tags produced from `\{{...}}` are allowed.
+Validation inspects parsed source-template tokens only. Interpolated context
+values are opaque data and are never parsed or rendered a second time, so literal
+text such as `{{agent.name}}` in a category description remains unchanged.
 
 ---
 
@@ -537,21 +545,19 @@ rendering deterministic and testable without disk access.
 
 ---
 
-## Skills Extension Point
+## Skill Loading
 
-`skills` is currently a passthrough field on `AgentDescriptor`.
+`skills` remains a passthrough field on `AgentDescriptor`. Prompt composition
+copies `agentConfig.skills ?? []` so later activation and delegation can resolve
+the declared intent against the active harness catalog.
 
-The current composition phase does **not** resolve, load, or filter skills. It
-simply copies `agentConfig.skills ?? []` onto the descriptor so downstream code
-has a stable place to read declared skill intent.
+Skill discovery and loading are adapter-owned. The adapter passes its catalog to
+the engine matcher, reports missing requested names as warnings, and asks the
+harness to load the available requested names before the agent starts work.
+Missing names do not block activation or delegation. Disabled names are omitted
+without a warning.
 
-This is an intentional extension point for issue #12. The planned direction is:
-
-- skill discovery/loading remains adapter-owned
-- skill matching/filtering remains engine-owned
-- resolved skills will become an additional composition phase before delegation
-
-That future work must continue to respect the ownership rules in
+This flow must respect the ownership rules in
 [Adapter Boundary](../architecture/adapter-boundary.md).
 
 ---
@@ -618,9 +624,7 @@ type ComposeError =
         | { kind: "UnsupportedTag"; tag: string; message: string }
         | { kind: "UnknownPath"; path: string; message: string }
         | { kind: "UnsafePath"; path: string; message: string }
-        | { kind: "FunctionValue"; path: string; message: string }
-        | { kind: "SectionMismatch"; message: string }
-        | { kind: "UnresolvedTag"; tag: string; message: string };
+        | { kind: "FunctionValue"; path: string; message: string };
     }
   | {
       type: "TemplateContextBuildError";
@@ -642,10 +646,11 @@ read failure (`cause instanceof Error ? cause.message : String(cause)`).
 
 ### `PromptTemplateError`
 
-Returned when Mustache parsing, strict path validation, unsupported-feature
-validation, rendering, or rendered-output checks fail. The error identifies the
+Returned when Mustache parsing, strict source-path validation,
+unsupported-feature validation, or rendering fails. The error identifies the
 logical source (`prompt`, `prompt_file`, `prompt_append`, or `prompt_append_file`)
-and maps library or wrapper failures into a typed nested reason.
+and maps library or wrapper failures into a typed nested reason. Rendered output
+is not rescanned because interpolated values are opaque data.
 
 Because composition returns `ResultAsync`, callers can compose prompt loading
 with the rest of the engine pipeline without `try/catch` control flow.
@@ -657,7 +662,7 @@ with the rest of the engine pipeline without `try/catch` control flow.
 | File | Contents |
 | --- | --- |
 | [`packages/engine/src/compose.ts`](../../packages/engine/src/compose.ts) | `AgentDescriptor`, `DelegationTarget`, `ComposeError`, `composeAgentDescriptor()`, `composeWorkflowStepPrompt()`, `detectAppendCollisions()`, `AppendCollision`, `AppendScope`, `WorkflowStepComposedPrompt` |
-| `packages/engine/src/template-renderer.ts` | Mustache wrapper, parse/render helpers, reference extraction, unsupported-feature and unresolved-tag checks |
+| `packages/engine/src/template-renderer.ts` | Mustache wrapper, parse/render helpers, reference extraction, and source-token validation |
 | `packages/engine/src/template-context.ts` | Agent prompt Template Context types, `ALLOWED_TEMPLATE_PATHS`, delegation target projection |
 | [`packages/engine/src/run-agent-effects.ts`](../../packages/engine/src/run-agent-effects.ts) | `RunAgentEffect` carrying the composed descriptor |
 | [`packages/engine/src/tool-policy.ts`](../../packages/engine/src/tool-policy.ts) | `evaluateEffectiveToolPolicy()` and `EffectiveToolPolicy` |

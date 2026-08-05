@@ -67,11 +67,22 @@
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/pi/src/active-plan-ui-state.ts`
+  - function isTerminalWorkflowStatus: (status) => boolean
+  - function resolveActivePlanIdentity: (port) => ResultAsync<ActivePlanIdentity | ActivePlanEmptyReason, ActivePlanUiError>
+  - function resolveActivePlanView: (port) => ResultAsync<ActivePlanView, ActivePlanUiError>
+  - function createActivePlanUiState: () => ActivePlanUiState
+  - interface ActivePlanIdentity
+  - interface ActivePlanUiError
+  - _...7 more_
 - `packages/adapters/pi/src/agent-cycle.ts`
+  - function normalizeAgentBadgeKey: (agentName) => string
+  - function selectAgentBadgeBg: (agentName) => PiUiThemeBgColor
   - function listCycleablePrimaryAgents: (descriptors, AgentDescriptor>) => readonly AgentDescriptor[]
   - function nextCycleablePrimaryAgent: (descriptors, AgentDescriptor>, currentName) => AgentDescriptor | undefined
   - function renderActiveAgentBadge: (agentName, theme?) => string
   - const PI_PRIMARY_AGENT_CYCLE_SHORTCUT
+  - _...1 more_
 - `packages/adapters/pi/src/artifact-provider.ts`
   - function createPiSanitizedChildIndex: (entries) => Result<PiSanitizedChildIndex, PiSanitizedChildIndexError>
   - class PiSanitizedChildIndexExporter
@@ -188,6 +199,7 @@
   - interface PiInspectorViewState
   - interface PiInspectorView
   - _...7 more_
+- `packages/adapters/pi/src/child-native-components.ts` — function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory, interface PiNativeTranscriptComponentDeps
 - `packages/adapters/pi/src/child-picker.ts`
   - function buildChildPickerEntries: (input) => Result<readonly PiChildPickerEntry[], PiChildPickerError>
   - function sanitizeChildPickerPreview: (value) => string
@@ -251,7 +263,7 @@
   - function renderPiChildTranscript: (state, width, input?) => PiChildTranscriptRender
   - function renderPiChildTranscriptRows: (state, width, input?) => readonly PiChildTranscriptRenderedRow[]
   - function renderPiChildTranscriptLines: (state, width, input?) => string[]
-  - _...45 more_
+  - _...46 more_
 - `packages/adapters/pi/src/child-transfer.ts`
   - function encodeTransferChunks: (payload, transferId, overrides?) => Result<readonly TransferChunk[], TransferEncodeError>
   - class ChunkTransferAssembler
@@ -278,12 +290,12 @@
   - _...15 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
-  - function classifyWeaveGoalInvocation: (parsed) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
   - function isOwnSourceInfo: (sourceInfo) => boolean
   - type WeaveCommandName
   - type WeaveCommandClassification
-  - _...6 more_
+  - const WEAVE_INSPECT_COMMAND_NAME
+  - _...5 more_
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -342,42 +354,13 @@
   - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
   - _...70 more_
 - `packages/adapters/pi/src/extension.ts`
+  - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
-  - function buildChildBootstrapBody: (descriptorsByName, AgentDescriptor>, target, childId, context, ctx?) => JsonValue
-  - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
-  - interface PiSharedLogRedirector
-  - interface PiExtensionDeps
-  - const PI_SHARED_LOG_PATH
-- `packages/adapters/pi/src/goal-args.ts` — function parseWeaveGoalArgs: (raw) => WeaveGoalArgs, type WeaveGoalArgs
-- `packages/adapters/pi/src/goal-commands.ts`
-  - function handleWeaveGoal: (rawArgs, ui, deps) => Promise<void>
-  - interface WeaveGoalFooterPort
-  - interface WeaveGoalCommandPiPort
-  - interface WeaveGoalCommandDependencies
-- `packages/adapters/pi/src/goal-footer-controller.ts`
-  - class PiGoalFooterController
-  - interface PiGoalFooterCache
-  - interface PiGoalFooterTimerHandle
-  - interface PiGoalFooterTimerPort
-  - interface PiGoalFooterControllerDependencies
-  - const GOAL_FOOTER_REFRESH_INTERVAL_MS
-- `packages/adapters/pi/src/goal-plan-resolver.ts` — function resolveGoalPlan: ({...}, catalog, projectRoot, readSnapshot, }) => ResultAsync<PlanTaskSnapshot, PiAdapterFailure>, interface ResolveGoalPlanInput
-- `packages/adapters/pi/src/goal-session.ts`
-  - function persistGoalState: (pi, controller, "serialize">) => void
-  - function restoreGoalState: (ctx, controller, "restore">) => Result<void, SessionGoalError>
-  - const WEAVE_GOAL_STATE_ENTRY_TYPE
-- `packages/adapters/pi/src/goal-status.ts`
-  - function renderGoalFooter: (input) => string | undefined
-  - interface RenderGoalFooterInput
-  - const WEAVE_GOAL_STATUS_KEY
-  - const WEAVE_GOAL_STATUS_MAX_WIDTH
-- `packages/adapters/pi/src/goal-tool.ts`
-  - function syncWeaveGoalReportToolAvailability: (pi, "getActiveTools" | "setActiveTools">, controller, "isPursuing">) => void
-  - function buildWeaveGoalReportToolRegistration: (deps) => WeaveGoalReportToolRegistration
-  - function registerWeaveGoalReportTool: (deps) => void
-  - interface WeaveGoalReportToolDependencies
-  - type WeaveGoalReportToolRegistration
-  - const WEAVE_GOAL_REPORT_TOOL_NAME
+  - function resolveAgentRuntimeMeta: (descriptorsByName, AgentDescriptor>, agentName, ctx?) => void
+  - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
+  - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
+  - function buildChildBootstrapBody: (descriptorsByName, AgentDescriptor>, target, childId, context, ctx?, prepareComposedPrompt?) => void
+  - _...7 more_
 - `packages/adapters/pi/src/host-compatibility-matrix.ts`
   - function validateHostCompatibilityMatrix: (matrix) => Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>
   - interface PiHostSurfaceDeclaration
@@ -424,18 +407,26 @@
   - interface PiPlanCatalogPort
 - `packages/adapters/pi/src/plan-provider.ts` — function createPiPlanStateProvider: (projectRoot) => PlanStateProvider, const PI_PLAN_COORDINATOR_AGENT
 - `packages/adapters/pi/src/plan-render.ts` — function renderPlanWidgetLines: (snapshot) => string[]
+- `packages/adapters/pi/src/plan-task-list.ts`
+  - function planTaskListVisibleRows: (rows) => number
+  - function planTaskListRowBudget: (terminalRows) => number
+  - function planTaskListMaxScroll: (taskCount, rows) => number
+  - function planTaskListOffsetForIndex: (index, taskCount, rows) => number
+  - function renderPlanTaskListLines: (input) => string[]
+  - function createPlanTaskListComponent: (input) => PlanTaskListComponent
+  - _...8 more_
 - `packages/adapters/pi/src/port-safety.ts`
   - function safelyAwaitPortResult: (call) => void
   - function safelyListAvailableModels: (modelRegistry, "getAvailable">) => Result<readonly PiModelInfo[], string>
   - const MODEL_REGISTRY_THREW_REASON
 - `packages/adapters/pi/src/primary-session.ts`
-  - function renderWeavePromptBlock: (descriptor) => string
-  - function appendWeaveBlockOnce: (systemPrompt, descriptor) => string
+  - function renderRequiredSkillsPrompt: (composedPrompt, resolvedSkills) => string
+  - function renderWeavePromptBlock: (descriptor, resolvedSkills) => string
+  - function appendWeaveBlockOnce: (systemPrompt, descriptor, resolvedSkills) => string
   - class PiPrimarySession
   - interface PiPrimaryCapabilityWarning
   - interface PiActivePrimary
-  - interface PiPrimaryActivationContext
-  - _...4 more_
+  - _...5 more_
 - `packages/adapters/pi/src/prompt-chunking.ts`
   - function promptTransferNackReason: (error) => PromptTransferNackReason
   - function encodePromptChunksBounded: (task, transferId) => Result<readonly PromptChunk[], PromptChunkError>
@@ -516,6 +507,11 @@
   - interface PiStartWorkflowInput
   - interface PiResumeWorkflowInput
   - _...2 more_
+- `packages/adapters/pi/src/workflow-task-status.ts`
+  - function renderWorkflowTaskFooter: (input) => string | undefined
+  - interface RenderWorkflowTaskFooterInput
+  - const WEAVE_WORKFLOW_TASK_STATUS_KEY
+  - const WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -1131,34 +1127,14 @@
   - interface WorkflowRunnerInput
   - interface WorkflowRunnerOutput
   - type WorkflowRunnerError
-- `packages/engine/src/session-goal-continuation.ts`
-  - function decideSessionGoalContinuation: (input) => SessionGoalContinuationDecision
-  - interface SessionGoalContinuationInput
-  - type SessionGoalContinuationDecision
-- `packages/engine/src/session-goal-plan.ts`
-  - function countIncompleteLeaves: (parents) => number
-  - function adjudicateSessionGoalCompletion: ({...}, reportedStatus, evidence, }) => Result<
-  - function renderGoalPlanBlock: ({...}, snapshot, }) => string
-  - interface AdjudicateSessionGoalCompletionInput
-  - type SessionGoalReportedStatus
-  - type SessionGoalVerdict
-  - _...1 more_
-- `packages/engine/src/session-goal.ts`
-  - function parseSessionGoalSnapshot: (value) => Result<SessionGoalState | null, SessionGoalError>
-  - function formatDuration: (milliseconds) => string
-  - function formatTokenCount: (tokens) => string
-  - class SessionGoalController
-  - interface SessionGoalState
-  - interface SessionGoalSnapshot
-  - _...6 more_
 - `packages/engine/src/skill-resolution.ts`
-  - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
-  - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
+  - function resolveSkillsForAgent: (input) => Result<SkillResolutionResult, never>
+  - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, CategoryShuttleConflictError>
   - interface SkillInfo
   - interface ResolvedSkill
+  - interface SkillResolutionResult
   - interface SkillResolutionInput
-  - interface SkillResolutionConfigInput
-  - _...2 more_
+  - _...4 more_
 - `packages/engine/src/template-context.ts`
   - function buildTemplateContext: (input) => Result<AgentPromptTemplateContext, TemplateContextError>
   - interface AgentContextEntry

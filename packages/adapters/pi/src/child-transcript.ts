@@ -1076,6 +1076,46 @@ export type PiTranscriptComponentKind =
   | "unknown";
 
 /**
+ * Structured, entry-shaped data for an injected native component. Native Pi
+ * components need the transcript fact itself, not the fallback renderer's
+ * prose, so every request carries the normalized payload for its kind.
+ */
+export type PiTranscriptComponentPayload =
+  | { readonly type: "text"; readonly text: string }
+  | {
+      readonly type: "assistant";
+      readonly text: string;
+      readonly thinking: string;
+      readonly markdown: string;
+      readonly streaming: boolean;
+      readonly stopReason?: string;
+    }
+  | {
+      readonly type: "tool";
+      readonly toolName: string;
+      readonly toolCallId: string;
+      readonly state: PiChildTranscriptToolEntry["state"];
+      readonly knownTool: boolean;
+      readonly argumentsKnown: boolean;
+      readonly arguments?: unknown;
+      readonly partialResults: readonly unknown[];
+      readonly result?: unknown;
+      readonly error?: string;
+    }
+  | { readonly type: "usage"; readonly usage: PiChildTranscriptUsage }
+  | { readonly type: "queue"; readonly size: number }
+  | {
+      readonly type: "status";
+      readonly status: string;
+      readonly message?: string;
+    }
+  | {
+      readonly type: "retry";
+      readonly attempt?: number;
+      readonly reason?: string;
+    };
+
+/**
  * Sanitized input for an injected native component. Image bytes and extension
  * UI payloads are deliberately not representable in this port.
  */
@@ -1085,6 +1125,7 @@ export interface PiTranscriptComponentRequest {
   readonly factId: string;
   readonly sequence: number;
   readonly content: string;
+  readonly payload?: PiTranscriptComponentPayload;
   readonly streaming?: boolean;
   readonly toolName?: string;
   readonly knownToolDefinition?: unknown;
@@ -1105,6 +1146,12 @@ export interface PiTranscriptComponentRequest {
 /** Injected Pi native component factory; it has no dependency on Pi internals. */
 export interface PiTranscriptComponentFactory {
   create(request: PiTranscriptComponentRequest): PiTranscriptComponent;
+  /**
+   * Optional row filter. A factory returns `true` to drop a transcript fact
+   * from the render entirely, which lets a harness view hide bookkeeping rows
+   * the native harness never shows.
+   */
+  suppress?(request: PiTranscriptComponentRequest): boolean;
 }
 
 export interface PiTranscriptRenderOptions {
@@ -1740,18 +1787,72 @@ function componentKindFor(
   return entry.kind === "thinking" ? "thinking" : "assistant";
 }
 
+function payloadFor(
+  entry: PiChildTranscriptEntry | undefined,
+): PiTranscriptComponentPayload | undefined {
+  if (entry === undefined) return undefined;
+  switch (entry.kind) {
+    case "task":
+    case "steering":
+    case "follow_up":
+      return { type: "text", text: boundedTranscriptText(entry.text) };
+    case "assistant":
+      return {
+        type: "assistant",
+        text: boundedTranscriptText(entry.text),
+        thinking: boundedTranscriptText(entry.thinking),
+        markdown: boundedTranscriptText(entry.markdown),
+        streaming: entry.streaming,
+        stopReason: entry.stopReason,
+      };
+    case "text":
+    case "thinking":
+    case "markdown":
+      return { type: "text", text: boundedTranscriptText(entry.text) };
+    case "tool":
+      return {
+        type: "tool",
+        toolName: entry.toolName,
+        toolCallId: entry.toolCallId,
+        state: entry.state,
+        knownTool: entry.knownTool,
+        argumentsKnown: entry.argumentsKnown,
+        arguments: entry.arguments,
+        partialResults: entry.partialResults,
+        result: entry.result,
+        error: entry.error,
+      };
+    case "usage":
+      return { type: "usage", usage: entry.usage };
+    case "queue":
+      return { type: "queue", size: entry.size };
+    case "status":
+      return {
+        type: "status",
+        status: entry.status,
+        message: entry.message,
+      };
+    case "retry":
+      return { type: "retry", attempt: entry.attempt, reason: entry.reason };
+    default:
+      return undefined;
+  }
+}
+
 function requestFor(
   rowItem: PiChildTranscriptRenderedRow,
   entry: PiChildTranscriptEntry | undefined,
   options: PiTranscriptRenderOptions,
   normalizedRow = rowItem,
 ): PiTranscriptComponentRequest {
+  const kind = componentKindFor(rowItem, entry);
   const request: PiTranscriptComponentRequest = {
-    kind: componentKindFor(rowItem, entry),
+    kind,
     entryId: rowItem.entryId,
     factId: rowItem.factId,
     sequence: rowItem.sequence,
-    content: normalizedRow.lines.join("\\n"),
+    content: normalizedRow.lines.join("\n"),
+    payload: payloadFor(entry),
     streaming: entry?.kind === "assistant" ? entry.streaming : undefined,
     toolName: entry?.kind === "tool" ? entry.toolName : undefined,
     knownToolDefinition: toolDefinitionFor(entry, options.toolDefinitions),
@@ -1779,6 +1880,19 @@ function requestFor(
   return request;
 }
 
+function samePayload(
+  left: PiTranscriptComponentPayload | undefined,
+  right: PiTranscriptComponentPayload | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  if (left.type !== right.type) return false;
+  return Result.fromThrowable(
+    () => JSON.stringify(left) === JSON.stringify(right),
+    () => "payload_compare_failed",
+  )().unwrapOr(false);
+}
+
 function sameComponentRequest(
   left: PiTranscriptComponentRequest,
   right: PiTranscriptComponentRequest,
@@ -1793,6 +1907,7 @@ function sameComponentRequest(
     left.toolName === right.toolName &&
     Object.is(left.knownToolDefinition, right.knownToolDefinition) &&
     Object.is(left.theme, right.theme) &&
+    samePayload(left.payload, right.payload) &&
     JSON.stringify(left.imageMetadata) ===
       JSON.stringify(right.imageMetadata) &&
     JSON.stringify(left.extensionUiMetadata) ===
@@ -1808,6 +1923,17 @@ function safeInvalidate(component: PiTranscriptComponent): void {
     () => undefined,
     () => undefined,
   );
+}
+
+function safeSuppress(
+  factory: PiTranscriptComponentFactory,
+  request: PiTranscriptComponentRequest,
+): boolean {
+  if (typeof factory.suppress !== "function") return false;
+  return Result.fromThrowable(
+    () => factory.suppress?.(request) === true,
+    () => "component_suppress_failed",
+  )().unwrapOr(false);
 }
 
 function safeCreateComponent(
@@ -1827,6 +1953,90 @@ function safeCreateComponent(
   );
 }
 
+/**
+ * Bounds a native component's own line without touching its styling. Native
+ * components come from the harness's trusted UI code, already wrapped to the
+ * requested width, so stripping their ANSI would erase Pi's colors.
+ */
+/**
+ * Clips a styled line to the visible width without dropping its escape
+ * sequences. Native components pad to the width they are given, but a long
+ * tool path or result line can still overflow, and an overflowing line wraps
+ * and shears the rows below it.
+ */
+function clipNativeLine(value: string, width: number): string {
+  if (width <= 0) return "";
+  let visible = 0;
+  let styled = false;
+  let out = "";
+  const chars = [...value];
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index] as string;
+    if (char === "\u001b") {
+      styled = true;
+      const next = chars[index + 1];
+      if (next === "]") {
+        // OSC: terminated by BEL or ST, and costs no visible columns.
+        out += char;
+        index += 1;
+        while (index < chars.length) {
+          const current = chars[index] as string;
+          out += current;
+          if (current === "\u0007") break;
+          if (
+            current === "\u001b" &&
+            chars[index + 1] === "\\" &&
+            index + 1 < chars.length
+          ) {
+            out += "\\";
+            index += 1;
+            break;
+          }
+          index += 1;
+        }
+        continue;
+      }
+      if (next === "[") {
+        out += char;
+        out += next;
+        index += 1;
+        while (index + 1 < chars.length) {
+          const current = chars[index + 1] as string;
+          out += current;
+          index += 1;
+          if (/[@-~]/.test(current)) break;
+        }
+        continue;
+      }
+      // Any other escape: copy the introducer and its single final byte.
+      out += char;
+      if (next !== undefined) {
+        out += next;
+        index += 1;
+      }
+      continue;
+    }
+    const cost = codePointWidth(char.codePointAt(0) ?? 0);
+    if (visible + cost > width) return styled ? `${out}\u001b[0m` : out;
+    visible += cost;
+    out += char;
+  }
+  return out;
+}
+
+function boundedNativeLines(value: string, width: number): string[] {
+  const lines: string[] = [];
+  for (const part of value.replace(/\r\n?/g, "\n").split("\n")) {
+    const codePoints = [...part];
+    const bounded =
+      codePoints.length <= MAX_PI_TRANSCRIPT_RENDER_STRING
+        ? part
+        : `${codePoints.slice(0, MAX_PI_TRANSCRIPT_RENDER_STRING - 1).join("")}\u2026`;
+    lines.push(clipNativeLine(bounded, width));
+  }
+  return lines;
+}
+
 function safeRenderComponent(
   component: PiTranscriptComponent,
   width: number,
@@ -1841,7 +2051,7 @@ function safeRenderComponent(
       const bounded: string[] = [];
       for (const line of lines) {
         if (typeof line !== "string") continue;
-        bounded.push(...wrapTranscriptText(line, width));
+        bounded.push(...boundedNativeLines(line, width));
         if (bounded.length >= MAX_PI_TRANSCRIPT_RENDER_LINES) break;
       }
       return bounded.length > 0
@@ -1901,6 +2111,13 @@ export class PiChildTranscriptRenderer {
         options,
         normalizedRows.get(rowItem.id),
       );
+      if (safeSuppress(factory, request)) {
+        const suppressed = entryFacts.get(rowItem.factId);
+        if (suppressed?.component !== undefined)
+          safeInvalidate(suppressed.component);
+        entryFacts.delete(rowItem.factId);
+        continue;
+      }
       const cached = entryFacts.get(rowItem.factId);
       let component = cached?.component;
       if (

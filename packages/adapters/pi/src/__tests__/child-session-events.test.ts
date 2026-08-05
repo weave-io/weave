@@ -44,6 +44,99 @@ describe("Pi child session event protocol", () => {
     }
   });
 
+  it("normalizes Pi native tool execution events", () => {
+    const started = parsePiChildSessionEvent({
+      type: "tool_execution_start",
+      toolCallId: "call-1",
+      toolName: "read",
+      args: { path: "README.md" },
+    });
+    expect(started.success).toBe(true);
+    if (started.success) {
+      expect(started.data).toEqual({
+        type: "tool_call",
+        toolCallId: "call-1",
+        toolName: "read",
+        arguments: { path: "README.md" },
+      });
+    }
+
+    const updated = parsePiChildSessionEvent({
+      type: "tool_execution_update",
+      toolCallId: "call-1",
+      toolName: "read",
+      partialResult: { content: [{ type: "text", text: "partial" }] },
+    });
+    expect(updated.success).toBe(true);
+    if (updated.success) {
+      expect(updated.data).toEqual({
+        type: "tool_partial_result",
+        toolCallId: "call-1",
+        toolName: "read",
+        partialResult: { content: [{ type: "text", text: "partial" }] },
+      });
+    }
+
+    const completed = parsePiChildSessionEvent({
+      type: "tool_execution_end",
+      toolCallId: "call-1",
+      toolName: "read",
+      result: { content: [{ type: "text", text: "done" }] },
+      isError: false,
+    });
+    expect(completed.success).toBe(true);
+    if (completed.success) {
+      expect(completed.data).toEqual({
+        type: "tool_result",
+        toolCallId: "call-1",
+        toolName: "read",
+        result: { content: [{ type: "text", text: "done" }] },
+      });
+    }
+
+    const failed = parsePiChildSessionEvent({
+      type: "tool_execution_end",
+      toolCallId: "call-2",
+      toolName: "bash",
+      result: "command failed",
+      isError: true,
+    });
+    expect(failed.success).toBe(true);
+    if (failed.success) {
+      expect(failed.data).toEqual({
+        type: "tool_error",
+        toolCallId: "call-2",
+        toolName: "bash",
+        error: "command failed",
+      });
+    }
+  });
+
+  it("bounds oversized Pi native tool results without losing their event kind", () => {
+    const parsed = parsePiChildSessionEvent({
+      type: "tool_execution_end",
+      toolCallId: "call-large",
+      toolName: "read",
+      result: {
+        content: [{ type: "text", text: "x".repeat(20_000) }],
+      },
+      isError: false,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe("tool_result");
+      expect(parsed.data).toEqual({
+        type: "tool_result",
+        toolCallId: "call-large",
+        toolName: "read",
+        result: {
+          content: [{ type: "text", text: "x".repeat(16_384) }],
+        },
+      });
+    }
+  });
+
   it("preserves unknown kinds as a bounded unknown variant", () => {
     const parsed = parsePiChildSessionEvent({
       type: "future_event",

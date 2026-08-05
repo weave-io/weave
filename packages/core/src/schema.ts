@@ -7,8 +7,8 @@
 
 import { z } from "zod";
 import {
-  THINKING_LEVEL_VALUES,
   parseModelIntentEntry,
+  THINKING_LEVEL_VALUES,
 } from "./model-thinking-syntax.js";
 import {
   refinePromptAppendExclusive,
@@ -21,6 +21,19 @@ import {
 // ---------------------------------------------------------------------------
 
 export const ToolPermissionSchema = z.enum(["allow", "deny", "ask"]);
+
+/**
+ * A required string that must carry actual content.
+ *
+ * Rejects both `""` and whitespace-only values with `message`, while preserving
+ * the author's original value verbatim — no trimming, so surrounding
+ * formatting the author chose survives into the typed config.
+ */
+function NonBlankStringSchema(message: string) {
+  return z
+    .string({ error: message })
+    .refine((value) => value.trim().length > 0, { message });
+}
 
 /** Closed, harness-neutral vocabulary for per-model thinking intent. */
 export const ThinkingLevelSchema = z.enum(THINKING_LEVEL_VALUES);
@@ -159,10 +172,18 @@ export const AgentConfigSchema = z
 // Category
 // ---------------------------------------------------------------------------
 
+/**
+ * A routing category. Each category generates a `shuttle-<name>` subagent, so
+ * the `description` is required: it is the routing text delegators read when
+ * choosing between generated shuttles. Without it a generated shuttle would
+ * advertise the generic Shuttle description, which contradicts its domain.
+ */
 export const CategoryConfigSchema = z
   .object({
     name: z.string().optional(),
-    description: z.string().optional(),
+    description: NonBlankStringSchema(
+      "category description must be a non-empty string",
+    ),
     patterns: z
       .array(z.string())
       .min(1, "patterns must have at least one entry"),

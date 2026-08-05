@@ -513,6 +513,29 @@ describe("PiChildInspectionRegistry persistence", () => {
     store.close();
   });
 
+  it("notifies a transcript listener so a live inspection view can repaint", async () => {
+    const registry = new PiChildInspectionRegistry();
+    await registry.register({
+      id: "child",
+      parentId: ROOT_NODE_ID,
+      name: "child",
+      kind: "ordinary",
+      snapshot: () => node({ id: "child" }),
+    });
+    const seen: string[] = [];
+    registry.onTranscriptUpdate((childId) => seen.push(childId));
+    await registry.checkpointEvent("child", { type: "text", text: "one" });
+    await registry.checkpointEvent("missing", { type: "text", text: "skip" });
+    registry.onTranscriptUpdate(undefined);
+    await registry.checkpointEvent("child", { type: "text", text: "two" });
+    await registry.drain();
+
+    expect(seen).toEqual(["child"]);
+    expect(registry.getTranscriptState("child").entries.length).toBeGreaterThan(
+      1,
+    );
+  });
+
   it("keeps intermediate latestOutput out of finalOutput and persists terminal output", async () => {
     const now = () => 30;
     const { fs, store } = await openTestHistory(now);

@@ -3,9 +3,14 @@ import { parseConfig } from "../parse-config.js";
 
 describe("parseConfig — opaque adapter settings", () => {
   it("round-trips null and nested JSON values", () => {
-    const result = parseConfig(`settings { adapters { test { value null nested { ok true } } } }`);
+    const result = parseConfig(
+      `settings { adapters { test { value null nested { ok true } } } }`,
+    );
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().settings.adapters?.test).toEqual({ value: null, nested: { ok: true } });
+    expect(result._unsafeUnwrap().settings.adapters?.test).toEqual({
+      value: null,
+      nested: { ok: true },
+    });
   });
 });
 
@@ -16,6 +21,7 @@ describe("parseConfig — model thinking suffix", () => {
   review_models ["plain-review", "review/model#low", "review\\#model"]
 }
 category backend {
+  description "Backend services and persistence"
   patterns ["src/**"]
   models ["plain-category", "category/model#max", "category\\#model"]
 }`);
@@ -44,6 +50,7 @@ category backend {
   review_models ["plain-review", "review/model#bad"]
 }
 category backend {
+  description "Backend services and persistence"
   patterns ["src/**"]
   models ["plain-category", "category/model#invalid"]
 }`);
@@ -265,6 +272,72 @@ describe("parseConfig — validation errors", () => {
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
     expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+});
+
+describe("parseConfig — category description", () => {
+  it("a described category survives the full pipeline", () => {
+    const src = `category backend {
+  description "Backend services, APIs, and persistence"
+  patterns ["src/api/**"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().categories.backend?.description).toBe(
+      "Backend services, APIs, and persistence",
+    );
+  });
+
+  it("a category with no description → ValidationError at categories.<name>.description", () => {
+    const src = `category backend {
+  patterns ["src/api/**"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "ValidationError",
+          path: "categories.backend.description",
+        }),
+      ]),
+    );
+  });
+
+  it("an empty category description → ValidationError with the non-empty message", () => {
+    const src = `category backend {
+  description ""
+  patterns ["src/api/**"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "ValidationError",
+          path: "categories.backend.description",
+          message: "category description must be a non-empty string",
+        }),
+      ]),
+    );
+  });
+
+  it("a whitespace-only category description → ValidationError with the non-empty message", () => {
+    const src = `category backend {
+  description "   "
+  patterns ["src/api/**"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "ValidationError",
+          path: "categories.backend.description",
+          message: "category description must be a non-empty string",
+        }),
+      ]),
+    );
   });
 });
 
@@ -620,6 +693,7 @@ describe("parseConfig — workflows", () => {
 }
 
 category backend {
+  description "Backend API surface"
   patterns ["src/api/**"]
 }
 

@@ -1,8 +1,4 @@
-import {
-  errAsync,
-  okAsync,
-  type ResultAsync,
-} from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type {
   ChildProcessError,
   PiChildProcessPort,
@@ -31,10 +27,15 @@ export class FakeSpawnedProcess implements PiSpawnedChildProcess {
   private exitResolve: ((code: number | null) => void) | undefined;
   readonly exited: Promise<number | null>;
   private nextWriteError: ChildProcessError | undefined;
+  private resolveWriteCalled!: () => void;
+  readonly writeCalled: Promise<void>;
 
   constructor() {
     this.exited = new Promise((resolve) => {
       this.exitResolve = resolve;
+    });
+    this.writeCalled = new Promise((resolve) => {
+      this.resolveWriteCalled = resolve;
     });
   }
 
@@ -71,6 +72,7 @@ export class FakeSpawnedProcess implements PiSpawnedChildProcess {
       return errAsync(error);
     }
     this.writtenChunks.push(bytes);
+    this.resolveWriteCalled();
     return okAsync(undefined);
   }
 
@@ -123,6 +125,22 @@ export class FakeChildProcessPort implements PiChildProcessPort {
   readonly spawnedProcesses: FakeSpawnedProcess[] = [];
   readonly spawnInputs: PiChildSpawnInput[] = [];
   private nextSpawnError: ChildProcessError | undefined;
+  private readonly spawnResolvers: ((process: FakeSpawnedProcess) => void)[] =
+    [];
+  readonly spawnCalled: Promise<FakeSpawnedProcess>;
+  readonly spawnPromises: Promise<FakeSpawnedProcess>[] = [];
+
+  constructor() {
+    this.spawnCalled = this.createSpawnPromise();
+  }
+
+  private createSpawnPromise(): Promise<FakeSpawnedProcess> {
+    const promise = new Promise<FakeSpawnedProcess>((resolve) => {
+      this.spawnResolvers.push(resolve);
+    });
+    this.spawnPromises.push(promise);
+    return promise;
+  }
 
   failNextSpawn(error: ChildProcessError): void {
     this.nextSpawnError = error;
@@ -139,6 +157,8 @@ export class FakeChildProcessPort implements PiChildProcessPort {
     }
     const process = new FakeSpawnedProcess();
     this.spawnedProcesses.push(process);
+    this.spawnResolvers.shift()?.(process);
+    this.createSpawnPromise();
     return okAsync(process);
   }
 }

@@ -102,6 +102,14 @@ export interface PiDelegationToolDeps {
     parentAgentName: string,
   ) => JsonValue;
   readonly buildEnv: () => Record<string, string>;
+  /**
+   * Names the model and reasoning level the target agent will run with, so the
+   * tool call can show them before the child exists.
+   */
+  readonly resolveAgentRuntime?: (agentName: string) => {
+    readonly model?: string;
+    readonly reasoningLevel?: string;
+  };
 }
 
 interface PiDelegationRenderDetails {
@@ -275,6 +283,9 @@ function renderStatus(
 
 const COLLAPSED_PREVIEW_CODE_POINT_LIMIT = 240;
 
+/** Width of the rule that separates the delegation call line from its output. */
+const DELEGATION_RULE_WIDTH = 50;
+
 function collapsedPreview(output: string): string {
   const normalized = output.replace(/\s+/gu, " ").trim();
   const codePoints = Array.from(normalized);
@@ -390,7 +401,16 @@ export function buildDelegationToolRegistration(
     renderCall: (args, theme) => {
       const agent = typeof args.agent === "string" ? args.agent : "delegate";
       const displayName = formatDelegationAgentName(agent);
-      return new Text(theme.fg("toolTitle", theme.bold(displayName)), 0, 0);
+      const runtime = deps.resolveAgentRuntime?.(agent) ?? {};
+      const suffix = [runtime.model, runtime.reasoningLevel]
+        .filter((part): part is string => part !== undefined && part !== "")
+        .join(" ");
+      const title = theme.fg("toolTitle", theme.bold(displayName));
+      return new Text(
+        suffix === "" ? title : `${title} ${theme.fg("muted", suffix)}`,
+        0,
+        0,
+      );
     },
     renderResult: (result, options, theme, context) => {
       const details = readRenderDetails(result.details);
@@ -399,21 +419,30 @@ export function buildDelegationToolRegistration(
         (typeof context.args?.agent === "string"
           ? context.args.agent
           : "delegate");
-      const displayName =
-        details?.displayName ?? formatDelegationAgentName(agent);
       if (details === undefined) {
         const fallback = result.content[0]?.text ?? "";
-        return new Text(theme.fg("toolOutput", fallback), 0, 0);
+        return new Text(
+          theme.fg(
+            "toolOutput",
+            fallback === "" ? formatDelegationAgentName(agent) : fallback,
+          ),
+          0,
+          0,
+        );
       }
-      const heading = `${theme.fg("toolTitle", theme.bold(displayName))} ${renderStatus(details, theme)}`;
-      if (details.latestOutput.length === 0) {
-        return new Text(heading, 0, 0);
-      }
-      const output = options.expanded
-        ? details.latestOutput
-        : collapsedPreview(details.latestOutput);
-      if (output.length === 0) return new Text(heading, 0, 0);
-      return new Text(`${heading}\n${theme.fg("toolOutput", output)}`, 0, 0);
+      // The call line already names the agent, model, and reasoning level, so
+      // the result body is a rule and the child's latest thought.
+      const rule = theme.fg("muted", "\u2500".repeat(DELEGATION_RULE_WIDTH));
+      const body =
+        details.latestOutput.length === 0
+          ? renderStatus(details, theme)
+          : theme.fg(
+              "toolOutput",
+              options.expanded
+                ? details.latestOutput
+                : collapsedPreview(details.latestOutput),
+            );
+      return new Text(`${rule}\n${body}`, 0, 0);
     },
     execute: async (_toolCallId, params, signal, onUpdate, ctx) => {
       const parsed = parseDelegationCall(params);

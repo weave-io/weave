@@ -1,8 +1,4 @@
-import type {
-  ResolvedSkill,
-  SkillInfo,
-  SkillResolutionError,
-} from "@weaveio/weave-engine";
+import type { SkillInfo, SkillResolutionResult } from "@weaveio/weave-engine";
 import { resolveSkillsForAgent } from "@weaveio/weave-engine";
 import type { Result } from "neverthrow";
 import type { PiSkillInfo } from "./types.js";
@@ -32,10 +28,9 @@ export function toEngineSkillInfo(skill: PiSkillInfo): SkillInfo {
  * Pi exposes it — and delegates exact, case-sensitive matching to the
  * engine's `resolveSkillsForAgent`.
  *
- * Per-agent resolution (not the batch `resolveSkillsForConfig`) is used
- * deliberately: `resolveSkillsForConfig` fails globally the moment any one
- * agent has a missing skill, which would violate Pi adapter contract's requirement
- * that a missing requested skill disable only the one affected descriptor.
+ * Per-agent resolution is used because activation needs one descriptor's
+ * available skills and warnings. A missing requested skill never disables the
+ * descriptor or affects another agent.
  */
 export class PiSkillCatalog {
   private availableSkills: readonly SkillInfo[];
@@ -58,16 +53,12 @@ export class PiSkillCatalog {
     return this.availableSkills;
   }
 
-  /**
-   * Resolves one descriptor's requested skills against the current
-   * snapshot. A missing skill isolates only this agent's result — it MUST
-   * NOT be escalated into a config-wide failure.
-   */
+  /** Resolves available skills and non-fatal warnings for one descriptor. */
   resolveForAgent(
     agentName: string,
     agentSkills: readonly string[] | undefined,
     disabledSkills: readonly string[] = [],
-  ): Result<ResolvedSkill[], SkillResolutionError[]> {
+  ): Result<SkillResolutionResult, never> {
     return resolveSkillsForAgent({
       agentName,
       agentSkills: agentSkills === undefined ? undefined : [...agentSkills],

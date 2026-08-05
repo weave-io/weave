@@ -1034,11 +1034,98 @@ describe("AgentConfigSchema — prompt_append_file", () => {
 });
 
 // ---------------------------------------------------------------------------
+// CategoryConfigSchema — description (required, non-blank)
+// ---------------------------------------------------------------------------
+
+describe("CategoryConfigSchema — description", () => {
+  it("accepts a category with a non-blank description", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "Frontend components and styling",
+      patterns: ["src/components/**"],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.description).toBe("Frontend components and styling");
+    }
+  });
+
+  it("preserves surrounding whitespace verbatim when content is present", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "  Backend services  ",
+      patterns: ["src/server/**"],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.description).toBe("  Backend services  ");
+  });
+
+  it("rejects a category with no description at all", () => {
+    const r = CategoryConfigSchema.safeParse({
+      patterns: ["src/**"],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const issue = r.error.issues.find(
+        (i) => i.path.join(".") === "description",
+      );
+      expect(issue).toBeDefined();
+      expect(issue?.code).toBe("invalid_type");
+    }
+  });
+
+  it("rejects an empty-string description with the non-empty message", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "",
+      patterns: ["src/**"],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const issue = r.error.issues.find(
+        (i) => i.path.join(".") === "description",
+      );
+      expect(issue?.message).toBe(
+        "category description must be a non-empty string",
+      );
+    }
+  });
+
+  it("rejects a whitespace-only description with the non-empty message", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "   \t\n  ",
+      patterns: ["src/**"],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const issue = r.error.issues.find(
+        (i) => i.path.join(".") === "description",
+      );
+      expect(issue?.message).toBe(
+        "category description must be a non-empty string",
+      );
+    }
+  });
+
+  it("rejects a non-string description", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: 42,
+      patterns: ["src/**"],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const issue = r.error.issues.find(
+        (i) => i.path.join(".") === "description",
+      );
+      expect(issue?.code).toBe("invalid_type");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // CategoryConfigSchema — prompt_append_file
 // ---------------------------------------------------------------------------
 
 describe("CategoryConfigSchema — prompt_append_file", () => {
   const baseCategory = {
+    description: "TypeScript source edits",
     patterns: ["src/**/*.ts"],
   };
 
@@ -1956,9 +2043,21 @@ describe("delegation limit schemas", () => {
 
 describe("opaque adapter settings", () => {
   it("validates JSON values and bounds", () => {
-    expect(SettingsConfigSchema.safeParse({ adapters: { test: { value: null, list: [true, 1] } } }).success).toBe(true);
-    expect(SettingsConfigSchema.safeParse({ adapters: { test: { a: { b: { c: { d: { e: true } } } } } } }).success).toBe(false);
-    expect(SettingsConfigSchema.safeParse({ adapters: { test: { value: Number.POSITIVE_INFINITY } } }).success).toBe(false);
+    expect(
+      SettingsConfigSchema.safeParse({
+        adapters: { test: { value: null, list: [true, 1] } },
+      }).success,
+    ).toBe(true);
+    expect(
+      SettingsConfigSchema.safeParse({
+        adapters: { test: { a: { b: { c: { d: { e: true } } } } } },
+      }).success,
+    ).toBe(false);
+    expect(
+      SettingsConfigSchema.safeParse({
+        adapters: { test: { value: Number.POSITIVE_INFINITY } },
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -1993,6 +2092,7 @@ describe("model thinking suffix validation", () => {
 
   it("accepts plain, suffixed, and escaped category model entries", () => {
     const result = CategoryConfigSchema.safeParse({
+      description: "Source tree work",
       patterns: ["src/**"],
       models: ["plain-category", "category-model#max", "category\\#model"],
     });
@@ -2038,6 +2138,7 @@ describe("model thinking suffix validation", () => {
 
   it("rejects an invalid category model suffix with a readable indexed error", () => {
     const result = CategoryConfigSchema.safeParse({
+      description: "Source tree work",
       patterns: ["src/**"],
       models: ["plain-category", "category-model#bad"],
     });

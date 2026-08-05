@@ -481,25 +481,35 @@ function convertLegacyCategory(
   entry: Record<string, unknown>,
   warnings: ConversionWarning[],
 ): string[] {
-  const lines: string[] = [`category ${name} {`];
-
-  if (typeof entry["description"] === "string") {
-    const escaped = escapeForDsl(entry["description"]);
-    lines.push(`  description "${escaped}"`);
-  }
-
-  if (Array.isArray(entry["patterns"])) {
-    const items = entry["patterns"]
-      .filter((p): p is string => typeof p === "string")
-      .map((p) => JSON.stringify(p))
-      .join(", ");
-    lines.push(`  patterns [${items}]`);
-  } else if (entry["patterns"] !== undefined) {
+  const patterns = Array.isArray(entry["patterns"])
+    ? entry["patterns"].filter(
+        (pattern): pattern is string => typeof pattern === "string",
+      )
+    : [];
+  if (patterns.length === 0) {
     warnings.push({
       field: `categories.${name}.patterns`,
-      reason: "expected an array of glob patterns; skipped",
+      reason:
+        "a non-empty array of glob patterns is required; category skipped",
     });
+    return [];
   }
+
+  const description = entry["description"];
+  if (typeof description !== "string" || description.trim().length === 0) {
+    warnings.push({
+      field: `categories.${name}.description`,
+      reason: "a non-empty string is required; category skipped",
+    });
+    return [];
+  }
+
+  const lines: string[] = [`category ${name} {`];
+  const escapedDescription = escapeForDsl(description);
+  lines.push(`  description "${escapedDescription}"`);
+
+  const items = patterns.map((pattern) => JSON.stringify(pattern)).join(", ");
+  lines.push(`  patterns [${items}]`);
 
   const modelsResult = convertLegacyModels(entry, `categories.${name}`);
   warnings.push(...modelsResult.warnings);

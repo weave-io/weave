@@ -220,6 +220,8 @@ export interface PiSessionContext {
   readonly modelRegistry: PiModelRegistry;
   /** Command-context access to Pi's current skill discovery snapshot. */
   readonly getSystemPromptOptions?: () => PiBuildSystemPromptOptions;
+  /** Public on ordinary Pi extension contexts, including `session_start`. */
+  readonly getSystemPrompt?: () => string;
 }
 
 /** A registered command handler. Receives raw argument text and the live session context. */

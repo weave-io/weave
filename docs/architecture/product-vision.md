@@ -185,20 +185,22 @@ See [Tool Policy](../reference/tool-policy.md) for the full vocabulary, evaluati
 
 ## Adapter-Provided Skill Resolution
 
-Weave resolves agent `skills [...]` declarations against an explicit list of skills supplied by the adapter. The engine owns matching, disabled-skill filtering, and missing-skill error reporting; adapters own skill discovery, loading, file formats, and harness-specific mounting.
+Weave resolves agent `skills [...]` declarations against an explicit list of skills supplied by the adapter. The engine owns matching, disabled-skill filtering, and missing-skill warnings; adapters own skill discovery, loading, file formats, and harness-specific mounting.
 
 **Adapter surface:** `HarnessAdapter.loadAvailableSkills(): Promise<SkillInfo[]>` is called during the adapter bootstrap loop before each `spawnSubagent` call. The engine calls `resolveSkillsForConfig()` and attaches `resolvedSkills` to each `RunAgentEffect`.
 
 **Engine APIs (pure, harness-agnostic):**
 
-- `resolveSkillsForAgent(input)` — resolves one agent's declared skill names against adapter-provided available skills; returns `Result<ResolvedSkill[], SkillResolutionError[]>`.
-- `resolveSkillsForConfig(input)` — batch resolution across all declared agents and generated category shuttles; accumulates errors across all agents.
+- `resolveSkillsForAgent(input)` — resolves one agent's declared skill names against adapter-provided available skills; returns available skills and non-fatal warnings in `Result<SkillResolutionResult, never>`.
+- `resolveSkillsForConfig(input)` — resolves all declared agents and generated category shuttles; returns `skillsByAgent` plus accumulated warnings. Category shuttle name conflicts remain typed errors.
 
 **Invariants:**
 
 - The engine never scans `~/.weave/skills/`, `.weave/skills/`, or any harness-owned skill directory.
 - `RunAgentEffect.resolvedSkills` carries only engine-resolved skill references; adapter-owned metadata (paths, content, tokens) must not appear in emitted effects.
-- Disabled skills are filtered before missing-skill validation — a disabled skill reference is not an error.
+- Adapters ask the harness to load each resolved skill before agent work starts.
+- A requested skill that is absent from the harness catalog emits a warning. The agent continues with the available skills.
+- Disabled skills are filtered before missing-skill reporting. A disabled skill reference does not emit a warning.
 
 See [Adapter Boundary](adapter-boundary.md#skills) for the ownership rule and data flow.
 

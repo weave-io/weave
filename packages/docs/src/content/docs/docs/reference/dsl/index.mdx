@@ -65,14 +65,16 @@ Supported top-level forms include:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `description` | string | Human-readable domain summary. |
+| `description` | string | **Required.** Non-blank routing guidance shown for the generated category shuttle. |
 | `patterns` | string[] | Glob-like routing metadata. |
 | `models` | string[] | Category-specific model preference override. |
 | `prompt_append` / `prompt_append_file` | string | Added to the generated shuttle prompt. |
 | `temperature` | number | Optional generation preference. |
 | `tool_policy` | block | Category-specific policy applied to the generated shuttle. |
 
-Categories generate agents named `shuttle-{category}`.
+Categories generate agents named `shuttle-{category}`. The generated agent uses the category description in Loom and Tapestry delegation tables and does not inherit the base Shuttle's triggers; its description and patterns provide category routing, while generic Shuttle triggers cover fallback work.
+
+This is a breaking config requirement: every existing category block must add a non-blank `description`. Legacy migration skips categories without descriptions and reports a warning rather than writing invalid DSL.
 
 ## Tool Policy
 

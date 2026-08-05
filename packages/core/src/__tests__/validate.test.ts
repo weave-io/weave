@@ -32,6 +32,7 @@ describe("validate — model thinking suffix", () => {
   review_models ["plain-review", "review-model#low", "review\\#model"]
 }
 category backend {
+  description "Backend services and persistence"
   patterns ["src/**"]
   models ["plain-category", "category-model#max", "category\\#model"]
 }`);
@@ -200,12 +201,90 @@ describe("validate — schema constraint errors", () => {
 
   it("empty patterns array on category → err", () => {
     const src = `category empty {
+  description "Category with no patterns"
   patterns []
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
     expect(errors.some((e) => e.path.includes("patterns"))).toBe(true);
+  });
+});
+
+describe("validate — category description is required and non-blank", () => {
+  const patternsOnly = `  patterns ["src/**"]`;
+
+  it("category with a non-blank description → ok and preserved", () => {
+    const src = `category backend {
+  description "Backend services and persistence"
+${patternsOnly}
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.categories.backend?.description).toBe(
+      "Backend services and persistence",
+    );
+  });
+
+  it("category with no description → err at categories.<name>.description", () => {
+    const src = `category backend {
+${patternsOnly}
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const issue = errors.find(
+      (e) => e.path === "categories.backend.description",
+    );
+    expect(issue).toBeDefined();
+  });
+
+  it("category with an empty description → err with the non-empty message", () => {
+    const src = `category backend {
+  description ""
+${patternsOnly}
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const issue = errors.find(
+      (e) => e.path === "categories.backend.description",
+    );
+    expect(issue?.message).toBe(
+      "category description must be a non-empty string",
+    );
+  });
+
+  it("category with a whitespace-only description → err with the non-empty message", () => {
+    const src = `category backend {
+  description "   "
+${patternsOnly}
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const issue = errors.find(
+      (e) => e.path === "categories.backend.description",
+    );
+    expect(issue?.message).toBe(
+      "category description must be a non-empty string",
+    );
+  });
+
+  it("reports each undescribed category separately", () => {
+    const src = `category backend {
+${patternsOnly}
+}
+
+category frontend {
+  patterns ["src/components/**"]
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const paths = result._unsafeUnwrapErr().map((e) => e.path);
+    expect(paths).toContain("categories.backend.description");
+    expect(paths).toContain("categories.frontend.description");
   });
 });
 
@@ -539,6 +618,7 @@ describe("validate — prompt_append_file (agent)", () => {
 describe("validate — prompt_append_file (category)", () => {
   it("category with prompt_append_file → ok and field preserved", () => {
     const src = `category frontend {
+  description "Frontend components"
   patterns ["src/components/**"]
   prompt_append_file "cat-extra.md"
 }`;
@@ -551,6 +631,7 @@ describe("validate — prompt_append_file (category)", () => {
 
   it("category with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
     const src = `category frontend {
+  description "Frontend components"
   patterns ["src/components/**"]
   prompt_append "inline extra"
   prompt_append_file "cat-extra.md"

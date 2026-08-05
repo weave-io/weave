@@ -30,7 +30,13 @@ category frontend {
 }
 ```
 
-A category produces an agent named `shuttle-frontend`. Its prompt append, model preferences, and tool policy apply to that generated agent.
+A category produces an agent named `shuttle-frontend`. Its `description` is required and must contain non-blank routing guidance; Loom and Tapestry show it in their delegation tables. The category's prompt append, model preferences, and tool policy apply to that generated agent.
+
+Generated category shuttles do not inherit the base Shuttle's triggers. They route from their category description and patterns, while the generic Shuttle's triggers describe fallback work that no category claims.
+
+## Migrate existing categories
+
+This requirement is a breaking config change. Add a non-blank `description` to every existing `category` block before validation. `weave init migrate` skips legacy categories without descriptions and reports a warning instead of writing invalid DSL.
 
 ## Override a built-in
 
