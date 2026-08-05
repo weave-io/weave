@@ -287,6 +287,114 @@ describe("ChildOverlayController", () => {
     }
   });
 
+  it("keeps rendered transcript in sync across older/newer/search page merges", async () => {
+    const transcriptMarkers = (view: ChildOverlayView): string[] => {
+      const markers: string[] = [];
+      for (const entry of view.transcript.entries) {
+        if ("messageId" in entry && typeof entry.messageId === "string") {
+          markers.push(entry.messageId);
+        }
+        if ("text" in entry && typeof entry.text === "string") {
+          markers.push(entry.text);
+        }
+      }
+      return markers;
+    };
+    const assertNoDuplicateTranscriptIds = (view: ChildOverlayView): void => {
+      const ids = view.transcript.entries.map((entry) => entry.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    };
+    const assertTranscriptCoversWindow = (view: ChildOverlayView): void => {
+      const markers = transcriptMarkers(view);
+      for (const entry of view.entries) {
+        const covered =
+          markers.includes(entry.id) || markers.includes(entry.text);
+        expect(covered).toBe(true);
+      }
+      assertNoDuplicateTranscriptIds(view);
+    };
+    const markerFor = (id: string): ((marker: string) => boolean) => {
+      const text = `e-text-${id.slice(1)}`;
+      return (marker) => marker === id || marker.includes(text);
+    };
+
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "render-page-1", entries: entries(6) }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 2,
+      windowCap: 4,
+    });
+
+    // Open newest page: e4–e5.
+    const opened = await mustOpen(overlay, "render-page-1");
+    expect(opened.entries.map((entry) => entry.id)).toEqual(["e4", "e5"]);
+    assertTranscriptCoversWindow(opened);
+    expect(transcriptMarkers(opened).some(markerFor("e4"))).toBe(true);
+    expect(transcriptMarkers(opened).some(markerFor("e5"))).toBe(true);
+    expect(transcriptMarkers(opened).some(markerFor("e2"))).toBe(false);
+
+    // Load older page e2–e3; retained window + transcript must be e2–e5.
+    const afterOlder = (await overlay.loadOlder())._unsafeUnwrap();
+    expect(afterOlder.entries.map((entry) => entry.id)).toEqual([
+      "e2",
+      "e3",
+      "e4",
+      "e5",
+    ]);
+    assertTranscriptCoversWindow(afterOlder);
+    for (const id of ["e2", "e3", "e4", "e5"]) {
+      expect(transcriptMarkers(afterOlder).some(markerFor(id))).toBe(true);
+    }
+
+    // Overflow trim (another older page) drops the tip; transcript must drop
+    // stale e4/e5 rows and keep only the retained window without dupes.
+    const afterOverflow = (await overlay.loadOlder())._unsafeUnwrap();
+    expect(afterOverflow.entries.map((entry) => entry.id)).toEqual([
+      "e0",
+      "e1",
+      "e2",
+      "e3",
+    ]);
+    assertTranscriptCoversWindow(afterOverflow);
+    expect(transcriptMarkers(afterOverflow).some(markerFor("e5"))).toBe(false);
+    expect(transcriptMarkers(afterOverflow).some(markerFor("e4"))).toBe(false);
+
+    // Newer merges walk the opaque cursor back to the tip; transcript follows.
+    let afterNewer = afterOverflow;
+    let newerGuard = 0;
+    while (
+      afterNewer.hasNewer &&
+      afterNewer.newerCursor !== undefined &&
+      newerGuard < 4
+    ) {
+      afterNewer = (await overlay.loadNewer())._unsafeUnwrap();
+      assertTranscriptCoversWindow(afterNewer);
+      newerGuard += 1;
+    }
+    expect(afterNewer.entries.map((entry) => entry.id)).toEqual([
+      "e2",
+      "e3",
+      "e4",
+      "e5",
+    ]);
+    expect(transcriptMarkers(afterNewer).some(markerFor("e5"))).toBe(true);
+    expect(transcriptMarkers(afterNewer).some(markerFor("e0"))).toBe(false);
+
+    // Search merge from a tip-only open pulls older pages; transcript follows.
+    const searchOverlay = createChildOverlayController(source, {
+      pageSize: 2,
+      windowCap: 4,
+      maxSearchPages: 3,
+    });
+    await mustOpen(searchOverlay, "render-page-1");
+    const afterSearch = (await searchOverlay.search("e-text-0"))._unsafeUnwrap();
+    expect(afterSearch.entries.some((entry) => entry.id === "e0")).toBe(true);
+    expect(afterSearch.searchMatches.length).toBeGreaterThan(0);
+    assertTranscriptCoversWindow(afterSearch);
+    expect(transcriptMarkers(afterSearch).some(markerFor("e0"))).toBe(true);
+  });
+
   it("retains fetched older pages at the window cap without gaps or dupes", async () => {
     const total = 200;
     const pageSize = 20;

@@ -990,7 +990,6 @@ export class ChildOverlayController {
                 ? child.runs[child.runs.length - 1]?.run
                 : undefined;
             state.activeBranchId = child.branchIds[0];
-            state.transcript = transcriptFromOverlayEntries(state.entries);
             return this.toView(child, state);
           });
       });
@@ -1188,6 +1187,15 @@ export class ChildOverlayController {
         ...entry,
         expanded: state.globalExpanded,
       }));
+      // Keep the rendered transcript visibility in lockstep with the overlay
+      // window without rebuilding (live thinking/tool rows must stay).
+      state.transcript = {
+        ...state.transcript,
+        entries: state.transcript.entries.map((entry) => ({
+          ...entry,
+          expanded: state.globalExpanded,
+        })),
+      };
       return this.toView(child, state);
     });
   }
@@ -1489,6 +1497,7 @@ export class ChildOverlayController {
       state.newerCursor = page.newerCursor;
       state.hasOlderFlag = page.hasOlder;
       state.hasNewerFlag = page.hasNewer;
+      syncTranscriptFromEntries(state);
       return;
     }
 
@@ -1517,6 +1526,7 @@ export class ChildOverlayController {
         state.liveTail = false;
       }
       restoreScrollAnchor(state, priorAnchor);
+      syncTranscriptFromEntries(state);
       return;
     }
 
@@ -1541,6 +1551,7 @@ export class ChildOverlayController {
     state.newerCursor = page.newerCursor;
     state.hasNewerFlag = page.hasNewer;
     restoreScrollAnchor(state, priorAnchor);
+    syncTranscriptFromEntries(state);
   }
 
   private mergeEntry(state: SavedChildState, entry: ChildOverlayEntry): void {
@@ -1551,10 +1562,16 @@ export class ChildOverlayController {
       state.entries = next;
       return;
     }
-    state.entries = dedupEntries([
+    const merged = dedupEntries([
       ...state.entries,
       { ...entry, expanded: state.globalExpanded },
-    ]).slice(-this.windowCap);
+    ]);
+    const retained = merged.slice(-this.windowCap);
+    const trimmed = retained.length < merged.length;
+    state.entries = retained;
+    // Live append keeps the incremental transcript reduce; only rebuild when
+    // the window trims so stale older transcript rows cannot outlive entries.
+    if (trimmed) syncTranscriptFromEntries(state);
   }
 
   private toView(
@@ -1632,6 +1649,58 @@ function dedupEntries(
     result.push(entry);
   }
   return result;
+}
+
+/**
+ * Rebuilds {@link SavedChildState.transcript} from the retained overlay window
+ * so paged merges (older/newer/search/replace) cannot leave the render model
+ * pointing at a stale tip-only transcript. Preserves expanded IDs that still
+ * resolve after the rebuild; scroll anchors are owned by {@link restoreScrollAnchor}.
+ */
+function syncTranscriptFromEntries(state: SavedChildState): void {
+  const priorExpandedIds = new Set<string>();
+  const priorExpandedTexts = new Set<string>();
+  for (const entry of state.transcript.entries) {
+    if (!entry.expanded) continue;
+    priorExpandedIds.add(entry.id);
+    if ("messageId" in entry && typeof entry.messageId === "string") {
+      priorExpandedIds.add(entry.messageId);
+    }
+    if ("text" in entry && typeof entry.text === "string") {
+      priorExpandedTexts.add(entry.text);
+    }
+  }
+  for (const entry of state.entries) {
+    if (!entry.expanded) continue;
+    priorExpandedIds.add(entry.id);
+    priorExpandedTexts.add(entry.text);
+  }
+
+  const rebuilt = transcriptFromOverlayEntries(state.entries);
+  if (priorExpandedIds.size === 0 && !state.globalExpanded) {
+    state.transcript = rebuilt;
+    return;
+  }
+
+  state.transcript = {
+    ...rebuilt,
+    entries: rebuilt.entries.map((entry) => {
+      const messageId =
+        "messageId" in entry && typeof entry.messageId === "string"
+          ? entry.messageId
+          : undefined;
+      const text =
+        "text" in entry && typeof entry.text === "string"
+          ? entry.text
+          : undefined;
+      const expanded =
+        state.globalExpanded ||
+        priorExpandedIds.has(entry.id) ||
+        (messageId !== undefined && priorExpandedIds.has(messageId)) ||
+        (text !== undefined && priorExpandedTexts.has(text));
+      return expanded === entry.expanded ? entry : { ...entry, expanded };
+    }),
+  };
 }
 
 function stripPathLike(value: string): string {
