@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import * as PiPublicExports from "@earendil-works/pi-coding-agent";
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
+import { getKeybindings as getHostKeybindings } from "@earendil-works/pi-tui";
 import {
   DEFAULT_RUNTIME_SETTINGS,
   type ThinkingLevelDecl,
@@ -526,6 +527,13 @@ class DefaultPiSharedLogRedirector implements PiSharedLogRedirector {
 export interface PiExtensionDeps {
   readonly hostPackageReader: HostPackageReader;
   readonly hostSurfaceReader?: PiHostSurfaceReader;
+  /**
+   * The host's process-wide keybindings manager, used only to inspect
+   * existing bindings before registering overlay shortcuts. Production reads
+   * Pi's public `getKeybindings()`; tests inject a modelled manager (or none,
+   * to prove the fail-closed path).
+   */
+  readonly hostKeybindings?: () => unknown;
   readonly capabilityProber: PiCapabilityProbeSource;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
@@ -672,6 +680,7 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
   return {
     hostPackageReader: new BunHostPackageReader(),
     hostSurfaceReader: new DefaultPiHostSurfaceReader(),
+    hostKeybindings: () => getHostKeybindings(),
     capabilityProber: new DefaultPiCapabilityProber({
       enforceCommandProvenance:
         envPort.read(WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV) !== "1",
@@ -2102,9 +2111,11 @@ export function createPiExtension(
   /** Generation-scoped native child overlay (Task 12). */
   const childOverlayCell = createChildOverlayCell();
   /**
-   * Task 13 overlay-key registration. Applied exactly once when the composed
-   * editor factory first receives a keybindings object that exposes
-   * `getEffectiveConfig()`.
+   * Task 13 overlay-key registration. Raw keys are claimed exactly once, at
+   * session activation, from the host's process-wide keybindings manager, so
+   * registration never depends on Weave owning the primary editor; the
+   * composed editor and overlay custom factories only re-offer their injected
+   * manager when no host manager could be read.
    */
   const overlayKeysCell = createChildOverlayKeysCell();
   // One allocator lives for the extension instance, so editor replacement does
@@ -3612,6 +3623,13 @@ export function createPiExtension(
         : undefined;
     },
     closeOverlay: () => closeChildOverlay(childOverlayCell, overlayKeysCell),
+    // Ownership-independent conflict source. Pi's process-wide keybindings
+    // manager is public, so overlay shortcuts no longer require Weave's
+    // composed editor factory to run - which it never does when another
+    // extension such as `pi-vim` owns the primary editor.
+    ...(deps.hostKeybindings === undefined
+      ? {}
+      : { hostKeybindings: deps.hostKeybindings }),
   });
 
   const sessionTransitionRuntime = createSessionTransitionRuntime({
@@ -4883,6 +4901,17 @@ export function createPiExtension(
           },
         );
         childInspectionEditorCell.editor = inspectionEditor;
+        // Overlay shortcuts must not depend on Weave owning the primary
+        // editor: when another extension (for example `pi-vim`) installs the
+        // editor first, the composed factory below never runs. Registering
+        // here, from the host keybindings port, keeps Alt+I / Alt+1..Alt+9 a
+        // real route to the overlay under any editor ownership, while still
+        // honouring this generation's `child_inspection.keys` overrides.
+        childInspectionRuntime.maybeRegisterOverlayKeys(
+          pi,
+          undefined,
+          generation.id,
+        );
         const editorFactory = (
           tui: unknown,
           theme: unknown,

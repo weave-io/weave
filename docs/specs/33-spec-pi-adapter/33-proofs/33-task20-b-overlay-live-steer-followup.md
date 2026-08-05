@@ -110,3 +110,31 @@ Pane `w23:p8V` remains open. No other pane was changed or closed.
 ## Required follow-up
 
 Do not mark Task 20(b), S043, or S044 complete from this run. Fix or provide a conflict-safe active-run route that opens the native child overlay while pi-vim owns the primary editor. Then rerun item (b) in a fresh pane and prove live tail, scroll disengagement/follow, Enter steering, Alt+Enter follow-up, primary-editor isolation, and clean settlement.
+
+## Remediation (Task 21, source-side only)
+
+Root cause: overlay shortcut registration required an injected keybindings
+object, and the check that recognized one required `getEffectiveConfig()`.
+
+- Pi's live `KeybindingsManager` (`@earendil-works/pi-tui`) exposes
+  `getResolvedBindings()`, so the capture rejected every real host manager.
+- The only injection points were Weave's composed editor factory and the
+  overlay `ui.custom` factory. With `pi-vim` owning the primary editor, Weave
+  yields and never installs its factory, and the overlay factory only runs
+  after an overlay already opened. No shortcut could ever register.
+
+Fix:
+
+- `captureChildOverlayKeybindings` / `childOverlayConflictPortFromHost` accept
+  `getResolvedBindings()` as well as `getEffectiveConfig()`.
+- The inspection runtime takes a `hostKeybindings` port (production: Pi's
+  public `getKeybindings()`), so conflict inspection no longer depends on
+  editor ownership.
+- Registration runs at session activation, before the editor factory is
+  composed and regardless of whether Weave installs it, so `child_inspection`
+  key overrides still apply. Raw keys are claimed once; the plan is rebuilt
+  per generation. Keys already owned by the host or user are skipped and
+  reported, never overwritten.
+
+Status: unchanged. This is source-side remediation only. Task 20(b), S043, and
+S044 stay incomplete until a fresh Herdr rerun proves the live behaviour.

@@ -68,7 +68,7 @@ export function createWriteToolDefinition() {}
     "@earendil-works/pi-tui": {
       version: EXACT_TESTED_HOST_VERSION,
       source:
-        "export function matchesKey() { return false; }\nexport function truncateToWidth(text) { return text; }\nexport function visibleWidth(text) { return text.length; }\nexport class Markdown {}\nexport class Text {}\n",
+        "export function matchesKey() { return false; }\nexport function truncateToWidth(text) { return text; }\nexport function visibleWidth(text) { return text.length; }\nexport function getKeybindings() { return { getResolvedBindings: () => ({}) }; }\nexport class Markdown {}\nexport class Text {}\n",
     },
   };
 

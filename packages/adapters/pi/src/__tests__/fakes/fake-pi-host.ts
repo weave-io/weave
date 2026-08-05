@@ -77,7 +77,9 @@ export class PersistentFakeNativeSessionStore {
 
   read(sessionId: string): readonly FakeNativeSessionEntry[] | undefined {
     const entries = this.sessions.get(sessionId);
-    return entries === undefined ? undefined : entries.map((entry) => ({ ...entry }));
+    return entries === undefined
+      ? undefined
+      : entries.map((entry) => ({ ...entry }));
   }
 
   tombstone(sessionId: string): void {
@@ -91,7 +93,10 @@ export class PersistentFakeNativeSessionStore {
   reload(): PersistentFakeNativeSessionStore {
     const next = new PersistentFakeNativeSessionStore();
     for (const [sessionId, entries] of this.sessions)
-      next.sessions.set(sessionId, entries.map((entry) => ({ ...entry })));
+      next.sessions.set(
+        sessionId,
+        entries.map((entry) => ({ ...entry })),
+      );
     for (const sessionId of this.tombstones) next.tombstones.add(sessionId);
     return next;
   }
@@ -922,6 +927,18 @@ export class RecordingFakePiHost {
 
   getEditorComponentForTest(): unknown {
     return this.editorFactory;
+  }
+
+  /**
+   * Stands in for Pi's process-wide `KeybindingsManager`. Overlay shortcut
+   * registration inspects this before claiming any key, independently of who
+   * owns the primary editor.
+   */
+  hostKeybindingsForTest(): unknown {
+    if (this.effectiveKeybindingConfig === undefined) return undefined;
+    return {
+      getResolvedBindings: () => this.effectiveKeybindingConfig ?? {},
+    };
   }
 
   /** Constructs the currently installed editor through the host-facing factory. */

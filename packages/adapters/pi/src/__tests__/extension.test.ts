@@ -51,10 +51,6 @@ import {
   parsePiSkillsFromSystemPrompt,
   resolveDirectStepBadgeAgent,
 } from "../extension.js";
-import type {
-  PiThreadSourceFactory,
-  PiThreadSources,
-} from "../thread-sources.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
 import {
@@ -71,6 +67,10 @@ import type {
 import { InMemoryRecoveryPointerStore } from "../recovery-pointer.js";
 import type { JsonValue } from "../strict-json.js";
 import { serializeCompletionCandidate } from "../structured-completion.js";
+import type {
+  PiThreadSourceFactory,
+  PiThreadSources,
+} from "../thread-sources.js";
 import type { IdGenerator } from "../types.js";
 import {
   FakeChildProcessPort,
@@ -397,7 +397,10 @@ function mutableChildRefSource(
   const sessions = {
     createChildSession: (created: { readonly childId: string }) =>
       okAsync(
-        sessionRecord(`children/${created.childId}/session.jsonl`, created.childId),
+        sessionRecord(
+          `children/${created.childId}/session.jsonl`,
+          created.childId,
+        ),
       ),
     establishThreadLeaf: (ref: string) =>
       okAsync({ record: sessionRecord(ref, "recover-me"), leafId: "leaf-1" }),
@@ -421,7 +424,14 @@ function mutableChildRefSource(
     openedParentSessionIds.push(factoryInput.parentSessionId);
     return okAsync(sources);
   };
-  return { factory, sources, records, updates, cleared, openedParentSessionIds };
+  return {
+    factory,
+    sources,
+    records,
+    updates,
+    cleared,
+    openedParentSessionIds,
+  };
 }
 
 async function flushBackgroundWork(): Promise<void> {
@@ -644,6 +654,10 @@ function installExtension(
     // Opt out of production Task 4/5/6 source opening (real XDG + SessionManager).
     // Thread-source wiring tests inject an explicit factory via overrides.
     threadSourceFactory: undefined,
+    // Stands in for Pi's process-wide keybindings manager, so overlay
+    // shortcut registration can be modelled independently of editor
+    // ownership. Absent unless a test sets `effectiveKeybindingConfig`.
+    hostKeybindings: () => host.hostKeybindingsForTest(),
     ...overrides,
   });
   factory(host.api);
@@ -3983,7 +3997,6 @@ describe("createPiExtension: config activation, materialization consumption, pri
       ),
     ).toBe(true);
   });
-
 });
 
 /**
@@ -6741,10 +6754,12 @@ describe("createPiExtension: Task 12 native child overlay", () => {
   const OVERLAY_CHILD_ID = "overlay-hist-child";
   const OVERLAY_SESSION_REF = `${OVERLAY_CHILD_ID}/session.jsonl`;
 
-  function overlayThreadFactory(options: {
-    readonly entries?: readonly unknown[];
-    readonly failRead?: boolean;
-  } = {}): PiThreadSourceFactory {
+  function overlayThreadFactory(
+    options: {
+      readonly entries?: readonly unknown[];
+      readonly failRead?: boolean;
+    } = {},
+  ): PiThreadSourceFactory {
     const entries = options.entries ?? [
       {
         type: "message",
@@ -6866,9 +6881,7 @@ describe("createPiExtension: Task 12 native child overlay", () => {
     }
   }
 
-  async function openOverlayChild(
-    host: RecordingFakePiHost,
-  ): Promise<void> {
+  async function openOverlayChild(host: RecordingFakePiHost): Promise<void> {
     const before = host.customCalls.length;
     const picker = host.deferNextSelect();
     const inspect = host.invokeCommand("weave:inspect");
@@ -6884,6 +6897,145 @@ describe("createPiExtension: Task 12 native child overlay", () => {
     await inspect;
     await waitForCustomCalls(host, before + 1);
   }
+
+  it("registers overlay shortcuts while pi-vim owns the primary editor", async () => {
+    // Task 20(b) blocker: overlay shortcuts used to register only when Weave's
+    // composed editor factory received a keybindings object. With `pi-vim`
+    // owning the primary editor that factory never runs, so no shortcut route
+    // to the native overlay existed.
+    const history = mutableChildRefSource([
+      eligibleOrdinaryRecoveryRecord({
+        childId: OVERLAY_CHILD_ID,
+        status: "running",
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    // Pi's own bindings claim nothing Weave wants here.
+    host.effectiveKeybindingConfig = { "app.interrupt": "ctrl+c" };
+    const modalFactory = (
+      tui: unknown,
+      theme: unknown,
+      keybindings: unknown,
+    ) => ({ tui, theme, keybindings, handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        {
+          ...EMPTY_CONFIG,
+          settings: { adapters: { pi: { child_inspection: {} } } },
+        } as unknown as WeaveConfig,
+      ),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      parentSessionId: () => "parent",
+      restoreOrdinaryChild: () =>
+        okAsync({ finalOutput: "restored", interventionCount: 0 }),
+      threadSourceFactory: overlayThreadFactory(),
+    });
+
+    await host.triggerSessionStart();
+    // Weave yielded the editor, so its composed factory never ran; the
+    // shortcuts exist anyway, planned from the host keybindings manager.
+    expect(host.editorFactoryCalls.length).toBe(0);
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+    const registeredKeys = host.registerShortcutCalls.map(
+      (call) => call.shortcut,
+    );
+    expect(registeredKeys).toContain("alt+i");
+    expect(registeredKeys).toContain("alt+1");
+
+    // The registered shortcut reaches the Weave child picker without Weave
+    // ever claiming the primary editor.
+    const picker = host.deferNextSelect();
+    const pressed = host.invokeShortcut("alt+i");
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (host.selectCalls.length > 0) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    expect(host.selectCalls.at(-1)?.title).toBe("Weave children");
+    expect(host.selectCalls.at(-1)?.options.length).toBeGreaterThan(0);
+    picker.settle(undefined);
+    await pressed;
+    await flushBackgroundWork();
+
+    expect(host.editorFactoryCalls.length).toBe(0);
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+  });
+
+  it("keeps /weave:inspect registered and submits nothing to the primary conversation", async () => {
+    const history = mutableChildRefSource([
+      eligibleOrdinaryRecoveryRecord({
+        childId: OVERLAY_CHILD_ID,
+        status: "running",
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const modalFactory = () => ({ handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        {
+          ...EMPTY_CONFIG,
+          settings: { adapters: { pi: { child_inspection: {} } } },
+        } as unknown as WeaveConfig,
+      ),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      parentSessionId: () => "parent",
+      restoreOrdinaryChild: () =>
+        okAsync({ finalOutput: "restored", interventionCount: 0 }),
+      threadSourceFactory: overlayThreadFactory(),
+    });
+    await host.triggerSessionStart();
+
+    expect(
+      host.registerCommandCalls.some((call) => call.name === "weave:inspect"),
+    ).toBe(true);
+
+    // A live child is streaming when the command runs, exactly as in the
+    // failed real-harness attempt.
+    await host.triggerEvent("agent_start", { reason: "user" });
+    await openOverlayChild(host);
+
+    expect(host.customCalls.length).toBeGreaterThan(0);
+    // Command input stays isolated: nothing partially reaches the primary
+    // conversation as a user turn.
+    expect(host.sentUserMessages).toEqual([]);
+    expect(host.sendMessageCalls).toEqual([]);
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+
+    host.inputCustom("\u001b");
+    host.finishCustom();
+    await flushBackgroundWork();
+    expect(host.sentUserMessages).toEqual([]);
+  });
 
   it("opens the native overlay without borrowing the session editor (pi-vim coexistence)", async () => {
     const history = mutableChildRefSource([
@@ -6918,7 +7070,9 @@ describe("createPiExtension: Task 12 native child overlay", () => {
           settings: { adapters: { pi: { child_inspection: {} } } },
         } as unknown as WeaveConfig,
       ),
-      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
       parentSessionId: () => "parent",
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
@@ -7107,7 +7261,9 @@ describe("createPiExtension: Task 12 native child overlay", () => {
         },
         EMPTY_CONFIG,
       ),
-      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
       parentSessionId: () => "parent",
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
@@ -7124,7 +7280,9 @@ describe("createPiExtension: Task 12 native child overlay", () => {
     await flushBackgroundWork();
     const secondLabel = host.selectCalls
       .at(-1)
-      ?.options.find((label) => label.includes(secondId) || label.includes("shuttle"));
+      ?.options.find(
+        (label) => label.includes(secondId) || label.includes("shuttle"),
+      );
     picker.settle(secondLabel);
     await inspect;
     await flushBackgroundWork();
@@ -7159,7 +7317,9 @@ describe("createPiExtension: Task 12 native child overlay", () => {
         },
         EMPTY_CONFIG,
       ),
-      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
       parentSessionId: () => "parent",
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
@@ -7202,7 +7362,9 @@ describe("createPiExtension: Task 12 native child overlay", () => {
         },
         EMPTY_CONFIG,
       ),
-      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
       parentSessionId: () => "parent",
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
@@ -7244,7 +7406,9 @@ describe("createPiExtension: Task 12 native child overlay", () => {
         },
         EMPTY_CONFIG,
       ),
-      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
       parentSessionId: () => "parent",
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
@@ -7289,7 +7453,9 @@ describe("createPiExtension: Task 12 native child overlay", () => {
         },
         EMPTY_CONFIG,
       ),
-      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
       parentSessionId: () => "parent",
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
@@ -7342,7 +7508,9 @@ describe("createPiExtension: Task 12 native child overlay", () => {
         },
         EMPTY_CONFIG,
       ),
-      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
       parentSessionId: () => "parent",
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),
@@ -7393,7 +7561,9 @@ describe("createPiExtension: Task 13 overlay keys and picker", () => {
         },
         config,
       ),
-      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
       parentSessionId: () => "parent",
       restoreOrdinaryChild: () =>
         okAsync({ finalOutput: "restored", interventionCount: 0 }),

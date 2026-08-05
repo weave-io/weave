@@ -12,15 +12,6 @@
  * property of the ports rather than of accidental capture.
  */
 import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
-import {
-  buildChildPickerMetadataEntries,
-  collectChildPickerCandidates,
-  type PiChildPickerActiveChild,
-  type PiChildPickerCachePort,
-  type PiChildPickerRefPort,
-  type PiChildPickerSourceState,
-  type PiChildPickerStatus,
-} from "./child-picker.js";
 import type { PiChildInspectionEditor } from "./child-inspection-editor.js";
 import {
   childInspectionOverlayKeyOverrides,
@@ -32,24 +23,33 @@ import type {
 } from "./child-overlay.js";
 import {
   applyChildOverlayKeyPlan,
-  captureChildOverlayKeybindings,
   CHILD_OVERLAY_CANCEL_CHOICES,
   CHILD_OVERLAY_ESCAPE_HINT,
+  captureChildOverlayKeybindings,
   childOverlayConflictPortFromHost,
   createChildOverlayKeyInterceptor,
   createChildOverlayKeyMachine,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
   PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
-  planChildOverlayKeyRegistrations,
-  resolveChildOverlayCancelChoice,
   type PiChildOverlayAction,
   type PiChildOverlayHierarchyNode,
   type PiChildOverlayKeyInterceptor,
   type PiChildOverlayKeyMachine,
   type PiChildOverlayKeyPlan,
+  planChildOverlayKeyRegistrations,
+  resolveChildOverlayCancelChoice,
 } from "./child-overlay-keys.js";
 import {
-  PiChildInspectionRegistry,
+  buildChildPickerMetadataEntries,
+  collectChildPickerCandidates,
+  type PiChildPickerActiveChild,
+  type PiChildPickerCachePort,
+  type PiChildPickerRefPort,
+  type PiChildPickerSourceState,
+  type PiChildPickerStatus,
+} from "./child-picker.js";
+import {
+  type PiChildInspectionRegistry,
   type PiChildTreeNode,
   ROOT_NODE_ID,
 } from "./child-tree.js";
@@ -97,13 +97,20 @@ export interface PiChildOverlayCell {
 }
 
 /**
- * Task 13 overlay-key registration state. Applied exactly once when a host
- * keybindings object that exposes `getEffectiveConfig()` first arrives;
- * otherwise every shortcut is skipped and the gap is reported through the
+ * Task 13 overlay-key registration state.
+ *
+ * Raw keys are handed to `pi.registerShortcut` exactly once for the extension
+ * lifetime (`registeredKeys`), while the plan behind them is rebuilt per
+ * generation, because a generation carries its own
+ * `child_inspection.keys` overrides and `clearChildOverlayGeneration` drops
+ * the plan. Registration requires an inspectable host keybindings source;
+ * without one every shortcut is skipped and the gap is reported through the
  * bounded diagnostic list.
  */
 export interface PiChildOverlayKeysCell {
   status: "pending" | "applied";
+  /** Raw keys already handed to the host, never registered twice. */
+  registeredKeys: readonly string[];
   plan: PiChildOverlayKeyPlan | undefined;
   machine: PiChildOverlayKeyMachine;
   interceptor: PiChildOverlayKeyInterceptor | undefined;
@@ -163,6 +170,7 @@ export function createChildOverlayKeysCell(
 ): PiChildOverlayKeysCell {
   return {
     status: "pending",
+    registeredKeys: Object.freeze([]),
     plan: undefined,
     machine: createChildOverlayKeyMachine({ now }),
     interceptor: undefined,
@@ -254,6 +262,16 @@ export interface PiChildInspectionRuntimeDeps {
   ) => PiChildInspectionSettings | undefined;
   /** Closes the mounted overlay, if any. */
   readonly closeOverlay: () => void;
+  /**
+   * The host's process-wide keybindings manager, when the harness exposes one.
+   *
+   * Overlay shortcuts must not depend on Weave owning the primary editor: when
+   * another extension (for example `pi-vim`) installs the editor first, Weave
+   * yields and its composed factory never runs, so no keybindings object ever
+   * reaches {@link PiChildInspectionRuntime.maybeRegisterOverlayKeys}. This
+   * port is the ownership-independent source of the same conflict data.
+   */
+  readonly hostKeybindings?: () => unknown;
 }
 
 export interface PiChildInspectionRuntime {
@@ -283,6 +301,13 @@ export interface PiChildInspectionRuntime {
     keybindings: unknown,
     generationId: string,
   ) => void;
+  /**
+   * Registers Task 13 shortcuts without an injected keybindings object, using
+   * the host keybindings port. Safe to call before any generation exists and
+   * while another extension owns the primary editor; the action handlers
+   * resolve the live generation at key-press time.
+   */
+  readonly ensureOverlayKeysRegistered: (pi: PiExtensionApi) => void;
 }
 
 export function createChildInspectionRuntime(
@@ -328,6 +353,23 @@ export function createChildInspectionRuntime(
       active: !["completed", "cancelled", "failed"].includes(node.status),
       order: node.startedAtMs,
     }));
+
+  /**
+   * Reads the host keybindings manager without ever letting a host throw
+   * escape. Absent or throwing hosts degrade to `undefined`, which the caller
+   * reports as a skipped registration rather than an unchecked one.
+   */
+  const readHostKeybindings = (): unknown => {
+    const read = deps.hostKeybindings;
+    if (read === undefined) return undefined;
+    return Result.fromThrowable(
+      () => read(),
+      () => undefined,
+    )().match(
+      (value) => value,
+      () => undefined,
+    );
+  };
 
   const reportOverlayKeyDiagnostic = (detail: string): void => {
     const next = [...overlayKeysCell.diagnostics, detail];
@@ -383,9 +425,7 @@ export function createChildInspectionRuntime(
     const parentState = deps.parentSessionState();
     const parentSessionId =
       threadSourcesCell.refs?.liveParentSessionId() ??
-      (parentState.persistence === "persistent"
-        ? parentState.sessionId
-        : "");
+      (parentState.persistence === "persistent" ? parentState.sessionId : "");
     type CacheListPage = {
       readonly records: readonly {
         readonly childId: string;
@@ -461,8 +501,9 @@ export function createChildInspectionRuntime(
         ? undefined
         : {
             readRefs: (input) =>
-              threadSourcesCell.refs!.readRefs({ limit: input.limit }).map(
-                (scan) =>
+              threadSourcesCell
+                .refs!.readRefs({ limit: input.limit })
+                .map((scan) =>
                   scan.refs.map((record) => ({
                     childId: record.childId,
                     threadId: record.threadId,
@@ -472,7 +513,7 @@ export function createChildInspectionRuntime(
                     updatedAt: record.updatedAt,
                     originParentSessionId: record.originParentSessionId,
                   })),
-              ),
+                ),
           };
 
     const candidates = await collectChildPickerCandidates({
@@ -532,8 +573,7 @@ export function createChildInspectionRuntime(
         (view) => view.child.childId,
         () => treeSelectionCell.selectedId,
       ) ?? treeSelectionCell.selectedId;
-    const focusedId =
-      focused === ROOT_NODE_ID ? undefined : focused;
+    const focusedId = focused === ROOT_NODE_ID ? undefined : focused;
     const draft =
       childOverlayCell.controller?.view().match(
         (view) => view.draft,
@@ -629,10 +669,9 @@ export function createChildInspectionRuntime(
         void (async () => {
           const choice = await ResultAsync.fromThrowable(
             () =>
-              ctx.ui.select(
-                CHILD_OVERLAY_ESCAPE_HINT,
-                [...CHILD_OVERLAY_CANCEL_CHOICES],
-              ),
+              ctx.ui.select(CHILD_OVERLAY_ESCAPE_HINT, [
+                ...CHILD_OVERLAY_CANCEL_CHOICES,
+              ]),
             () => "cancel confirm unavailable",
           )();
           if (deps.activeGenerationId() !== generationId) return;
@@ -651,28 +690,53 @@ export function createChildInspectionRuntime(
   };
 
   /**
-   * Captures the live keybindings from the composed editor factory (or the
-   * overlay custom factory) and registers Task 13 shortcuts exactly once.
+   * Plans and registers Task 13 shortcuts.
+   *
+   * Raw key registration is exactly once for the extension lifetime, but the
+   * plan behind those keys is rebuilt whenever a generation needs one: a new
+   * generation carries its own overrides, and generation teardown drops the
+   * plan while the host keeps the registered keys.
+   *
+   * The keybindings object may come from the composed editor factory, from the
+   * overlay custom factory, or - when another extension such as `pi-vim` owns
+   * the primary editor and neither factory ever runs - from the host
+   * keybindings port. Conflict inspection stays a precondition on every route:
+   * a key already owned by the host or the user is skipped and reported,
+   * never overwritten.
+   *
+   * `generationId` is the generation whose overrides apply, or `undefined`
+   * when no generation is live yet, in which case the live generation is
+   * resolved at key-press time instead.
    */
-  const maybeRegisterOverlayKeys = (
+  const registerOverlayKeys = (
     pi: PiExtensionApi,
     keybindings: unknown,
-    generationId: string,
+    generationId: string | undefined,
   ): void => {
-    if (overlayKeysCell.status === "applied") return;
+    if (
+      overlayKeysCell.status === "applied" &&
+      overlayKeysCell.plan !== undefined
+    ) {
+      return;
+    }
     const diagnostics: string[] = [PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC];
-    const captured = captureChildOverlayKeybindings(keybindings);
+    const captured =
+      captureChildOverlayKeybindings(keybindings) ??
+      captureChildOverlayKeybindings(readHostKeybindings());
     const conflictPort = childOverlayConflictPortFromHost(captured);
     if (conflictPort === undefined) {
       diagnostics.push(
-        "weave overlay keys skipped: host keybindings do not expose getEffectiveConfig()",
+        "weave overlay keys skipped: host keybindings expose neither getResolvedBindings() nor getEffectiveConfig()",
       );
       overlayKeysCell.diagnostics = Object.freeze(
         diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
       );
       return;
     }
-    const settings = deps.childInspectionSettings(generationId);
+    const settings =
+      generationId === undefined
+        ? undefined
+        : deps.childInspectionSettings(generationId);
     const overrides =
       settings === undefined
         ? undefined
@@ -689,15 +753,27 @@ export function createChildInspectionRuntime(
       return;
     }
     diagnostics.push(...plan.value.diagnostics);
+    // Keys already handed to the host stay registered: Pi keeps one handler
+    // per key, and re-registering would replace a live handler with an
+    // identical one for no gain.
+    const alreadyRegistered = new Set(overlayKeysCell.registeredKeys);
+    const pending = plan.value.registrations.filter(
+      (registration) => !alreadyRegistered.has(registration.key),
+    );
     const applied = applyChildOverlayKeyPlan(
       {
         registerShortcut: (key, options) => {
           pi.registerShortcut?.(key, options);
         },
       },
-      plan.value,
+      { ...plan.value, registrations: pending },
       (action) => {
-        dispatchOverlayAction(action, generationId);
+        // A registration made before any generation existed resolves the live
+        // generation when the key is pressed. Dispatch still refuses any
+        // generation that is no longer current.
+        const target = generationId ?? deps.activeGenerationId();
+        if (target === undefined) return;
+        dispatchOverlayAction(action, target);
       },
     );
     if (applied.isErr()) {
@@ -709,16 +785,34 @@ export function createChildInspectionRuntime(
     }
     overlayKeysCell.status = "applied";
     overlayKeysCell.plan = plan.value;
-    overlayKeysCell.generationId = generationId;
+    overlayKeysCell.registeredKeys = Object.freeze([
+      ...overlayKeysCell.registeredKeys,
+      ...pending.map((registration) => registration.key),
+    ]);
+    const boundGenerationId = generationId ?? deps.activeGenerationId();
+    overlayKeysCell.generationId = boundGenerationId;
     overlayKeysCell.diagnostics = Object.freeze(
       diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
     );
-    bindOverlayKeyInterceptor(generationId);
+    if (boundGenerationId !== undefined) {
+      bindOverlayKeyInterceptor(boundGenerationId);
+    }
     for (const diagnostic of plan.value.diagnostics) {
       reportOverlayKeyDiagnostic(diagnostic);
     }
   };
 
+  const maybeRegisterOverlayKeys = (
+    pi: PiExtensionApi,
+    keybindings: unknown,
+    generationId: string,
+  ): void => {
+    registerOverlayKeys(pi, keybindings, generationId);
+  };
+
+  const ensureOverlayKeysRegistered = (pi: PiExtensionApi): void => {
+    registerOverlayKeys(pi, undefined, deps.activeGenerationId());
+  };
 
   return {
     reportOverlayKeyDiagnostic,
@@ -728,5 +822,6 @@ export function createChildInspectionRuntime(
     dispatchOverlayAction,
     bindOverlayKeyInterceptor,
     maybeRegisterOverlayKeys,
+    ensureOverlayKeysRegistered,
   };
 }

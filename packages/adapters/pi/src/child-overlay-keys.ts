@@ -26,7 +26,7 @@
  * `KeybindingsManager.getResolvedBindings()`); a taken key is skipped and
  * reported once, never registered.
  */
-import { matchesKey, type KeyId } from "@earendil-works/pi-tui";
+import { type KeyId, matchesKey } from "@earendil-works/pi-tui";
 import { err, ok, Result } from "neverthrow";
 
 // ---------------------------------------------------------------------------
@@ -188,7 +188,12 @@ export function isPiChildOverlayKeySyntax(
 }
 
 export type PiChildOverlayKeyOverrides = Readonly<
-  Partial<Record<PiChildOverlayActionId, PiChildOverlayKey | readonly PiChildOverlayKey[]>>
+  Partial<
+    Record<
+      PiChildOverlayActionId,
+      PiChildOverlayKey | readonly PiChildOverlayKey[]
+    >
+  >
 >;
 
 function normalizeOverrideKeys(
@@ -266,7 +271,10 @@ export function parseChildOverlayKeyOverrides(
     });
   }
   const known = new Set<string>(actions.map((action) => action.id));
-  const resolved = new Map<PiChildOverlayActionId, readonly PiChildOverlayKey[]>();
+  const resolved = new Map<
+    PiChildOverlayActionId,
+    readonly PiChildOverlayKey[]
+  >();
   for (const [actionId, value] of entries) {
     if (!known.has(actionId) || !isPiChildOverlayActionId(actionId)) {
       return err({
@@ -291,29 +299,45 @@ export interface PiChildOverlayKeybindingConflictPort {
 }
 
 /**
- * The only public `KeybindingsManager` member this adapter is allowed to touch.
- * Duck-typing exactly one documented method keeps the capture safe against
- * host internals changing shape underneath us.
+ * The public `KeybindingsManager` members this adapter is allowed to touch.
+ *
+ * Pi's live manager (`@earendil-works/pi-tui`) exposes
+ * `getResolvedBindings()`; the coding agent's interactive mode additionally
+ * reads `getEffectiveConfig()`. Both return the same resolved id-to-key map,
+ * so either one is enough for conflict inspection and both are optional here.
+ * Duck-typing exactly these two documented methods keeps the capture safe
+ * against host internals changing shape underneath us.
  */
 export interface PiKeybindingsConfigPort {
-  getEffectiveConfig(): Readonly<
+  getEffectiveConfig?(): Readonly<
+    Record<string, string | readonly string[] | undefined>
+  >;
+  getResolvedBindings?(): Readonly<
     Record<string, string | readonly string[] | undefined>
   >;
 }
 
 /**
- * Recognizes Pi's live `KeybindingsManager` from the opaque value the composed
- * editor/custom-component factory receives. Anything without a callable
- * `getEffectiveConfig()` is rejected: conflict inspection is a precondition for
- * registering, never something to guess at.
+ * Recognizes Pi's live `KeybindingsManager`, whether it arrives from the
+ * composed editor/custom-component factory or from the host's process-wide
+ * accessor. Anything without a callable `getResolvedBindings()` or
+ * `getEffectiveConfig()` is rejected: conflict inspection is a precondition
+ * for registering, never something to guess at.
  */
 export function captureChildOverlayKeybindings(
   candidate: unknown,
 ): PiKeybindingsConfigPort | undefined {
   if (typeof candidate !== "object" || candidate === null) return undefined;
-  const method = (candidate as { getEffectiveConfig?: unknown })
-    .getEffectiveConfig;
-  if (typeof method !== "function") return undefined;
+  const port = candidate as {
+    getEffectiveConfig?: unknown;
+    getResolvedBindings?: unknown;
+  };
+  if (
+    typeof port.getResolvedBindings !== "function" &&
+    typeof port.getEffectiveConfig !== "function"
+  ) {
+    return undefined;
+  }
   return candidate as PiKeybindingsConfigPort;
 }
 
@@ -326,8 +350,20 @@ export function childOverlayConflictPortFromHost(
   keybindings: PiKeybindingsConfigPort | undefined,
 ): PiChildOverlayKeybindingConflictPort | undefined {
   if (keybindings === undefined) return undefined;
+  const read = (():
+    | (() => Readonly<Record<string, string | readonly string[] | undefined>>)
+    | undefined => {
+    if (typeof keybindings.getResolvedBindings === "function") {
+      return () => keybindings.getResolvedBindings!();
+    }
+    if (typeof keybindings.getEffectiveConfig === "function") {
+      return () => keybindings.getEffectiveConfig!();
+    }
+    return undefined;
+  })();
+  if (read === undefined) return undefined;
   const config = Result.fromThrowable(
-    () => keybindings.getEffectiveConfig(),
+    read,
     () => "keybindings_config_unavailable" as const,
   )();
   if (config.isErr()) return undefined;
@@ -610,8 +646,7 @@ export function childOverlaySibling(
   if (siblings.length <= 1) return ok(undefined);
   const index = siblings.findIndex((node) => node.childId === childId);
   if (index < 0) return ok(undefined);
-  const next =
-    (index + direction + siblings.length * 2) % siblings.length;
+  const next = (index + direction + siblings.length * 2) % siblings.length;
   return ok(siblings[next]?.childId);
 }
 
@@ -666,9 +701,10 @@ export function resolveChildOverlayCancelChoice(
   childId: string,
   choice: number | string | undefined,
 ): PiChildOverlayCancelDecision {
-  const cancel =
-    choice === 1 || choice === CHILD_OVERLAY_CANCEL_CHOICES[1];
-  return cancel ? { kind: "cancel-subtree", childId } : { kind: "keep-running" };
+  const cancel = choice === 1 || choice === CHILD_OVERLAY_CANCEL_CHOICES[1];
+  return cancel
+    ? { kind: "cancel-subtree", childId }
+    : { kind: "keep-running" };
 }
 
 export interface PiChildOverlayKeyContext {
@@ -854,7 +890,9 @@ export function createChildOverlayKeyInterceptor(
         matchesKey(data, "backspace") ||
         classifyChildOverlayKey(EMPTY_PLAN, data) !== undefined
       ) {
-        deps.report("weave overlay key ignored: generation is no longer active");
+        deps.report(
+          "weave overlay key ignored: generation is no longer active",
+        );
         return true;
       }
       return false;
@@ -923,4 +961,3 @@ export const PI_NAMED_SHORTCUT_ACTIONS_CAPABILITY_ID =
  */
 export const PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC =
   "Pi exposes raw-key shortcuts only (registerShortcut takes a key, not a named action id, and keybindings.json accepts only Pi's own tui.*/app.* ids). Weave emulates named actions with adapter-owned ids and settings.adapters.pi.child_inspection.keys overrides." as const;
-
