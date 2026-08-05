@@ -3,10 +3,8 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { $ } from "bun";
 import {
   createProductionPiAdapterCommandRegistry,
   openProductionPiAdapterCommandPorts,
@@ -26,19 +24,43 @@ function fakeSessionManager(): PiSessionManagerStatic {
   };
 }
 
+/**
+ * macOS temp dirs live behind `/var` → `/private/var`. The production
+ * openat(O_NOFOLLOW) chain refuses that symlink, so scratch roots must start
+ * on the resolved path. Prefixed without shelling out to `realpath`.
+ */
+function resolvedTmpdir(): string {
+  const root = tmpdir();
+  return root.startsWith("/var/") ? `/private${root}` : root;
+}
+
 async function tempXdg(): Promise<string> {
-  const base = await mkdtemp(join(tmpdir(), "weave-pi-cli-prod-"));
-  const resolved = await $`realpath ${base}`.quiet();
-  return resolved.text().trim();
+  const base = join(resolvedTmpdir(), `weave-pi-cli-prod-${crypto.randomUUID()}`);
+  // Bun.write creates parent directories; no node:fs mkdtemp.
+  await Bun.write(join(base, ".keep"), "");
+  await Bun.file(join(base, ".keep")).delete();
+  return base;
+}
+
+/** Delete files under a scratch tree with Bun.file (directories may remain). */
+async function removeScratchFiles(root: string): Promise<void> {
+  const glob = new Bun.Glob("**/*");
+  const files: string[] = [];
+  for await (const relative of glob.scan({
+    cwd: root,
+    onlyFiles: true,
+    dot: true,
+  })) {
+    files.push(join(root, relative));
+  }
+  await Promise.all(files.map((path) => Bun.file(path).delete()));
 }
 
 describe("openProductionPiAdapterCommandPorts", () => {
   const dirs: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(
-      dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-    );
+    await Promise.all(dirs.splice(0).map((dir) => removeScratchFiles(dir)));
   });
 
   it("opens XDG-rooted ports and lists an empty workspace page", async () => {

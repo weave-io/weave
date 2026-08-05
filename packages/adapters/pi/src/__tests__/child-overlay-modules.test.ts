@@ -13,11 +13,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
+const SRC_DIR = join(import.meta.dir, "..");
 
 /** Overlay modules in dependency order; earlier modules may not import later ones. */
 const LAYERS = [
@@ -34,8 +32,8 @@ const MAX_MODULE_LINES = 1200;
 /** Maximum lines allowed for the facade, which must stay a thin re-export. */
 const MAX_FACADE_LINES = 500;
 
-function readModule(file: string): string {
-  return readFileSync(join(SRC_DIR, file), "utf8");
+async function readModule(file: string): Promise<string> {
+  return await Bun.file(join(SRC_DIR, file)).text();
 }
 
 function localImports(source: string): readonly string[] {
@@ -53,9 +51,9 @@ function localImports(source: string): readonly string[] {
 }
 
 describe("child overlay module boundaries", () => {
-  test("imports only flow down the layer order", () => {
+  test("imports only flow down the layer order", async () => {
     for (const [index, file] of LAYERS.entries()) {
-      const imports = localImports(readModule(file));
+      const imports = localImports(await readModule(file));
       const forbidden = LAYERS.slice(index).filter((later) =>
         imports.includes(later),
       );
@@ -63,30 +61,30 @@ describe("child overlay module boundaries", () => {
     }
   });
 
-  test("no overlay module imports the facade", () => {
+  test("no overlay module imports the facade", async () => {
     for (const file of LAYERS) {
       if (file === "child-overlay.ts") continue;
       expect({
         file,
-        importsFacade: localImports(readModule(file)).includes(
+        importsFacade: localImports(await readModule(file)).includes(
           "child-overlay.ts",
         ),
       }).toEqual({ file, importsFacade: false });
     }
   });
 
-  test("no overlay module imports itself", () => {
+  test("no overlay module imports itself", async () => {
     for (const file of LAYERS) {
       expect({
         file,
-        selfImport: localImports(readModule(file)).includes(file),
+        selfImport: localImports(await readModule(file)).includes(file),
       }).toEqual({ file, selfImport: false });
     }
   });
 
-  test("each module stays within its size budget", () => {
+  test("each module stays within its size budget", async () => {
     for (const file of LAYERS) {
-      const lines = readModule(file).split("\n").length;
+      const lines = (await readModule(file)).split("\n").length;
       const budget =
         file === "child-overlay.ts" ? MAX_FACADE_LINES : MAX_MODULE_LINES;
       expect({ file, withinBudget: lines <= budget }).toEqual({

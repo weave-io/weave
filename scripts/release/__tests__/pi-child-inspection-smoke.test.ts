@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 import { makeChildSettlementMissingFailure } from "../../../packages/adapters/pi/src/errors.js";
 import {
+  artifactDigest,
   runAutonomousSmoke,
   validateLargeOutputSmoke,
   validateSmokeBinding,
@@ -54,6 +55,13 @@ describe("autonomous child inspection smoke", () => {
     expect(
       validateSmokeBinding({ ...binding, subjectSha: "clean" }).isErr(),
     ).toBe(true);
+  });
+
+  it("digests artifact bytes with Bun.CryptoHasher", () => {
+    const bytes = new TextEncoder().encode("smoke-artifact");
+    expect(artifactDigest(bytes)).toBe(
+      new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+    );
   });
 
   it("rejects structured ChildSettlementMissing without log text", async () => {

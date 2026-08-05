@@ -1,7 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   HOST_PACKAGE_NAME,
   HOST_VERSION_FLOOR,
@@ -110,7 +108,7 @@ describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)
     // adapter's own declared, enforced compatibility range
     expect(isSupportedHostVersion(EXACT_TESTED_HOST_VERSION)).toBe(true);
 
-    const root = join(".release", `pi-fake-host-${randomUUID()}`);
+    const root = join(".release", `pi-fake-host-${crypto.randomUUID()}`);
     const packager = new PublicPackagePackager(
       new BunPackageCommandRunner(),
       new PackagePolicyValidator(),
@@ -228,14 +226,14 @@ describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)
       // factory is only type/shape-inspected, never invoked, so Pi is
       // never started
       const indexModule = (await import(
-        pathToFileURL(join(packageDir, "dist/index.js")).href
+        new URL(`file://${join(packageDir, "dist/index.js")}`).href
       )) as Record<string, unknown>;
       expect(indexModule.ADAPTER_PACKAGE_IDENTITY).toBe(
         "@weaveio/weave-adapter-pi",
       );
 
       const extensionModule = (await import(
-        pathToFileURL(join(packageDir, "dist/extension.js")).href
+        new URL(`file://${join(packageDir, "dist/extension.js")}`).href
       )) as { default?: unknown };
       expect(typeof extensionModule.default).toBe("function");
     } finally {

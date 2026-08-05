@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
@@ -14,6 +13,26 @@ import {
   InMemoryRuntimeStoreFactory,
   SqliteRuntimeStoreFactory,
 } from "../runtime-store-port.js";
+
+async function makeScratchRoot(prefix: string): Promise<string> {
+  const root = join(tmpdir(), `${prefix}-${crypto.randomUUID()}`);
+  await Bun.write(join(root, ".keep"), "");
+  await Bun.file(join(root, ".keep")).delete();
+  return root;
+}
+
+async function removeScratchFiles(root: string): Promise<void> {
+  const glob = new Bun.Glob("**/*");
+  const files: string[] = [];
+  for await (const relative of glob.scan({
+    cwd: root,
+    onlyFiles: true,
+    dot: true,
+  })) {
+    files.push(join(root, relative));
+  }
+  await Promise.all(files.map((path) => Bun.file(path).delete()));
+}
 
 describe("InMemoryRuntimeStoreFactory", () => {
   it("returns the injected store without touching disk", async () => {
@@ -40,12 +59,12 @@ describe("FailingRuntimeStoreFactory", () => {
 describe("SqliteRuntimeStoreFactory — real filesystem conformance", () => {
   let root: string;
 
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "weave-runtime-store-test-"));
+  beforeEach(async () => {
+    root = await makeScratchRoot("weave-runtime-store-test");
   });
 
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
+  afterEach(async () => {
+    await removeScratchFiles(root);
   });
 
   it("opens and migrates a fresh Runtime Store in a scratch directory", async () => {
@@ -68,12 +87,12 @@ describe("SqliteRuntimeStoreFactory — real filesystem conformance", () => {
 describe("BunJsonlRecoveryPointerStore — schema-safe read safety", () => {
   let root: string;
 
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "weave-recovery-pointer-test-"));
+  beforeEach(async () => {
+    root = await makeScratchRoot("weave-recovery-pointer-test");
   });
 
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
+  afterEach(async () => {
+    await removeScratchFiles(root);
   });
 
   it("reads only the latest valid pointer and skips malformed/unknown-version entries", async () => {

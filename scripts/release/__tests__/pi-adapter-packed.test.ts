@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { PackagePolicyValidator } from "../package-policy.js";
 import { BunPackageCommandRunner, PublicPackagePackager } from "../packager.js";
@@ -15,7 +14,7 @@ import { TarInspector } from "../tar-inspector.js";
  */
 describe("pi adapter packed artifact (Pi adapter contract, PI-PKG)", () => {
   it("packs @weaveio/weave-adapter-pi with an inventory-clean, policy-valid tarball", async () => {
-    const root = join(".release", `pi-pkg-packed-${randomUUID()}`);
+    const root = join(".release", `pi-pkg-packed-${crypto.randomUUID()}`);
     const packager = new PublicPackagePackager(
       new BunPackageCommandRunner(),
       new PackagePolicyValidator(),

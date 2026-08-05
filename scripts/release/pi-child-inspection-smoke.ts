@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import {
@@ -121,7 +120,7 @@ export function sanitizedAssertion(value: unknown): string {
   return text.length > 512 ? `${text.slice(0, 512)}…` : text;
 }
 export function artifactDigest(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
+  return new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
 }
 
 export async function runAutonomousSmoke(input: {
