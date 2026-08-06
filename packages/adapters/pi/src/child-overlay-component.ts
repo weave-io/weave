@@ -39,6 +39,11 @@ import {
   createPiChildTranscriptRenderer,
   type PiTranscriptComponentFactory,
 } from "./child-transcript.js";
+import {
+  fitLinesToWidth,
+  fitLineWithSuffix,
+  fitRuleToWidth,
+} from "./render-width.js";
 
 // ---------------------------------------------------------------------------
 // Native custom component (Task 12 phase B1)
@@ -196,7 +201,7 @@ export function createChildOverlayCustomComponent(
   };
 
   const headerLines = (view: ChildOverlayView, width: number): string[] => {
-    const title = view.child.title ?? view.child.childId;
+    const title = boundText(view.child.title ?? view.child.childId);
     const status = view.child.status.toUpperCase();
     const run =
       view.activeRun !== undefined ? `run ${view.activeRun}` : undefined;
@@ -205,8 +210,10 @@ export function createChildOverlayCustomComponent(
         ? `branch ${view.activeBranchId}`
         : undefined;
     const meta = [run, branch].filter((part) => part !== undefined).join(" · ");
+    // Reserve ` · STATUS` so a narrow terminal truncates the title, not the
+    // live/settled marker the reader needs (Task 20(f) width-51 crash).
     const header = [
-      boundText(`◆ ${title} · ${status}`),
+      fitLineWithSuffix(`◆ ${title}`, ` · ${status}`, width),
       ...(meta.length > 0 ? [boundText(meta)] : []),
     ];
     if (view.readOnly) {
@@ -239,7 +246,7 @@ export function createChildOverlayCustomComponent(
         ),
       );
     }
-    header.push("─".repeat(Math.min(width, 40)));
+    header.push(fitRuleToWidth("─", width, 40));
     return header;
   };
 
@@ -436,7 +443,7 @@ export function createChildOverlayCustomComponent(
 
   return {
     render(width) {
-      return Result.fromThrowable(
+      const rendered = Result.fromThrowable(
         (): string[] => {
           if (finished) return lines;
           const resized = controller.resize(width, visibleHeight());
@@ -490,6 +497,9 @@ export function createChildOverlayCustomComponent(
           return lines;
         },
       )().unwrapOr(lines);
+      // Pi aborts when any custom-component line exceeds the passed width.
+      // Fit every return path, including cached and fallback frames.
+      return fitLinesToWidth(rendered, width);
     },
     handleInput(data) {
       if (finished || inputBusy) return;

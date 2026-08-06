@@ -239,6 +239,14 @@
   - _...37 more_
 - `packages/adapters/pi/src/child-overlay-component.ts` — function createChildOverlayCustomComponent: (tui) => void },, interface PiChildOverlayCustomComponent
 - `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
+- `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
+  - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
+  - function formatPiChildOverlayFallbackDiagnostic: (code) => string
+  - function piChildOverlayFallbackReasonCode: (reason, stage, sourceErrorType?) => PiChildOverlayFallbackReasonCode
+  - function piChildOverlayOpenErrorReasonCode: (error) => PiChildOverlayFallbackReasonCode
+  - function piChildOverlayOpenErrorReasonCodeFromUnknown: (error) => PiChildOverlayFallbackReasonCode
+  - type ChildOverlayOpenTerminalError
+  - _...4 more_
 - `packages/adapters/pi/src/child-overlay-keys.ts`
   - function isPiChildOverlayActionId: (value) => value is PiChildOverlayActionId
   - function childOverlayActionFromId: (id) => PiChildOverlayAction | undefined
@@ -246,7 +254,7 @@
   - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
-  - _...41 more_
+  - _...45 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
@@ -255,6 +263,10 @@
   - function boundLabel: (value) => string
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
   - _...6 more_
+- `packages/adapters/pi/src/child-overlay-search.ts`
+  - function stripPathLike: (value) => string
+  - function matchingEntryIds: (entries, needle) => string[]
+  - function mergeMatchIds: (older, newer) => string[]
 - `packages/adapters/pi/src/child-overlay-types.ts`
   - function clampPageSize: (pageSize) => number
   - function clampWindowCap: (windowCap) => number
@@ -262,8 +274,9 @@
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
   - interface ChildOverlayConfig
-  - _...25 more_
+  - _...26 more_
 - `packages/adapters/pi/src/child-overlay.ts`
+  - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
   - function mapNativeSessionEntryPageToOverlay: (page) => ChildOverlayPage
   - function createReadSessionEntryPageOverlaySource: (deps) => void
@@ -441,6 +454,12 @@
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
   - _...10 more_
+- `packages/adapters/pi/src/generation-resources.ts`
+  - function createGenerationSessionCtxCell: () => PiGenerationSessionCtxCell
+  - function readSessionManagerEntries: (ctx, report) => void
+  - class PiGenerationResourceOwner
+  - interface PiGenerationSessionCtxCell
+  - type PiChildRefEntryReadDegradation
 - `packages/adapters/pi/src/host-compatibility-matrix.ts`
   - function validateHostCompatibilityMatrix: (matrix) => Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>
   - interface PiHostSurfaceDeclaration
@@ -530,6 +549,11 @@
   - function activeInstanceFromRecoveryPointer: (pointer) => |
   - class InMemoryRecoveryPointerStore
   - _...9 more_
+- `packages/adapters/pi/src/render-width.ts`
+  - function fitLineToWidth: (line, width) => string
+  - function fitLineWithSuffix: (head, suffix, width) => string
+  - function fitLinesToWidth: (lines, width) => string[]
+  - function fitRuleToWidth: (rule, width, cap) => string
 - `packages/adapters/pi/src/repeated-settlement-validator.ts`
   - function validateRepeatedSettlements: (options) => ResultAsync<
   - interface PiSettlementValidationRun
