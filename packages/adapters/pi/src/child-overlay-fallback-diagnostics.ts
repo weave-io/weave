@@ -194,7 +194,10 @@ export function piChildOverlayOpenErrorReasonCodeFromUnknown(
   if (typeof type !== "string") {
     return "open-failed";
   }
-  if (type in PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE) {
+  // Own-key only: `in` also matches Object.prototype names (toString,
+  // constructor, __proto__), which would resolve to inherited functions
+  // instead of collapsing to the opaque open-failed code.
+  if (Object.hasOwn(PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE, type)) {
     return PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE[
       type as ChildOverlayOpenTerminalError["type"]
     ];

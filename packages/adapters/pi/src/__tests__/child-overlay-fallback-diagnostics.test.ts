@@ -195,4 +195,17 @@ describe("child overlay fallback diagnostics", () => {
       "open-failed",
     );
   });
+
+  it("rejects Object.prototype key names at the unknown runtime boundary", () => {
+    // `type in map` is true for inherited names; own-key checks must not.
+    expect(
+      piChildOverlayOpenErrorReasonCodeFromUnknown({ type: "toString" }),
+    ).toBe("open-failed");
+    expect(
+      piChildOverlayOpenErrorReasonCodeFromUnknown({ type: "constructor" }),
+    ).toBe("open-failed");
+    expect(
+      piChildOverlayOpenErrorReasonCodeFromUnknown({ type: "__proto__" }),
+    ).toBe("open-failed");
+  });
 });
