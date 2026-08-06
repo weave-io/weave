@@ -2654,13 +2654,96 @@ describe("createChildOverlayCustomComponent", () => {
 
   it("calls resize and preserves the logical anchor across widths", async () => {
     const { component, controller } = await mount({ entryCount: 40 });
-    controller.setScrollOffset(4)._unsafeUnwrap();
+    // Scroll offsets are rendered rows, so measure the extent before scrolling.
+    component.render(100);
+    const extent = controller.view()._unsafeUnwrap().scrollExtent;
+    controller.setScrollOffset(Math.min(4, extent))._unsafeUnwrap();
     const before = controller.view()._unsafeUnwrap().anchor?.entryId;
     expect(before).toBeDefined();
     component.render(100);
     const after = controller.view()._unsafeUnwrap();
     expect(after.anchor?.entryId).toBe(before);
     expect(after.width).toBe(100);
+  });
+
+  it("scrolls the viewport by rendered rows, not by entry count", async () => {
+    // Twelve multi-line entries render far more rows than entries. Clamping the
+    // offset by entry count pinned the viewport near the tail, so the oldest
+    // rows stayed unreachable no matter how often PageUp was pressed.
+    const tall = Array.from({ length: 12 }, (_, index) => ({
+      id: `e${index}`,
+      payload: message(
+        `e${index}`,
+        index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        Array.from(
+          { length: 8 },
+          (_line, line) => `entry-${index}-line-${line}`,
+        ).join("\n"),
+      ),
+    }));
+    const { component, controller } = await mount({
+      status: "live",
+      pageSize: 50,
+      sourceEntries: tall,
+    });
+
+    const firstFrame = component.render(80).join("\n");
+    expect(firstFrame).toContain("entry-11-line-7");
+    expect(firstFrame).not.toContain("entry-0-line-0");
+    expect(controller.view()._unsafeUnwrap().scrollExtent).toBeGreaterThan(12);
+
+    let topFrame = "";
+    for (let press = 0; press < 30; press += 1) {
+      component.handleInput(PAGE_UP);
+      await flush();
+      topFrame = component.render(80).join("\n");
+    }
+    // Oldest rendered row is reachable, and the cue counts hidden rows.
+    expect(topFrame).toContain("entry-0-line-0");
+    const scrolled = controller.view()._unsafeUnwrap();
+    expect(scrolled.liveTail).toBe(false);
+    expect(scrolled.scrollOffset).toBe(scrolled.scrollExtent);
+    expect(scrolled.scrollOffset).toBeGreaterThan(12);
+    expect(topFrame).toContain(`${scrolled.scrollOffset} newer line(s) below`);
+
+    // Manual scrolling holds its position across renders.
+    component.render(80);
+    expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(
+      scrolled.scrollOffset,
+    );
+
+    component.handleInput(PAGE_DOWN);
+    await flush();
+    const paged = component.render(80).join("\n");
+    const afterPageDown = controller.view()._unsafeUnwrap();
+    expect(afterPageDown.scrollOffset).toBeLessThan(scrolled.scrollOffset);
+    expect(paged).toContain(
+      `${afterPageDown.scrollOffset} newer line(s) below`,
+    );
+
+    for (let press = 0; press < 30; press += 1) {
+      component.handleInput(PAGE_DOWN);
+      await flush();
+    }
+    const bottomFrame = component.render(80).join("\n");
+    const bottom = controller.view()._unsafeUnwrap();
+    expect(bottom.scrollOffset).toBe(0);
+    expect(bottom.liveTail).toBe(true);
+    expect(bottomFrame).toContain("entry-11-line-7");
+    expect(bottomFrame).not.toContain("newer line(s) below");
+
+    // End returns to the live tail from anywhere in the scrollback.
+    component.handleInput(PAGE_UP);
+    await flush();
+    expect(controller.view()._unsafeUnwrap().liveTail).toBe(false);
+    component.handleInput(END);
+    await flush();
+    const followed = controller.view()._unsafeUnwrap();
+    expect(followed.scrollOffset).toBe(0);
+    expect(followed.liveTail).toBe(true);
+    expect(component.render(80).join("\n")).not.toContain(
+      "newer line(s) below",
+    );
   });
 
   it("requests older and newer pages at pagination edges", async () => {

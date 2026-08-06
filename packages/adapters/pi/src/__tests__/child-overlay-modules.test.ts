@@ -3,9 +3,9 @@
  *
  * The overlay runtime is intentionally layered:
  *
- *   child-overlay-types  →  child-overlay-replay  →  child-overlay-controller
- *                                                 →  child-overlay-component
- *                                                 →  child-overlay (facade)
+ *   child-overlay-types  →  child-overlay-scroll   →  child-overlay-controller
+ *                        →  child-overlay-replay   →  child-overlay-component
+ *                                                  →  child-overlay (facade)
  *
  * Imports must only flow left to right. Nothing may import the facade, and no
  * module may exceed its size budget, so the graph stays acyclic and each file
@@ -20,6 +20,7 @@ const SRC_DIR = join(import.meta.dir, "..");
 /** Overlay modules in dependency order; earlier modules may not import later ones. */
 const LAYERS = [
   "child-overlay-types.ts",
+  "child-overlay-scroll.ts",
   "child-overlay-replay.ts",
   "child-overlay-controller.ts",
   "child-overlay-component.ts",

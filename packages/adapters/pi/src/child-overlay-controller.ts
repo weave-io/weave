@@ -35,6 +35,13 @@ import {
   transcriptFromOverlayEntries,
 } from "./child-overlay-replay.js";
 import {
+  anchorFromScroll,
+  maxScrollRows,
+  type OverlayScrollState,
+  restoreScrollAnchor,
+  scrollDelta,
+} from "./child-overlay-scroll.js";
+import {
   matchingEntryIds,
   mergeMatchIds,
   stripPathLike,
@@ -60,8 +67,6 @@ import {
   clampPageSize,
   clampWindowCap,
   OverlayTextSchema,
-  SCROLL_KEYS,
-  SCROLL_PAGE,
 } from "./child-overlay-types.js";
 import {
   type PiChildSessionEvent,
@@ -78,7 +83,7 @@ import {
 // Per-child saved state (LRU)
 // ---------------------------------------------------------------------------
 
-interface SavedChildState {
+interface SavedChildState extends OverlayScrollState {
   draft: string;
   searchQuery: string;
   /**
@@ -89,8 +94,6 @@ interface SavedChildState {
    * list is authoritative and is rebuilt on each `search` call.
    */
   searchMatchIds: string[];
-  scrollOffset: number;
-  liveTail: boolean;
   globalExpanded: boolean;
   activeRun: number | undefined;
   activeBranchId: string | undefined;
@@ -98,10 +101,8 @@ interface SavedChildState {
   newerCursor: string | undefined;
   hasOlderFlag: boolean;
   hasNewerFlag: boolean;
-  entries: ChildOverlayEntry[];
   compact: ChildCompactState;
   transcript: PiChildTranscriptState;
-  anchor: ChildOverlayAnchor | undefined;
   width: number;
   height: number;
   lastTouched: number;
@@ -113,6 +114,7 @@ function emptySaved(threadId: string, touched: number): SavedChildState {
     searchQuery: "",
     searchMatchIds: [],
     scrollOffset: 0,
+    scrollExtent: undefined,
     liveTail: true,
     globalExpanded: false,
     activeRun: undefined,
@@ -421,9 +423,27 @@ export class ChildOverlayController {
     return ok(this.toView(child, state));
   }
 
+  /**
+   * Record the rendered-row layout measured by the component so scroll clamping
+   * uses visual rows. Only the component knows wrapped row counts, so the
+   * controller cannot derive this itself.
+   */
+  setScrollExtent(extent: number): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      const max = Math.max(0, Math.floor(extent));
+      state.scrollExtent = max;
+      if (state.scrollOffset > max) {
+        state.scrollOffset = max;
+        state.liveTail = state.scrollOffset === 0;
+        state.anchor = anchorFromScroll(state);
+      }
+      return this.toView(child, state);
+    });
+  }
+
   setScrollOffset(offset: number): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
-      const max = Math.max(0, state.entries.length);
+      const max = maxScrollRows(state);
       const next = Math.min(Math.max(0, Math.floor(offset)), max);
       state.scrollOffset = next;
       state.liveTail = next === 0;
@@ -434,7 +454,7 @@ export class ChildOverlayController {
 
   scrollBy(delta: number): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
-      const max = Math.max(0, state.entries.length);
+      const max = maxScrollRows(state);
       const next = Math.min(
         Math.max(0, state.scrollOffset + Math.trunc(delta)),
         max,
@@ -455,15 +475,9 @@ export class ChildOverlayController {
       state.width = Math.max(1, Math.floor(width));
       state.height = Math.max(1, Math.floor(height));
       state.anchor = anchor;
-      if (anchor !== undefined) {
-        const index = state.entries.findIndex(
-          (entry) => entry.id === anchor.entryId,
-        );
-        if (index >= 0) {
-          state.scrollOffset = Math.max(0, state.entries.length - 1 - index);
-          state.liveTail = state.scrollOffset === 0;
-        }
-      }
+      // Row counts change with width, so the next render re-measures the extent
+      // and clamps. Rewriting the offset from the anchor's entry index here
+      // would convert rows back into entries and pin the viewport to the tail.
       return this.toView(child, state);
     });
   }
@@ -553,15 +567,15 @@ export class ChildOverlayController {
     const scroll = scrollDelta(data);
     if (scroll !== undefined) {
       if (scroll === "oldest") {
-        state.scrollOffset = Math.max(0, state.entries.length);
-        state.liveTail = false;
+        state.scrollOffset = maxScrollRows(state);
+        state.liveTail = state.scrollOffset === 0;
       } else if (scroll === "follow") {
         state.scrollOffset = 0;
         state.liveTail = true;
       } else {
         state.scrollOffset = Math.min(
           Math.max(0, state.scrollOffset + scroll),
-          Math.max(0, state.entries.length),
+          maxScrollRows(state),
         );
         state.liveTail = state.scrollOffset === 0;
       }
@@ -895,6 +909,7 @@ export class ChildOverlayController {
       searchQuery: state.searchQuery,
       searchMatches,
       scrollOffset: state.scrollOffset,
+      scrollExtent: maxScrollRows(state),
       liveTail: state.liveTail,
       globalExpanded: state.globalExpanded,
       activeRun: state.activeRun,
@@ -1004,57 +1019,6 @@ function syncTranscriptFromEntries(state: SavedChildState): void {
       return expanded === entry.expanded ? entry : { ...entry, expanded };
     }),
   };
-}
-
-function anchorFromScroll(
-  state: SavedChildState,
-): ChildOverlayAnchor | undefined {
-  if (state.entries.length === 0) return undefined;
-  const index = Math.max(
-    0,
-    Math.min(
-      state.entries.length - 1,
-      state.entries.length - 1 - state.scrollOffset,
-    ),
-  );
-  const entry = state.entries[index];
-  if (entry === undefined) return undefined;
-  return { entryId: entry.id, lineOffset: 0 };
-}
-
-/** Recompute scrollOffset so a retained entry stays the logical viewport anchor. */
-function restoreScrollAnchor(
-  state: SavedChildState,
-  anchor: ChildOverlayAnchor | undefined,
-): void {
-  if (anchor === undefined || state.entries.length === 0) {
-    state.anchor = anchorFromScroll(state);
-    return;
-  }
-  const index = state.entries.findIndex((entry) => entry.id === anchor.entryId);
-  if (index < 0) {
-    // Anchor was trimmed; clamp to the nearest retained edge.
-    state.scrollOffset = Math.min(
-      state.scrollOffset,
-      Math.max(0, state.entries.length - 1),
-    );
-    state.liveTail = state.scrollOffset === 0;
-    state.anchor = anchorFromScroll(state);
-    return;
-  }
-  state.scrollOffset = Math.max(0, state.entries.length - 1 - index);
-  state.liveTail = state.scrollOffset === 0;
-  state.anchor = { entryId: anchor.entryId, lineOffset: anchor.lineOffset };
-}
-
-function scrollDelta(data: string): number | "oldest" | "follow" | undefined {
-  if (data === SCROLL_KEYS.pageUp) return SCROLL_PAGE;
-  if (data === SCROLL_KEYS.pageDown) return -SCROLL_PAGE;
-  if (data === SCROLL_KEYS.shiftUp) return 1;
-  if (data === SCROLL_KEYS.shiftDown) return -1;
-  if (data === SCROLL_KEYS.home) return "oldest";
-  if (data === SCROLL_KEYS.end) return "follow";
-  return undefined;
 }
 
 function projectLiveEntry(

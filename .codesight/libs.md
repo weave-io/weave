@@ -263,6 +263,12 @@
   - function boundLabel: (value) => string
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
   - _...6 more_
+- `packages/adapters/pi/src/child-overlay-scroll.ts`
+  - function maxScrollRows: (state) => number
+  - function anchorFromScroll: (state) => ChildOverlayAnchor | undefined
+  - function restoreScrollAnchor: (state, anchor) => void
+  - function scrollDelta: (data) => number | "oldest" | "follow" | undefined
+  - interface OverlayScrollState
 - `packages/adapters/pi/src/child-overlay-search.ts`
   - function stripPathLike: (value) => string
   - function matchingEntryIds: (entries, needle) => string[]

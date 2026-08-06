@@ -425,8 +425,8 @@ export function createChildOverlayCustomComponent(
     if (viewResult.isErr()) return errAsync(viewResult.error);
     const view = viewResult.value;
     if (data === SCROLL_KEYS.pageUp && view.hasOlder) {
-      const nearOldest =
-        view.scrollOffset >= Math.max(0, view.entries.length - 1);
+      // Older pages load once the viewport sits on the oldest rendered row.
+      const nearOldest = view.scrollOffset >= Math.max(0, view.scrollExtent);
       if (nearOldest || view.entries.length === 0) {
         return controller.loadOlder().map(() => undefined);
       }
@@ -473,6 +473,12 @@ export function createChildOverlayCustomComponent(
               visibleHeight() - editorLines.length - header.length - 1,
             );
             const scrollMax = Math.max(0, transcript.value.length - budget);
+            // Scroll is measured here, in rendered rows, and reported back so
+            // the controller clamps in the same unit the viewport paints.
+            controller.setScrollExtent(scrollMax).match(
+              () => undefined,
+              () => undefined,
+            );
             const scrollOffset = Math.min(view.scrollOffset, scrollMax);
             const end = transcript.value.length - scrollOffset;
             lines = [

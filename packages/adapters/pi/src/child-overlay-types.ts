@@ -330,7 +330,10 @@ export interface ChildOverlayView {
   readonly draft: string;
   readonly searchQuery: string;
   readonly searchMatches: readonly string[];
+  /** Hidden rendered rows below the viewport bottom (visual rows, not entries). */
   readonly scrollOffset: number;
+  /** Largest valid `scrollOffset` from the last measured render. */
+  readonly scrollExtent: number;
   readonly liveTail: boolean;
   readonly globalExpanded: boolean;
   readonly activeRun: number | undefined;
