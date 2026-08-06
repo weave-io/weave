@@ -277,6 +277,15 @@ export interface PiChildInspectionRuntimeDeps {
 export interface PiChildInspectionRuntime {
   /** Appends a bounded overlay-key diagnostic and surfaces it when there is UI. */
   readonly reportOverlayKeyDiagnostic: (detail: string) => void;
+  /**
+   * Appends a bounded overlay diagnostic without notifying.
+   *
+   * Fallback decisions are recorded on every inspection, including the routine
+   * ones (a host without the native overlay preflight always falls back), so
+   * surfacing them as warnings would be noise. They are still readable from
+   * `/weave:health`, which is where a proof run collects them.
+   */
+  readonly recordOverlayDiagnostic: (detail: string) => void;
   /** Projects the live registry as the overlay's hierarchy view. */
   readonly buildOverlayHierarchy: (
     registry: PiChildInspectionRegistry,
@@ -371,11 +380,15 @@ export function createChildInspectionRuntime(
     );
   };
 
-  const reportOverlayKeyDiagnostic = (detail: string): void => {
+  const recordOverlayDiagnostic = (detail: string): void => {
     const next = [...overlayKeysCell.diagnostics, detail];
     overlayKeysCell.diagnostics = Object.freeze(
       next.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
     );
+  };
+
+  const reportOverlayKeyDiagnostic = (detail: string): void => {
+    recordOverlayDiagnostic(detail);
     const ctx = deps.latestSessionCtx();
     if (ctx !== undefined && ctx.hasUI) {
       ctx.ui.notify(detail, "warning");
@@ -809,6 +822,7 @@ export function createChildInspectionRuntime(
 
   return {
     reportOverlayKeyDiagnostic,
+    recordOverlayDiagnostic,
     buildOverlayHierarchy,
     focusOverlayChild,
     openChildPicker: openTask13ChildPicker,

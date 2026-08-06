@@ -121,32 +121,42 @@ The current proof pane remains open as required. A remediation must keep histori
 
 ## Remediation note (2026-08-06)
 
-This proof stays **FAIL** until item (c) is rerun in a fresh Herdr Pi session. The
-following adapter changes were made in response to the blocker and are covered by
-automated tests only:
+This proof stays **FAIL** until item (c) is rerun in a fresh Herdr Pi session.
 
-- `readOverlaySessionEntryPage` now verifies a persisted child session against the
-  parent session recorded in the child's own durable ref record
-  (`PiOverlayChildDescriptor.originParentSessionId`) instead of the live parent
-  session identity read at page time. A restarted parent generation that reports a
-  different live identity no longer turns every historical page read into
-  `parent-session-mismatch`. Missing, corrupt, root-violating, and genuinely
-  mismatched sessions still fail closed, and the header check is never skipped.
-- A new extension-boundary test persists a real child session and a real parent ref
-  ledger on disk, restarts the parent generation, selects the historical child
-  through the registered `/weave:inspect` picker, and asserts the native overlay
-  mounts (`ui.custom` mount with no `setEditorComponent` borrow), renders a bounded
-  newest page, and stays read-only.
-- The focused native overlay gained a documented in-overlay search route:
-  `ctrl+f` opens a search prompt, Enter runs `ChildOverlayController.search`, `n`/`N`
-  walk matches, and Escape exits search without closing the overlay or leaking a key
-  to the primary editor. The key is offered to the same host conflict port every
-  other overlay key uses; when the host already binds it, the route is disabled and
-  reported instead of silently stolen.
+An earlier remediation changed `readOverlaySessionEntryPage` to verify a persisted
+child session against the parent session recorded in the child's own durable ref
+record instead of the live parent session identity. That change was **speculative**
+and has been reverted: it was never reproduced fail-first, the restarted parent
+identity matched the handoff in this very proof, and the ref reader already excludes
+origin-mismatched records, so the divergence it claimed to close did not exist. The
+extension-boundary restart test passed on the pre-change baseline as well and is now
+labelled as boundary coverage rather than regression coverage.
 
-The exact production cause of `historical_selection_activated_custom_editor_fallback_instead_of_native_overlay`
-was **not** reproduced offline: with real persisted sessions and refs, the boundary
-test mounts the native overlay both before and after the fix. The origin-parent fix
-removes the one code-level divergence found between the picker path (which resolved
-the child) and the page path (which did not), but the rerun must confirm it and, if
-the fallback recurs, capture the overlay diagnostics printed by `/weave:health`.
+The following adapter changes are retained, each covered by a focused test proven to
+fail before the change:
+
+- Every persisted session ref must have an expected parent session. When none is
+  known, `readOverlaySessionEntryPage` fails closed before reading rather than
+  passing `undefined` through, which would make the native store skip parent
+  equality entirely. Root, auth, header, cursor, and corruption failures stay
+  fail-closed and verbatim.
+- Overlay search scans every page inside the existing bounded historical page
+  budget instead of stopping at the first page that contains a match, and merges
+  matches from all scanned pages in stable transcript order without duplicates.
+  Matches trimmed out of the bounded window still count, so the reported total and
+  `n` / `N` navigation cover the whole scanned range.
+- Every native-overlay to custom-editor fallback decision now records a bounded
+  reason code, printed by `/weave:health` as `overlay: weave overlay fallback:
+  <code>`. The codes are a closed set and carry no identifier, path, prompt, or
+  transcript text.
+- The focused native overlay keeps its documented in-overlay search route: `ctrl+f`
+  opens a search prompt, Enter runs the search, `n` / `N` walk matches, and Escape
+  exits search without closing the overlay or leaking a key to the primary editor.
+  The key is offered to the same host conflict port every other overlay key uses;
+  when the host already binds it, the route is disabled and reported.
+
+The exact production cause of
+`historical_selection_activated_custom_editor_fallback_instead_of_native_overlay`
+is still **not** reproduced offline, and nothing here may be read as a fix for it.
+The rerun must capture the fallback reason code from `/weave:health`; that code
+names the decision that the previous run could only observe as a silent path change.

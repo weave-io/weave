@@ -7459,6 +7459,16 @@ describe("createPiExtension: Task 12 native child overlay", () => {
     expect(host.editorFactoryCalls.length).toBeGreaterThan(editorCallsBefore);
     expect(host.getEditorComponentForTest()).not.toBe(modalFactory);
     expect(host.customCalls.length).toBeGreaterThan(0);
+    // Task 20(c): the decision to leave the native overlay is recorded as a
+    // bounded reason code, so a live run can name the cause from
+    // `/weave:health` alone instead of reporting a silent fallback.
+    await host.invokeCommand("weave:health");
+    const health = host.notifyCalls.at(-1)?.message ?? "";
+    expect(health).toContain(
+      "overlay: weave overlay fallback: open-source-failed",
+    );
+    expect(health).not.toContain(OVERLAY_CHILD_ID);
+    expect(health).not.toContain("/Users/");
     host.inputCustom("\u001b");
     host.finishCustom();
     await flushBackgroundWork();
@@ -7729,7 +7739,7 @@ describe("createPiExtension: Task 13 overlay keys and picker", () => {
     ]);
     await host.invokeCommand("weave:health");
     const health = host.notifyCalls.at(-1)?.message ?? "";
-    expect(health).toContain("overlay keys:");
+    expect(health).toContain("overlay:");
     expect(health).toContain("registerShortcut takes a key");
     expect(health).toContain("getEffectiveConfig()");
   });
@@ -7915,7 +7925,6 @@ describe("readOverlaySessionEntryPage: extension source boundary", () => {
     branchIds: ["main"],
     descendantChildIds: [],
     sessionRef: undefined,
-    originParentSessionId: undefined,
     ...overrides,
   });
 
@@ -8028,12 +8037,10 @@ describe("readOverlaySessionEntryPage: extension source boundary", () => {
     expect(result._unsafeUnwrapErr()).toEqual(unreadable("ref-1"));
   });
 
-  it("verifies the child's origin parent session, not the restarted live one", async () => {
-    // After a parent restart the live session identity can differ from the
-    // parent that created the child. The child's durable record is the only
-    // authority for the expected header `parentSession`; using the live
-    // identity here made every historical child read fail closed with
-    // `parent-session-mismatch` and drop the overlay to the custom editor.
+  it("verifies a persisted session against the live parent session", async () => {
+    // The live parent session identity is the expected header `parentSession`.
+    // It is passed through unchanged so the native store can enforce parent
+    // equality; nothing here may widen it.
     let observedParent: string | undefined = "unset";
     const result = await readOverlaySessionEntryPage(
       {
@@ -8043,37 +8050,6 @@ describe("readOverlaySessionEntryPage: extension source boundary", () => {
               descriptor({
                 status: "settled",
                 sessionRef: "ref-1",
-                originParentSessionId: "parent-origin",
-              }),
-            ),
-          ),
-        sessions: () => ({
-          readSessionEntryPage: (_ref, expectedParentSession) => {
-            observedParent = expectedParentSession;
-            return okAsync({ entries: [], bytesRead: 0, linesScanned: 0 });
-          },
-        }),
-        parentSessionId: () => "parent-restarted",
-      },
-      "child-1",
-      pageOptions,
-    );
-    expect(result.isOk()).toBe(true);
-    expect(observedParent).toBe("parent-origin");
-  });
-
-  it("still verifies against the live parent when no durable origin exists", async () => {
-    // No durable record means no stronger authority; the header check must
-    // stay on, never widening to `undefined`.
-    let observedParent: string | undefined = "unset";
-    const result = await readOverlaySessionEntryPage(
-      {
-        controller: () =>
-          controllerFor(
-            okAsync(
-              descriptor({
-                sessionRef: "ref-1",
-                originParentSessionId: undefined,
               }),
             ),
           ),
@@ -8090,6 +8066,76 @@ describe("readOverlaySessionEntryPage: extension source boundary", () => {
     );
     expect(result.isOk()).toBe(true);
     expect(observedParent).toBe("parent-live");
+  });
+
+  it("fails closed when no expected parent session is known", async () => {
+    // A persisted session ref always belongs to a parent session. Reading it
+    // with an absent expected parent would make the native store skip parent
+    // equality entirely, so the read must never reach the store.
+    let readAttempted = false;
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(
+            okAsync(descriptor({ status: "settled", sessionRef: "ref-1" })),
+          ),
+        sessions: () => ({
+          readSessionEntryPage: () => {
+            readAttempted = true;
+            return okAsync({ entries: [], bytesRead: 0, linesScanned: 0 });
+          },
+        }),
+        parentSessionId: () => undefined,
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(readAttempted).toBe(false);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(unreadable("ref-1"));
+  });
+
+  it("fails closed when the expected parent session is empty", async () => {
+    // An empty identity is as unverifiable as an absent one.
+    let readAttempted = false;
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(
+            okAsync(descriptor({ status: "settled", sessionRef: "ref-1" })),
+          ),
+        sessions: () => ({
+          readSessionEntryPage: () => {
+            readAttempted = true;
+            return okAsync({ entries: [], bytesRead: 0, linesScanned: 0 });
+          },
+        }),
+        parentSessionId: () => "",
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(readAttempted).toBe(false);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(unreadable("ref-1"));
+  });
+
+  it("returns an empty page without a session ref even with no parent", async () => {
+    // Nothing is persisted, so there is no header to verify and no read.
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () => controllerFor(okAsync(descriptor())),
+        sessions: () => ({
+          readSessionEntryPage: () =>
+            okAsync({ entries: [], bytesRead: 0, linesScanned: 0 }),
+        }),
+        parentSessionId: () => undefined,
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().entries).toEqual([]);
   });
 
   it("preserves an actual SessionMissing for a known session ref", async () => {

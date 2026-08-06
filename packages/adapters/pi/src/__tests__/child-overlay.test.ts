@@ -1481,6 +1481,43 @@ describe("ChildOverlayController", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("merges matches from every scanned page, not just the first page with a hit", async () => {
+    // Markers sit on the newest page and on two older pages. Stopping at the
+    // first page that contains a hit reported only the newest-page match and
+    // made `n` / `N` navigation skip every older one.
+    const marked = entries(100).map((entry, index) =>
+      index === 95 || index === 85 || index === 62
+        ? { id: entry.id, payload: message(entry.id, "user", "needle-token") }
+        : entry,
+    );
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "search-pages", entries: marked }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 10,
+      maxSearchPages: 3,
+      windowCap: 25,
+    });
+    const opened = await mustOpen(overlay, "search-pages");
+    // The newest page (e90..e99) holds exactly one marker.
+    expect(
+      opened.entries.filter((entry) => entry.text.includes("needle-token"))
+        .length,
+    ).toBe(1);
+
+    const found = (await overlay.search("needle-token"))._unsafeUnwrap();
+    // Three older pages reach e60..e89, so e85 and e62 join e95.
+    expect(found.searchMatches).toEqual(["e62", "e85", "e95"]);
+    expect(new Set(found.searchMatches).size).toBe(found.searchMatches.length);
+    // The window cap trimmed the newest entries, but trimmed matches still
+    // count: the reported total is the real total, not the visible one.
+    expect(found.entries.length).toBeLessThanOrEqual(25);
+    expect(
+      found.entries.filter((entry) => entry.text.includes("needle-token"))
+        .length,
+    ).toBeLessThan(found.searchMatches.length);
+  });
+
   it("searches loaded entries and fetches a bounded number of older pages", async () => {
     const source = createMemoryChildOverlaySource([
       child({ childId: "search-1", entries: entries(100) }),
@@ -2508,6 +2545,7 @@ describe("createChildOverlayCustomComponent", () => {
       readonly status?: "live" | "settled" | "orphan";
       readonly entryCount?: number;
       readonly pageSize?: number;
+      readonly sourceEntries?: readonly MemoryOverlaySourceEntry[];
       readonly mutations?: ChildOverlayMutationPort;
       readonly onFallback?: (fallback: ChildOverlayFallbackRequired) => void;
     } = {},
@@ -2518,7 +2556,7 @@ describe("createChildOverlayCustomComponent", () => {
         childId: "overlay-1",
         status,
         generationId: "gen-1",
-        entries: entries(options.entryCount ?? 12),
+        entries: options.sourceEntries ?? entries(options.entryCount ?? 12),
         runs: [
           { run: 1, action: "start" },
           { run: 2, action: "continue" },
@@ -2798,6 +2836,50 @@ describe("createChildOverlayCustomComponent", () => {
     await flush();
     expect(component.render(80).join("\n")).toContain("1/11 matches");
     expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(firstOffset);
+  });
+
+  it("navigates matches that span more than one fetched page", async () => {
+    // Markers on the newest page and on two older pages. Search must fetch and
+    // merge them all before navigation, so `n` walks the full match set.
+    const marked = entries(60).map((entry, index) =>
+      index === 55 || index === 42 || index === 21
+        ? { id: entry.id, payload: message(entry.id, "user", "needle-token") }
+        : entry,
+    );
+    const { component, controller } = await mount({
+      status: "settled",
+      pageSize: 10,
+      sourceEntries: marked,
+    });
+    component.render(80);
+    // Only the newest page is loaded, so only one marker is visible up front.
+    expect(
+      controller
+        .view()
+        ._unsafeUnwrap()
+        .entries.filter((entry) => entry.text.includes("needle-token")).length,
+    ).toBe(1);
+
+    component.handleInput("\x06");
+    for (const key of "needle-token") component.handleInput(key);
+    component.handleInput("\r");
+    await flush();
+    const view = controller.view()._unsafeUnwrap();
+    expect(view.searchMatches).toEqual(["e21", "e42", "e55"]);
+    expect(component.render(80).join("\n")).toContain("1/3 matches");
+    const firstOffset = controller.view()._unsafeUnwrap().scrollOffset;
+    component.handleInput("n");
+    await flush();
+    expect(component.render(80).join("\n")).toContain("2/3 matches");
+    const secondOffset = controller.view()._unsafeUnwrap().scrollOffset;
+    expect(secondOffset).not.toBe(firstOffset);
+    component.handleInput("n");
+    await flush();
+    expect(component.render(80).join("\n")).toContain("3/3 matches");
+    component.handleInput("N");
+    await flush();
+    expect(component.render(80).join("\n")).toContain("2/3 matches");
+    expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(secondOffset);
   });
 
   it("exits search on Escape without closing the overlay or leaking input", async () => {

@@ -261,15 +261,6 @@ export interface PiOverlayChildDescriptor {
    * only — never an absolute filesystem path.
    */
   readonly sessionRef: string | undefined;
-  /**
-   * Parent session that owns this child's native session, as recorded when the
-   * child was created. This is the only authority for the expected header
-   * `parentSession` of a persisted child session: a later parent generation may
-   * report a different live session identity, and reading a historical child
-   * must still verify against the parent that actually created it. Undefined
-   * when this generation has no durable record for the child.
-   */
-  readonly originParentSessionId: string | undefined;
 }
 
 /**
@@ -1084,7 +1075,6 @@ export class PiDelegationController {
         branchIds: [],
         descendantChildIds: [],
         sessionRef: record?.sessionRef,
-        originParentSessionId: record?.originParentSessionId,
       };
     }
     const record = this.threadRecords.get(state.threadId);
@@ -1113,7 +1103,6 @@ export class PiDelegationController {
       branchIds: [],
       descendantChildIds: [],
       sessionRef: record?.sessionRef,
-      originParentSessionId: record?.originParentSessionId,
     };
   }
 
@@ -3003,7 +2992,6 @@ function refRecordToOverlayDescriptor(
     branchIds: [],
     descendantChildIds: [],
     sessionRef: record.sessionRef,
-    originParentSessionId: record.originParentSessionId,
   };
 }
 

@@ -237,7 +237,21 @@ Backspace edits your draft when the draft is non-empty. On an empty draft it mov
 
 `Ctrl+F` opens a search prompt inside the focused overlay. Type a query and press Enter to run it; the header then shows the query and the current match position, `n` moves to the next match, `N` to the previous one, and Escape leaves search and clears the query. Search owns the keyboard while the prompt is open: no key reaches the draft editor, the overlay key actions, or Pi, and Escape closes search rather than the overlay. A settled or orphan child stays read-only throughout, so search can never steer or follow up.
 
-Searching scans the loaded window first and then pages back through recorded history, bounded by the same page budget the overlay uses elsewhere. `Ctrl+F` is checked against your effective Pi keybindings like every other overlay key: if the host already binds it, the route is disabled and reported as `weave overlay search skipped key ctrl+f: already bound to <owner>` instead of taking the key over.
+Searching scans every page within the overlay's bounded historical page budget, not just the first page that contains a hit, and merges the matches from all of them in transcript order without duplicates. A match that the bounded window has since trimmed still counts toward the reported total, so the match count is the real total rather than the visible one. `Ctrl+F` is checked against your effective Pi keybindings like every other overlay key: if the host already binds it, the route is disabled and reported as `weave overlay search skipped key ctrl+f: already bound to <owner>` instead of taking the key over.
+
+#### Why an inspection opened in the fallback editor
+
+Child inspection has two paths: the native full-screen overlay and the custom-editor fallback. Every decision to use the fallback is recorded as a bounded reason code and printed by `/weave:health` as `overlay: weave overlay fallback: <code>`. The codes carry no child id, session id, path, prompt, or transcript text.
+
+| Code | Meaning |
+| --- | --- |
+| `preflight-not-native` | The host preflight resolved the custom editor, so the native path never ran. |
+| `controller-absent` | No overlay controller exists for this generation. |
+| `generation-changed` | The session generation changed between selection and activation. |
+| `open-failed` | Opening the child failed for a reason other than a fallback request. |
+| `open-source-failed`, `open-describe-failed`, `open-render-failed` | Opening the child requested the fallback for that reason. |
+| `mounted-source-failed`, `mounted-describe-failed`, `mounted-render-failed` | The mounted native overlay requested the fallback for that reason. |
+| `no-tui-custom-surface` | The host offers no TUI custom surface, so no overlay can mount. |
 
 #### Child picker
 

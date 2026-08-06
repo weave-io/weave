@@ -113,6 +113,11 @@ import {
   createReadSessionEntryPageOverlaySource,
 } from "./child-overlay.js";
 import {
+  formatPiChildOverlayFallbackDiagnostic,
+  type PiChildOverlayFallbackReasonCode,
+  piChildOverlayFallbackReasonCode,
+} from "./child-overlay-fallback-diagnostics.js";
+import {
   captureChildOverlayKeybindings,
   childOverlayConflictPortFromHost,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
@@ -1028,21 +1033,18 @@ function unreadableSessionError(ref: string): PiNativeSessionError {
  * native page without consulting session infrastructure at all.
  */
 /**
- * The parent session identity a persisted child session must have been created
- * under. The child's own durable record is authoritative: a restarted parent
- * generation can report a different live session identity while the ref ledger
- * still resolves the child, and reading its page must verify the header
- * against the parent that actually created it rather than the current one.
- * Falls back to the live parent session identity only when no durable origin is
- * known, and never widens to `undefined`, which would skip the header check.
+ * The parent session identity a persisted child session must be verified
+ * against. A persisted session ref always belongs to a parent session, so an
+ * absent expected parent is a wiring defect, never a licence to read a session
+ * without checking its header. `undefined` here would make the native store
+ * skip parent equality entirely, so the caller fails closed instead.
  */
 function expectedParentSessionForChild(
-  descriptor: { readonly originParentSessionId: string | undefined },
   deps: PiOverlaySessionPageDeps,
 ): string | undefined {
-  const origin = descriptor.originParentSessionId;
-  if (origin !== undefined && origin.length > 0) return origin;
-  return deps.parentSessionId();
+  const live = deps.parentSessionId();
+  if (live === undefined || live.length === 0) return undefined;
+  return live;
 }
 
 export function readOverlaySessionEntryPage(
@@ -1072,11 +1074,13 @@ export function readOverlaySessionEntryPage(
         ) {
           return errAsync(unreadableSessionError(ref));
         }
-        return sessions.readSessionEntryPage(
-          ref,
-          expectedParentSessionForChild(descriptor, deps),
-          options,
-        );
+        const expectedParent = expectedParentSessionForChild(deps);
+        if (expectedParent === undefined) {
+          // Fail closed: reading without an expected parent would skip the
+          // header parent-equality check for a persisted session.
+          return errAsync(unreadableSessionError(ref));
+        }
+        return sessions.readSessionEntryPage(ref, expectedParent, options);
       },
     );
 }
@@ -1801,6 +1805,11 @@ function renderHealthMessage(
   controller: PiExtensionController,
   activeSession: PiActiveSession | undefined,
   bootActivationFailure: PiPrimarySessionFailure | undefined,
+  /**
+   * Bounded overlay diagnostics: key-binding conflicts and every
+   * native-overlay fallback reason code recorded this generation. A proof run
+   * reads the fallback cause from here.
+   */
   overlayKeyDiagnostics: readonly string[] = [],
 ): string {
   const generation = controller.getCurrentGeneration();
@@ -1840,7 +1849,7 @@ function renderHealthMessage(
     0,
     PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics,
   )) {
-    result.push(`overlay keys: ${diagnostic}`);
+    result.push(`overlay: ${diagnostic}`);
   }
 
   if (activeSession?.generationId === generation.id) {
@@ -5010,6 +5019,19 @@ export function createPiExtension(
           );
         };
         let customInspectionOpen = false;
+        /**
+         * Records one native-overlay → custom-editor fallback decision as a
+         * bounded reason code. Every path that leaves the native overlay goes
+         * through here, so a live run always answers "why did this land in the
+         * fallback?" from `/weave:health` alone. Codes carry no identifiers.
+         */
+        const reportOverlayFallback = (
+          code: PiChildOverlayFallbackReasonCode,
+        ): void => {
+          childInspectionRuntime.recordOverlayDiagnostic(
+            formatPiChildOverlayFallbackDiagnostic(code),
+          );
+        };
         const isFallbackRequired = (
           error: unknown,
         ): error is ChildOverlayFallbackRequired =>
@@ -5096,6 +5118,11 @@ export function createPiExtension(
             ctx.mode !== "tui" ||
             ctx.ui.custom === undefined
           ) {
+            reportOverlayFallback(
+              overlay === undefined
+                ? "controller-absent"
+                : "no-tui-custom-surface",
+            );
             ctx.ui.notify("Child inspection requires Pi TUI mode.", "warning");
             return;
           }
@@ -5158,6 +5185,12 @@ export function createPiExtension(
                   // Settle native once, then hand off to the custom-editor path.
                   settle();
                   if (!startupOwnsGeneration()) return;
+                  reportOverlayFallback(
+                    piChildOverlayFallbackReasonCode(
+                      fallback.metadata.reason,
+                      "mounted",
+                    ),
+                  );
                   activateCustomEditorInspection(fallback.metadata.childId);
                 },
                 { cwd: ctx.cwd },
@@ -5174,6 +5207,11 @@ export function createPiExtension(
         const activateNativeOverlay = (childId: string): void => {
           const overlay = childOverlayCell.controller;
           if (overlay === undefined || !startupOwnsGeneration()) {
+            reportOverlayFallback(
+              overlay === undefined
+                ? "controller-absent"
+                : "generation-changed",
+            );
             activateCustomEditorInspection(childId);
             return;
           }
@@ -5189,9 +5227,16 @@ export function createPiExtension(
             }
             closeChildOverlay(childOverlayCell, overlayKeysCell);
             if (isFallbackRequired(opened.error)) {
+              reportOverlayFallback(
+                piChildOverlayFallbackReasonCode(
+                  opened.error.metadata.reason,
+                  "open",
+                ),
+              );
               activateCustomEditorInspection(opened.error.metadata.childId);
               return;
             }
+            reportOverlayFallback("open-failed");
             activateCustomEditorInspection(childId);
           })();
         };
@@ -5204,6 +5249,11 @@ export function createPiExtension(
             activateNativeOverlay(childId);
             return;
           }
+          reportOverlayFallback(
+            childOverlayCell.controller === undefined
+              ? "controller-absent"
+              : "preflight-not-native",
+          );
           activateCustomEditorInspection(childId);
         };
         const openCustomInspection = (): void => {

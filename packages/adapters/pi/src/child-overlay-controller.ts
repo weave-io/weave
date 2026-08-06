@@ -35,6 +35,11 @@ import {
   transcriptFromOverlayEntries,
 } from "./child-overlay-replay.js";
 import {
+  matchingEntryIds,
+  mergeMatchIds,
+  stripPathLike,
+} from "./child-overlay-search.js";
+import {
   CHILD_OVERLAY_BOUNDS,
   type ChildOverlayAnchor,
   type ChildOverlayChild,
@@ -76,6 +81,14 @@ import {
 interface SavedChildState {
   draft: string;
   searchQuery: string;
+  /**
+   * Every match for {@link SavedChildState.searchQuery}, in stable transcript
+   * order (oldest first), deduplicated by entry id. Fetching older pages trims
+   * the newest entries out of the bounded window, so matches cannot be derived
+   * from the window alone without losing every match scrolled out of it. This
+   * list is authoritative and is rebuilt on each `search` call.
+   */
+  searchMatchIds: string[];
   scrollOffset: number;
   liveTail: boolean;
   globalExpanded: boolean;
@@ -98,6 +111,7 @@ function emptySaved(threadId: string, touched: number): SavedChildState {
   return {
     draft: "",
     searchQuery: "",
+    searchMatchIds: [],
     scrollOffset: 0,
     liveTail: true,
     globalExpanded: false,
@@ -309,6 +323,14 @@ export class ChildOverlayController {
     });
   }
 
+  /**
+   * Searches the whole bounded historical range, not just the loaded window.
+   * Stopping at the first page with a match reported a fraction of the real
+   * matches and made `n` / `N` navigation skip the rest, because fetching
+   * older pages trims the newest entries out of the window. Every page within
+   * the existing `maxSearchPages` budget is scanned, and matches from all of
+   * them are merged in transcript order without duplicates.
+   */
   search(query: string): ResultAsync<ChildOverlayView, ChildOverlayError> {
     const bounded = OverlayTextSchema.safeParse(query);
     const text = bounded.success
@@ -316,19 +338,19 @@ export class ChildOverlayController {
       : query.slice(0, CHILD_OVERLAY_BOUNDS.maxTextLength);
     return this.withOpen((child, state) => {
       state.searchQuery = text;
-      if (text.length === 0) {
-        return okAsync(this.toView(child, state));
-      }
+      state.searchMatchIds = [];
+      if (text.length === 0) return okAsync(this.toView(child, state));
       const needle = text.toLowerCase();
-      if (
-        state.entries.some((entry) => entry.text.toLowerCase().includes(needle))
-      ) {
-        return okAsync(this.toView(child, state));
-      }
+      // Seed from the loaded window; older pages prepend ahead of it.
+      state.searchMatchIds = matchingEntryIds(state.entries, needle);
       return this.searchFetchPages(child, state, needle, 0);
     });
   }
-
+  /**
+   * Fetches one older page per step until the page budget is spent or the
+   * transcript start is reached. Unlike the load-more paths this never stops
+   * early on a hit: a match on a newer page says nothing about older ones.
+   */
   private searchFetchPages(
     child: ChildOverlayChild,
     state: SavedChildState,
@@ -337,8 +359,7 @@ export class ChildOverlayController {
   ): ResultAsync<ChildOverlayView, ChildOverlayError> {
     if (
       pagesFetched >= this.maxSearchPages ||
-      state.olderCursor === undefined ||
-      state.entries.some((entry) => entry.text.toLowerCase().includes(needle))
+      state.olderCursor === undefined
     ) {
       return okAsync(this.toView(child, state));
     }
@@ -350,6 +371,11 @@ export class ChildOverlayController {
       )
       .andThen((page) => {
         this.applyPage(state, page, "prepend");
+        // `applyPage` may trim the window; a trimmed entry is still a match.
+        state.searchMatchIds = mergeMatchIds(
+          matchingEntryIds(page.entries, needle),
+          state.searchMatchIds,
+        );
         if (!page.hasOlder) return okAsync(this.toView(child, state));
         return this.searchFetchPages(child, state, needle, pagesFetched + 1);
       });
@@ -853,12 +879,15 @@ export class ChildOverlayController {
     state: SavedChildState,
   ): ChildOverlayView {
     const needle = state.searchQuery.trim().toLowerCase();
+    // Matches from every scanned page come first, in transcript order; live
+    // entries added after the search are appended. Trimmed matches still count.
     const searchMatches =
       needle.length === 0
         ? []
-        : state.entries
-            .filter((entry) => entry.text.toLowerCase().includes(needle))
-            .map((entry) => entry.id);
+        : mergeMatchIds(
+            state.searchMatchIds,
+            matchingEntryIds(state.entries, needle),
+          );
     return {
       child,
       entries: state.entries,
@@ -929,7 +958,7 @@ function dedupEntries(
  * Rebuilds {@link SavedChildState.transcript} from the retained overlay window
  * so paged merges (older/newer/search/replace) cannot leave the render model
  * pointing at a stale tip-only transcript. Preserves expanded IDs that still
- * resolve after the rebuild; scroll anchors are owned by {@link restoreScrollAnchor}.
+ * resolve; scroll anchors are owned by {@link restoreScrollAnchor}.
  */
 function syncTranscriptFromEntries(state: SavedChildState): void {
   const priorExpandedIds = new Set<string>();
@@ -975,18 +1004,6 @@ function syncTranscriptFromEntries(state: SavedChildState): void {
       return expanded === entry.expanded ? entry : { ...entry, expanded };
     }),
   };
-}
-
-function stripPathLike(value: string): string {
-  // Drop absolute path prefixes that would leak storage locations.
-  return boundText(
-    value
-      .replace(
-        /(?:^|[\s"])(?:\/(?:Users|home|var|tmp|private)\/\S+)/gu,
-        " [path]",
-      )
-      .replace(/(?:[A-Za-z]:\\[^\s"]+)/gu, " [path]"),
-  );
 }
 
 function anchorFromScroll(

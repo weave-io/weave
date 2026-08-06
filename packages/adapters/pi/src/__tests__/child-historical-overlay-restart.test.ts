@@ -65,10 +65,19 @@ async function flushBackgroundWork(ticks = 40): Promise<void> {
 }
 
 /**
- * Extension-boundary proof for Spec 33 Task 20 item (c): a settled child whose
- * native session and parent ref ledger are real files on disk must open in the
- * native overlay after the parent generation restarts, not in the custom-editor
- * fallback.
+ * Extension-boundary coverage for Spec 33 Task 20 item (c): a settled child
+ * whose native session and parent ref ledger are real files on disk opens in
+ * the native overlay after the parent generation restarts, not in the
+ * custom-editor fallback.
+ *
+ * This is **not** a regression test for the live blocker
+ * `historical_selection_activated_custom_editor_fallback_instead_of_native_overlay`.
+ * It passes on the pre-change baseline as well, so it does not reproduce that
+ * failure and must not be cited as proof that the failure is fixed. It exists
+ * to pin the boundary that is known to work offline: picker resolution, page
+ * read, native mount, bounded newest page, and read-only rendering. The live
+ * cause is instead instrumented through the bounded overlay fallback reason
+ * codes reported to `/weave:health`.
  */
 describe("createPiExtension: historical native overlay after a parent restart", () => {
   let root = "";
