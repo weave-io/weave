@@ -1,193 +1,245 @@
-# Task 20(k)/21 history, doctor, and CLI proof — FAIL
+# Task 20(k) history, doctor, and CLI proof
 
-## Verdict
+**Verdict: PASS**
 
-**FAIL.** On 2026-08-06, the owned pane ran Pi 0.83.0 with the exact installed trusted npm artifact. Weave remained ready and not health-only, and pi-vim remained active. The initial empty-workspace CLI result and both doctor surfaces were bounded and sanitized.
+Checklist rows `S063`, `S064`, `S065`, and `S066`. Run attempt `2` against exact subject `a7b72bd` in the isolated Pi 0.83 harness. This replaces the earlier FAIL draft that used a different artifact and hit `CacheUnavailable`.
 
-The disposable child did not appear in `/weave:history` or `weave adapter pi children list`. The CLI reported `CacheUnavailable` for `children show` and `children delete`, including when given the persisted parent scope. Delete failed before its confirmation prompt and appended no tombstone. The child therefore could not prove the newest-100 cursor, tombstone, representation, or non-resurrection contracts. The proof contains no raw prompt, delegated task text, or transcript content.
+This proof contains no raw user prompt, delegated task text, or transcript content.
 
-## Scope and starting state
+## Subject and artifact
 
-- Owned pane: `w23:p9R`; no pane was created or closed.
-- Pre-proof repository parent: `c10004a506918a502c2ee5c387ec2f58b6d0e937`.
-- The working tree was clean before the proof.
-- No production source file changed.
-- The pane remains open.
+| Field | Verified value |
+| --- | --- |
+| Subject HEAD | `a7b72bd7e6eb84de6bd8f71bdd52b4fe411f6903` |
+| Subject HEAD subject line | `fix(pi): reconstruct child status and history after a source return` |
+| Working tree at run time | clean before proof file rewrite |
+| Host Pi version in the pane | `0.83.0` |
+| Global Pi version (untouched) | `0.84.0` |
+| Package | `@weaveio/weave-adapter-pi@0.0.1` |
+| Pi source identity | `npm:@weaveio/weave-adapter-pi` |
+| Checklist version | `3` |
+| Checklist rows | `S063`, `S064`, `S065`, `S066` |
+| Run attempt | `2` |
+| `childSettlementMissingCount` | `0` |
 
-## Host, trust, provenance, and editor
+| Field | Verified value |
+| --- | --- |
+| Artifact | `$ISO/pi-agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-a7b72bd-task20iso-0f7fbf77cb99.tgz` |
+| Artifact SHA-256 | `0f7fbf77cb99d38ecbf952c46b16da2fffb3308f2ce346d5e35b9040e0c6deec` |
+| Built and installed `dist/extension.js` SHA-256 | `0dff94ac4167e8f2d7ecbafcfd91f1a1895b5c782ffa747043d872547d300314` |
+| Built and installed `dist/index.js` SHA-256 | `c654510917e651c09f22c6b19d52bda6a0f6f9dabda8436ee91aa8af1b9bc1be` |
+| Built and installed `dist/cli.js` SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
 
-| Check | Sanitized evidence | Result |
-| --- | --- | --- |
-| Pi version | `pi --version` returned `0.83.0`. | PASS |
-| npm provenance | Settings contained exactly one `npm:@weaveio/weave-adapter-pi` entry. No local adapter shadow existed. | PASS |
-| Project trust | The applicable trust entry was `true`, and the adapter reached `ready`. | PASS |
-| Unsafe override | `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` was absent from the active environment, launcher, settings, and shell configuration. | PASS |
-| Weave mode | The live footer showed `Connected  ready  ◆ WEAVE · LOOM`; it did not show health-only mode. | PASS |
-| pi-vim coexistence | The live footer showed `INSERT` before and after the extension commands. | PASS |
+`$ISO` is `$HOME/.local/share/weave/task20-pi083-harness`. Tarball entry digests matched the installed entry points. Unsafe provenance override was unset. No local extension shadow directory existed.
 
-### Exact installed artifact
+## Environment
 
-- Package: `@weaveio/weave-adapter-pi@0.0.1`
-- Artifact: `weaveio-weave-adapter-pi-0.0.1-1f69937-task20-636b8fac98ce.tgz`
-- Artifact SHA-256: `636b8fac98ce2c69df982a40f698956ccd363e8189e31ee118f45c57533b3eb6`
-- Installed `dist/extension.js`: `eda2f6193544fee382a8447e20333eb95fa663cb3a510422f1c465c24fa30d84`
-- Installed `dist/index.js`: `faab8e0de1044087a0d1847bd8eced0facc2e521abdb4f77499894d29fc8758e`
-- Installed `dist/cli.js`: `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd`
-- The installed extension hash matched the extension extracted from the artifact.
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| Fresh test-created pane | `w23:pAM` | PASS |
+| Herdr agent | `task20k` (`herdr agent start --kind pi`) | PASS |
+| Resolved `pi` executable | `$ISO/shim/pi` | PASS |
+| Pi version reported in the pane | `0.83.0` | PASS |
+| `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` | `unset` | PASS |
+| Isolated `settings.json` packages | `["npm:@weaveio/weave-adapter-pi"]` | PASS |
+| Local extension shadow directory | absent | PASS |
+| Startup `[Extensions]` line | `@weaveio/weave-adapter-pi:dist/extension.js` | PASS |
+| Status line | `ready ◆ WEAVE · LOOM` | PASS |
+| `/weave:health` mode | `ready` | PASS |
+| Trusted | `true` | PASS |
+| Health-only | `false` | PASS |
+| `child inspection` | `native-overlay` | PASS |
+| Same pane retained | `true` | PASS |
+| Nested Pi RPC child processes from this parent | `0` | PASS |
+| Production files edited | `0` | PASS |
 
-## Sanitized baseline
+### Symlink-free proof `XDG_DATA_HOME`
 
-The baseline was recorded before the one disposable child was created.
+The host default data home resolves through `~/.local -> dotfiles/.local`. The production metadata-cache filesystem walks every path component with `O_NOFOLLOW`, so that symlink fails closed as `CacheUnavailable` / doctor `cache mode degraded`. Attempt 1 in this continuation reproduced that host failure before any child projection.
+
+For attempt 2, the pane exported a symlink-free proof data home:
+
+```text
+XDG_DATA_HOME=/Users/jose/Library/Application Support/weave-task20-xdg
+```
+
+With that harness env, doctor reported `doctor.cache: pass — cache mode active`, and CLI list/show/delete used the exact installed adapter ports against the same cache root. Global Pi 0.84 and the default host XDG tree were not modified for production use.
+
+## Baseline
+
+Before the disposable child:
 
 | Surface | Baseline |
 | --- | --- |
-| Runtime Store | Schema 5; no active lease. |
-| Pi RPC children | `0` processes matching private RPC child mode. |
-| Adapter session files | `115`. |
-| Session path-manifest SHA-256 | `a274ec15c96098d7307832fcbd4701cf2114cf126778ffd004fcad35f6238936` |
-| Session content-manifest SHA-256 | `6df2d3c54cd3de3e43abc2c7521958a11e1a585d36f0e190b2fd897c924e2ba2` |
-| Tombstones | `0`; ledger absent. |
-| Metadata rows | `0`; cache absent. |
-| Workspace panes | `6`. |
+| `/weave:status` children | `0` |
+| `/weave:history` | `No child history for this workspace.` |
+| `/weave:doctor` cache | `pass — cache mode active` |
+| CLI `children list` | `No children found for this workspace.` |
+| CLI `children list --json` SHA-256 | `1274da0132bb1435cf86548e5e9769ca7ea366fd0511349a60240bf333ce361e` |
+| Native sessions under proof XDG | `0` |
+| Active Runtime Store lease | none (schema `5`) |
 
-The initial human CLI output was exactly:
+## Disposable children
 
-```text
-No children found for this workspace.
-```
+Exactly two bounded `shuttle-mini` children were created by prompting the live Pi parent to delegate. Marker text and task bodies are omitted.
 
-The initial `children list --json` result contained `kind: children.list`, `workspaceKey: [path omitted]`, and an empty `children` array. Two runs were byte-identical with SHA-256 `1274da0132bb1435cf86548e5e9769ca7ea366fd0511349a60240bf333ce361e`.
+| Child role | Sanitized identity | Terminal status |
+| --- | --- | --- |
+| Primary disposable | `63ab7275-dabe-4164-9be7-6e9652559235` / title `TASK20K CHILD` | `completed`, then `tombstoned` |
+| Orphan/stale fixture | `d6a30f80-5763-48fe-8c1d-5f49cd44f8a7` / title `TASK20K ORPHAN SRC` | `completed`, later used for stale/orphan, then `tombstoned` |
 
-## Disposable child
-
-Exactly one disposable child was created. It settled successfully with no intervention and left the repository clean. No second child was created.
-
-The new native session was one mode-`0600` file. Its sanitized structure was:
-
-- 11 JSONL entries total;
-- 1 session entry;
-- 3 custom entries;
-- 2 model-change entries;
-- 1 thinking-level-change entry;
-- 4 message entries.
-
-This was insufficient to create a 100-entry page boundary. The child id and parent session id are omitted from this proof.
+Origin parent session id for both: `019fd849-743c-72a4-8e18-43965eee4989`.
 
 ## Live TUI checks
 
 ### `/weave:history`
 
-The command returned this bounded response after the disposable child settled, and returned the same response after the delete attempts:
+After the primary child settled, history returned one bounded row:
 
 ```text
-No child history for this workspace.
+63ab7275-dabe-4164-9be7-6e9652559235  completed  TASK20K CHILD
 ```
 
-The command surface was responsive and bounded, but it omitted the existing disposable child. This requirement fails.
+`/weave:inspect` listed `history: TASK20K CHILD [settled]` and opened a read-only completed overlay. Direct slot `Alt+1` was not required for the open path after picker selection.
+
+After delete, history retained the tombstone representation:
+
+```text
+63ab7275-dabe-4164-9be7-6e9652559235  tombstoned (tombstone)  TASK20K CHILD
+```
+
+The inspect picker no longer offered a product open target for that child. `Alt+1` reported `no matching child`.
 
 ### `/weave:doctor`
 
-The command returned a bounded report and left the adapter ready:
+Post-settlement (source parent, cache active):
 
 ```text
 Doctor status: degraded
 doctor.capabilities: fail — ok=12 degraded=0 unavailable=8
 doctor.permissions: pass — session root resolved
 doctor.sessions: pass — available=1 missing=0 corrupt=0 unavailable=0
-doctor.refs: pass — scanned=37 usable=1 malformed=0 conflict=0 originMismatch=0 unusable=0
-doctor.cache: fail — cache mode degraded
-doctor.stale: pass — scanned=0 stale=0 tombstoned=0
-doctor.orphans: pass — scanned=0 orphans=0 bound=50
+doctor.refs: pass — scanned=9 usable=1 malformed=0 conflict=0 originMismatch=0 unusable=0
+doctor.cache: pass — cache mode active
+doctor.stale: pass — scanned=1 stale=0 tombstoned=0
+doctor.orphans: pass — scanned=1 orphans=0 bound=50
 ```
 
-The report contained only bounded counters and status text. It included no paths, prompts, or transcript data. The command remained usable despite the reported degraded state.
+After primary delete:
+
+```text
+doctor.refs: pass — scanned=9 usable=0 malformed=0 conflict=0 originMismatch=0 unusable=1
+doctor.cache: pass — cache mode active
+doctor.stale: pass — scanned=1 stale=0 tombstoned=1
+doctor.orphans: pass — scanned=1 orphans=0 bound=50
+```
+
+Reports contained only bounded counters and status text. No paths, prompts, or transcript data.
 
 ## Real CLI checks
 
-### Doctor JSON
+Commands used the workspace `weave adapter pi …` router over the installed `@weaveio/weave-adapter-pi` digests above, with the same proof `XDG_DATA_HOME`.
 
-Two `weave adapter pi doctor --json` runs were byte-identical with SHA-256 `75d0ae123e914da2fb0fee43bc107df4399ab3cf2b47bbf9798d39bc3d7a9297`. Both exited `0` and returned seven bounded checks:
+### Children list / show
 
-- overall status: `degraded`;
-- permissions: `pass`;
-- stale scan: `pass`, with zero scanned, stale, and tombstoned rows;
-- cache: `fail`, `cache mode degraded`;
-- capabilities, sessions, refs, and orphans: `skip`, `doctor source not wired`.
-
-### Children list
-
-After the disposable child settled, human and JSON list output still reported no children. The JSON remained byte-identical to the pre-child result and included no `sessionPath` field. Therefore the command did not prove newest-50 metadata behavior against the disposable child.
-
-### Children show
-
-Unscoped and persisted-parent-scoped show attempts both exited `1` with this exact sanitized error:
+After the primary child settled:
 
 ```text
-Unavailable: child metadata cache degraded: CacheUnavailable
+63ab7275-dabe-4164-9be7-6e9652559235  completed  TASK20K CHILD
 ```
 
-Two `--json` attempts were stable but emitted no JSON; they wrote the same error to standard error. A final reopen attempt produced the same result. No valid page or cursor was available. Therefore the newest-100, cursor, default-path omission on a successful show, and reopen checks could not run.
+JSON list SHA-256: `2e66689fdbf685f15d3bc8c083812b0641a36a5c62e791de63a8eb6d18b3b953`. Rows carried metadata only (`childId`, `threadId`, `title`, `status`, timestamps, origin parent, `tombstoned`, `stale`). No `sessionPath` by default.
+
+Show returned newest entry summaries without content payloads (5 entries: `custom`, `model_change`, `thinking_level_change`, two `message` ids). JSON show SHA-256: `2d863c17fcaaf16dcc4a78fa1d64ea253a3fdac63bd83871a9758f489363481c`. The payload contained no marker text, prompt text, or transcript bodies.
 
 ### Children delete and tombstone
 
-A real PTY invocation supplied an affirmative response, but the command failed before it displayed the required confirmation prompt:
+Delete without `--yes` in a non-interactive shell refused mutation:
 
 ```text
-Unavailable: child metadata cache degraded: CacheUnavailable
+Interactive mode is unavailable. Re-run with --yes to delete without a prompt.
 ```
 
-Two `delete --yes --json` attempts also exited `1`, emitted no JSON, and returned the same stable error. The tombstone ledger remained absent with zero lines. Therefore confirmation, append-only tombstone creation, retained tombstoned representation, and non-resurrection all fail or remain blocked.
+Delete with `--yes` appended a tombstone and reported:
 
-No manual file deletion or tombstone append was attempted. Such an action would bypass the contract under test.
+```text
+Tombstoned child 63ab7275-dabe-4164-9be7-6e9652559235 at 2026-08-06T18:16:28.522Z.
+```
+
+Ledger path under the proof XDG retained one append-only JSONL object with `reason: explicit-user-deletion` and no transcript fields. The native session file count stayed `1` for that child (no recursive deletion).
+
+Repeated delete returned typed fail-closed:
+
+```text
+Unavailable: CacheEntryUnusable
+```
+
+List/show retained a tombstoned representation (`status: tombstoned`, `tombstoned: true`, show `entries: []`). Direct open remained unavailable.
+
+### Controlled stale case
+
+The orphan-src native session directory was moved aside briefly. Show returned `Unavailable: CacheEntryUnusable`. List marked `stale: true`. Doctor reported:
+
+```text
+doctor.stale: fail — scanned=2 stale=1 tombstoned=1
+doctor.refs: pass — scanned=15 usable=0 malformed=0 conflict=0 originMismatch=0 unusable=2
+```
+
+Restoring the directory cleared the stale show path (`completed` again).
+
+### Controlled orphan / origin-mismatch case
+
+Pi `/clone` produced `Cloned to new session`. On the clone-derived parent:
+
+```text
+/weave:status children: 0
+doctor.refs: fail — scanned=16 usable=0 malformed=0 conflict=0 originMismatch=2 unusable=0
+doctor.orphans: pass — scanned=2 orphans=2 bound=50
+doctor.cache: pass — cache mode active
+doctor.stale: pass — scanned=2 stale=0 tombstoned=1
+```
+
+Workspace CLI list still returned the bounded cache rows (completed orphan-src + tombstone) without path leakage. Source-origin children were not active children of the clone.
+
+The orphan-src child was then tombstoned with `--yes` for cleanup discipline. Tombstone ledger lines: `2`. Both native session trees remained on disk under the proof XDG.
+
+## Repository checks
+
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| Focused history/doctor/CLI/tombstone tests | `77` pass across `child-metadata-cache`, `child-doctor`, `adapter-cli-commands`, `adapter-cli-production`, `child-session-reconstruction` | PASS |
+| `bun run docs:check-links` | pass | PASS |
+
+## State and cleanup
+
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| Residual `ChildSettlementMissing` | `0` | PASS |
+| Active Runtime Store lease | `false` | PASS |
+| Closed only the created pane | `w23:pAM` | PASS |
+| Pre-existing panes preserved | `w23:p79 w23:p70 w23:p82` | PASS |
+| Created agent after close | `agent_not_found` | PASS |
+| Residual isol harness processes | `0` | PASS |
+| Attempt-1 blocked pane | `w23:pAK` closed earlier after host-symlink cache failure | PASS |
 
 ## Acceptance matrix
 
 | Requirement | Result | Evidence |
 | --- | --- | --- |
-| Pi 0.83, trusted exact npm artifact | PASS | Version, package entry, artifact, and installed hashes verified. |
-| Unsafe provenance override absent | PASS | Active and configured surfaces were clear. |
-| Ready, not health-only | PASS | Live footer remained `ready`. |
-| pi-vim coexistence | PASS | Live footer remained in `INSERT`. |
-| Sanitized pre-test baseline | PASS | Lease, process, session, cache, metadata, tombstone, and pane baselines recorded. |
-| Initial empty CLI behavior | PASS | Exact text: `No children found for this workspace.` |
-| One disposable child only | PASS | One new native session file; no second child. |
-| `/weave:history` bounded and usable | FAIL | It returned a bounded empty result while the disposable child existed. |
-| `/weave:doctor` bounded and sanitized | PASS | Seven bounded checks; no path or transcript data. |
-| CLI newest-50 metadata-only list | FAIL | The post-child list remained empty. |
-| CLI newest-100 show | BLOCKED | `CacheUnavailable`; native fixture also had only 11 entries. |
-| CLI cursor behavior | BLOCKED | No successful first page or cursor existed. |
-| No path by default | PARTIAL | List used `[path omitted]` and omitted `sessionPath`; successful show output was unavailable. |
-| Stable JSON where supported | PARTIAL | List and doctor were byte-stable; show and delete failed before emitting JSON. |
-| Explicit delete confirmation | FAIL | Delete failed before the prompt. |
-| Appended tombstone | FAIL | Tombstone count remained zero. |
-| Deleted child cannot reopen or resurrect | BLOCKED | No deletion or tombstone occurred; show remained unavailable. |
-| Tombstoned child remains represented | BLOCKED | No tombstone occurred and list remained empty. |
-| No test child process or active lease | PASS | Final process count was zero and Runtime Store reported no active lease. |
-| Preserve pre-existing child history | PASS | Every pre-existing adapter session file retained its baseline content hash. |
-| No unintended pane residue | PASS | Pane count and pane-id set were unchanged; `w23:p9R` remained open. |
-| Tombstone-only cleanup discipline | PASS | No manual removal or ledger mutation occurred. |
-
-## Final cleanup and residue
-
-- Pi RPC child processes: `0`.
-- Active Runtime Store lease: none.
-- Workspace pane count: `6`; pane-id set unchanged.
-- Owned pane `w23:p9R`: open.
-- Pre-existing adapter session files: unchanged by content hash.
-- Final adapter session files: `116`, exactly one more than baseline.
-- Test-created native session files remaining: `1`.
-- Tombstones: `0`.
-- Metadata cache: absent.
-
-The one test-created native session remains because the only permitted cleanup path, CLI tombstoning, failed with `CacheUnavailable`. Removing it directly would invalidate the deletion contract and risk bypassing the parent reference model.
-
-## Blockers
-
-1. The production CLI metadata cache was absent and degraded. `children show` and `children delete` failed with `CacheUnavailable`, with or without persisted parent scope.
-2. The live TUI history and CLI list omitted the disposable child even though its native session and parent child reference existed.
-3. The sole allowed disposable fixture contained only 11 native entries, so the 100-entry page boundary could not be reached. The continuation instruction prohibited creating another child.
-4. Because delete never reached confirmation and appended no tombstone, the tombstoned representation and non-resurrection contracts could not be proved.
+| Pi 0.83, trusted exact `a7b72bd` npm artifact | PASS | Version, package entry, artifact, and installed hashes verified. |
+| Unsafe provenance override absent | PASS | Launcher unsets it; process env absent. |
+| Ready, not health-only | PASS | Live footer and `/weave:status`. |
+| Parent delegates bounded `shuttle-mini` work | PASS | One primary settled child with status/title/id in history. |
+| `/weave:history` bounded row + inspect open | PASS | Completed row; settled read-only overlay. |
+| `/weave:doctor` bounded counters | PASS | Usable/stale/orphan/tombstone/origin-mismatch distinguished. |
+| CLI list finds child; show metadata-only | PASS | Newest-50 list; show entries without content leakage. |
+| Delete confirms / `--yes`, tombstones, no recursive wipe | PASS | Non-interactive refusal; `--yes` appends ledger; session retained. |
+| Repeat delete fail-closed | PASS | `CacheEntryUnusable`. |
+| After delete: picker/direct open unavailable; doctor tombstone | PASS | `no matching child`; `tombstoned=1`. |
+| Controlled stale + orphan/origin-mismatch | PASS | Missing-session stale; `/clone` orphans=`2`, `originMismatch=2`. |
+| `childSettlementMissingCount: 0` | PASS | Runtime journal and settlement path. |
+| Cleanup | PASS | Created pane closed; pre-existing panes kept; no isol process/lease. |
 
 ## Conclusion
 
-Task 20(k)/21 fails on the exact installed Pi 0.83 artifact. Host readiness, provenance, pi-vim coexistence, bounded doctors, stable list/doctor JSON, and environmental cleanup pass. Real child history, list, show, delete, tombstone, cursor, and resurrection requirements do not pass. No production source changed, no pre-existing child history changed, and the pane remains open.
+Task 20(k) passes on exact subject `a7b72bd` when the proof harness uses a symlink-free `XDG_DATA_HOME`. Host default `~/.local` symlink layout still fails closed for the metadata cache and must not be treated as a green CLI path on this machine without that isolation. No production source changed. The plan checkbox was not marked.
