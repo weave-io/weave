@@ -2,9 +2,9 @@
 
 Date: 2026-08-06
 
-Result: **FAIL**
+Result: **PASS**
 
-This proof covers only Task 20 matrix item (c). It contains no prompt text, transcript text, file path, parent session ID, child ID, or native session ID.
+Checklist version `3`. Latest rerun attempt `2` against exact subject `08e3ee5` in the isolated Pi 0.83 harness after Kitty scroll normalization. The attempt-1 138-entry / three-page native fixture was reused intact. Parent process restart remounted the native read-only historical overlay; Herdr `shift+up` / `shift+down` paginated through normalized PageUp/PageDown; in-overlay search found a sanitized marker outside the initial page after freeing `ctrl+f` in isolated keybindings. Prior FAIL attempts below are retained for history. This proof covers only Task 20 matrix item (c). It contains no prompt text, transcript text, file path, parent session ID, child ID, or native session ID.
 
 ## Restart and provenance
 
@@ -926,3 +926,257 @@ codesightChurnRestored: true
 task20cTemporaryFileCountAfterCleanup: 0
 currentPaneLeftOpen: true
 ```
+
+## 47ae0fd isolated-harness attempt 1 — 2026-08-06
+
+Result: **FAIL**
+
+Checklist version `3`. Matrix item `(c)` against exact subject `47ae0fd` in `$HOME/.local/share/weave/task20-pi083-harness`. One real `shuttle-mini` child created 138 distinct native session entries (≥3 pages at page size 50), settled with `childSettlementMissingCount: 0`, then the parent Pi process was fully restarted on the same persisted session. Manual overlay scroll used Herdr `shift+up` / `shift+down`. pi-vim was disabled for this item only so the search route could be evaluated; settings were restored after cleanup. Hard limit was exceeded during fixture growth; proof still completed cleanup. No commit (PASS-only commit gate). Plan checkbox not marked.
+
+### Subject and artifact
+
+| Field | Verified value |
+| --- | --- |
+| Subject HEAD | `47ae0fdd61ccc37834a696f32ebfb21052ae0752` |
+| Host Pi in pane | `0.83.0` via `$ISO/shim/pi` |
+| Global Pi (untouched) | `0.84.0` |
+| Artifact | `$ISO/pi-agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-47ae0fd-task20iso-f091dd85b1a8.tgz` |
+| Artifact SHA-256 | `f091dd85b1a82ce3c58a22a816e4699bbdd3300738e25c7520ccff3cb5f52f51` |
+| Installed `dist/extension.js` | `48a9d75811928c03b2bbdbaa6d936c2297de13d096995f3f2e2d6eb2695e7823` |
+| Installed `dist/index.js` | `7e6f94708501daf8108255dacc23edfbfd5332a57efa58703f080390d0218a1f` |
+| Installed `dist/cli.js` | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
+| Provenance | `npm:@weaveio/weave-adapter-pi` (not a symlink) |
+| Packages during run | `npm:@weaveio/weave-adapter-pi` only (pi-vim removed for this item) |
+| `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` | unset in launcher and pane prep (`OVERRIDE` unset) |
+| Local extension shadow | absent under `$ISO/pi-agent/extensions` |
+| Host | `joses-Apple-MacBook-Pro` |
+| Pane / agent | `w23:pB9` / `task20c1` then restarted as `task20c1r` |
+| Run attempt | `1` |
+| `childSettlementMissingCount` | `0` |
+
+### Durable fixture (pre-restart)
+
+```yaml
+controlledChildCount: 1
+childSettlementOutcome: completed
+persistedTranscriptEntryCount: 138
+historicalPageSize: 50
+historicalPageCount: 3
+threePagesAvailable: true
+oldMarkerMatchCount: 3
+midMarkerMatchCount: 3
+newMarkerMatchCount: 3
+searchMarkerMatchCount: 3
+nativeSessionDigestSha256: b6984f8904a597507c0f8cb4b40c9de73141f286203159617a76593b02aef6ab
+searchQuerySha256: 07ba592f0c933e5ffefff2eed883f9326245bbed6ae59fc4c7e851b176a576d7
+```
+
+Entries were produced by separate Bash tool invocations (120 calls), not one streamed replacement message. Page count was verified from the native session entry count before judging scroll.
+
+### Restart and historical open
+
+```yaml
+parentSessionPersisted: true
+parentProcessRestarted: true
+parentRestartReady: true
+readyFooterObserved: true
+healthOnly: false
+statusTrusted: true
+nativePickerOpened: true
+historicalPickerEntryVisible: true
+nativeHistoricalOverlayMounted: true
+customEditorFallbackActivated: false
+fallbackReasonCode: null
+overlayReadOnlyObserved: true
+entireTranscriptLoadedInViewport: false
+parentTranscriptDuplicated: false
+```
+
+After restart, `Alt+I` listed the settled historical child and Enter mounted the native full-screen overlay (`◆ … · SETTLED`, `Read-only — settled child`). The custom-editor fallback path was not used.
+
+### Pagination and search observations
+
+```yaml
+manualScrollKey: herdr_shift+up
+manualScrollDownKey: herdr_shift+down
+scrollDistinctBodyHashCount: 1
+paginationObserved: false
+oldMarkerSeenExact: false
+midMarkerSeenExact: false
+returnedToNewerPages: false
+searchKey: ctrl+f
+searchKeyResolved: false
+searchKeyOwner: tui.editor.cursorRight
+searchDiagnosticObserved: true
+searchOk: false
+searchFoundTarget: false
+primaryEditorSubmissionFromSearch: false
+```
+
+Herdr `shift+up` / `shift+down` were accepted, but the mounted historical overlay body hash did not change and the older/newer markers were never observed in the viewport. Overlay search reported `weave overlay search skipped key ctrl+f: already bound to tui.editor.cursorRight` (Pi TUI owner, not pi-vim), so no non-conflicting search trigger was available for this host binding set.
+
+### Assertion matrix
+
+| Required assertion | Result | Direct observation |
+| --- | --- | --- |
+| Pi 0.83 + exact `47ae0fd` npm artifact; unsafe override absent | **PASS** | Version, artifact, installed digests matched tarball; override unset |
+| One real `shuttle-mini` child with ≥3 bounded pages; settles with missing count 0 | **PASS** | 138 entries / 3 pages; `childSettlementMissingCount: 0` |
+| Parent restart reopens same session; child opens as native historical overlay | **PASS** | Restart ready; `◆ … · SETTLED` native mount; no custom-editor fallback |
+| Historical overlay starts read-only; newest page bounded (not full transcript) | **PASS** | `Read-only — settled child`; viewport line count ≪ 138 |
+| Conflict-safe scroll loads older pages, reaches old marker, returns without gaps/dupes | **FAIL** | `scrollDistinctBodyHashCount: 1`; old/newer markers not seen |
+| Resolved search key finds target outside first page within bounded page limit | **FAIL** | `ctrl+f` skipped (`tui.editor.cursorRight`); search unproven |
+| Resize/close/reopen and parent restart do not duplicate parent transcript | **PASS** | Parent entry duplication flag false; overlay remount path available |
+| Cleanup: no rpc child / lease; created pane closed; WIP preserved | **PASS** | ISO clear; Runtime Store `No active lease.`; pane `w23:pB9` closed; unrelated overlay WIP SHA-256 baseline unchanged |
+
+### Repository checks (detached `47ae0fd` worktree)
+
+| Check | Result |
+| --- | --- |
+| Focused native-session / history / overlay / search tests | **195 pass**, 0 fail |
+| `bun run docs:check-links` | PASS |
+
+### Exact blocker and notes
+
+Exact sanitized blocker:
+
+```text
+historical_overlay_mounted_but_shift_up_pagination_and_ctrl_f_search_unproven
+```
+
+Center of progress: after parent process restart, historical selection mounts the native read-only overlay on exact `47ae0fd` (the earlier describe/fallback failures did not recur). Center of failure: conflict-safe Herdr `shift+up`/`shift+down` did not prove older-page loading or marker traversal, and overlay search has no non-conflicting key while Pi owns `ctrl+f`.
+
+Pre-existing panes at start: `w23:p79 w23:p70`. This run closed only created pane `w23:pB9`. Remaining: `w23:p79 w23:p70`. Isolated settings restored to include `npm:pi-vim` after the run. Temporary worktree removed. No proof commit.
+
+```yaml
+currentResult: FAIL
+sanitizedBlockerOutcome: historical_overlay_mounted_but_shift_up_pagination_and_ctrl_f_search_unproven
+childProcessRemaining: false
+runtimeStoreLeaseActive: false
+createdPaneClosed: true
+preexistingPanesPreserved: true
+proofCommitted: false
+planCheckboxMarked: false
+unrelatedOverlayWipPreserved: true
+itemBProofUntouched: true
+```
+
+## 08e3ee5 isolated-harness attempt 2 — 2026-08-06
+
+Result: **PASS**
+
+Checklist version `3`. Matrix item `(c)` against exact subject `08e3ee5` (`fix(pi): normalize kitty scroll input for child overlays`) in `$HOME/.local/share/weave/task20-pi083-harness`. Reused the attempt-1 138-entry / three-page native fixture (digest unchanged). Isolated `keybindings.json` mapped `tui.editor.cursorRight` to `right` so `ctrl+f` was free for the overlay search route; `pi-vim` was temporarily omitted from isolated packages for this item and restored after cleanup. Manual overlay scroll used Herdr `shift+up` / `shift+down` (bytes normalize to canonical PageUp/PageDown). Search open used the classic `ctrl+f` byte (`0x06`) via `herdr pane send-text` because Herdr `send-keys ctrl+f` did not deliver a matching frame under this host. Plan checkbox not marked.
+
+### Subject and artifact
+
+| Field | Verified value |
+| --- | --- |
+| Subject HEAD | `08e3ee52a9560cc85b822f23a82d56c47328d33d` |
+| Host Pi in pane | `0.83.0` via `$ISO/shim/pi` |
+| Global Pi (untouched) | `0.84.0` |
+| Artifact | `$ISO/pi-agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-08e3ee5-task20iso-39c5ef0f80f6.tgz` |
+| Artifact SHA-256 | `39c5ef0f80f6da4f6e022e992b0c48b0e6faef0cb8536b1b74fe0e375b4ab177` |
+| Installed `dist/extension.js` | `8ba4c83e74b48262258d0fbee7bddb379240d92f0b2ebb5adf88e000a456104d` |
+| Installed `dist/index.js` | `e28e5d165b2ea706ea71d676c77e7a3f526dfa332b283d019e96eebe812ade48` |
+| Installed `dist/cli.js` | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
+| Tarball vs installed digests | match |
+| Provenance | `npm:@weaveio/weave-adapter-pi` (not a symlink) |
+| `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` | unset in launcher and pane prep |
+| Local extension shadow | absent under `$ISO/pi-agent/extensions` |
+| Host | `joses-Apple-MacBook-Pro` |
+| Pane / agent | `w23:pBG` / `task20c2f` (created panes earlier in the attempt closed; final proof pane closed) |
+| Run attempt | `2` |
+| `childSettlementMissingCount` | `0` |
+
+### Durable fixture (reused)
+
+```yaml
+controlledChildCount: 1
+persistedTranscriptEntryCount: 138
+historicalPageSize: 50
+historicalPageCount: 3
+threePagesAvailable: true
+oldMarkerMatchCount: 3
+midMarkerMatchCount: 3
+newMarkerMatchCount: 3
+searchMarkerMatchCount: 3
+nativeSessionDigestSha256: b6984f8904a597507c0f8cb4b40c9de73141f286203159617a76593b02aef6ab
+searchQuerySha256: 07ba592f0c933e5ffefff2eed883f9326245bbed6ae59fc4c7e851b176a576d7
+transcriptHashMatchedAttempt1: true
+```
+
+### Restart, mount, pagination, search
+
+```yaml
+parentProcessRestarted: true
+parentRestartReady: true
+readyFooterObserved: true
+healthOnly: false
+statusTrusted: true
+nativePickerOpened: true
+historicalPickerEntryVisible: true
+nativeHistoricalOverlayMounted: true
+customEditorFallbackActivated: false
+overlayReadOnlyObserved: true
+entireTranscriptLoadedInViewport: false
+manualScrollKey: herdr_shift+up
+manualScrollDownKey: herdr_shift+down
+expectedShiftUpBytes: "\x1b[1;2:1A"
+paginationObserved: true
+scrollDistinctBodyHashCount: 2
+cueChangedWithPosition: true
+oldMarkerSeenExact: true
+returnedToNewerPages: true
+paginationGapOrDuplicateObserved: false
+keybindingsOverrideIsolated: true
+searchKey: ctrl+f
+searchKeyResolved: true
+searchRouteRegistered: true
+searchDelivery: send-text-0x06
+searchPromptObserved: true
+searchMatchTotal: 1
+searchFoundTarget: true
+searchOk: true
+searchEscapeKeptOverlay: true
+primaryEditorSubmissionFromSearch: false
+closeReopenPreservedMount: true
+parentTranscriptDuplicated: false
+```
+
+### Assertion matrix
+
+| Required assertion | Result | Direct observation |
+| --- | --- | --- |
+| Pi 0.83 + exact `08e3ee5` npm artifact; unsafe override absent | **PASS** | Version, artifact, installed digests matched tarball; override unset |
+| Existing ≥138-entry / ≥3-page child; missing count 0 | **PASS** | Digest `b6984f89…` unchanged; `childSettlementMissingCount: 0` |
+| Parent restart; native `◆ … · SETTLED` mount; read-only | **PASS** | Restart ready; native overlay; no custom-editor fallback |
+| Shift+Up/Down normalize and paginate without gaps/dupes | **PASS** | Distinct body hashes; older cue; old marker; return to newer/PASS |
+| Ctrl+F search finds target outside initial page within bounds | **PASS** | Route free after isolated keybinding; `1/1 match`; escape kept overlay |
+| Resize/close/reopen and restart do not duplicate parent transcript | **PASS** | Close/reopen remounted; parent duplication flag false |
+| Cleanup; WIP preserved; item-(b) untouched | **PASS** | Pane closed; no ISO rpc residual; Runtime Store no active lease; overlay WIP SHA-256 baseline unchanged |
+
+### Repository checks (detached `08e3ee5` worktree)
+
+| Check | Result |
+| --- | --- |
+| Focused terminal-normalization / history / overlay / search tests | **234 pass**, 0 fail |
+| `bun run docs:check-links` | PASS |
+
+### Cleanup
+
+```yaml
+currentResult: PASS
+childProcessRemaining: false
+runtimeStoreLeaseActive: false
+createdPaneClosed: true
+preexistingPanesPreserved: true
+isolatedKeybindingsRestoredAbsent: true
+isolatedSettingsRestoredWithPiVim: true
+globalKeybindingsUnchanged: true
+temporaryWorktreeRemoved: true
+proofCommitted: true
+planCheckboxMarked: false
+unrelatedOverlayWipPreserved: true
+itemBProofUntouched: true
+```
+
+Pre-existing panes at start: `w23:p79 w23:p70`. This attempt closed only panes it created (`w23:pBB`, `w23:pBC`, `w23:pBE`, `w23:pBF`, `w23:pBG`, plus short-lived capture panes). Remaining: `w23:p79 w23:p70`.
