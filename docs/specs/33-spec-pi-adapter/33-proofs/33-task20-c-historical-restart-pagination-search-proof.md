@@ -311,3 +311,105 @@ remediationExpectedParentValidationRetained: true
 This note records the offline diagnosis and repair only. The result above stays
 **FAIL** until a fresh Herdr run re-observes the native historical overlay,
 pagination, and bounded search end to end.
+
+## Title-bound-fix rerun — `d2daabb` (2026-08-06)
+
+Result: **FAIL**
+
+This fresh rerun preserved the earlier failures above. It recorded only bounded,
+sanitized evidence.
+
+```yaml
+sourceCommitSha256: d2daabb9242dc9d805d5ad4be586c13157875875
+installedExtensionSha256: 430c06be3433325fbf13c8f12fa5f55e647b1fb1c26ecb2631baeb01691ba017
+installedExtensionHashMatched: true
+piVersion083: true
+requestedCurrentPaneMatched: true
+readyFooterObserved: true
+statusTrusted: true
+healthOnly: false
+weaveNpmPackageConfiguredCount: 1
+piVimNpmPackageConfiguredCount: 1
+unsafeOverrideCount: 0
+localWeaveShadowCount: 0
+piVimInsertObservedBeforeInspection: true
+paneCreateSplitCloseCount: 0
+nestedPiLaunchCount: 0
+productionCodeChanged: false
+```
+
+The persisted fixture matched the handoff. The marker was derived in memory from
+the persisted data only and was not recorded.
+
+```yaml
+persistedTranscriptEntryCount: 68
+historicalPageSize: 50
+historicalPageCount: 2
+olderPageEntryCount: 18
+newestPageEntryCount: 50
+controlledUniqueEventCount: 30
+persistedMarkerMatchCount: 10
+olderPageMarkerMatchCount: 6
+newestPageMarkerMatchCount: 4
+transcriptSha256: 1794e072c31c2720f27ab865cabf31ae499dba47e99ec22e043708dea253fe52
+transcriptHashMatchedHandoff: true
+markerSha256: e8557f118a904b10c8a56d54e6d4123a3a7fa071f27775dfbbd5ba7c67992fd9
+markerHashMatchedHandoff: true
+markerDerivedLocally: true
+```
+
+The registered inspector opened its picker and selected the completed child with
+the maximum-length persisted title. The native historical overlay did not mount.
+The health command reported the bounded fallback subcode below, so the run stopped
+at that fail-closed boundary.
+
+```yaml
+registeredInspectCommandUsed: true
+nativePickerOpened: true
+completedMaximumLengthTitleVisible: true
+completedMaximumLengthTitleSelected: true
+pickerOpenWaitMilliseconds: 2000
+selectionMountWaitMilliseconds: 3000
+selectionAttemptCount: 1
+nativeHistoricalOverlayMounted: false
+customEditorFallbackActivated: true
+healthCommandUsed: true
+fallbackReasonCode: open-describe-failed
+fallbackReasonCodeCount: 1
+nativeReadOnlyStatusObserved: false
+nativeNewestPageCountObserved: false
+nativeOlderPageCountObserved: false
+nativePaginationObserved: false
+nativePaginationGapCountObserved: false
+nativePaginationDuplicateCountObserved: false
+nativeViewportAnchorPreservedObserved: false
+nativeSelectionPreservedObserved: false
+nativeSearchInputObserved: false
+nativeBoundedPageScanObserved: false
+nativeMatchNavigationObserved: false
+searchQueryEntered: false
+searchQueryPrimaryEditorLeakCount: 0
+searchQueryPrimarySessionLeakCount: 0
+primarySubmissionDeltaDuringInspection: 0
+primaryDraftByteCountBefore: 0
+primaryDraftByteCountAfter: 0
+primaryDraftRestored: true
+piVimInsertRestored: true
+readyAfterClose: true
+```
+
+### Title-bound-fix rerun verdict
+
+**FAIL** — picker selection reached the bounded `open-describe-failed` fallback.
+The native historical overlay did not mount, so read-only behavior, both bounded
+pages, gap-free pagination, viewport and selection preservation, all-page native
+search, and ten-match navigation were not directly observed.
+
+```yaml
+currentResult: FAIL
+sanitizedBlockerOutcome: open-describe-failed
+cleanupTargetCount: 2
+codesightChurnRestored: true
+task20cTemporaryFileCountAfterCleanup: 0
+currentPaneLeftOpen: true
+```
