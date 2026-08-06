@@ -50,6 +50,17 @@ export const CHILD_OVERLAY_BOUNDS = Object.freeze({
   maxIdLength: 256,
   /** Ceiling on run-divider labels. */
   maxLabelLength: 128,
+  /**
+   * Ceiling on a child descriptor title.
+   *
+   * A descriptor title is not a label: it is the already-validated title of a
+   * persisted child ref, so this bound must equal the ref store's own
+   * `PI_CHILD_REF_BOUNDS.maxTitleLength`. Capping it at the shorter label bound
+   * rejected every real prompt-derived title, which surfaced as an
+   * `OverlayInvalidChild` on `title` and sent historical children to the
+   * custom-editor fallback. The equality is pinned by test.
+   */
+  maxTitleLength: 200,
   /** Ceiling on run dividers retained per child descriptor. */
   maxRuns: 64,
   /** Ceiling on nested hierarchy depth reported in descriptors. */
@@ -125,7 +136,7 @@ export const ChildOverlayChildSchema = z
     threadId: OpaqueIdSchema,
     parentChildId: OpaqueIdSchema.optional(),
     status: ChildOverlayStatusSchema,
-    title: z.string().max(CHILD_OVERLAY_BOUNDS.maxLabelLength).optional(),
+    title: z.string().max(CHILD_OVERLAY_BOUNDS.maxTitleLength).optional(),
     generationId: OpaqueIdSchema.optional(),
     runs: z
       .array(ChildOverlayRunDividerSchema)

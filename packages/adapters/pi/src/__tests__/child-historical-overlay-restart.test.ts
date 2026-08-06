@@ -7,8 +7,10 @@ import {
 import { $ } from "bun";
 import { ok, okAsync } from "neverthrow";
 import { PiNativeSessionStore } from "../child-native-sessions.js";
+import { CHILD_OVERLAY_BOUNDS } from "../child-overlay-types.js";
 import {
   createNativeChildRefSourceAuthority,
+  PI_CHILD_REF_BOUNDS,
   PiChildSessionRefStore,
 } from "../child-session-refs.js";
 import { PiConfigActivator } from "../config-activator.js";
@@ -88,7 +90,17 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     if (root.length > 0) await $`rm -rf ${root}`.quiet();
   });
 
-  it("mounts the native overlay for a persisted settled child selected after a restart", async () => {
+  /**
+   * Opens the picker for one persisted settled child after a parent restart
+   * and selects it. The child's ref `title` is the only variable: it is the
+   * exact field that decided native mount versus custom-editor fallback.
+   */
+  async function openHistoricalChildAfterRestart(title: string): Promise<{
+    readonly host: RecordingFakePiHost;
+    readonly customBefore: number;
+    readonly editorCallsBefore: number;
+    readonly editorOwnerBefore: unknown;
+  }> {
     const fs = createBunPiNativeSessionFs();
     const nativeHost = createPiNativeSessionHost(SessionManager);
     const store = new PiNativeSessionStore({
@@ -147,7 +159,7 @@ describe("createPiExtension: historical native overlay after a parent restart", 
         childId: CHILD,
         nativeSessionId: created.sessionId,
         sessionRef: created.ref,
-        title: "loom",
+        title,
         status: "running",
       })
     )._unsafeUnwrap();
@@ -244,6 +256,13 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     deferred.settle(label);
     await flushBackgroundWork();
 
+    return { host, customBefore, editorCallsBefore, editorOwnerBefore };
+  }
+
+  it("mounts the native overlay for a persisted settled child selected after a restart", async () => {
+    const { host, customBefore, editorCallsBefore, editorOwnerBefore } =
+      await openHistoricalChildAfterRestart("loom");
+
     // The native overlay mounts through ui.custom and never borrows the
     // session editor; the custom-editor fallback always calls
     // setEditorComponent, so an unchanged editor owner proves the native path.
@@ -266,5 +285,45 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     await flushBackgroundWork();
     expect(host.getEditorComponentForTest()).toBe(editorOwnerBefore);
     expect(host.sentUserMessages).toEqual([]);
+  });
+
+  /**
+   * Regression for the Task 20(c) live failure. A real ref title is derived
+   * from the delegated task and is bounded by the ref store at
+   * `PI_CHILD_REF_BOUNDS.maxTitleLength`; the durable proof fixture carried a
+   * title of exactly that length. The overlay descriptor schema used to cap
+   * `title` at the shorter run-divider label bound, so `open` rejected the
+   * described child with `OverlayInvalidChild` and the selection landed in the
+   * custom-editor fallback with the opaque `open-failed` code.
+   */
+  it("mounts the native overlay for a title at the persisted ref title bound", async () => {
+    const title = "t".repeat(PI_CHILD_REF_BOUNDS.maxTitleLength);
+    const { host, customBefore, editorCallsBefore, editorOwnerBefore } =
+      await openHistoricalChildAfterRestart(title);
+
+    // Native mount: ui.custom ran once and the primary editor never changed
+    // owner, which the custom-editor fallback could not leave untouched.
+    expect(host.customCalls.length - customBefore).toBe(1);
+    expect(host.editorFactoryCalls.length).toBe(editorCallsBefore);
+    expect(host.getEditorComponentForTest()).toBe(editorOwnerBefore);
+
+    const rendered = host.customRenderedLines.at(-1)?.join("\n") ?? "";
+    expect(rendered).toContain("SETTLED");
+    expect(rendered).toContain("Read-only");
+    expect(rendered).toContain("body-68");
+
+    host.inputCustom("\u001b");
+    host.finishCustom();
+    await flushBackgroundWork();
+    expect(host.getEditorComponentForTest()).toBe(editorOwnerBefore);
+    expect(host.sentUserMessages).toEqual([]);
+  });
+
+  it("admits exactly the title length the ref store persists", () => {
+    // The overlay descriptor validates an already-validated persisted title;
+    // a narrower bound here can only reject real data.
+    expect(CHILD_OVERLAY_BOUNDS.maxTitleLength).toBe(
+      PI_CHILD_REF_BOUNDS.maxTitleLength,
+    );
   });
 });

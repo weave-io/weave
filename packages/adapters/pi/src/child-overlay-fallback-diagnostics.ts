@@ -21,6 +21,22 @@ export const PI_CHILD_OVERLAY_FALLBACK_REASON_CODES = Object.freeze([
   "generation-changed",
   /** `ChildOverlayController.open` rejected the child. */
   "open-failed",
+  /** `open` rejected the described child: it failed descriptor validation. */
+  "open-invalid-child",
+  /** `open` rejected the child: the page source is not ready yet. */
+  "open-source-not-ready",
+  /** `open` rejected the child: the page source is corrupt. */
+  "open-source-corrupt",
+  /** `open` rejected the child: the page source is unavailable. */
+  "open-source-unavailable",
+  /** `open` rejected the child: no such child is known. */
+  "open-child-not-found",
+  /** `open` rejected the child: the pagination cursor is invalid. */
+  "open-invalid-cursor",
+  /** `open` rejected the child: a bounded overlay capacity was exceeded. */
+  "open-capacity-exceeded",
+  /** `open` rejected the child: no overlay was open when one was required. */
+  "open-not-open",
   /** `open` asked for the fallback: the page source failed. */
   "open-source-failed",
   /** `open` asked for the fallback: the child could not be described. */
@@ -88,4 +104,39 @@ export function piChildOverlayFallbackReasonCode(
     return stage === "open" ? "open-render-failed" : "mounted-render-failed";
   }
   return "open-failed";
+}
+
+/**
+ * Maps one non-fallback `ChildOverlayController.open` error to its bounded
+ * subcode.
+ *
+ * Every historical overlay failure used to collapse into the single
+ * `open-failed` code, which could not distinguish a descriptor that failed
+ * validation from a source that was not ready, corrupt, or unknown. The
+ * discriminant is a closed union, so the mapping stays exhaustive and no
+ * identifier, path, issue path, or operation name ever reaches a diagnostic.
+ */
+export function piChildOverlayOpenErrorReasonCode(error: {
+  readonly type?: string;
+}): PiChildOverlayFallbackReasonCode {
+  switch (error.type) {
+    case "OverlayInvalidChild":
+      return "open-invalid-child";
+    case "SourceStartupNotReady":
+      return "open-source-not-ready";
+    case "SourceCorrupt":
+      return "open-source-corrupt";
+    case "SourceUnavailable":
+      return "open-source-unavailable";
+    case "ChildNotFound":
+      return "open-child-not-found";
+    case "SourceInvalidCursor":
+      return "open-invalid-cursor";
+    case "OverlayCapacityExceeded":
+      return "open-capacity-exceeded";
+    case "OverlayNotOpen":
+      return "open-not-open";
+    default:
+      return "open-failed";
+  }
 }

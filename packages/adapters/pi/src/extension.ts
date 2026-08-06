@@ -116,6 +116,7 @@ import {
   formatPiChildOverlayFallbackDiagnostic,
   type PiChildOverlayFallbackReasonCode,
   piChildOverlayFallbackReasonCode,
+  piChildOverlayOpenErrorReasonCode,
 } from "./child-overlay-fallback-diagnostics.js";
 import {
   captureChildOverlayKeybindings,
@@ -5236,7 +5237,9 @@ export function createPiExtension(
               activateCustomEditorInspection(opened.error.metadata.childId);
               return;
             }
-            reportOverlayFallback("open-failed");
+            reportOverlayFallback(
+              piChildOverlayOpenErrorReasonCode(opened.error),
+            );
             activateCustomEditorInspection(childId);
           })();
         };

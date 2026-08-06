@@ -271,3 +271,43 @@ sanitizedBlockerOutcome: open-failed
 coordinatorCleanupTargetCount: 1
 coordinatorCleanupTargetOutcome: current_proof_pane_when_no_longer_needed
 ```
+
+### Remediation note (offline, post-rerun)
+
+The recorded `open-failed` code was reproduced offline against the durable
+fixture this rerun used, without re-running Herdr. `ChildOverlayController.open`
+rejected the described child before any page was read: the overlay descriptor
+schema bounded a child `title` by the run-divider label bound, while the ref
+store persists titles up to its own, longer title bound. A real task-derived
+title therefore failed descriptor validation with `OverlayInvalidChild`, which
+is not a fallback-required error, so the extension reported the generic
+`open-failed` code and activated the custom editor.
+
+Remediation:
+
+- The overlay descriptor title bound now equals the ref store's persisted title
+  bound, so an already-validated persisted title is admitted unchanged. No other
+  validation was relaxed: missing, corrupt, root-violating, unauthorized,
+  malformed-header, and parent-mismatch data all stay fail-closed, and
+  expected-parent validation remains mandatory and non-empty.
+- Every non-fallback `open` error now reports its own bounded, identifier-free
+  subcode, so a future run distinguishes an invalid descriptor from a source
+  that is not ready, corrupt, unavailable, or unknown instead of collapsing them
+  into `open-failed`.
+- A boundary regression covers the exact failing shape: a persisted settled
+  child whose ref title sits at the ref store's title bound, selected from the
+  picker after a parent restart. It fails on the pre-fix schema and passes after.
+
+```yaml
+remediationDiagnosedOffline: true
+remediationCause: overlay_descriptor_title_bound_shorter_than_persisted_ref_title_bound
+remediationOpenErrorType: OverlayInvalidChild
+remediationRegressionFailedBeforeFix: true
+remediationRegressionPassesAfterFix: true
+remediationFailOpenIntroduced: false
+remediationExpectedParentValidationRetained: true
+```
+
+This note records the offline diagnosis and repair only. The result above stays
+**FAIL** until a fresh Herdr run re-observes the native historical overlay,
+pagination, and bounded search end to end.
