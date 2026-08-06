@@ -579,4 +579,143 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
       ),
     ).toBe(true);
   });
+
+  /**
+   * Models the lifecycle order in which key planning happens before a session
+   * context can carry raw input: the first registration sees a UI without
+   * `onTerminalInput`, a later lifecycle call sees the live one.
+   */
+  function runtimeWithDeferredTerminalInput(
+    registry: PiChildInspectionRegistry,
+    input: ReturnType<typeof terminalInputHost>,
+  ): {
+    readonly runtime: ReturnType<typeof createChildInspectionRuntime>;
+    readonly overlayCell: ReturnType<typeof createChildOverlayCell>;
+    readonly overlayKeysCell: ReturnType<typeof createChildOverlayKeysCell>;
+    readonly focused: string[];
+    readonly exposeTerminalInput: () => void;
+  } {
+    let terminalInputLive = false;
+    const overlayCell = createChildOverlayCell();
+    const overlayKeysCell = createChildOverlayKeysCell(() => 1);
+    const editorCell = createChildInspectionEditorCell();
+    const focused: string[] = [];
+    editorCell.activate = (childId) => {
+      focused.push(childId);
+    };
+    const registryCell = createChildInspectionRegistryCell();
+    registryCell.registry = registry;
+    const runtime = createChildInspectionRuntime({
+      overlayCell,
+      overlayKeysCell,
+      inspectionEditorCell: editorCell,
+      inspectionRegistryCell: registryCell,
+      treeSelectionCell: createChildTreeSelectionCell(),
+      threadSourcesCell: createThreadSourcesCell(),
+      delegationControllerCell: createDelegationControllerCell(),
+      latestSessionCtx: () =>
+        ({
+          cwd: "/repo",
+          hasUI: true,
+          ui: {
+            notify: () => undefined,
+            select: async () => undefined,
+            ...(terminalInputLive
+              ? { onTerminalInput: input.onTerminalInput }
+              : {}),
+          },
+        }) as never,
+      activeGenerationId: () => "gen-1",
+      parentSessionState: () => ({ persistence: "unknown", sessionId: "" }),
+      childInspectionSettings: () => undefined,
+      closeOverlay: () => closeChildOverlay(overlayCell, overlayKeysCell),
+      hostKeybindings: () => ({ getResolvedBindings: () => ({}) }),
+    });
+    return {
+      runtime,
+      overlayCell,
+      overlayKeysCell,
+      focused,
+      exposeTerminalInput: () => {
+        terminalInputLive = true;
+      },
+    };
+  }
+
+  test("a later lifecycle call binds the listener an applied plan never got", async () => {
+    const { pi, registered } = recordingPi();
+    const input = terminalInputHost();
+    const {
+      runtime,
+      overlayCell,
+      overlayKeysCell,
+      focused,
+      exposeTerminalInput,
+    } = runtimeWithDeferredTerminalInput(
+      await registryWithChildren("child-1"),
+      input,
+    );
+
+    // Planning succeeds from the host keybindings port, but the session
+    // context cannot carry raw input yet, so no listener is installed.
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    expect(registered.has("alt+1")).toBe(true);
+    expect(overlayKeysCell.status).toBe("applied");
+    expect(overlayKeysCell.plan).toBeDefined();
+    const appliedPlan = overlayKeysCell.plan;
+    expect(input.listeners.length).toBe(0);
+
+    // The session context now exposes the listener route. Before this fix the
+    // applied-plan early return made every later call inert, so Alt+1 stayed
+    // dead for the whole generation under a foreign primary editor.
+    exposeTerminalInput();
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    expect(input.listeners.length).toBe(1);
+
+    expect(input.emit("\u001b1")).toBe(true);
+    expect(focused).toEqual(["child-1"]);
+
+    // Repeated later calls reuse the one listener.
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    runtime.maybeRegisterOverlayKeys(
+      pi,
+      { getResolvedBindings: () => ({}) },
+      "gen-1",
+    );
+    expect(input.listeners.length).toBe(1);
+    // The plan object is untouched, so key planning and host shortcut
+    // registration did not run a second time.
+    expect(overlayKeysCell.plan).toBe(appliedPlan);
+
+    // Teardown releases the listener, and a new generation installs one fresh.
+    clearChildOverlayGeneration(overlayCell, overlayKeysCell);
+    expect(input.listeners.length).toBe(0);
+    expect(input.unsubscribeCalls).toBe(1);
+    expect(overlayKeysCell.terminalInput).toBeUndefined();
+
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    expect(input.listeners.length).toBe(1);
+  });
+
+  test("retries without a listener route keep the diagnostic list bounded", async () => {
+    const { pi } = recordingPi();
+    const input = terminalInputHost();
+    const { runtime, overlayKeysCell } = runtimeWithDeferredTerminalInput(
+      await registryWithChildren("child-1"),
+      input,
+    );
+
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    const afterFirst = [...overlayKeysCell.diagnostics];
+    expect(
+      afterFirst.filter((line) => line.includes("ui.onTerminalInput")).length,
+    ).toBe(1);
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    }
+
+    expect([...overlayKeysCell.diagnostics]).toEqual(afterFirst);
+    expect(input.listeners.length).toBe(0);
+  });
 });

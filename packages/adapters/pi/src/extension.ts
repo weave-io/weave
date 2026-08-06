@@ -5441,6 +5441,20 @@ export function createPiExtension(
       }
 
       ensureInspectionEditor(ctx, session.generationId);
+      // Overlay keys are planned once, during session start, but the raw
+      // terminal-input route they depend on can only be installed from a
+      // session context that exposes `ui.onTerminalInput`. Under a foreign
+      // primary editor (`pi-vim`) the composed editor factory never runs and
+      // the overlay's custom factory only runs once an overlay is already
+      // mounted, so this is the one lifecycle event that recurs while the
+      // generation is live. The call is inert once the listener exists: raw
+      // shortcut registration stays exactly-once and the listener is bound at
+      // most once per generation.
+      childInspectionRuntime.maybeRegisterOverlayKeys(
+        pi,
+        undefined,
+        session.generationId,
+      );
       if (session.primarySession.getCurrent() === undefined) return undefined;
 
       return {

@@ -924,12 +924,55 @@ export function createChildInspectionRuntime(
     }
   };
 
+  /**
+   * Retries the raw-input binding for a plan that is already applied.
+   *
+   * Planning keys and installing the listener have different preconditions:
+   * planning needs only an inspectable host keybindings source, while the
+   * listener needs a live session context that exposes `ui.onTerminalInput`.
+   * A lifecycle call can satisfy the first and not the second, and
+   * {@link registerOverlayKeys} then returns early on every later call
+   * (`status === "applied" && plan !== undefined`), so the generation keeps an
+   * applied plan with no listener for the rest of its life - which is exactly
+   * the state in which Alt+I / Alt+1..Alt+9 look registered and never reach
+   * the overlay under a foreign primary editor.
+   *
+   * This runs on every later lifecycle call so the missing listener is
+   * installed as soon as a session context can carry it. It changes nothing
+   * else: raw shortcut registration stays exactly-once for the extension
+   * lifetime, and {@link bindOverlayTerminalInput} keeps its own
+   * single-listener guard, so repeated calls never stack a second listener.
+   */
+  const retryOverlayTerminalInput = (generationId: string): void => {
+    if (overlayKeysCell.status !== "applied") return;
+    if (overlayKeysCell.plan === undefined) return;
+    if (overlayKeysCell.terminalInput !== undefined) return;
+    const previous = overlayKeysCell.diagnostics;
+    const diagnostics = [...previous];
+    bindOverlayTerminalInput(generationId, diagnostics);
+    // A retry that still finds no listener route repeats the same degraded
+    // reason, so only genuinely new lines are kept: a session that never
+    // gains `ui.onTerminalInput` must not fill the bounded diagnostic list
+    // with one identical line per turn.
+    const added = diagnostics
+      .slice(previous.length)
+      .filter((line) => !previous.includes(line));
+    if (added.length === 0) return;
+    overlayKeysCell.diagnostics = Object.freeze(
+      [...previous, ...added].slice(
+        0,
+        PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics,
+      ),
+    );
+  };
+
   const maybeRegisterOverlayKeys = (
     pi: PiExtensionApi,
     keybindings: unknown,
     generationId: string,
   ): void => {
     registerOverlayKeys(pi, keybindings, generationId);
+    retryOverlayTerminalInput(generationId);
   };
 
   return {
