@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 264 lib files | 37 env vars | 10 middleware | 0% test coverage
-> **Token savings:** this file is ~27,400 tokens. Without it, AI exploration would cost ~85,200 tokens. **Saves ~57,800 tokens per conversation.**
-> **Last scanned:** 2026-08-06 03:31 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 262 lib files | 37 env vars | 10 middleware | 0% test coverage
+> **Token savings:** this file is ~27,200 tokens. Without it, AI exploration would cost ~84,600 tokens. **Saves ~57,500 tokens per conversation.**
+> **Last scanned:** 2026-08-06 00:36 — re-run after significant changes
 
 ---
 
@@ -250,14 +250,6 @@
   - _...37 more_
 - `packages/adapters/pi/src/child-overlay-component.ts` — function createChildOverlayCustomComponent: (tui) => void },, interface PiChildOverlayCustomComponent
 - `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
-- `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
-  - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
-  - function formatPiChildOverlayFallbackDiagnostic: (code) => string
-  - function piChildOverlayFallbackReasonCode: (reason, stage) => PiChildOverlayFallbackReasonCode
-  - function piChildOverlayOpenErrorReasonCode: (error) => PiChildOverlayFallbackReasonCode
-  - function piChildOverlayOpenErrorReasonCodeFromUnknown: (error) => PiChildOverlayFallbackReasonCode
-  - type ChildOverlayOpenTerminalError
-  - _...3 more_
 - `packages/adapters/pi/src/child-overlay-keys.ts`
   - function isPiChildOverlayActionId: (value) => value is PiChildOverlayActionId
   - function childOverlayActionFromId: (id) => PiChildOverlayAction | undefined
@@ -265,7 +257,7 @@
   - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
-  - _...45 more_
+  - _...41 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
@@ -274,10 +266,6 @@
   - function boundLabel: (value) => string
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
   - _...6 more_
-- `packages/adapters/pi/src/child-overlay-search.ts`
-  - function stripPathLike: (value) => string
-  - function matchingEntryIds: (entries, needle) => string[]
-  - function mergeMatchIds: (older, newer) => string[]
 - `packages/adapters/pi/src/child-overlay-types.ts`
   - function clampPageSize: (pageSize) => number
   - function clampWindowCap: (windowCap) => number
@@ -1604,7 +1592,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 275 test files found
+> 273 test files found
 
 ---
 
