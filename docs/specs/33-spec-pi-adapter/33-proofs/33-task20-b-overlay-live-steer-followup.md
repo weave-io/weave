@@ -498,3 +498,96 @@ wait_gate_did_not_observe_new_active_child
 **FAIL** — not every required assertion was directly observed. The exact
 blocker is `wait_gate_did_not_observe_new_active_child`. Preserve Task 20(b),
 S043, and S044 as incomplete.
+
+## One-pane post-fix rerun — direct Alt+1 loop, no RPC gate
+
+This rerun used only the requested fresh current pane. It did not create,
+split, launch, or close another pane, and it did not launch a nested Pi
+process. It made no production-code edits. The driver started Alt+1 attempts
+12 seconds after the ready footer was observed and did not wait for RPC process
+discovery. Exactly one controlled `shuttle-mini` child was dispatched.
+Evidence below contains only booleans, counts, timings, outcomes, and hashes.
+
+### Fresh Pi and artifact checks
+
+```yaml
+requestedCurrentPaneMatched: true
+piVersion083: true
+readyFooterObserved: true
+trustedNpmProvenance: true
+healthOnlyFalse: true
+piVimInsertObservedBeforeDispatch: true
+weaveNpmPackageConfigured: true
+piVimNpmPackageConfigured: true
+projectExtensionCount: 0
+localWeaveShadowCount: 0
+unsafeOverridePresentInSettings: false
+unsafeOverridePresentProcessCount: 0
+liveProcessEnvironmentCheckCount: 2
+installedExtensionSha256: ac1d12c298300741140d1cefa0e6946489e2fa8a5aeded2873f4c1ea07313061
+nestedPiLaunchCount: 0
+paneCreateSplitCloseCount: 0
+```
+
+The live current-pane footer showed `Connected`, `ready`, and the active Weave
+agent before dispatch. The pi-vim state was `INSERT`. The adapter and pi-vim
+were both configured with `npm:` provenance, no project or local adapter shadow
+was present, and both current-pane foreground process environments lacked the
+unsafe override.
+
+### Driver and controlled child
+
+```yaml
+childDispatchCount: 1
+childOutcomeCompleted: true
+childInterventionCount: 0
+childElapsedSeconds: 150
+childEmittedLineCount: 75
+childSteeringObserved: false
+childFollowUpObserved: false
+driverPostReadyDelaySeconds: 12
+driverMountTimeoutSeconds: 180
+alt1AttemptCount: 161
+alt1StoppedOnMount: false
+overlayMounted: false
+driverFailureElapsedMs: 192448
+driverStderrByteCount: 0
+readyViewportSha256: 77d38e394b05e3c50fda0825e37d785d10090683ec0801eaef083d15cacd30a7
+postRunFooterSha256Prefix: b16283914ca2e4c7
+```
+
+The driver began its Alt+1 loop after the fixed 12-second delay. It continued
+until the 180-second mount timeout and stopped after 161 attempts. No native
+overlay mounted. The child stayed active for 150 seconds, emitted 75 timed
+lines, and settled as `completed`. Since the overlay never mounted, the driver
+correctly did not send either mutation message. The child directly reported
+both observation booleans as false.
+
+Exact sanitized blocker:
+
+```text
+native_overlay_mount_timeout_after_161_alt1_attempts
+```
+
+### Required assertion matrix
+
+| Required assertion | Result | Direct observation |
+| --- | --- | --- |
+| Alt+1 mounts native active-child overlay | **FAIL** | The no-gate driver sent 161 Alt+1 attempts during the active child and observed no native overlay before the 180-second timeout. |
+| Live tail advances | **NOT OBSERVED** | Native overlay did not mount. |
+| Manual scroll disengages tail | **NOT OBSERVED** | Native overlay did not mount. |
+| New entries preserve the manual anchor | **NOT OBSERVED** | Native overlay did not mount. |
+| Return to bottom resumes tail | **NOT OBSERVED** | Native overlay did not mount. |
+| Enter steering reaches child | **FAIL** | Overlay input was unavailable; no steering submission occurred, and the child reported false. |
+| Alt+Enter follow-up reaches child | **FAIL** | Overlay input was unavailable; no follow-up submission occurred, and the child reported false. |
+| No primary draft/key/submission leak | **NOT OBSERVED** | No overlay draft or submission probe could run. The post-run footer had no queued-message indicator, but that alone does not prove full isolation. |
+| Clean settlement | **PASS** | The single child returned the host settlement outcome `completed` with zero interventions. |
+| Settled overlay is read-only | **NOT OBSERVED** | Native overlay did not mount. |
+| Closing overlay restores pi-vim `INSERT` | **NOT OBSERVED** | No overlay mounted, so no overlay close transition existed to test. |
+
+### One-pane post-fix rerun result
+
+**FAIL** — every criterion was not directly observed. The exact blocker is
+`native_overlay_mount_timeout_after_161_alt1_attempts`. Keep Task 20(b), S043,
+and S044 incomplete. Cleanup targets are the temporary background-driver
+artifacts only; the requested pane remains open.
