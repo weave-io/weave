@@ -2,28 +2,28 @@
 
 This record covers Task 20 preparation only. It binds the installed Pi adapter to the exact release artifact built from the subject commit. It supersedes the earlier artifact data in this file and does not claim completion of the 14-scenario acceptance matrix.
 
-This refresh rebuilds the artifact after the resume-origin fix landed in `cdfbfcc` (`fix(pi): prefer session header id for resume origin`). It supersedes the previous refresh, which was built from `357c590a62c94d7d49c4a5837ab6b9ecef07f9db` and carried the own-key overlay open-error diagnostics fix (`707dcae`). The subject history also retains the exhaustive overlay open-error diagnostics mapping (`454908a`), the persisted ref title admission (`8736b78`), the historical overlay pagination and search remediation (`2521e29`), the active-child overlay startup fix (`5a0c10c`), the trusted XDG root fix (`8b9dc84`), the native child session-header fix (`c952ef8`), the bounded restore startup-suffix fix (`5b7f81f`), and the overlay session page source boundary fix (`8b15cf8`).
+This refresh rebuilds the artifact after the typed describe-source diagnostics work landed in `895f459` (`fix(pi): name the source error behind a describe fallback`) and `2a17b58` (`fix(pi): exhaustively map describe fallback source errors`). It supersedes the previous refresh, which was built from `5e40129c91933f6dac971f7a686dcae0e15c4191` and carried the resume-origin fix (`cdfbfcc`). The subject history also retains the own-key overlay open-error diagnostics fix (`707dcae`), the exhaustive overlay open-error diagnostics mapping (`454908a`), the persisted ref title admission (`8736b78`), the historical overlay pagination and search remediation (`2521e29`), the active-child overlay startup fix (`5a0c10c`), the trusted XDG root fix (`8b9dc84`), the native child session-header fix (`c952ef8`), the bounded restore startup-suffix fix (`5b7f81f`), and the overlay session page source boundary fix (`8b15cf8`).
 
 ## Subject
 
 | Field | Verified value |
 | --- | --- |
-| Subject HEAD | `5e40129c91933f6dac971f7a686dcae0e15c4191` |
-| Subject HEAD subject line | `chore(codesight): restore metadata from before cdfbfcc` |
-| Remediation commit in subject history | `cdfbfcc` — `fix(pi): prefer session header id for resume origin` |
+| Subject HEAD | `b2f3e339c35c0c3ba27c4a3a903ed50075145981` |
+| Subject HEAD subject line | `chore(codesight): restore metadata from before 2a17b58` |
+| Remediation commits in subject history | `895f459` — `fix(pi): name the source error behind a describe fallback`; `2a17b58` — `fix(pi): exhaustively map describe fallback source errors` |
 | Working tree at build time | clean (`git status --porcelain` empty) |
-| Superseded artifact subject | `357c590a62c94d7d49c4a5837ab6b9ecef07f9db` |
+| Superseded artifact subject | `5e40129c91933f6dac971f7a686dcae0e15c4191` |
 | Pi version | `0.83.0` |
 | Bun version | `1.3.13` |
 | Package | `@weaveio/weave-adapter-pi@0.0.1` |
-| Artifact | `/Users/jose/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-5e40129-task20-83b40329b183.tgz` |
-| Artifact SHA-256 | `83b40329b18392b88201691ff3f16bfdc9b2b795e19f08b456eaddfa8a21f1c8` |
-| Built and shipped `dist/extension.js` SHA-256 | `d1afe6497936ea08fbd6352d7db588f8d2a2b125a4aec0cf20b83fa73ed6c653` |
-| Built and shipped `dist/index.js` SHA-256 | `12ab01bfbb7592a59c1bab180cfc714857ea1c36d4850db4068479762b7996ad` |
+| Artifact | `/Users/jose/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-b2f3e33-task20-1ec676628a95.tgz` |
+| Artifact SHA-256 | `1ec676628a9519e63f9fa69d101a15110722da5eca3eb689beb2470a7c8d672c` |
+| Built and shipped `dist/extension.js` SHA-256 | `5d68b19a4e89bdcc6622921b966802e451f167df1745525f18a99c5321f61719` |
+| Built and shipped `dist/index.js` SHA-256 | `a7f28f8d2349e5a22b1fd988cee2a5e4a933941ee2e62345e2580515b2d6f737` |
 | Built and shipped `dist/cli.js` SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
 | Installed package | `/Users/jose/.pi/agent/npm/node_modules/@weaveio/weave-adapter-pi` |
-| Installed `dist/extension.js` SHA-256 | `d1afe6497936ea08fbd6352d7db588f8d2a2b125a4aec0cf20b83fa73ed6c653` |
-| Installed `dist/index.js` SHA-256 | `12ab01bfbb7592a59c1bab180cfc714857ea1c36d4850db4068479762b7996ad` |
+| Installed `dist/extension.js` SHA-256 | `5d68b19a4e89bdcc6622921b966802e451f167df1745525f18a99c5321f61719` |
+| Installed `dist/index.js` SHA-256 | `a7f28f8d2349e5a22b1fd988cee2a5e4a933941ee2e62345e2580515b2d6f737` |
 | Installed `dist/cli.js` SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
 | Pi source identity | `npm:@weaveio/weave-adapter-pi` |
 
@@ -48,12 +48,12 @@ The staged public manifest declares the adapter runtime dependencies (`kysely`, 
 
 ## Build and artifact checks
 
-The repository was clean before the build, and the subject HEAD was confirmed to be exactly `5e40129c91933f6dac971f7a686dcae0e15c4191`. The build and pack used the repository's Bun release path and canonical `PublicPackagePackager`:
+The repository was clean before the build, and the subject HEAD was confirmed to be exactly `b2f3e339c35c0c3ba27c4a3a903ed50075145981`. The build and pack used the repository's Bun release path and canonical `PublicPackagePackager`:
 
 ```sh
-SUBJECT_HEAD=5e40129c91933f6dac971f7a686dcae0e15c4191
+SUBJECT_HEAD=b2f3e339c35c0c3ba27c4a3a903ed50075145981
 ROOT=".release/task20-refresh-${SUBJECT_HEAD}"
-ARTIFACT="$HOME/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-5e40129-task20-83b40329b183.tgz"
+ARTIFACT="$HOME/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-b2f3e33-task20-1ec676628a95.tgz"
 
 git log -1 --pretty='%H%n%s'
 git status --porcelain
@@ -73,19 +73,19 @@ console.log(result.value);
 cp "$ROOT/out/weaveio-weave-adapter-pi-0.0.1.tgz" "$ARTIFACT"
 tar -tzf "$ARTIFACT" | LC_ALL=C sort
 shasum -a 256 "$ARTIFACT" packages/adapters/pi/dist/{extension,index,cli}.js
-tar -xOf "$ARTIFACT" package/dist/extension.js | shasum -a 256
-tar -xOf "$ARTIFACT" package/dist/index.js | shasum -a 256
-tar -xOf "$ARTIFACT" package/dist/cli.js | shasum -a 256
+tar -xOzf "$ARTIFACT" package/dist/extension.js | shasum -a 256
+tar -xOzf "$ARTIFACT" package/dist/index.js | shasum -a 256
+tar -xOzf "$ARTIFACT" package/dist/cli.js | shasum -a 256
 ```
 
-`bun run build` exited successfully. `PublicPackagePackager` staged the approved public manifest and files, ran script-disabled package packing through its Bun command runner, validated the emitted bytes with `PackagePolicyValidator`, and returned the packed tarball path. The artifact was copied to the durable artifact path, whose name embeds the subject prefix `5e40129` and the first twelve hex characters of the tarball digest. The staging root `.release/` is ignored by Git, so the build and pack left the working tree clean.
+`bun run build` exited successfully. `PublicPackagePackager` staged the approved public manifest and files, ran script-disabled package packing through its Bun command runner, validated the emitted bytes with `PackagePolicyValidator`, and returned the packed tarball path. The artifact was copied to the durable artifact path, whose name embeds the subject prefix `b2f3e33` and the first twelve hex characters of the tarball digest. The staging root `.release/` is ignored by Git, so the build and pack left the working tree clean.
 
 ## Exact-byte install and provenance
 
 The artifact was extracted into a temporary directory. Runtime dependencies were installed without peer dependencies or lifecycle scripts. The previously installed package directory was removed and replaced with the staged tree. Each shipped file was then compared byte-for-byte with the installed file.
 
 ```sh
-ARTIFACT="$HOME/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-5e40129-task20-83b40329b183.tgz"
+ARTIFACT="$HOME/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-b2f3e33-task20-1ec676628a95.tgz"
 INSTALL="$HOME/.pi/agent/npm/node_modules/@weaveio/weave-adapter-pi"
 STAGE=$(mktemp -d /tmp/weave-pi-task20-install.XXXXXX)
 VERIFY=$(mktemp -d /tmp/weave-pi-task20-verify.XXXXXX)
@@ -138,10 +138,10 @@ env -u WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE ~/.pi/agent/bin/pi list
 | Check | Command | Result |
 | --- | --- | --- |
 | Build | `bun run build` | pass |
-| Focused overlay suites | `bun test packages/adapters/pi/src/__tests__/child-overlay.test.ts packages/adapters/pi/src/__tests__/child-overlay-keys.test.ts packages/adapters/pi/src/__tests__/child-overlay-modules.test.ts` | 93 pass, 0 fail, 3 files |
-| Full Pi adapter suite | `bun test packages/adapters/pi` | 1816 pass, 0 fail, 95 files |
+| Focused overlay suites | `bun test packages/adapters/pi/src/__tests__/child-overlay.test.ts packages/adapters/pi/src/__tests__/child-overlay-keys.test.ts packages/adapters/pi/src/__tests__/child-overlay-modules.test.ts` | 101 pass, 0 fail, 3 files |
+| Full Pi adapter suite | `bun test packages/adapters/pi` | 1826 pass, 0 fail, 95 files |
 | Typecheck | `bun run typecheck` | pass (exit 0) |
-| Lint | `bun run lint` | exit 0, no errors (352 warnings, 74 infos) |
+| Lint | `bun run lint` | exit 0, no errors (352 warnings, 75 infos) |
 | Documentation links | `bun run docs:check-links` | pass (exit 0) |
 
 ## Scope boundary
