@@ -672,3 +672,125 @@ panesClosedCount: 0
 requestedPaneLeftOpen: true
 cleanupOutcome: clean
 ```
+
+---
+
+## Second public terminal-input fix rerun — 2026-08-06
+
+Result: **FAIL**
+
+This rerun used only the fresh owned pane `w23:p9X`. It dispatched exactly one
+bounded, read-only `shuttle` child and started one same-pane driver before the
+dispatch. The driver used a fixed 18-second delay and sent exactly one real
+Alt+1 shortcut. No replacement child was started.
+
+The sole child finished without a terminal assistant response. The host
+returned `ChildResponseMissing` with reason `tool-only`. The driver sent the
+single shortcut 18.033 seconds after it started, but observed no native overlay.
+The driver therefore sent no steering or follow-up draft and performed no
+post-mount mutation. A single real `/reload` attempt was also bounded and failed
+closed with `Wait for the current response to finish before reloading.` It did
+not execute generation teardown, so listener teardown and fresh-listener
+behavior remain unproved.
+
+### Exact artifact, provenance, and readiness
+
+```yaml
+requestedCurrentPaneMatched: true
+requestedPane: w23:p9X
+piVersion: 0.83.0
+expectedSourceCommit: 2eae427c7e65366cbdf9db84b9cd4e1d7a4d33b0
+artifactHashMatchCount: 1
+artifactSha256: 2870934901cd0b824e7c101379a72c9a37488497618eca839ca624878411318d
+installedExtensionSha256: 8dbc032fa3d7a21aad16ffa39062ef32f4dbde2bde8e493fe3386e43b6364845
+trustedNpmSettingCount: 1
+packageDirectoryIsSymlink: false
+localExtensionShadowCount: 0
+livePiAncestryProcessCountChecked: 2
+unsafeOverridePresentProcessCount: 0
+readyObserved: true
+healthOnlyTrueObserved: false
+piVimInsertObserved: true
+nestedPiSessionLaunchCount: 0
+otherPaneInspectCount: 0
+otherPaneCreateAlterCloseCount: 0
+```
+
+### Driver and lifecycle outcomes
+
+```yaml
+driverStartedBeforeDispatch: true
+fixedPostDispatchDelayMs: 18000
+observedShortcutDelayMs: 18033
+altNumberShortcutCount: 1
+boundedChildDispatchCount: 1
+secondChildDispatchCount: 0
+childTerminalResponseObserved: false
+childOutcome: ChildResponseMissing
+childOutcomeReason: tool-only
+overlayMountCount: 0
+actionDispatchCount: 0
+liveTailDistinctViewportHashCount: 0
+liveTailAdvanced: false
+manualScrollProbeCount: 0
+endFollowProbeCount: 0
+steeringSubmissionCount: 0
+followUpSubmissionCount: 0
+steeringPrimaryUserMessageCount: 0
+followUpPrimaryUserMessageCount: 0
+settledOverlayProbeCount: 0
+overlayCloseCount: 0
+ordinaryInputPassedThrough: true
+plainEscapePassedThrough: true
+piVimInsertRestoredAfterEscape: true
+reloadCommandCount: 1
+reloadExecuted: false
+reloadOutcome: blocked_current_response
+listenerTeardownObserved: false
+freshListenerDispatchObserved: false
+driverMetricSha256: 0cf96b70d8409c515ec29e63d13b3714331950cf4b7085b22593e591d732b036
+rawCaptureFileCount: 0
+```
+
+### Required assertion matrix
+
+| Required assertion | Result | Sanitized outcome |
+| --- | --- | --- |
+| Pi 0.83 and the exact installed artifact | **PASS** | Version, artifact SHA-256, and installed extension SHA-256 matched. |
+| Trusted npm provenance with no unsafe live-process override | **PASS** | One npm setting, no local shadow or symlink, and `0/2` checked live processes had the override. |
+| Ready, not health-only, and pi-vim active | **PASS** | The owned viewport showed `ready`, `WEAVE · LOOM`, and `INSERT`; no health-only marker appeared. |
+| Exactly one bounded real child | **PASS** | Dispatch count was `1`; replacement count was `0`. |
+| The child emits enough timed events and settles cleanly | **FAIL** | The child returned no terminal assistant response: `ChildResponseMissing`, reason `tool-only`. |
+| One Alt+number input causes one native overlay mount/action | **FAIL** | One Alt+1 was sent after 18.033 seconds; mount and action counts were both `0`. |
+| Live tail advances | **FAIL — not observed** | No overlay mounted. |
+| PageUp disengages follow and preserves its anchor | **FAIL — not observed** | No overlay mounted; probe count was `0`. |
+| End resumes live follow | **FAIL — not observed** | No overlay mounted; probe count was `0`. |
+| Enter steering reaches only the child | **FAIL — not observed** | Fail-closed driver sent no draft; child and primary receipt counts were `0`. |
+| Alt+Enter follow-up reaches only the child | **FAIL — not observed** | Fail-closed driver sent no draft; child and primary receipt counts were `0`. |
+| Drafts, keys, and submissions do not leak to the primary | **FAIL — only partial evidence** | No draft was sent and primary user-message counts stayed `0`; mounted-overlay isolation was not testable. |
+| Settlement is clean | **FAIL** | No terminal child response or settled-overlay state was observed. |
+| Settled overlay is read-only | **FAIL — not observed** | No overlay mounted. |
+| Closing restores primary input and pi-vim | **FAIL — not observed** | No overlay mounted, so no close transition existed. |
+| Ordinary input and plain Escape pass through | **PASS** | Ordinary input reached the primary editor; plain Escape reached pi-vim `NORMAL`, and `i` restored `INSERT`. |
+| Reload tears down the old listener without duplicate dispatch | **FAIL** | Pi refused the one bounded reload during the active response; teardown did not execute. |
+| No raw prompt, transcript, or draft is stored | **PASS** | Repository evidence contains only booleans, counts, hashes, timings, and outcomes. |
+
+### Exact blockers and cleanup
+
+The exact sanitized blockers are
+`child_response_missing_tool_only`,
+`overlay_not_mounted_after_one_alt1_at_18033ms`, and
+`reload_blocked_while_current_response_active`. Task 20(b), S043, and S044
+remain incomplete, and the canonical result remains **FAIL**.
+
+```yaml
+childRpcProcessCountAfterFailure: 0
+runtimeStoreSchemaVersion: 5
+runtimeStoreActiveLeaseCount: 0
+sourceChangeCountBeforeProofEdit: 0
+otherPanesAlteredCount: 0
+panesClosedCount: 0
+requestedPaneLeftOpen: true
+temporaryProofFileCountAfterCleanup: 0
+cleanupOutcome: clean
+```
