@@ -591,3 +591,84 @@ native_overlay_mount_timeout_after_161_alt1_attempts
 `native_overlay_mount_timeout_after_161_alt1_attempts`. Keep Task 20(b), S043,
 and S044 incomplete. Cleanup targets are the temporary background-driver
 artifacts only; the requested pane remains open.
+
+---
+
+## Public terminal-input fix rerun — 2026-08-06
+
+Result: **FAIL**
+
+This rerun targeted only the owned current pane and requested exactly one
+bounded `shuttle-mini` child. The sole child process exited before settlement
+and returned no resumable thread identifier. A second child was not started.
+The real-harness scenario therefore did not begin, and Task 20(b), S043, and
+S044 remain incomplete.
+
+### Prerequisite and dispatch outcomes
+
+```yaml
+requestedCurrentPaneMatched: true
+requestedPaneOpen: true
+sourceCommitExact: true
+sourceCommit: 2eae427c7e65366cbdf9db84b9cd4e1d7a4d33b0
+piVersion083: true
+trustedNpmPackageConfigured: true
+packageDirectoryIsSymlink: false
+artifactHashMatchCount: 1
+artifactSha256: 2870934901cd0b824e7c101379a72c9a37488497618eca839ca624878411318d
+installedExtensionSha256: 8dbc032fa3d7a21aad16ffa39062ef32f4dbde2bde8e493fe3386e43b6364845
+liveCurrentPiProcessChecked: true
+unsafeOverridePresentInLiveCurrentPi: false
+readyObserved: true
+healthOnlyTrueObserved: false
+piVimInsertObserved: false
+boundedChildDispatchCount: 1
+boundedChildActiveObserved: false
+boundedChildSettled: false
+boundedChildOutcome: ChildExitedUnexpectedly
+resumableThreadIdentifierPresent: false
+secondChildDispatchCount: 0
+nestedPiLaunchCount: 0
+otherPaneInspectCount: 0
+otherPaneCreateSplitLaunchCloseCount: 0
+```
+
+### Required assertion matrix
+
+| Required assertion | Result | Sanitized outcome |
+| --- | --- | --- |
+| Pi 0.83, exact source and artifact, strict trusted npm provenance | **PASS** | All exact version, source, provenance, and SHA-256 checks matched. |
+| Unsafe override is absent from the live current Pi process | **PASS** | `unsafeOverridePresentInLiveCurrentPi=false`. |
+| Ready and not health-only | **PASS** | `readyObserved=true`; `healthOnlyTrueObserved=false`. |
+| Pi-vim starts in `INSERT` | **FAIL — not observed** | `piVimInsertObserved=false` during the active primary run. |
+| One bounded child becomes active | **FAIL** | The only child exited before active-state evidence or settlement. |
+| Alt+number mounts one native overlay and dispatches one action | **FAIL — not run** | `overlayMountCount=0`; `actionDispatchCount=0`. |
+| Live tail advances | **FAIL — not run** | `liveTailAdvanceCount=0`. |
+| Manual scroll disengages and preserves its anchor | **FAIL — not run** | `manualScrollProbeCount=0`. |
+| End restores live follow | **FAIL — not run** | `endFollowProbeCount=0`. |
+| Enter steering reaches only the child | **FAIL — not run** | `steeringSubmissionCount=0`; `steeringChildReceiptCount=0`. |
+| Alt+Enter follow-up reaches only the child | **FAIL — not run** | `followUpSubmissionCount=0`; `followUpChildReceiptCount=0`. |
+| Settled overlay becomes read-only | **FAIL — not run** | `settledOverlayProbeCount=0`. |
+| Overlay close restores the primary editor and pi-vim state | **FAIL — not run** | `overlayCloseCount=0`; `restoreProbeCount=0`. |
+| Ordinary input and plain Escape pass through | **FAIL — not run** | `passThroughProbeCount=0`. |
+| No duplicate dispatch occurs | **FAIL — not testable** | No action dispatch occurred. |
+| Listener teardown and reload are safe | **FAIL — not run** | `lifecycleReloadProbeCount=0`. |
+| No prompt or transcript evidence is stored | **PASS** | Stored evidence contains only booleans, counts, hashes, and outcomes. |
+
+### Exact blocker and cleanup
+
+The exact sanitized blocker is
+`sole_child_exited_before_settlement_without_resumable_thread_id`. Starting a
+replacement child would have violated the one-child bound, so the rerun failed
+closed without sending overlay or editor input.
+
+```yaml
+childRpcProcessCountAfterFailure: 0
+runtimeStoreLeaseActiveAfterFailure: false
+temporaryProofFileCountAfterFailure: 0
+sourceChangeCountBeforeProofEdit: 0
+otherPanesAlteredCount: 0
+panesClosedCount: 0
+requestedPaneLeftOpen: true
+cleanupOutcome: clean
+```
