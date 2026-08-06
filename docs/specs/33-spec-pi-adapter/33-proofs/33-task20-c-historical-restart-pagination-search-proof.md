@@ -787,8 +787,22 @@ Remediation:
   cleanup hook is invoked through `Result.fromThrowable`, so a throwing hook
   cannot escape disposal.
 
-The helpers are internal to the extension module and are not re-exported from
-the package entry point, so no public API documentation changed.
+The generation-scoped helpers and the resource owner live in an internal module
+that the package `exports` map does not expose and that the package entry point
+does not re-export. The generated `./extension` and `.` declarations therefore
+carry none of them, and no public API documentation changed. Tests reach the
+module through a relative import; the public surface was not widened for them.
+
+Disposal safety is pinned directly rather than inferred: a resource owner built
+with a throwing cleanup hook still resolves `dispose()` as a successful
+`ResultAsync<void, never>`, still shuts down the telemetry and runtime store it
+adopted, runs the hook exactly once, and stays safe under repeated disposal.
+
+The boundary coverage runs entirely on in-memory seams. It spawns no process,
+runs no shell command, creates no temporary directory, and writes no real file:
+the native session, its 69 persisted historical entries, the parent ref ledger,
+and the metadata cache are all held in memory fixtures the repository already
+ships.
 
 ```yaml
 remediationDiagnosedOffline: true
@@ -799,8 +813,15 @@ remediationGenerationScoped: true
 remediationCrossGenerationLeakPossible: false
 remediationFallbackCrossesSessionAuthority: false
 remediationDisposalNeverthrowSafe: true
+remediationDisposalThrowingHookTestedDirectly: true
 remediationFailOpenIntroduced: false
 remediationPublicApiChanged: false
+remediationInternalModuleExportedFromPackage: false
+remediationTestProcessSpawnCount: 0
+remediationTestShellCommandCount: 0
+remediationTestTempDirectoryCount: 0
+remediationTestRealFileWriteCount: 0
+remediationHistoricalFixtureEntryCount: 69
 ```
 
 This note records the offline diagnosis and repair only. The result above stays

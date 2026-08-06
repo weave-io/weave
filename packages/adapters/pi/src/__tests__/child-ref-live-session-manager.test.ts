@@ -1,27 +1,35 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it } from "bun:test";
 import {
   ALL_CAPABILITY_IDS,
   createInMemoryRuntimeStore,
 } from "@weaveio/weave-engine";
-import { $ } from "bun";
 import { ok, okAsync } from "neverthrow";
+import {
+  FakePiChildMetadataCacheFs,
+  openBunChildMetadataDatabase,
+} from "../child-metadata-cache.js";
+import type {
+  PiNativeSessionFsPort,
+  PiNativeSessionHandle,
+  PiNativeSessionHeader,
+  PiNativeSessionHostPort,
+} from "../child-native-sessions.js";
 import { PiNativeSessionStore } from "../child-native-sessions.js";
 import {
   createNativeChildRefSourceAuthority,
   PiChildSessionRefStore,
 } from "../child-session-refs.js";
 import { PiConfigActivator } from "../config-activator.js";
+import { createPiExtension } from "../extension.js";
 import {
   createGenerationSessionCtxCell,
-  createPiExtension,
   type PiChildRefEntryReadDegradation,
+  PiGenerationResourceOwner,
   readSessionManagerEntries,
-} from "../extension.js";
+} from "../generation-resources.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_SURFACE_IDS } from "../host-inventory.js";
-import { createBunPiNativeSessionFs } from "../native-session-fs.js";
-import { createPiNativeSessionHost } from "../native-session-host.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 import { FakePathContainmentPort } from "../path-containment.js";
 import {
   openPiThreadSources,
@@ -38,6 +46,11 @@ import {
 
 const PARENT = "parent-session-live-mgr-1";
 const CHILD = "live-mgr-child-1";
+const SESSION_ROOT = "/data/weave-livemgr/sessions";
+const CACHE_ROOT = "/data/weave-livemgr/cache";
+const WORKSPACE = "/repo";
+const PARENT_SESSION_FILE = "/data/weave-livemgr/parent.jsonl";
+const HISTORICAL_ENTRY_COUNT = 69;
 
 const EMPTY_CONFIG = {
   agents: {},
@@ -72,15 +85,64 @@ async function flushBackgroundWork(ticks = 40): Promise<void> {
 
 /** A Pi session manager whose entries this test drives directly. */
 function managerFor(
-  root: string,
   entries: () => readonly unknown[],
 ): Record<string, unknown> {
   return {
     getSessionId: () => PARENT,
-    getSessionFile: () => `${root}/parent.jsonl`,
+    getSessionFile: () => PARENT_SESSION_FILE,
     isPersisted: () => true,
     getEntries: () => entries(),
   };
+}
+
+function handleFor(
+  file: string | undefined,
+  dir: string,
+  header: PiNativeSessionHeader | null,
+): PiNativeSessionHandle {
+  return {
+    getSessionId: () => header?.id ?? "",
+    getSessionFile: () => file,
+    getSessionDir: () => dir,
+    getHeader: () => header,
+    getEntries: () => [],
+    isPersisted: () => true,
+    getLeafId: () => "leaf-1",
+    appendCustomEntry: () => "entry-1",
+  };
+}
+
+/**
+ * In-memory stand-in for Pi's `SessionManager`. It never starts a harness and
+ * never touches a real filesystem: the store writes every byte through the
+ * injected {@link MemoryPiNativeSessionFs}.
+ */
+class MemoryNativeSessionHost implements PiNativeSessionHostPort {
+  create(
+    cwd: string,
+    sessionDir: string,
+    options: { parentSession?: string; id?: string },
+  ): PiNativeSessionHandle {
+    return handleFor(`${sessionDir}/session.jsonl`, sessionDir, {
+      type: "session",
+      id: options.id ?? "native-session-1",
+      cwd,
+      version: 3,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      parentSession: options.parentSession,
+    });
+  }
+
+  open(path: string, sessionDir: string): PiNativeSessionHandle {
+    return handleFor(path, sessionDir, {
+      type: "session",
+      id: "native-session-1",
+      cwd: WORKSPACE,
+      version: 3,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      parentSession: PARENT,
+    });
+  }
 }
 
 /**
@@ -94,45 +156,41 @@ function managerFor(
  * `session_start`, so a picker row resolved before the replacement could no
  * longer be described after it - the live `open-describe-child-not-found`
  * blocker.
+ *
+ * Every seam here is in memory: no process is spawned, no shell command runs,
+ * no temporary directory is made, and no real file is written.
  */
 describe("createPiExtension: child refs follow the live session manager", () => {
-  let root = "";
-  beforeEach(async () => {
-    root = (await $`mktemp -d /private/tmp/weave-livemgr-XXXXXX`.text()).trim();
-  });
-  afterEach(async () => {
-    if (root.length > 0) await $`rm -rf ${root}`.quiet();
-  });
-
   /**
-   * Seeds one settled child: a real native session on disk plus the durable
-   * parent ref ledger entries Pi would have persisted for it.
+   * Seeds one settled child: a native session held entirely in the memory
+   * filesystem plus the durable parent ref ledger entries Pi would have
+   * persisted for it.
    */
   async function seedSettledChild(): Promise<{
-    readonly fs: ReturnType<typeof createBunPiNativeSessionFs>;
-    readonly nativeHost: ReturnType<typeof createPiNativeSessionHost>;
+    readonly fs: MemoryPiNativeSessionFs;
+    readonly nativeHost: PiNativeSessionHostPort;
     readonly parentEntries: readonly unknown[];
   }> {
-    const fs = createBunPiNativeSessionFs();
-    const nativeHost = createPiNativeSessionHost(SessionManager);
+    const fs = new MemoryPiNativeSessionFs();
+    const nativeHost = new MemoryNativeSessionHost();
     const store = new PiNativeSessionStore({
-      root: `${root}/sessions`,
-      fs,
+      root: SESSION_ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
       host: nativeHost,
     });
     const created = (
       await store.createChildSession({
         childId: CHILD,
         parentSession: PARENT,
-        cwd: root,
+        cwd: WORKSPACE,
       })
     )._unsafeUnwrap();
     const directory = (
-      await fs.openDirectory(`${root}/sessions/${CHILD}`, false)
+      await fs.openDirectory(`${SESSION_ROOT}/${CHILD}`, false)
     )._unsafeUnwrap();
     const fileName = created.ref.slice(created.ref.lastIndexOf("/") + 1);
     const lines: string[] = [];
-    for (let index = 0; index < 69; index += 1) {
+    for (let index = 0; index < HISTORICAL_ENTRY_COUNT; index += 1) {
       lines.push(
         `${JSON.stringify({
           type: "message",
@@ -153,6 +211,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
         0o600,
       )
     )._unsafeUnwrap();
+    directory.close();
 
     const parentEntries: { type: string; data: unknown }[] = [];
     const seedRefs = new PiChildSessionRefStore({
@@ -183,8 +242,8 @@ describe("createPiExtension: child refs follow the live session manager", () => 
 
   function installExtension(
     host: RecordingFakePiHost,
-    fs: ReturnType<typeof createBunPiNativeSessionFs>,
-    nativeHost: ReturnType<typeof createPiNativeSessionHost>,
+    fs: MemoryPiNativeSessionFs,
+    nativeHost: PiNativeSessionHostPort,
     logger: RecordingLogger,
   ): void {
     const factory = createPiExtension({
@@ -239,10 +298,12 @@ describe("createPiExtension: child refs follow the live session manager", () => 
       threadSourceFactory: (input: PiThreadSourceFactoryInput) =>
         openPiThreadSources({
           ...input,
-          sessionRoot: `${root}/sessions`,
-          fs,
+          sessionRoot: SESSION_ROOT,
+          fs: fs as unknown as PiNativeSessionFsPort,
           host: nativeHost,
-          cacheRoot: `${root}/cache`,
+          cacheRoot: CACHE_ROOT,
+          cacheFs: new FakePiChildMetadataCacheFs(),
+          openDatabase: () => openBunChildMetadataDatabase(":memory:"),
         }),
       hostKeybindings: () => host.hostKeybindingsForTest(),
     } as never);
@@ -265,9 +326,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
     // is exactly what a captured `ctx.sessionManager` sees after a load.
     let startupManagerAttached = true;
     host.setSessionManager(
-      managerFor(root, () =>
-        startupManagerAttached ? parentEntries : [],
-      ) as never,
+      managerFor(() => (startupManagerAttached ? parentEntries : [])) as never,
     );
 
     installExtension(host, fs, nativeHost, logger);
@@ -288,7 +347,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
     // Pi replaces the session manager for the next model turn: the startup
     // manager goes stale, and a fresh context carries the live one.
     startupManagerAttached = false;
-    host.setSessionManager(managerFor(root, () => parentEntries) as never);
+    host.setSessionManager(managerFor(() => parentEntries) as never);
     await host.triggerBeforeAgentStart();
     await flushBackgroundWork();
 
@@ -303,7 +362,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
     expect(host.getEditorComponentForTest()).toBe(editorOwnerBefore);
     const rendered = host.customRenderedLines.at(-1)?.join("\n") ?? "";
     expect(rendered).toContain("SETTLED");
-    expect(rendered).toContain("body-68");
+    expect(rendered).toContain(`body-${HISTORICAL_ENTRY_COUNT - 1}`);
   });
 
   /**
@@ -316,13 +375,13 @@ describe("createPiExtension: child refs follow the live session manager", () => 
     const logger = new RecordingLogger();
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.effectiveKeybindingConfig = {};
-    host.setSessionManager(managerFor(root, () => []) as never);
+    host.setSessionManager(managerFor(() => []) as never);
 
     installExtension(host, fs, nativeHost, logger);
     await host.triggerSessionStart();
     await flushBackgroundWork();
 
-    host.setSessionManager(managerFor(root, () => parentEntries) as never);
+    host.setSessionManager(managerFor(() => parentEntries) as never);
     await host.triggerBeforeAgentStart();
     await flushBackgroundWork();
 
@@ -347,7 +406,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
     const logger = new RecordingLogger();
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.effectiveKeybindingConfig = {};
-    host.setSessionManager(managerFor(root, () => []) as never);
+    host.setSessionManager(managerFor(() => []) as never);
 
     installExtension(host, fs, nativeHost, logger);
     await host.triggerSessionStart();
@@ -355,7 +414,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
 
     // No lifecycle callback after the replacement: only the command context
     // can carry the live manager.
-    host.setSessionManager(managerFor(root, () => parentEntries) as never);
+    host.setSessionManager(managerFor(() => parentEntries) as never);
 
     const deferred = host.deferNextSelect();
     void host.invokeCommand("weave:inspect");
@@ -486,5 +545,65 @@ describe("readSessionManagerEntries", () => {
       ),
     ).toEqual([]);
     expect(seen).toEqual(["get-entries-failed"]);
+  });
+});
+
+/**
+ * The generation resource owner runs the session-context cleanup. That
+ * callback is supplied by the extension, so a defect there must not turn
+ * disposal - whose failure type is `never` - into a thrown rejection that
+ * would strand the runtime store and telemetry it also owns.
+ */
+describe("PiGenerationResourceOwner disposal", () => {
+  it("absorbs a throwing onDispose and still reports success", async () => {
+    let calls = 0;
+    const owner = new PiGenerationResourceOwner("gen-a", () => {
+      calls += 1;
+      throw new Error("cleanup exploded");
+    });
+
+    const disposed = await owner.dispose();
+
+    expect(disposed.isOk()).toBe(true);
+    expect(disposed._unsafeUnwrap()).toBeUndefined();
+    expect(calls).toBe(1);
+  });
+
+  it("keeps releasing adopted resources after onDispose throws", async () => {
+    let telemetryShutdowns = 0;
+    let storeCloses = 0;
+    const owner = new PiGenerationResourceOwner("gen-a", () => {
+      throw new Error("cleanup exploded");
+    });
+    owner.adoptTelemetry({
+      shutdown: () => {
+        telemetryShutdowns += 1;
+        return okAsync(undefined);
+      },
+    } as never);
+    owner.adoptRuntimeStore({
+      close: () => {
+        storeCloses += 1;
+        return okAsync(undefined);
+      },
+    } as never);
+
+    expect((await owner.dispose()).isOk()).toBe(true);
+    expect(telemetryShutdowns).toBe(1);
+    expect(storeCloses).toBe(1);
+  });
+
+  it("stays idempotent when disposed repeatedly after a throwing cleanup", async () => {
+    let calls = 0;
+    const owner = new PiGenerationResourceOwner("gen-a", () => {
+      calls += 1;
+      throw new Error("cleanup exploded");
+    });
+
+    expect((await owner.dispose()).isOk()).toBe(true);
+    expect((await owner.dispose()).isOk()).toBe(true);
+    expect((await owner.dispose()).isOk()).toBe(true);
+    // Cleanup runs exactly once, no matter how many disposals arrive.
+    expect(calls).toBe(1);
   });
 });
