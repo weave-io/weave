@@ -801,8 +801,10 @@ adopted, runs the hook exactly once, and stays safe under repeated disposal.
 The boundary coverage runs entirely on in-memory seams. It spawns no process,
 runs no shell command, creates no temporary directory, and writes no real file:
 the native session, its 69 persisted historical entries, the parent ref ledger,
-and the metadata cache are all held in memory fixtures the repository already
-ships.
+the metadata cache, the telemetry log filesystem
+(`MemoryRuntimeLogFileSystem`), and the recovery pointer store
+(`InMemoryRecoveryPointerStore`) all use repository-provided in-memory
+fixtures.
 
 ```yaml
 remediationDiagnosedOffline: true
@@ -821,6 +823,8 @@ remediationTestProcessSpawnCount: 0
 remediationTestShellCommandCount: 0
 remediationTestTempDirectoryCount: 0
 remediationTestRealFileWriteCount: 0
+remediationTelemetryLogFileSystem: MemoryRuntimeLogFileSystem
+remediationRecoveryPointerStore: InMemoryRecoveryPointerStore
 remediationHistoricalFixtureEntryCount: 69
 ```
 

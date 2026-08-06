@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   ALL_CAPABILITY_IDS,
   createInMemoryRuntimeStore,
+  MemoryRuntimeLogFileSystem,
 } from "@weaveio/weave-engine";
 import { ok, okAsync } from "neverthrow";
 import {
@@ -31,6 +32,7 @@ import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_SURFACE_IDS } from "../host-inventory.js";
 import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 import { FakePathContainmentPort } from "../path-containment.js";
+import { InMemoryRecoveryPointerStore } from "../recovery-pointer.js";
 import {
   openPiThreadSources,
   type PiThreadSourceFactoryInput,
@@ -240,12 +242,20 @@ describe("createPiExtension: child refs follow the live session manager", () => 
     return { fs, nativeHost, parentEntries };
   }
 
+  type ExtensionTestSeams = {
+    telemetryLogFileSystem: MemoryRuntimeLogFileSystem;
+    recoveryPointerStoreFactoryCalls: { value: number };
+  };
+
   function installExtension(
     host: RecordingFakePiHost,
     fs: MemoryPiNativeSessionFs,
     nativeHost: PiNativeSessionHostPort,
     logger: RecordingLogger,
-  ): void {
+  ): ExtensionTestSeams {
+    const telemetryLogFileSystem = new MemoryRuntimeLogFileSystem();
+    const recoveryPointerStore = new InMemoryRecoveryPointerStore();
+    const recoveryPointerStoreFactoryCalls = { value: 0 };
     const factory = createPiExtension({
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
@@ -294,6 +304,11 @@ describe("createPiExtension: child refs follow the live session manager", () => 
       runtimeStoreFactory: {
         open: () => okAsync(createInMemoryRuntimeStore()),
       },
+      telemetryLogFileSystem,
+      recoveryPointerStoreFactory: () => {
+        recoveryPointerStoreFactoryCalls.value += 1;
+        return recoveryPointerStore;
+      },
       parentSessionId: () => PARENT,
       threadSourceFactory: (input: PiThreadSourceFactoryInput) =>
         openPiThreadSources({
@@ -308,6 +323,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
       hostKeybindings: () => host.hostKeybindingsForTest(),
     } as never);
     factory(host.api);
+    return { telemetryLogFileSystem, recoveryPointerStoreFactoryCalls };
   }
 
   /**
@@ -329,9 +345,16 @@ describe("createPiExtension: child refs follow the live session manager", () => 
       managerFor(() => (startupManagerAttached ? parentEntries : [])) as never,
     );
 
-    installExtension(host, fs, nativeHost, logger);
+    const seams = installExtension(host, fs, nativeHost, logger);
     await host.triggerSessionStart();
     await flushBackgroundWork();
+
+    expect(seams.recoveryPointerStoreFactoryCalls.value).toBeGreaterThan(0);
+    expect(
+      seams.telemetryLogFileSystem
+        .paths()
+        .some((path) => path.endsWith("/pi-adapter.ndjson")),
+    ).toBe(true);
 
     const customBefore = host.customCalls.length;
     const editorOwnerBefore = host.getEditorComponentForTest();
