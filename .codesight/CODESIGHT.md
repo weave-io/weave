@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 268 lib files | 37 env vars | 10 middleware | 4 events | 0% test coverage
-> **Token savings:** this file is ~27,900 tokens. Without it, AI exploration would cost ~87,000 tokens. **Saves ~59,100 tokens per conversation.**
-> **Last scanned:** 2026-08-06 16:53 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 269 lib files | 37 env vars | 10 middleware | 4 events | 0% test coverage
+> **Token savings:** this file is ~28,100 tokens. Without it, AI exploration would cost ~87,200 tokens. **Saves ~59,200 tokens per conversation.**
+> **Last scanned:** 2026-08-06 17:54 — re-run after significant changes
 
 ---
 
@@ -354,6 +354,14 @@
   - type PiExtensionUiResponse
   - const MAX_CHILD_EVENT_STRING
   - _...4 more_
+- `packages/adapters/pi/src/child-session-reconstruction.ts`
+  - function describeChildReconstructionError: (error) => string
+  - function reconstructParentLocalChildren: (input) => ResultAsync<PiChildReconstructionSummary, PiChildReconstructionError>
+  - function createChildReconstructionCell: () => PiChildReconstructionCell
+  - function publishChildReconstruction: (cell, generationId, summary) => void
+  - function clearChildReconstruction: (cell) => void
+  - function readChildReconstruction: (cell, generationId, parentSessionId) => PiChildReconstructionSummary | undefined
+  - _...15 more_
 - `packages/adapters/pi/src/child-session-refs.ts`
   - function createNativeChildRefSourceAuthority: (store) => PiChildRefSourceAuthority
   - function parseChildRefRecord: (value) => Result<PiChildRefRecord, PiChildRefError>
@@ -1637,7 +1645,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 279 test files found
+> 280 test files found
 
 ---
 

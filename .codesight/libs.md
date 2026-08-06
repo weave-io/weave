@@ -343,6 +343,14 @@
   - type PiExtensionUiResponse
   - const MAX_CHILD_EVENT_STRING
   - _...4 more_
+- `packages/adapters/pi/src/child-session-reconstruction.ts`
+  - function describeChildReconstructionError: (error) => string
+  - function reconstructParentLocalChildren: (input) => ResultAsync<PiChildReconstructionSummary, PiChildReconstructionError>
+  - function createChildReconstructionCell: () => PiChildReconstructionCell
+  - function publishChildReconstruction: (cell, generationId, summary) => void
+  - function clearChildReconstruction: (cell) => void
+  - function readChildReconstruction: (cell, generationId, parentSessionId) => PiChildReconstructionSummary | undefined
+  - _...15 more_
 - `packages/adapters/pi/src/child-session-refs.ts`
   - function createNativeChildRefSourceAuthority: (store) => PiChildRefSourceAuthority
   - function parseChildRefRecord: (value) => Result<PiChildRefRecord, PiChildRefError>

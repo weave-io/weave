@@ -146,6 +146,19 @@ import {
   type PiChildRuntimeError,
 } from "./child-runtime.js";
 import {
+  clearChildReconstruction,
+  countParentLocalChildren,
+  createChildReconstructionCell,
+  describeChildReconstructionError,
+  mergeReconstructedHistoryRows,
+  type PiChildReconstructionSummary,
+  type PiHistoryRow,
+  publishChildReconstruction,
+  readChildReconstruction,
+  reconstructParentLocalChildren,
+  renderReconstructedStatusLines,
+} from "./child-session-reconstruction.js";
+import {
   applyTreeControlKey,
   EMPTY_USAGE_AGGREGATE,
   extractAssistantStopReason,
@@ -1830,6 +1843,7 @@ function renderStatusMessage(
   controller: PiExtensionController,
   _activeSession: PiActiveSession | undefined,
   delegationController?: PiDelegationController,
+  reconstructed?: PiChildReconstructionSummary | undefined,
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
@@ -1842,7 +1856,10 @@ function renderStatusMessage(
     `health-only: ${effectiveHealthOnly(generation)}`,
   ];
   const tree = delegationController?.snapshotTree() ?? [];
-  lines.push(`children: ${tree.length}`);
+  // A returning source parent has an empty live tree but may still own
+  // settled children in its own authoritative refs. Counting both is what
+  // makes status survive a `/clone`, `/fork`, or `/tree` round trip.
+  lines.push(`children: ${countParentLocalChildren(tree, reconstructed)}`);
   if (tree.length > 0 && delegationController !== undefined) {
     lines.push(
       ...renderChildTreeLines(
@@ -1852,6 +1869,7 @@ function renderStatusMessage(
       ),
     );
   }
+  lines.push(...renderReconstructedStatusLines(tree, reconstructed));
   return lines.join("\n");
 }
 
@@ -2169,6 +2187,16 @@ export function createPiExtension(
    * degrades to a structured refusal and never to an unverified resume.
    */
   const threadSourcesCell = createThreadSourcesCell();
+  /**
+   * Parent-local children reconstructed from the live parent's own
+   * authoritative refs. A session transition revokes the delegation
+   * controller, so a *returning* source parent starts with an empty live tree
+   * even though it still owns settled children. This cell is what lets
+   * `/weave:status` and `/weave:history` answer from bounded authoritative
+   * data again, and it is generation- and parent-scoped so a clone/fork
+   * destination can never read a source's children.
+   */
+  const childReconstructionCell = createChildReconstructionCell();
   /** Production sets true only after a successful required factory open. */
   let threadSourcesRequired = false;
   const recoveryCoordinatorCell: {
@@ -2283,6 +2311,23 @@ export function createPiExtension(
     import("@weaveio/weave-engine").WorkflowExecutionContext["workflows"][string]
   > = {};
   let activeSession: PiActiveSession | undefined;
+  /**
+   * The reconstruction summary the *current* generation and *live* parent may
+   * read. Everything else reads as absent, so a stale callback or a
+   * clone/fork destination can never render another parent's children.
+   */
+  const currentChildReconstruction = ():
+    | PiChildReconstructionSummary
+    | undefined => {
+    const parent = activeSession?.primarySession.getParentSession();
+    const parentSessionId =
+      parent?.persistence === "persistent" ? parent.sessionId : undefined;
+    return readChildReconstruction(
+      childReconstructionCell,
+      activeSession?.generationId,
+      parentSessionId,
+    );
+  };
   /**
    * Settlement handle for the Alt+T overlay that is currently mounted, if any.
    *
@@ -2924,6 +2969,7 @@ export function createPiExtension(
           controller,
           activeSession,
           delegationControllerCell.controller,
+          currentChildReconstruction(),
         ),
         "info",
       );
@@ -2970,6 +3016,7 @@ export function createPiExtension(
         ctx.ui.notify("Child history is unavailable in this session.", "info");
         return;
       }
+      const reconstructed = currentChildReconstruction();
       const listed = await handlers["children.list"]?.(
         JSON.stringify({
           workspaceKey: ctx.cwd,
@@ -2981,19 +3028,19 @@ export function createPiExtension(
         return;
       }
       const body = JSON.parse(listed.value) as {
-        readonly children: readonly {
-          readonly childId: string;
-          readonly status: string;
-          readonly title: string;
-          readonly tombstoned: boolean;
-        }[];
+        readonly children: readonly PiHistoryRow[];
         readonly nextCursor?: string;
       };
-      if (body.children.length === 0) {
+      // The metadata cache is derivative and generation-local. A returning
+      // source parent merges its own authoritative parent-local refs in, so a
+      // child settled before the transition is still listed. Cache rows win
+      // on child id, and origin-mismatched refs were already excluded.
+      const rows = mergeReconstructedHistoryRows(body.children, reconstructed);
+      if (rows.length === 0) {
         ctx.ui.notify("No child history for this workspace.", "info");
         return;
       }
-      const lines = body.children.map(
+      const lines = rows.map(
         (row) =>
           `${row.childId}  ${row.status}${row.tombstoned ? " (tombstone)" : ""}  ${row.title}`,
       );
@@ -4150,6 +4197,7 @@ export function createPiExtension(
           activeSession = undefined;
           controller.shutdown();
           clearThreadSources(threadSourcesCell);
+          clearChildReconstruction(childReconstructionCell);
           threadSourcesRequired = false;
           currentWorkflows = {};
           planStateProviderCell.value = undefined;
@@ -4192,6 +4240,7 @@ export function createPiExtension(
           activeSession = undefined;
           controller.shutdown();
           clearThreadSources(threadSourcesCell);
+          clearChildReconstruction(childReconstructionCell);
           threadSourcesRequired = false;
           setActiveAgentStatus(ctx, undefined);
           ctx.ui.setStatus(
@@ -4291,6 +4340,7 @@ export function createPiExtension(
           }
           if (opened.isErr()) {
             clearThreadSources(threadSourcesCell);
+            clearChildReconstruction(childReconstructionCell);
             threadSourcesRequired = false;
             allowDelegationController = false;
             deps.logger.warn(
@@ -4312,6 +4362,41 @@ export function createPiExtension(
             threadSourcesCell.cache = opened.value.cache;
             threadSourcesCell.cacheMode = opened.value.cacheMode;
             threadSourcesRequired = !effectiveHealthOnly(generation);
+            // A session transition revoked the previous generation, so this
+            // parent's own settled children exist only in its authoritative
+            // ref ledger. Reconstruct them once per generation, project them
+            // into the derivative metadata cache, and publish a
+            // generation-scoped summary the status and history surfaces read.
+            // `readRefs` already excludes refs another parent minted, so a
+            // clone or fork destination reconstructs nothing from its
+            // inherited entries.
+            await reconstructParentLocalChildren({
+              refs: opened.value.refs,
+              cache: opened.value.cache,
+              workspaceKey: ctx.cwd,
+              parentSessionId: parentForSources.sessionId,
+            }).match(
+              (summary) => {
+                if (!startupOwnsGeneration()) return;
+                publishChildReconstruction(
+                  childReconstructionCell,
+                  generation.id,
+                  summary,
+                );
+              },
+              (error) => {
+                if (!startupOwnsGeneration()) return;
+                clearChildReconstruction(childReconstructionCell);
+                deps.logger.warn(
+                  {
+                    failure: error.type,
+                    reason: error.reason,
+                    safeMessage: describeChildReconstructionError(error),
+                  },
+                  "parent-local child reconstruction failed; status and history stay live-only",
+                );
+              },
+            );
             const sessionStore = opened.value.sessions as PiNativeSessionStore;
             const discoveryCache = opened.value.cache as PiChildMetadataCache;
             const canList =
