@@ -239,14 +239,6 @@
   - _...37 more_
 - `packages/adapters/pi/src/child-overlay-component.ts` — function createChildOverlayCustomComponent: (tui) => void },, interface PiChildOverlayCustomComponent
 - `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
-- `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
-  - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
-  - function formatPiChildOverlayFallbackDiagnostic: (code) => string
-  - function piChildOverlayFallbackReasonCode: (reason, stage) => PiChildOverlayFallbackReasonCode
-  - function piChildOverlayOpenErrorReasonCode: (error) => PiChildOverlayFallbackReasonCode
-  - type PiChildOverlayFallbackReasonCode
-  - const PI_CHILD_OVERLAY_FALLBACK_REASON_CODES
-  - _...1 more_
 - `packages/adapters/pi/src/child-overlay-keys.ts`
   - function isPiChildOverlayActionId: (value) => value is PiChildOverlayActionId
   - function childOverlayActionFromId: (id) => PiChildOverlayAction | undefined
@@ -254,7 +246,7 @@
   - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
-  - _...45 more_
+  - _...41 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
@@ -263,10 +255,6 @@
   - function boundLabel: (value) => string
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
   - _...6 more_
-- `packages/adapters/pi/src/child-overlay-search.ts`
-  - function stripPathLike: (value) => string
-  - function matchingEntryIds: (entries, needle) => string[]
-  - function mergeMatchIds: (older, newer) => string[]
 - `packages/adapters/pi/src/child-overlay-types.ts`
   - function clampPageSize: (pageSize) => number
   - function clampWindowCap: (windowCap) => number
