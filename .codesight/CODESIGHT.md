@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 269 lib files | 37 env vars | 10 middleware | 6 events | 0% test coverage
-> **Token savings:** this file is ~28,100 tokens. Without it, AI exploration would cost ~87,600 tokens. **Saves ~59,500 tokens per conversation.**
-> **Last scanned:** 2026-08-06 20:28 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 269 lib files | 37 env vars | 10 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~28,200 tokens. Without it, AI exploration would cost ~88,200 tokens. **Saves ~60,000 tokens per conversation.**
+> **Last scanned:** 2026-08-06 23:03 — re-run after significant changes
 
 ---
 
@@ -285,12 +285,13 @@
   - function matchingEntryIds: (entries, needle) => string[]
   - function mergeMatchIds: (older, newer) => string[]
 - `packages/adapters/pi/src/child-overlay-terminal-input.ts`
+  - function normalizeChildOverlayScrollFrame: (data) => string | undefined
   - function isChildOverlayScrollFrame: (data) => boolean
   - function releaseChildOverlayTerminalInput: (state) => void
   - function createChildOverlayTerminalInputBinder: (deps) => PiChildOverlayTerminalInputBinder
   - interface PiChildOverlayTerminalInputState
   - interface PiChildOverlayTerminalInputDeps
-  - interface PiChildOverlayTerminalInputBinder
+  - _...1 more_
 - `packages/adapters/pi/src/child-overlay-types.ts`
   - function clampPageSize: (pageSize) => number
   - function clampWindowCap: (windowCap) => number
@@ -1640,6 +1641,9 @@
 - `\u001bi` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
 - `\u001b2` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
 - `\u001b[1;3D` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `\x1b[1;2:1A` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `\x1b[1;2:3A` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `\x1b[1;2:1B` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
 - `\x1b[5~` [event] — `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`
 - `\x1b[6~` [event] — `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`
 

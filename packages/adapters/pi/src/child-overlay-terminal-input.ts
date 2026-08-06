@@ -15,6 +15,7 @@
  * on the ports in {@link PiChildOverlayTerminalInputDeps}; it never reaches
  * into the inspection runtime, so generation ownership stays with the caller.
  */
+import { isKeyRelease, type KeyId, matchesKey } from "@earendil-works/pi-tui";
 import { Result } from "neverthrow";
 import {
   classifyChildOverlayKey,
@@ -22,19 +23,87 @@ import {
   type PiChildOverlayAction,
   type PiChildOverlayKeyPlan,
 } from "./child-overlay-keys.js";
-import { scrollDelta } from "./child-overlay-scroll.js";
+import { SCROLL_KEYS } from "./child-overlay-types.js";
 import type { PiSessionContext, PiTerminalInputHandler } from "./types.js";
 
 /**
- * Whether a raw frame is one of the six overlay scroll frames.
+ * Longest raw frame this route will even try to classify as scrolling.
  *
- * The set is exactly {@link scrollDelta}'s domain - PageUp, PageDown,
- * Shift+Up, Shift+Down, Home, End - so the mounted overlay and this route can
- * never disagree about which frames belong to scrolling. Anything else, from
+ * Every scroll frame is a short CSI sequence; the longest event-aware Kitty
+ * form in the wild is well under this. Bounding the input keeps a pasted
+ * block or a bracketed-paste payload from being walked by the key parser on
+ * every keystroke, and makes the normalizer's cost independent of input size.
+ */
+const MAX_SCROLL_FRAME_LENGTH = 32;
+
+/**
+ * Semantic scroll aliases, in the order they are matched.
+ *
+ * Each entry maps a *semantic* key identity - what the user pressed, however
+ * their terminal chose to encode it - onto the one canonical frame the rest
+ * of Weave's overlay stack already understands ({@link SCROLL_KEYS}).
+ *
+ * Shift+Up / Shift+Down are the conflict-safe terminal aliases for paging:
+ * they resolve to canonical PageUp / PageDown so one press moves a page and
+ * reaches the component's existing bounded older/newer pagination at the
+ * viewport edges, rather than crawling one rendered row at a time.
+ */
+const SCROLL_ALIASES: readonly {
+  readonly key: KeyId;
+  readonly canonical: string;
+}[] = [
+  { key: "pageUp", canonical: SCROLL_KEYS.pageUp },
+  { key: "pageDown", canonical: SCROLL_KEYS.pageDown },
+  { key: "shift+up", canonical: SCROLL_KEYS.pageUp },
+  { key: "shift+down", canonical: SCROLL_KEYS.pageDown },
+  { key: "home", canonical: SCROLL_KEYS.home },
+  { key: "end", canonical: SCROLL_KEYS.end },
+];
+
+/**
+ * Canonical overlay scroll frame for a raw terminal frame, or none.
+ *
+ * Pi 0.83 negotiates the Kitty keyboard protocol (flags including event
+ * types), so a real PTY delivers Shift+Up as the event-aware form
+ * `ESC [ 1;2:1 A` rather than the legacy `ESC [ 1;2 A`. Comparing raw bytes
+ * against {@link SCROLL_KEYS} therefore rejected every live scroll press and
+ * the mounted overlay never moved. Matching *semantically* through Pi TUI's
+ * own `matchesKey` accepts legacy, disambiguated, and event-aware encodings
+ * alike, and collapsing the match back onto a canonical frame means nothing
+ * downstream - the scroll model, the controller, the component - has to
+ * learn about terminal encodings at all.
+ *
+ * Release frames are ignored. With event reporting active a single physical
+ * press arrives as press *and* release; treating both as scroll input would
+ * silently double every page.
+ *
+ * Returns `undefined` for everything else, including repeat-only ambiguity,
+ * terminal reports such as the incidental `ESC [ 6;38;15 t` size probe,
+ * ordinary text, and unrecognized CSI sequences.
+ */
+export function normalizeChildOverlayScrollFrame(
+  data: string,
+): string | undefined {
+  if (data.length === 0 || data.length > MAX_SCROLL_FRAME_LENGTH) {
+    return undefined;
+  }
+  if (isKeyRelease(data)) return undefined;
+  for (const alias of SCROLL_ALIASES) {
+    if (matchesKey(data, alias.key)) return alias.canonical;
+  }
+  return undefined;
+}
+
+/**
+ * Whether a raw frame is one of the overlay scroll frames.
+ *
+ * Delegates to {@link normalizeChildOverlayScrollFrame} so the mounted
+ * overlay and this route can never disagree about which frames belong to
+ * scrolling, whatever encoding the terminal used. Anything else, from
  * ordinary text to an unrecognized CSI sequence, is not a scroll frame.
  */
 export function isChildOverlayScrollFrame(data: string): boolean {
-  return scrollDelta(data) !== undefined;
+  return normalizeChildOverlayScrollFrame(data) !== undefined;
 }
 
 /**
@@ -222,10 +291,15 @@ export function createChildOverlayTerminalInputBinder(
         // overlay exactly once. Every other frame still falls through to the
         // component, which keeps Enter, Alt+Enter, Escape, the draft editor,
         // and search on their existing routes.
-        if (!isChildOverlayScrollFrame(data)) return undefined;
+        //
+        // The frame is normalized first, so the overlay receives the canonical
+        // encoding it already understands no matter how the live terminal
+        // encoded the press, and release frames never reach it at all.
+        const canonical = normalizeChildOverlayScrollFrame(data);
+        if (canonical === undefined) return undefined;
         const mounted = deps.activeGenerationId();
         if (mounted === undefined) return undefined;
-        if (!deps.dispatchOverlayScroll(data, mounted)) return undefined;
+        if (!deps.dispatchOverlayScroll(canonical, mounted)) return undefined;
         return { consume: true };
       }
       const plan = state.plan;

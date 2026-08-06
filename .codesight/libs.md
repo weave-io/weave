@@ -274,12 +274,13 @@
   - function matchingEntryIds: (entries, needle) => string[]
   - function mergeMatchIds: (older, newer) => string[]
 - `packages/adapters/pi/src/child-overlay-terminal-input.ts`
+  - function normalizeChildOverlayScrollFrame: (data) => string | undefined
   - function isChildOverlayScrollFrame: (data) => boolean
   - function releaseChildOverlayTerminalInput: (state) => void
   - function createChildOverlayTerminalInputBinder: (deps) => PiChildOverlayTerminalInputBinder
   - interface PiChildOverlayTerminalInputState
   - interface PiChildOverlayTerminalInputDeps
-  - interface PiChildOverlayTerminalInputBinder
+  - _...1 more_
 - `packages/adapters/pi/src/child-overlay-types.ts`
   - function clampPageSize: (pageSize) => number
   - function clampWindowCap: (windowCap) => number

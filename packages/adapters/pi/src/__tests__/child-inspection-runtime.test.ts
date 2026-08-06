@@ -645,7 +645,7 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     return controller;
   }
 
-  test("the six raw scroll frames drive the mounted overlay exactly once each", async () => {
+  test("the raw scroll frames drive the mounted overlay exactly once each", async () => {
     // Pi 0.83 claims PageUp/PageDown for its own paging route before a mounted
     // custom component, so before the terminal-input route claimed the six
     // overlay scroll frames, raw PageUp never scrolled the live overlay.
@@ -693,15 +693,26 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     const afterPageDown = controller.view()._unsafeUnwrap().scrollOffset;
     expect(afterPageDown).toBeLessThan(secondPage);
 
-    // Shift+Up / Shift+Down move by a single rendered row.
-    expect(input.emit(SCROLL_KEYS.shiftUp)).toBe(true);
+    // Shift+Up / Shift+Down are the conflict-safe aliases for paging, sent by
+    // a live Pi 0.83 PTY in the event-aware Kitty-compatible encoding
+    // (`ESC [ 1;2:1 A`), not the legacy `ESC [ 1;2 A` the raw binder used to
+    // require. They must reach the component as canonical PageUp/PageDown.
+    expect(input.emit("\x1b[1;2:1A")).toBe(true);
     await flush();
-    expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(
-      afterPageDown + 1,
+    const afterShiftUp = controller.view()._unsafeUnwrap().scrollOffset;
+    expect(afterShiftUp).toBeGreaterThan(afterPageDown);
+
+    // Event reporting also delivers a release for the same physical press; it
+    // must not scroll again and must not be consumed.
+    expect(input.emit("\x1b[1;2:3A")).toBe(false);
+    await flush();
+    expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(afterShiftUp);
+
+    expect(input.emit("\x1b[1;2:1B")).toBe(true);
+    await flush();
+    expect(controller.view()._unsafeUnwrap().scrollOffset).toBeLessThan(
+      afterShiftUp,
     );
-    expect(input.emit(SCROLL_KEYS.shiftDown)).toBe(true);
-    await flush();
-    expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(afterPageDown);
 
     // Home reaches the oldest retained row, End follows output again.
     expect(input.emit(SCROLL_KEYS.home)).toBe(true);
@@ -719,8 +730,9 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
       SCROLL_KEYS.pageUp,
       SCROLL_KEYS.pageUp,
       SCROLL_KEYS.pageDown,
-      SCROLL_KEYS.shiftUp,
-      SCROLL_KEYS.shiftDown,
+      // Normalized from the live event-aware Shift+Up / Shift+Down frames.
+      SCROLL_KEYS.pageUp,
+      SCROLL_KEYS.pageDown,
       SCROLL_KEYS.home,
       SCROLL_KEYS.end,
     ]);

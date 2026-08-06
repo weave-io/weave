@@ -6,6 +6,7 @@ import {
 import {
   createChildOverlayTerminalInputBinder,
   isChildOverlayScrollFrame,
+  normalizeChildOverlayScrollFrame,
   type PiChildOverlayTerminalInputState,
 } from "../child-overlay-terminal-input.js";
 import { SCROLL_KEYS } from "../child-overlay-types.js";
@@ -100,6 +101,127 @@ function boundBinder(options: {
   return { host, state, scrolls, actions };
 }
 
+/**
+ * The exact bytes a live Pi 0.83 / Herdr PTY delivered for one semantic
+ * Shift+Up, captured in the Task 20 pane probe: an incidental terminal size
+ * report followed by the event-aware Kitty-compatible key frame. The key
+ * frame is *not* the legacy `ESC [ 1;2 A` the raw binder used to require.
+ */
+const LIVE_PROBE = {
+  /** `ESC [ 6;38;15 t` - incidental terminal report, never a key. */
+  incidentalReport: "\x1b[6;38;15t",
+  /** `ESC [ 1;2:1 A` - Shift+Up, event type 1 (press). */
+  shiftUpPress: "\x1b[1;2:1A",
+  /** `ESC [ 1;2:1 B` - Shift+Down, event type 1 (press). */
+  shiftDownPress: "\x1b[1;2:1B",
+  /** `ESC [ 1;2:2 A` - Shift+Up, event type 2 (repeat). */
+  shiftUpRepeat: "\x1b[1;2:2A",
+  /** `ESC [ 1;2:3 A` - Shift+Up, event type 3 (release). */
+  shiftUpRelease: "\x1b[1;2:3A",
+  /** `ESC [ 1;2:3 B` - Shift+Down, event type 3 (release). */
+  shiftDownRelease: "\x1b[1;2:3B",
+} as const;
+
+/** Frames that must never be treated as overlay scrolling. */
+const NON_SCROLL_FRAMES = [
+  LIVE_PROBE.incidentalReport,
+  "\r",
+  "\x1b\r",
+  "\x1b",
+  "\x1bi",
+  "\x1b1",
+  "\x1b9",
+  "\x7f",
+  "a",
+  "hello",
+  "\x1b[A",
+  "\x1b[B",
+  "\x1b[Z",
+  "\x1b[1;3D",
+  "\x1b[200~",
+  "\x1b[99;99Z",
+  "\u0003",
+  "",
+] as const;
+
+describe("normalizeChildOverlayScrollFrame", () => {
+  test("the exact live Shift+Up probe bytes normalize to canonical PageUp", () => {
+    // Pre-fix regression: Pi 0.83 negotiates Kitty event reporting, so the
+    // live PTY sent the event-aware form while the binder only accepted the
+    // legacy one, and semantic Shift+Up never moved the mounted overlay.
+    expect(LIVE_PROBE.shiftUpPress).not.toBe(SCROLL_KEYS.shiftUp);
+    expect(normalizeChildOverlayScrollFrame(LIVE_PROBE.shiftUpPress)).toBe(
+      SCROLL_KEYS.pageUp,
+    );
+  });
+
+  test("the live Shift+Down event-aware form normalizes to canonical PageDown", () => {
+    expect(LIVE_PROBE.shiftDownPress).not.toBe(SCROLL_KEYS.shiftDown);
+    expect(normalizeChildOverlayScrollFrame(LIVE_PROBE.shiftDownPress)).toBe(
+      SCROLL_KEYS.pageDown,
+    );
+  });
+
+  test("legacy Shift+Up / Shift+Down also page, not crawl one row", () => {
+    // The conflict-safe terminal aliases must page on both encodings so a
+    // press reaches the component's bounded older/newer pagination at the
+    // viewport edges.
+    expect(normalizeChildOverlayScrollFrame(SCROLL_KEYS.shiftUp)).toBe(
+      SCROLL_KEYS.pageUp,
+    );
+    expect(normalizeChildOverlayScrollFrame(SCROLL_KEYS.shiftDown)).toBe(
+      SCROLL_KEYS.pageDown,
+    );
+  });
+
+  test("legacy and Kitty PageUp/PageDown/Home/End reach their canonical constants", () => {
+    for (const [frame, canonical] of [
+      // Legacy encodings.
+      ["\x1b[5~", SCROLL_KEYS.pageUp],
+      ["\x1b[6~", SCROLL_KEYS.pageDown],
+      ["\x1b[H", SCROLL_KEYS.home],
+      ["\x1b[F", SCROLL_KEYS.end],
+      ["\x1b[1~", SCROLL_KEYS.home],
+      ["\x1b[4~", SCROLL_KEYS.end],
+      // Event-aware Kitty-compatible press encodings.
+      ["\x1b[5;1:1~", SCROLL_KEYS.pageUp],
+      ["\x1b[6;1:1~", SCROLL_KEYS.pageDown],
+      ["\x1b[1;1:1H", SCROLL_KEYS.home],
+      ["\x1b[1;1:1F", SCROLL_KEYS.end],
+      // Repeat frames are still real scroll intent (key held down).
+      ["\x1b[5;1:2~", SCROLL_KEYS.pageUp],
+      [LIVE_PROBE.shiftUpRepeat, SCROLL_KEYS.pageUp],
+    ] as const) {
+      expect(normalizeChildOverlayScrollFrame(frame)).toBe(canonical);
+    }
+  });
+
+  test("release frames normalize to nothing so one press cannot scroll twice", () => {
+    for (const frame of [
+      LIVE_PROBE.shiftUpRelease,
+      LIVE_PROBE.shiftDownRelease,
+      "\x1b[5;1:3~",
+      "\x1b[6;1:3~",
+      "\x1b[1;1:3H",
+      "\x1b[1;1:3F",
+    ]) {
+      expect(normalizeChildOverlayScrollFrame(frame)).toBeUndefined();
+    }
+  });
+
+  test("the incidental terminal report and ordinary input normalize to nothing", () => {
+    for (const frame of NON_SCROLL_FRAMES) {
+      expect(normalizeChildOverlayScrollFrame(frame)).toBeUndefined();
+    }
+  });
+
+  test("oversized frames are rejected without walking the payload", () => {
+    expect(
+      normalizeChildOverlayScrollFrame(`${"x".repeat(64)}\x1b[5~`),
+    ).toBeUndefined();
+  });
+});
+
 describe("isChildOverlayScrollFrame", () => {
   test("recognizes exactly the six overlay scroll frames", () => {
     for (const frame of SCROLL_FRAMES) {
@@ -122,6 +244,13 @@ describe("isChildOverlayScrollFrame", () => {
       expect(isChildOverlayScrollFrame(other)).toBe(false);
     }
   });
+
+  test("recognizes the live event-aware press forms and rejects releases", () => {
+    expect(isChildOverlayScrollFrame(LIVE_PROBE.shiftUpPress)).toBe(true);
+    expect(isChildOverlayScrollFrame(LIVE_PROBE.shiftDownPress)).toBe(true);
+    expect(isChildOverlayScrollFrame(LIVE_PROBE.shiftUpRelease)).toBe(false);
+    expect(isChildOverlayScrollFrame(LIVE_PROBE.incidentalReport)).toBe(false);
+  });
 });
 
 describe("raw scroll frames while the native overlay is mounted", () => {
@@ -136,16 +265,50 @@ describe("raw scroll frames while the native overlay is mounted", () => {
     expect(scrolls).toEqual([{ data: "\x1b[5~", generationId: "gen-1" }]);
   });
 
-  test("every overlay scroll frame dispatches once for the active generation", () => {
+  test("every overlay scroll frame dispatches its canonical form once", () => {
     const { host, scrolls } = boundBinder({ overlayOpen: () => true });
 
     for (const frame of SCROLL_FRAMES) {
       expect(host.emit(frame)).toBe(true);
     }
 
-    expect(scrolls).toEqual(
-      SCROLL_FRAMES.map((data) => ({ data, generationId: "gen-1" })),
-    );
+    // Shift+Up / Shift+Down are conflict-safe aliases for paging, so the
+    // mounted overlay only ever sees the four canonical frames.
+    expect(scrolls).toEqual([
+      { data: SCROLL_KEYS.pageUp, generationId: "gen-1" },
+      { data: SCROLL_KEYS.pageDown, generationId: "gen-1" },
+      { data: SCROLL_KEYS.pageUp, generationId: "gen-1" },
+      { data: SCROLL_KEYS.pageDown, generationId: "gen-1" },
+      { data: SCROLL_KEYS.home, generationId: "gen-1" },
+      { data: SCROLL_KEYS.end, generationId: "gen-1" },
+    ]);
+  });
+
+  test("the live Shift+Up frame dispatches canonical PageUp exactly once", () => {
+    const { host, scrolls, actions } = boundBinder({ overlayOpen: () => true });
+
+    // The live PTY emits an incidental report before the key frame; only the
+    // key frame is ours.
+    expect(host.emit(LIVE_PROBE.incidentalReport)).toBe(false);
+    expect(host.emit(LIVE_PROBE.shiftUpPress)).toBe(true);
+    // Event reporting also delivers the matching release; it must not scroll.
+    expect(host.emit(LIVE_PROBE.shiftUpRelease)).toBe(false);
+
+    expect(scrolls).toEqual([
+      { data: SCROLL_KEYS.pageUp, generationId: "gen-1" },
+    ]);
+    expect(actions).toEqual([]);
+  });
+
+  test("the live Shift+Down frame dispatches canonical PageDown exactly once", () => {
+    const { host, scrolls } = boundBinder({ overlayOpen: () => true });
+
+    expect(host.emit(LIVE_PROBE.shiftDownPress)).toBe(true);
+    expect(host.emit(LIVE_PROBE.shiftDownRelease)).toBe(false);
+
+    expect(scrolls).toEqual([
+      { data: SCROLL_KEYS.pageDown, generationId: "gen-1" },
+    ]);
   });
 
   test("no frame is dispatched twice for one press", () => {
@@ -161,20 +324,7 @@ describe("raw scroll frames while the native overlay is mounted", () => {
   test("non-scroll frames stay on their existing routes while mounted", () => {
     const { host, scrolls, actions } = boundBinder({ overlayOpen: () => true });
 
-    for (const data of [
-      "\r",
-      "\x1b\r",
-      "\x1b",
-      "\x1bi",
-      "\x1b1",
-      "\x1b9",
-      "a",
-      "hello",
-      "\x1b[Z",
-      "\x1b[A",
-      "\x1b[1;3D",
-      "\u0003",
-    ]) {
+    for (const data of NON_SCROLL_FRAMES) {
       expect(host.emit(data)).toBe(false);
     }
 
@@ -210,7 +360,11 @@ describe("raw scroll frames while the native overlay is mounted", () => {
       overlayOpen: () => false,
     });
 
-    for (const frame of SCROLL_FRAMES) {
+    for (const frame of [
+      ...SCROLL_FRAMES,
+      LIVE_PROBE.shiftUpPress,
+      LIVE_PROBE.shiftDownPress,
+    ]) {
       expect(host.emit(frame)).toBe(false);
     }
 
