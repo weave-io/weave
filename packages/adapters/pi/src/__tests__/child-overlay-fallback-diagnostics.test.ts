@@ -128,6 +128,16 @@ describe("child overlay fallback diagnostics", () => {
         "SourceStartupNotReady",
       ),
     ).toBe("open-describe-source-not-ready");
+    // SourceInvalidCursor is impossible on the describe-fallback path: open
+    // keeps it as a terminal open error (`open-invalid-cursor`), so a
+    // smuggled/mismatched describe lookup must stay generic.
+    expect(
+      piChildOverlayFallbackReasonCode(
+        "describe-failed",
+        "open",
+        "SourceInvalidCursor",
+      ),
+    ).toBe("open-describe-failed");
     // An absent, unmodelled, or smuggled discriminant stays generic.
     expect(piChildOverlayFallbackReasonCode("describe-failed", "open")).toBe(
       "open-describe-failed",
@@ -161,6 +171,50 @@ describe("child overlay fallback diagnostics", () => {
         "SourceUnavailable",
       ),
     ).toBe("open-source-failed");
+  });
+
+  it("rejects non-string describe sourceErrorType values without throwing", () => {
+    // Unknown-runtime boundary: typeof === "string" before any map lookup.
+    // Coercion, Symbol.toStringTag, or a throwing toString must never run.
+    const throwingToString = {
+      toString(): string {
+        throw new Error("toString must not run");
+      },
+      valueOf(): string {
+        throw new Error("valueOf must not run");
+      },
+    };
+    const cases: readonly unknown[] = [
+      undefined,
+      null,
+      0,
+      1,
+      true,
+      false,
+      Symbol("SourceUnavailable"),
+      throwingToString,
+      ["ChildNotFound"],
+      { type: "ChildNotFound" },
+      Object.create(null),
+    ];
+    for (const value of cases) {
+      expect(
+        piChildOverlayFallbackReasonCode("describe-failed", "open", value),
+      ).toBe("open-describe-failed");
+    }
+    expect(
+      piChildOverlayFallbackReasonCode("describe-failed", "open", "toString"),
+    ).toBe("open-describe-failed");
+    expect(
+      piChildOverlayFallbackReasonCode("describe-failed", "open", "__proto__"),
+    ).toBe("open-describe-failed");
+    expect(
+      piChildOverlayFallbackReasonCode(
+        "describe-failed",
+        "open",
+        "constructor",
+      ),
+    ).toBe("open-describe-failed");
   });
 
   it("maps every typed non-fallback open error to its own bounded subcode", () => {

@@ -15,6 +15,7 @@
 import type {
   ChildOverlayError,
   ChildOverlayFallbackRequired,
+  ChildOverlaySourceErrorType,
 } from "./child-overlay-types.js";
 
 /**
@@ -24,6 +25,26 @@ import type {
 export type ChildOverlayOpenTerminalError = Exclude<
   ChildOverlayError,
   ChildOverlayFallbackRequired
+>;
+
+/**
+ * Source-error discriminants that `ChildOverlayController.open` may convert
+ * into a describe-failed fallback.
+ *
+ * `SourceInvalidCursor` is deliberately excluded: describe never yields an
+ * invalid pagination cursor, so that discriminant stays on the terminal
+ * open-error path (`open-invalid-cursor`) instead of a describe subcode.
+ */
+export type ChildOverlayDescribeFallbackSourceErrorType = Exclude<
+  ChildOverlaySourceErrorType,
+  "SourceInvalidCursor"
+>;
+
+type AssertNever<T extends never> = T;
+
+/** Compile-time proof that SourceInvalidCursor cannot key the describe map. */
+type _SourceInvalidCursorImpossibleForDescribe = AssertNever<
+  Extract<ChildOverlayDescribeFallbackSourceErrorType, "SourceInvalidCursor">
 >;
 
 export const PI_CHILD_OVERLAY_FALLBACK_REASON_CODES = Object.freeze([
@@ -106,25 +127,72 @@ export function formatPiChildOverlayFallbackDiagnostic(
 }
 
 /**
- * Closed map from a source-error discriminant to its `open` describe subcode.
+ * Compile-time exhaustive map from every describe-fallback source-error
+ * discriminant to its `open` describe subcode.
  *
- * Keyed by the literal discriminants of `ChildOverlaySourceError`. A lookup
- * with an unknown key falls back to the generic code, so no dynamic string can
- * reach a diagnostic.
+ * Keyed by {@link ChildOverlayDescribeFallbackSourceErrorType}. Adding a
+ * member to that closed set fails typechecking here until a subcode is
+ * supplied. `SourceInvalidCursor` is excluded (see that type). Unknown
+ * runtime keys must not index this table directly — use
+ * {@link openDescribeSubcodeFromUnknownSourceErrorType}.
  */
-const OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR: Readonly<
-  Record<string, PiChildOverlayFallbackReasonCode | undefined>
-> = Object.freeze(
-  Object.assign(
-    Object.create(null) as Record<string, never>,
-    {
-      ChildNotFound: "open-describe-child-not-found",
-      SourceUnavailable: "open-describe-source-unavailable",
-      SourceCorrupt: "open-describe-source-corrupt",
-      SourceStartupNotReady: "open-describe-source-not-ready",
-    } as const,
-  ),
-);
+const OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR = {
+  ChildNotFound: "open-describe-child-not-found",
+  SourceUnavailable: "open-describe-source-unavailable",
+  SourceCorrupt: "open-describe-source-corrupt",
+  SourceStartupNotReady: "open-describe-source-not-ready",
+} as const satisfies Record<
+  ChildOverlayDescribeFallbackSourceErrorType,
+  PiChildOverlayFallbackReasonCode
+>;
+
+/**
+ * Maps one typed describe-fallback source-error discriminant to its bounded
+ * subcode. Exhaustive over {@link ChildOverlayDescribeFallbackSourceErrorType}.
+ */
+function openDescribeSubcodeForKnownSourceError(
+  type: ChildOverlayDescribeFallbackSourceErrorType,
+): PiChildOverlayFallbackReasonCode {
+  switch (type) {
+    case "ChildNotFound":
+      return OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR.ChildNotFound;
+    case "SourceUnavailable":
+      return OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR.SourceUnavailable;
+    case "SourceCorrupt":
+      return OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR.SourceCorrupt;
+    case "SourceStartupNotReady":
+      return OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR.SourceStartupNotReady;
+    default: {
+      const _exhaustive: never = type;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Unknown-runtime boundary for a describe-fallback `sourceErrorType`.
+ *
+ * Verifies `typeof sourceErrorType === "string"` before any lookup. Non-string
+ * values, symbols, objects (including those whose `toString` throws),
+ * Object.prototype key names, `SourceInvalidCursor`, and unknown strings all
+ * collapse to `open-describe-failed` without throwing.
+ */
+function openDescribeSubcodeFromUnknownSourceErrorType(
+  sourceErrorType: unknown,
+): PiChildOverlayFallbackReasonCode {
+  if (typeof sourceErrorType !== "string") {
+    return "open-describe-failed";
+  }
+  // Own-key only: `in` also matches Object.prototype names (toString,
+  // constructor, __proto__), which would resolve to inherited functions
+  // instead of collapsing to the opaque describe-failed code.
+  if (Object.hasOwn(OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR, sourceErrorType)) {
+    return openDescribeSubcodeForKnownSourceError(
+      sourceErrorType as ChildOverlayDescribeFallbackSourceErrorType,
+    );
+  }
+  return "open-describe-failed";
+}
 
 /**
  * Maps a controller fallback reason to its `open`-time or mounted reason code.
@@ -136,21 +204,21 @@ const OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR: Readonly<
  * A single code cannot tell an absent source from an unknown child, which is
  * exactly the distinction a live run needs. Only the `open` describe stage has
  * subcodes today; every other stage keeps its existing code.
+ *
+ * `sourceErrorType` is `unknown` at this boundary: callers may pass metadata
+ * from an untrusted runtime shape. Non-string values never reach the map.
  */
 export function piChildOverlayFallbackReasonCode(
   reason: string,
   stage: "open" | "mounted",
-  sourceErrorType?: string,
+  sourceErrorType?: unknown,
 ): PiChildOverlayFallbackReasonCode {
   if (reason === "source-failed") {
     return stage === "open" ? "open-source-failed" : "mounted-source-failed";
   }
   if (reason === "describe-failed") {
     if (stage === "mounted") return "mounted-describe-failed";
-    return (
-      OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR[sourceErrorType ?? ""] ??
-      "open-describe-failed"
-    );
+    return openDescribeSubcodeFromUnknownSourceErrorType(sourceErrorType);
   }
   if (reason === "render-failed") {
     return stage === "open" ? "open-render-failed" : "mounted-render-failed";
