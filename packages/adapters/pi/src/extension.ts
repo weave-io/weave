@@ -347,7 +347,16 @@ class PiGenerationResourceOwner {
   private runtimeStore: RuntimeStore | undefined;
   private telemetry: PiTelemetry | undefined;
 
-  constructor(readonly generationId: string) {}
+  /**
+   * `onDispose` runs exactly once, when this generation stops owning its
+   * resources. It releases generation-scoped state a retained closure could
+   * otherwise keep alive - notably the newest session context. A throwing
+   * `onDispose` is absorbed so disposal keeps its `never` failure type.
+   */
+  constructor(
+    readonly generationId: string,
+    private readonly onDispose?: () => void,
+  ) {}
 
   adoptRuntimeStore(store: RuntimeStore): void {
     if (this.disposed) {
@@ -374,6 +383,13 @@ class PiGenerationResourceOwner {
   dispose(): ResultAsync<void, never> {
     if (this.disposed) return okAsync(undefined);
     this.disposed = true;
+    Result.fromThrowable(
+      () => this.onDispose?.(),
+      () => undefined,
+    )().match(
+      () => undefined,
+      () => undefined,
+    );
     const telemetry = this.telemetry;
     const runtimeStore = this.runtimeStore;
     this.telemetry = undefined;
@@ -1085,6 +1101,73 @@ export function readOverlaySessionEntryPage(
         return sessions.readSessionEntryPage(ref, expectedParent, options);
       },
     );
+}
+
+/**
+ * Why a child-ref entry read could not consult a session manager. Bounded
+ * codes only: they name the shape of the degradation, never a session.
+ */
+export type PiChildRefEntryReadDegradation =
+  | "no-session-manager"
+  | "get-entries-failed";
+
+/** Generation-scoped holder for the newest session context Pi handed us. */
+export interface PiGenerationSessionCtxCell {
+  /** Records `ctx` as the newest context observed for `generationId`. */
+  readonly note: (generationId: string, ctx: PiSessionContext) => void;
+  /**
+   * The newest context for `generationId`, or `undefined` when the cell holds
+   * another generation's context. A replaced generation therefore never reads
+   * its successor's session manager.
+   */
+  readonly read: (generationId: string) => PiSessionContext | undefined;
+  /** Drops the held context when `generationId` still owns the cell. */
+  readonly clear: (generationId: string) => void;
+}
+
+export function createGenerationSessionCtxCell(): PiGenerationSessionCtxCell {
+  let held: { generationId: string; ctx: PiSessionContext } | undefined;
+  return {
+    note: (generationId, ctx) => {
+      held = { generationId, ctx };
+    },
+    read: (generationId) =>
+      held?.generationId === generationId ? held.ctx : undefined,
+    clear: (generationId) => {
+      if (held?.generationId === generationId) held = undefined;
+    },
+  };
+}
+
+/**
+ * Reads Pi's parent session entries from a context, fail-closed.
+ *
+ * An absent or throwing session manager yields no entries and one bounded
+ * degradation report: the ref ledger is then simply empty, which every caller
+ * already treats as "no durable children", never as an authority to skip a
+ * check.
+ */
+export function readSessionManagerEntries(
+  ctx: PiSessionContext | undefined,
+  report: (degradation: PiChildRefEntryReadDegradation) => void,
+): readonly unknown[] {
+  const manager = ctx?.sessionManager as
+    | { getEntries?: () => readonly unknown[] }
+    | undefined;
+  if (manager === undefined || typeof manager.getEntries !== "function") {
+    report("no-session-manager");
+    return [];
+  }
+  return Result.fromThrowable(
+    () => manager.getEntries?.() ?? [],
+    () => undefined,
+  )().match(
+    (entries) => entries,
+    () => {
+      report("get-entries-failed");
+      return [];
+    },
+  );
 }
 
 export function buildChildBootstrapBody(
@@ -2370,6 +2453,26 @@ export function createPiExtension(
    * naming a target's model needs a context the extension already holds.
    */
   let latestSessionCtx: PiSessionContext | undefined;
+  /**
+   * The most recent session context *per generation*. Pi replaces
+   * `ctx.sessionManager` across a session load, so a context captured at
+   * `session_start` can stop reporting the parent's entries while the session
+   * is still the same file. Long-lived readers therefore resolve the context
+   * at call time, and only ever the one their own generation observed: a
+   * retained closure from a replaced generation must never reach a newer
+   * generation's manager.
+   */
+  const generationSessionCtxCell = createGenerationSessionCtxCell();
+  /**
+   * Records the context a public callback or command boundary was handed, so
+   * the child-ref entry read follows the live session manager instead of the
+   * one captured when the generation started.
+   */
+  const noteGenerationSessionCtx = (ctx: PiSessionContext): void => {
+    const generationId = controller.getCurrentGeneration()?.id;
+    if (generationId === undefined) return;
+    generationSessionCtxCell.note(generationId, ctx);
+  };
   let editorInstallCell:
     | {
         generationId: string;
@@ -2901,6 +3004,11 @@ export function createPiExtension(
     // factory time before child mode can be detected (Pi adapter contract,
     // - public adapter surface stays TUI-only).
     if (childModeState.active) return;
+    // Command boundary: Pi hands every command a freshly built context, so
+    // this is the newest session manager the generation has seen. Recording
+    // it here keeps `/weave:inspect` reading live refs even when the context
+    // captured at `session_start` has since been replaced.
+    noteGenerationSessionCtx(ctx);
     if (name === "weave:recover-children" && activeSession === undefined) {
       ctx.ui.notify("Child recovery is unavailable in this session.", "info");
       return;
@@ -4029,11 +4137,17 @@ export function createPiExtension(
       const startupHandle = startupOperation.value;
       const startupOwnsGeneration = (): boolean =>
         startupStillCurrent() && startupHandle.assertStillCurrent().isOk();
-      const generationResources = new PiGenerationResourceOwner(generation.id);
+      const generationResources = new PiGenerationResourceOwner(
+        generation.id,
+        () => generationSessionCtxCell.clear(generation.id),
+      );
       const generationTelemetryCell: { telemetry: PiTelemetry | undefined } = {
         telemetry: undefined,
       };
       generationResourcesCell.owner = generationResources;
+      // Seeds this generation's context slot, which also drops the replaced
+      // generation's context: the cell holds exactly one generation at a time.
+      generationSessionCtxCell.note(generation.id, ctx);
       doctorHealthOnlyCell.value = generation.healthOnlyMode;
       // Doctor stays registered in health-only; capability probes are always
       // available from preflight even when thread sources are not open yet.
@@ -4249,6 +4363,21 @@ export function createPiExtension(
       // read-only in health-only. Delegation still requires a full ready
       // generation (Pi adapter contract).
       if (generation.preflight.trust !== "withheld") {
+        // Bounded: one warning per degradation shape for this generation, so a
+        // session whose manager never returns entries cannot flood the log
+        // through the ref reads that run on every picker open.
+        const reportedRefEntryReadDegradations =
+          new Set<PiChildRefEntryReadDegradation>();
+        const reportRefEntryReadDegradation = (
+          degradation: PiChildRefEntryReadDegradation,
+        ): void => {
+          if (reportedRefEntryReadDegradations.has(degradation)) return;
+          reportedRefEntryReadDegradations.add(degradation);
+          deps.logger.warn(
+            { degradation },
+            "child ref entry read found no usable session manager",
+          );
+        };
         let allowDelegationController = !effectiveHealthOnly(generation);
         const parentForSources = session.primarySession.getParentSession();
         if (
@@ -4264,21 +4393,18 @@ export function createPiExtension(
               },
             },
             read: {
-              getEntries: () => {
-                const manager = ctx.sessionManager as
-                  | { getEntries?: () => readonly unknown[] }
-                  | undefined;
-                if (
-                  manager === undefined ||
-                  typeof manager.getEntries !== "function"
-                ) {
-                  return [];
-                }
-                return Result.fromThrowable(
-                  () => manager.getEntries?.() ?? [],
-                  () => undefined,
-                )().unwrapOr([]);
-              },
+              // Resolved at call time, never captured: Pi replaces
+              // `ctx.sessionManager` across a session load, so the manager
+              // held at `session_start` can stop reporting this parent's
+              // entries while the session file is unchanged. The generation
+              // id pins the lookup, so a replaced generation's retained
+              // closure falls back to its own startup context instead of
+              // reading its successor's manager.
+              getEntries: () =>
+                readSessionManagerEntries(
+                  generationSessionCtxCell.read(generation.id) ?? ctx,
+                  reportRefEntryReadDegradation,
+                ),
             },
             env: {
               XDG_DATA_HOME: deps.envPort.read("XDG_DATA_HOME"),
@@ -5430,6 +5556,7 @@ export function createPiExtension(
 
     pi.on("before_agent_start", (event, ctx: PiSessionContext) => {
       latestSessionCtx = ctx;
+      noteGenerationSessionCtx(ctx);
       if (childModeState.active) return undefined;
       const session = activeSession;
       if (

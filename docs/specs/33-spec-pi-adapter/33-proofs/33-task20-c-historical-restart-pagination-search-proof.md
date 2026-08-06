@@ -750,3 +750,60 @@ codesightChurnRestored: true
 task20cTemporaryFileCountAfterCleanup: 0
 currentPaneLeftOpen: true
 ```
+
+## Remediation note — live session manager for child refs (offline, 2026-08-06)
+
+This proof stays **FAIL** until item (c) is rerun in a fresh Herdr Pi session.
+
+The recorded `open-describe-child-not-found` was reproduced offline at the
+extension boundary against a real settled child, a real native session on disk,
+and the durable parent ref ledger. Pi replaces `ctx.sessionManager` across a
+session load, while the parent ref reader was built once at `session_start` and
+captured that startup context. After the replacement the captured manager
+reports no entries for the parent, so the ref ledger read empty and the picked
+child could not be described, even though the session file and every durable ref
+were unchanged.
+
+Remediation:
+
+- The extension holds the newest session context Pi handed it, scoped to the
+  generation that observed it. The long-lived ref-store read port resolves that
+  context at call time instead of holding the startup one.
+- The scope is a single generation. A retained closure from a replaced
+  generation reads `undefined` and falls back to its own captured startup
+  context; it can never reach a newer generation's session manager, so no
+  session or fork authority is crossed. Generation disposal clears the cell only
+  while that generation still owns it, so a late-disposing predecessor cannot
+  strip the live generation's context.
+- Command and `before_agent_start` boundaries record the context they were
+  handed, which is how a freshly built command context reaches the reader with
+  no lifecycle callback in between.
+- The read itself is fail-closed. An absent context, an absent manager, a
+  manager without `getEntries`, and a throwing `getEntries` all yield no entries
+  plus one bounded, identifier-free degradation code, logged once per shape per
+  generation. An empty ledger is already treated everywhere as "no durable
+  children", never as authority to skip a check.
+- `PiGenerationResourceOwner` disposal keeps its `never` failure type: the new
+  cleanup hook is invoked through `Result.fromThrowable`, so a throwing hook
+  cannot escape disposal.
+
+The helpers are internal to the extension module and are not re-exported from
+the package entry point, so no public API documentation changed.
+
+```yaml
+remediationDiagnosedOffline: true
+remediationCause: child_ref_reader_captured_startup_session_manager_after_pi_replaced_it
+remediationRegressionFailedBeforeFix: true
+remediationRegressionPassesAfterFix: true
+remediationGenerationScoped: true
+remediationCrossGenerationLeakPossible: false
+remediationFallbackCrossesSessionAuthority: false
+remediationDisposalNeverthrowSafe: true
+remediationFailOpenIntroduced: false
+remediationPublicApiChanged: false
+```
+
+This note records the offline diagnosis and repair only. The result above stays
+**FAIL** until a fresh Herdr run re-observes the native historical overlay, both
+bounded pages, gap-free pagination, viewport and selection preservation, and
+bounded native search end to end.
