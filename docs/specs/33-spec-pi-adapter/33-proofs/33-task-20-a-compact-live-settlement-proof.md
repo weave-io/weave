@@ -1,259 +1,128 @@
 # Task 20(a) compact live settlement proof
 
-Final rerun result: **PASS**
+**Verdict: PASS**
 
-This record covers only Task 20 matrix item (a): compact block live fragment and settlement tail. It contains no raw prompt, child transcript, native session ID, or child session path. The earlier failed attempts and their remediations remain below as historical evidence.
+Checklist version `3`. Matrix item `(a)` (compact block live fragment and settlement tail), covering related smoke rows `S040` and `S041`. Run attempt `1` against exact subject `a7b72bd` in the isolated Pi 0.83 harness. This replaces the earlier proof bound to older artifacts (`6a547d3` / `e905209b8cf5…` and prior failed remediations).
 
-## Harness identity
+## Subject and artifact
 
-| Field | Value |
+| Field | Verified value |
 | --- | --- |
-| Date | `2026-08-05` |
-| Herdr pane | `w23:p8H` |
-| Pi | `0.83.0` |
-| Pi extension source | `npm:@weaveio/weave-adapter-pi` |
-| Setup proof | [`33-task-20-release-setup-proof.md`](./33-task-20-release-setup-proof.md) |
-| Artifact | `weaveio-weave-adapter-pi-0.0.1-0b68a775-task20-73cca4466e6c.tgz` |
-| Artifact SHA-256 | `73cca4466e6cd0a82d682225509c8f4aa39c783fd9c5ded5abc1509b40f51c0a` |
-| Installed extension SHA-256 | `c13eaf83ec49472ef2661da4c3a26a145eabf7b8bdb5295b31d4f49ee6b6fdfd` |
+| Subject HEAD | `a7b72bd7e6eb84de6bd8f71bdd52b4fe411f6903` |
+| Subject HEAD subject line | `fix(pi): reconstruct child status and history after a source return` |
+| Working tree at run time | unrelated overlay WIP preserved unstaged; only this proof committed |
+| Host Pi version in the pane | `0.83.0` |
+| Global Pi version (untouched) | `0.84.0` |
+| Package | `@weaveio/weave-adapter-pi@0.0.1` |
+| Pi source identity | `npm:@weaveio/weave-adapter-pi` |
+| Checklist version | `3` |
+| Checklist rows | `S040`, `S041` |
+| Run attempt | `1` |
+| `childSettlementMissingCount` | `0` |
+| Host | `joses-Apple-MacBook-Pro` |
 
-The current pane loaded the npm package entry point. Its live footer showed `Connected`, `ready`, and `WEAVE · LOOM`.
+| Field | Verified value |
+| --- | --- |
+| Artifact | `$ISO/pi-agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-a7b72bd-task20iso-0f7fbf77cb99.tgz` |
+| Artifact SHA-256 | `0f7fbf77cb99d38ecbf952c46b16da2fffb3308f2ce346d5e35b9040e0c6deec` |
+| Built and installed `dist/extension.js` SHA-256 | `0dff94ac4167e8f2d7ecbafcfd91f1a1895b5c782ffa747043d872547d300314` |
+| Built and installed `dist/index.js` SHA-256 | `c654510917e651c09f22c6b19d52bda6a0f6f9dabda8436ee91aa8af1b9bc1be` |
+| Built and installed `dist/cli.js` SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
 
-## Structured readiness
+`$ISO` is `$HOME/.local/share/weave/task20-pi083-harness`. Tarball entry digests matched the installed entry points. Unsafe provenance override was unset in the pane and in the isolated launcher. No local extension shadow directory existed under `$ISO/pi-agent/extensions`. Global `~/.pi/agent` remained on Pi `0.84.0` with its own package list untouched.
 
-```yaml
-health:
-  mode: ready
-  result: PASS
-status:
-  trust: trusted
-  mode: interactive
-  healthOnly: false
-  result: PASS
-provenanceOverrideAbsent:
-  result: FAIL
-  observed: WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE was present in the live Pi process
-```
+## Environment
 
-The trusted status follows from the active `npm:` package source. The ready footer establishes that the interactive generation was not in health-only mode. The inherited unsafe override is a release-harness setup deviation and must be removed before the scenario is rerun.
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| Fresh test-created pane | `w23:pAW` | PASS |
+| Herdr agent | `task20a` (`herdr agent start --kind pi`) | PASS |
+| Resolved `pi` executable | `$ISO/shim/pi` | PASS |
+| Pi version reported in the pane | `0.83.0` | PASS |
+| `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` | `unset` in both live ISO Pi processes | PASS |
+| Isolated `settings.json` packages | `npm:@weaveio/weave-adapter-pi`, `npm:pi-vim` | PASS |
+| Local extension shadow directory | absent | PASS |
+| Startup `[Extensions]` line | `@weaveio/weave-adapter-pi:dist/extension.js`, `pi-vim` | PASS |
+| Status line | `ready ◆ WEAVE · LOOM` | PASS |
+| `/weave:status` trust | `trusted` | PASS |
+| `/weave:status` mode | `tui` | PASS |
+| `health-only` | `false` | PASS |
+| Generation | `b9afdae4-8b3b-4145-af49-88f4a1e81e8c` | PASS |
+| Nested ISO rpc child processes after settlement | `0` | PASS |
+| Production source edited | `0` | PASS |
 
-## Delegation attempt
+Startup reported the same pre-existing, unrelated overlay key-conflict warnings already recorded for other Task 20 items (`alt+left` / `alt+right`). The isolated agent directory has no `rose-pine` theme, so Pi fell back to `dark`. Neither notice affects this item.
 
-One ordinary `shuttle-mini` delegation used the unique safe marker `TASK20A_SAFE_M7Q2`. The request was bounded and allowed no tools or file edits.
+## Ordinary delegation
 
-The delegation failed before child process spawn with this sanitized typed result:
+One ordinary `shuttle-mini` delegation ran a harmless no-edit task. The child streamed a bounded assistant fragment while `running`, then settled with the unique terminal marker `TASK20A_PASS_M4P8`.
 
-```yaml
-ok: false
-error: ChildSpawnFailed
-reason: thread-session-create-failed
-retryable: true
-recovery: retry
-```
+A 5 ms dual-source (`visible` + `recent-unwrapped`) sampler inspected the collapsed `weave_delegate` block. It retained only booleans, counts, SHA-256 digests, and short activity previews. It stored no raw prompt or child transcript.
 
-A direct storage-boundary diagnostic resolved the default native session layout and returned `symlink-rejected`. The current environment did not define `XDG_DATA_HOME`, and the default `$HOME/.local` component is a symlink. The no-follow native session store therefore refused the path before it created a child session.
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| Ordinary delegation completes successfully | parent reported `ok, completed, TASK20A_PASS_M4P8` | PASS |
+| Live compact block has exactly three sanitized lines | `running.seen=true`, `lineCount=3`, `sanitized=true` | PASS |
+| Live block contains a non-whitespace assistant fragment | `nonWhitespaceActivity=true`; preview `TASK 20 A _PASS _M 4 P 8` (streaming) | PASS |
+| Live status observed before settlement | `runningStatusSeen=true`; `runningEllipsisCount=191` then one non-ellipsis live sample | PASS |
+| Settled compact block has exactly three sanitized lines | `settled.seen=true`, `lineCount=3`, `sanitized=true` | PASS |
+| Final tail is the authoritative terminal response | settled activity SHA-256 `e6316d0ed93b00fcc75f785408507cb200756fc354e4a2b77d253fb76d90be01` matches `TASK20A_PASS_M4P8` | PASS |
+| Terminal status / identity / run metadata | `weave_delegate · shuttle-mini · completed` / `TASK20A_PASS_M4P8` / `run 1 · start` | PASS |
+| Compact block exposes no path | `forbiddenPath=false` in live and settled samples | PASS |
+| Compact block exposes no native session ID | `nativeSessionId=false` in live and settled samples | PASS |
+| Sampler stores no prompt or transcript | `sampleStoredPromptOrTranscript=false` | PASS |
+| No continued spinner/stream mutation after settlement | settled frames remained `completed` with frozen three-line tail | PASS |
 
-## Assertions
+## Freeze after reopen/inspect
 
-| Assertion | Result | Sanitized evidence |
-| --- | --- | --- |
-| Current pane is ready | **PASS** | Live footer showed `Connected ready WEAVE · LOOM`. |
-| Status is trusted interactive and health-only is false | **PASS** | Active npm source, interactive TUI, and ready generation. |
-| Release verification has no unsafe provenance override | **FAIL** | The live Pi process inherited the unsafe override. |
-| Ordinary delegation starts | **FAIL** | Typed pre-spawn failure: `thread-session-create-failed`. |
-| Live compact block has exactly three sanitized lines | **FAIL — not observed** | No child run started and no compact sample was emitted. |
-| Live block contains a non-whitespace assistant fragment | **FAIL — not observed** | No child run started. |
-| Settled compact block has exactly three sanitized lines | **FAIL — not observed** | No settlement occurred. |
-| Final tail matches the Task 8 terminal response | **FAIL — not observed** | No authoritative settlement result existed. |
-| Compact block exposes no path or session ID | **FAIL — not testable** | No live or settled compact block was rendered. |
-| No child process remains | **PASS** | No child process was spawned by this attempt; post-attempt process inspection found no new child-mode Pi process. |
-| No Runtime Store lease remains | **PASS** | Runtime Store schema 5 reported `No active lease.` |
-| No raw prompt or transcript is in this proof | **PASS** | Only the safe marker and typed, sanitized assertions are recorded. |
+After settlement, the compact block SHA-256 was `f48130eeafc809760aa508984bb146fb8042ef240408e1cf3893068b41f3d71a` over the three sanitized lines. Opening the child through `Alt+I` / `Enter` mounted the settled overlay (`· SETTLED`) and showed the marker in the overlay body. Closing the overlay left the compact block byte-identical (`unchanged: true`).
 
-## Cleanup
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| Reopen/inspect does not mutate the frozen compact block | before/after SHA-256 identical | PASS |
+
+## Settlement missing and cleanup
+
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| `childSettlementMissingCount` | `0` (authoritative completed settlement; no `ChildSettlementMissing`) | PASS |
+| No ISO-harness rpc child process remains | `0` matching `task20-pi083-harness` + `--mode rpc` | PASS |
+| Runtime Store lease | schema 5 reported `No active lease.` | PASS |
+| Created pane closed | `w23:pAW` closed; agent `task20a` gone | PASS |
+| Pre-existing panes preserved | `w23:p70 w23:p79 w23:p82 w23:pAR` unchanged | PASS |
+| Global Pi 0.84 / other workspaces untouched | no ISO process remained after close | PASS |
 
 ```yaml
 childProcessRemaining: false
 runtimeStoreLeaseActive: false
 samplerRunning: false
-cleanupPending: true
-cleanupPendingReason: close only pane w23:p8H after the parent verification run consumes this proof
+cleanupPending: false
 otherPanesAltered: false
+createdPaneClosed: true
 ```
 
-Pane `w23:p8H` remains open as required. No other pane was closed or altered.
+## Repository checks (detached `a7b72bd` worktree)
 
-## Rerun requirement
+Focused compact-render and settlement tests, plus docs link check, were run from a detached temporary worktree at exact subject `a7b72bd` (main working-tree overlay WIP left unstaged):
 
-Start a fresh Pi 0.83 npm-provenance pane with an absolute, no-symlink `XDG_DATA_HOME` and without `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE`. Then rerun only matrix item (a). Do not mark Task 20(a) complete from this proof.
-
-## Remediation (recorded after this failure)
-
-This section records the code change made in response to the failure above. It changes nothing about the result of this run, which remains **FAIL**. Task 20(a) is still not proven.
-
-| Field | Value |
+| Check | Result |
 | --- | --- |
-| Remediation commit | `fix(pi): canonicalize trusted xdg data roots` — `8b9dc84215d85d87bac4644f24cc3e0dc02260cd` |
-| Blocker addressed | `thread-session-create-failed` caused by the symlinked `$HOME/.local` component |
-| Scope | Base-path canonicalization only; no change to no-follow behaviour below the adapter root |
+| `bun test` `child-compact-render.test.ts` + `repeated-settlement-validator.test.ts` | **22 pass**, 0 fail |
+| `bun run docs:check-links` | PASS |
 
-The trust boundary is now explicit. The configured base — `$XDG_DATA_HOME`, or `$HOME/.local/share` when unset — is canonicalized once with libc `realpath(3)`, so a user-owned symlinked base resolves to its real target. The canonical base must be absolute, a directory, owned by the current uid, and neither group- nor world-writable; a base whose unresolved components are symlinks (dangling or looping) is refused. The adapter-owned `weave/adapters/pi/sessions` components are appended only after that check, and everything at or below them is still opened with strict `openat(O_NOFOLLOW)`. Symlinked components inside the adapter root or inside a child directory remain rejected.
+## Acceptance
 
-Rerun conditions are therefore relaxed in one respect only: a fresh pane no longer needs a symlink-free `XDG_DATA_HOME`. Every other rerun requirement above still stands, including the removal of `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` and a rebuilt npm-provenance artifact that contains the remediation commit.
-
-## Remediation (session header persistence)
-
-This section records a follow-on create-path fix that is required after the trusted XDG root remediation. It does not change the result of the run above, which remains **FAIL**. Task 20(a) is still not proven.
-
-| Field | Value |
+| Acceptance | Result |
 | --- | --- |
-| Remediation commit | `fix(pi): persist native child session headers before spawn` — `c952ef89d90a2efa8dc27394f217d6b6307d4367` |
-| Blocker addressed | Pi 0.83 `SessionManager.create` leaves the generated session path absent until an assistant entry; Weave must exclusive-create the host header at 0600, reopen, and revalidate identity before spawn so `establishThreadLeaf` can append durable custom metadata |
-| Scope | Native child session create path only; no assistant fabrication; collision/nonempty/race fail closed |
+| Fresh Herdr pane runs Pi 0.83.0 with exact `a7b72bd` npm-provenance artifact; unsafe override absent; built/installed digests match | PASS |
+| Parent delegates deterministic bounded work to `shuttle-mini` that emits enough progress to exercise live compact updates, then returns one terminal marker | PASS |
+| Compact block updates in place with bounded live fragments/status and never dumps full transcript or raw prompt | PASS |
+| On settlement, the block freezes with correct terminal status, bounded result tail, child/thread identity, duration/metadata as specified, and no continued spinner/stream mutation | PASS |
+| Reopening/inspecting the child does not mutate the frozen compact block | PASS |
+| `childSettlementMissingCount: 0`; proof records checklist v3, subject/artifact/digests, host, run attempt, sanitized observations, and cleanup | PASS |
+| Close only created pane; no created process, Runtime Store lease, or pane remains; pre-existing panes preserved | PASS |
+| Focused compact-render/settlement tests and docs links from clean committed source; commit only proof plus hook metadata; pre-existing dirty/untracked WIP remains byte-identical and unstaged | PASS |
 
-A rebuilt npm-provenance artifact for the Task 20(a) rerun must include both remediation commits (`8b9dc84` and `c952ef89`).
+## Notes
 
-## Rerun attempt after both remediations
-
-Result: **FAIL**
-
-This rerun used the refreshed npm-provenance artifact that includes both recorded remediations. It does not supersede or remove the earlier failure evidence.
-
-| Field | Value |
-| --- | --- |
-| Date | `2026-08-05` |
-| Herdr pane | `w23:p8Q` |
-| Pi | `0.83.0` |
-| Pi extension source | `npm:@weaveio/weave-adapter-pi` |
-| Setup proof | [`33-task-20-release-setup-proof.md`](./33-task-20-release-setup-proof.md) |
-| Artifact | `weaveio-weave-adapter-pi-0.0.1-eec3a4a-task20-c927ea47e3af.tgz` |
-| Artifact SHA-256 | `c927ea47e3af584582770c8fac96547f12d9bfcf234f095987387e3586635d7c` |
-| Installed extension SHA-256 | `4e1c360fe1e0d764c64b5eaa1535188a480110e8a48fb22f6c1089efaba4c653` |
-| Installed index SHA-256 | `95efd487860d219e40fe57acbaf964fa62f8d89e309a9c95ecd38a95a6c1ea66` |
-| Installed CLI SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
-
-### Structured readiness
-
-```yaml
-healthReady: true
-statusTrusted: true
-healthOnly: false
-provenanceOverrideAbsentInVerifierProcess: true
-```
-
-The live footer showed `Connected`, `ready`, and `WEAVE · LOOM`. The loaded npm package and matching installed hashes establish trusted provenance. The registered delegation tool entered the interactive controller rather than a health-only rejection path.
-
-### Delegation result
-
-One ordinary delegation attempted a harmless, no-edit task. The child acknowledged authenticated bootstrap, but the parent rejected the restored session before it delivered task content:
-
-```yaml
-ok: false
-error: ChildAuthenticationFailed
-reason: restore-active-leaf-mismatch
-retryable: false
-recovery: abort
-```
-
-Hash-only inspection found an unbroken five-entry chain. Its entry types were `custom`, `model_change`, `thinking_level_change`, `model_change`, and `thinking_level_change`. The final leaf hash differed from the metadata-leaf hash. Pi advanced the active leaf during child startup and bootstrap model activation, after Weave established the metadata leaf but before `PiRpcChild.verifyRestoreContext()` required exact equality. No prompt or assistant transcript reached the child session.
-
-### Compact block assertions
-
-| Assertion | Result | Sanitized evidence |
-| --- | --- | --- |
-| Live compact block has exactly three sanitized lines | **FAIL — not observed** | Hash-only sampler: `runningSeen=false`. |
-| Live block contains a non-whitespace assistant fragment | **FAIL — not observed** | The parent withheld task content after restore verification failed. |
-| Settled compact block has exactly three sanitized lines | **FAIL — not observed** | Hash-only sampler: `settledSeen=false`. |
-| Final tail is authoritative | **FAIL — not testable** | No successful terminal response existed. |
-| Compact block exposes no path or native session ID | **FAIL — not testable** | No live or settled compact sample was captured. |
-| Sampler stored no prompt or transcript text | **PASS** | It stored only booleans, line counts, lengths, and SHA-256 values; no sample qualified for storage. |
-| No child process remains | **PASS** | Post-failure process count was zero. |
-| No Runtime Store lease remains | **PASS** | Runtime Store schema 5 reported `No active lease.` |
-
-### Cleanup
-
-```yaml
-childProcessRemaining: false
-runtimeStoreLeaseActive: false
-samplerRunning: false
-cleanupPending: true
-cleanupPendingReason: close only pane w23:p8Q after the parent verification run consumes this proof
-otherPanesAltered: false
-```
-
-Pane `w23:p8Q` remains open. No other pane was changed.
-
-### Additional remediation required
-
-Task 20(a) remains incomplete. The restore check must authenticate the established metadata leaf as an ancestor while allowing only the bounded, expected Pi startup entries that advance the live leaf before task delivery. The implementation must still fail closed on a disconnected or malformed chain. Rebuild and install a new npm-provenance artifact after that fix, then rerun this matrix item in a fresh pane.
-
-### Remediation commit
-
-| Field | Value |
-| --- | --- |
-| Commit | `5b7f81f` |
-| Subject | `fix(pi): authenticate bounded restore startup suffix` |
-
-`PiRpcChild.verifyRestoreContext()` now authenticates the established metadata leaf as an ancestor of the reported active leaf through a bounded `get_entries` cursor page, and accepts only a contiguous suffix of Pi-owned `model_change` and `thinking_level_change` entries with valid unique ids and an unbroken parent chain. Forbidden kinds, a disconnected or branched leaf, a repeated id, a malformed id or parent, and an oversized suffix still fail closed, and task content is still withheld until authentication succeeds.
-
-The failures recorded above stand. They are retained as the observed evidence of the blocker. The final rerun below uses a fresh pane and a rebuilt npm-provenance artifact that includes this remediation.
-
-## Final rerun after restore-suffix remediation
-
-Result: **PASS**
-
-This section supersedes only the final outcome. It does not remove or change either failed attempt above.
-
-| Field | Value |
-| --- | --- |
-| Date | `2026-08-05` |
-| Herdr pane | `w23:p8T` |
-| Pi | `0.83.0` |
-| Pi extension source | `npm:@weaveio/weave-adapter-pi` |
-| Setup proof | [`33-task-20-release-setup-proof.md`](./33-task-20-release-setup-proof.md) |
-| Artifact | `weaveio-weave-adapter-pi-0.0.1-6a547d3-task20-e905209b8cf5.tgz` |
-| Artifact SHA-256 | `e905209b8cf5359eb78c7c31c5ade4f82feaa660f752b3c45a8d07e62d41750d` |
-| Installed extension SHA-256 | `7d441b86529a1d15baecb31a77a51f298f820eb73a4a927a366b493542d723bc` |
-| Installed index SHA-256 | `925cc842591d9b8bd2ad9c94089e821eae2c26b641b89c04264f25cf0428213f` |
-| Installed CLI SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
-
-### Provenance and readiness
-
-The verifier first inspected both live Pi processes in pane `w23:p8T`. Neither process environment contained `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE`. Pi loaded the installed `npm:` package, and the live footer showed `Connected`, `ready`, and `WEAVE · LOOM`. Trusted npm provenance, the active interactive controller, and the successful registered delegation establish `trust: trusted` and `health-only: false`.
-
-```yaml
-healthReady: true
-statusTrusted: true
-healthOnly: false
-provenanceOverrideAbsentInLivePiProcesses: true
-```
-
-### Ordinary delegation and compact block
-
-One ordinary `shuttle-mini` delegation ran a harmless no-edit task and completed successfully. Its terminal response was the safe marker `TASK20A_PASS_K9V4`. A 40 ms visible-terminal sampler inspected the actual collapsed `weave_delegate` block while running and after settlement. The sampler retained only booleans, counts, and SHA-256 values; it stored no raw prompt or transcript.
-
-| Assertion | Result | Sanitized evidence |
-| --- | --- | --- |
-| Ordinary delegation completes successfully | **PASS** | Settlement outcome was `completed` with zero interventions. |
-| Live compact block has exactly three sanitized lines | **PASS** | `running.seen=true`, `lineCount=3`, `sanitized=true`. |
-| Live block contains a non-whitespace assistant fragment | **PASS** | `nonWhitespaceActivity=true`. |
-| Settled compact block has exactly three sanitized lines | **PASS** | `settled.seen=true`, `lineCount=3`, `sanitized=true`. |
-| Final tail is the authoritative terminal response | **PASS** | Settled activity and terminal response shared SHA-256 `cd6283a83fb0bc163ed1a0cb5dcd5fe96a62cdfc7346ac469cfaf07cfef1f73f`. |
-| Compact block exposes no path | **PASS** | Forbidden-path checks were false in both samples. |
-| Compact block exposes no native session ID | **PASS** | Native-session-ID checks were false in both samples. |
-| Sampler stores no prompt or transcript | **PASS** | `sampleStoredPromptOrTranscript=false`. |
-| No child process remains | **PASS** | No pane-parented `--mode rpc --no-session` Pi process remained. |
-| No Runtime Store lease remains | **PASS** | Runtime Store schema 5 reported `No active lease.` |
-
-### Final cleanup state
-
-```yaml
-childProcessRemaining: false
-runtimeStoreLeaseActive: false
-samplerRunning: false
-cleanupPending: true
-cleanupPendingReason: close only pane w23:p8T after the parent verification run consumes this proof
-otherPanesAltered: false
-```
-
-Pane `w23:p8T` remains open. No other pane was changed or closed.
+The plan checkbox for Task 20(a) was not marked. Unrelated overlay WIP in the main working tree was preserved unstaged and verified byte-identical to the pre-run baseline after this proof.
