@@ -23,7 +23,6 @@ import {
   MAX_NAME_LENGTH,
   type PiDelegateRequestBody,
 } from "./child-control-bodies.js";
-import { childPickerTaskFirstLine } from "./child-picker.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type {
   CreateNativeChildSessionInput,
@@ -36,6 +35,7 @@ import type {
   PiNativeThreadMetadata,
   PiNativeThreadMetadataInput,
 } from "./child-native-sessions.js";
+import { childPickerTaskFirstLine } from "./child-picker.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
 import type {
   PiChildRecoverySettlement,
@@ -51,7 +51,11 @@ import type {
   PiChildRefScan,
   PiChildRefStatus,
 } from "./child-session-refs.js";
-import { type TimerHandle, type TimerPort, SystemTimerPort } from "./child-timer.js";
+import {
+  SystemTimerPort,
+  type TimerHandle,
+  type TimerPort,
+} from "./child-timer.js";
 import {
   addUsage,
   EMPTY_USAGE_AGGREGATE,
@@ -64,10 +68,10 @@ import {
 import {
   makeChildAbortFailedFailure,
   makeChildCapacityExceededFailure,
+  makeChildInteractionUnavailableFailure,
   makeChildRecordCorruptFailure,
   makeChildRecordQuarantinedFailure,
   makeChildRecordQuotaExceededFailure,
-  makeChildInteractionUnavailableFailure,
   makeChildRecoveryUnavailableFailure,
   makeChildSpawnFailedFailure,
   makeThreadAlreadyRunningFailure,
@@ -257,6 +261,15 @@ export interface PiOverlayChildDescriptor {
    * only — never an absolute filesystem path.
    */
   readonly sessionRef: string | undefined;
+  /**
+   * Parent session that owns this child's native session, as recorded when the
+   * child was created. This is the only authority for the expected header
+   * `parentSession` of a persisted child session: a later parent generation may
+   * report a different live session identity, and reading a historical child
+   * must still verify against the parent that actually created it. Undefined
+   * when this generation has no durable record for the child.
+   */
+  readonly originParentSessionId: string | undefined;
 }
 
 /**
@@ -513,9 +526,7 @@ function bootstrapRuntimeMeta(bootstrap: unknown): {
  * statuses leave retryability unset so readiness fails closed instead of
  * inventing a prior outcome.
  */
-function retryableFromRefStatus(
-  status: PiChildRefStatus,
-): boolean | undefined {
+function retryableFromRefStatus(status: PiChildRefStatus): boolean | undefined {
   if (status === "completed") return false;
   if (status === "failed" || status === "cancelled") return true;
   return undefined;
@@ -1073,15 +1084,14 @@ export class PiDelegationController {
         branchIds: [],
         descendantChildIds: [],
         sessionRef: record?.sessionRef,
+        originParentSessionId: record?.originParentSessionId,
       };
     }
     const record = this.threadRecords.get(state.threadId);
     const treeChild =
       this.children.get(state.latestChildId) ?? this.children.get(childId);
     const title =
-      record?.title ??
-      treeChild?.snapshot().name ??
-      state.agentName;
+      record?.title ?? treeChild?.snapshot().name ?? state.agentName;
     let status: PiOverlayChildDescriptor["status"];
     if (state.running) {
       status = "live";
@@ -1103,6 +1113,7 @@ export class PiDelegationController {
       branchIds: [],
       descendantChildIds: [],
       sessionRef: record?.sessionRef,
+      originParentSessionId: record?.originParentSessionId,
     };
   }
 
@@ -1111,7 +1122,9 @@ export class PiDelegationController {
   ): ResultAsync<PiOverlayChildDescriptor, PiAdapterFailure> {
     const cached = this.threadRecords.get(childId);
     if (cached !== undefined) {
-      return okAsync(refRecordToOverlayDescriptor(cached, this.deps.generationId));
+      return okAsync(
+        refRecordToOverlayDescriptor(cached, this.deps.generationId),
+      );
     }
     for (const record of this.threadRecords.values()) {
       if (record.childId === childId) {
@@ -1129,13 +1142,10 @@ export class PiDelegationController {
       .mapErr(() => makeThreadNotFoundFailure(childId, "refs-unavailable"))
       .andThen((scan) => {
         const match = scan.refs.find(
-          (record) =>
-            record.childId === childId || record.threadId === childId,
+          (record) => record.childId === childId || record.threadId === childId,
         );
         if (match === undefined) {
-          return errAsync(
-            makeThreadNotFoundFailure(childId, "unknown-thread"),
-          );
+          return errAsync(makeThreadNotFoundFailure(childId, "unknown-thread"));
         }
         this.rememberThreadRecord(match);
         return okAsync(
@@ -1523,9 +1533,7 @@ export class PiDelegationController {
       metadata.parentAgentName.length === 0 ||
       metadata.cwd.length === 0
     ) {
-      return err(
-        makeThreadIntegrityFailure(threadId, "session-corrupt"),
-      );
+      return err(makeThreadIntegrityFailure(threadId, "session-corrupt"));
     }
     const runs = record.runs.length;
     if (runs < 1) {
@@ -2962,7 +2970,9 @@ function recordToOverlayRuns(
     run: run.run,
     action: run.action,
     startedAt: run.startedAt,
-    ...(run.priorOutcome === undefined ? {} : { priorOutcome: run.priorOutcome }),
+    ...(run.priorOutcome === undefined
+      ? {}
+      : { priorOutcome: run.priorOutcome }),
     ...(run.initiator === undefined ? {} : { initiator: run.initiator }),
     ...(run.model === undefined ? {} : { model: run.model }),
     ...(run.reasoning === undefined ? {} : { reasoning: run.reasoning }),
@@ -2993,6 +3003,7 @@ function refRecordToOverlayDescriptor(
     branchIds: [],
     descendantChildIds: [],
     sessionRef: record.sessionRef,
+    originParentSessionId: record.originParentSessionId,
   };
 }
 

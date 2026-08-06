@@ -961,3 +961,51 @@ export const PI_NAMED_SHORTCUT_ACTIONS_CAPABILITY_ID =
  */
 export const PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC =
   "Pi exposes raw-key shortcuts only (registerShortcut takes a key, not a named action id, and keybindings.json accepts only Pi's own tui.*/app.* ids). Weave emulates named actions with adapter-owned ids and settings.adapters.pi.child_inspection.keys overrides." as const;
+
+// ---------------------------------------------------------------------------
+// In-overlay search route (Task 20 item c)
+// ---------------------------------------------------------------------------
+
+/**
+ * Documented key that opens the transcript search prompt while the native
+ * overlay owns the keyboard. `ctrl+f` is the standard "find" key and is not one
+ * of Pi's own bindings, but the host may still claim it, so it is offered to
+ * the same conflict port every other overlay key uses.
+ */
+export const PI_CHILD_OVERLAY_SEARCH_KEY = "ctrl+f" as const;
+
+/** Raw terminal byte Pi delivers for {@link PI_CHILD_OVERLAY_SEARCH_KEY}. */
+export const PI_CHILD_OVERLAY_SEARCH_TRIGGER = "\x06" as const;
+
+export interface PiChildOverlaySearchRoute {
+  /** Raw key data that opens the search prompt, or undefined when skipped. */
+  readonly trigger: string | undefined;
+  /** Bounded diagnostic lines; one line when the host already owns the key. */
+  readonly diagnostics: readonly string[];
+}
+
+/**
+ * Resolves the in-overlay search key against the host's effective bindings.
+ *
+ * The overlay never registers this key as a Pi shortcut: it is consumed only
+ * while the overlay is mounted and focused. When the host already binds the
+ * key, the route is skipped and reported instead of being silently stolen, so
+ * a conflict is always visible rather than changing the key's meaning.
+ */
+export function resolveChildOverlaySearchRoute(
+  conflicts?: PiChildOverlayKeybindingConflictPort,
+): PiChildOverlaySearchRoute {
+  const owner = conflicts?.ownerOf(PI_CHILD_OVERLAY_SEARCH_KEY);
+  if (owner !== undefined) {
+    return Object.freeze({
+      trigger: undefined,
+      diagnostics: Object.freeze([
+        `weave overlay search skipped key ${PI_CHILD_OVERLAY_SEARCH_KEY}: already bound to ${owner}`,
+      ]),
+    });
+  }
+  return Object.freeze({
+    trigger: PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+    diagnostics: Object.freeze([]),
+  });
+}

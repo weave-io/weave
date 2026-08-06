@@ -2767,4 +2767,118 @@ describe("createChildOverlayCustomComponent", () => {
     expect(controller.currentChildId()).toBe("two");
     expect(joined).toContain("two");
   });
+
+  it("searches the transcript from ctrl+f and navigates matches", async () => {
+    const { component, controller } = await mount({
+      status: "settled",
+      entryCount: 40,
+      pageSize: 40,
+    });
+    component.render(80);
+    component.handleInput("\x06");
+    expect(component.render(80).join("\n")).toContain("Search: ");
+    for (const key of "e-text-1") component.handleInput(key);
+    expect(component.render(80).join("\n")).toContain("Search: e-text-1");
+    component.handleInput("\r");
+    await flush();
+    const view = controller.view()._unsafeUnwrap();
+    expect(view.searchQuery).toBe("e-text-1");
+    // e-text-1 plus e-text-10..e-text-19 in a 40-entry window.
+    expect(view.searchMatches.length).toBe(11);
+    const header = component.render(80).join("\n");
+    expect(header).toContain("1/11 matches");
+    const firstOffset = controller.view()._unsafeUnwrap().scrollOffset;
+    component.handleInput("n");
+    await flush();
+    expect(component.render(80).join("\n")).toContain("2/11 matches");
+    expect(controller.view()._unsafeUnwrap().scrollOffset).not.toBe(
+      firstOffset,
+    );
+    component.handleInput("N");
+    await flush();
+    expect(component.render(80).join("\n")).toContain("1/11 matches");
+    expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(firstOffset);
+  });
+
+  it("exits search on Escape without closing the overlay or leaking input", async () => {
+    const state = await mount({ status: "settled", entryCount: 20 });
+    state.component.render(80);
+    state.component.handleInput("\x06");
+    for (const key of "e-text-3") state.component.handleInput(key);
+    state.component.handleInput("\r");
+    await flush();
+    expect(state.controller.view()._unsafeUnwrap().searchQuery).toBe(
+      "e-text-3",
+    );
+    state.component.handleInput("\x1b");
+    await flush();
+    // Escape leaves search only: the overlay stays mounted and the query clears.
+    expect(state.closed()).toBe(0);
+    expect(state.controller.view()._unsafeUnwrap().searchQuery).toBe("");
+    expect(state.component.render(80).join("\n")).not.toContain("Search:");
+    // A second Escape now has its ordinary meaning again.
+    state.component.handleInput("\x1b");
+    await flush();
+    expect(state.closed()).toBe(1);
+  });
+
+  it("keeps a settled overlay read-only while search is open", async () => {
+    const steered: string[] = [];
+    const state = await mount({
+      status: "settled",
+      entryCount: 12,
+      mutations: {
+        steer: (_childId, _generationId, text) => {
+          steered.push(text);
+          return okAsync(undefined);
+        },
+        followUp: (_childId, _generationId, text) => {
+          steered.push(text);
+          return okAsync(undefined);
+        },
+      },
+    });
+    state.component.render(80);
+    state.component.handleInput("\x06");
+    for (const key of "hello") state.component.handleInput(key);
+    state.component.handleInput("\r");
+    await flush();
+    // Enter inside search runs the query; it can never steer or follow up.
+    expect(steered).toEqual([]);
+    expect(state.controller.view()._unsafeUnwrap().draft).toBe("");
+  });
+
+  it("leaves the key alone when the host already binds it", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({
+        childId: "overlay-1",
+        status: "settled",
+        generationId: "gen-1",
+        entries: entries(8),
+      }),
+    ]);
+    const controller = createChildOverlayController(source);
+    await mustOpen(controller, "overlay-1");
+    let closed = 0;
+    const component = createChildOverlayCustomComponent(
+      { requestRender: () => undefined } as never,
+      {} as never,
+      getKeybindings() as never,
+      controller,
+      () => {
+        closed += 1;
+      },
+      () => undefined,
+      { cwd: "/workspace" },
+      undefined,
+      { trigger: undefined },
+    );
+    component.render(80);
+    component.handleInput("\x06");
+    await flush();
+    // No prompt opened, so the key kept its host meaning and Escape still closes.
+    expect(component.render(80).join("\n")).not.toContain("Search:");
+    component.handleInput("\x1b");
+    expect(closed).toBe(1);
+  });
 });

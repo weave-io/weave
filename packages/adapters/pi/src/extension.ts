@@ -112,7 +112,12 @@ import {
   createChildOverlayCustomComponent,
   createReadSessionEntryPageOverlaySource,
 } from "./child-overlay.js";
-import { PI_CHILD_OVERLAY_KEY_BOUNDS } from "./child-overlay-keys.js";
+import {
+  captureChildOverlayKeybindings,
+  childOverlayConflictPortFromHost,
+  PI_CHILD_OVERLAY_KEY_BOUNDS,
+  resolveChildOverlaySearchRoute,
+} from "./child-overlay-keys.js";
 import {
   buildChildPickerEntries,
   type PiChildPickerNode,
@@ -1022,6 +1027,24 @@ function unreadableSessionError(ref: string): PiNativeSessionError {
  * with no session ref has nothing persisted to read, so it returns the empty
  * native page without consulting session infrastructure at all.
  */
+/**
+ * The parent session identity a persisted child session must have been created
+ * under. The child's own durable record is authoritative: a restarted parent
+ * generation can report a different live session identity while the ref ledger
+ * still resolves the child, and reading its page must verify the header
+ * against the parent that actually created it rather than the current one.
+ * Falls back to the live parent session identity only when no durable origin is
+ * known, and never widens to `undefined`, which would skip the header check.
+ */
+function expectedParentSessionForChild(
+  descriptor: { readonly originParentSessionId: string | undefined },
+  deps: PiOverlaySessionPageDeps,
+): string | undefined {
+  const origin = descriptor.originParentSessionId;
+  if (origin !== undefined && origin.length > 0) return origin;
+  return deps.parentSessionId();
+}
+
 export function readOverlaySessionEntryPage(
   deps: PiOverlaySessionPageDeps,
   childId: string,
@@ -1051,7 +1074,7 @@ export function readOverlaySessionEntryPage(
         }
         return sessions.readSessionEntryPage(
           ref,
-          deps.parentSessionId(),
+          expectedParentSessionForChild(descriptor, deps),
           options,
         );
       },
@@ -5043,6 +5066,29 @@ export function createPiExtension(
           ctx.ui.setEditorComponent?.(editorFactory);
           openCustomInspection();
         };
+        let searchRouteReported = false;
+        /**
+         * Resolves the in-overlay search key against the host's own bindings.
+         * A key the host already owns is never stolen: the route is disabled
+         * and the conflict is reported once through the overlay diagnostics
+         * that `/weave:health` prints.
+         */
+        const searchRouteTrigger = (
+          keybindings: unknown,
+        ): { readonly trigger: string | undefined } => {
+          const route = resolveChildOverlaySearchRoute(
+            childOverlayConflictPortFromHost(
+              captureChildOverlayKeybindings(keybindings),
+            ),
+          );
+          if (!searchRouteReported) {
+            searchRouteReported = true;
+            for (const diagnostic of route.diagnostics) {
+              childInspectionRuntime.reportOverlayKeyDiagnostic(diagnostic);
+            }
+          }
+          return { trigger: route.trigger };
+        };
         const mountNativeOverlay = (): void => {
           const overlay = childOverlayCell.controller;
           if (
@@ -5116,6 +5162,7 @@ export function createPiExtension(
                 },
                 { cwd: ctx.cwd },
                 overlayKeysCell.interceptor,
+                searchRouteTrigger(keybindings),
               );
               childOverlayCell.component = mounted;
               return mounted;

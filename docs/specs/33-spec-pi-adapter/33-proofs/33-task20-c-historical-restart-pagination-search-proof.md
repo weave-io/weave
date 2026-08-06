@@ -118,3 +118,35 @@ coordinatorCleanupTarget: current_proof_pane_when_no_longer_needed
 ```
 
 The current proof pane remains open as required. A remediation must keep historical selection on the native overlay path after restart, then rerun item (c) and directly observe both page transitions, stable viewport state, and native search.
+
+## Remediation note (2026-08-06)
+
+This proof stays **FAIL** until item (c) is rerun in a fresh Herdr Pi session. The
+following adapter changes were made in response to the blocker and are covered by
+automated tests only:
+
+- `readOverlaySessionEntryPage` now verifies a persisted child session against the
+  parent session recorded in the child's own durable ref record
+  (`PiOverlayChildDescriptor.originParentSessionId`) instead of the live parent
+  session identity read at page time. A restarted parent generation that reports a
+  different live identity no longer turns every historical page read into
+  `parent-session-mismatch`. Missing, corrupt, root-violating, and genuinely
+  mismatched sessions still fail closed, and the header check is never skipped.
+- A new extension-boundary test persists a real child session and a real parent ref
+  ledger on disk, restarts the parent generation, selects the historical child
+  through the registered `/weave:inspect` picker, and asserts the native overlay
+  mounts (`ui.custom` mount with no `setEditorComponent` borrow), renders a bounded
+  newest page, and stays read-only.
+- The focused native overlay gained a documented in-overlay search route:
+  `ctrl+f` opens a search prompt, Enter runs `ChildOverlayController.search`, `n`/`N`
+  walk matches, and Escape exits search without closing the overlay or leaking a key
+  to the primary editor. The key is offered to the same host conflict port every
+  other overlay key uses; when the host already binds it, the route is disabled and
+  reported instead of silently stolen.
+
+The exact production cause of `historical_selection_activated_custom_editor_fallback_instead_of_native_overlay`
+was **not** reproduced offline: with real persisted sessions and refs, the boundary
+test mounts the native overlay both before and after the fix. The origin-parent fix
+removes the one code-level divergence found between the picker path (which resolved
+the child) and the page path (which did not), but the rerun must confirm it and, if
+the fallback recurs, capture the overlay diagnostics printed by `/weave:health`.

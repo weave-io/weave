@@ -395,12 +395,15 @@ export {
   PI_CHILD_OVERLAY_ACTION_IDS,
   PI_CHILD_OVERLAY_ACTIONS,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
+  PI_CHILD_OVERLAY_SEARCH_KEY,
+  PI_CHILD_OVERLAY_SEARCH_TRIGGER,
   PI_NAMED_SHORTCUT_ACTIONS_CAPABILITY_ID,
   PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
   PiChildOverlayKeyMachine,
   parseChildOverlayKeyOverrides,
   planChildOverlayKeyRegistrations,
   resolveChildOverlayCancelChoice,
+  resolveChildOverlaySearchRoute,
 } from "./child-overlay-keys.js";
 export type {
   PiChildPickerActiveChild,

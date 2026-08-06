@@ -7915,6 +7915,7 @@ describe("readOverlaySessionEntryPage: extension source boundary", () => {
     branchIds: ["main"],
     descendantChildIds: [],
     sessionRef: undefined,
+    originParentSessionId: undefined,
     ...overrides,
   });
 
@@ -8025,6 +8026,70 @@ describe("readOverlaySessionEntryPage: extension source boundary", () => {
     );
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr()).toEqual(unreadable("ref-1"));
+  });
+
+  it("verifies the child's origin parent session, not the restarted live one", async () => {
+    // After a parent restart the live session identity can differ from the
+    // parent that created the child. The child's durable record is the only
+    // authority for the expected header `parentSession`; using the live
+    // identity here made every historical child read fail closed with
+    // `parent-session-mismatch` and drop the overlay to the custom editor.
+    let observedParent: string | undefined = "unset";
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(
+            okAsync(
+              descriptor({
+                status: "settled",
+                sessionRef: "ref-1",
+                originParentSessionId: "parent-origin",
+              }),
+            ),
+          ),
+        sessions: () => ({
+          readSessionEntryPage: (_ref, expectedParentSession) => {
+            observedParent = expectedParentSession;
+            return okAsync({ entries: [], bytesRead: 0, linesScanned: 0 });
+          },
+        }),
+        parentSessionId: () => "parent-restarted",
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(observedParent).toBe("parent-origin");
+  });
+
+  it("still verifies against the live parent when no durable origin exists", async () => {
+    // No durable record means no stronger authority; the header check must
+    // stay on, never widening to `undefined`.
+    let observedParent: string | undefined = "unset";
+    const result = await readOverlaySessionEntryPage(
+      {
+        controller: () =>
+          controllerFor(
+            okAsync(
+              descriptor({
+                sessionRef: "ref-1",
+                originParentSessionId: undefined,
+              }),
+            ),
+          ),
+        sessions: () => ({
+          readSessionEntryPage: (_ref, expectedParentSession) => {
+            observedParent = expectedParentSession;
+            return okAsync({ entries: [], bytesRead: 0, linesScanned: 0 });
+          },
+        }),
+        parentSessionId: () => "parent-live",
+      },
+      "child-1",
+      pageOptions,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(observedParent).toBe("parent-live");
   });
 
   it("preserves an actual SessionMissing for a known session ref", async () => {

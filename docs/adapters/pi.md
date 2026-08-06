@@ -233,6 +233,12 @@ Escape is a two-step, non-destructive control. The first Escape shows `Press Esc
 
 Backspace edits your draft when the draft is non-empty. On an empty draft it moves focus to the parent child, or closes the overlay when the focused child is already a direct child of the session.
 
+#### Transcript search
+
+`Ctrl+F` opens a search prompt inside the focused overlay. Type a query and press Enter to run it; the header then shows the query and the current match position, `n` moves to the next match, `N` to the previous one, and Escape leaves search and clears the query. Search owns the keyboard while the prompt is open: no key reaches the draft editor, the overlay key actions, or Pi, and Escape closes search rather than the overlay. A settled or orphan child stays read-only throughout, so search can never steer or follow up.
+
+Searching scans the loaded window first and then pages back through recorded history, bounded by the same page budget the overlay uses elsewhere. `Ctrl+F` is checked against your effective Pi keybindings like every other overlay key: if the host already binds it, the route is disabled and reported as `weave overlay search skipped key ctrl+f: already bound to <owner>` instead of taking the key over.
+
 #### Child picker
 
 `Alt+I` opens a bounded metadata picker over at most 200 candidates. Rows are ordered by stable depth-first tree order, and the numbered slots `Alt+1` through `Alt+9` address the active children in that same order, so a slot means the same child in the list and on the keyboard. Sibling navigation wraps at both ends.

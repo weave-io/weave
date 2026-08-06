@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 262 lib files | 37 env vars | 10 middleware | 0% test coverage
 > **Token savings:** this file is ~27,200 tokens. Without it, AI exploration would cost ~84,600 tokens. **Saves ~57,500 tokens per conversation.**
-> **Last scanned:** 2026-08-06 00:36 — re-run after significant changes
+> **Last scanned:** 2026-08-06 01:48 — re-run after significant changes
 
 ---
 
@@ -257,7 +257,7 @@
   - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
-  - _...41 more_
+  - _...45 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
@@ -1592,7 +1592,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 273 test files found
+> 274 test files found
 
 ---
 

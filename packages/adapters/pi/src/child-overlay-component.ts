@@ -25,6 +25,7 @@ import {
 } from "./child-native-components.js";
 import type { ChildOverlayController } from "./child-overlay-controller.js";
 import type { PiChildOverlayKeyInterceptor } from "./child-overlay-keys.js";
+import { PI_CHILD_OVERLAY_SEARCH_TRIGGER } from "./child-overlay-keys.js";
 import { boundText } from "./child-overlay-replay.js";
 import {
   type ChildOverlayError,
@@ -45,6 +46,27 @@ import {
 
 /** Rows Pi keeps for its own footer, status, and padding around the overlay. */
 const OVERLAY_RESERVED_HOST_ROWS = 6;
+
+/** Longest search query the prompt accepts before it stops taking input. */
+const OVERLAY_SEARCH_QUERY_MAX = 120;
+
+/** Keys the search prompt understands, as raw terminal data. */
+const SEARCH_KEYS = {
+  commit: ["\r", "\n"],
+  cancel: "\x1b",
+  backspace: ["\x7f", "\b"],
+  nextMatch: "n",
+  previousMatch: "N",
+} as const;
+
+/**
+ * How the overlay is routing keyboard input.
+ *
+ * `off` is the ordinary overlay; `typing` collects a search query and consumes
+ * every key; `navigate` walks committed matches. Neither search state ever
+ * forwards a key to the draft editor, the key interceptor, or Pi.
+ */
+type OverlaySearchMode = "off" | "typing" | "navigate";
 
 export interface PiChildOverlayCustomComponent {
   render(width: number): string[];
@@ -79,7 +101,17 @@ export function createChildOverlayCustomComponent(
    * the primary editor while the overlay is mounted.
    */
   keyInterceptor?: PiChildOverlayKeyInterceptor,
+  /**
+   * Resolved in-overlay search route. Omitted keeps the documented default
+   * key; passing a route with an undefined trigger disables the route, which
+   * is how a host binding conflict is honored: the key keeps its existing
+   * meaning instead of being silently stolen.
+   */
+  searchRoute: { readonly trigger: string | undefined } = {
+    trigger: PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+  },
 ): PiChildOverlayCustomComponent {
+  const searchTrigger = searchRoute.trigger;
   const draftEditor = new CustomEditor(tui, theme, keybindings);
   const transcriptRenderer = createPiChildTranscriptRenderer();
   let componentFactory: PiTranscriptComponentFactory | undefined;
@@ -89,6 +121,9 @@ export function createChildOverlayCustomComponent(
   let finished = false;
   let fallbackEmitted = false;
   let inputBusy = false;
+  let searchMode: OverlaySearchMode = "off";
+  let searchDraft = "";
+  let searchMatchIndex = 0;
 
   const finish = (): void => {
     if (finished) return;
@@ -183,10 +218,24 @@ export function createChildOverlayCustomComponent(
         ),
       );
     }
-    if (view.searchQuery.length > 0) {
+    if (view.searchQuery.length > 0 && searchMode !== "typing") {
+      const total = view.searchMatches.length;
+      const position = total === 0 ? 0 : searchMatchIndex + 1;
       header.push(
         boundText(
-          `Search: ${view.searchQuery} (${view.searchMatches.length} match${view.searchMatches.length === 1 ? "" : "es"})`,
+          `Search: ${view.searchQuery} (${position}/${total} match${total === 1 ? "" : "es"})`,
+        ),
+      );
+    }
+    if (searchMode === "typing") {
+      header.push(boundText(`Search: ${searchDraft}\u258f`));
+    }
+    if (searchMode !== "off") {
+      header.push(
+        boundText(
+          searchMode === "typing"
+            ? "Enter searches · Esc cancels search"
+            : "n next match · N previous match · Esc exits search",
         ),
       );
     }
@@ -250,6 +299,116 @@ export function createChildOverlayCustomComponent(
     const view = controller.view();
     if (view.isOk()) syncDraftEditor(view.value);
     requestPaint();
+  };
+
+  const focusSearchMatch = (): void => {
+    const viewResult = controller.view();
+    if (viewResult.isErr()) return;
+    const view = viewResult.value;
+    if (view.searchMatches.length === 0) return;
+    const bounded =
+      ((searchMatchIndex % view.searchMatches.length) +
+        view.searchMatches.length) %
+      view.searchMatches.length;
+    searchMatchIndex = bounded;
+    const matchId = view.searchMatches[bounded];
+    const index = view.entries.findIndex((entry) => entry.id === matchId);
+    if (index < 0) return;
+    // Scroll offsets count backwards from the newest entry, so the newest
+    // entry sits at offset 0 and the oldest at entries.length - 1.
+    controller.setScrollOffset(view.entries.length - 1 - index).match(
+      () => undefined,
+      () => undefined,
+    );
+  };
+
+  const exitSearch = (clearQuery: boolean): void => {
+    searchMode = "off";
+    searchDraft = "";
+    searchMatchIndex = 0;
+    if (!clearQuery) {
+      requestPaint();
+      return;
+    }
+    void controller.search("").match(
+      () => requestPaint(),
+      () => requestPaint(),
+    );
+  };
+
+  /**
+   * Runs the whole search route. Returns true when the key belonged to search,
+   * which means it must never reach the interceptor, the controller, the draft
+   * editor, or Pi.
+   */
+  const handleSearchInput = (data: string): boolean => {
+    if (searchMode === "off") {
+      if (searchTrigger === undefined || data !== searchTrigger) return false;
+      searchMode = "typing";
+      searchDraft = "";
+      searchMatchIndex = 0;
+      requestPaint();
+      return true;
+    }
+    if (data === SEARCH_KEYS.cancel) {
+      exitSearch(true);
+      return true;
+    }
+    if (searchTrigger !== undefined && data === searchTrigger) {
+      // Re-opening from navigate mode edits the committed query again.
+      searchMode = "typing";
+      requestPaint();
+      return true;
+    }
+    if (searchMode === "navigate") {
+      if (data === SEARCH_KEYS.nextMatch) {
+        searchMatchIndex += 1;
+        focusSearchMatch();
+        requestPaint();
+        return true;
+      }
+      if (data === SEARCH_KEYS.previousMatch) {
+        searchMatchIndex -= 1;
+        focusSearchMatch();
+        requestPaint();
+        return true;
+      }
+      // Every other key stays consumed: search owns the keyboard until Escape.
+      return true;
+    }
+    if (SEARCH_KEYS.commit.includes(data as never)) {
+      const query = searchDraft;
+      searchMode = "navigate";
+      searchMatchIndex = 0;
+      inputBusy = true;
+      void controller.search(query).match(
+        () => {
+          inputBusy = false;
+          focusSearchMatch();
+          requestPaint();
+        },
+        (error) => {
+          inputBusy = false;
+          afterControllerOutcome(err(error));
+        },
+      );
+      return true;
+    }
+    if (SEARCH_KEYS.backspace.includes(data as never)) {
+      searchDraft = searchDraft.slice(0, -1);
+      requestPaint();
+      return true;
+    }
+    // Printable ASCII only; control sequences never edit the query.
+    if (
+      data.length > 0 &&
+      searchDraft.length < OVERLAY_SEARCH_QUERY_MAX &&
+      /^[\x20-\x7e]+$/.test(data)
+    ) {
+      searchDraft = `${searchDraft}${data}`.slice(0, OVERLAY_SEARCH_QUERY_MAX);
+      requestPaint();
+    }
+    return true;
   };
 
   const handlePaginationEdge = (
@@ -336,6 +495,9 @@ export function createChildOverlayCustomComponent(
       if (finished || inputBusy) return;
       Result.fromThrowable(
         () => {
+          // Search owns the keyboard whenever it is open, so no key can reach
+          // the interceptor, the draft editor, or Pi while the prompt is up.
+          if (handleSearchInput(data)) return;
           if (keyInterceptor !== undefined) {
             const consumed = Result.fromThrowable(
               () => keyInterceptor(data),
