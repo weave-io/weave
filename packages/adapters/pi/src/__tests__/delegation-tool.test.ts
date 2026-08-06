@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { DelegationTarget } from "@weaveio/weave-engine";
 import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
+import type { PiChildRefStatus } from "../child-session-refs.js";
 import type {
   PiDelegationController,
   PiDelegationRequest,
@@ -49,6 +50,17 @@ function fakeController(
   cancelSubtree?: (
     nodeId: string,
   ) => ResultAsync<void, readonly PiAdapterFailure[]>,
+  // Mirrors the real controller: a thread only exists once a run was actually
+  // registered. Defaulting to `undefined` keeps every failure that never got
+  // that far reporting no thread handle at all.
+  threadStatus?: (threadId: string) =>
+    | {
+        readonly threadId: string;
+        readonly runs: number;
+        readonly status: PiChildRefStatus;
+        readonly retryable: boolean;
+      }
+    | undefined,
 ): PiDelegationController {
   return {
     delegate,
@@ -57,6 +69,7 @@ function fakeController(
       (() => {
         throw new Error("cancelSubtree should not have been called");
       }),
+    threadStatus: threadStatus ?? (() => undefined),
   } as unknown as PiDelegationController;
 }
 
@@ -774,6 +787,113 @@ describe("buildDelegationToolRegistration", () => {
     // A missing response is a result failure, never protocol corruption.
     expect(JSON.stringify(text)).not.toContain("ChildEnvelopeMalformed");
     expect(JSON.stringify(text)).not.toContain("ChildSettlementMissing");
+  });
+
+  it("execute: a failed start whose thread the controller registered as retryable reports the thread handle its own `recovery: retry` needs", async () => {
+    const statusCalls: string[] = [];
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getController: () =>
+          fakeController(
+            () =>
+              errAsync(
+                makeChildResponseMissingFailure("child-1", {
+                  reason: "empty",
+                  parentId: "root",
+                  correlationId: "child-1",
+                }),
+              ),
+            undefined,
+            (threadId) => {
+              statusCalls.push(threadId);
+              return {
+                threadId,
+                runs: 1,
+                status: "failed",
+                retryable: true,
+              };
+            },
+          ),
+      }),
+    );
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("ChildResponseMissing");
+    expect(text.retryable).toBe(true);
+    expect(text.recovery).toBe("retry");
+    // The declared recovery is `retry`, and `retry` is only callable by naming
+    // a thread - so the handle must travel with the failure that offers it.
+    expect(text.thread).toBe("child-1");
+    // A start's own child id is the opaque thread id it asks the controller about.
+    expect(statusCalls).toEqual(["child-1"]);
+  });
+
+  it("execute: a failed start reports no thread handle when the controller registered no thread", async () => {
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getController: () =>
+          fakeController(
+            () =>
+              errAsync(
+                makeChildResponseMissingFailure("child-1", {
+                  reason: "empty",
+                  parentId: "root",
+                }),
+              ),
+            undefined,
+            () => undefined,
+          ),
+      }),
+    );
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("ChildResponseMissing");
+    // Fails closed: never hand back a handle no later run could resume.
+    expect(text.thread).toBeUndefined();
+  });
+
+  it("execute: a failed start reports no thread handle when the controller recorded the thread as non-retryable", async () => {
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getController: () =>
+          fakeController(
+            () =>
+              errAsync(makeChildSpawnFailedFailure("child-1", "spawn refused")),
+            undefined,
+            (threadId) => ({
+              threadId,
+              runs: 1,
+              status: "failed",
+              retryable: false,
+            }),
+          ),
+      }),
+    );
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("ChildSpawnFailed");
+    expect(text.thread).toBeUndefined();
   });
 
   it("execute: a signal that never aborts never touches cancelSubtree, and the once-listener never leaks past the settled call", async () => {

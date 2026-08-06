@@ -374,6 +374,33 @@ function threadFailureResult(
 }
 
 /**
+ * Reports a failed root `start` run.
+ *
+ * A start's child id is also its opaque thread id, so a run that failed *after*
+ * the controller registered its thread can still be retried - but only if the
+ * caller is told which thread to name. Declaring `recovery: "retry"` without a
+ * `thread` handle (e.g. `ChildResponseMissing`) leaves the caller with no way
+ * to invoke the recovery it was just offered.
+ *
+ * This fails closed: the handle is advertised only when the controller itself
+ * still reports a registered thread whose recorded outcome is retryable. A
+ * failure raised before thread registration (capacity, authority, target) or
+ * one the controller recorded as non-retryable reports no thread at all,
+ * so no caller is ever handed a handle it cannot actually resume.
+ */
+function startFailureResult(
+  controller: PiDelegationController,
+  childId: string,
+  failure: PiAdapterFailure,
+): PiToolResult {
+  const thread = controller.threadStatus(childId);
+  if (thread === undefined || !thread.retryable || !failure.retryable) {
+    return failureResult(failure.code, failure);
+  }
+  return threadFailureResult(thread.threadId, failure);
+}
+
+/**
  * Reports a failure to the calling model with enough detail to act on it.
  * `code` alone (e.g. a bare `"ChildSpawnFailed"`) tells the model nothing
  * about *why* the child never started, so the closed, bounded `reason`
@@ -932,7 +959,7 @@ export function buildDelegationToolRegistration(
           );
           return successResult(value, compact);
         },
-        (failure) => failureResult(failure.code, failure),
+        (failure) => startFailureResult(controller, childId, failure),
       );
       if (signal === undefined) return settlement;
       // Wires the exact generated `childId`'s subtree to this tool call's
