@@ -658,3 +658,95 @@ The next rerun must record the exact fallback subcode from `/weave:health`. The
 result above stays **FAIL** until a fresh Herdr run re-observes the native
 historical overlay, both bounded pages, gap-free pagination, viewport and
 selection preservation, and bounded native search end to end.
+
+## Typed-diagnostics rerun — `dc37fcb` (2026-08-06)
+
+Result: **FAIL**
+
+This fresh rerun preserved all earlier attempts and recorded only bounded,
+sanitized evidence.
+
+```yaml
+sourceCommitSha256: dc37fcb0f5b8d9b7b6cad81aa0e432dd715404ea
+installedExtensionSha256: 5d68b19a4e89bdcc6622921b966802e451f167df1745525f18a99c5321f61719
+installedExtensionHashMatched: true
+piVersion083: true
+requestedCurrentPaneMatched: true
+readyFooterObserved: true
+statusTrusted: true
+healthOnly: false
+weaveNpmPackageConfiguredCount: 1
+piVimNpmPackageConfiguredCount: 1
+unsafeOverrideCount: 0
+localWeaveShadowCount: 0
+paneCreateSplitCloseCount: 0
+nestedPiLaunchCount: 0
+productionCodeChanged: false
+```
+
+The persisted fixture hash and entry count matched the existing contract. Native
+mounting failed before search, so no marker value was derived or entered.
+
+```yaml
+persistedTranscriptEntryCount: 68
+historicalPageSize: 50
+historicalPageCount: 2
+olderPageEntryCount: 18
+newestPageEntryCount: 50
+controlledUniqueEventCount: 30
+persistedMarkerMatchCount: 10
+olderPageMarkerMatchCount: 6
+newestPageMarkerMatchCount: 4
+transcriptSha256: 1794e072c31c2720f27ab865cabf31ae499dba47e99ec22e043708dea253fe52
+transcriptHashMatchedExistingFixture: true
+markerDerived: false
+markerPersisted: false
+```
+
+The completed historical child was selected once. The native overlay did not
+mount. The fallback was closed before the health command recorded its single
+bounded describe-source subcode.
+
+```yaml
+registeredInspectCommandUsed: true
+nativePickerOpened: true
+completedHistoricalChildSelected: true
+pickerOpenMilliseconds: 0
+historicalSelectionCount: 1
+nativeHistoricalOverlayMounted: false
+customEditorFallbackActivated: true
+customEditorFallbackClosed: true
+healthCommandUsed: true
+fallbackReasonCode: open-describe-child-not-found
+fallbackReasonCodeCount: 1
+nativeReadOnlyStatusObserved: false
+nativeEntryCountObserved: false
+nativeNewestPageCountObserved: false
+nativeOlderPageCountObserved: false
+nativePaginationObserved: false
+nativePaginationGapCountObserved: false
+nativePaginationDuplicateCountObserved: false
+nativeViewportAnchorPreservedObserved: false
+nativeSearchInputObserved: false
+nativeBoundedPageScanObserved: false
+nativeMatchNavigationObserved: false
+nativeInputIsolationObserved: false
+nativeInterventionIsolationObserved: false
+searchQueryEntered: false
+primarySubmissionAddedByNativeOverlayCount: 0
+piVimInsertRestored: true
+readyAfterFallbackClose: true
+```
+
+### Typed-diagnostics rerun verdict
+
+**FAIL** — `open-describe-child-not-found`
+
+```yaml
+currentResult: FAIL
+sanitizedBlockerOutcome: open-describe-child-not-found
+cleanupTargetCount: 2
+codesightChurnRestored: true
+task20cTemporaryFileCountAfterCleanup: 0
+currentPaneLeftOpen: true
+```
