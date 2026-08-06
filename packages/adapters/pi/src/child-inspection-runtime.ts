@@ -27,6 +27,7 @@ import {
   CHILD_OVERLAY_ESCAPE_HINT,
   captureChildOverlayKeybindings,
   childOverlayConflictPortFromHost,
+  classifyChildOverlayKey,
   createChildOverlayKeyInterceptor,
   createChildOverlayKeyMachine,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
@@ -59,7 +60,11 @@ import type {
   PiThreadRefPort,
   PiThreadSessionPort,
 } from "./delegation-controller.js";
-import type { PiExtensionApi, PiSessionContext } from "./types.js";
+import type {
+  PiExtensionApi,
+  PiSessionContext,
+  PiTerminalInputHandler,
+} from "./types.js";
 
 /**
  * Holds the live delegation controller together with the generation it was
@@ -114,6 +119,17 @@ export interface PiChildOverlayKeysCell {
   plan: PiChildOverlayKeyPlan | undefined;
   machine: PiChildOverlayKeyMachine;
   interceptor: PiChildOverlayKeyInterceptor | undefined;
+  /**
+   * Unsubscribe handle for the generation's raw terminal-input listener, or
+   * `undefined` when none is installed.
+   *
+   * `pi.registerShortcut` is dispatched by Pi's *default* editor, so under a
+   * foreign primary editor (`pi-vim`) the registered handler never fires. The
+   * listener is the ownership-independent route to the same dispatch. It is
+   * installed at most once per generation and released on generation teardown,
+   * so a reload can never stack two listeners on the same host.
+   */
+  terminalInput: (() => void) | undefined;
   diagnostics: readonly string[];
   generationId: string | undefined;
 }
@@ -174,6 +190,7 @@ export function createChildOverlayKeysCell(
     plan: undefined,
     machine: createChildOverlayKeyMachine({ now }),
     interceptor: undefined,
+    terminalInput: undefined,
     diagnostics: Object.freeze([PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC]),
     generationId: undefined,
   };
@@ -234,6 +251,30 @@ export function clearChildOverlayGeneration(
   overlayKeysCell.interceptor = undefined;
   overlayKeysCell.plan = undefined;
   overlayKeysCell.generationId = undefined;
+  releaseChildOverlayTerminalInput(overlayKeysCell);
+}
+
+/**
+ * Removes the raw terminal-input listener, if one is installed.
+ *
+ * Unlike raw shortcut registration - which Pi keeps for the extension
+ * lifetime and which therefore must never be repeated - the listener is owned
+ * by Weave, so it is released whenever the state behind it goes away. A
+ * released cell re-installs exactly one listener on the next registration.
+ */
+export function releaseChildOverlayTerminalInput(
+  overlayKeysCell: PiChildOverlayKeysCell,
+): void {
+  const unsubscribe = overlayKeysCell.terminalInput;
+  overlayKeysCell.terminalInput = undefined;
+  if (unsubscribe === undefined) return;
+  Result.fromThrowable(
+    () => unsubscribe(),
+    () => "terminal_input_release_failed" as const,
+  )().match(
+    () => undefined,
+    () => undefined,
+  );
 }
 
 /** Parent session state as the picker needs it: an id, or none. */
@@ -703,6 +744,76 @@ export function createChildInspectionRuntime(
   };
 
   /**
+   * Installs the ownership-independent raw-input route for overlay keys.
+   *
+   * `pi.registerShortcut` is only reachable through Pi's *default* editor, so
+   * when another extension (for example `pi-vim`) installs a custom editor the
+   * registered handler never fires and Alt+I / Alt+1..Alt+9 become inert
+   * before the overlay is mounted. Pi's TUI consults extension input listeners
+   * before every component, overlay, and shortcut route, so this listener sees
+   * the same frames under any editor ownership.
+   *
+   * It is deliberately conservative:
+   *
+   * - only frames the live plan itself classifies as a Weave overlay action
+   *   are consumed; every other frame - ordinary text, `pi-vim` Escape,
+   *   unrelated Alt keys, host shortcuts - is returned untouched;
+   * - while the native overlay is mounted the overlay's own interceptor owns
+   *   input, so the listener stays inert and no action is handled twice;
+   * - consuming a matched frame is what keeps the default-editor shortcut path
+   *   from dispatching the same action a second time, since Pi stops routing a
+   *   consumed frame.
+   *
+   * Exactly one listener exists per generation, and generation teardown
+   * releases it through {@link releaseChildOverlayTerminalInput}.
+   */
+  const bindOverlayTerminalInput = (
+    generationId: string,
+    diagnostics: string[],
+  ): void => {
+    if (overlayKeysCell.terminalInput !== undefined) return;
+    const ctx = deps.latestSessionCtx();
+    const subscribe = ctx?.ui.onTerminalInput;
+    if (ctx === undefined || subscribe === undefined) {
+      if (diagnostics.length < PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics) {
+        diagnostics.push(
+          "weave overlay keys degraded: host exposes no ui.onTerminalInput, shortcuts reach the overlay only under Pi's default editor",
+        );
+      }
+      return;
+    }
+    const handler: PiTerminalInputHandler = (data) => {
+      // The mounted overlay owns raw input through its own interceptor.
+      if (childOverlayCell.open) return undefined;
+      const plan = overlayKeysCell.plan;
+      if (plan === undefined) return undefined;
+      const action = classifyChildOverlayKey(plan, data);
+      if (action === undefined) return undefined;
+      const target = deps.activeGenerationId();
+      if (target === undefined) return undefined;
+      dispatchOverlayAction(action, target);
+      return { consume: true };
+    };
+    const installed = Result.fromThrowable(
+      () => subscribe.call(ctx.ui, handler),
+      () => "terminal_input_subscribe_failed" as const,
+    )();
+    installed.match(
+      (unsubscribe) => {
+        overlayKeysCell.terminalInput = unsubscribe;
+        overlayKeysCell.generationId = generationId;
+      },
+      () => {
+        if (diagnostics.length < PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics) {
+          diagnostics.push(
+            "weave overlay keys degraded: ui.onTerminalInput refused the listener",
+          );
+        }
+      },
+    );
+  };
+
+  /**
    * Plans and registers Task 13 shortcuts.
    *
    * Raw key registration is exactly once for the extension lifetime, but the
@@ -803,10 +914,11 @@ export function createChildInspectionRuntime(
       ...pending.map((registration) => registration.key),
     ]);
     overlayKeysCell.generationId = generationId;
+    bindOverlayKeyInterceptor(generationId);
+    bindOverlayTerminalInput(generationId, diagnostics);
     overlayKeysCell.diagnostics = Object.freeze(
       diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
     );
-    bindOverlayKeyInterceptor(generationId);
     for (const diagnostic of plan.value.diagnostics) {
       reportOverlayKeyDiagnostic(diagnostic);
     }

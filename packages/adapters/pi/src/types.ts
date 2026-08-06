@@ -148,9 +148,36 @@ export interface PiUiDialogOptions {
   readonly timeout?: number;
 }
 
+/**
+ * Narrow mirror of Pi's own `TerminalInputHandler`
+ * (`dist/core/extensions/types.d.ts`). Returning `{ consume: true }` stops the
+ * host from routing the frame any further; returning `undefined` leaves the
+ * frame untouched for the editor, overlays, and host shortcuts.
+ */
+export type PiTerminalInputHandler = (data: string) =>
+  | {
+      readonly consume?: boolean;
+      readonly data?: string;
+    }
+  | undefined;
+
 export interface PiUiPort {
   readonly theme?: PiUiThemePort;
   notify(message: string, level?: PiUiNotifyLevel): void;
+  /**
+   * Mirrors Pi's own `ctx.ui.onTerminalInput()` (interactive mode only).
+   *
+   * This is the only public input path that is independent of primary-editor
+   * ownership: `pi.registerShortcut` is dispatched by Pi's *default* editor, so
+   * when another extension (for example `pi-vim`) installs a custom editor the
+   * registered handler never runs. Pi's TUI consults input listeners before
+   * any component or shortcut routing, so a listener that consumes only the
+   * keys it recognises reaches the same route without stealing ordinary input.
+   *
+   * Optional deliberately: non-interactive modes and unit-test doubles do not
+   * provide it, and every caller must degrade instead of failing.
+   */
+  onTerminalInput?(handler: PiTerminalInputHandler): () => void;
   setStatus(key: string, value: string | undefined): void;
   setWidget(
     key: string,

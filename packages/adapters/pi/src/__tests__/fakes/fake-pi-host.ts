@@ -22,6 +22,7 @@ import type {
   PiSessionManagerPort,
   PiSkillInfo,
   PiSourceInfo,
+  PiTerminalInputHandler,
   PiToolRegistration,
   PiUiDialogOptions,
   PiUiNotifyLevel,
@@ -251,6 +252,32 @@ export class RecordingFakePiHost {
   getSystemPromptCalls = 0;
   generatedTurnCount = 0;
   readonly customCalls: unknown[] = [];
+  /**
+   * Live `ctx.ui.onTerminalInput` listeners, in registration order.
+   *
+   * Present only when {@link supportsTerminalInput} is true, so a test can
+   * model a host (or mode) without the public input-listener surface.
+   */
+  readonly terminalInputListeners: PiTerminalInputHandler[] = [];
+  /** Number of listeners that have been unsubscribed. */
+  terminalInputUnsubscribeCalls = 0;
+  /** Whether `ctx.ui` exposes `onTerminalInput` at all. */
+  supportsTerminalInput = true;
+
+  /**
+   * Feeds one raw terminal frame through the registered listeners exactly the
+   * way Pi's TUI does: listeners run first, in order, and a `consume` result
+   * stops routing. Returns true when the frame was consumed by a listener.
+   */
+  emitTerminalInput(data: string): boolean {
+    let current = data;
+    for (const listener of [...this.terminalInputListeners]) {
+      const result = listener(current);
+      if (result?.consume === true) return true;
+      if (result?.data !== undefined) current = result.data;
+    }
+    return false;
+  }
   readonly customRenderedLines: string[][] = [];
   readonly customComponents: {
     render(width: number): string[];
@@ -731,6 +758,19 @@ export class RecordingFakePiHost {
         this.confirmCalls.push({ title, message, opts });
         return await (this.confirmResponses.shift() ?? false);
       },
+      ...(this.supportsTerminalInput
+        ? {
+            onTerminalInput: (handler: PiTerminalInputHandler) => {
+              this.terminalInputListeners.push(handler);
+              return () => {
+                const index = this.terminalInputListeners.indexOf(handler);
+                if (index === -1) return;
+                this.terminalInputListeners.splice(index, 1);
+                this.terminalInputUnsubscribeCalls += 1;
+              };
+            },
+          }
+        : {}),
       getEditorComponent: () => this.editorFactory,
       setEditorComponent: (factory) => {
         this.editorFactoryCalls.push(factory);
