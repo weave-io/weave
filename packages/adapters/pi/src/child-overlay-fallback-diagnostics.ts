@@ -12,6 +12,20 @@
  * proof without sanitisation.
  */
 
+import type {
+  ChildOverlayError,
+  ChildOverlayFallbackRequired,
+} from "./child-overlay-types.js";
+
+/**
+ * Non-fallback `ChildOverlayError` variants that reach the terminal open-error
+ * diagnostic branch (after `fallback-required` is handled separately).
+ */
+export type ChildOverlayOpenTerminalError = Exclude<
+  ChildOverlayError,
+  ChildOverlayFallbackRequired
+>;
+
 export const PI_CHILD_OVERLAY_FALLBACK_REASON_CODES = Object.freeze([
   /** Preflight resolved the custom editor, so the native path never ran. */
   "preflight-not-native",
@@ -107,36 +121,83 @@ export function piChildOverlayFallbackReasonCode(
 }
 
 /**
- * Maps one non-fallback `ChildOverlayController.open` error to its bounded
- * subcode.
+ * Compile-time exhaustive map from every non-fallback open-error discriminant
+ * to its bounded, identifier-free reason code.
  *
- * Every historical overlay failure used to collapse into the single
- * `open-failed` code, which could not distinguish a descriptor that failed
- * validation from a source that was not ready, corrupt, or unknown. The
- * discriminant is a closed union, so the mapping stays exhaustive and no
- * identifier, path, issue path, or operation name ever reaches a diagnostic.
+ * Adding a member to `ChildOverlayOpenTerminalError` fails typechecking here
+ * until a reason code is supplied. Unknown runtime shapes must not use this
+ * table directly — call {@link piChildOverlayOpenErrorReasonCodeFromUnknown}.
  */
-export function piChildOverlayOpenErrorReasonCode(error: {
-  readonly type?: string;
-}): PiChildOverlayFallbackReasonCode {
+const PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE = {
+  OverlayInvalidChild: "open-invalid-child",
+  SourceStartupNotReady: "open-source-not-ready",
+  SourceCorrupt: "open-source-corrupt",
+  SourceUnavailable: "open-source-unavailable",
+  ChildNotFound: "open-child-not-found",
+  SourceInvalidCursor: "open-invalid-cursor",
+  OverlayCapacityExceeded: "open-capacity-exceeded",
+  OverlayNotOpen: "open-not-open",
+} as const satisfies Record<
+  ChildOverlayOpenTerminalError["type"],
+  PiChildOverlayFallbackReasonCode
+>;
+
+/**
+ * Maps one typed non-fallback `ChildOverlayController.open` error to its
+ * bounded subcode.
+ *
+ * Exhaustive over {@link ChildOverlayOpenTerminalError}: a new closed-union
+ * member is a compile error until mapped. No identifier, path, issue path, or
+ * operation name reaches a diagnostic.
+ */
+export function piChildOverlayOpenErrorReasonCode(
+  error: ChildOverlayOpenTerminalError,
+): PiChildOverlayFallbackReasonCode {
   switch (error.type) {
     case "OverlayInvalidChild":
-      return "open-invalid-child";
+      return PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE.OverlayInvalidChild;
     case "SourceStartupNotReady":
-      return "open-source-not-ready";
+      return PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE.SourceStartupNotReady;
     case "SourceCorrupt":
-      return "open-source-corrupt";
+      return PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE.SourceCorrupt;
     case "SourceUnavailable":
-      return "open-source-unavailable";
+      return PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE.SourceUnavailable;
     case "ChildNotFound":
-      return "open-child-not-found";
+      return PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE.ChildNotFound;
     case "SourceInvalidCursor":
-      return "open-invalid-cursor";
+      return PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE.SourceInvalidCursor;
     case "OverlayCapacityExceeded":
-      return "open-capacity-exceeded";
+      return PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE.OverlayCapacityExceeded;
     case "OverlayNotOpen":
-      return "open-not-open";
-    default:
-      return "open-failed";
+      return PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE.OverlayNotOpen;
+    default: {
+      const _exhaustive: never = error;
+      return _exhaustive;
+    }
   }
+}
+
+/**
+ * Boundary for unknown or untrusted runtime shapes.
+ *
+ * Validates the discriminant against the closed open-error map and returns
+ * `open-failed` for anything else. Does not weaken compile-time exhaustiveness
+ * of {@link piChildOverlayOpenErrorReasonCode}.
+ */
+export function piChildOverlayOpenErrorReasonCodeFromUnknown(
+  error: unknown,
+): PiChildOverlayFallbackReasonCode {
+  if (typeof error !== "object" || error === null) {
+    return "open-failed";
+  }
+  const type = Reflect.get(error, "type");
+  if (typeof type !== "string") {
+    return "open-failed";
+  }
+  if (type in PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE) {
+    return PI_CHILD_OVERLAY_OPEN_ERROR_REASON_BY_TYPE[
+      type as ChildOverlayOpenTerminalError["type"]
+    ];
+  }
+  return "open-failed";
 }

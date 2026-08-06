@@ -8,12 +8,15 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
+  type ChildOverlayOpenTerminalError,
   formatPiChildOverlayFallbackDiagnostic,
   isPiChildOverlayFallbackReasonCode,
   PI_CHILD_OVERLAY_FALLBACK_DIAGNOSTIC_PREFIX,
   PI_CHILD_OVERLAY_FALLBACK_REASON_CODES,
+  type PiChildOverlayFallbackReasonCode,
   piChildOverlayFallbackReasonCode,
   piChildOverlayOpenErrorReasonCode,
+  piChildOverlayOpenErrorReasonCodeFromUnknown,
 } from "../child-overlay-fallback-diagnostics.js";
 
 describe("child overlay fallback diagnostics", () => {
@@ -89,40 +92,107 @@ describe("child overlay fallback diagnostics", () => {
     );
   });
 
-  it("maps every non-fallback open error to its own bounded subcode", () => {
-    // Task 20(c): the historical overlay failed with a single opaque
-    // `open-failed`, which could not tell a rejected descriptor apart from an
-    // unready, corrupt, or unknown source.
+  it("maps every typed non-fallback open error to its own bounded subcode", () => {
+    // Typed path: closed-union members only. A new ChildOverlayError variant
+    // that reaches this branch fails typecheck until the exhaustive map and
+    // never-checked switch are updated.
+    const typedCases: readonly {
+      readonly error: ChildOverlayOpenTerminalError;
+      readonly code: PiChildOverlayFallbackReasonCode;
+    }[] = [
+      {
+        error: { type: "OverlayInvalidChild", issues: ["title"] },
+        code: "open-invalid-child",
+      },
+      {
+        error: { type: "SourceStartupNotReady", operation: "loadNewest" },
+        code: "open-source-not-ready",
+      },
+      {
+        error: { type: "SourceCorrupt", operation: "loadNewest" },
+        code: "open-source-corrupt",
+      },
+      {
+        error: { type: "SourceUnavailable", operation: "describe" },
+        code: "open-source-unavailable",
+      },
+      {
+        error: { type: "ChildNotFound", childId: "opaque-child" },
+        code: "open-child-not-found",
+      },
+      {
+        error: { type: "SourceInvalidCursor", operation: "loadOlder" },
+        code: "open-invalid-cursor",
+      },
+      {
+        error: {
+          type: "OverlayCapacityExceeded",
+          operation: "entry-content-blocks",
+        },
+        code: "open-capacity-exceeded",
+      },
+      {
+        error: { type: "OverlayNotOpen" },
+        code: "open-not-open",
+      },
+    ];
+    for (const { error, code } of typedCases) {
+      expect(piChildOverlayOpenErrorReasonCode(error)).toBe(code);
+      // Payload fields never leak into the reason code.
+      expect(piChildOverlayOpenErrorReasonCode(error)).not.toContain("/");
+      expect(piChildOverlayOpenErrorReasonCode(error)).not.toMatch(/opaque/);
+    }
+  });
+
+  it("maps known discriminators and rejects unknown runtime shapes safely", () => {
     expect(
-      piChildOverlayOpenErrorReasonCode({ type: "OverlayInvalidChild" }),
+      piChildOverlayOpenErrorReasonCodeFromUnknown({
+        type: "OverlayInvalidChild",
+      }),
     ).toBe("open-invalid-child");
     expect(
-      piChildOverlayOpenErrorReasonCode({ type: "SourceStartupNotReady" }),
+      piChildOverlayOpenErrorReasonCodeFromUnknown({
+        type: "SourceStartupNotReady",
+      }),
     ).toBe("open-source-not-ready");
-    expect(piChildOverlayOpenErrorReasonCode({ type: "SourceCorrupt" })).toBe(
-      "open-source-corrupt",
-    );
     expect(
-      piChildOverlayOpenErrorReasonCode({ type: "SourceUnavailable" }),
+      piChildOverlayOpenErrorReasonCodeFromUnknown({ type: "SourceCorrupt" }),
+    ).toBe("open-source-corrupt");
+    expect(
+      piChildOverlayOpenErrorReasonCodeFromUnknown({
+        type: "SourceUnavailable",
+      }),
     ).toBe("open-source-unavailable");
-    expect(piChildOverlayOpenErrorReasonCode({ type: "ChildNotFound" })).toBe(
-      "open-child-not-found",
-    );
     expect(
-      piChildOverlayOpenErrorReasonCode({ type: "SourceInvalidCursor" }),
+      piChildOverlayOpenErrorReasonCodeFromUnknown({ type: "ChildNotFound" }),
+    ).toBe("open-child-not-found");
+    expect(
+      piChildOverlayOpenErrorReasonCodeFromUnknown({
+        type: "SourceInvalidCursor",
+      }),
     ).toBe("open-invalid-cursor");
     expect(
-      piChildOverlayOpenErrorReasonCode({ type: "OverlayCapacityExceeded" }),
+      piChildOverlayOpenErrorReasonCodeFromUnknown({
+        type: "OverlayCapacityExceeded",
+      }),
     ).toBe("open-capacity-exceeded");
-    expect(piChildOverlayOpenErrorReasonCode({ type: "OverlayNotOpen" })).toBe(
-      "open-not-open",
-    );
-    // An unmodelled shape stays generic rather than echoing anything.
     expect(
-      piChildOverlayOpenErrorReasonCode({
+      piChildOverlayOpenErrorReasonCodeFromUnknown({ type: "OverlayNotOpen" }),
+    ).toBe("open-not-open");
+    // Smuggled or unmodelled shapes stay generic rather than echoing anything.
+    expect(
+      piChildOverlayOpenErrorReasonCodeFromUnknown({
         type: "child-abc123 /Users/someone",
       }),
     ).toBe("open-failed");
-    expect(piChildOverlayOpenErrorReasonCode({})).toBe("open-failed");
+    expect(piChildOverlayOpenErrorReasonCodeFromUnknown({})).toBe(
+      "open-failed",
+    );
+    expect(piChildOverlayOpenErrorReasonCodeFromUnknown(null)).toBe(
+      "open-failed",
+    );
+    expect(piChildOverlayOpenErrorReasonCodeFromUnknown("OverlayNotOpen")).toBe(
+      "open-failed",
+    );
   });
 });
