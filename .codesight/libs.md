@@ -246,7 +246,7 @@
   - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
-  - _...45 more_
+  - _...41 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
