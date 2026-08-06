@@ -915,9 +915,8 @@ export class ChildOverlayController {
   private fallbackFromError(
     childId: string,
     reason: ChildOverlayFallbackReason,
-    _error: ChildOverlaySourceError,
+    error: ChildOverlaySourceError,
   ): ChildOverlayFallbackRequired {
-    void _error;
     const child = this.openChild;
     const state = this.saved.get(childId);
     const metadata: ChildOverlayFallbackMetadata = {
@@ -927,6 +926,7 @@ export class ChildOverlayController {
       entryCount: state?.entries.length ?? 0,
       reason,
       readOnly: child === undefined ? true : isReadOnly(child),
+      sourceErrorType: error.type, // discriminant only, never free-form
     };
     // Ensure no path-like strings leak through error channels.
     return {

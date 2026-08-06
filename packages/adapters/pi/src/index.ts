@@ -331,6 +331,7 @@ export type {
   ChildOverlayReplayStep,
   ChildOverlayRunDivider,
   ChildOverlaySourceError,
+  ChildOverlaySourceErrorType,
   ChildOverlaySourcePort,
   ChildOverlayStatus,
   ChildOverlayView,
@@ -350,6 +351,7 @@ export {
   createReadSessionEntryPageOverlaySource,
   mapNativeSessionEntryPageToOverlay,
   mapNativeSessionEntryToOverlay,
+  mapPiDelegationFailureToOverlaySourceError,
   mergeChildOverlayReplaySteps,
   transcriptFromOverlayEntries,
 } from "./child-overlay.js";

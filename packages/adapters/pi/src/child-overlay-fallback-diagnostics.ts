@@ -55,6 +55,14 @@ export const PI_CHILD_OVERLAY_FALLBACK_REASON_CODES = Object.freeze([
   "open-source-failed",
   /** `open` asked for the fallback: the child could not be described. */
   "open-describe-failed",
+  /** `open` describe fallback: no such child is known to the controller. */
+  "open-describe-child-not-found",
+  /** `open` describe fallback: the describe source was unavailable. */
+  "open-describe-source-unavailable",
+  /** `open` describe fallback: the describe source was corrupt. */
+  "open-describe-source-corrupt",
+  /** `open` describe fallback: the describe source was not ready yet. */
+  "open-describe-source-not-ready",
   /** `open` asked for the fallback: rendering failed. */
   "open-render-failed",
   /** The mounted native overlay asked for the fallback: source failure. */
@@ -98,21 +106,51 @@ export function formatPiChildOverlayFallbackDiagnostic(
 }
 
 /**
+ * Closed map from a source-error discriminant to its `open` describe subcode.
+ *
+ * Keyed by the literal discriminants of `ChildOverlaySourceError`. A lookup
+ * with an unknown key falls back to the generic code, so no dynamic string can
+ * reach a diagnostic.
+ */
+const OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR: Readonly<
+  Record<string, PiChildOverlayFallbackReasonCode | undefined>
+> = Object.freeze(
+  Object.assign(
+    Object.create(null) as Record<string, never>,
+    {
+      ChildNotFound: "open-describe-child-not-found",
+      SourceUnavailable: "open-describe-source-unavailable",
+      SourceCorrupt: "open-describe-source-corrupt",
+      SourceStartupNotReady: "open-describe-source-not-ready",
+    } as const,
+  ),
+);
+
+/**
  * Maps a controller fallback reason to its `open`-time or mounted reason code.
  * Unknown reasons collapse to the generic open failure rather than being
  * echoed, so no free-form text can reach a diagnostic.
+ *
+ * When the fallback came from a source error, `sourceErrorType` selects a
+ * describe subcode instead of the indistinguishable `open-describe-failed`.
+ * A single code cannot tell an absent source from an unknown child, which is
+ * exactly the distinction a live run needs. Only the `open` describe stage has
+ * subcodes today; every other stage keeps its existing code.
  */
 export function piChildOverlayFallbackReasonCode(
   reason: string,
   stage: "open" | "mounted",
+  sourceErrorType?: string,
 ): PiChildOverlayFallbackReasonCode {
   if (reason === "source-failed") {
     return stage === "open" ? "open-source-failed" : "mounted-source-failed";
   }
   if (reason === "describe-failed") {
-    return stage === "open"
-      ? "open-describe-failed"
-      : "mounted-describe-failed";
+    if (stage === "mounted") return "mounted-describe-failed";
+    return (
+      OPEN_DESCRIBE_SUBCODE_BY_SOURCE_ERROR[sourceErrorType ?? ""] ??
+      "open-describe-failed"
+    );
   }
   if (reason === "render-failed") {
     return stage === "open" ? "open-render-failed" : "mounted-render-failed";

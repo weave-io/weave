@@ -29,11 +29,17 @@ import {
   type MemoryOverlaySourceChild,
   type MemoryOverlaySourceEntry,
   mapNativeSessionEntryToOverlay,
+  mapPiDelegationFailureToOverlaySourceError,
   mergeChildOverlayReplaySteps,
   transcriptFromOverlayEntries,
 } from "../child-overlay.js";
 import { boundText } from "../child-overlay-replay.js";
 import { parsePiChildSessionEvent } from "../child-session-events.js";
+import {
+  makeThreadAuthorityDeniedFailure,
+  makeThreadIntegrityFailure,
+  makeThreadNotFoundFailure,
+} from "../errors.js";
 import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 
 /** Pi native components read the process-wide theme. */
@@ -1820,6 +1826,31 @@ describe("ChildOverlayController", () => {
     const error = result._unsafeUnwrapErr() as ChildOverlayFallbackRequired;
     expect(error.kind).toBe("fallback-required");
     expect(error.metadata.reason).toBe("describe-failed");
+    // Task 20(c): the fallback must also name which source error caused it,
+    // so a live run can distinguish an unknown child from an absent source.
+    expect(error.metadata.sourceErrorType).toBe("ChildNotFound");
+    expect(JSON.stringify(error)).not.toContain("/Users/");
+  });
+
+  it.each([
+    ["SourceUnavailable"],
+    ["SourceCorrupt"],
+    ["SourceStartupNotReady"],
+  ] as const)("carries the %s describe failure into bounded fallback metadata", async (type) => {
+    const source: ChildOverlaySourcePort = {
+      describe: () => errAsync({ type, operation: "describe" }),
+      loadNewest: () => errAsync({ type, operation: "loadNewest" }),
+      loadOlder: () => errAsync({ type, operation: "loadOlder" }),
+      loadNewer: () => errAsync({ type, operation: "loadNewer" }),
+    };
+    const overlay = createChildOverlayController(source);
+    const result = await overlay.open("describe-failure");
+    const error = result._unsafeUnwrapErr() as ChildOverlayFallbackRequired;
+    expect(error.kind).toBe("fallback-required");
+    expect(error.metadata.reason).toBe("describe-failed");
+    expect(error.metadata.sourceErrorType).toBe(type);
+    // Only the discriminant crosses over: never `operation` or a path.
+    expect(JSON.stringify(error)).not.toContain('describe"');
     expect(JSON.stringify(error)).not.toContain("/Users/");
   });
 
@@ -2962,5 +2993,64 @@ describe("createChildOverlayCustomComponent", () => {
     expect(component.render(80).join("\n")).not.toContain("Search:");
     component.handleInput("\x1b");
     expect(closed).toBe(1);
+  });
+});
+
+describe("mapPiDelegationFailureToOverlaySourceError", () => {
+  // Task 20(c): production `describe` used to collapse every delegation
+  // failure into `ChildNotFound`, so a live `open-describe-failed` fallback
+  // could not name its cause. Each failure now keeps its own source error
+  // while staying inside the fallback-classified set, so the overlay still
+  // falls back exactly as before.
+  it("keeps an unknown or origin-mismatched thread as a missing child", () => {
+    for (const reason of ["unknown-thread", "origin-mismatch"] as const) {
+      expect(
+        mapPiDelegationFailureToOverlaySourceError(
+          makeThreadNotFoundFailure("thread-a", reason),
+          "child-a",
+        ),
+      ).toEqual({ type: "ChildNotFound", childId: "child-a" });
+    }
+  });
+
+  it("reports an unreadable ref source as unavailable, not as a missing child", () => {
+    expect(
+      mapPiDelegationFailureToOverlaySourceError(
+        makeThreadNotFoundFailure("thread-a", "refs-unavailable"),
+        "child-a",
+      ),
+    ).toEqual({ type: "SourceUnavailable", operation: "describe" });
+  });
+
+  it("reports a thread integrity failure as a corrupt source", () => {
+    expect(
+      mapPiDelegationFailureToOverlaySourceError(
+        makeThreadIntegrityFailure("thread-a", "ref-conflict"),
+        "child-a",
+      ),
+    ).toEqual({ type: "SourceCorrupt", operation: "describe" });
+  });
+
+  it("reports any other controller failure as an unavailable source", () => {
+    expect(
+      mapPiDelegationFailureToOverlaySourceError(
+        makeThreadAuthorityDeniedFailure("thread-a", "not-owner"),
+        "child-a",
+      ),
+    ).toEqual({ type: "SourceUnavailable", operation: "describe" });
+  });
+
+  it("never copies a thread id or free-form failure text into the error", () => {
+    const mapped = mapPiDelegationFailureToOverlaySourceError(
+      makeThreadNotFoundFailure(
+        "thread-/Users/someone/secret",
+        "unknown-thread",
+      ),
+      "child-a",
+    );
+    const serialized = JSON.stringify(mapped);
+    expect(serialized).not.toContain("/Users/");
+    expect(serialized).not.toContain("thread-");
+    expect(serialized).not.toContain("No delegated thread");
   });
 });

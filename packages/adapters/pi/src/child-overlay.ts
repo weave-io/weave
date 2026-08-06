@@ -58,6 +58,39 @@ import type {
   PiChildTranscriptEntry,
   PiChildTranscriptState,
 } from "./child-transcript.js";
+import type { PiAdapterFailure } from "./errors.js";
+
+/**
+ * Maps a delegation-controller failure onto the overlay source error that
+ * describes it.
+ *
+ * Every branch stays inside the fallback-classified source errors, so the
+ * overlay still falls back to the custom editor exactly as before; only the
+ * reported reason changes. Collapsing every controller failure into
+ * `ChildNotFound` made an absent thread source, a corrupt thread record, and a
+ * genuinely unknown child indistinguishable in `/weave:health`, which is the
+ * distinction a live run needs to name its blocker.
+ *
+ * Nothing but the failure discriminant and its bounded reason is read, and the
+ * only identifier that crosses into the result is the child id the caller
+ * already supplied.
+ */
+export function mapPiDelegationFailureToOverlaySourceError(
+  failure: PiAdapterFailure,
+  childId: string,
+): ChildOverlaySourceError {
+  if (failure.code === "ThreadNotFound") {
+    // Only `refs-unavailable` means the source itself could not be consulted;
+    // an unknown or origin-mismatched thread really is "no such child here".
+    return failure.correlation?.["reason"] === "refs-unavailable"
+      ? { type: "SourceUnavailable", operation: "describe" }
+      : { type: "ChildNotFound", childId };
+  }
+  if (failure.code === "ThreadIntegrityError") {
+    return { type: "SourceCorrupt", operation: "describe" };
+  }
+  return { type: "SourceUnavailable", operation: "describe" };
+}
 
 // ---------------------------------------------------------------------------
 // In-memory source helper (tests + adapters that already hold entry pages)
@@ -383,6 +416,7 @@ export type {
   ChildOverlayReplayStep,
   ChildOverlayRunDivider,
   ChildOverlaySourceError,
+  ChildOverlaySourceErrorType,
   ChildOverlaySourcePort,
   ChildOverlayStatus,
   ChildOverlayView,

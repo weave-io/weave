@@ -250,6 +250,7 @@ Child inspection has two paths: the native full-screen overlay and the custom-ed
 | `generation-changed` | The session generation changed between selection and activation. |
 | `open-failed` | Opening the child failed for a reason other than a fallback request. |
 | `open-source-failed`, `open-describe-failed`, `open-render-failed` | Opening the child requested the fallback for that reason. |
+| `open-describe-child-not-found`, `open-describe-source-unavailable`, `open-describe-source-corrupt`, `open-describe-source-not-ready` | Opening the child requested the fallback because describing it failed, and the source error is known. A describe failure only reports the generic `open-describe-failed` when no source error discriminant is available. |
 | `mounted-source-failed`, `mounted-describe-failed`, `mounted-render-failed` | The mounted native overlay requested the fallback for that reason. |
 | `no-tui-custom-surface` | The host offers no TUI custom surface, so no overlay can mount. |
 

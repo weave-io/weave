@@ -36,6 +36,10 @@ describe("child overlay fallback diagnostics", () => {
       "open-not-open",
       "open-source-failed",
       "open-describe-failed",
+      "open-describe-child-not-found",
+      "open-describe-source-unavailable",
+      "open-describe-source-corrupt",
+      "open-describe-source-not-ready",
       "open-render-failed",
       "mounted-source-failed",
       "mounted-describe-failed",
@@ -90,6 +94,73 @@ describe("child overlay fallback diagnostics", () => {
     expect(piChildOverlayFallbackReasonCode("child-xyz", "open")).toBe(
       "open-failed",
     );
+  });
+
+  it("names which source error caused an open describe fallback", () => {
+    // Task 20(c): `open-describe-failed` alone could not tell an absent
+    // controller from an unknown child, so a live run could not name its
+    // blocker. Each fallback-classified source error now has its own subcode.
+    expect(
+      piChildOverlayFallbackReasonCode(
+        "describe-failed",
+        "open",
+        "ChildNotFound",
+      ),
+    ).toBe("open-describe-child-not-found");
+    expect(
+      piChildOverlayFallbackReasonCode(
+        "describe-failed",
+        "open",
+        "SourceUnavailable",
+      ),
+    ).toBe("open-describe-source-unavailable");
+    expect(
+      piChildOverlayFallbackReasonCode(
+        "describe-failed",
+        "open",
+        "SourceCorrupt",
+      ),
+    ).toBe("open-describe-source-corrupt");
+    expect(
+      piChildOverlayFallbackReasonCode(
+        "describe-failed",
+        "open",
+        "SourceStartupNotReady",
+      ),
+    ).toBe("open-describe-source-not-ready");
+    // An absent, unmodelled, or smuggled discriminant stays generic.
+    expect(piChildOverlayFallbackReasonCode("describe-failed", "open")).toBe(
+      "open-describe-failed",
+    );
+    expect(
+      piChildOverlayFallbackReasonCode(
+        "describe-failed",
+        "open",
+        "child-abc123 /Users/someone",
+      ),
+    ).toBe("open-describe-failed");
+    expect(
+      piChildOverlayFallbackReasonCode(
+        "describe-failed",
+        "open",
+        "constructor",
+      ),
+    ).toBe("open-describe-failed");
+    // Other stages and reasons are untouched by the subcode selection.
+    expect(
+      piChildOverlayFallbackReasonCode(
+        "describe-failed",
+        "mounted",
+        "SourceUnavailable",
+      ),
+    ).toBe("mounted-describe-failed");
+    expect(
+      piChildOverlayFallbackReasonCode(
+        "source-failed",
+        "open",
+        "SourceUnavailable",
+      ),
+    ).toBe("open-source-failed");
   });
 
   it("maps every typed non-fallback open error to its own bounded subcode", () => {

@@ -231,6 +231,13 @@ export type ChildOverlaySourceError =
   | { readonly type: "SourceInvalidCursor"; readonly operation: string }
   | { readonly type: "ChildNotFound"; readonly childId: string };
 
+/**
+ * The closed set of source-error discriminants, carried through fallback
+ * metadata so a fallback decision names which source failure caused it.
+ * A discriminant is a fixed literal, never an identifier or free-form text.
+ */
+export type ChildOverlaySourceErrorType = ChildOverlaySourceError["type"];
+
 export interface ChildOverlaySourcePort {
   describe(
     childId: string,
@@ -284,6 +291,14 @@ export interface ChildOverlayFallbackMetadata {
   readonly entryCount: number;
   readonly reason: ChildOverlayFallbackReason;
   readonly readOnly: boolean;
+  /**
+   * The source-error discriminant that forced the fallback, when one exists.
+   * Present so a `describe-failed` or `source-failed` decision can be reported
+   * as a specific bounded reason code instead of collapsing four distinct
+   * source failures into one indistinguishable code. Absent for fallbacks that
+   * no source error produced (for example a render failure).
+   */
+  readonly sourceErrorType?: ChildOverlaySourceErrorType;
 }
 
 export interface ChildOverlayFallbackRequired {

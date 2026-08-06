@@ -553,3 +553,108 @@ codesightChurnRestored: true
 task20cTemporaryFileCountAfterCleanup: 0
 currentPaneLeftOpen: true
 ```
+
+## Remediation note — post-resume describe replay (offline, 2026-08-06)
+
+This proof stays **FAIL** until item (c) is rerun in a fresh Herdr Pi session.
+
+The recorded `open-describe-failed` was replayed offline against the exact
+persisted fixture this rerun used, through the real production boundary: the
+persisted parent session reopened by the host `SessionManager`, the real thread
+sources, the real picker row builder, and the real delegation controller. **The
+failure did not reproduce.** No repair of the resolution path is therefore
+claimed, and none was made.
+
+Only hashes, counts, and discriminants were captured. No raw id, path, title,
+marker, prompt, or transcript text was read into a file or into this note.
+
+```yaml
+replayUsedExactFixture: true
+replayUsedRealSessionManager: true
+replayUsedRealThreadSources: true
+replayUsedRealPickerRowBuilder: true
+replayUsedRealDelegationController: true
+persistedHeaderIdEqualsRuntimeId: true
+persistedHeaderPresent: true
+persistedHeaderVersion: 3
+stableSessionHeaderFixActiveInReplay: true
+refOriginDistinctCount: 1
+refOriginEqualsPersistedHeaderId: true
+parentEntriesScanned: 101
+refCandidateEntryCount: 2
+refMalformedEntryCount: 0
+refOriginMismatchedChildCount: 0
+refConflictingChildCount: 0
+refDuplicateEntryCount: 0
+refUnusableSourceChildCount: 0
+refUsableRefCount: 1
+refIssueCount: 0
+readRefsDefaultLimitRefCount: 1
+readRefsControllerLimitRefCount: 1
+pickerRowIdEqualsDurableChildId: true
+pickerRowIdEqualsDurableThreadId: true
+resolveOverlayChildOutcome: ok
+resolveOverlayChildErrorDiscriminatorCount: 0
+resolvedStatus: settled
+resolvedTitleLength: 200
+resolvedSessionRefPresent: true
+resolvedRunCount: 1
+describeFailedReproducedOffline: false
+speculativeResolutionFixIntroduced: false
+```
+
+Ruled out by the replay, each against the exact fixture:
+
+- Picker row identity. The row id the picker hands to `activateChild` is the
+  durable `childId` itself, and the picker entry carries its node, so the id the
+  controller receives is the persisted one.
+- Ref scanning and its bounds. The picker's default `readRefs()` limit and the
+  controller's own limit both clamp to the same returned-ref bound, and both
+  returned the same single usable ref with zero issues.
+- Ref origin. The persisted origin equals the persisted session-header id, and
+  the host reported an identical runtime id for this fixture, so the retained
+  session-header origin fix is active and no divergence existed here to close.
+- Native source authority. The child session opened against its recorded
+  expected parent, with no tombstone and no root, header, or parent-equality
+  violation.
+- Controller lifecycle. The delegation controller and the overlay controller are
+  published and revoked together in one generation block, so an absent
+  delegation controller reports `controller-absent`, never `open-describe-failed`.
+
+What the replay did expose is a diagnostics gap, and only that was repaired:
+
+- `open-describe-failed` covered four distinct source failures at once —
+  unknown child, unavailable source, corrupt source, and not-yet-ready source.
+  Each now reports its own bounded, identifier-free subcode, so the next run
+  names which failure it hit. A describe failure with no known discriminant
+  still reports the original generic code.
+- Production `describe` collapsed every delegation-controller failure into
+  `ChildNotFound`. It now maps an unreadable ref source to an unavailable
+  source and a thread integrity failure to a corrupt source, while an unknown or
+  origin-mismatched thread stays a missing child. Every branch stays inside the
+  fallback-classified errors, so the fallback decision itself is unchanged.
+- The fallback metadata carries the source-error discriminant only — never the
+  failing operation, a thread id, a path, or any free-form failure text.
+
+Fork and clone origin exclusion, new-session isolation, the 200-character title
+bound, the mandatory non-empty expected parent, and root, authority, header, and
+corruption fail-closed behavior are all unchanged and still covered.
+
+```yaml
+remediationDiagnosedOffline: true
+remediationScope: diagnostics_only
+remediationCause: open_describe_failed_covered_four_distinct_source_failures
+remediationRegressionFailedBeforeFix: true
+remediationRegressionPassesAfterFix: true
+remediationFallbackDecisionChanged: false
+remediationChildNotFoundCollapseRemoved: true
+remediationForkCloneExclusionRetained: true
+remediationExpectedParentValidationRetained: true
+remediationTitleBoundRetained: true
+remediationFailOpenIntroduced: false
+```
+
+The next rerun must record the exact fallback subcode from `/weave:health`. The
+result above stays **FAIL** until a fresh Herdr run re-observes the native
+historical overlay, both bounded pages, gap-free pagination, viewport and
+selection preservation, and bounded native search end to end.

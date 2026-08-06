@@ -111,6 +111,7 @@ import {
   createChildOverlayController,
   createChildOverlayCustomComponent,
   createReadSessionEntryPageOverlaySource,
+  mapPiDelegationFailureToOverlaySourceError,
 } from "./child-overlay.js";
 import {
   formatPiChildOverlayFallbackDiagnostic,
@@ -4567,10 +4568,9 @@ export function createPiExtension(
                     branchIds: [...descriptor.branchIds],
                     descendantChildIds: [...descriptor.descendantChildIds],
                   }))
-                  .mapErr(() => ({
-                    type: "ChildNotFound" as const,
-                    childId: id,
-                  }));
+                  .mapErr((failure) =>
+                    mapPiDelegationFailureToOverlaySourceError(failure, id),
+                  );
               },
               readSessionEntryPage: (id, options) =>
                 readOverlaySessionEntryPage(
@@ -5232,6 +5232,7 @@ export function createPiExtension(
                 piChildOverlayFallbackReasonCode(
                   opened.error.metadata.reason,
                   "open",
+                  opened.error.metadata.sourceErrorType,
                 ),
               );
               activateCustomEditorInspection(opened.error.metadata.childId);
