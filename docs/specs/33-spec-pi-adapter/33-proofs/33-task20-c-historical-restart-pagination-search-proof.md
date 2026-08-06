@@ -160,3 +160,114 @@ The exact production cause of
 is still **not** reproduced offline, and nothing here may be read as a fix for it.
 The rerun must capture the fallback reason code from `/weave:health`; that code
 names the decision that the previous run could only observe as a silent path change.
+
+## Approved-artifact rerun — `b586ec4` (2026-08-06)
+
+Result: **FAIL**
+
+This rerun used the approved release artifact. It preserves the earlier failed run
+above and records only sanitized outcomes.
+
+```yaml
+approvedArtifactSourceCommitHash: b586ec4ce81220088f750ebea2c00a1d9f4e112b
+approvedArtifactSha256: 7ee79db93854c6a01ddf3dbfb9798a8560f39b47c5e149cede59aac4b1b094ee
+installedExtensionSha256: ee5173d4d0b87e5b2a8467d1e9331ffa5d8f07b2f9bd14868ed375cc7204e944
+installedExtensionHashMatched: true
+artifactExtensionHashMatched: true
+piVersion083: true
+requestedCurrentPaneMatched: true
+readyFooterObserved: true
+statusTrusted: true
+healthOnly: false
+weaveNpmPackageConfiguredCount: 1
+piVimNpmPackageConfiguredCount: 1
+unsafeOverrideCount: 0
+localWeaveShadowCount: 0
+piVimInsertObservedBeforeInspection: true
+parentSessionMatchedHandoff: true
+parentReopenSucceeded: true
+parentReopenedEntryCount: 38
+parentHeaderVersion: 3
+controlledChildCount: 1
+childSettlementOutcome: completed
+childInterventionCount: 0
+durableParentReferenceCount: 2
+completedLifecycleReferenceCount: 1
+activeRuntimeLeaseCount: 0
+paneCreateSplitCloseCount: 0
+nestedPiLaunchCount: 0
+productionCodeChanged: false
+```
+
+The durable fixture matched the handoff before inspection:
+
+```yaml
+persistedTranscriptEntryCount: 68
+historicalPageSize: 50
+historicalPageCount: 2
+olderPageEntryCount: 18
+newestPageEntryCount: 50
+controlledUniqueEventCount: 30
+persistedMarkerMatchCount: 10
+olderPageMarkerMatchCount: 6
+newestPageMarkerMatchCount: 4
+transcriptSha256: 1794e072c31c2720f27ab865cabf31ae499dba47e99ec22e043708dea253fe52
+transcriptHashMatchedHandoff: true
+markerSha256: e8557f118a904b10c8a56d54e6d4123a3a7fa071f27775dfbbd5ba7c67992fd9
+markerHashMatchedHandoff: true
+```
+
+The registered inspector opened its native picker. The sole settled history entry
+was selected after one downward navigation. Selection activated the custom-editor
+fallback instead of the native full-screen historical overlay. The test stopped at
+that fail-closed boundary and did not claim any native pagination or search result.
+
+```yaml
+registeredInspectCommandUsed: true
+nativePickerOpened: true
+settledHistoryEntryVisible: true
+settledHistoryEntrySelected: true
+pickerOpenWaitMilliseconds: 2000
+selectionMountWaitMilliseconds: 3000
+selectionAttemptCount: 1
+nativeHistoricalOverlayMounted: false
+customEditorFallbackActivated: true
+healthCommandUsed: true
+fallbackReasonCode: open-failed
+fallbackReasonCodeCount: 1
+nativeReadOnlyStatusObserved: false
+nativeNewestPageCountObserved: false
+nativeOlderPageCountObserved: false
+nativePaginationObserved: false
+nativePaginationGapCountObserved: false
+nativePaginationDuplicateCountObserved: false
+nativeViewportAnchorPreservedObserved: false
+nativeSelectionPreservedObserved: false
+nativeSearchInputObserved: false
+nativeBoundedPageScanObserved: false
+nativeMatchNavigationObserved: false
+searchQueryEntered: false
+searchQueryPrimaryEditorLeakCount: 0
+searchQueryPrimarySessionLeakCount: 0
+inspectExactPrimarySubmissionCount: 0
+healthExactPrimarySubmissionCount: 0
+primaryDraftByteCountBefore: 0
+primaryDraftByteCountAfter: 0
+primaryDraftRestored: true
+piVimInsertRestored: true
+readyAfterClose: true
+```
+
+### Approved-artifact rerun verdict
+
+**FAIL** — picker selection reached the bounded `open-failed` fallback. The native
+historical overlay did not mount, so read-only behavior, the 50-entry newest page,
+the 18-entry older page, gap-free pagination, viewport preservation, bounded search,
+and cross-page match navigation were not directly observed.
+
+```yaml
+currentResult: FAIL
+sanitizedBlockerOutcome: open-failed
+coordinatorCleanupTargetCount: 1
+coordinatorCleanupTargetOutcome: current_proof_pane_when_no_longer_needed
+```
