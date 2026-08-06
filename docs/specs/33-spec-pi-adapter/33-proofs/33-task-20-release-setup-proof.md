@@ -2,27 +2,28 @@
 
 This record covers Task 20 preparation only. It binds the installed Pi adapter to the exact release artifact built from the subject commit. It supersedes the earlier artifact data in this file and does not claim completion of the 14-scenario acceptance matrix.
 
-This refresh rebuilds the artifact after the active-child overlay startup fix landed. It supersedes the previous refresh, which was built from `920aaa3d4ef09cf829f2ab82f0df58c09e3e30d7` and carried the native child overlay remediation. The subject history also retains the trusted XDG root fix (`8b9dc84215d85d87bac4644f24cc3e0dc02260cd`), the native child session-header fix (`c952ef89d90a2efa8dc27394f217d6b6307d4367`), the bounded restore startup-suffix fix (`5b7f81f7a562a96d62711caa24df1a092bc8bd7c`), and the overlay session page source boundary fix (`8b15cf8`).
+This refresh rebuilds the artifact after the approved historical overlay pagination and search remediation landed in `2521e29` (`fix(pi): scan every search page and require an expected parent`). It supersedes the previous refresh, which was built from `5a0c10cbfa3318689eb3cbc423982587182f4465` and carried the active-child overlay startup fix. The subject history also retains the trusted XDG root fix (`8b9dc84215d85d87bac4644f24cc3e0dc02260cd`), the native child session-header fix (`c952ef89d90a2efa8dc27394f217d6b6307d4367`), the bounded restore startup-suffix fix (`5b7f81f7a562a96d62711caa24df1a092bc8bd7c`), and the overlay session page source boundary fix (`8b15cf8`).
 
 ## Subject
 
 | Field | Verified value |
 | --- | --- |
-| Subject HEAD | `5a0c10cbfa3318689eb3cbc423982587182f4465` |
-| Subject HEAD subject line | `docs(pi): correct Task 20(b) SourceStartupNotReady boundary` |
+| Subject HEAD | `b586ec4ce81220088f750ebea2c00a1d9f4e112b` |
+| Subject HEAD subject line | `chore(codesight): restore metadata accidentally rewritten by 2521e29` |
+| Remediation commit in subject history | `2521e29` — `fix(pi): scan every search page and require an expected parent` |
 | Working tree at build time | clean (`git status --porcelain` empty) |
-| Superseded artifact subject | `920aaa3d4ef09cf829f2ab82f0df58c09e3e30d7` |
+| Superseded artifact subject | `5a0c10cbfa3318689eb3cbc423982587182f4465` |
 | Pi version | `0.83.0` |
 | Bun version | `1.3.13` |
 | Package | `@weaveio/weave-adapter-pi@0.0.1` |
-| Artifact | `/Users/jose/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-5a0c10c-task20-91c6dd040255.tgz` |
-| Artifact SHA-256 | `91c6dd04025570f956e219d991c160cab4491b0faa7f8b0867acaf09500dec21` |
-| Built and shipped `dist/extension.js` SHA-256 | `ac1d12c298300741140d1cefa0e6946489e2fa8a5aeded2873f4c1ea07313061` |
-| Built and shipped `dist/index.js` SHA-256 | `ebeaf8902b0817359bcbfca19d70dbfc1b17075309a8db29ce242bc4842648a8` |
+| Artifact | `/Users/jose/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-b586ec4-task20-7ee79db93854.tgz` |
+| Artifact SHA-256 | `7ee79db93854c6a01ddf3dbfb9798a8560f39b47c5e149cede59aac4b1b094ee` |
+| Built and shipped `dist/extension.js` SHA-256 | `ee5173d4d0b87e5b2a8467d1e9331ffa5d8f07b2f9bd14868ed375cc7204e944` |
+| Built and shipped `dist/index.js` SHA-256 | `ee2741d254fd2aef523e2dcb24dcd2138bc1e47664c1dd47415af00e02782786` |
 | Built and shipped `dist/cli.js` SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
 | Installed package | `/Users/jose/.pi/agent/npm/node_modules/@weaveio/weave-adapter-pi` |
-| Installed `dist/extension.js` SHA-256 | `ac1d12c298300741140d1cefa0e6946489e2fa8a5aeded2873f4c1ea07313061` |
-| Installed `dist/index.js` SHA-256 | `ebeaf8902b0817359bcbfca19d70dbfc1b17075309a8db29ce242bc4842648a8` |
+| Installed `dist/extension.js` SHA-256 | `ee5173d4d0b87e5b2a8467d1e9331ffa5d8f07b2f9bd14868ed375cc7204e944` |
+| Installed `dist/index.js` SHA-256 | `ee2741d254fd2aef523e2dcb24dcd2138bc1e47664c1dd47415af00e02782786` |
 | Installed `dist/cli.js` SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
 | Pi source identity | `npm:@weaveio/weave-adapter-pi` |
 
@@ -47,13 +48,15 @@ The staged public manifest declares the adapter runtime dependencies (`kysely`, 
 
 ## Build and artifact checks
 
-The repository was clean before the build. The build and pack used the repository's Bun release path and canonical `PublicPackagePackager`:
+The repository was clean before the build, and the subject HEAD was confirmed to be exactly `b586ec4ce81220088f750ebea2c00a1d9f4e112b`. The build and pack used the repository's Bun release path and canonical `PublicPackagePackager`:
 
 ```sh
-SUBJECT_HEAD=5a0c10cbfa3318689eb3cbc423982587182f4465
+SUBJECT_HEAD=b586ec4ce81220088f750ebea2c00a1d9f4e112b
 ROOT=".release/task20-refresh-${SUBJECT_HEAD}"
-ARTIFACT="$HOME/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-5a0c10c-task20-91c6dd040255.tgz"
+ARTIFACT="$HOME/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-b586ec4-task20-7ee79db93854.tgz"
 
+git log -1 --pretty='%H%n%s'
+git status --porcelain
 bun run build
 SUBJECT_HEAD="$SUBJECT_HEAD" bun -e '
 import { join } from "node:path";
@@ -64,7 +67,7 @@ const result = await new PublicPackagePackager(
   new BunPackageCommandRunner(),
   new PackagePolicyValidator(),
 ).pack("@weaveio/weave-adapter-pi", root, join(root, "out"));
-if (result.isErr()) process.exit(1);
+if (result.isErr()) { console.error(result.error); process.exit(1); }
 console.log(result.value);
 '
 cp "$ROOT/out/weaveio-weave-adapter-pi-0.0.1.tgz" "$ARTIFACT"
@@ -76,14 +79,14 @@ tar -xOf "$ARTIFACT" package/dist/cli.js | shasum -a 256
 tar -xOf "$ARTIFACT" package/package.json
 ```
 
-`bun run build` exited successfully. `PublicPackagePackager` staged the approved public manifest and files, ran script-disabled package packing through its Bun command runner, validated the emitted bytes with `PackagePolicyValidator`, and returned the packed tarball path. The artifact was copied to the durable artifact path, whose name embeds the subject prefix `5a0c10c` and the first twelve hex characters of the tarball digest. The staging root `.release/` is ignored by Git, so the build and pack left the working tree clean.
+`bun run build` exited successfully. `PublicPackagePackager` staged the approved public manifest and files, ran script-disabled package packing through its Bun command runner, validated the emitted bytes with `PackagePolicyValidator`, and returned the packed tarball path. The artifact was copied to the durable artifact path, whose name embeds the subject prefix `b586ec4` and the first twelve hex characters of the tarball digest. The staging root `.release/` is ignored by Git, so the build and pack left the working tree clean.
 
 ## Exact-byte install and provenance
 
 The artifact was extracted into a temporary directory. Runtime dependencies were installed without peer dependencies or lifecycle scripts. The previously installed package directory was removed and replaced with the staged tree. Each shipped file was then compared byte-for-byte with the installed file.
 
 ```sh
-ARTIFACT="$HOME/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-5a0c10c-task20-91c6dd040255.tgz"
+ARTIFACT="$HOME/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-b586ec4-task20-7ee79db93854.tgz"
 INSTALL="$HOME/.pi/agent/npm/node_modules/@weaveio/weave-adapter-pi"
 STAGE=$(mktemp -d /tmp/weave-pi-task20-install.XXXXXX)
 VERIFY=$(mktemp -d /tmp/weave-pi-task20-verify.XXXXXX)
@@ -97,7 +100,7 @@ cmp -s "$VERIFY/package/$RELATIVE_PATH" "$INSTALL/$RELATIVE_PATH"
 shasum -a 256 "$INSTALL/dist/extension.js" "$INSTALL/dist/index.js" "$INSTALL/dist/cli.js"
 ```
 
-All eight shipped files compared identical: `package.json`, `README.md`, `dist/cli.js`, `dist/cli.d.ts`, `dist/extension.js`, `dist/extension.d.ts`, `dist/index.js`, and `dist/index.d.ts`. No file mismatched.
+All eight shipped files compared identical: `package.json`, `README.md`, `dist/cli.js`, `dist/cli.d.ts`, `dist/extension.js`, `dist/extension.d.ts`, `dist/index.js`, and `dist/index.d.ts`. No file mismatched. The install produced 18 runtime packages under `node_modules`, and none of `@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`, `@earendil-works/pi-tui`, or `pi-agent-core` is present.
 
 Pi settings continue to register the adapter as an npm package. The recorded `packages` list is:
 
@@ -116,7 +119,7 @@ Pi settings continue to register the adapter as an npm package. The recorded `pa
 
 ### Command-provenance override
 
-Before the build, the verifier confirmed that `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` was absent from its own environment and absent from the Pi launcher `~/.pi/agent/bin/pi`. The verifier found one stale export of that override in the user shell profile `~/.zshrc`, left over from an earlier local-development session. Release verification must never run with the override, so the verifier backed the profile up and removed the export line. The profile now contains no occurrence of the variable. The override was not set at any point during this refresh.
+`WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` was absent from the verifier environment, absent from the Pi launcher `~/.pi/agent/bin/pi`, absent from `~/.pi/agent/settings.json`, and absent from the user shell profile `~/.zshrc` (`grep -c` returned `0` for both the launcher and the profile). The override was not set at any point during this refresh and was not enabled.
 
 All Pi verification commands also removed that variable from their child environment:
 
@@ -136,8 +139,8 @@ env -u WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE ~/.pi/agent/bin/pi list
 | Check | Command | Result |
 | --- | --- | --- |
 | Build | `bun run build` | pass |
-| Focused overlay suites | `bun test packages/adapters/pi/src/__tests__/child-overlay.test.ts packages/adapters/pi/src/__tests__/child-overlay-keys.test.ts packages/adapters/pi/src/__tests__/child-overlay-modules.test.ts` | 87 pass, 0 fail, 3 files |
-| Full Pi adapter suite | `bun test packages/adapters/pi` | 1770 pass, 0 fail, 92 files |
+| Focused overlay suites | `bun test packages/adapters/pi/src/__tests__/child-overlay.test.ts packages/adapters/pi/src/__tests__/child-overlay-keys.test.ts packages/adapters/pi/src/__tests__/child-overlay-modules.test.ts` | 93 pass, 0 fail, 3 files |
+| Full Pi adapter suite | `bun test packages/adapters/pi` | 1785 pass, 0 fail, 94 files |
 | Typecheck | `bun run typecheck` | pass |
 | Lint | `bun run lint` | exit 0, no errors |
 | Documentation links | `bun run docs:check-links` | pass |
@@ -146,6 +149,6 @@ env -u WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE ~/.pi/agent/bin/pi list
 
 This record proves build, artifact, install, and package-provenance setup only.
 
-No interactive Pi TUI readiness or behavior run was performed during this refresh, and none is claimed. Acceptance matrix item **b** is **not** claimed as passed by this record. Loading, readiness, and real-behavior proof under `docs/testing/adapter-verification.md` stages 3 through 5 remain outstanding for the acceptance matrix.
+No interactive Pi TUI readiness or behavior run was performed during this refresh, and none is claimed. Acceptance matrix items **b** and **c** are **not** claimed as passed by this record. Loading, readiness, and real-behavior proof under `docs/testing/adapter-verification.md` stages 3 through 5 remain outstanding for the acceptance matrix.
 
 No Task 20 scenario-matrix command was run. The Task 20 plan checkbox, acceptance manifest, and smoke checklist remain unchanged because preparation does not satisfy an acceptance scenario or checklist row.
