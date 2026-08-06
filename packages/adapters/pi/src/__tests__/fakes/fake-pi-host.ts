@@ -33,11 +33,16 @@ import type {
 export function persistentFakeSessionManager(
   overrides: { readonly id?: string; readonly file?: string } = {},
 ): PiSessionManagerPort {
+  const id = overrides.id ?? "fake-session-1";
   return {
-    getSessionId: () => overrides.id ?? "fake-session-1",
+    getSessionId: () => id,
     getSessionFile: () =>
       overrides.file ?? "/fake/sessions/fake-session-1.jsonl",
     isPersisted: () => true,
+    // Mirror Pi 0.83's public SessionManager.getHeader(): the persisted file
+    // header id is the stable origin. Fake hosts keep it equal to `id` unless
+    // a test supplies a divergent manager of its own.
+    getHeader: () => ({ id }),
   };
 }
 

@@ -76,6 +76,8 @@ function baseDeps(
     getParentSessionState: () => ({
       persistence: "persistent",
       sessionId: "session-test",
+      runtimeSessionId: "session-test",
+      identitySource: "session-header",
       sessionFile: "/sessions/test.jsonl",
     }),
     ...overrides,
@@ -289,7 +291,10 @@ describe("buildDelegationToolRegistration", () => {
 
     capturedRequest?.onSessionEvent?.({
       type: "message_update",
-      assistantMessageEvent: { type: "text_delta", delta: "Inspecting the adapter" },
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: "Inspecting the adapter",
+      },
     } as never);
     expect(updates.length).toBeGreaterThanOrEqual(2);
     const live = updates[updates.length - 1];
@@ -339,9 +344,9 @@ describe("buildDelegationToolRegistration", () => {
     )
       .render(80)
       .join("\n");
-    expect(collapsed?.split("\n").filter((line) => line.length > 0).length).toBe(
-      3,
-    );
+    expect(
+      collapsed?.split("\n").filter((line) => line.length > 0).length,
+    ).toBe(3);
     expect(collapsed).toContain("Inspecting the adapter");
     expect(collapsed).not.toContain("\u2500");
 
@@ -878,6 +883,8 @@ describe("weave_delegate persistent-parent guard", () => {
         getParentSessionState: () => ({
           persistence: "persistent",
           sessionId: "session-a",
+          runtimeSessionId: "session-a",
+          identitySource: "session-header",
           sessionFile: "/sessions/a.jsonl",
         }),
         getController: () =>
@@ -1314,8 +1321,8 @@ describe("weave_delegate thread lifecycle", () => {
       })
       ?.render(80)
       .join("\n");
-    expect(rendered?.split("\n").filter((line) => line.length > 0)).toHaveLength(
-      3,
-    );
+    expect(
+      rendered?.split("\n").filter((line) => line.length > 0),
+    ).toHaveLength(3);
   });
 });

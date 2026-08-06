@@ -413,3 +413,43 @@ codesightChurnRestored: true
 task20cTemporaryFileCountAfterCleanup: 0
 currentPaneLeftOpen: true
 ```
+
+## Remediation note — resume-origin repair (offline, 2026-08-06)
+
+This proof stays **FAIL** until item (c) is rerun in a fresh Herdr Pi session.
+
+Offline diagnosis against Pi 0.83 and the exact resume fixture shape: after a
+restart that reopens the same parent session file, `SessionManager.getSessionId()`
+can be a freshly minted runtime id while the file's persisted header `id` stays
+stable. Using the runtime id as child-ref origin authority origin-mismatched every
+historical ref this session itself wrote, so picker selection could not describe
+the settled child for the native overlay and fell through to
+`open-describe-failed`.
+
+Remediation:
+
+- Parent persistence probing prefers the bounded non-empty header `id` from the
+  host's public `SessionManager.getHeader()` when present. That single persisted
+  identity is the origin authority for child refs. The runtime id is retained for
+  diagnostics only.
+- Fork, clone, and genuinely new sessions mint a new header id, so imported source
+  refs stay origin-mismatched and excluded. Absent, invalid, or oversized headers
+  fall back to the live runtime id for that process only; a throwing header probe
+  fails closed as `unknown` / `probe-failed` and never fabricates an origin.
+- Production `session_start` already passes the live `ctx.sessionManager` into
+  `PiPrimarySession`; an extension-boundary test asserts `getHeader()` is read and
+  that the header id — not the divergent runtime id — is handed to thread sources.
+
+```yaml
+remediationDiagnosedOffline: true
+remediationCause: parent_origin_used_ephemeral_runtime_id_instead_of_persisted_header_id
+remediationRegressionFailedBeforeFix: true
+remediationRegressionPassesAfterFix: true
+remediationForkCloneExclusionRetained: true
+remediationArbitraryPriorOriginRejected: true
+remediationFailOpenIntroduced: false
+```
+
+This note records the offline diagnosis and repair only. The result above stays
+**FAIL** until a fresh Herdr run re-observes the native historical overlay,
+pagination, and bounded search end to end.

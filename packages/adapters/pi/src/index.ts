@@ -831,6 +831,7 @@ export type {
   PiResourceOrigin,
   PiResourceScope,
   PiSessionContext,
+  PiSessionHeader,
   PiSessionManagerPort,
   PiSkillInfo,
   PiSourceInfo,

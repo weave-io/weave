@@ -162,7 +162,7 @@ All filesystem access goes through a no-follow `openat` chain: directories are `
 
 A bounded metadata cache lives beside it at `$XDG_DATA_HOME/weave/adapters/pi/cache/child-metadata.sqlite` (schema version 1, same permissions). It stores metadata only — ids, titles, statuses, and timestamps — with no column for any prompt, message, response, thinking block, tool call, tool result, or transcript. It is fully rebuildable from the parent session's child references, and its loss is never fatal: an open failure, permission failure, corruption, or schema mismatch degrades to reading the bounded parent references directly, so delegation, settlement, and the live overlay keep working with no cache at all.
 
-The authoritative record of which children belong to a parent is a custom entry in the parent's own Pi session. A reference whose recorded origin does not match the current parent session — after a fork or clone, for example — is excluded rather than adopted.
+The authoritative record of which children belong to a parent is a custom entry in the parent's own Pi session. Origin authority is the session file's persisted header id when the host exposes `SessionManager.getHeader()` — not the manager's per-process runtime id — so a restart that reopens the same file keeps the refs this session wrote. A reference whose recorded origin does not match that identity — after a fork or clone, for example — is excluded rather than adopted. When the header is absent or unusable, the adapter falls back to the live runtime id for that process only and never invents a prior origin.
 
 #### Cleanup, tombstones, and orphans
 

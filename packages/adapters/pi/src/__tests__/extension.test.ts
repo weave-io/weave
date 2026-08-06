@@ -4231,6 +4231,44 @@ describe("createPiExtension: persistent-parent guard on production weave_delegat
     expect(idGenerator.calls).toBe(idCallsAfterStart);
     expect(processPort.spawnedProcesses).toHaveLength(0);
   });
+
+  it("wires ctx.sessionManager.getHeader into thread-source origin on resume", async () => {
+    // Production session_start passes the live ctx.sessionManager into
+    // PiPrimarySession. When the host exposes getHeader(), the persisted
+    // header id — not the freshly minted runtime id — must become the
+    // parentSessionId handed to thread sources. Without that wiring,
+    // historical refs written before restart are origin-mismatched.
+    const opened: string[] = [];
+    let headerReads = 0;
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: {
+        getSessionId: () => "runtime-boot-2",
+        getSessionFile: () => "/sessions/a.jsonl",
+        isPersisted: () => true,
+        getHeader: () => {
+          headerReads += 1;
+          return { type: "session", id: "header-stable" };
+        },
+      },
+    });
+    installExtension(host, "0.81.1", {
+      threadSourceFactory: (input) => {
+        opened.push(input.parentSessionId);
+        return errAsync({
+          type: "ParentSessionUnavailable" as const,
+          reason: "not persisted",
+        });
+      },
+    });
+
+    await host.triggerSessionStart();
+
+    expect(headerReads).toBeGreaterThan(0);
+    expect(opened).toEqual(["header-stable"]);
+    expect(opened).not.toContain("runtime-boot-2");
+  });
 });
 
 describe("createPiExtension: Task 9 thread source factory wiring", () => {

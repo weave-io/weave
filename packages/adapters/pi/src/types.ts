@@ -205,6 +205,26 @@ export interface PiSessionManagerPort {
   getSessionId(): string;
   getSessionFile(): string | undefined;
   isPersisted(): boolean;
+  /**
+   * The persisted session header of the file this manager is reading, when
+   * the host exposes one.
+   *
+   * `getSessionId()` is the *runtime* identity of the manager and may be a
+   * freshly minted id at probe time, even when the manager is already serving
+   * a reopened session file. The header `id` is the identity written into the
+   * file itself, so it is stable across restarts of the same parent session
+   * and newly minted for a fork, clone, or genuinely new session.
+   */
+  getHeader?(): PiSessionHeader | null | undefined;
+}
+
+/**
+ * Narrow projection of Pi's session header. Only the fields Weave needs for
+ * stable parent identity are modelled; everything else is ignored.
+ */
+export interface PiSessionHeader {
+  readonly id?: unknown;
+  readonly parentSession?: unknown;
 }
 
 /** Narrow projection of `ExtensionContext` used by command handlers and lifecycle delegates. */

@@ -109,7 +109,24 @@ export type PiParentSessionProbePort = PiSessionManagerPort;
 export type PiParentSessionState =
   | {
       readonly persistence: "persistent";
+      /**
+       * The **stable persisted** identity of this parent session: the id
+       * written into the session file's own header when the host exposes it.
+       *
+       * This is the single origin authority for child refs. It survives a
+       * restart that reopens the same file, and it is newly minted for a
+       * fork, clone, or genuinely new session, so refs imported from a source
+       * session stay origin-mismatched and excluded.
+       */
       readonly sessionId: string;
+      /**
+       * The host's *runtime* session id at probe time. Diagnostics only: it
+       * can differ from `sessionId` on a resume, and is never used as origin
+       * authority.
+       */
+      readonly runtimeSessionId: string;
+      /** Where `sessionId` came from. */
+      readonly identitySource: "session-header" | "runtime";
       readonly sessionFile: string;
     }
   | {
@@ -126,6 +143,31 @@ export const UNKNOWN_PARENT_SESSION: PiParentSessionState = {
   reason: "no-probe",
 };
 
+/** Upper bound on a host-reported session identity, mirroring ref id bounds. */
+const MAX_PARENT_SESSION_ID_LENGTH = 256;
+
+/**
+ * Reads the persisted header id of the file the host is actually serving.
+ *
+ * Returns `undefined` when the host exposes no header, the header is absent,
+ * or the header id is not a bounded non-empty string. It never invents an
+ * identity and never accepts an arbitrary prior origin: exactly one id, taken
+ * from this session's own header, is eligible.
+ */
+function readPersistedHeaderSessionId(
+  probe: PiParentSessionProbePort,
+): string | undefined {
+  if (typeof probe.getHeader !== "function") return undefined;
+  const header = probe.getHeader();
+  if (header === null || typeof header !== "object") return undefined;
+  const id = (header as { readonly id?: unknown }).id;
+  if (typeof id !== "string") return undefined;
+  if (id.length === 0 || id.length > MAX_PARENT_SESSION_ID_LENGTH) {
+    return undefined;
+  }
+  return id;
+}
+
 const probeParentSessionSafely = Result.fromThrowable(
   (probe: PiParentSessionProbePort): PiParentSessionState => {
     if (!probe.isPersisted()) {
@@ -138,11 +180,30 @@ const probeParentSessionSafely = Result.fromThrowable(
     if (sessionFile === undefined || sessionFile.length === 0) {
       return { persistence: "ephemeral", reason: "no-session-file" };
     }
-    const sessionId = probe.getSessionId();
-    if (typeof sessionId !== "string" || sessionId.length === 0) {
+    const runtimeSessionId = probe.getSessionId();
+    if (typeof runtimeSessionId !== "string" || runtimeSessionId.length === 0) {
       return { persistence: "ephemeral", reason: "no-session-file" };
     }
-    return { persistence: "persistent", sessionId, sessionFile };
+    // Prefer the identity persisted in the session file's own header. On a
+    // restart that reopens the same parent session the runtime id can be a
+    // freshly minted value, and using it as origin authority would
+    // origin-mismatch every historical ref this session itself wrote.
+    const headerSessionId = readPersistedHeaderSessionId(probe);
+    return headerSessionId === undefined
+      ? {
+          persistence: "persistent",
+          sessionId: runtimeSessionId,
+          runtimeSessionId,
+          identitySource: "runtime",
+          sessionFile,
+        }
+      : {
+          persistence: "persistent",
+          sessionId: headerSessionId,
+          runtimeSessionId,
+          identitySource: "session-header",
+          sessionFile,
+        };
   },
   () => undefined,
 );

@@ -467,14 +467,26 @@ describe("parent session persistence", () => {
     file?: string | undefined;
     id?: string;
     throws?: boolean;
+    header?: unknown;
+    headerThrows?: boolean;
   }) {
-    return {
+    const base = {
       isPersisted: () => {
         if (overrides.throws === true) throw new Error("host exploded");
         return overrides.persisted ?? true;
       },
       getSessionFile: () => overrides.file,
       getSessionId: () => overrides.id ?? "session-1",
+    };
+    if (overrides.header === undefined && overrides.headerThrows !== true) {
+      return base;
+    }
+    return {
+      ...base,
+      getHeader: () => {
+        if (overrides.headerThrows === true) throw new Error("header exploded");
+        return overrides.header as { id?: unknown } | null;
+      },
     };
   }
 
@@ -485,8 +497,88 @@ describe("parent session persistence", () => {
     expect(state).toEqual({
       persistence: "persistent",
       sessionId: "session-a",
+      runtimeSessionId: "session-a",
+      identitySource: "runtime",
       sessionFile: "/sessions/a.jsonl",
     });
+  });
+
+  it("prefers the persisted header id over an ephemeral runtime id", () => {
+    // A restart that reopens the same parent session can probe while the
+    // host still reports a freshly minted runtime id. The persisted header
+    // is the stable identity historical refs were written against.
+    const state = probeParentSession(
+      probe({
+        persisted: true,
+        file: "/sessions/a.jsonl",
+        id: "runtime-9",
+        header: { type: "session", id: "session-a", cwd: "/w" },
+      }),
+    );
+    expect(state).toEqual({
+      persistence: "persistent",
+      sessionId: "session-a",
+      runtimeSessionId: "runtime-9",
+      identitySource: "session-header",
+      sessionFile: "/sessions/a.jsonl",
+    });
+  });
+
+  it("uses the fork's own header id, never the source session id", () => {
+    // Forking writes a new header id and records the source in
+    // `parentSession`. Origin authority follows the new id, so refs copied
+    // from the source session stay excluded.
+    const state = probeParentSession(
+      probe({
+        persisted: true,
+        file: "/sessions/fork.jsonl",
+        id: "session-fork",
+        header: {
+          type: "session",
+          id: "session-fork",
+          parentSession: "/sessions/a.jsonl",
+        },
+      }),
+    );
+    expect(state.persistence === "persistent" && state.sessionId).toBe(
+      "session-fork",
+    );
+  });
+
+  it.each([
+    ["absent header", null],
+    ["non-object header", "session-a"],
+    ["empty header id", { type: "session", id: "" }],
+    ["non-string header id", { type: "session", id: 42 }],
+    ["oversized header id", { type: "session", id: "x".repeat(257) }],
+  ])("falls back to the runtime id for %s", (_name, header) => {
+    const state = probeParentSession(
+      probe({
+        persisted: true,
+        file: "/sessions/a.jsonl",
+        id: "runtime-9",
+        header,
+      }),
+    );
+    expect(state).toEqual({
+      persistence: "persistent",
+      sessionId: "runtime-9",
+      runtimeSessionId: "runtime-9",
+      identitySource: "runtime",
+      sessionFile: "/sessions/a.jsonl",
+    });
+  });
+
+  it("treats a throwing header probe as unknown, never fabricating an id", () => {
+    const state = probeParentSession(
+      probe({
+        persisted: true,
+        file: "/sessions/a.jsonl",
+        id: "runtime-9",
+        headerThrows: true,
+      }),
+    );
+    expect(state).toEqual({ persistence: "unknown", reason: "probe-failed" });
   });
 
   it("reports a --no-session parent as ephemeral from the host answer alone", () => {
@@ -593,6 +685,8 @@ describe("parent session persistence", () => {
     expect(session.getParentSession()).toEqual({
       persistence: "persistent",
       sessionId: "session-b",
+      runtimeSessionId: "session-b",
+      identitySource: "runtime",
       sessionFile: "/sessions/b.jsonl",
     });
     expect(session.requirePersistentParent("delegate").isOk()).toBe(true);
