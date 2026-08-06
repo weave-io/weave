@@ -1,17 +1,19 @@
 import { describe, expect, it } from "bun:test";
+import { errAsync, okAsync } from "neverthrow";
 import {
   buildChildPickerEntries,
   buildChildPickerMetadataEntries,
   childPickerTaskFirstLine,
+  collectChildPickerCandidates,
   createChildPickerEntries,
   createChildPickerMetadataEntries,
   moveChildPicker,
   PI_CHILD_PICKER_BOUNDS,
   PI_CHILD_PICKER_STATUSES,
-  resolveChildPickerTitle,
-  sanitizeChildPickerPreview,
   type PiChildPickerCandidate,
   type PiChildPickerStatus,
+  resolveChildPickerTitle,
+  sanitizeChildPickerPreview,
 } from "../child-picker.js";
 
 const node = (childId: string, overrides: Record<string, unknown> = {}) => ({
@@ -152,7 +154,9 @@ describe("child picker metadata", () => {
       ),
     });
     expect(result.isOk()).toBe(true);
-    const statuses = new Set(result._unsafeUnwrap().map((entry) => entry.status));
+    const statuses = new Set(
+      result._unsafeUnwrap().map((entry) => entry.status),
+    );
     for (const status of PI_CHILD_PICKER_STATUSES) {
       expect(statuses.has(status)).toBe(true);
     }
@@ -180,7 +184,11 @@ describe("child picker metadata", () => {
           createdAt: 40,
           status: "failed",
         }),
-        candidate("active-2", { active: true, treeOrder: 2, status: "running" }),
+        candidate("active-2", {
+          active: true,
+          treeOrder: 2,
+          status: "running",
+        }),
         candidate("active-1", { active: true, treeOrder: 1, status: "queued" }),
       ],
     });
@@ -241,9 +249,7 @@ describe("child picker metadata", () => {
   it("injects the local timestamp formatter", () => {
     const result = buildChildPickerMetadataEntries({
       formatTimestamp: (ms) => `fmt(${ms})`,
-      candidates: [
-        candidate("c1", { updatedAt: 42, status: "settled" }),
-      ],
+      candidates: [candidate("c1", { updatedAt: 42, status: "settled" })],
     });
     expect(result._unsafeUnwrap()[0]?.timestampLabel).toBe("fmt(42)");
   });
@@ -252,12 +258,18 @@ describe("child picker metadata", () => {
     const result = buildChildPickerMetadataEntries({
       formatTimestamp,
       candidates: [
-        candidate("ok", { sourceState: "available", status: "running", active: true }),
+        candidate("ok", {
+          sourceState: "available",
+          status: "running",
+          active: true,
+        }),
         candidate("stale", { sourceState: "stale", status: "running" }),
         candidate("gone", { sourceState: "unavailable", status: "settled" }),
       ],
     });
-    expect(result._unsafeUnwrap().map((entry) => entry.childId)).toEqual(["ok"]);
+    expect(result._unsafeUnwrap().map((entry) => entry.childId)).toEqual([
+      "ok",
+    ]);
   });
 
   it("includes orphan candidates as read-only", () => {
@@ -298,5 +310,88 @@ describe("child picker metadata", () => {
         ],
       }).isErr(),
     ).toBe(true);
+  });
+});
+
+describe("child picker candidate collection", () => {
+  const activeChild = (childId: string, treeOrder: number) => ({
+    childId,
+    threadId: `thread-${childId}`,
+    status: "running" as const,
+    agent: childId,
+    createdAt: treeOrder,
+    updatedAt: treeOrder,
+    treeOrder,
+  });
+
+  it("keeps live children when the ref scan is unusable", async () => {
+    const collected = await collectChildPickerCandidates({
+      active: [activeChild("child-a", 10), activeChild("child-b", 20)],
+      workspaceKey: "/repo",
+      parentSessionId: "parent-session",
+      cacheDegraded: true,
+      refs: {
+        readRefs: () => errAsync({ type: "ChildRefParentUnavailable" }),
+      },
+    });
+
+    expect(collected.isOk()).toBe(true);
+    expect(collected._unsafeUnwrap().map((row) => row.childId)).toEqual([
+      "child-a",
+      "child-b",
+    ]);
+  });
+
+  it("keeps live children when the cache list and the ref scan both fail", async () => {
+    const collected = await collectChildPickerCandidates({
+      active: [activeChild("child-a", 10)],
+      workspaceKey: "/repo",
+      parentSessionId: "parent-session",
+      cache: {
+        list: () => errAsync("cache down"),
+        validate: () => okAsync("available" as const),
+      },
+      refs: { readRefs: () => errAsync("refs down") },
+    });
+
+    expect(collected._unsafeUnwrap().map((row) => row.childId)).toEqual([
+      "child-a",
+    ]);
+  });
+
+  it("bounds an over-long settled title into a valid agent label", async () => {
+    const collected = await collectChildPickerCandidates({
+      active: [],
+      workspaceKey: "/repo",
+      parentSessionId: "parent-session",
+      cacheDegraded: true,
+      refs: {
+        readRefs: () =>
+          okAsync([
+            {
+              childId: "settled-1",
+              threadId: "thread-settled-1",
+              title: "t".repeat(400),
+              status: "completed",
+              createdAt: 1,
+              updatedAt: 2,
+              originParentSessionId: "parent-session",
+            },
+          ]),
+      },
+    });
+
+    const rows = collected._unsafeUnwrap();
+    expect(rows[0]?.agent.length).toBeLessThanOrEqual(
+      PI_CHILD_PICKER_BOUNDS.maxLabelLength,
+    );
+    const entries = buildChildPickerMetadataEntries({
+      formatTimestamp,
+      candidates: rows,
+    });
+    expect(entries.isOk()).toBe(true);
+    expect(entries._unsafeUnwrap().map((entry) => entry.childId)).toEqual([
+      "settled-1",
+    ]);
   });
 });

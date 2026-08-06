@@ -1,4 +1,4 @@
-import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
+import { err, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 
 export type PiChildPickerKind =
   | "root"
@@ -70,7 +70,9 @@ export const PI_CHILD_PICKER_STATUSES = Object.freeze([
 
 export type PiChildPickerStatus = (typeof PI_CHILD_PICKER_STATUSES)[number];
 
-const PICKER_STATUS_SET: ReadonlySet<string> = new Set(PI_CHILD_PICKER_STATUSES);
+const PICKER_STATUS_SET: ReadonlySet<string> = new Set(
+  PI_CHILD_PICKER_STATUSES,
+);
 
 /** Authoritative-source availability for one picker candidate. */
 export type PiChildPickerSourceState =
@@ -122,14 +124,12 @@ export interface PiChildPickerMetadataInput {
 }
 
 const MAX_PICKER_PREVIEW_LENGTH = 240;
-const ANSI_ESCAPE_PATTERN = new RegExp(
-  String.raw`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)?)`,
-  "g",
-);
-const CONTROL_CHARACTER_PATTERN = new RegExp(
-  String.raw`[\u0000-\u001f\u007f]`,
-  "g",
-);
+// Built from named sources rather than inline literals: a regex literal here
+// would carry control characters, which the repo lint forbids.
+const ANSI_ESCAPE_SOURCE = String.raw`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)?)`;
+const CONTROL_CHARACTER_SOURCE = String.raw`[\u0000-\u001f\u007f]`;
+const ANSI_ESCAPE_PATTERN = new RegExp(ANSI_ESCAPE_SOURCE, "g");
+const CONTROL_CHARACTER_PATTERN = new RegExp(CONTROL_CHARACTER_SOURCE, "g");
 function sanitize(value: string | undefined): string {
   if (!value) return "";
   const clean = value
@@ -151,9 +151,7 @@ function boundLabel(value: string, max: number): string {
 /**
  * First line of a task only. Never returns the remainder of a multi-line task.
  */
-export function childPickerTaskFirstLine(
-  value: string | undefined,
-): string {
+export function childPickerTaskFirstLine(value: string | undefined): string {
   if (!value) return "";
   const firstLine = value.split(/\r\n|\n|\r/, 1)[0] ?? "";
   return boundLabel(
@@ -269,7 +267,10 @@ function validateMetadataCandidate(
       detail: "treeOrder must be a finite number",
     });
   }
-  if (!candidate.agent || candidate.agent.length > PI_CHILD_PICKER_BOUNDS.maxLabelLength) {
+  if (
+    !candidate.agent ||
+    candidate.agent.length > PI_CHILD_PICKER_BOUNDS.maxLabelLength
+  ) {
     return err({
       type: "invalid-picker-input",
       detail: "agent must be a non-empty bounded label",
@@ -329,7 +330,10 @@ export function buildChildPickerMetadataEntries(
       timestampLabel: input.formatTimestamp(candidate.updatedAt),
       active: candidate.active,
       treeOrder: candidate.treeOrder,
-      agent: boundLabel(sanitize(candidate.agent), PI_CHILD_PICKER_BOUNDS.maxLabelLength),
+      agent: boundLabel(
+        sanitize(candidate.agent),
+        PI_CHILD_PICKER_BOUNDS.maxLabelLength,
+      ),
       readOnly: orphan,
       sourceState: orphan ? "orphan" : "available",
       createdAt: candidate.createdAt,
@@ -439,7 +443,10 @@ function clampCandidateLimit(limit: number | undefined): number {
   if (limit === undefined || !Number.isFinite(limit)) {
     return PI_CHILD_PICKER_BOUNDS.maxCandidates;
   }
-  return Math.max(1, Math.min(Math.floor(limit), PI_CHILD_PICKER_BOUNDS.maxCandidates));
+  return Math.max(
+    1,
+    Math.min(Math.floor(limit), PI_CHILD_PICKER_BOUNDS.maxCandidates),
+  );
 }
 
 function activeCandidate(
@@ -471,7 +478,8 @@ function activeCandidate(
 /**
  * A settled row's stored title is already the Task 9 resolved title, so it is
  * offered as the explicit title and never re-derived from a task string the
- * picker does not (and must not) have.
+ * picker does not (and must not) have. The derived agent label is bounded
+ * here, because a stored title may legitimately be longer than a label.
  */
 function settledCandidate(
   row: PiChildPickerCacheRecord | PiChildPickerRefRecord,
@@ -479,12 +487,16 @@ function settledCandidate(
 ): PiChildPickerCandidate | undefined {
   const status = coerceStatus(row.status);
   if (status === undefined) return undefined;
+  const agent = boundLabel(
+    sanitize(row.title),
+    PI_CHILD_PICKER_BOUNDS.maxLabelLength,
+  );
   return {
     childId: row.childId,
     threadId: row.threadId,
     status,
     ...(row.title.length === 0 ? {} : { explicitTitle: row.title }),
-    agent: row.title.length === 0 ? "child" : row.title,
+    agent: agent.length === 0 ? "child" : agent,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     active: false,
@@ -500,6 +512,10 @@ function settledCandidate(
  * degraded or absent, the bounded current-parent Task 5 ref scan is used
  * instead. Rows from another parent session are kept as read-only orphans;
  * stale and unavailable rows are dropped here and never reach the list.
+ *
+ * Active children are authoritative on their own: they are running in this
+ * very process. An unusable cache or ref scan therefore only removes settled
+ * rows; it never removes the live children, and never fails the collection.
  */
 export function collectChildPickerCandidates(
   input: PiChildPickerCandidateInput,
@@ -525,27 +541,30 @@ export function collectChildPickerCandidates(
   > => {
     const refs = input.refs;
     if (refs === undefined) return okAsync(Object.freeze(candidates));
-    return refs
-      .readRefs({ limit: remaining })
-      .mapErr(
-        (): PiChildPickerError => ({
-          type: "invalid-picker-input",
-          detail: "ref fallback unavailable",
-        }),
-      )
-      .map((rows) => {
-        for (const row of rows.slice(0, remaining)) {
-          if (seen.has(row.childId)) continue;
-          const candidate = settledCandidate(
-            row,
-            orphanOf(row.originParentSessionId),
-          );
-          if (candidate === undefined) continue;
-          seen.add(row.childId);
-          candidates.push(candidate);
-        }
-        return Object.freeze(candidates);
-      });
+    return (
+      refs
+        .readRefs({ limit: remaining })
+        .map((rows) => {
+          for (const row of rows.slice(0, remaining)) {
+            if (seen.has(row.childId)) continue;
+            const candidate = settledCandidate(
+              row,
+              orphanOf(row.originParentSessionId),
+            );
+            if (candidate === undefined) continue;
+            seen.add(row.childId);
+            candidates.push(candidate);
+          }
+          return Object.freeze(candidates) as readonly PiChildPickerCandidate[];
+        })
+        // An unusable ref scan is a missing settled history, not a broken
+        // picker: the already-collected live children stay listable.
+        .orElse(() =>
+          okAsync(
+            Object.freeze(candidates) as readonly PiChildPickerCandidate[],
+          ),
+        )
+    );
   };
 
   const cache = input.cache;
@@ -571,9 +590,7 @@ export function collectChildPickerCandidates(
       // before it is offered; a cached row alone is never trusted.
       return ResultAsync.combine(
         rows.map((row) =>
-          cache
-            .validate(row.childId)
-            .map((state) => ({ row, state }) as const),
+          cache.validate(row.childId).map((state) => ({ row, state }) as const),
         ),
       )
         .mapErr(

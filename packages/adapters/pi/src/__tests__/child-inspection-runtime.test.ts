@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { errAsync, okAsync } from "neverthrow";
 import {
   clearChildOverlayGeneration,
   clearThreadSources,
@@ -854,5 +855,217 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
 
     expect([...overlayKeysCell.diagnostics]).toEqual(afterFirst);
     expect(input.listeners.length).toBe(0);
+  });
+});
+
+/**
+ * Task 20 item (d): a live session has authoritative live children while the
+ * Task 5 ref scan and Task 6 cache are unusable. The picker must still list
+ * every live child; only truly invalid bounded data may fail closed.
+ */
+describe("live child picker with degraded thread sources", () => {
+  async function liveRegistry(
+    ...children: readonly (readonly [string, number])[]
+  ): Promise<PiChildInspectionRegistry> {
+    const registry = new PiChildInspectionRegistry();
+    for (const [childId, startedAtMs] of children) {
+      await registry.register({
+        id: childId,
+        parentId: ROOT_NODE_ID,
+        name: childId,
+        kind: "ordinary",
+        snapshot: () => ({
+          id: childId,
+          parentId: undefined,
+          name: childId,
+          status: "running",
+          currentTurn: 1,
+          currentTool: undefined,
+          startedAtMs,
+          elapsedMs: 5,
+          usage: {} as never,
+          latestOutput: "",
+        }),
+      });
+    }
+    return registry;
+  }
+
+  function pickerHarness(
+    registry: PiChildInspectionRegistry | undefined,
+    refs: unknown,
+  ): {
+    readonly runtime: ReturnType<typeof createChildInspectionRuntime>;
+    readonly selectCalls: (readonly string[])[];
+    readonly notices: { message: string; level: string }[];
+    readonly focused: string[];
+    readonly ctx: never;
+  } {
+    const overlayCell = createChildOverlayCell();
+    const overlayKeysCell = createChildOverlayKeysCell(() => 1);
+    const editorCell = createChildInspectionEditorCell();
+    const focused: string[] = [];
+    editorCell.activate = (childId) => {
+      focused.push(childId);
+    };
+    const registryCell = createChildInspectionRegistryCell();
+    registryCell.registry = registry;
+    const threadSourcesCell = createThreadSourcesCell();
+    threadSourcesCell.refs = refs as never;
+    const selectCalls: (readonly string[])[] = [];
+    const notices: { message: string; level: string }[] = [];
+    const ctx = {
+      cwd: "/repo",
+      hasUI: true,
+      ui: {
+        notify: (message: string, level: string) =>
+          notices.push({ message, level }),
+        select: async (_title: string, labels: readonly string[]) => {
+          selectCalls.push([...labels]);
+          return undefined;
+        },
+      },
+    } as never;
+    const runtime = createChildInspectionRuntime({
+      overlayCell,
+      overlayKeysCell,
+      inspectionEditorCell: editorCell,
+      inspectionRegistryCell: registryCell,
+      treeSelectionCell: createChildTreeSelectionCell(),
+      threadSourcesCell,
+      delegationControllerCell: createDelegationControllerCell(),
+      latestSessionCtx: () => ctx,
+      activeGenerationId: () => "gen-1",
+      parentSessionState: () => ({
+        persistence: "persistent",
+        sessionId: "parent-session",
+      }),
+      childInspectionSettings: () => undefined,
+      closeOverlay: () => closeChildOverlay(overlayCell, overlayKeysCell),
+    });
+    return { runtime, selectCalls, notices, focused, ctx };
+  }
+
+  /**
+   * Models the live transition observed in isolated Pi 0.83: the bounded ref
+   * scan succeeds while no child exists and becomes unusable once children do,
+   * because each ref's authoritative source is checked during the scan.
+   */
+  function refsUnusableWithChildren(hasChildren: () => boolean): unknown {
+    return {
+      liveParentSessionId: () => "parent-session",
+      readRefs: () =>
+        hasChildren()
+          ? errAsync({ type: "ChildRefParentUnavailable" as const })
+          : okAsync({ refs: [] }),
+    };
+  }
+
+  test("reports no children before any child exists", async () => {
+    const { runtime, selectCalls, notices, ctx } = pickerHarness(
+      await liveRegistry(),
+      refsUnusableWithChildren(() => false),
+    );
+
+    await runtime.openChildPicker(ctx, "gen-1");
+
+    expect(selectCalls).toEqual([]);
+    expect(notices).toEqual([
+      { message: "No Weave children are available to inspect.", level: "info" },
+    ]);
+  });
+
+  test("lists every live child when the ref scan is unusable", async () => {
+    const { runtime, selectCalls, notices, ctx } = pickerHarness(
+      await liveRegistry(["child-c", 30], ["child-a", 10], ["child-b", 20]),
+      refsUnusableWithChildren(() => true),
+    );
+
+    await runtime.openChildPicker(ctx, "gen-1");
+
+    expect(notices).toEqual([]);
+    expect(selectCalls.length).toBe(1);
+    const labels = selectCalls[0] ?? [];
+    expect(labels.length).toBe(3);
+    // Deterministic tree order (start time), active marker, title, status.
+    expect(labels[0]).toContain("child-a");
+    expect(labels[1]).toContain("child-b");
+    expect(labels[2]).toContain("child-c");
+    for (const label of labels) {
+      expect(label.startsWith("●")).toBe(true);
+      expect(label).toContain("[running]");
+      // The injected formatter renders a non-empty local timestamp.
+      expect(label.trim().endsWith("[running]")).toBe(false);
+    }
+  });
+
+  test("lists live children when a settled ref carries an over-long title", async () => {
+    const longTitle = "t".repeat(400);
+    const refs = {
+      liveParentSessionId: () => "parent-session",
+      readRefs: () =>
+        okAsync({
+          refs: [
+            {
+              childId: "settled-1",
+              threadId: "thread-settled-1",
+              title: longTitle,
+              status: "completed",
+              createdAt: 1,
+              updatedAt: 2,
+              originParentSessionId: "parent-session",
+            },
+          ],
+        }),
+    };
+    const { runtime, selectCalls, notices, ctx } = pickerHarness(
+      await liveRegistry(["child-a", 10]),
+      refs,
+    );
+
+    await runtime.openChildPicker(ctx, "gen-1");
+
+    expect(notices).toEqual([]);
+    const labels = selectCalls[0] ?? [];
+    expect(labels.length).toBe(2);
+    expect(labels[0]).toContain("child-a");
+    expect(labels[1]).toContain("[completed]");
+  });
+
+  test("fails closed on truly invalid bounded live data", async () => {
+    const registry = new PiChildInspectionRegistry();
+    await registry.register({
+      id: "child-bad",
+      parentId: ROOT_NODE_ID,
+      name: "child-bad",
+      kind: "ordinary",
+      snapshot: () => ({
+        id: "child-bad",
+        parentId: undefined,
+        name: "child-bad",
+        status: "running",
+        currentTurn: 1,
+        currentTool: undefined,
+        // A non-finite timestamp is out of bounds for the picker contract.
+        startedAtMs: Number.POSITIVE_INFINITY,
+        elapsedMs: 0,
+        usage: {} as never,
+        latestOutput: "",
+      }),
+    });
+    const { runtime, selectCalls, notices, ctx } = pickerHarness(
+      registry,
+      refsUnusableWithChildren(() => true),
+    );
+
+    await runtime.openChildPicker(ctx, "gen-1");
+
+    expect(selectCalls).toEqual([]);
+    expect(notices).toEqual([
+      {
+        message: "Child picker is unavailable in this session.",
+        level: "warning",
+      },
+    ]);
   });
 });
