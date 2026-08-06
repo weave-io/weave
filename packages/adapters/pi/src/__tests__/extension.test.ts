@@ -7871,6 +7871,69 @@ describe("createPiExtension: Task 13 overlay keys and picker", () => {
     await flushBackgroundWork();
     expect(host.customDoneCalls).toBe(doneBeforeEscape);
   });
+
+  it("binds the overlay input listener from the real before_agent_start wiring", async () => {
+    // Regression proof at the lifecycle level, not the runtime level: the raw
+    // terminal-input route is what carries Alt+I / Alt+1..Alt+9 under a
+    // foreign primary editor, and `before_agent_start` is the only recurring
+    // event that can install it once the session UI can carry a listener.
+    // Removing that registration makes every assertion below fail.
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.effectiveKeybindingConfig = {};
+    // Pi hands the extension runner one UI context per session bind.
+    host.stableSessionUi = true;
+    // Keys are planned while the session UI exposes no input listener at all.
+    host.supportsTerminalInput = false;
+    installTask13Extension(host);
+    await host.triggerSessionStart();
+    const altOneRegistrations = () =>
+      host.registerShortcutCalls.filter((call) => call.shortcut === "alt+1");
+    expect(altOneRegistrations()).toHaveLength(1);
+    expect(host.terminalInputListeners).toHaveLength(0);
+
+    // A later bind exposes `ui.onTerminalInput`; the applied plan must acquire
+    // the listener it never got, from the real lifecycle handler.
+    host.supportsTerminalInput = true;
+    host.invalidateSessionUi();
+    await host.triggerBeforeAgentStart();
+    expect(host.terminalInputListeners).toHaveLength(1);
+    const firstListener = host.terminalInputListeners[0];
+
+    // Further turns on the same live host are inert: no second listener.
+    await host.triggerBeforeAgentStart();
+    await host.triggerBeforeAgentStart();
+    expect(host.terminalInputListeners).toHaveLength(1);
+    expect(host.terminalInputListeners[0]).toBe(firstListener);
+
+    // Pi drops extension listeners silently on session invalidation and hands
+    // out a replacement UI context.
+    host.invalidateSessionUi();
+    expect(host.terminalInputListeners).toHaveLength(0);
+    await host.triggerBeforeAgentStart();
+    expect(host.terminalInputListeners).toHaveLength(1);
+    expect(host.terminalInputListeners[0]).not.toBe(firstListener);
+    // The rebind happens exactly once, not once per turn.
+    await host.triggerBeforeAgentStart();
+    await host.triggerBeforeAgentStart();
+    expect(host.terminalInputListeners).toHaveLength(1);
+    expect(host.terminalInputListeners[0]).not.toBe(firstListener);
+
+    // Raw shortcut registration stays exactly-once across all of it.
+    expect(altOneRegistrations()).toHaveLength(1);
+
+    // The rebound listener is a live route: one Alt+1 frame is consumed and
+    // dispatched exactly once, while ordinary input passes through.
+    const dispatches = () =>
+      host.notifyCalls.filter((call) =>
+        call.message.includes("weave overlay key ignored: no matching child"),
+      );
+    expect(dispatches()).toHaveLength(0);
+    expect(host.emitTerminalInput("\u001b1")).toBe(true);
+    expect(dispatches()).toHaveLength(1);
+    expect(host.emitTerminalInput("hello")).toBe(false);
+    expect(host.emitTerminalInput("\u001b")).toBe(false);
+    expect(dispatches()).toHaveLength(1);
+  });
 });
 
 describe("createPiExtension: real-dispatch active-child shortcut", () => {

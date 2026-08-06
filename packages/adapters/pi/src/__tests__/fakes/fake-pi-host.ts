@@ -263,6 +263,24 @@ export class RecordingFakePiHost {
   terminalInputUnsubscribeCalls = 0;
   /** Whether `ctx.ui` exposes `onTerminalInput` at all. */
   supportsTerminalInput = true;
+  /**
+   * When true, every session context reuses one `ui` object, the way Pi hands
+   * the extension runner a single `ExtensionUIContext` per session bind and
+   * exposes it by reference. Tests that model host invalidation flip this on
+   * and call {@link invalidateSessionUi} to replace the identity.
+   */
+  stableSessionUi = false;
+  private cachedSessionUi: PiUiPort | undefined;
+
+  /**
+   * Models Pi's `resetExtensionUI()`: extension terminal-input listeners are
+   * dropped without telling the extension, and the next session context
+   * carries a different `ui` object identity.
+   */
+  invalidateSessionUi(): void {
+    this.terminalInputListeners.length = 0;
+    this.cachedSessionUi = undefined;
+  }
 
   /**
    * Feeds one raw terminal frame through the registered listeners exactly the
@@ -732,7 +750,7 @@ export class RecordingFakePiHost {
         return this.availableModels;
       },
     };
-    const ui: PiUiPort = {
+    const builtUi: PiUiPort = {
       ...(this.theme === undefined ? {} : { theme: this.theme }),
       notify: (message, level) => {
         const failure = this.notifyFailure;
@@ -812,6 +830,10 @@ export class RecordingFakePiHost {
         return (await result) as never;
       },
     };
+    const ui: PiUiPort = this.stableSessionUi
+      ? (this.cachedSessionUi ?? builtUi)
+      : builtUi;
+    if (this.stableSessionUi) this.cachedSessionUi = ui;
     return Object.assign(
       {
         mode,
