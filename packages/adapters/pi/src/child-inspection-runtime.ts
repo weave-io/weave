@@ -130,6 +130,24 @@ export interface PiChildOverlayKeysCell {
    * so a reload can never stack two listeners on the same host.
    */
   terminalInput: (() => void) | undefined;
+  /**
+   * The host UI object the live listener was installed on, or `undefined`
+   * when no listener is installed.
+   *
+   * Pi drops every extension terminal-input listener without telling the
+   * extension: `InteractiveMode` registers
+   * `setBeforeSessionInvalidate(() => this.resetExtensionUI())`, and
+   * `resetExtensionUI` calls `clearExtensionTerminalInputListeners`, which
+   * runs each unsubscribe and empties the set. `/reload` takes the same route.
+   * The handle Weave holds therefore survives as an inert closure, which on
+   * its own would make the single-listener guard skip rebinding forever.
+   *
+   * Pi hands the extension runner one `ExtensionUIContext` per session bind
+   * and exposes it by reference (`get ui() { return runner.uiContext; }`), so
+   * the identity of this object is the reliable signal for "same live host":
+   * unchanged while the bind lasts, replaced after an invalidation or reload.
+   */
+  terminalInputHost: unknown;
   diagnostics: readonly string[];
   generationId: string | undefined;
 }
@@ -191,6 +209,7 @@ export function createChildOverlayKeysCell(
     machine: createChildOverlayKeyMachine({ now }),
     interceptor: undefined,
     terminalInput: undefined,
+    terminalInputHost: undefined,
     diagnostics: Object.freeze([PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC]),
     generationId: undefined,
   };
@@ -267,6 +286,7 @@ export function releaseChildOverlayTerminalInput(
 ): void {
   const unsubscribe = overlayKeysCell.terminalInput;
   overlayKeysCell.terminalInput = undefined;
+  overlayKeysCell.terminalInputHost = undefined;
   if (unsubscribe === undefined) return;
   Result.fromThrowable(
     () => unsubscribe(),
@@ -430,10 +450,22 @@ export function createChildInspectionRuntime(
 
   const reportOverlayKeyDiagnostic = (detail: string): void => {
     recordOverlayDiagnostic(detail);
-    const ctx = deps.latestSessionCtx();
-    if (ctx !== undefined && ctx.hasUI) {
-      ctx.ui.notify(detail, "warning");
-    }
+    // Pi's `ExtensionContext.ui` getter calls `assertActive()` and throws once
+    // the extension runner is marked stale, so a context retained across a
+    // session invalidation can throw on plain property access. A diagnostic is
+    // best-effort surface: it must never throw out of a lifecycle callback and
+    // abort key registration, so a dead host degrades to "recorded only".
+    Result.fromThrowable(
+      () => {
+        const ctx = deps.latestSessionCtx();
+        if (ctx === undefined || !ctx.hasUI) return;
+        ctx.ui.notify(detail, "warning");
+      },
+      () => "overlay_diagnostic_notify_failed" as const,
+    )().match(
+      () => undefined,
+      () => undefined,
+    );
   };
 
   const focusOverlayChild = (childId: string): void => {
@@ -744,6 +776,44 @@ export function createChildInspectionRuntime(
   };
 
   /**
+   * Resolves the live raw-input route, or `undefined` when there is none.
+   *
+   * Pi exposes `ctx.ui` through a getter that calls `assertActive()` and
+   * throws once the extension runner has been marked stale, so a context
+   * retained from a replaced session can throw on plain property access.
+   * Reading it through `Result.fromThrowable` keeps an invalidated host from
+   * throwing out of a lifecycle callback and degrades it to "no route", which
+   * is exactly what an invalidated context is.
+   *
+   * The returned `ui` is the host object itself, kept only so the caller can
+   * compare identity against {@link PiChildOverlayKeysCell.terminalInputHost}.
+   */
+  const readTerminalInputRoute = ():
+    | {
+        readonly ui: unknown;
+        readonly subscribe: (handler: PiTerminalInputHandler) => () => void;
+      }
+    | undefined =>
+    Result.fromThrowable(
+      () => {
+        const ctx = deps.latestSessionCtx();
+        if (ctx === undefined) return undefined;
+        const ui = ctx.ui;
+        const subscribe = ui.onTerminalInput;
+        if (subscribe === undefined) return undefined;
+        return {
+          ui,
+          subscribe: (handler: PiTerminalInputHandler) =>
+            subscribe.call(ui, handler),
+        };
+      },
+      () => undefined,
+    )().match(
+      (route) => route,
+      () => undefined,
+    );
+
+  /**
    * Installs the ownership-independent raw-input route for overlay keys.
    *
    * `pi.registerShortcut` is only reachable through Pi's *default* editor, so
@@ -764,23 +834,40 @@ export function createChildInspectionRuntime(
    *   from dispatching the same action a second time, since Pi stops routing a
    *   consumed frame.
    *
-   * Exactly one listener exists per generation, and generation teardown
-   * releases it through {@link releaseChildOverlayTerminalInput}.
+   * Exactly one listener exists per live host UI, and generation teardown
+   * releases it through {@link releaseChildOverlayTerminalInput}. When Pi
+   * silently clears listeners on session invalidation or reload, the next
+   * lifecycle call sees a new UI context and rebinds exactly once.
    */
   const bindOverlayTerminalInput = (
     generationId: string,
     diagnostics: string[],
   ): void => {
-    if (overlayKeysCell.terminalInput !== undefined) return;
-    const ctx = deps.latestSessionCtx();
-    const subscribe = ctx?.ui.onTerminalInput;
-    if (ctx === undefined || subscribe === undefined) {
+    const route = readTerminalInputRoute();
+    if (route === undefined) {
+      // No live route to install on. A handle taken from an earlier host is
+      // left in place: it cannot be replaced yet, and the next lifecycle call
+      // that does find a route releases it before rebinding.
+      if (overlayKeysCell.terminalInput !== undefined) return;
       if (diagnostics.length < PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics) {
         diagnostics.push(
           "weave overlay keys degraded: host exposes no ui.onTerminalInput, shortcuts reach the overlay only under Pi's default editor",
         );
       }
       return;
+    }
+    if (overlayKeysCell.terminalInput !== undefined) {
+      // The live host already carries this generation's listener, so there is
+      // nothing to install and a second one must never be stacked.
+      if (overlayKeysCell.terminalInputHost === route.ui) return;
+      // A different UI context is live, so Pi invalidated or reloaded the
+      // session since the handle was taken. `resetExtensionUI` already ran
+      // `clearExtensionTerminalInputListeners`, so the old listener is gone
+      // and the retained handle is inert; forgetting it here is what keeps
+      // the single-listener guard from skipping the rebind forever. Calling
+      // the stale handle is safe - Pi's per-listener unsubscribe is a
+      // remove-then-delete that no-ops once the listener is already gone.
+      releaseChildOverlayTerminalInput(overlayKeysCell);
     }
     const handler: PiTerminalInputHandler = (data) => {
       // The mounted overlay owns raw input through its own interceptor.
@@ -795,12 +882,13 @@ export function createChildInspectionRuntime(
       return { consume: true };
     };
     const installed = Result.fromThrowable(
-      () => subscribe.call(ctx.ui, handler),
+      () => route.subscribe(handler),
       () => "terminal_input_subscribe_failed" as const,
     )();
     installed.match(
       (unsubscribe) => {
         overlayKeysCell.terminalInput = unsubscribe;
+        overlayKeysCell.terminalInputHost = route.ui;
         overlayKeysCell.generationId = generationId;
       },
       () => {
@@ -946,7 +1034,15 @@ export function createChildInspectionRuntime(
   const retryOverlayTerminalInput = (generationId: string): void => {
     if (overlayKeysCell.status !== "applied") return;
     if (overlayKeysCell.plan === undefined) return;
-    if (overlayKeysCell.terminalInput !== undefined) return;
+    // A handle is only proof of a live listener while the host UI it was
+    // installed on is still the live one; after an invalidation or reload it
+    // is an inert closure and this generation still needs a listener.
+    if (
+      overlayKeysCell.terminalInput !== undefined &&
+      overlayKeysCell.terminalInputHost === readTerminalInputRoute()?.ui
+    ) {
+      return;
+    }
     const previous = overlayKeysCell.diagnostics;
     const diagnostics = [...previous];
     bindOverlayTerminalInput(generationId, diagnostics);

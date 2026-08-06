@@ -21,17 +21,21 @@ import type { PiExtensionApi, PiTerminalInputHandler } from "../types.js";
 function recordingPi(): {
   readonly pi: PiExtensionApi;
   readonly registered: Map<string, (ctx: never) => unknown>;
+  /** Total `registerShortcut` calls, so re-registration cannot hide in a Map. */
+  readonly registrationCalls: () => number;
 } {
   const registered = new Map<string, (ctx: never) => unknown>();
+  let registrationCalls = 0;
   const pi = {
     registerShortcut: (
       shortcut: string,
       registration: { handler: (ctx: never) => unknown },
     ) => {
+      registrationCalls += 1;
       registered.set(shortcut, registration.handler);
     },
   } as unknown as PiExtensionApi;
-  return { pi, registered };
+  return { pi, registered, registrationCalls: () => registrationCalls };
 }
 
 describe("child-inspection-runtime cells", () => {
@@ -324,6 +328,7 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     readonly onTerminalInput: (handler: PiTerminalInputHandler) => () => void;
     readonly listeners: PiTerminalInputHandler[];
     readonly emit: (data: string) => boolean;
+    readonly clearAll: () => void;
     unsubscribeCalls: number;
   } {
     const listeners: PiTerminalInputHandler[] = [];
@@ -338,6 +343,14 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
           listeners.splice(index, 1);
           host.unsubscribeCalls += 1;
         };
+      },
+      // Mirrors Pi's `clearExtensionTerminalInputListeners`: every extension
+      // listener is unsubscribed and the set emptied without telling the
+      // extension, so the handle Weave still holds becomes an inert closure.
+      // Deliberately silent, and deliberately not counted as an
+      // adapter-driven unsubscribe.
+      clearAll: () => {
+        listeners.length = 0;
       },
       // Mirrors Pi's TUI: listeners run before any component or shortcut
       // routing, and a consuming listener stops the frame.
@@ -390,6 +403,8 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     readonly focused: string[];
     readonly selects: string[];
     readonly notices: string[];
+    readonly invalidateHost: () => void;
+    readonly poisonHost: () => void;
   } {
     const overlayCell = createChildOverlayCell();
     const overlayKeysCell = createChildOverlayKeysCell(() => 1);
@@ -403,6 +418,28 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     const notices: string[] = [];
     const registryCell = createChildInspectionRegistryCell();
     registryCell.registry = registry;
+    // Pi hands the extension runner one `ExtensionUIContext` per session bind
+    // and exposes it by reference (`get ui() { return runner.uiContext; }`),
+    // so the context object is stable for as long as a bind lasts and is
+    // replaced only by the next bind. Modelling that identity faithfully is
+    // what makes the host-identity guard meaningful; a helper that rebuilt the
+    // context on every read would look like a permanent invalidation.
+    const buildCtx = (): never =>
+      ({
+        cwd: "/repo",
+        hasUI: true,
+        ui: {
+          notify: (message: string) => notices.push(message),
+          select: async (title: string) => {
+            selects.push(title);
+            return undefined;
+          },
+          ...(input === undefined
+            ? {}
+            : { onTerminalInput: input.onTerminalInput }),
+        },
+      }) as never;
+    let liveCtx = buildCtx();
     const runtime = createChildInspectionRuntime({
       overlayCell,
       overlayKeysCell,
@@ -411,21 +448,7 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
       treeSelectionCell,
       threadSourcesCell: createThreadSourcesCell(),
       delegationControllerCell: createDelegationControllerCell(),
-      latestSessionCtx: () =>
-        ({
-          cwd: "/repo",
-          hasUI: true,
-          ui: {
-            notify: (message: string) => notices.push(message),
-            select: async (title: string) => {
-              selects.push(title);
-              return undefined;
-            },
-            ...(input === undefined
-              ? {}
-              : { onTerminalInput: input.onTerminalInput }),
-          },
-        }) as never,
+      latestSessionCtx: () => liveCtx,
       activeGenerationId: () => "gen-1",
       parentSessionState: () => ({ persistence: "unknown", sessionId: "" }),
       childInspectionSettings: () => undefined,
@@ -440,6 +463,27 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
       focused,
       selects,
       notices,
+      // Models one full Pi session invalidation: `resetExtensionUI` clears
+      // every extension terminal-input listener, and the following bind hands
+      // the runner a fresh `ExtensionUIContext`.
+      invalidateHost: () => {
+        input?.clearAll();
+        liveCtx = buildCtx();
+      },
+      // Models a context retained across a session invalidation with no
+      // replacement bind yet: Pi's `ExtensionContext.ui` getter calls
+      // `assertActive()` and throws once the runner is stale, so plain
+      // property access on the retained context throws.
+      poisonHost: () => {
+        input?.clearAll();
+        liveCtx = {
+          cwd: "/repo",
+          hasUI: true,
+          get ui(): never {
+            throw new Error("extension context is no longer active");
+          },
+        } as never;
+      },
     };
   }
 
@@ -549,6 +593,9 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     expect(input.listeners.length).toBe(0);
     expect(input.unsubscribeCalls).toBe(1);
     expect(overlayKeysCell.terminalInput).toBeUndefined();
+    // Teardown drops the host identity with the handle, so the next
+    // generation cannot mistake a dead host for the live one.
+    expect(overlayKeysCell.terminalInputHost).toBeUndefined();
 
     runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
     expect(input.listeners.length).toBe(1);
@@ -559,6 +606,84 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     // Releasing twice is safe and does not unsubscribe anything else.
     releaseChildOverlayTerminalInput(overlayKeysCell);
     expect(input.unsubscribeCalls).toBe(2);
+  });
+
+  test("a silently cleared listener is rebound once on the next live host", async () => {
+    const { pi, registered, registrationCalls } = recordingPi();
+    const input = terminalInputHost();
+    const { runtime, overlayKeysCell, focused, invalidateHost } =
+      runtimeUnderForeignEditor(await registryWithChildren("child-1"), input);
+
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    expect(input.listeners.length).toBe(1);
+    const boundHost = overlayKeysCell.terminalInputHost;
+    expect(boundHost).toBeDefined();
+    const afterFirstRegistration = registrationCalls();
+
+    // Pi's `setBeforeSessionInvalidate` -> `resetExtensionUI` ->
+    // `clearExtensionTerminalInputListeners` empties the listener set without
+    // telling the extension, and the next bind presents a fresh UI context.
+    invalidateHost();
+    expect(input.listeners.length).toBe(0);
+    // The clear is silent: it is not an adapter-driven unsubscribe, and the
+    // retained handle survives as an inert closure.
+    expect(input.unsubscribeCalls).toBe(0);
+    expect(overlayKeysCell.terminalInput).toBeDefined();
+
+    // The next lifecycle retry sees a different live host and rebinds.
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    expect(input.listeners.length).toBe(1);
+    expect(overlayKeysCell.terminalInputHost).not.toBe(boundHost);
+
+    // Alt+1 dispatches exactly once through the single live listener.
+    expect(input.emit("\u001b1")).toBe(true);
+    expect(focused).toEqual(["child-1"]);
+
+    // A repeated retry against the same live host adds no duplicate, so the
+    // action still fires once per key frame.
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    expect(input.listeners.length).toBe(1);
+    focused.length = 0;
+    expect(input.emit("\u001b1")).toBe(true);
+    expect(focused).toEqual(["child-1"]);
+
+    // Rebinding raw input never re-runs host shortcut registration.
+    expect(registrationCalls()).toBe(afterFirstRegistration);
+    expect(registered.has("alt+1")).toBe(true);
+  });
+
+  test("a stale ui context that throws is contained, not propagated", async () => {
+    const { pi, registered, registrationCalls } = recordingPi();
+    const input = terminalInputHost();
+    const { runtime, overlayKeysCell, focused, poisonHost, invalidateHost } =
+      runtimeUnderForeignEditor(await registryWithChildren("child-1"), input);
+
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    expect(input.listeners.length).toBe(1);
+    const afterFirstRegistration = registrationCalls();
+    const afterFirstDiagnostics = [...overlayKeysCell.diagnostics];
+
+    // The retained context is now dead: reading `ctx.ui` throws.
+    poisonHost();
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      expect(() =>
+        runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1"),
+      ).not.toThrow();
+    }
+    // A dead host degrades to "no route" and stays bounded: no listener is
+    // installed, no diagnostic accumulates, and registration does not repeat.
+    expect(input.listeners.length).toBe(0);
+    expect([...overlayKeysCell.diagnostics]).toEqual(afterFirstDiagnostics);
+    expect(registrationCalls()).toBe(afterFirstRegistration);
+    expect(registered.has("alt+1")).toBe(true);
+
+    // Once Pi binds a live context again, the route is restored exactly once.
+    invalidateHost();
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    expect(input.listeners.length).toBe(1);
+    expect(input.emit("\u001b1")).toBe(true);
+    expect(focused).toEqual(["child-1"]);
   });
 
   test("degrades with a diagnostic when the host exposes no input listener", async () => {
@@ -594,6 +719,7 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     readonly overlayKeysCell: ReturnType<typeof createChildOverlayKeysCell>;
     readonly focused: string[];
     readonly exposeTerminalInput: () => void;
+    readonly invalidateHost: () => void;
   } {
     let terminalInputLive = false;
     const overlayCell = createChildOverlayCell();
@@ -605,6 +731,21 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     };
     const registryCell = createChildInspectionRegistryCell();
     registryCell.registry = registry;
+    // Stable per bind, replaced only when Pi would hand the runner a new
+    // `ExtensionUIContext`. See the note in `runtimeUnderForeignEditor`.
+    const buildCtx = (): never =>
+      ({
+        cwd: "/repo",
+        hasUI: true,
+        ui: {
+          notify: () => undefined,
+          select: async () => undefined,
+          ...(terminalInputLive
+            ? { onTerminalInput: input.onTerminalInput }
+            : {}),
+        },
+      }) as never;
+    let liveCtx = buildCtx();
     const runtime = createChildInspectionRuntime({
       overlayCell,
       overlayKeysCell,
@@ -613,18 +754,7 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
       treeSelectionCell: createChildTreeSelectionCell(),
       threadSourcesCell: createThreadSourcesCell(),
       delegationControllerCell: createDelegationControllerCell(),
-      latestSessionCtx: () =>
-        ({
-          cwd: "/repo",
-          hasUI: true,
-          ui: {
-            notify: () => undefined,
-            select: async () => undefined,
-            ...(terminalInputLive
-              ? { onTerminalInput: input.onTerminalInput }
-              : {}),
-          },
-        }) as never,
+      latestSessionCtx: () => liveCtx,
       activeGenerationId: () => "gen-1",
       parentSessionState: () => ({ persistence: "unknown", sessionId: "" }),
       childInspectionSettings: () => undefined,
@@ -638,6 +768,13 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
       focused,
       exposeTerminalInput: () => {
         terminalInputLive = true;
+        // Gaining the raw-input route is itself a rebind in Pi: the next
+        // `bindCurrentSessionExtensions` builds a fresh context.
+        liveCtx = buildCtx();
+      },
+      invalidateHost: () => {
+        input.clearAll();
+        liveCtx = buildCtx();
       },
     };
   }
