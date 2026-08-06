@@ -619,6 +619,43 @@ export function createChildInspectionRuntime(
     focusOverlayChild(entry.childId);
   };
 
+  /**
+   * Hands one raw overlay scroll frame to the mounted overlay component.
+   *
+   * Pi 0.83 routes PageUp/PageDown to its own paging route before a mounted
+   * `ui.custom` component, so the ownership-independent terminal-input
+   * listener claims those frames and delivers them here instead. Delivery is
+   * exactly once - the listener consumes only what this reports as
+   * delivered - and it fails closed on every mismatch: a stale session
+   * context, a generation that is no longer current, an overlay mounted for a
+   * different generation, a closed overlay, a missing component, or a
+   * throwing dispatch target all report `false` and leave the frame on its
+   * existing host route rather than sending it to the wrong session.
+   */
+  const dispatchOverlayScroll = (
+    data: string,
+    generationId: string,
+  ): boolean => {
+    if (deps.latestSessionCtx() === undefined) return false;
+    if (deps.activeGenerationId() !== generationId) return false;
+    if (!childOverlayCell.open) return false;
+    if (
+      childOverlayCell.generationId !== undefined &&
+      childOverlayCell.generationId !== generationId
+    ) {
+      return false;
+    }
+    const component = childOverlayCell.component;
+    if (component === undefined) return false;
+    return Result.fromThrowable(
+      () => {
+        component.handleInput(data);
+        return true;
+      },
+      () => "overlay_scroll_dispatch_failed" as const,
+    )().unwrapOr(false);
+  };
+
   const dispatchOverlayAction = (
     action: PiChildOverlayAction,
     generationId: string,
@@ -759,6 +796,8 @@ export function createChildInspectionRuntime(
     activeGenerationId: deps.activeGenerationId,
     dispatchOverlayAction: (action, generationId) =>
       dispatchOverlayAction(action, generationId),
+    dispatchOverlayScroll: (data, generationId) =>
+      dispatchOverlayScroll(data, generationId),
   });
 
   /**

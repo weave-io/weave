@@ -22,7 +22,20 @@ import {
   type PiChildOverlayAction,
   type PiChildOverlayKeyPlan,
 } from "./child-overlay-keys.js";
+import { scrollDelta } from "./child-overlay-scroll.js";
 import type { PiSessionContext, PiTerminalInputHandler } from "./types.js";
+
+/**
+ * Whether a raw frame is one of the six overlay scroll frames.
+ *
+ * The set is exactly {@link scrollDelta}'s domain - PageUp, PageDown,
+ * Shift+Up, Shift+Down, Home, End - so the mounted overlay and this route can
+ * never disagree about which frames belong to scrolling. Anything else, from
+ * ordinary text to an unrecognized CSI sequence, is not a scroll frame.
+ */
+export function isChildOverlayScrollFrame(data: string): boolean {
+  return scrollDelta(data) !== undefined;
+}
 
 /**
  * The overlay-keys state this module reads and owns.
@@ -55,6 +68,19 @@ export interface PiChildOverlayTerminalInputDeps {
     action: PiChildOverlayAction,
     generationId: string,
   ) => void;
+  /**
+   * Hands one raw overlay scroll frame to the mounted overlay of the
+   * generation that owns it, reporting whether it was actually delivered.
+   *
+   * `false` means "not delivered" for every reason - no mounted component, a
+   * generation that is no longer current, a stale session context, a throwing
+   * dispatch target - and the frame is then left on its existing host route
+   * rather than silently swallowed.
+   */
+  readonly dispatchOverlayScroll: (
+    data: string,
+    generationId: string,
+  ) => boolean;
 }
 
 export interface PiChildOverlayTerminalInputBinder {
@@ -185,8 +211,23 @@ export function createChildOverlayTerminalInputBinder(
       releaseChildOverlayTerminalInput(state);
     }
     const handler: PiTerminalInputHandler = (data) => {
-      // The mounted overlay owns raw input through its own interceptor.
-      if (deps.isOverlayOpen()) return undefined;
+      if (deps.isOverlayOpen()) {
+        // The mounted overlay owns raw input through its own interceptor -
+        // except for paging. Pi 0.83 claims PageUp/PageDown for its own
+        // editor/global paging route *before* the mounted custom component
+        // sees them, so under a real PTY the overlay never disengaged live
+        // tail and never showed the newer-lines cue. Extension terminal-input
+        // listeners run before that route, so the six overlay scroll frames -
+        // and only those - are claimed here and dispatched to the mounted
+        // overlay exactly once. Every other frame still falls through to the
+        // component, which keeps Enter, Alt+Enter, Escape, the draft editor,
+        // and search on their existing routes.
+        if (!isChildOverlayScrollFrame(data)) return undefined;
+        const mounted = deps.activeGenerationId();
+        if (mounted === undefined) return undefined;
+        if (!deps.dispatchOverlayScroll(data, mounted)) return undefined;
+        return { consume: true };
+      }
       const plan = state.plan;
       if (plan === undefined) return undefined;
       const action = classifyChildOverlayKey(plan, data);

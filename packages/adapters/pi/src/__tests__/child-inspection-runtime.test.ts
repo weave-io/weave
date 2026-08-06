@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { getKeybindings } from "@earendil-works/pi-tui";
 import { errAsync, okAsync } from "neverthrow";
 import {
   clearChildOverlayGeneration,
@@ -14,7 +15,14 @@ import {
   createThreadSourcesCell,
   releaseChildOverlayTerminalInput,
 } from "../child-inspection-runtime.js";
+import {
+  createChildOverlayController,
+  createChildOverlayCustomComponent,
+  createMemoryChildOverlaySource,
+  type MemoryOverlaySourceEntry,
+} from "../child-overlay.js";
 import { PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC } from "../child-overlay-keys.js";
+import { SCROLL_KEYS } from "../child-overlay-types.js";
 import { PiChildInspectionRegistry, ROOT_NODE_ID } from "../child-tree.js";
 import type { PiExtensionApi, PiTerminalInputHandler } from "../types.js";
 
@@ -576,6 +584,202 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
 
     expect(input.emit("\u001b1")).toBe(false);
     expect(focused).toEqual([]);
+  });
+
+  /** Lets the component's asynchronous input path settle. */
+  const flush = (): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, 0));
+
+  /**
+   * Mounts a real controller and a real native component into the overlay
+   * cell, exactly as the extension does when the native overlay opens.
+   */
+  async function mountRealOverlay(
+    overlayCell: ReturnType<typeof createChildOverlayCell>,
+    generationId: string,
+  ): Promise<ReturnType<typeof createChildOverlayController>> {
+    const overlayEntries: MemoryOverlaySourceEntry[] = Array.from(
+      { length: 40 },
+      (_unused, index) => ({
+        id: `e${index}`,
+        payload: {
+          type: "message",
+          id: `e${index}`,
+          parentId: null,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: {
+            role: index % 2 === 0 ? "user" : "assistant",
+            content: `overlay line ${index}`,
+          },
+        },
+      }),
+    );
+    const source = createMemoryChildOverlaySource([
+      {
+        childId: "overlay-1",
+        threadId: "overlay-1",
+        status: "live",
+        generationId,
+        runs: [{ run: 1, action: "start" }],
+        branchIds: ["main"],
+        descendantChildIds: [],
+        entries: overlayEntries,
+      },
+    ]);
+    const controller = createChildOverlayController(source, { pageSize: 40 });
+    const opened = await controller.open("overlay-1");
+    expect(opened.isOk()).toBe(true);
+    const component = createChildOverlayCustomComponent(
+      { requestRender: () => undefined } as never,
+      {} as never,
+      getKeybindings() as never,
+      controller,
+      () => undefined,
+      () => undefined,
+      { cwd: "/workspace" },
+    );
+    overlayCell.controller = controller;
+    overlayCell.component = component;
+    overlayCell.generationId = generationId;
+    overlayCell.open = true;
+    return controller;
+  }
+
+  test("the six raw scroll frames drive the mounted overlay exactly once each", async () => {
+    // Pi 0.83 claims PageUp/PageDown for its own paging route before a mounted
+    // custom component, so before the terminal-input route claimed the six
+    // overlay scroll frames, raw PageUp never scrolled the live overlay.
+    const { pi } = recordingPi();
+    const input = terminalInputHost();
+    const { runtime, overlayCell, focused } = runtimeUnderForeignEditor(
+      await registryWithChildren("child-1"),
+      input,
+    );
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    const controller = await mountRealOverlay(overlayCell, "gen-1");
+    const mounted = overlayCell.component;
+    if (mounted === undefined) throw new Error("overlay was not mounted");
+    // Pi stops routing a consumed frame, so each frame must reach the mounted
+    // component exactly once: from this route, never also from host routing.
+    const delivered: string[] = [];
+    overlayCell.component = {
+      render: (width: number) => mounted.render(width),
+      handleInput: (data: string) => {
+        delivered.push(data);
+        mounted.handleInput(data);
+      },
+      invalidate: () => mounted.invalidate(),
+    };
+
+    expect(controller.view()._unsafeUnwrap().liveTail).toBe(true);
+
+    // PageUp disengages live tail and raises the newer-lines cue.
+    expect(input.emit(SCROLL_KEYS.pageUp)).toBe(true);
+    await flush();
+    const firstPage = controller.view()._unsafeUnwrap();
+    expect(firstPage.scrollOffset).toBeGreaterThan(0);
+    expect(firstPage.liveTail).toBe(false);
+    expect(mounted.render(80).join("\n")).toContain("newer line(s) below");
+
+    // A second page moves further back, so paging is not a one-shot that
+    // immediately re-pins to the tail.
+    expect(input.emit(SCROLL_KEYS.pageUp)).toBe(true);
+    await flush();
+    const secondPage = controller.view()._unsafeUnwrap().scrollOffset;
+    expect(secondPage).toBeGreaterThan(firstPage.scrollOffset);
+
+    expect(input.emit(SCROLL_KEYS.pageDown)).toBe(true);
+    await flush();
+    const afterPageDown = controller.view()._unsafeUnwrap().scrollOffset;
+    expect(afterPageDown).toBeLessThan(secondPage);
+
+    // Shift+Up / Shift+Down move by a single rendered row.
+    expect(input.emit(SCROLL_KEYS.shiftUp)).toBe(true);
+    await flush();
+    expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(
+      afterPageDown + 1,
+    );
+    expect(input.emit(SCROLL_KEYS.shiftDown)).toBe(true);
+    await flush();
+    expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(afterPageDown);
+
+    // Home reaches the oldest retained row, End follows output again.
+    expect(input.emit(SCROLL_KEYS.home)).toBe(true);
+    await flush();
+    expect(controller.view()._unsafeUnwrap().liveTail).toBe(false);
+
+    expect(input.emit(SCROLL_KEYS.end)).toBe(true);
+    await flush();
+    const followed = controller.view()._unsafeUnwrap();
+    expect(followed.scrollOffset).toBe(0);
+    expect(followed.liveTail).toBe(true);
+    expect(mounted.render(80).join("\n")).not.toContain("newer line(s) below");
+
+    expect(delivered).toEqual([
+      SCROLL_KEYS.pageUp,
+      SCROLL_KEYS.pageUp,
+      SCROLL_KEYS.pageDown,
+      SCROLL_KEYS.shiftUp,
+      SCROLL_KEYS.shiftDown,
+      SCROLL_KEYS.home,
+      SCROLL_KEYS.end,
+    ]);
+    // Nothing on the scroll route reached the pre-mount child-focus route.
+    expect(focused).toEqual([]);
+  });
+
+  test("a scroll frame for a replaced generation is never dispatched", async () => {
+    const { pi } = recordingPi();
+    const input = terminalInputHost();
+    const { runtime, overlayCell } = runtimeUnderForeignEditor(
+      await registryWithChildren("child-1"),
+      input,
+    );
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    const controller = await mountRealOverlay(overlayCell, "gen-1");
+    // The mounted overlay belongs to a generation that is no longer live.
+    overlayCell.generationId = "gen-0";
+
+    expect(input.emit(SCROLL_KEYS.pageUp)).toBe(false);
+    await flush();
+
+    const view = controller.view()._unsafeUnwrap();
+    expect(view.scrollOffset).toBe(0);
+    expect(view.liveTail).toBe(true);
+  });
+
+  test("an open overlay with no mounted component fails closed", async () => {
+    const { pi } = recordingPi();
+    const input = terminalInputHost();
+    const { runtime, overlayCell } = runtimeUnderForeignEditor(
+      await registryWithChildren("child-1"),
+      input,
+    );
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    overlayCell.open = true;
+    overlayCell.generationId = "gen-1";
+
+    expect(input.emit(SCROLL_KEYS.pageUp)).toBe(false);
+  });
+
+  test("a throwing component never leaks the frame or the exception", async () => {
+    const { pi } = recordingPi();
+    const input = terminalInputHost();
+    const { runtime, overlayCell } = runtimeUnderForeignEditor(
+      await registryWithChildren("child-1"),
+      input,
+    );
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    await mountRealOverlay(overlayCell, "gen-1");
+    overlayCell.component = {
+      render: () => [],
+      handleInput: () => {
+        throw new Error("component is gone");
+      },
+      invalidate: () => undefined,
+    };
+
+    expect(input.emit(SCROLL_KEYS.pageUp)).toBe(false);
   });
 
   test("exactly one listener, released on teardown and reinstalled once", async () => {

@@ -274,6 +274,7 @@
   - function matchingEntryIds: (entries, needle) => string[]
   - function mergeMatchIds: (older, newer) => string[]
 - `packages/adapters/pi/src/child-overlay-terminal-input.ts`
+  - function isChildOverlayScrollFrame: (data) => boolean
   - function releaseChildOverlayTerminalInput: (state) => void
   - function createChildOverlayTerminalInputBinder: (deps) => PiChildOverlayTerminalInputBinder
   - interface PiChildOverlayTerminalInputState
