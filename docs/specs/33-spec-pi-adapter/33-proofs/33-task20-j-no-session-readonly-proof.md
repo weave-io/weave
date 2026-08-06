@@ -1,61 +1,77 @@
-# Task 20(j)/21 `--no-session` read-only proof — PASS
+# Task 20(j) `--no-session` read-only proof
 
-## Verdict
+**Verdict: PASS**
 
-**PASS.** On 2026-08-06, the owned pane ran Pi 0.83.0 with `--no-session` and the exact installed npm artifact. Weave was trusted, ready, and not health-only. The one real `weave_delegate` attempt failed closed with `PersistentParentSessionRequired` before it created a child. Read-only child UI remained available. No child process, Runtime Store lease, child session, child ref, or persistent parent session file resulted from the attempt.
+Checklist rows `S056` and `S057`. Run attempt `1` against exact subject `a7b72bd` in the isolated Pi 0.83 harness.
 
 This proof contains no raw user prompt, delegated task text, or transcript content.
 
-## Scope and starting state
+## Subject and artifact
 
-- Owned pane: `w23:p9Q`; no other pane was used or created.
-- Pre-proof repository parent: `548bc414901975247a836b3768a12571a82acbdc`.
-- The working tree was clean before this proof.
-- No production source file was changed.
-- The pane remains open.
+| Field | Verified value |
+| --- | --- |
+| Subject HEAD | `a7b72bd7e6eb84de6bd8f71bdd52b4fe411f6903` |
+| Subject HEAD subject line | `fix(pi): reconstruct child status and history after a source return` |
+| Working tree at run time | clean before proof file rewrite |
+| Host Pi version in the pane | `0.83.0` |
+| Global Pi version (untouched) | `0.84.0` |
+| Package | `@weaveio/weave-adapter-pi@0.0.1` |
+| Pi source identity | `npm:@weaveio/weave-adapter-pi` |
+| Checklist version | `3` |
+| Checklist rows | `S056`, `S057` |
+| Run attempt | `1` |
+| `childSettlementMissingCount` | `0` |
 
-## Host, trust, provenance, and editor
+| Field | Verified value |
+| --- | --- |
+| Artifact | `$ISO/pi-agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-a7b72bd-task20iso-0f7fbf77cb99.tgz` |
+| Artifact SHA-256 | `0f7fbf77cb99d38ecbf952c46b16da2fffb3308f2ce346d5e35b9040e0c6deec` |
+| Built and installed `dist/extension.js` SHA-256 | `0dff94ac4167e8f2d7ecbafcfd91f1a1895b5c782ffa747043d872547d300314` |
+| Built and installed `dist/index.js` SHA-256 | `c654510917e651c09f22c6b19d52bda6a0f6f9dabda8436ee91aa8af1b9bc1be` |
+| Built and installed `dist/cli.js` SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
 
-| Check | Sanitized evidence | Result |
-| --- | --- | --- |
-| Pi version | `pi --version` returned `0.83.0`. | PASS |
-| Process mode | Both active Bun/Pi command lines ended in `pi-coding-agent/dist/cli.js --no-session`. | PASS |
-| Project trust | `~/.pi/agent/trust.json` records `/Users/jose: true`, which applies to this project. The live adapter reached `ready`; withheld trust fails closed to health-only. | PASS |
-| Weave health | `/weave:health` reported `Weave adapter mode: ready`; the footer remained `Connected  ready  ◆ WEAVE · LOOM`. | PASS |
-| Not health-only | The health report and footer both reported `ready`, not `health-only`. | PASS |
-| npm provenance | `~/.pi/agent/settings.json` contains exactly one `npm:@weaveio/weave-adapter-pi` entry. No local `~/.pi/agent/extensions/weave-adapter-pi` shadow exists. | PASS |
-| Unsafe override | `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` was absent from the active environment, active process environment, launcher, settings, and `~/.zshrc`. | PASS |
-| pi-vim coexistence | The footer showed `INSERT` before and after the inspector and palette overlays. Weave remained ready. | PASS |
+`$ISO` is `$HOME/.local/share/weave/task20-pi083-harness`. Tarball entry digests matched the installed entry points. Unsafe provenance override was unset. No local extension shadow directory existed.
 
-### Exact installed artifact
+## Environment
 
-- Package: `@weaveio/weave-adapter-pi@0.0.1`
-- Artifact: `~/.pi/agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-1f69937-task20-636b8fac98ce.tgz`
-- Artifact SHA-256: `636b8fac98ce2c69df982a40f698956ccd363e8189e31ee118f45c57533b3eb6`
-- Installed `dist/extension.js`: `eda2f6193544fee382a8447e20333eb95fa663cb3a510422f1c465c24fa30d84`
-- Installed `dist/index.js`: `faab8e0de1044087a0d1847bd8eced0facc2e521abdb4f77499894d29fc8758e`
-- Installed `dist/cli.js`: `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd`
-- Extracting `package/dist/extension.js` from that artifact produced the installed `dist/extension.js` hash.
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| Fresh test-created pane | `w23:pAJ` | PASS |
+| Herdr agent | `task20j` (`herdr agent start --kind pi -- --no-session`) | PASS |
+| Resolved `pi` executable | `$ISO/shim/pi` | PASS |
+| Pi version reported in the pane | `0.83.0` | PASS |
+| Active argv | `["pi","--no-session"]` | PASS |
+| Process command lines | both Bun/Pi lines end in `pi-coding-agent/dist/cli.js --no-session` | PASS |
+| `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` | `unset` in pane prep and process environment | PASS |
+| Isolated `settings.json` packages | `["npm:@weaveio/weave-adapter-pi"]` | PASS |
+| Local extension shadow directory | absent | PASS |
+| Startup `[Extensions]` line | `@weaveio/weave-adapter-pi:dist/extension.js` | PASS |
+| Status line | `ready ◆ WEAVE · LOOM` | PASS |
+| `/weave:health` mode | `ready` | PASS |
+| Trusted | `true` | PASS |
+| Health-only | `false` | PASS |
+| `child inspection` | `native-overlay` | PASS |
+| Open parent `.jsonl` files for the Pi process | `0` | PASS |
+| Open files under `sessions/` for the Pi process | `0` | PASS |
+| Same pane retained | `true` | PASS |
+| Nested Pi RPC child processes from this parent | `0` | PASS |
+| Production files edited | `0` | PASS |
 
 ## Persistent-parent proof
 
-The active parent had no persistent session file before or after the attempt:
+Isolated session tree and Weave data tree were unchanged across the delegation attempt and all read-only UI checks:
 
-- Active command line included `--no-session`.
-- Open `.jsonl` files for the Pi process: `0`.
-- Open files below `~/.pi/agent/sessions/` for the Pi process: `0`.
-- Session filenames matching the active ephemeral session identifier: `0`.
+| Surface | Before | After | Outcome |
+| --- | ---: | ---: | --- |
+| `$ISO/pi-agent/sessions` file count | `16` | `16` | PASS |
+| `$ISO/pi-agent/sessions` path-manifest SHA-256 | `bdc18b51dc7941c46ee936e1f40a1f20dfffdc7a1a042df6a12907cbff23cfc7` | same | PASS |
+| `$XDG_DATA_HOME/weave` path-manifest SHA-256 | `19fb6a5cdd893ccad5403ba0fff1494dbc7ee0adc459fc4fd0b1b6f596c94d8c` | same | PASS |
 
-The private child-session file manifest was unchanged across the delegation attempt:
-
-- Before: 115 files; path-manifest SHA-256 `a274ec15c96098d7307832fcbd4701cf2114cf126778ffd004fcad35f6238936`.
-- After the attempt and all read-only UI checks: 115 files; the same path-manifest SHA-256.
-
-A child ref requires a persistent parent session entry. This parent had no persistent session file to receive one, and no child-session path was added. Therefore the attempt created neither a child session nor a child ref.
+A child ref requires a persistent parent session entry. This parent had no persistent session file to receive one, and no child-session path was added.
 
 ## One real delegation attempt
 
-Exactly one real `weave_delegate` call was made. Its task text is intentionally omitted.
+Exactly one real `weave_delegate` call targeted `shuttle-mini`. Its task text is intentionally omitted.
 
 The structured result was:
 
@@ -67,63 +83,47 @@ retryable: false
 recovery: none
 ```
 
-The remediation instructed the operator to start or reopen Pi with a persistent session. No second delegation, retry, or continue call was made.
+The bounded remediation instructed the operator to start or reopen Pi with a persistent session (do not use `--no-session`). No second delegation, retry, or continue call was made. Direct slot `Alt+1` produced no child target.
 
 ## No child or lease side effects
 
-Immediately after the attempt and again after the UI checks:
-
-- Pi RPC child processes matching `--mode rpc --no-session`: `0`.
-- `weave runtime status`: Runtime Store schema `5`; `No active lease.`
-- Private child-session file count and path manifest: unchanged.
-- Persistent parent session file: absent.
-- Parent child ref: absent because no persistent parent file existed and no child-session path appeared.
-
-The Runtime Store contains old workflow records, but none holds an active lease. Those records predate this proof and are not child processes or child-session refs from this attempt.
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| Parent-descendant `--mode rpc --no-session` processes | `0` | PASS |
+| `/weave:status` children | `0` | PASS |
+| Active Runtime Store lease | `false` (`No active lease.`; schema `5`) | PASS |
+| Persistent parent session file created | `false` | PASS |
+| Child session / child ref created | `false` | PASS |
+| Residual `ChildSettlementMissing` | `0` | PASS |
 
 ## Read-only UI proof
 
-The commands were entered in the active owned TUI while the agent was running. Pi executes extension commands immediately rather than queueing them as prompts.
-
 | Command | Sanitized outcome | Result |
 | --- | --- | --- |
-| `/weave:history` | Returned `No child history for this workspace.` | PASS |
-| `/weave:doctor` | Opened and returned a bounded report: status `degraded`, 12 capability checks passed, 8 were unavailable, and unwired optional sources were skipped. The command remained usable and did not put Weave in health-only mode. | PASS |
-| `/weave:inspect` | Opened the native `Weave child inspection` overlay with navigation help and an empty execution view. Escape closed it cleanly. | PASS |
-| `/weave:health` | Reported adapter mode `ready`. | PASS |
+| `/weave:history` | `No child history for this workspace.` | PASS |
+| `/weave:doctor` | Bounded report: status `degraded`; capabilities `ok=12` / `unavailable=8`; optional doctor sources skipped as unwired. Remained usable; did not enter health-only. | PASS |
+| `/weave:inspect` | Native `Weave child inspection` overlay with navigation help and empty execution view. Escape closed it cleanly. | PASS |
+| `/weave:health` | Adapter mode `ready`. | PASS |
+| `/weave:status` | `trust: trusted`; `health-only: false`; `children: 0`. | PASS |
+| `/weave:clear-children` | Read-only no-op: `No terminal child history to clear.` | PASS |
 
-The empty history and inspector prove that there was no child target. Therefore child steering, follow-up, delete, retry, and continue routes were not exposed. The exposed child-creation mutation was the single `weave_delegate` call, and it returned `PersistentParentSessionRequired`. `/weave:clear-children` also performed a read-only no-op and reported `No terminal child history to clear.` It created no state. No retry or continue action was possible without a thread identifier, and the failed delegation created none.
+Empty history and empty inspection prove there was no child target. Therefore child steering, follow-up, delete, retry, and continue routes were not exposed. The only child-creation mutation attempted was the single `weave_delegate` call, and it returned `PersistentParentSessionRequired`. No retry or continue action was possible without a thread identifier, and the failed delegation created none.
 
-After each overlay closed, pi-vim returned to `INSERT`; the footer remained `Connected  ready  ◆ WEAVE · LOOM`.
+Footer remained `ready ◆ WEAVE · LOOM` after each command. No false write capability was advertised.
 
-## Commands and results
+## Repository checks
 
-The verification used these command classes. Dynamic IDs and transcript data are omitted.
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| Focused no-session/capability tests | `90` pass (`primary-session`, `delegation-tool`, `failure-taxonomy`) | PASS |
+| `bun run docs:check-links` | pass | PASS |
 
-```bash
-pi --version
-ps -p <pi-pid> -o pid=,ppid=,command=
-lsof -p <pi-pid>
-jq <bounded provenance/trust queries> ~/.pi/agent/settings.json ~/.pi/agent/trust.json
-shasum -a 256 <installed files and matching artifact>
-find "$XDG_DATA_HOME/weave" -type f | LC_ALL=C sort | shasum -a 256
-ps -axo command= | awk <bounded rpc-child predicate>
-weave runtime status
-herdr pane send-text <owned-pane> '/weave:history'
-herdr pane send-text <owned-pane> '/weave:doctor'
-herdr pane send-text <owned-pane> '/weave:inspect'
-herdr pane send-text <owned-pane> '/weave:health'
-bun run docs:check-links
-```
+## State and cleanup
 
-Expected results:
-
-- Pi `0.83.0`; active parent command line includes `--no-session`.
-- Exact npm artifact and installed hashes match.
-- Adapter mode `ready`; no health-only state.
-- Zero open parent session files, child RPC processes, active leases, new child-session paths, and child refs.
-- Documentation link check passes.
-
-## Conclusion
-
-Task 20(j)/21 passes. The Pi adapter fails closed at the persistent-parent boundary, preserves read-only child surfaces, creates no unattached child state, retains trusted npm provenance, and coexists with pi-vim in the owned `--no-session` pane.
+| Check | Observed | Outcome |
+| --- | ---: | --- |
+| Closed only the created pane | `w23:pAJ` | PASS |
+| Pre-existing panes preserved | `w23:p79 w23:p70 w23:p82` | PASS |
+| Created agent after close | `agent_not_found` | PASS |
+| Residual harness processes | `0` | PASS |
+| Global Pi 0.84 / global `~/.pi/agent` | untouched | PASS |
