@@ -421,3 +421,80 @@ Unit coverage:
 Status: unchanged for Task 20(b), S043, and S044. A fresh Herdr pane must still
 prove live tail, scroll disengage/follow, Enter steering, Alt+Enter follow-up,
 primary-editor isolation, and clean settlement.
+
+## Post-fix rerun — overlay-startup-fix artifact (2026-08-06)
+
+### Scope and safety
+
+This rerun executed matrix item **(b) only** against the newly installed
+artifact. It made zero production-code edits and dispatched exactly one
+bounded `shuttle-mini` child. The wait-gated driver sent zero keys before its
+active-child gate. Evidence below contains only booleans, counts, timings,
+outcomes, and SHA-256 values.
+
+### Fresh Pi and artifact checks
+
+| Check | Result | Sanitized observation |
+| --- | --- | --- |
+| Pi version | **PASS** | `0.83.0` |
+| Adapter ready | **PASS** | A fresh no-session TUI directly rendered adapter mode `ready`. |
+| Trusted | **PASS** | The configured `npm:` package loaded without an untrusted warning, and the bounded delegation was accepted. |
+| Non-health-only | **PASS** | The fresh health view directly rendered adapter mode `ready`; mutating delegation was available and completed. |
+| Npm provenance | **PASS** | The Weave adapter and pi-vim were configured as `npm:` packages; project extension count was `0`; local Weave shadow count was `0`. |
+| Unsafe override absent | **PASS** | Matching launcher/config file count was `0`; the fresh Pi process had no override variable. |
+| pi-vim ownership | **PASS** | The primary editor state was `INSERT` before dispatch and in the fresh verification TUI. |
+| Installed extension hash | **PASS** | `ac1d12c298300741140d1cefa0e6946489e2fa8a5aeded2873f4c1ea07313061` |
+
+### Wait gate and bounded child
+
+```yaml
+childDispatchCount: 1
+initialActiveChildCount: 0
+keysSentBeforeActiveGate: 0
+activeChildObservedByGate: false
+overlayKeysSent: 0
+childSeparateCommandCount: 155
+childElapsedAtLeast120Seconds: true
+childSteeringObserved: false
+childFollowUpObserved: false
+childEditsMade: false
+childOutcomeCompleted: true
+childInterventionCount: 0
+activeRuntimeLeaseCountAfterSettlement: 0
+primaryUserMessageCountBefore: 1
+primaryUserMessageCountAfter: 1
+```
+
+The driver reached `READY` before dispatch. It then waited for a new active
+child and sent no keys. The single child ran for at least 120 seconds and
+completed 155 separate read-only commands, but the gate never reported an
+active child. The driver therefore exited before Alt+1, as required by its
+fail-closed gate.
+
+Exact sanitized blocker:
+
+```text
+wait_gate_did_not_observe_new_active_child
+```
+
+### Required assertion matrix
+
+| Required assertion | Result | Direct observation |
+| --- | --- | --- |
+| Alt+1 mounts native active-child overlay | **NOT OBSERVED** | The active-child gate stayed false, so Alt+1 count was `0`. |
+| Live tail advances | **NOT OBSERVED** | Native overlay did not mount. |
+| Manual scroll disengages tail | **NOT OBSERVED** | Native overlay did not mount. |
+| New entries preserve the manual anchor | **NOT OBSERVED** | Native overlay did not mount. |
+| Return to bottom resumes tail | **NOT OBSERVED** | Native overlay did not mount. |
+| Enter steering reaches child | **FAIL** | Child reported `steeringObserved: false`; intervention count was `0`. |
+| Alt+Enter follow-up reaches child | **FAIL** | Child reported `followUpObserved: false`; intervention count was `0`. |
+| No primary draft/key/submission leak | **NOT OBSERVED** | Primary user-message count stayed `1`, but no overlay draft or submission probe ran. |
+| Clean settlement | **PASS** | Child completed; active runtime lease count was `0`; remaining child process count was `0`. |
+| Settled overlay is read-only | **NOT OBSERVED** | Native overlay did not mount. |
+| Unmount restores pi-vim | **NOT OBSERVED** | No overlay was mounted or unmounted. |
+
+### Current overall result
+
+**FAIL** — not every required assertion was directly observed. The exact
+blocker is `wait_gate_did_not_observe_new_active_child`. Preserve Task 20(b),
+S043, and S044 as incomplete.
