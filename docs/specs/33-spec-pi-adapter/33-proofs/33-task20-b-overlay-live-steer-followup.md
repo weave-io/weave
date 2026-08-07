@@ -1,10 +1,12 @@
 # Task 20(b) — Full-screen overlay live tail, steering, and follow-up
 
-Date: 2026-08-05
+Date: 2026-08-06
 
-Result: **FAIL**
+Result: **PASS**
 
-This proof covers only Task 20 matrix item (b). It records the observed blocker. It does not mark S043 or S044 complete.
+Checklist version `3`. Latest targeted rerun attempt `9` against exact subject `16593bf` continued the same persisted item-(b)/(c) shuttle-mini thread after attempt `8` (entries 344→356). Manual scroll used Herdr semantic `shift+up` / `shift+down`. The `16593bf` anchor fix kept body hash / older marker / effective scroll stable while native entries and the newer-lines cue advanced under manual scroll. Item (c) separately proves absolute oldest/newest three-page pagination; this item does not re-claim that surface. Plan checkbox not marked.
+
+This file preserves earlier FAIL history below and records the `16593bf` Continue live-anchor PASS.
 
 ## Pane and artifact
 
@@ -793,4 +795,511 @@ panesClosedCount: 0
 requestedPaneLeftOpen: true
 temporaryProofFileCountAfterCleanup: 0
 cleanupOutcome: clean
+```
+
+---
+
+## 47ae0fd isolated-harness attempt 5 — Herdr Shift+Up/Down — 2026-08-06
+
+Result: **FAIL**
+
+Checklist version `3`. Matrix item `(b)` after `fix(pi): route raw scroll input to the child overlay`. Run attempt `5` against exact subject `47ae0fd` in `$HOME/.local/share/weave/task20-pi083-harness`. Manual overlay scroll used Herdr `shift+up` / `shift+down` because Herdr 0.8 reserves plain PageUp/PageDown for pane scrollback (S043 requires manual scroll, not a specific key). pi-vim was disabled for this item only (restored after cleanup). Hard limit 8 minutes. No commit (PASS-only commit gate).
+
+### Subject and artifact
+
+| Field | Verified value |
+| --- | --- |
+| Subject HEAD | `47ae0fdd61ccc37834a696f32ebfb21052ae0752` |
+| Host Pi in pane | `0.83.0` via `$ISO/shim/pi` |
+| Global Pi (untouched) | `0.84.0` |
+| Artifact | `$ISO/pi-agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-47ae0fd-task20iso-f091dd85b1a8.tgz` |
+| Artifact SHA-256 | `f091dd85b1a82ce3c58a22a816e4699bbdd3300738e25c7520ccff3cb5f52f51` |
+| Installed `dist/extension.js` | `48a9d75811928c03b2bbdbaa6d936c2297de13d096995f3f2e2d6eb2695e7823` |
+| Installed `dist/index.js` | `7e6f94708501daf8108255dacc23edfbfd5332a57efa58703f080390d0218a1f` |
+| Installed `dist/cli.js` | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
+| Provenance | `npm:@weaveio/weave-adapter-pi` (not a symlink); package directory is not a symlink |
+| Packages during run | `npm:@weaveio/weave-adapter-pi` only (pi-vim removed for this item) |
+| `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` | unset in launcher and live ISO processes (`0` override) |
+| Local extension shadow | absent under `$ISO/pi-agent/extensions` |
+| Host | `joses-Apple-MacBook-Pro` |
+| Pane / agent | `w23:pB7` / `task20b5` |
+| Run id / markers | `423DFAA4` (`TASK20B_OLD/MID/NEW/STEER/FOLLOW/PASS_423DFAA4`) |
+| Active child id from status gate | `326295f9-e67c-45ae-ad1d-09fb47713588` |
+| `childSettlementMissingCount` | `0` |
+
+### Environment
+
+```yaml
+readyStatusObserved: true
+trust: trusted
+healthOnly: false
+piVimDisabled: true
+nativeOverlayMountRoute: alt+i+enter
+nativeCustomComponentMounted: true
+customEditorFallbackObserved: false
+statusGateObserved: true
+statusChildrenCount: 1
+manualScrollKey: herdr_shift+up
+manualScrollDownKey: herdr_shift+down
+shiftUpAccepted: true
+shiftDownAccepted: true
+pageUpPageDownNote: herdr_0.8_pane_scrollback_conflict_not_proven_overlay_path
+herdrNamedPageUpSupported: false
+herdrHomeEndSendKeysOnLivePane: unsupported_invalid_key
+liveWindow: 2026-08-06T21:30:59Z .. 2026-08-06T21:38:35Z
+```
+
+Mount used one status-gated picker selection (`Alt+I` then Enter) after compact `shuttle-mini · running` and one `/weave:status` showing `children: 1`. No blind Alt+1 loop. Plain PageUp/PageDown were not used as the overlay proof keys and are not claimed to have reached Pi.
+
+### Controlled-run observations (attempt 5)
+
+```yaml
+overlayMountAttempts: 1
+overlayMounted: true
+overlayMountedLive: true
+nativeCustomComponentMounted: true
+steeringSubmitted: true
+steeringReachedChild: true
+followUpSubmitted: true
+followUpReachedChild: true
+primaryEditorSteeringLeak: false
+primaryEditorFollowUpLeak: false
+primaryDraftSeededBeforeMount: true
+liveTailDistinctBodyHashCount: 1
+liveTailAdvanced: false
+newMarkerSeenExact: true
+oldMarkerSeenExact: false
+midMarkerSeenExact: false
+shiftUpKeyCount: 300
+shiftUpReachedOldest: false
+manualScrollDisengaged: false
+manualScrollInitialNewerCount: null
+manualScrollNewEntriesObserved: false
+manualScrollAnchorStable: false
+shiftDownTraversedNewer: true
+newerCueDecreased: false
+newerCueDisappearedAtBottom: true
+endResumedLiveTail: true
+bottomReturnDistinctBodyHashCount: 2
+settledObserved: false
+settledReadOnlyObserved: false
+settledStillScrollable: false
+overlayClosedAfterProof: false
+primaryDraftPreservedAfterClose: false
+childRpcProcessCountAtEnd: 0
+remainingSecondsAtEnd: 24.1
+outcome: FAIL
+driverBlockerOutcome: failed:liveTailAdvanced,oldMarkerSeenExact,shiftUpReachedOldest,newerCueDecreased,manualScrollDisengaged,manualScrollNewEntriesObserved,manualScrollAnchorStable,primaryDraftPreservedAfterClose,settledObserved,settledReadOnlyObserved,settledStillScrollable,overlayClosedAfterProof
+```
+
+### Assertion matrix
+
+| Assertion | Result | Sanitized evidence |
+| --- | --- | --- |
+| Pi 0.83 + exact `47ae0fd` npm artifact; unsafe override absent | **PASS** | Version, artifact, installed digests matched tarball; override unset |
+| One real `shuttle-mini` child streams with unique markers | **PASS** | Child id `326295f9-…`; NEW marker observed; `childSettlementMissingCount: 0` |
+| Status-gated open mounts native `◆ … · LIVE` custom overlay | **PASS** | `overlayMountRoute=alt+i+enter`; `nativeCustomComponentMounted=true`; no custom-editor fallback |
+| Herdr `shift+up` accepted/forwarded; disengages live-tail; older markers + newer-lines cue | **FAIL** | `shiftUpAccepted=true` after 300 keys; Herdr pane scroll offset unchanged (not stolen as scrollback); `manualScrollDisengaged=false`; `oldMarkerSeenExact=false`; cue never appeared |
+| Herdr `shift+down` reduces newer cue; End clears cue and follows later output | **FAIL** | `shiftDownAccepted=true`; `newerCueDecreased=false` (no cue to reduce). Herdr `home`/`end` send-keys returned `invalid_key` on the live pane, so End was not a proven overlay delivery path |
+| Manual scroll keeps viewport anchor while later output arrives | **FAIL** | `manualScrollNewEntriesObserved=false`; `manualScrollAnchorStable=false` |
+| Enter steering + Alt+Enter follow-up reach child once each | **PASS** | Both submitted and observed; no primary-editor token leak |
+| Closing overlay restores pre-seeded primary draft | **FAIL** | `primaryDraftSeededBeforeMount=true`; `primaryDraftPreservedAfterClose=false` |
+| Settled overlay scrollable/read-only; compact freeze | **FAIL — not observed** | `settledObserved=false` before hard-limit exit; overlay remained `LIVE` |
+| Cleanup: no rpc child / lease; created pane closed; WIP preserved | **PASS** | ISO rpc `0`; Runtime Store schema 5 `No active lease.`; pane `w23:pB7` closed; unrelated overlay WIP SHA-256 baseline unchanged |
+
+### Repository checks (detached `47ae0fd` worktree)
+
+| Check | Result |
+| --- | --- |
+| Focused raw-terminal / overlay / inspection tests | **138 pass**, 0 fail |
+| `bun run docs:check-links` | PASS |
+
+### Exact blocker and notes
+
+Exact sanitized blocker:
+
+```text
+failed:liveTailAdvanced,oldMarkerSeenExact,shiftUpReachedOldest,newerCueDecreased,manualScrollDisengaged,manualScrollNewEntriesObserved,manualScrollAnchorStable,primaryDraftPreservedAfterClose,settledObserved,settledReadOnlyObserved,settledStillScrollable,overlayClosedAfterProof
+```
+
+Center of failure: after native LIVE mount and successful steer/follow, Herdr `shift+up` was accepted and did not move Herdr pane scrollback, but the mounted overlay never showed a positive newer-lines cue or OLD/MID markers. Post-run visible overlay content contained recent NEW/PROGRESS lines only (no FILL/OLD), so the live window had no proven scroll extent. Close/draft restore and settled read-only checks therefore did not complete inside the 8-minute window.
+
+Attempt 4 used raw PTY PageUp and is superseded for the scroll-key claim. Attempt 5 proves the conflict-safe Herdr key path is accepted, but not that the overlay consumed it for manual scroll. Plain PageUp/PageDown remain a Herdr pane-scrollback conflict and are not claimed to have reached Pi.
+
+Pre-existing panes at start: `w23:p79 w23:p70`. This run closed only created pane `w23:pB7`. Remaining: `w23:p79 w23:p70`. Isolated settings restored to include `npm:pi-vim` after the run. Temporary worktree removed. No proof commit.
+
+```yaml
+childProcessRemaining: false
+runtimeStoreLeaseActive: false
+createdPaneClosed: true
+proofCommitted: false
+planCheckboxMarked: false
+unrelatedOverlayWipPreserved: true
+```
+
+
+---
+
+## 08e3ee5 isolated-harness attempt 6 — Continue 138-entry child — 2026-08-06
+
+Result: **FAIL**
+
+Checklist version `3`. Matrix item `(b)` against exact subject `08e3ee5` in `$HOME/.local/share/weave/task20-pi083-harness`. Reused the item-(c) settled 138-entry / three-page native fixture (`nativeSessionDigestSha256` `b6984f89…` before Continue). Parent session resumed; `weave_delegate` `action=continue` started a distinct live attempt on the same thread. Manual overlay scroll used Herdr `shift+up` / `shift+down`. pi-vim disabled for this item only and restored after cleanup. Hard limit 8 minutes. No commit (PASS-only commit gate). Plan checkbox not marked.
+
+### Subject and artifact
+
+| Field | Verified value |
+| --- | --- |
+| Subject HEAD | `08e3ee52a9560cc85b822f23a82d56c47328d33d` |
+| Host Pi in pane | `0.83.0` via `$ISO/shim/pi` |
+| Global Pi (untouched) | `0.84.0` |
+| Artifact | `$ISO/pi-agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-08e3ee5-task20iso-39c5ef0f80f6.tgz` |
+| Artifact SHA-256 | `39c5ef0f80f6da4f6e022e992b0c48b0e6faef0cb8536b1b74fe0e375b4ab177` |
+| Installed `dist/extension.js` | `8ba4c83e74b48262258d0fbee7bddb379240d92f0b2ebb5adf88e000a456104d` |
+| Installed `dist/index.js` | `e28e5d165b2ea706ea71d676c77e7a3f526dfa332b283d019e96eebe812ade48` |
+| Installed `dist/cli.js` | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
+| Tarball vs installed digests | match |
+| Provenance | `npm:@weaveio/weave-adapter-pi` (not a symlink) |
+| Packages during run | `npm:@weaveio/weave-adapter-pi` only (pi-vim removed for this item) |
+| `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` | unset in launcher and live ISO process |
+| Local extension shadow | absent under `$ISO/pi-agent/extensions` |
+| Host | `joses-Apple-MacBook-Pro` |
+| Pane / agent | `w23:pBJ` / `task20bc6` |
+| Run id / markers | `5C9B8796` (`TASK20B_LIVE/STEER/FOLLOW/PASS_5C9B8796`; historical `TASK20C_*_8BCAA12E`) |
+| Continued thread | same item-(c) shuttle-mini thread (identity not retained here) |
+| Native entries before → after | `138` → `196` |
+| `childSettlementMissingCount` | `0` |
+
+### Environment and Continue
+
+```yaml
+readyStatusObserved: true
+trust: trusted
+healthOnly: false
+piVimDisabled: true
+continueUsed: true
+nativeOverlayMountRoute: alt+i+enter
+nativeCustomComponentMounted: true
+customEditorFallbackObserved: false
+statusGateObserved: true
+manualScrollKey: herdr_shift+up
+manualScrollDownKey: herdr_shift+down
+expectedShiftUpBytes: "\x1b[1;2:1A"
+closeDelivery: empty_backspace
+```
+
+### Controlled-run observations (attempt 6)
+
+```yaml
+overlayMounted: true
+overlayMountedLive: true
+liveTailDistinctBodyHashCount: 5
+liveTailAdvanced: true
+steeringSubmitted: true
+steeringReachedChild: true
+followUpSubmitted: true
+followUpReachedChild: true
+primaryEditorSteeringLeak: false
+primaryEditorFollowUpLeak: false
+primaryDraftSeededBeforeMount: true
+emptyBackspaceClosedOverlay: true
+primaryDraftPreservedAfterClose: true
+shiftUpAccepted: true
+manualScrollDisengaged: true
+manualScrollInitialNewerCount: 20
+manualScrollFinalNewerCountObserved: 136
+manualScrollAnchorStable: true
+manualScrollNewEntriesObserved: false
+oldMarkerSeenExact: false
+midMarkerSeenExact: false
+newerCueDecreased: true
+shiftDownAccepted: true
+shiftDownTraversedNewer: true
+newerCueDisappearedAtBottom: true
+endResumedLiveTail: true
+settledObserved: true
+settledReadOnlyObserved: true
+settledStillScrollable: true
+childRpcProcessCountAtEnd: 0
+outcome: FAIL
+driverBlockerOutcome: failed:oldMarkerSeenExact,manualScrollNewEntriesObserved
+```
+
+### Assertion matrix
+
+| Assertion | Result | Sanitized evidence |
+| --- | --- | --- |
+| Pi 0.83 + exact `08e3ee5` npm artifact; unsafe override absent | **PASS** | Version, artifact, installed digests matched tarball; override unset |
+| Same persisted parent; Continue distinct live attempt on 138-entry thread | **PASS** | Parent session resumed; native entries `138`→`196`; compact run-2 LIVE then SETTLED |
+| Status-gated open mounts native `◆ … · LIVE` custom overlay | **PASS** | `overlayMountRoute=alt+i+enter`; no custom-editor fallback on live mount |
+| ≥2 live-tail body hashes prove new entries advance the tail | **PASS** | `liveTailDistinctBodyHashCount: 5` |
+| Herdr Shift+Up disengages live-tail; positive newer-lines cue | **PASS** | Cue observed (`20`, later `136`); `manualScrollDisengaged=true` |
+| Older historical markers reachable while live | **FAIL** | Historical EX112–EX120 visible with cue `136`, but `TASK20C_OLD/MID` never entered viewport |
+| New continued entries arrive while body/anchor stable | **FAIL** | Anchor stayed stable; newer-lines cue did not increase while disengaged before Escape-arm abort |
+| Shift+Down reduces cue; End/follow resumes later output | **PASS** | `newerCueDecreased=true`; cue cleared at bottom; live follow resumed |
+| Enter steering + Alt+Enter follow-up reach child once each | **PASS** | Both submitted and observed; no primary-editor leak |
+| Empty Backspace closes overlay; primary draft restored | **PASS** | `emptyBackspaceClosedOverlay=true`; draft token restored |
+| Settled overlay read-only and scrollable; CSM=0 | **PASS** | Native `◆ … · SETTLED` + `Read-only — settled child`; `childSettlementMissingCount: 0` |
+| Cleanup: no rpc child; created pane closed; WIP preserved | **PASS** | Pane `w23:pBJ` closed; preexisting `w23:p79 w23:p70` preserved; unrelated overlay/CodeSight WIP SHA-256 baseline restored |
+
+### Repository checks (detached `08e3ee5` worktree)
+
+| Check | Result |
+| --- | --- |
+| Focused normalizer/runtime/live-overlay/settlement tests | **182 pass**, 0 fail |
+| `bun run docs:check-links` | PASS |
+
+### Exact blocker and notes
+
+Exact sanitized blocker:
+
+```text
+failed:oldMarkerSeenExact,manualScrollNewEntriesObserved
+```
+
+Center of progress: Continue on the 138-entry fixture mounted native LIVE, advanced live-tail hashes, proved conflict-safe Shift+Up/Down cue behavior, steer/follow isolation, empty-Backspace draft restore, and clean SETTLED reopen with CSM=0.
+
+Center of failure: while manually scrolled, the overlay exposed recent historical tool lines (EX112+) and a large newer-lines cue, but never reached the early `TASK20C_OLD` / `TASK20C_MID` markers; and the newer-lines cue did not increase from the disengaged baseline before Escape-arming aborted the live child mid-stream. A later `/weave:inspect` remount hit the custom-editor fallback, so additional OLD pagination could not be completed on the native path inside the remaining budget.
+
+Pre-existing panes at start: `w23:p79 w23:p70`. This run closed only created pane `w23:pBJ` (plus short-lived failed `w23:pBH` from the first agent-start retry). Remaining: `w23:p79 w23:p70`. Isolated settings restored to include `npm:pi-vim`. Temporary worktree removed. No proof commit.
+
+```yaml
+currentResult: FAIL
+sanitizedBlockerOutcome: failed:oldMarkerSeenExact,manualScrollNewEntriesObserved
+childProcessRemaining: false
+createdPaneClosed: true
+preexistingPanesPreserved: true
+proofCommitted: false
+planCheckboxMarked: false
+unrelatedOverlayWipPreserved: true
+```
+
+---
+
+## 08e3ee5 isolated-harness attempt 8 — targeted scroll-then-steer gaps — 2026-08-06
+
+Result: **FAIL**
+
+Checklist version `3`. Targeted follow-up to attempt `6` on exact subject `08e3ee5`. Same persisted shuttle-mini thread (`c6d5b297-…`) continued again after attempt-6 growth (≥196 native entries; this run started at 313). Item (c) remains the proof of full oldest/newest three-page traversal; this run required only a stable older marker (accepted `TASK20C2_EX*`) plus live anchor stability while scrolled. Hard limit 6 minutes. Plan checkbox not marked. No commit.
+
+### Subject and artifact
+
+| Field | Verified value |
+| --- | --- |
+| Subject HEAD | `08e3ee52a9560cc85b822f23a82d56c47328d33d` |
+| Host Pi in pane | `0.83.0` via `$ISO/shim/pi` |
+| Artifact | `$ISO/pi-agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-08e3ee5-task20iso-39c5ef0f80f6.tgz` |
+| Artifact SHA-256 | `39c5ef0f80f6da4f6e022e992b0c48b0e6faef0cb8536b1b74fe0e375b4ab177` |
+| Installed `dist/extension.js` | `8ba4c83e74b48262258d0fbee7bddb379240d92f0b2ebb5adf88e000a456104d` |
+| Installed `dist/index.js` | `e28e5d165b2ea706ea71d676c77e7a3f526dfa332b283d019e96eebe812ade48` |
+| Installed `dist/cli.js` | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
+| Provenance | `npm:@weaveio/weave-adapter-pi` (not a symlink); unsafe override absent |
+| Pane / agent | `w23:pBW` / `task20bn…` |
+| Run id | `43920F43` |
+| Native entries before → after | `313` → `338` |
+| `childSettlementMissingCount` | `0` |
+
+### Controlled-run observations (attempt 8 targeted)
+
+```yaml
+overlayMounted: true
+overlayMountedLive: true
+nativeCustomComponentMounted: true
+stableOlderMarkerSeen: true
+stableOlderMarkerKind: TASK20C2_EX
+manualScrollDisengaged: true
+manualScrollInitialNewerCount: 215
+manualScrollFinalNewerCount: 215
+nativeEntryCountAtScrollCapture: 318
+nativeEntryCountAfterSteer: 335
+nativeEntryCountIncreasedWhileScrolled: true
+steeringSubmittedWhileScrolled: true
+steeringReachedChild: true
+manualScrollNewEntriesObserved: true
+manualScrollAnchorStable: false
+naturalCueAdvancedBeforeSteer: false
+naturalBodyStableBeforeSteer: false
+exBlockStable: false
+shiftUpKeyCount: 176
+tailNewMarkerSeenAfterDown: true
+endResumedLiveTail: true
+childSettlementMissingCount: 0
+outcome: FAIL
+driverBlockerOutcome: failed:manualScrollAnchorStable
+```
+
+### Gap closure vs attempt 6
+
+| Targeted gap | Attempt 6 | Attempt 8 | Notes |
+| --- | --- | --- | --- |
+| Stable older marker while live (not absolute `TASK20C_OLD`) | FAIL (`oldMarkerSeenExact`) | **PASS** (`TASK20C2_EX` with cue 215) | Absolute oldest page remains item (c) |
+| New entries while scrolled + stable viewport body/anchor | FAIL (`manualScrollNewEntriesObserved`) | **FAIL** | Entries rose 318→335 and steer reached the child, but newer-lines cue stayed 215 and the EX viewport block slid (tip-relative paging). Full body hash and EX-block hash were not stable |
+
+### Repository checks (detached `08e3ee5` worktree)
+
+| Check | Result |
+| --- | --- |
+| Focused normalizer/runtime/live-overlay/settlement tests | **237 pass**, 0 fail |
+| `bun run docs:check-links` | PASS |
+
+### Exact blocker and cleanup
+
+```text
+failed:manualScrollAnchorStable
+```
+
+Center of failure: after native LIVE mount and deep Shift+Up into historical `TASK20C2_EX*` with a large positive newer-lines cue, Continue produced new native entries and Enter steering while scrolled reached the child, but the overlay kept a constant newer-lines count and advanced the visible body (EX block left the viewport). That is tip-relative follow under manual scroll, not content-anchored live stability required for item (b)/S043.
+
+Pre-existing panes: `w23:p79 w23:p70`. Closed only created panes from this targeted series. Isolated settings restored with `npm:pi-vim`. Unrelated overlay/CodeSight WIP hashes restored. No proof commit.
+
+```yaml
+currentResult: FAIL
+sanitizedBlockerOutcome: failed:manualScrollAnchorStable
+childProcessRemaining: false
+createdPaneClosed: true
+preexistingPanesPreserved: true
+proofCommitted: false
+planCheckboxMarked: false
+unrelatedOverlayWipPreserved: true
+```
+
+---
+
+## 16593bf isolated-harness attempt 9 — targeted live-anchor PASS — 2026-08-06
+
+Result: **PASS**
+
+Checklist version `3`. Targeted follow-up to attempt `8` on exact subject `16593bf` (`fix(pi): preserve child overlay anchor on live updates`). Same persisted shuttle-mini thread (`c6d5b297-…`) continued again after attempt-8 growth (native entries started at 344). Item (c) remains the proof of full oldest/newest three-page traversal; this run required a stable older marker (accepted `TASK20C2_EX*`), Shift+Up cue disengagement, Enter steering while scrolled, body/marker/scroll stability while entry count and hidden-newer cue increased, Shift+Down to the new tail, and CSM=0. Hard limit 6 minutes. Plan checkbox not marked.
+
+Prior same-matrix evidence (attempts 5–8 / Continue runs) already covers native LIVE mount, multi-hash live-tail advance, Enter steering + Alt+Enter follow-up isolation, empty-Backspace draft restore, settled read-only scroll, old-block freeze, focused tests, and cleanup. This run closes the remaining `manualScrollAnchorStable` gap on `16593bf`.
+
+### Subject and artifact
+
+| Field | Verified value |
+| --- | --- |
+| Subject HEAD | `16593bf8e2ec5530163704359594a63eafec28e1` |
+| Host Pi in pane | `0.83.0` via `$ISO/shim/pi` |
+| Global Pi (untouched) | `0.84.0` |
+| Artifact | `$ISO/pi-agent/npm/artifacts/weaveio-weave-adapter-pi-0.0.1-16593bf-task20iso-f8db0f7f7419.tgz` |
+| Artifact SHA-256 | `f8db0f7f741979b5c39e371f67a8471c00e66ec8a77bb9e6163fa527fd070eb3` |
+| Installed `dist/extension.js` | `e86463ff54577e5a78384bf2da1e8b7f336c3a4b9aa9dc1517333ba85d70baba` |
+| Installed `dist/index.js` | `83aa6831e6e7a79cd20c732d495bb703f6484f1a6cef1feeea8310ba296201c3` |
+| Installed `dist/cli.js` | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
+| Tarball vs installed digests | match |
+| Provenance | `npm:@weaveio/weave-adapter-pi` (not a symlink) |
+| Packages during run | `npm:@weaveio/weave-adapter-pi` only (pi-vim removed for this item) |
+| `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` | unset in launcher and live ISO process (`override_present=False`) |
+| Local extension shadow | absent under `$ISO/pi-agent/extensions` |
+| Host | `joses-Apple-MacBook-Pro` |
+| Pane / agent | `w23:pBX` / `task20b9a` |
+| Run id / markers | `DD9FA589` (`TASK20B_LIVE/STEER/PASS_DD9FA589`) |
+| Continued thread | same item-(c) shuttle-mini thread (`c6d5b297-…`) |
+| Native entries before → after | `344` → `356` |
+| `childSettlementMissingCount` | `0` |
+
+### Environment and Continue
+
+```yaml
+readyStatusObserved: true
+trust: trusted
+healthOnly: false
+piVimDisabled: true
+continueUsed: true
+nativeOverlayMountRoute: alt+i+enter
+nativeCustomComponentMounted: true
+customEditorFallbackObserved: false
+statusGateObserved: true
+manualScrollKey: herdr_shift+up
+manualScrollDownKey: herdr_shift+down
+expectedShiftUpBytes: "\x1b[1;2:1A"
+```
+
+### Controlled-run observations (attempt 9 targeted)
+
+```yaml
+overlayMounted: true
+overlayMountedLive: true
+nativeCustomComponentMounted: true
+stableOlderMarkerSeen: true
+stableOlderMarkerKind: TASK20C2_EX
+stableOlderMarkerSha256: 83194a07bcfe8fc388f20752b96125b4f49095df181ff010c05c2d97edfcc4bf
+manualScrollDisengaged: true
+manualScrollInitialNewerCount: 210
+manualScrollFinalNewerCount: 212
+manualScrollBodyShaBeforeSteer: 9663f255de7559f23cc9d1c429ea8ad782f283015ec06b8654d05c729eed5c5e
+manualScrollBodyShaAfterSteer: 9663f255de7559f23cc9d1c429ea8ad782f283015ec06b8654d05c729eed5c5e
+manualScrollAnchorSha256: 9663f255de7559f23cc9d1c429ea8ad782f283015ec06b8654d05c729eed5c5e
+manualScrollAnchorStable: true
+herdrScrollOffsetAtCapture: 0
+herdrScrollOffsetAfterSteer: 0
+herdrScrollOffsetStable: true
+nativeEntryCountAtScrollCapture: 350
+nativeEntryCountAfterSteer: 352
+nativeEntryCountIncreasedWhileScrolled: true
+naturalBodyStableBeforeSteer: true
+naturalCueAdvancedBeforeSteer: true
+anchorProofViaNaturalProgressBeforeSteer: true
+steeringSubmittedWhileScrolled: true
+steeringReachedChild: true
+manualScrollNewEntriesObserved: true
+shiftUpKeyCount: 176
+tailNewMarkerSeenAfterDown: true
+endResumedLiveTail: true
+newerCueDisappearedAtBottom: true
+settledObserved: true
+childSettlementMissingCount: 0
+childRpcProcessCountAtEnd: 0
+outcome: PASS
+driverBlockerOutcome: null
+```
+
+### Gap closure vs attempt 8
+
+| Targeted gap | Attempt 8 (`08e3ee5`) | Attempt 9 (`16593bf`) | Notes |
+| --- | --- | --- | --- |
+| Stable older marker while live | PASS (`TASK20C2_EX`, cue 215) | **PASS** (`TASK20C2_EX`, cue 210→212) | Absolute oldest page remains item (c) |
+| New entries while scrolled + stable viewport body/anchor | FAIL (entries 318→335, cue stuck 215, body slid) | **PASS** | Body hash identical before/after steer; cue 210→212; entries 350→352; Herdr pane offset stayed 0 |
+
+### Assertion matrix
+
+| Assertion | Result | Sanitized evidence |
+| --- | --- | --- |
+| Fresh pane runs Pi 0.83.0 with exact `16593bf` npm artifact; unsafe override absent | **PASS** | Version, artifact, installed digests matched tarball; `override_present=False` |
+| Persisted thread Continue creates distinct live attempt with delayed separate tool entries | **PASS** | Parent session resumed; native entries `344`→`356`; LIVE marker observed |
+| Native LIVE overlay mounts | **PASS** | `overlayMountRoute=alt+i+enter`; `nativeCustomComponentMounted=true` |
+| Shift+Up normalizes / disengages live-tail; stable older marker + positive cue | **PASS** | `shiftUpAccepted=true`; `TASK20C2_EX`; cue `210` then `212` |
+| Capture body hash, anchor marker/hash, cue, scroll offset, extent, native entry count | **PASS** | Body/anchor `9663f255…`; marker sha `83194a07…`; cue 210/212; Herdr offset 0; entries 350 at capture |
+| Enter steering while scrolled adds entry; after repaint entry count + cue rise; body/marker/scroll stable | **PASS** | Steer reached child; entries 350→352; cue 210→212; body hash unchanged; no slide to tip |
+| Shift+Down reaches new tail marker and resumes live-tail | **PASS** | `tailNewMarkerSeenAfterDown=true`; `endResumedLiveTail=true`; cue cleared at bottom |
+| Child settles with `childSettlementMissingCount: 0` | **PASS** | CSM `0`; rpc children `0` |
+| Prior matrix evidence still cited; this run proves the anchor gap on `16593bf` | **PASS** | Attempt 6/8 cited for mount/tail/steer/follow/draft/settled; attempt 9 closes anchor |
+| Cleanup: no rpc child / lease; created pane closed; WIP preserved | **PASS** | Pane `w23:pBX` closed; preexisting `w23:p79 w23:p70` preserved; settings restored with `npm:pi-vim`; unrelated overlay/CodeSight WIP SHA-256 baseline unchanged |
+
+### Repository checks (detached `16593bf` worktree)
+
+| Check | Result |
+| --- | --- |
+| Focused overlay/native/live-session/settlement/normalizer/runtime tests | **245 pass**, 0 fail |
+| `bun run docs:check-links` | PASS |
+
+### Exact outcome and cleanup
+
+```text
+PASS
+```
+
+Center of proof: after native LIVE mount and deep Shift+Up into historical `TASK20C2_EX*` with a large positive newer-lines cue, natural continued output advanced the cue (210→212) while the overlay body hash stayed identical; Enter steering while scrolled reached the child and raised native entries (350→352) without sliding the viewport toward the tip. Shift+Down resumed live-tail on the new marker. Settlement reported CSM=0.
+
+Pre-existing panes at start: `w23:p79 w23:p70`. This run closed only created pane `w23:pBX`. Remaining: `w23:p79 w23:p70`. Isolated settings restored to include `npm:pi-vim`. Temporary `16593bf` worktree removed. Artifact retained under `$ISO/pi-agent/npm/artifacts/`.
+
+```yaml
+currentResult: PASS
+sanitizedBlockerOutcome: null
+childProcessRemaining: false
+runtimeStoreLeaseActive: false
+createdPaneClosed: true
+preexistingPanesPreserved: true
+proofCommitted: true
+planCheckboxMarked: false
+unrelatedOverlayWipPreserved: true
 ```
