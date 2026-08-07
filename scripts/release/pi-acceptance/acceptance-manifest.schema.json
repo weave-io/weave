@@ -16,7 +16,7 @@
         "package": { "const": "@earendil-works/pi-coding-agent" },
         "supportedRange": { "type": "string", "pattern": "^>=0\\.81\\.1(?: <\\d+\\.\\d+\\.\\d+)?$" },
         "floorVersion": { "const": "0.81.1" },
-        "exactTestedVersion": { "type": "string", "pattern": "^0\\.81\\.[1-9][0-9]*$" }
+        "exactTestedVersion": { "const": "0.83.0" }
       }
     },
     "artifactBinding": {

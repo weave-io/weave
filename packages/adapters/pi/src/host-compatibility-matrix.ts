@@ -96,6 +96,14 @@ const overlayOnly = (
   fallback: "custom-editor",
 });
 
+/**
+ * The one host version the release was actually tested against. It must be a
+ * stable version inside the supported range, but it is deliberately not tied
+ * to the floor's minor line: the floor states what the adapter supports, while
+ * this states what was proved (Spec 33 §16).
+ */
+export const EXACT_TESTED_HOST_VERSION = "0.83.0";
+
 export interface PiHostCompatibilityMatrix {
   readonly package: string;
   readonly supportedRange: string;
@@ -108,7 +116,7 @@ export const PI_HOST_COMPATIBILITY_MATRIX: PiHostCompatibilityMatrix = {
   package: HOST_PACKAGE_NAME,
   supportedRange: `>=${HOST_VERSION_FLOOR}`,
   floorVersion: HOST_VERSION_FLOOR,
-  exactTestedVersion: "0.81.1",
+  exactTestedVersion: EXACT_TESTED_HOST_VERSION,
   surfaces: Object.freeze([
     rendering("assistant-rendering"),
     rendering("tool-rendering"),

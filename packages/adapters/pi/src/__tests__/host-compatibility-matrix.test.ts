@@ -4,6 +4,7 @@ import {
   HOST_VERSION_FLOOR,
 } from "../host-compatibility.js";
 import {
+  EXACT_TESTED_HOST_VERSION,
   PI_HOST_COMPATIBILITY_MATRIX,
   validateHostCompatibilityMatrix,
 } from "../host-compatibility-matrix.js";
@@ -13,7 +14,20 @@ describe("PI_HOST_COMPATIBILITY_MATRIX", () => {
     expect(PI_HOST_COMPATIBILITY_MATRIX.package).toBe(HOST_PACKAGE_NAME);
     expect(PI_HOST_COMPATIBILITY_MATRIX.supportedRange).toBe(">=0.81.1");
     expect(PI_HOST_COMPATIBILITY_MATRIX.floorVersion).toBe(HOST_VERSION_FLOOR);
-    expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).toBe("0.81.1");
+    expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).toBe("0.83.0");
+    expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).toBe(
+      EXACT_TESTED_HOST_VERSION,
+    );
+  });
+
+  it("keeps the tested version off the floor's minor line without moving the floor", () => {
+    expect(PI_HOST_COMPATIBILITY_MATRIX.floorVersion).toBe("0.81.1");
+    expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).not.toBe(
+      PI_HOST_COMPATIBILITY_MATRIX.floorVersion,
+    );
+    expect(
+      validateHostCompatibilityMatrix(PI_HOST_COMPATIBILITY_MATRIX).isOk(),
+    ).toBe(true);
   });
 
   it("passes its own validator", () => {
@@ -115,6 +129,26 @@ describe("validateHostCompatibilityMatrix", () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr())
       expect(result.error.type).toBe("ExactVersionOutOfRange");
+  });
+
+  it("rejects a prerelease exact tested version", () => {
+    for (const version of ["0.83.0-rc.1", "0.84.0-beta"]) {
+      const result = validateHostCompatibilityMatrix({
+        ...PI_HOST_COMPATIBILITY_MATRIX,
+        exactTestedVersion: version,
+      });
+      expect(result.isErr()).toBe(true);
+      if (result.isErr())
+        expect(result.error.type).toBe("ExactVersionMalformed");
+    }
+  });
+
+  it("accepts the stable release-tested version 0.83.0", () => {
+    const result = validateHostCompatibilityMatrix({
+      ...PI_HOST_COMPATIBILITY_MATRIX,
+      exactTestedVersion: "0.83.0",
+    });
+    expect(result.isOk()).toBe(true);
   });
 
   it("accepts an exact tested version in a later minor", () => {

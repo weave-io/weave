@@ -130,7 +130,9 @@ export const HostSchema = z
     package: z.literal(PI_HOST_COMPATIBILITY_MATRIX.package),
     supportedRange: z.string().regex(/^>=0\.81\.1(?: <\d+\.\d+\.\d+)?$/),
     floorVersion: z.literal(PI_HOST_COMPATIBILITY_MATRIX.floorVersion),
-    exactTestedVersion: z.string().regex(/^0\.81\.[1-9][0-9]*$/),
+    exactTestedVersion: z.literal(
+      PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion,
+    ),
   })
   .strict();
 
