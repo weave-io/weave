@@ -244,10 +244,13 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
-      liveSmoke: { required: true, checklistIds: ["S014", "S015"] },
+      liveSmoke: {
+        required: true,
+        checklistIds: ["S014", "S015", "S056"],
+      },
       result: "pass",
       notes:
-        "Closed-set check verifies all 9 PI_CONTROL_KINDS private control envelope kinds appear across the referenced tests.",
+        "Closed-set check verifies all 9 PI_CONTROL_KINDS private control envelope kinds appear across the referenced tests. S056 proves delegation refuses a non-persistent parent.",
     },
     {
       id: "PI-CMD",
@@ -316,7 +319,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
-      liveSmoke: { required: true, checklistIds: ["S016"] },
+      liveSmoke: { required: true, checklistIds: ["S016", "S058"] },
       result: "pass",
       notes:
         "Closed-set check verifies all 10 lifecycle operations (observeSession, startExecution, resumeExecution, handleUserInterrupt, dispatchStep, completeStep, beforeTool, inspectExecution, approveArtifact, reconcileExecution) appear across the referenced tests.",
@@ -457,7 +460,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
-      liveSmoke: { required: true, checklistIds: ["S021"] },
+      liveSmoke: { required: true, checklistIds: ["S021", "S063", "S064"] },
       result: "pass",
     },
     {
@@ -599,7 +602,15 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P002"] },
-      liveSmoke: { required: true, checklistIds: ["S001", "S002"] },
+      liveSmoke: {
+        required: true,
+        checklistIds: [
+          "S001",
+          "S002",
+          "S057",
+          "S067",
+        ],
+      },
       result: "pass",
     },
     {
@@ -627,10 +638,22 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P003", "P011"] },
-      liveSmoke: { required: true, checklistIds: ["S024", "S025"] },
+      liveSmoke: {
+        required: true,
+        checklistIds: [
+          "S040",
+          "S041",
+          "S042",
+          "S043",
+          "S045",
+          "S046",
+          "S047",
+          "S048",
+        ],
+      },
       result: "pending",
       notes:
-        "Native child session paging proves bounded bidirectional reads without full materialization; multi-chunk backward assembly stays chronological (Weft follow-up after fb7a9e9).",
+        "Native child session paging proves bounded bidirectional reads without full materialization; multi-chunk backward assembly stays chronological. Task 20 proved every cited row except S042, so narrow-width compact rendering and terminal-sequence sanitization have automated coverage only and the row stays pending.",
     },
     {
       id: "PI-INT",
@@ -645,8 +668,21 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P004"] },
-      liveSmoke: { required: true, checklistIds: ["S026", "S027", "S028"] },
-      result: "pending",
+      liveSmoke: {
+        required: true,
+        checklistIds: [
+          "S044",
+          "S049",
+          "S050",
+          "S051",
+          "S052",
+          "S053",
+          "S055",
+        ],
+      },
+      result: "pass",
+      notes:
+        "Task 20 proved every cited row on Pi 0.83.0 under checklist version 3: overlay steer and queued follow-up, picker and overlay keys, double-Escape cancel, retry and continue with frozen prior blocks, and the retryable ChildResponseMissing path.",
     },
     {
       id: "PI-PRI",
@@ -670,10 +706,10 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P005"] },
-      liveSmoke: { required: true, checklistIds: ["S029", "S030"] },
+      liveSmoke: { required: true, checklistIds: ["S059", "S061", "S062"] },
       result: "pending",
       notes:
-        "ADR 0014 replaces JSONL private-history migration with native Pi child sessions and an explicit no-migration decision. Privacy evidence is parent-facing projection exclusion, default-tree isolation, and metadata-only refs.",
+        "ADR 0014 replaces JSONL private-history migration with native Pi child sessions and an explicit no-migration decision. Task 20 proved origin-mismatch exclusion (S059) and absence from the resume tree (S061); it never inspected on-disk permission modes (S062), so this stays pending.",
     },
     {
       id: "PI-BND",
@@ -685,8 +721,10 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P006"] },
-      liveSmoke: { required: true, checklistIds: ["S031"] },
+      liveSmoke: { required: true, checklistIds: ["S068"] },
       result: "pending",
+      notes:
+        "Automated tests prove the bounded terminal projection plus numeric metadata. Task 20 recorded no live run that inspected parent projections for child content, so S068 and this requirement stay pending.",
     },
     {
       id: "PI-OVR",
@@ -702,8 +740,10 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P007"] },
-      liveSmoke: { required: true, checklistIds: ["S032"] },
+      liveSmoke: { required: true, checklistIds: ["S069"] },
       result: "pending",
+      notes:
+        "Oversized native output is proved by the >1 MiB RPC test and the repeated-settlement validator. Task 20 ran no live oversized sequential and maximum-parallelism sweep, so S069 and this requirement stay pending.",
     },
     {
       id: "PI-QUO",
@@ -726,10 +766,10 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P008"] },
-      liveSmoke: { required: true, checklistIds: ["S033"] },
-      result: "pending",
+      liveSmoke: { required: true, checklistIds: ["S065", "S066"] },
+      result: "pass",
       notes:
-        "ADR 0014 removes byte quotas, trimming, and automatic pruning. PI-QUO now proves explicit cleanup with tombstones and rejection of the removed quota/retention settings keys.",
+        "ADR 0014 removes byte quotas, trimming, and automatic pruning. Task 20 proved confirmed deletion with a tombstone that stays listed (S065) and orphan children readable after a parent delete (S066) on Pi 0.83.0 under checklist version 3.",
     },
     {
       id: "PI-SET",
@@ -748,8 +788,10 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P009"] },
-      liveSmoke: { required: true, checklistIds: ["S034"] },
+      liveSmoke: { required: true, checklistIds: ["S050"] },
       result: "pending",
+      notes:
+        "Task 20 proved only the keybinding half of adapter settings (S050: conflicts reported, user bindings preserved). No live run rejected invalid adapter settings with structured issues, so this stays pending.",
     },
     {
       id: "PI-RCV",
@@ -768,7 +810,9 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
       },
       packedProof: { required: true, evidenceIds: ["P010"] },
-      liveSmoke: { required: true, checklistIds: ["S035", "S036"] },
+      liveSmoke: { required: true, checklistIds: ["S054", "S057", "S060"] },
       result: "pending",
+      notes:
+        "Task 20 proved read-only recovery surfaces under a non-persistent parent and health-only mode (S057). Thread capacity release (S054) and the quit-and-reload bounded cancel then force-stop path (S060) were never run live, so this stays pending.",
     },
   ];

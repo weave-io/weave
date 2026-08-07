@@ -69,8 +69,17 @@ describe("parseSmokeChecklist", () => {
     const result = parseSmokeChecklist(read.value);
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
-    expect(result.value.version).toBe("1");
-    expect(result.value.items).toHaveLength(36);
-    expect(new Set(result.value.items.map((item) => item.id)).size).toBe(36);
+    expect(result.value.version).toBe("3");
+    expect(result.value.items).toHaveLength(53);
+    expect(new Set(result.value.items.map((item) => item.id)).size).toBe(53);
+    const byId = new Map(
+      result.value.items.map((item) => [item.id, item.result]),
+    );
+    for (const id of ["S010", "S011", "S012", "S013"])
+      expect(byId.get(id)).toBe("Pending");
+    for (const id of ["S040", "S049", "S057", "S067"])
+      expect(byId.get(id)).toBe("Pass");
+    for (const id of ["S042", "S054", "S060", "S062", "S068", "S069"])
+      expect(byId.get(id)).toBe("Pending");
   });
 });
