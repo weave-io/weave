@@ -1175,8 +1175,15 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     string,
     "replacement" | "rename" | "symlink" | "hardlink"
   >();
-  /** One-shot cap on the next range read's returned byte count. */
-  private readonly midReadShortCaps = new Map<string, number>();
+  /**
+   * One-shot caps on range-read returned byte counts. Each entry may require
+   * `offset >= minOffset` so paging tests can short a body window without
+   * consuming the cap on the header scan at offset 0.
+   */
+  private readonly midReadShortCaps = new Map<
+    string,
+    { maxBytes: number; minOffset: number }
+  >();
   private readonly exclusiveCreateFailures = new Map<
     string,
     PiNativeSessionFsError
@@ -1221,16 +1228,22 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
   }
 
   /**
-   * Consumes a one-shot short-read cap when present. When a short cap fires,
-   * mid-read mutations and leaf swaps stay queued for the next range call so
-   * a forced short read can succeed and the follow-up check pair can reject.
+   * Consumes a one-shot short-read cap when present and the read offset meets
+   * its minimum. When a short cap fires, mid-read mutations and leaf swaps stay
+   * queued for the next range call so a forced short read can succeed and the
+   * follow-up check pair can reject.
    */
-  private takeForcedShortCap(path: string, name: string): number | undefined {
+  private takeForcedShortCap(
+    path: string,
+    name: string,
+    offset: number,
+  ): number | undefined {
     const key = this.midReadKey(path, name);
     const cap = this.midReadShortCaps.get(key);
     if (cap === undefined) return undefined;
+    if (offset < cap.minOffset) return undefined;
     this.midReadShortCaps.delete(key);
-    return Math.max(0, cap);
+    return Math.max(0, cap.maxBytes);
   }
 
   private applyPostValidationSwap(path: string, name: string): void {
@@ -1436,7 +1449,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
                 }
                 // One content read per check pair. A forced short cap defers
                 // mutations/swaps so the next readRange re-checks before bytes.
-                const shortCap = fs.takeForcedShortCap(path, name);
+                const shortCap = fs.takeForcedShortCap(path, name, offset);
                 if (shortCap === undefined) {
                   fs.applyMidReadLeafSwap(path, name);
                   fs.applyMidReadMutation(path, name, file);
@@ -1763,13 +1776,22 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
   }
 
   /**
-   * Force the next open-file `readRange` for `path`/`name` to return at most
-   * `maxBytes`, even when more content is available. Queued mid-read mutations
-   * and leaf swaps stay deferred until the following range call so a short
-   * read can succeed and the retry's check pair can reject.
+   * Force the next open-file `readRange` for `path`/`name` at
+   * `offset >= minOffset` to return at most `maxBytes`, even when more content
+   * is available. Queued mid-read mutations and leaf swaps stay deferred until
+   * the following range call so a short read can succeed and the retry's check
+   * pair can reject. Pass `minOffset > 0` to spare the header scan at offset 0.
    */
-  simulateForcedShortRead(path: string, name: string, maxBytes: number): void {
-    this.midReadShortCaps.set(this.midReadKey(path, name), maxBytes);
+  simulateForcedShortRead(
+    path: string,
+    name: string,
+    maxBytes: number,
+    minOffset = 0,
+  ): void {
+    this.midReadShortCaps.set(this.midReadKey(path, name), {
+      maxBytes,
+      minOffset,
+    });
   }
 
   simulateFileTruncate(path: string, name: string, size: number): void {

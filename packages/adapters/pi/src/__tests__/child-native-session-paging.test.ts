@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ok, type Result } from "neverthrow";
+import { ok, type Result, type ResultAsync } from "neverthrow";
 import {
   decodePiNativeSessionEntryCursor,
   encodePiNativeSessionEntryCursor,
   PI_NATIVE_SESSION_ENTRY_CURSOR_VERSION,
   PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
   PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+  type PiNativeSessionDirectory,
+  type PiNativeSessionFileHandle,
+  type PiNativeSessionFsError,
   type PiNativeSessionFsPort,
   type PiNativeSessionHandle,
   type PiNativeSessionHostPort,
@@ -83,12 +86,56 @@ class ForbiddenHost implements PiNativeSessionHostPort {
   }
 }
 
-function pagingStore(fs: MemoryPiNativeSessionFs): PiNativeSessionStore {
+function pagingStore(fs: PiNativeSessionFsPort): PiNativeSessionStore {
   return new PiNativeSessionStore({
     root: ROOT,
-    fs: fs as unknown as PiNativeSessionFsPort,
+    fs,
     host: new ForbiddenHost(),
   });
+}
+
+/**
+ * Records every positional read through an opened descriptor so tests can
+ * prove short-window assembly retries via public `readRange`.
+ */
+class RecordingFs implements PiNativeSessionFsPort {
+  readonly requestedOffsets: number[] = [];
+  readonly requestedLengths: number[] = [];
+
+  constructor(private readonly inner: MemoryPiNativeSessionFs) {}
+
+  openDirectory(
+    path: string,
+    create: boolean,
+  ): ResultAsync<PiNativeSessionDirectory, PiNativeSessionFsError> {
+    return this.inner.openDirectory(path, create).map((directory) => {
+      const recorder = this;
+      const wrapped: PiNativeSessionDirectory = {
+        ...directory,
+        openFile(
+          name: string,
+        ): ResultAsync<
+          PiNativeSessionFileHandle | undefined,
+          PiNativeSessionFsError
+        > {
+          return directory.openFile(name).map((handle) => {
+            if (handle === undefined) return undefined;
+            return {
+              identity: handle.identity,
+              stat: () => handle.stat(),
+              readRange: (offset: number, length: number) => {
+                recorder.requestedOffsets.push(offset);
+                recorder.requestedLengths.push(length);
+                return handle.readRange(offset, length);
+              },
+              close: () => handle.close(),
+            } satisfies PiNativeSessionFileHandle;
+          });
+        },
+      };
+      return wrapped;
+    });
+  }
 }
 
 function entryIds(entries: readonly PiNativeSessionPagedEntry[]): string[] {
@@ -679,6 +726,148 @@ describe("readSessionEntryPage", () => {
         "entry-6",
         "entry-7",
       ]);
+    });
+  });
+
+  describe("forced short reads in backward paging", () => {
+    test("two-entry newest page retries short body window and returns entry-1", async () => {
+      // Pre-fix: a short body window returned the older prefix and jumped
+      // past the unread suffix, so newest(limit=1) yielded entry-0 / corrupt
+      // instead of entry-1.
+      const fs = new MemoryPiNativeSessionFs();
+      await seedJsonl(fs, buildSession(2));
+      const recording = new RecordingFs(fs);
+      // Spare the header scan at offset 0; short only the body window.
+      fs.simulateForcedShortRead(DIR, FILE, 140, 1);
+
+      const newestOne = (
+        await pagingStore(recording).readSessionEntryPage(REF, PARENT, {
+          direction: "newest",
+          limit: 1,
+        })
+      )._unsafeUnwrap();
+      expect(entryIds(newestOne.entries)).toEqual(["entry-1"]);
+
+      // First body request is the full window; the retry continues at
+      // offset + short with the unread remainder — never skips the suffix.
+      const bodyReads = recording.requestedOffsets
+        .map((offset, index) => ({
+          offset,
+          length: recording.requestedLengths[index] ?? 0,
+        }))
+        .filter((read) => read.offset > 0);
+      expect(bodyReads.length).toBeGreaterThanOrEqual(2);
+      expect(bodyReads[0]?.length).toBeGreaterThan(140);
+      expect(bodyReads[1]?.offset).toBe((bodyReads[0]?.offset ?? 0) + 140);
+      expect(bodyReads[1]?.length).toBe((bodyReads[0]?.length ?? 0) - 140);
+
+      const fsBoth = new MemoryPiNativeSessionFs();
+      await seedJsonl(fsBoth, buildSession(2));
+      fsBoth.simulateForcedShortRead(DIR, FILE, 140, 1);
+      const newestBoth = (
+        await pagingStore(fsBoth).readSessionEntryPage(REF, PARENT, {
+          direction: "newest",
+          limit: 2,
+        })
+      )._unsafeUnwrap();
+      expect(entryIds(newestBoth.entries)).toEqual(["entry-0", "entry-1"]);
+    });
+
+    test("older cursor paging under forced short reads preserves prior entry order", async () => {
+      const fs = new MemoryPiNativeSessionFs();
+      await seedJsonl(fs, buildSession(3));
+      const store = pagingStore(fs);
+      const newest = (
+        await store.readSessionEntryPage(REF, PARENT, {
+          direction: "newest",
+          limit: 1,
+        })
+      )._unsafeUnwrap();
+      expect(entryIds(newest.entries)).toEqual(["entry-2"]);
+      expect(newest.olderCursor).toBeDefined();
+
+      fs.simulateForcedShortRead(DIR, FILE, 140, 1);
+      const older = (
+        await store.readSessionEntryPage(REF, PARENT, {
+          direction: "older",
+          cursor: newest.olderCursor,
+          limit: 1,
+        })
+      )._unsafeUnwrap();
+      expect(entryIds(older.entries)).toEqual(["entry-1"]);
+
+      fs.simulateForcedShortRead(DIR, FILE, 140, 1);
+      const olderTwo = (
+        await store.readSessionEntryPage(REF, PARENT, {
+          direction: "older",
+          cursor: newest.olderCursor,
+          limit: 2,
+        })
+      )._unsafeUnwrap();
+      expect(entryIds(olderTwo.entries)).toEqual(["entry-0", "entry-1"]);
+    });
+
+    test("growth between short chunk and retry rejects with no partial page", async () => {
+      const fs = new MemoryPiNativeSessionFs();
+      await seedJsonl(fs, buildSession(2));
+      fs.simulateForcedShortRead(DIR, FILE, 32, 1);
+      fs.simulateMidReadGrowth(DIR, FILE, 64);
+
+      const failure = (
+        await pagingStore(fs).readSessionEntryPage(REF, PARENT, {
+          direction: "newest",
+          limit: 2,
+        })
+      )._unsafeUnwrapErr();
+
+      expect(failure).toEqual({
+        type: "SessionCorrupt",
+        ref: REF,
+        reason: "unreadable",
+      });
+    });
+
+    test("rewrite and path swap between short chunk and retry reject closed", async () => {
+      for (const arm of [
+        (fs: MemoryPiNativeSessionFs) => fs.simulateMidReadRewrite(DIR, FILE),
+        (fs: MemoryPiNativeSessionFs) =>
+          fs.simulateMidReadLeafSwap(DIR, FILE, "replacement"),
+      ] as const) {
+        const fs = new MemoryPiNativeSessionFs();
+        await seedJsonl(fs, buildSession(2));
+        fs.simulateForcedShortRead(DIR, FILE, 32, 1);
+        arm(fs);
+
+        const failure = (
+          await pagingStore(fs).readSessionEntryPage(REF, PARENT, {
+            direction: "newest",
+            limit: 2,
+          })
+        )._unsafeUnwrapErr();
+
+        expect(failure).toEqual({
+          type: "SessionCorrupt",
+          ref: REF,
+          reason: "unreadable",
+        });
+      }
+    });
+
+    test("premature zero-length body read fails typed with no throw", async () => {
+      const fs = new MemoryPiNativeSessionFs();
+      await seedJsonl(fs, buildSession(2));
+      fs.simulateForcedShortRead(DIR, FILE, 0, 1);
+
+      const result = await pagingStore(fs).readSessionEntryPage(REF, PARENT, {
+        direction: "newest",
+        limit: 1,
+      });
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toEqual({
+        type: "SessionCorrupt",
+        ref: REF,
+        reason: "unreadable",
+      });
     });
   });
 });

@@ -997,6 +997,14 @@ function isSessionHeaderLine(value: unknown): value is {
   return record.type === "session";
 }
 
+/**
+ * Assembles exactly `length` bytes (budget/capped) by calling the handle's
+ * public {@link PiNativeSessionFileHandle.readRange} in a loop. Each call
+ * performs one content read with full fd+leaf checks; short nonzero chunks
+ * resume at `offset + consumed`. A premature zero-length read before the
+ * window is complete fails closed — never a partial success that would let
+ * backward paging skip an unread suffix.
+ */
 function readRangeExact(
   handle: PiNativeSessionFileHandle,
   offset: number,
@@ -1018,20 +1026,46 @@ function readRangeExact(
     });
   }
   const capped = Math.min(length, remaining, effectiveMaxRangeLength());
-  return handle
-    .readRange(offset, capped)
-    .mapErr((error) => fromFsError(error, ref))
-    .andThen((range) => {
-      if (!sameFileIdentity(range.identity, expected)) {
-        return errAsync<Uint8Array, PiNativeSessionError>({
-          type: "SessionCorrupt",
-          ref,
-          reason: "stale-cursor",
-        });
-      }
-      state.bytesRead += range.bytes.length;
-      return okAsync(range.bytes);
-    });
+  const chunks: Uint8Array[] = [];
+  let consumed = 0;
+
+  const readNext = (): ResultAsync<Uint8Array, PiNativeSessionError> => {
+    if (consumed >= capped) {
+      return okAsync(concatChunks(chunks, consumed));
+    }
+    const need = capped - consumed;
+    return handle
+      .readRange(offset + consumed, need)
+      .mapErr((error) => fromFsError(error, ref))
+      .andThen((range) => {
+        if (!sameFileIdentity(range.identity, expected)) {
+          return errAsync<Uint8Array, PiNativeSessionError>({
+            type: "SessionCorrupt",
+            ref,
+            reason: "stale-cursor",
+          });
+        }
+        if (range.bytes.length === 0) {
+          // Premature EOF: the requested window is not complete.
+          return errAsync<Uint8Array, PiNativeSessionError>({
+            type: "SessionCorrupt",
+            ref,
+            reason: "unreadable",
+          });
+        }
+        chunks.push(range.bytes);
+        consumed += range.bytes.length;
+        state.bytesRead += range.bytes.length;
+        if (consumed >= capped) {
+          return okAsync(concatChunks(chunks, consumed));
+        }
+        // Short nonzero chunk: retry through public readRange so the next
+        // content read gets its own before/after fd+leaf checks.
+        return readNext();
+      });
+  };
+
+  return readNext();
 }
 
 /**
