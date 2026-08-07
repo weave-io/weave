@@ -367,7 +367,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
   - **Acceptance**:
     - Every matrix item has a proof record; each records that its test-created pane was closed, no test-created process/lease/pane remains, and all pre-existing panes were preserved; acceptance manifest validates against its schema.
 
-- [ ] 21. Warp gate, staged commits, and issue-linked PR
+- [x] 21. Warp gate, staged commits, and issue-linked PR
   - **What**: Pass the mandatory Warp gate, deliver the work as focused staged Conventional Commits (schema+test+doc per commit; no commit exposes incomplete user-reachable behavior; no experimental dual path), and open an issue-linked PR. Restore the health-only restriction scope after merge (the exception covers only this plan).
   - **Depends on**: Tasks 1–20.
   - **Implementation outline**:
