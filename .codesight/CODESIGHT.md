@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~28,700 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,600 tokens per conversation.**
-> **Last scanned:** 2026-08-07 19:06 — re-run after significant changes
+> **Token savings:** this file is ~28,800 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,600 tokens per conversation.**
+> **Last scanned:** 2026-08-07 19:22 — re-run after significant changes
 
 ---
 
@@ -95,11 +95,14 @@
   - function createPiAdapterCommandRegistry: (options) => AdapterCommandRegistry
   - _...20 more_
 - `packages/adapters/pi/src/adapter-cli-production.ts`
+  - function evaluateProductionChildrenDeleteGate: (options, "SessionManager"
+  >) => Result<void, PiAdapterFailure>
   - function openProductionPiAdapterCommandPorts: (options) => ResultAsync<
+  - function createProductionPorts: (options) => ResultAsync<
   - function createProductionPiAdapterCommandRegistry: (options) => ResultAsync<AdapterCommandRegistry, PiProductionAdapterCommandError>
+  - function resolveProductionAdapterCliRegistry: (input) => ResultAsync<AdapterCommandRegistry, PiProductionAdapterCliOpenError>
   - interface PiProductionAdapterCommandPorts
-  - interface CreateProductionPiAdapterCommandPortsOptions
-  - type PiProductionAdapterCommandError
+  - _...5 more_
 - `packages/adapters/pi/src/agent-cycle.ts`
   - function normalizeAgentBadgeKey: (agentName) => string
   - function selectAgentBadgeBg: (agentName) => PiUiThemeBgColor
@@ -233,8 +236,8 @@
   - function resolvePiChildMetadataCacheRoot: (input) => Result<string, PiChildMetadataCacheError>
   - function createChildMetadataBypass: (source, reason, now) => void
   - function openPiChildMetadataCache: (options) => ResultAsync<PiChildMetadataCacheOpenOutcome, never>
-  - function openBunChildMetadataDatabase
-  - _...27 more_
+  - function openPiChildMetadataCacheReadOnly: (options) => ResultAsync<PiChildMetadataCacheOpenOutcome, never>
+  - _...31 more_
 - `packages/adapters/pi/src/child-native-components.ts`
   - function renderPiChildCompactComponent: (output, options, theme) => NeverthrowResult<
   - function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory

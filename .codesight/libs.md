@@ -84,11 +84,14 @@
   - function createPiAdapterCommandRegistry: (options) => AdapterCommandRegistry
   - _...20 more_
 - `packages/adapters/pi/src/adapter-cli-production.ts`
+  - function evaluateProductionChildrenDeleteGate: (options, "SessionManager"
+  >) => Result<void, PiAdapterFailure>
   - function openProductionPiAdapterCommandPorts: (options) => ResultAsync<
+  - function createProductionPorts: (options) => ResultAsync<
   - function createProductionPiAdapterCommandRegistry: (options) => ResultAsync<AdapterCommandRegistry, PiProductionAdapterCommandError>
+  - function resolveProductionAdapterCliRegistry: (input) => ResultAsync<AdapterCommandRegistry, PiProductionAdapterCliOpenError>
   - interface PiProductionAdapterCommandPorts
-  - interface CreateProductionPiAdapterCommandPortsOptions
-  - type PiProductionAdapterCommandError
+  - _...5 more_
 - `packages/adapters/pi/src/agent-cycle.ts`
   - function normalizeAgentBadgeKey: (agentName) => string
   - function selectAgentBadgeBg: (agentName) => PiUiThemeBgColor
@@ -222,8 +225,8 @@
   - function resolvePiChildMetadataCacheRoot: (input) => Result<string, PiChildMetadataCacheError>
   - function createChildMetadataBypass: (source, reason, now) => void
   - function openPiChildMetadataCache: (options) => ResultAsync<PiChildMetadataCacheOpenOutcome, never>
-  - function openBunChildMetadataDatabase
-  - _...27 more_
+  - function openPiChildMetadataCacheReadOnly: (options) => ResultAsync<PiChildMetadataCacheOpenOutcome, never>
+  - _...31 more_
 - `packages/adapters/pi/src/child-native-components.ts`
   - function renderPiChildCompactComponent: (output, options, theme) => NeverthrowResult<
   - function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory

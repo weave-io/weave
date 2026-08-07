@@ -585,7 +585,24 @@ export interface PiChildMetadataCacheFsPort {
     path: string,
     mode: number,
   ): ResultAsync<void, PiChildMetadataCacheFsError>;
+  /**
+   * Reports whether the private file already exists, without ever creating
+   * it, its parent directories, or widening any mode.
+   *
+   * Read-only cache access uses this instead of `ensurePrivateFile`: a
+   * pristine data root must stay byte-for-byte absent after a read command.
+   * The method is optional so existing boundaries stay valid; a boundary that
+   * omits it simply skips the probe, and the read-only database open — which
+   * also never creates — remains the non-creating guarantee.
+   */
+  probePrivateFile?(
+    path: string,
+    mode: number,
+  ): ResultAsync<PiChildMetadataCacheFileProbe, PiChildMetadataCacheFsError>;
 }
+
+/** Result of a non-creating existence probe of the database file. */
+export type PiChildMetadataCacheFileProbe = "present" | "absent";
 
 interface CacheLibcFlags {
   readonly O_RDONLY: number;
@@ -788,6 +805,57 @@ export class BunPiChildMetadataCacheFs implements PiChildMetadataCacheFsPort {
     ).andThen((fd) => this.verifyFileMode(fd, mode));
   }
 
+  /**
+   * Non-creating existence probe. Walks the same no-follow chain as
+   * `ensurePrivateFile` with creation disabled, so a missing root,
+   * a missing cache directory, or a missing database file all answer
+   * `absent` without a single `mkdirat` or `O_CREAT`.
+   */
+  probePrivateFile(
+    path: string,
+    mode: number,
+  ): ResultAsync<PiChildMetadataCacheFileProbe, PiChildMetadataCacheFsError> {
+    const segments = absoluteSegments(path);
+    if (segments.isErr()) return errAsync(segments.error);
+    const fileName = segments.value.at(-1);
+    if (fileName === undefined) return errAsync({ type: "unsafe-path" });
+    const parent = `/${segments.value.slice(0, -1).join("/")}`;
+    return this.withDirectoryChain(
+      parent,
+      false,
+      mode,
+      (libc, dirFd): Result<number | "absent", PiChildMetadataCacheFsError> => {
+        const fd = libc.openat(
+          dirFd,
+          cstr(fileName),
+          libc.flags.O_RDONLY | libc.flags.O_NOFOLLOW | libc.flags.O_CLOEXEC,
+          0,
+        );
+        if (fd >= 0) return ok(fd);
+        const openErrno = libc.errno();
+        if (isLoopErrno(openErrno)) return err({ type: "symlink-rejected" });
+        if (openErrno === ERRNO_ENOENT) return ok("absent");
+        return err({ type: "io" });
+      },
+    )
+      .orElse((error) =>
+        // A missing directory component of the chain is indistinguishable
+        // from a missing file for a reader: both mean "nothing to read".
+        error.type === "unsafe-path"
+          ? okAsync<number | "absent", PiChildMetadataCacheFsError>("absent")
+          : errAsync<number | "absent", PiChildMetadataCacheFsError>(error),
+      )
+      .andThen((fd) =>
+        fd === "absent"
+          ? okAsync<PiChildMetadataCacheFileProbe, PiChildMetadataCacheFsError>(
+              "absent",
+            )
+          : this.verifyFileMode(fd, mode).map(
+              (): PiChildMetadataCacheFileProbe => "present",
+            ),
+      );
+  }
+
   private openPrivateFile(
     libc: CacheLibc,
     dirFd: number,
@@ -926,6 +994,8 @@ export class FakePiChildMetadataCacheFs implements PiChildMetadataCacheFsPort {
   constructor(
     private readonly failure?: PiChildMetadataCacheFsError,
     readonly calls: string[] = [],
+    /** What a non-creating probe reports when it does not fail. */
+    private readonly probeAnswer: PiChildMetadataCacheFileProbe = "present",
   ) {}
 
   ensureDirectory(
@@ -943,6 +1013,17 @@ export class FakePiChildMetadataCacheFs implements PiChildMetadataCacheFsPort {
     this.calls.push(`file:${path}`);
     return this.failure === undefined
       ? okAsync(undefined)
+      : errAsync(this.failure);
+  }
+
+  probePrivateFile(
+    path: string,
+  ): ResultAsync<PiChildMetadataCacheFileProbe, PiChildMetadataCacheFsError> {
+    this.calls.push(`probe:${path}`);
+    return this.failure === undefined
+      ? okAsync<PiChildMetadataCacheFileProbe, PiChildMetadataCacheFsError>(
+          this.probeAnswer,
+        )
       : errAsync(this.failure);
   }
 }
@@ -1123,6 +1204,36 @@ export const openBunChildMetadataDatabase: PiChildMetadataDatabaseOpener = (
     },
   };
 };
+
+/**
+ * Read-only opener: never creates the file, never creates or migrates a
+ * table, and never writes a journal.
+ *
+ * `SQLITE_OPEN_READONLY` cannot create a database, `PRAGMA query_only=ON`
+ * rejects any write statement at the SQLite layer, and the journal mode is
+ * left untouched (the cache is always `DELETE`, so no `-wal`/`-shm` side
+ * files can appear). `run` refuses before it reaches SQLite so a caller
+ * bug is a typed failure rather than an attempted mutation.
+ */
+export const openBunChildMetadataDatabaseReadOnly: PiChildMetadataDatabaseOpener =
+  (path) => {
+    const database = new Database(path, { readonly: true, create: false });
+    database.exec("PRAGMA query_only=ON;");
+    return {
+      run() {
+        throw new Error(READ_ONLY_WRITE_REFUSED);
+      },
+      all(sql, params) {
+        return database.query(sql).all(...((params ?? []) as never[]));
+      },
+      close() {
+        database.close();
+      },
+    };
+  };
+
+/** Message used when a write is refused on a read-only cache handle. */
+export const READ_ONLY_WRITE_REFUSED = "child metadata cache is read-only";
 
 const CREATE_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS cache_meta (
@@ -1328,6 +1439,12 @@ export interface PiChildMetadataCacheOpenOptions {
   readonly source: PiChildMetadataSource;
   readonly openDatabase?: PiChildMetadataDatabaseOpener;
   readonly now?: () => number;
+  /**
+   * When `true`, open an existing database for reads only. Never creates the
+   * cache root, database file, tables, schema rows, journals, or locks.
+   * A missing cache degrades to a bounded empty bypass.
+   */
+  readonly readOnly?: boolean;
 }
 
 function degraded(
@@ -1349,10 +1466,16 @@ function degraded(
  * corrupt, or version-mismatched database resolves to a degraded outcome
  * carrying the typed error and a bounded direct-scan bypass. Callers therefore
  * cannot be blocked by cache state.
+ *
+ * When {@link PiChildMetadataCacheOpenOptions.readOnly} is set, delegates to
+ * {@link openPiChildMetadataCacheReadOnly} and never creates state.
  */
 export function openPiChildMetadataCache(
   options: PiChildMetadataCacheOpenOptions,
 ): ResultAsync<PiChildMetadataCacheOpenOutcome, never> {
+  if (options.readOnly === true) {
+    return openPiChildMetadataCacheReadOnly(options);
+  }
   const databasePath = join(
     options.root,
     PI_CHILD_METADATA_CACHE_LAYOUT.databaseFile,
@@ -1383,6 +1506,54 @@ export function openPiChildMetadataCache(
           );
         },
       ),
+  );
+}
+
+/**
+ * Opens an existing cache for reads only.
+ *
+ * Never creates directories, the database file, tables, schema rows, WAL/SHM
+ * side files, or lock artifacts. A missing database degrades to a bounded
+ * empty bypass. An existing database is opened with
+ * {@link openBunChildMetadataDatabaseReadOnly} (or a caller-supplied opener)
+ * and schema is verified with SELECT only — never CREATE/INSERT/migrate.
+ */
+export function openPiChildMetadataCacheReadOnly(
+  options: PiChildMetadataCacheOpenOptions,
+): ResultAsync<PiChildMetadataCacheOpenOutcome, never> {
+  const databasePath = join(
+    options.root,
+    PI_CHILD_METADATA_CACHE_LAYOUT.databaseFile,
+  );
+  const probe = options.fs.probePrivateFile?.bind(options.fs);
+  if (probe === undefined) {
+    return ResultAsync.fromSafePromise(
+      Promise.resolve(initializeDatabaseReadOnly(options, databasePath)),
+    );
+  }
+  return ResultAsync.fromSafePromise(
+    probe(databasePath, PI_CHILD_METADATA_CACHE_LAYOUT.fileMode).match(
+      (answer): PiChildMetadataCacheOpenOutcome => {
+        if (answer === "absent") {
+          return degraded(
+            options,
+            { type: "CacheUnavailable", reason: "open-failed" },
+            "open-failed",
+          );
+        }
+        return initializeDatabaseReadOnly(options, databasePath);
+      },
+      (error): PiChildMetadataCacheOpenOutcome => {
+        const reason = degradeReasonFromFs(error);
+        return degraded(
+          options,
+          reason === "root-violation"
+            ? { type: "CacheRootViolation", reason: "path-escape" }
+            : { type: "CacheUnavailable", reason },
+          reason,
+        );
+      },
+    ),
   );
 }
 
@@ -1484,6 +1655,92 @@ function initializeDatabase(
       authority: options.authority,
       source: options.source,
       now: options.now ?? (() => Date.now()),
+      readOnly: false,
+    }),
+  };
+}
+
+/**
+ * Read-only open of an already-present database. SELECT-only schema check;
+ * never CREATE/INSERT/migrate. Refuses writes on the returned cache.
+ */
+function initializeDatabaseReadOnly(
+  options: PiChildMetadataCacheOpenOptions,
+  databasePath: string,
+): PiChildMetadataCacheOpenOutcome {
+  const opener = options.openDatabase ?? openBunChildMetadataDatabaseReadOnly;
+  const opened = Result.fromThrowable(
+    () => opener(databasePath),
+    (cause): PiChildMetadataCacheError => ({
+      type: "CacheUnavailable",
+      reason: classifyOpenFailure(cause),
+    }),
+  )();
+  if (opened.isErr()) {
+    return degraded(
+      options,
+      opened.error,
+      opened.error.type === "CacheUnavailable"
+        ? opened.error.reason
+        : "open-failed",
+    );
+  }
+  const database = opened.value;
+  const prepared = Result.fromThrowable(
+    () => {
+      const rows = database.all("SELECT value FROM cache_meta WHERE key = ?", [
+        "schema_version",
+      ]);
+      const stored = rows.at(0);
+      if (stored === undefined) {
+        return "schema-mismatch" as const;
+      }
+      const parsed = z.looseObject({ value: z.string() }).safeParse(stored);
+      if (
+        !parsed.success ||
+        parsed.data.value !== String(PI_CHILD_METADATA_CACHE_SCHEMA_VERSION)
+      ) {
+        return "schema-mismatch" as const;
+      }
+      return "ready" as const;
+    },
+    (cause): PiChildMetadataCacheError => ({
+      type: "CacheUnavailable",
+      reason: classifyOpenFailure(cause),
+    }),
+  )();
+  if (prepared.isErr()) {
+    Result.fromThrowable(
+      () => database.close(),
+      () => undefined,
+    )();
+    return degraded(
+      options,
+      prepared.error,
+      prepared.error.type === "CacheUnavailable"
+        ? prepared.error.reason
+        : "open-failed",
+    );
+  }
+  if (prepared.value === "schema-mismatch") {
+    Result.fromThrowable(
+      () => database.close(),
+      () => undefined,
+    )();
+    return degraded(
+      options,
+      { type: "CacheUnavailable", reason: "schema-mismatch" },
+      "schema-mismatch",
+    );
+  }
+  return {
+    mode: "active",
+    cache: new PiChildMetadataCache({
+      database,
+      authority: options.authority,
+      source: options.source,
+      now: options.now ?? (() => Date.now()),
+      readOnly: true,
     }),
   };
 }
@@ -1497,6 +1754,8 @@ interface PiChildMetadataCacheInternalOptions {
   readonly authority: PiChildRefSourceAuthority;
   readonly source: PiChildMetadataSource;
   readonly now: () => number;
+  /** When true, every write path fails closed without touching SQLite. */
+  readonly readOnly: boolean;
 }
 
 /** Counts produced by one rebuild, for doctor and tests. */
@@ -1518,12 +1777,19 @@ export class PiChildMetadataCache {
   private readonly authority: PiChildRefSourceAuthority;
   private readonly source: PiChildMetadataSource;
   private readonly now: () => number;
+  private readonly readOnly: boolean;
 
   constructor(options: PiChildMetadataCacheInternalOptions) {
     this.database = options.database;
     this.authority = options.authority;
     this.source = options.source;
     this.now = options.now;
+    this.readOnly = options.readOnly;
+  }
+
+  /** Whether this handle refuses every create/migrate/upsert/reconstruct path. */
+  isReadOnly(): boolean {
+    return this.readOnly;
   }
 
   /** Column names actually present in the live table. */
@@ -1685,10 +1951,19 @@ export class PiChildMetadataCache {
       .andThen((state) => {
         if (state === "available") {
           if (!record.stale) return okAsync(record);
+          // Read-only handles never clear the stale bit on disk.
+          if (this.readOnly) return okAsync(record);
           const refreshed = this.upsert({ ...record, stale: false });
           return refreshed.isErr()
             ? errAsync(refreshed.error)
             : okAsync({ ...record, stale: false });
+        }
+        if (this.readOnly) {
+          return errAsync<PiChildMetadataRecord, PiChildMetadataCacheError>({
+            type: "CacheEntryUnusable",
+            childId,
+            state,
+          });
         }
         const marked = this.upsert({
           ...record,
@@ -1899,6 +2174,12 @@ export class PiChildMetadataCache {
     sql: string,
     params: readonly unknown[],
   ): Result<void, PiChildMetadataCacheError> {
+    if (this.readOnly) {
+      return err({
+        type: "CacheUnavailable",
+        reason: "permission",
+      });
+    }
     return Result.fromThrowable(
       () => {
         this.database.run(sql, params);

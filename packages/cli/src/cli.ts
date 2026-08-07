@@ -134,7 +134,7 @@ export async function run(
     case "adapter": {
       const { parseAdapterTarget, renderAdapterHelp, runAdapter } =
         await import("./commands/adapter.js");
-      const { createProductionPiAdapterCommandRegistry } = await import(
+      const { resolveProductionAdapterCliRegistry } = await import(
         "@weaveio/weave-adapter-pi/cli"
       );
       if (rest.length === 0 || flags.help) {
@@ -170,15 +170,23 @@ export async function run(
         };
       }
       const workspaceKey = process.cwd();
-      const productionRegistry =
-        await createProductionPiAdapterCommandRegistry({
-          workspaceKey,
-        });
+      // Delete is gated inside resolveProductionAdapterCliRegistry before
+      // createProductionPorts / any cache or ref open.
+      const productionRegistry = await resolveProductionAdapterCliRegistry({
+        action: resolved.action,
+        workspaceKey,
+        accessMode: "read",
+      });
       if (productionRegistry.isErr()) {
+        const error = productionRegistry.error;
+        const message =
+          error.type === "RequiredCapabilityUnavailable"
+            ? `RequiredCapabilityUnavailable: ${error.capabilityId} (${error.reason})`
+            : `Pi adapter command ports unavailable: ${error.type} (${error.reason})`;
         terminal.stderr(
           formatCliError({
             type: "InvalidArgs",
-            message: `Pi adapter command ports unavailable: ${productionRegistry.error.type} (${productionRegistry.error.reason})`,
+            message,
           }),
         );
         return ok(1);

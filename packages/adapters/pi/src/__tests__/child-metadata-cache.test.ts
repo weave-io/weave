@@ -9,7 +9,9 @@ import {
   createChildMetadataBypass,
   FakePiChildMetadataCacheFs,
   openBunChildMetadataDatabase,
+  openBunChildMetadataDatabaseReadOnly,
   openPiChildMetadataCache,
+  openPiChildMetadataCacheReadOnly,
   PI_CHILD_METADATA_CACHE_BOUNDS,
   PI_CHILD_METADATA_CACHE_COLUMNS,
   PI_CHILD_METADATA_CACHE_LAYOUT,
@@ -20,6 +22,7 @@ import {
   type PiChildMetadataRecord,
   type PiChildMetadataSource,
   parseChildMetadataRecord,
+  READ_ONLY_WRITE_REFUSED,
   resolvePiChildMetadataCacheRoot,
 } from "../child-metadata-cache.js";
 import type {
@@ -1117,6 +1120,89 @@ describe("child metadata cache — tombstones", () => {
         .all(ref.childId);
       raw.close();
       expect(rows).toHaveLength(1);
+    } finally {
+      await $`rm -rf ${base}`.quiet();
+    }
+  });
+});
+
+describe("child metadata cache — read-only non-creating open", () => {
+  it("degrades on a missing cache without mkdir or create", async () => {
+    const fs = new FakePiChildMetadataCacheFs(undefined, [], "absent");
+    const source = new FakeSource(WORKSPACE, PARENT, [makeRef()]);
+    const outcome = await openPiChildMetadataCacheReadOnly({
+      root: "/tmp/never-created-cache-root",
+      fs,
+      authority: new FakeAuthority(),
+      source,
+    });
+    expect(outcome.isOk()).toBe(true);
+    const value = outcome._unsafeUnwrap();
+    expect(value.mode).toBe("degraded");
+    if (value.mode !== "degraded") return;
+    expect(value.error).toEqual({
+      type: "CacheUnavailable",
+      reason: "open-failed",
+    });
+    expect(fs.calls.some((call) => call.startsWith("dir:"))).toBe(false);
+    expect(fs.calls.some((call) => call.startsWith("file:"))).toBe(false);
+    expect(fs.calls.some((call) => call.startsWith("probe:"))).toBe(true);
+    const page = await value.bypass.list({ workspaceKey: WORKSPACE });
+    expect(page.isOk()).toBe(true);
+  });
+
+  it("opens an existing DB read-only and refuses upsert/migrate paths", async () => {
+    const made = await $`mktemp -d`.quiet();
+    const resolved = await $`realpath ${made.text().trim()}`.quiet();
+    const base = resolved.text().trim();
+    try {
+      const root = join(base, "cache");
+      const databasePath = join(
+        root,
+        PI_CHILD_METADATA_CACHE_LAYOUT.databaseFile,
+      );
+      const ref = makeRef();
+      const first = await openPiChildMetadataCache({
+        root,
+        fs: new BunPiChildMetadataCacheFs(),
+        authority: new FakeAuthority(),
+        source: new FakeSource(WORKSPACE, PARENT, [ref]),
+      });
+      const opened = first._unsafeUnwrap();
+      if (opened.mode !== "active") throw new Error("expected active");
+      opened.cache.upsertRef(ref, WORKSPACE);
+      opened.cache.close();
+
+      const before = await Bun.file(databasePath).arrayBuffer();
+      const beforeSha = new Bun.CryptoHasher("sha256")
+        .update(new Uint8Array(before))
+        .digest("hex");
+
+      const second = await openPiChildMetadataCache({
+        root,
+        fs: new BunPiChildMetadataCacheFs(),
+        authority: new FakeAuthority(),
+        source: new FakeSource(WORKSPACE, PARENT, [ref]),
+        readOnly: true,
+        openDatabase: openBunChildMetadataDatabaseReadOnly,
+      });
+      const read = second._unsafeUnwrap();
+      expect(read.mode).toBe("active");
+      if (read.mode !== "active") return;
+      expect(read.cache.isReadOnly()).toBe(true);
+      const listed = read.cache.list({ workspaceKey: WORKSPACE });
+      expect(listed._unsafeUnwrap().records).toHaveLength(1);
+      expect(read.cache.upsertRef(ref, WORKSPACE).isErr()).toBe(true);
+      const rebuild = await read.cache.rebuild();
+      expect(rebuild.isErr()).toBe(true);
+      read.cache.close();
+
+      const after = await Bun.file(databasePath).arrayBuffer();
+      const afterSha = new Bun.CryptoHasher("sha256")
+        .update(new Uint8Array(after))
+        .digest("hex");
+      expect(afterSha).toBe(beforeSha);
+      expect(READ_ONLY_WRITE_REFUSED.length).toBeGreaterThan(0);
     } finally {
       await $`rm -rf ${base}`.quiet();
     }

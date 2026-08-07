@@ -38,12 +38,18 @@ export {
 } from "./adapter-cli-commands.js";
 export type {
   CreateProductionPiAdapterCommandPortsOptions,
+  PiProductionAdapterAccessMode,
+  PiProductionAdapterCliOpenError,
   PiProductionAdapterCommandError,
   PiProductionAdapterCommandPorts,
+  ResolveProductionAdapterCliRegistryInput,
 } from "./adapter-cli-production.js";
 export {
   createProductionPiAdapterCommandRegistry,
+  createProductionPorts,
+  evaluateProductionChildrenDeleteGate,
   openProductionPiAdapterCommandPorts,
+  resolveProductionAdapterCliRegistry,
 } from "./adapter-cli-production.js";
 export type { PiSessionMutationGate } from "./required-capability-gate.js";
 export {

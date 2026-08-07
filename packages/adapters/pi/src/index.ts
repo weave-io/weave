@@ -30,12 +30,18 @@ export {
 } from "./adapter-cli-commands.js";
 export type {
   CreateProductionPiAdapterCommandPortsOptions,
+  PiProductionAdapterAccessMode,
+  PiProductionAdapterCliOpenError,
   PiProductionAdapterCommandError,
   PiProductionAdapterCommandPorts,
+  ResolveProductionAdapterCliRegistryInput,
 } from "./adapter-cli-production.js";
 export {
   createProductionPiAdapterCommandRegistry,
+  createProductionPorts,
+  evaluateProductionChildrenDeleteGate,
   openProductionPiAdapterCommandPorts,
+  resolveProductionAdapterCliRegistry,
 } from "./adapter-cli-production.js";
 export type {
   PiSanitizedChildIndex,
@@ -232,6 +238,7 @@ export type {
   PiChildMetadataBypass,
   PiChildMetadataCacheDegradeReason,
   PiChildMetadataCacheError,
+  PiChildMetadataCacheFileProbe,
   PiChildMetadataCacheFsError,
   PiChildMetadataCacheFsPort,
   PiChildMetadataCacheOpenOptions,
@@ -252,7 +259,9 @@ export {
   createChildMetadataBypass,
   FakePiChildMetadataCacheFs,
   openBunChildMetadataDatabase,
+  openBunChildMetadataDatabaseReadOnly,
   openPiChildMetadataCache,
+  openPiChildMetadataCacheReadOnly,
   PI_CHILD_METADATA_CACHE_BOUNDS,
   PI_CHILD_METADATA_CACHE_COLUMNS,
   PI_CHILD_METADATA_CACHE_LAYOUT,
@@ -260,6 +269,7 @@ export {
   PI_CHILD_METADATA_FORBIDDEN_COLUMN_TOKENS,
   PiChildMetadataCache,
   parseChildMetadataRecord,
+  READ_ONLY_WRITE_REFUSED,
   resolvePiChildMetadataCacheRoot,
 } from "./child-metadata-cache.js";
 export type { PiNativeTranscriptComponentDeps } from "./child-native-components.js";
