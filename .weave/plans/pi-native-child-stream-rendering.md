@@ -352,7 +352,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
   - **Acceptance**:
     - Weft reports approval for the branch with zero outstanding findings.
 
-- [ ] 20. Real-harness proof on Pi 0.83 via Herdr
+- [x] 20. Real-harness proof on Pi 0.83 via Herdr
   - **What**: Prove every acceptance surface in a real Pi 0.83 harness following `docs/testing/adapter-verification.md`: launch each test in a fresh pane via `herdr agent`, close only the pane created for that individual test, and after every test prove no residual child process, no Runtime Store lease, and no leftover test-created pane. Never close or alter a pre-existing Herdr pane. Record proofs under Spec 33.
   - **Files**: `docs/specs/33-spec-pi-adapter/33-proofs/` (new proof records), `docs/specs/33-spec-pi-adapter/acceptance-manifest.json` (regenerate per tooling), `docs/specs/33-spec-pi-adapter/33-smoke-checklist.md` (check off procedure text, not plan tasks).
   - **Depends on**: Tasks 1–19.
