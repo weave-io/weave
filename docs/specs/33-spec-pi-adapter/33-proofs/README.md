@@ -40,7 +40,7 @@ both smoke checklists.
 | `33-task20-l-resume-exclusion-proof.md` | S061 | Historical — needs a created child session |
 | `33-task20-m-pi-vim-coexistence-proof.md` | S047, S049, S050 | S050 current (keybinding conflict reporting); S047 and S049 historical — need a child overlay |
 | `33-task20-n-health-only-readonly-proof.md` | S057, S067 | Historical — pre-`c24182f` behaviour under a reversible injected capability failure, including its then-passing mutation-rejection rows; S057 and S067 are now recorded by the Task 21 record |
-| `33-task21-final-head-fail-closed-proof.md` | S057, S063, S064, S067 | **Current** — the only record bound to the final fail-closed head `43ebc13` |
+| `33-task21-final-head-fail-closed-proof.md` | S057, S063, S064, S067 | **Current** — the only record bound to the final fail-closed head `b0997de` |
 
 ## What still holds at the fail-closed head
 
@@ -52,9 +52,11 @@ evidence that any mutation or spawn path works on this host.
 
 `33-task21-final-head-fail-closed-proof.md` is the current record for `S057`,
 `S063`, `S064`, and `S067`. It re-ran those four rows live against exact source
-`43ebc1379b22042ace2cb46039017a17aeea97b4` on Pi `0.83.0` and also recorded the
+`b0997dec207de8a953078edf4a2b92206c89778a` on Pi `0.83.0` and also recorded the
 fail-closed rejection of `weave_delegate`, `/weave:run`, `/weave:start`, and
-`children.delete`. `S050` is still recorded by
+`children.delete`, plus pristine non-creating startup, non-creating production
+CLI reads, explicit title provenance, and an inert interrupted legacy ref. It
+supersedes its own earlier `43ebc13` binding. `S050` is still recorded by
 `33-task20-m-pi-vim-coexistence-proof.md`.
 
 ## Supporting records
