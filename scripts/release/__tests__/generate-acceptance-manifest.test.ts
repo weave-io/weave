@@ -30,10 +30,14 @@ describe("generateAcceptanceManifest", () => {
         .map((row) => row.id),
     ).toEqual([
       "PI-POL",
+      "PI-DEL",
+      "PI-LIF",
       "PI-INS",
+      "PI-INT",
       "PI-PRI",
       "PI-BND",
       "PI-OVR",
+      "PI-QUO",
       "PI-SET",
       "PI-RCV",
     ]);
@@ -47,9 +51,7 @@ describe("generateAcceptanceManifest", () => {
               "PI-PRM",
               "PI-SKL",
               "PI-MDL",
-              "PI-DEL",
               "PI-CMD",
-              "PI-LIF",
               "PI-CMP",
               "PI-REC",
               "PI-PLN",
@@ -61,8 +63,6 @@ describe("generateAcceptanceManifest", () => {
               "PI-ERR",
               "PI-PKG",
               "PI-MODE",
-              "PI-INT",
-              "PI-QUO",
             ] as readonly string[]
           ).includes(row.id),
         )

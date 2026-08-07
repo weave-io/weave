@@ -9,7 +9,18 @@ import type {
  * named tests and packed-proof evidence IDs (see `PACKED_PROOF_REGISTRY`
  * below). Permission-specific live evidence belongs to the historical
  * permission-enabled artifact, so `PI-POL` remains pending until a new
- * digest-bound native-control smoke run completes. Automated and packed
+ * digest-bound native-control smoke run completes.
+ *
+ * Pi `0.83.0` lacks the required capability
+ * `descriptor-relative-native-session-io` (probe reason
+ * `path-only-session-api`), so every generation enters health-only mode and
+ * fails closed for all persistent session mutation and child spawn. Every
+ * requirement whose live evidence needed a spawned child or a session
+ * mutation is therefore `pending`, and the Task 20 proofs for those rows are
+ * historical records of pre-`c24182f` behaviour. Only read-only,
+ * reporting, and automated evidence supports a `pass` on this host.
+ *
+ * Automated and packed
  * evidence remains mandatory and is verified by
  * `scripts/release/__tests__/acceptance-manifest.test.ts`.
  */
@@ -248,9 +259,9 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         required: true,
         checklistIds: ["S014", "S015", "S056"],
       },
-      result: "pass",
+      result: "pending",
       notes:
-        "Closed-set check verifies all 9 PI_CONTROL_KINDS private control envelope kinds appear across the referenced tests. S056 proves delegation refuses a non-persistent parent.",
+        "Closed-set check verifies all 9 PI_CONTROL_KINDS private control envelope kinds appear across the referenced tests. Pi 0.83.0 lacks descriptor-relative-native-session-io (path-only-session-api), so persistent child spawn fails closed before any controller or child process call. S014 and S015 are historical checklist version 1 rows on Pi 0.81.1, and S056's PersistentParentSessionRequired path is superseded by the capability gate. No current live evidence supports delegation on this host.",
     },
     {
       id: "PI-CMD",
@@ -320,9 +331,9 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S016", "S058"] },
-      result: "pass",
+      result: "pending",
       notes:
-        "Closed-set check verifies all 10 lifecycle operations (observeSession, startExecution, resumeExecution, handleUserInterrupt, dispatchStep, completeStep, beforeTool, inspectExecution, approveArtifact, reconcileExecution) appear across the referenced tests.",
+        "Closed-set check verifies all 10 lifecycle operations (observeSession, startExecution, resumeExecution, handleUserInterrupt, dispatchStep, completeStep, beforeTool, inspectExecution, approveArtifact, reconcileExecution) appear across the referenced tests. Direct workflow dispatch and session transition both mutate persistent session state, so Pi 0.83.0 fails them closed; the Task 20 S058 proof is historical pre-c24182f evidence and this row stays pending.",
     },
     {
       id: "PI-CMP",
@@ -604,14 +615,11 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       packedProof: { required: true, evidenceIds: ["P002"] },
       liveSmoke: {
         required: true,
-        checklistIds: [
-          "S001",
-          "S002",
-          "S057",
-          "S067",
-        ],
+        checklistIds: ["S001", "S002", "S057", "S067"],
       },
       result: "pass",
+      notes:
+        "Pi 0.83.0 reports the required capability descriptor-relative-native-session-io as unavailable with reason path-only-session-api, so every generation on this host enters health-only mode and fails closed for all persistent session mutation and child spawn. S067 records that health-only report and S057 records that the descriptor-safe read-only surfaces (history, picker, doctor, list, show) stay available. Neither row claims any mutation or spawn support.",
     },
     {
       id: "PI-INS",
@@ -653,7 +661,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       result: "pending",
       notes:
-        "Native child session paging proves bounded bidirectional reads without full materialization; multi-chunk backward assembly stays chronological. Task 20 proved every cited row except S042, so narrow-width compact rendering and terminal-sequence sanitization have automated coverage only and the row stays pending.",
+        "Native child session paging proves bounded bidirectional reads without full materialization; multi-chunk backward assembly stays chronological. Every cited live row needs a spawned child or a session mutation, which Pi 0.83.0 fails closed for lack of descriptor-relative-native-session-io (path-only-session-api). The Task 20 proofs for those rows are historical pre-c24182f records, and S042 was never run live, so this row stays pending on automated coverage alone.",
     },
     {
       id: "PI-INT",
@@ -670,19 +678,11 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       packedProof: { required: true, evidenceIds: ["P004"] },
       liveSmoke: {
         required: true,
-        checklistIds: [
-          "S044",
-          "S049",
-          "S050",
-          "S051",
-          "S052",
-          "S053",
-          "S055",
-        ],
+        checklistIds: ["S044", "S049", "S050", "S051", "S052", "S053", "S055"],
       },
-      result: "pass",
+      result: "pending",
       notes:
-        "Task 20 proved every cited row on Pi 0.83.0 under checklist version 3: overlay steer and queued follow-up, picker and overlay keys, double-Escape cancel, retry and continue with frozen prior blocks, and the retryable ChildResponseMissing path.",
+        "Overlay steer, follow-up, retry, continue, and settlement all require a running persistent child. Pi 0.83.0 lacks descriptor-relative-native-session-io (path-only-session-api), so those routes fail closed before any child process starts. The Task 20 records for S044, S049, S051, S052, S053, and S055 are historical pre-c24182f proofs, not evidence for this head; only S050 still passes. Pending until a descriptor-safe host exists.",
     },
     {
       id: "PI-PRI",
@@ -709,7 +709,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       liveSmoke: { required: true, checklistIds: ["S059", "S061", "S062"] },
       result: "pending",
       notes:
-        "ADR 0014 replaces JSONL private-history migration with native Pi child sessions and an explicit no-migration decision. Task 20 proved origin-mismatch exclusion (S059) and absence from the resume tree (S061); it never inspected on-disk permission modes (S062), so this stays pending.",
+        "ADR 0014 replaces JSONL private-history migration with native Pi child sessions and an explicit no-migration decision. Every cited live row needs child sessions that Pi 0.83.0 cannot create: the host lacks descriptor-relative-native-session-io (path-only-session-api), so spawn fails closed. The Task 20 records for S059 and S061 are historical pre-c24182f proofs, and on-disk permission modes (S062) were never inspected, so this stays pending.",
     },
     {
       id: "PI-BND",
@@ -767,9 +767,9 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P008"] },
       liveSmoke: { required: true, checklistIds: ["S065", "S066"] },
-      result: "pass",
+      result: "pending",
       notes:
-        "ADR 0014 removes byte quotas, trimming, and automatic pruning. Task 20 proved confirmed deletion with a tombstone that stays listed (S065) and orphan children readable after a parent delete (S066) on Pi 0.83.0 under checklist version 3.",
+        "ADR 0014 removes byte quotas, trimming, and automatic pruning. `weave adapter pi children delete` is a persistent session mutation, so Pi 0.83.0 fails it closed for lack of descriptor-relative-native-session-io (path-only-session-api). The Task 20 records for S065 and S066 are historical pre-c24182f proofs and are not evidence for this head, so this row stays pending on automated coverage alone.",
     },
     {
       id: "PI-SET",
@@ -813,6 +813,6 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       liveSmoke: { required: true, checklistIds: ["S054", "S057", "S060"] },
       result: "pending",
       notes:
-        "Task 20 proved read-only recovery surfaces under a non-persistent parent and health-only mode (S057). Thread capacity release (S054) and the quit-and-reload bounded cancel then force-stop path (S060) were never run live, so this stays pending.",
+        "Task 20 proved read-only recovery surfaces under a non-persistent parent and health-only mode (S057), which stays valid on the fail-closed head: history, doctor, list, and show remain readable without any mutation support. Thread capacity release (S054) and the quit-and-reload bounded cancel then force-stop path (S060) were never run live, and both need a spawned child that Pi 0.83.0 fails closed, so this stays pending.",
     },
   ];

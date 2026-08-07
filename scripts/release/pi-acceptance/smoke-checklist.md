@@ -28,11 +28,50 @@ they are `Pending` here and `PI-POL` stays `pending` in the manifest.
 `S040`-`S069` belong to this checklist version. Each passing row was
 executed by hand in an isolated Pi `0.83.0` harness and recorded in its own
 proof file under
-[`docs/specs/33-spec-pi-adapter/33-proofs/`](../../../docs/specs/33-spec-pi-adapter/33-proofs/).
+[`docs/specs/33-spec-pi-adapter/33-proofs/`](../../../docs/specs/33-spec-pi-adapter/33-proofs/),
+indexed with current status by
+[`33-proofs/README.md`](../../../docs/specs/33-spec-pi-adapter/33-proofs/README.md).
 Task 20 ran the acceptance matrix as a set of per-item runs against several
 subjects and artifacts, not as one shared digest-bound sweep, so each row
 below is bound to the artifact recorded inside its own proof file and to no
 other.
+
+## Pi 0.83 fail-closed session contract
+
+Pi `0.83.0` addresses native sessions by caller-supplied filesystem path. The
+adapter therefore cannot prove that a session write lands inside host-owned
+storage, so the required capability `descriptor-relative-native-session-io`
+probes `unavailable` with reason `path-only-session-api`. The production probe
+port answers that surface `false` unconditionally: no environment variable,
+setting, RPC method presence, or session-restore support can raise it.
+
+Every generation on this host therefore enters health-only mode and **fails
+closed for all persistent session mutation and child spawn**. Commits
+`c24182f`, `50d59b4`, and `5af9f1b` enforce that boundary before any
+controller, session service, filesystem, cache, execution lease, or child
+process call. The blocked routes are `weave_delegate` (start, retry, continue,
+steer, follow-up), relayed child delegation, direct workflow dispatch,
+cancellation, clear, recovery, and `weave adapter pi children delete`.
+
+The descriptor-safe **read-only** surfaces stay available and are still
+recorded as passing: status, health, plan, inspect, `/weave:history`,
+`/weave:doctor`, and `weave adapter pi children list` / `show`. Those rows
+record read availability only. They are never evidence that any mutation or
+spawn path works on this host.
+
+### Superseded Task 20 live delegation rows
+
+Rows `S040`, `S041`, `S043`-`S049`, `S051`-`S053`, `S055`, `S056`, `S058`,
+`S059`, `S061`, `S065`, and `S066` were proved by Task 20 live runs that
+spawned a persistent child or mutated a native session. Those runs predate the
+fail-closed contract, so their proof files are retained as **historical**
+records of the pre-`c24182f` behaviour only. They are `Pending` below and are
+not presented as evidence for the current head. Re-running them requires a
+host that proves `descriptor-relative-native-session-io`.
+
+The historical checklist version 1 rows `S014`, `S015`, and `S016` also
+exercised delegation and direct workflow dispatch on Pi `0.81.1`. They remain
+bound to that historical host and artifact and say nothing about Pi `0.83.0`.
 
 ## Binding rules
 
@@ -87,9 +126,15 @@ verification.
 
 ## Task 20 proof records
 
-Every `Pass` row below cites the exact proof file that recorded it. Proof
-files are sanitized: they record digests, counts, and outcomes, never
-prompts or transcripts.
+The table below names the proof file that recorded each Task 20 row. Proof
+files are sanitized: they record digests, counts, and outcomes, never prompts
+or transcripts.
+
+Every row in this table that required a persistent child spawn or a native
+session mutation is now `Pending`, and its proof file is **historical**: it
+documents pre-`c24182f` behaviour and is not evidence for the fail-closed
+head. Only `S050`, `S057`, `S063`, `S064`, and `S067` — read-only and
+reporting surfaces — still carry a current `Pass`.
 
 | Proof record (`docs/specs/33-spec-pi-adapter/33-proofs/`) | Rows |
 | --- | --- |
@@ -148,33 +193,33 @@ record and stay `Pending`.
 | S021 | Diagnostics/usage | Confirm `.weave/runtime/logs/pi-adapter.ndjson` contains no prompts, secrets, or raw filesystem paths, and that usage observations are recorded. | Pass |
 | S022 | Cleanup | Confirm session end triggers idempotent secret/child cleanup with no leaked child processes. | Pass |
 | S023 | Package removal | Remove the packed package and reload; confirm Weave commands are gone, no child process remains, and durable `.weave/runtime` state stays inert for a later reinstall rather than being mutated or deleted. | Pass |
-| S040 | Compact block | The compact child block shows the latest fragment as a bounded 3-line tail while the child runs. | Pass |
-| S041 | Compact block | On settlement the compact block shows the final response tail or error, and every prior run's block stays frozen. | Pass |
+| S040 | Compact block | The compact child block shows the latest fragment as a bounded 3-line tail while the child runs. | Pending |
+| S041 | Compact block | On settlement the compact block shows the final response tail or error, and every prior run's block stays frozen. | Pending |
 | S042 | Compact block | The compact block renders at narrow widths, sanitizes terminal control sequences, and isolates render errors. | Pending |
-| S043 | Overlay | The live overlay transcript live-tails, disengages on manual scroll, and survives resize and expansion toggles. | Pass |
-| S044 | Overlay | Steer a running child with Enter and queue a follow-up with Alt+Enter, without leaking either into the parent session. | Pass |
-| S045 | Overlay | Open a historical child after a parent restart, with bounded pagination and in-overlay search. | Pass |
-| S046 | Overlay | Settled children are read-only and no focused overlay input reaches the primary editor. | Pass |
-| S047 | Overlay | The overlay falls back to the custom-editor path and restores pi-vim's mode on unmount. | Pass |
-| S048 | Picker | The picker lists children of every status with title precedence and active-first, newest-settled ordering. | Pass |
-| S049 | Keys | Alt+I, Alt+1..9, sibling keys, and empty-Backspace parent-or-close behave as documented. | Pass |
+| S043 | Overlay | The live overlay transcript live-tails, disengages on manual scroll, and survives resize and expansion toggles. | Pending |
+| S044 | Overlay | Steer a running child with Enter and queue a follow-up with Alt+Enter, without leaking either into the parent session. | Pending |
+| S045 | Overlay | Open a historical child after a parent restart, with bounded pagination and in-overlay search. | Pending |
+| S046 | Overlay | Settled children are read-only and no focused overlay input reaches the primary editor. | Pending |
+| S047 | Overlay | The overlay falls back to the custom-editor path and restores pi-vim's mode on unmount. | Pending |
+| S048 | Picker | The picker lists children of every status with title precedence and active-first, newest-settled ordering. | Pending |
+| S049 | Keys | Alt+I, Alt+1..9, sibling keys, and empty-Backspace parent-or-close behave as documented. | Pending |
 | S050 | Keys | Keybinding conflicts are reported and never overwrite the user's own bindings. | Pass |
-| S051 | Keys | A double Escape within 750ms opens the cancel-subtree confirmation defaulting to Keep running, and a single Escape never falls through. | Pass |
-| S052 | Threads | Retry a retryable failed thread and a cancelled thread; each run gets a new block with divider metadata. | Pass |
-| S053 | Threads | Continue a completed thread with a task, and confirm wrong-state continue/retry fails closed with typed diagnostics. | Pass |
+| S051 | Keys | A double Escape within 750ms opens the cancel-subtree confirmation defaulting to Keep running, and a single Escape never falls through. | Pending |
+| S052 | Threads | Retry a retryable failed thread and a cancelled thread; each run gets a new block with divider metadata. | Pending |
+| S053 | Threads | Continue a completed thread with a task, and confirm wrong-state continue/retry fails closed with typed diagnostics. | Pending |
 | S054 | Threads | Structured thread errors cover already-running, stale, integrity, and not-retryable, and capacity is held while running and released on settlement. | Pending |
-| S055 | Settlement | Empty, whitespace-only, thinking-only, and tool-only completions settle as retryable `ChildResponseMissing` with the transcript preserved. | Pass |
-| S056 | Sessions | A `--no-session` parent fails delegation with `PersistentParentSessionRequired` and writes zero session files. | Pass |
+| S055 | Settlement | Empty, whitespace-only, thinking-only, and tool-only completions settle as retryable `ChildResponseMissing` with the transcript preserved. | Pending |
+| S056 | Sessions | A `--no-session` parent fails delegation with `PersistentParentSessionRequired` and writes zero session files. | Pending |
 | S057 | Sessions | Read-only history, picker, and doctor stay available under a non-persistent parent and in health-only mode. | Pass |
-| S058 | Sessions | A session transition prompts with Stay as the default, cancels descendants, and writes settlement to the origin refs before switching. | Pass |
-| S059 | Sessions | A new parent session shows no prior-session child data, and forked or cloned refs are excluded on origin mismatch. | Pass |
+| S058 | Sessions | A session transition prompts with Stay as the default, cancels descendants, and writes settlement to the origin refs before switching. | Pending |
+| S059 | Sessions | A new parent session shows no prior-session child data, and forked or cloned refs are excluded on origin mismatch. | Pending |
 | S060 | Sessions | Quit and reload perform a bounded cancel then force-stop, leaving no residual child process. | Pending |
-| S061 | Privacy | No child session appears in Pi's `/resume` list or default session tree. | Pass |
+| S061 | Privacy | No child session appears in Pi's `/resume` list or default session tree. | Pending |
 | S062 | Privacy | Child sessions and their cache use user-only permissions inside the contained root. | Pending |
 | S063 | Diagnostics | `/weave:history` returns a bounded first page and `/weave:doctor` a sanitized report with no raw prompt or transcript. | Pass |
 | S064 | CLI | `weave adapter pi children list/show` respect the 50/100 bounds and cursor, return stable JSON, and print no paths by default. | Pass |
-| S065 | CLI | `weave adapter pi children delete` requires confirmation, appends a tombstone, and the child stays listed as a tombstone. | Pass |
-| S066 | CLI | Deleting a parent leaves orphan children readable through history and doctor. | Pass |
+| S065 | CLI | `weave adapter pi children delete` requires confirmation, appends a tombstone, and the child stays listed as a tombstone. | Pending |
+| S066 | CLI | Deleting a parent leaves orphan children readable through history and doctor. | Pending |
 | S067 | Mode | A missing required capability enters health-only mode reporting capability, version, contract, probe, mode, and remediation. | Pass |
 | S068 | Boundary | Parent projections carry only bounded terminal output and numeric metadata, never child content. | Pending |
 | S069 | Settlement | Valid bounded or transferred output never produces the exact structured `ChildSettlementMissing`. | Pending |
@@ -183,9 +228,19 @@ record and stay `Pending`.
 
 Stable publication requires every row to be `Pass`, with no row skipped or
 marked `N/A`. Rows `S001`-`S023` carry the historical checklist version 1
-binding; rows `S040`-`S069` carry their own Task 20 checklist version 3 proof
-bindings. The permission rows `S010`-`S013` and the six unproved rows
-`S042`, `S054`, `S060`, `S062`, `S068`, and `S069` are still `Pending`, so
-stable publication remains blocked until they are executed against a recorded
-binding. A single `Fail` blocks stable publication until the underlying defect
-is fixed and the affected rows are re-run against a new binding.
+binding; the remaining `Pass` rows in `S040`-`S069` carry their own Task 20
+checklist version 3 proof bindings and cover read-only surfaces only.
+
+Stable publication is blocked on Pi `0.83.0` for three reasons:
+
+1. The permission rows `S010`-`S013` were never re-run against the
+   native-control adapter.
+2. The six unproved rows `S042`, `S054`, `S060`, `S062`, `S068`, and `S069`
+   have no live run at all.
+3. Every persistent mutation and child spawn row is `Pending` because Pi
+   `0.83.0` lacks `descriptor-relative-native-session-io`
+   (`path-only-session-api`) and the adapter fails closed. These rows cannot
+   pass on this host at all; they need a descriptor-safe host.
+
+A single `Fail` blocks stable publication until the underlying defect is fixed
+and the affected rows are re-run against a new binding.
