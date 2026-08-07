@@ -28,10 +28,44 @@ describe("generateAcceptanceManifest", () => {
       manifest.requirements
         .filter((row) => row.result === "pending")
         .map((row) => row.id),
-    ).toEqual(["PI-POL", "PI-INS", "PI-INT", "PI-PRI", "PI-BND", "PI-OVR", "PI-QUO", "PI-SET", "PI-RCV"]);
+    ).toEqual([
+      "PI-POL",
+      "PI-INS",
+      "PI-PRI",
+      "PI-BND",
+      "PI-OVR",
+      "PI-SET",
+      "PI-RCV",
+    ]);
     expect(
       manifest.requirements
-        .filter((row) => row.id === "PI-ACT" || row.id === "PI-MAT" || row.id === "PI-PRM" || row.id === "PI-SKL" || row.id === "PI-MDL" || row.id === "PI-DEL" || row.id === "PI-CMD" || row.id === "PI-LIF" || row.id === "PI-CMP" || row.id === "PI-REC" || row.id === "PI-PLN" || row.id === "PI-ART" || row.id === "PI-PER" || row.id === "PI-DIA" || row.id === "PI-USG" || row.id === "PI-CAP" || row.id === "PI-ERR" || row.id === "PI-PKG" || row.id === "PI-MODE")
+        .filter((row) =>
+          (
+            [
+              "PI-ACT",
+              "PI-MAT",
+              "PI-PRM",
+              "PI-SKL",
+              "PI-MDL",
+              "PI-DEL",
+              "PI-CMD",
+              "PI-LIF",
+              "PI-CMP",
+              "PI-REC",
+              "PI-PLN",
+              "PI-ART",
+              "PI-PER",
+              "PI-DIA",
+              "PI-USG",
+              "PI-CAP",
+              "PI-ERR",
+              "PI-PKG",
+              "PI-MODE",
+              "PI-INT",
+              "PI-QUO",
+            ] as readonly string[]
+          ).includes(row.id),
+        )
         .every((row) => row.result === "pass"),
     ).toBe(true);
   }, 60_000);
