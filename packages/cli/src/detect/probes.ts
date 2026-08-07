@@ -1,4 +1,6 @@
+import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { resolve as posixResolve } from "node:path/posix";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
 export type ProbeError = {
@@ -26,7 +28,7 @@ function probeError(
 
 export class BunDetectionProbes implements DetectionProbes {
   home(): string {
-    return Bun.env.HOME ?? "/tmp";
+    return Bun.env.HOME ?? Bun.env.USERPROFILE ?? homedir();
   }
 
   resolvePath(path: string): string {
@@ -94,9 +96,13 @@ export class MemoryDetectionProbes implements DetectionProbes {
   }
 
   resolvePath(path: string): string {
-    if (path === "~") return this.home();
-    if (path.startsWith("~/")) return resolve(this.home(), path.slice(2));
-    return resolve(path);
+    let normalized = path.replace(/\\/g, "/");
+    normalized = normalized.replace(/^[A-Za-z]:/, "");
+    if (normalized === "~") return this.home();
+    if (normalized.startsWith("~/")) {
+      return posixResolve(this.home(), normalized.slice(2));
+    }
+    return posixResolve(normalized);
   }
 
   exists(path: string): ResultAsync<boolean, ProbeError> {

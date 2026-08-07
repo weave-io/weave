@@ -1139,7 +1139,7 @@ export class DashboardIndexWriter {
         onlyFiles: true,
       })) {
         // relPath is like "abc123d-2026-01-15-001/public-report.json"
-        const parts = relPath.split("/");
+        const parts = relPath.split(/[\\/]/);
         if (parts.length < 2) continue;
         const runId = parts[0];
         if (runId === undefined) continue;

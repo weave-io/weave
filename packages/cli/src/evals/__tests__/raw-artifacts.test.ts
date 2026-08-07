@@ -27,6 +27,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { basename, dirname, join, relative } from "node:path";
 import {
   isoToFilesafeDatetime,
   MemoryFileWriter,
@@ -42,9 +43,18 @@ import type { RawCaseResultArtifact, RawPromptArtifact } from "../types.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-const BUNDLE_DIR = "/fake/bundle";
+const BUNDLE_DIR = join("fake", "bundle");
 const FIXED_DATE = "2026-01-15";
 const FIXED_TIMESTAMP = `${FIXED_DATE}T12:00:00.000Z`;
+
+function relativeToBundle(filePath: string, bundleDir = BUNDLE_DIR): string {
+  return relative(bundleDir, filePath);
+}
+
+function expectUnderRaw(filePath: string, bundleDir = BUNDLE_DIR): void {
+  const relativePath = relativeToBundle(filePath, bundleDir);
+  expect(dirname(relativePath)).toBe(RAW_ARTIFACTS_SUBDIR);
+}
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -368,7 +378,7 @@ describe("RawArtifactsWriter (enabled)", () => {
 
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
-    expect(filePath).toContain("raw/");
+    expectUnderRaw(filePath);
     expect(filePath).toContain("case-route-to-shuttle");
     // Verify the mock recorded exactly one write at the returned path
     expect(mem.writes.size).toBe(1);
@@ -455,7 +465,7 @@ describe("RawArtifactsWriter (enabled)", () => {
 
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
-    expect(filePath).toContain("raw/");
+    expectUnderRaw(filePath);
     expect(filePath).toContain("prompt-loom");
     expect(mem.writes.has(filePath)).toBe(true);
   });
@@ -550,7 +560,7 @@ describe("RawArtifactsWriter (enabled)", () => {
 
   it("written path is under the bundle raw/ directory", async () => {
     const mem = new MemoryFileWriter();
-    const bundleDir = "/my/custom/bundle";
+    const bundleDir = join("my", "custom", "bundle");
     const writer = new RawArtifactsWriter(bundleDir, true, mem);
     const artifact = makeCaseResultArtifact();
 
@@ -561,7 +571,7 @@ describe("RawArtifactsWriter (enabled)", () => {
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
     // Path must be under <bundleDir>/raw/
-    expect(filePath.startsWith(`${bundleDir}/raw/`)).toBe(true);
+    expectUnderRaw(filePath, bundleDir);
   });
 });
 
@@ -828,7 +838,7 @@ describe("RawArtifactsWriter — path containment (writeCaseResultArtifact)", ()
     );
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
-    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+    expectUnderRaw(filePath);
   });
 
   it("path stays under raw/ even with ../ in caseId", async () => {
@@ -843,7 +853,7 @@ describe("RawArtifactsWriter — path containment (writeCaseResultArtifact)", ()
     );
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
-    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+    expectUnderRaw(filePath);
     expect(filePath).not.toContain("..");
   });
 
@@ -859,10 +869,10 @@ describe("RawArtifactsWriter — path containment (writeCaseResultArtifact)", ()
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
     // Strip the bundle prefix and verify no extra directory segments from the caseId
-    const relativeToBundle = filePath.slice(`${BUNDLE_DIR}/`.length);
-    expect(relativeToBundle.startsWith("raw/")).toBe(true);
+    const relativePath = relativeToBundle(filePath);
+    expect(dirname(relativePath)).toBe(RAW_ARTIFACTS_SUBDIR);
     // No slash in the filename portion (after raw/)
-    const filenameOnly = relativeToBundle.slice("raw/".length);
+    const filenameOnly = basename(relativePath);
     expect(filenameOnly).not.toContain("/");
   });
 
@@ -877,7 +887,7 @@ describe("RawArtifactsWriter — path containment (writeCaseResultArtifact)", ()
     );
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
-    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+    expectUnderRaw(filePath);
   });
 
   it("path stays under raw/ even with ../ in modelId", async () => {
@@ -891,7 +901,7 @@ describe("RawArtifactsWriter — path containment (writeCaseResultArtifact)", ()
     );
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
-    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+    expectUnderRaw(filePath);
     expect(filePath).not.toContain("..");
   });
 });
@@ -909,7 +919,7 @@ describe("RawArtifactsWriter — path containment (writePromptArtifact)", () => 
     const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
-    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+    expectUnderRaw(filePath);
   });
 
   it("path stays under raw/ even with ../ in agentName", async () => {
@@ -920,7 +930,7 @@ describe("RawArtifactsWriter — path containment (writePromptArtifact)", () => 
     const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
-    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+    expectUnderRaw(filePath);
     expect(filePath).not.toContain("..");
   });
 
@@ -932,9 +942,9 @@ describe("RawArtifactsWriter — path containment (writePromptArtifact)", () => 
     const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
-    const relativeToBundle = filePath.slice(`${BUNDLE_DIR}/`.length);
-    expect(relativeToBundle.startsWith("raw/")).toBe(true);
-    const filenameOnly = relativeToBundle.slice("raw/".length);
+    const relativePath = relativeToBundle(filePath);
+    expect(dirname(relativePath)).toBe(RAW_ARTIFACTS_SUBDIR);
+    const filenameOnly = basename(relativePath);
     expect(filenameOnly).not.toContain("/");
   });
 
@@ -946,6 +956,6 @@ describe("RawArtifactsWriter — path containment (writePromptArtifact)", () => 
     const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
     expect(result.isOk()).toBe(true);
     const filePath = result._unsafeUnwrap();
-    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+    expectUnderRaw(filePath);
   });
 });

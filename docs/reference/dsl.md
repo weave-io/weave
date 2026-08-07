@@ -31,9 +31,11 @@ The `.weave` configuration language is a block-structured, declarative DSL for d
 │   ├── loom.md
 │   ├── shuttle.md
 │   └── custom-agent.md
-├── plans/                   # Plan files (created by Pattern agent)
+├── plans/                   # Plan files (created by Pattern agent): .weave/plans/
 └── workflows/               # Additional workflow files (optional)
 ```
+
+Plan files are always stored under `.weave/plans/`. Plan-related learnings and execution artifacts should also stay under `.weave/`, not in top-level `plans/`, `learnings/`, or state directories.
 
 ---
 

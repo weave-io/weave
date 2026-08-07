@@ -166,6 +166,7 @@ describe("init command", () => {
     });
     const probes = new MemoryDetectionProbes({
       files: { "/home/user/.config/opencode/config.json": { readable: true } },
+      binaries: { opencode: "/usr/bin/opencode" },
     });
     const { terminal, ctx } = initContext({
       fs,
@@ -262,7 +263,9 @@ describe("runInit — explicit migrate mode (weave init migrate)", () => {
     const result = await runInit(ctx);
     expect(result._unsafeUnwrap()).toBe(1);
     expect(terminal.err.join("\n")).toContain("No legacy config found");
-    expect(terminal.err.join("\n")).toContain(".opencode/weave-opencode.jsonc");
+    expect(terminal.err.join("\n").replace(/\\/g, "/")).toContain(
+      ".opencode/weave-opencode.jsonc",
+    );
   });
 
   it("fails with exit 1 when no legacy source exists (global scope)", async () => {
@@ -272,7 +275,7 @@ describe("runInit — explicit migrate mode (weave init migrate)", () => {
     const result = await runInit(ctx);
     expect(result._unsafeUnwrap()).toBe(1);
     expect(terminal.err.join("\n")).toContain("No legacy config found");
-    expect(terminal.err.join("\n")).toContain(
+    expect(terminal.err.join("\n").replace(/\\/g, "/")).toContain(
       ".config/opencode/weave-opencode.jsonc",
     );
   });

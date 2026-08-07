@@ -440,6 +440,7 @@ describe("builtin compose smoke", () => {
    * Tokens that must NOT appear in any rendered (composed) prompt.
    * These indicate raw config objects, model identifiers, file paths,
    * harness-specific tool names, or secret/environment data leaking through.
+   * `.weave/` is an intentional product path for config, plans, and runtime state.
    */
   const RENDERED_BANNED_TOKENS = [
     // Raw model identifiers
@@ -451,7 +452,6 @@ describe("builtin compose smoke", () => {
     "packages/config",
     "packages/engine",
     "prompts/",
-    ".weave/",
     // Harness-specific tool names
     "TodoWrite",
     "todowrite",

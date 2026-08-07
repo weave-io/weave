@@ -44,7 +44,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { err, ok, ResultAsync } from "neverthrow";
 import type { EvalRunRequest } from "../input-validation.js";
 import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
@@ -1544,7 +1544,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
 
     expect(summary.rawArtifactsWritten.length).toBeGreaterThan(0);
     for (const writtenPath of summary.rawArtifactsWritten) {
-      expect(writtenPath).toContain("/raw/");
+      expect(dirname(writtenPath).split(/[\\/]/).at(-1)).toBe("raw");
     }
   });
 
@@ -1824,7 +1824,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     const staleRunId = "stale000-2026-07-01-001";
     const staleDir = join(bundleRoot, "runs", staleRunId);
 
-    await Bun.spawn(["mkdir", "-p", staleDir]).exited;
+    await Bun.write(join(staleDir, ".keep"), "");
     await Bun.write(
       join(staleDir, "repeatability-diagnostics.json"),
       "{ definitely-not-valid-json",
@@ -1868,10 +1868,14 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
 
     expect(diagnostics.comparableRunCount).toBe(1);
     expect(diagnostics.errors).toHaveLength(1);
-    expect(diagnostics.errors[0]).toMatchObject({
-      type: "RepeatabilityDiagnosticsReadError",
-      filePath: join(staleDir, "repeatability-diagnostics.json"),
-    });
+    expect(diagnostics.errors[0]?.type).toBe(
+      "RepeatabilityDiagnosticsReadError",
+    );
+    const diagnosticError = diagnostics.errors[0];
+    if (diagnosticError?.type !== "RepeatabilityDiagnosticsReadError") return;
+    expect(diagnosticError.filePath.replace(/\\/g, "/")).toContain(
+      `${staleRunId}/repeatability-diagnostics.json`,
+    );
   });
 
   it("groups repeatability snapshots by summary.modelId within each suite", () => {
@@ -2050,7 +2054,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     const staleRunId = "stale000-2026-07-01-001";
     const staleDir = join(bundleRoot, "runs", staleRunId);
 
-    await Bun.spawn(["mkdir", "-p", staleDir]).exited;
+    await Bun.write(join(staleDir, ".keep"), "");
 
     await Bun.write(
       join(staleDir, "repeatability-diagnostics.json"),
@@ -2122,7 +2126,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     const orchestrator = new EvalOrchestrator(makeOptions());
     const directoryPath = join(TEMP_DIR, `repeatability-write-error-${uid()}`);
 
-    await Bun.spawn(["mkdir", "-p", directoryPath]).exited;
+    await Bun.write(join(directoryPath, ".keep"), "");
 
     const result = await (
       orchestrator as unknown as {

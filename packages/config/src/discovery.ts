@@ -86,7 +86,7 @@ export function discoverAndParse(
   projectRoot?: string,
   fileReader: FileReader = bunFileReader,
 ): ResultAsync<DiscoveredConfig[], ConfigLoadError[]> {
-  const home = process.env.HOME ?? homedir();
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? homedir();
   const root = projectRoot ?? process.cwd();
 
   const scopes: ConfigScope[] = [

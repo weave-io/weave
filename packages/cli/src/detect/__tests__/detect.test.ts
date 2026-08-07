@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import { homedir } from "node:os";
 import { errAsync } from "neverthrow";
 import { detectHarnesses } from "../index.js";
-import { MemoryDetectionProbes, type ProbeError } from "../probes.js";
+import {
+  BunDetectionProbes,
+  MemoryDetectionProbes,
+  type ProbeError,
+} from "../probes.js";
 
 const files = {
   "/home/user/.config/opencode/config.json": { readable: true },
@@ -10,6 +15,26 @@ const files = {
 };
 
 describe("harness detection", () => {
+  function withEnv<T>(
+    values: { HOME?: string; USERPROFILE?: string },
+    callback: () => T,
+  ): T {
+    const originalHome = Bun.env.HOME;
+    const originalUserProfile = Bun.env.USERPROFILE;
+    try {
+      if (values.HOME === undefined) delete Bun.env.HOME;
+      else Bun.env.HOME = values.HOME;
+      if (values.USERPROFILE === undefined) delete Bun.env.USERPROFILE;
+      else Bun.env.USERPROFILE = values.USERPROFILE;
+      return callback();
+    } finally {
+      if (originalHome === undefined) delete Bun.env.HOME;
+      else Bun.env.HOME = originalHome;
+      if (originalUserProfile === undefined) delete Bun.env.USERPROFILE;
+      else Bun.env.USERPROFILE = originalUserProfile;
+    }
+  }
+
   it("detects all harnesses", async () => {
     const probes = new MemoryDetectionProbes({
       files,
@@ -113,5 +138,21 @@ describe("harness detection", () => {
         .resolvePath("~user/.config/tool.json")
         .endsWith("/~user/.config/tool.json"),
     ).toBe(true);
+  });
+
+  it("BunDetectionProbes uses OS home fallback for tilde paths", () => {
+    withEnv({ HOME: undefined, USERPROFILE: undefined }, () => {
+      const probes = new BunDetectionProbes();
+
+      expect(probes.home()).toBe(homedir());
+    });
+  });
+
+  it("BunDetectionProbes uses USERPROFILE when HOME is unavailable", () => {
+    withEnv({ HOME: undefined, USERPROFILE: "C:\\Users\\weave-test" }, () => {
+      const probes = new BunDetectionProbes();
+
+      expect(probes.home()).toBe("C:\\Users\\weave-test");
+    });
   });
 });

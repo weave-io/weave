@@ -52,8 +52,9 @@ function makeTempDir(): string {
   return dir;
 }
 
+// Sync existence probe: several guard assertions in this file check paths
+// synchronously, and awaiting a boolean is valid for the async call sites.
 function pathExists(p: string): boolean {
-  // Use Bun.file().exists() for async check, or spawnSync for sync
   const result = Bun.spawnSync(["test", "-e", p]);
   return result.exitCode === 0;
 }
@@ -264,13 +265,13 @@ function createLegacyV2Database(db: Database): void {
   `);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   testDir = makeTempDir();
+  await Bun.write(join(testDir, ".keep"), "");
 });
 
-afterEach(() => {
-  // Best-effort cleanup using Bun.spawnSync
-  Bun.spawnSync(["rm", "-rf", testDir]);
+afterEach(async () => {
+  await Bun.$`rm -rf ${testDir}`.quiet();
 });
 
 // ---------------------------------------------------------------------------
@@ -281,28 +282,28 @@ describe("lazy initialization", () => {
   it("does not create the DB file at construction time", async () => {
     const dbPath = makeDbPath(testDir);
     makeStore(testDir);
-    expect(pathExists(dbPath)).toBe(false);
+    expect(await pathExists(dbPath)).toBe(false);
   });
 
   it("creates the runtime directory and DB file on first operation", async () => {
     const store = makeStore(testDir);
     const result = await store.instances.list();
     expect(result.isOk()).toBe(true);
-    expect(pathExists(makeDbPath(testDir))).toBe(true);
+    expect(await pathExists(makeDbPath(testDir))).toBe(true);
   });
 
   it("creates the runtime directory with restrictive permissions", async () => {
     const store = makeStore(testDir);
     await store.instances.list();
     const runtimeDir = join(testDir, "runtime");
-    expect(pathExists(runtimeDir)).toBe(true);
+    expect(await pathExists(join(runtimeDir, "weave.db"))).toBe(true);
   });
 
   it("is idempotent — second operation does not re-initialize", async () => {
     const store = makeStore(testDir);
     await store.instances.list();
     await store.instances.list();
-    expect(pathExists(makeDbPath(testDir))).toBe(true);
+    expect(await pathExists(makeDbPath(testDir))).toBe(true);
   });
 
   it("concurrent ensureInitialized calls only initialize once", async () => {
@@ -321,7 +322,7 @@ describe("lazy initialization", () => {
     expect(r3.isOk()).toBe(true);
 
     // DB file should exist exactly once (not corrupted by double-init)
-    expect(pathExists(makeDbPath(testDir))).toBe(true);
+    expect(await pathExists(makeDbPath(testDir))).toBe(true);
 
     // Verify the DB is usable and consistent — only one schema_version row
     const db = new Database(makeDbPath(testDir));
@@ -2553,7 +2554,7 @@ describe("migrations", () => {
   it("SqliteRuntimeStore returns migration_version error on open with future DB", async () => {
     // Create a DB with a future schema version
     const runtimeDir = join(testDir, "runtime");
-    Bun.spawnSync(["mkdir", "-p", runtimeDir]);
+    await Bun.write(join(runtimeDir, ".keep"), "");
     const dbPath = join(runtimeDir, "weave.db");
     const db = new Database(dbPath);
     db.exec(CANONICAL_BOOTSTRAP_DDL);
@@ -2615,7 +2616,7 @@ describe("project salt lifecycle", () => {
       // Salts should be different (with overwhelming probability)
       expect(salt1).not.toBe(salt2);
     } finally {
-      Bun.spawnSync(["rm", "-rf", dir2]);
+      await Bun.$`rm -rf ${dir2}`.quiet();
     }
   });
 

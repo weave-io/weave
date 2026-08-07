@@ -48,6 +48,26 @@ const PROJECT = "/my/project";
 const GLOBAL_PATH = `${HOME}/.weave/config.weave`;
 const PROJECT_PATH = `${PROJECT}/.weave/config.weave`;
 
+function withEnv<T>(
+  values: { HOME?: string; USERPROFILE?: string },
+  callback: () => T,
+): T {
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+  try {
+    if (values.HOME === undefined) delete process.env.HOME;
+    else process.env.HOME = values.HOME;
+    if (values.USERPROFILE === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = values.USERPROFILE;
+    return callback();
+  } finally {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
+  }
+}
+
 describe("discoverAndParse", () => {
   it("(a) both files exist → returns 2 entries, global first", async () => {
     const reader = mockReader({
@@ -77,6 +97,23 @@ describe("discoverAndParse", () => {
     const result = await discoverAndParse(PROJECT, reader);
 
     process.env.HOME = origHome;
+
+    expect(result.isOk()).toBe(true);
+    const entries = result._unsafeUnwrap();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.scope.kind).toBe("global");
+  });
+
+  it("uses USERPROFILE for global config when HOME is unavailable", async () => {
+    const userProfile = "C:/Users/weave-test";
+    const reader = mockReader({
+      [`${userProfile}/.weave/config.weave`]: VALID_DSL,
+    });
+
+    const result = await withEnv(
+      { HOME: undefined, USERPROFILE: userProfile },
+      () => discoverAndParse(PROJECT, reader),
+    );
 
     expect(result.isOk()).toBe(true);
     const entries = result._unsafeUnwrap();

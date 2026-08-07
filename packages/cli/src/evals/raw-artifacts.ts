@@ -47,7 +47,7 @@
  * means the raw/published paths cannot be swapped by accident.
  */
 
-import { join, normalize, resolve } from "node:path";
+import { join, normalize, resolve, sep } from "node:path";
 import { err, ResultAsync } from "neverthrow";
 import type {
   RawArtifactWriteError,
@@ -482,7 +482,7 @@ function assertPathContained(
   rawDir: string,
   filePath: string,
 ): { isOk(): boolean; isErr(): boolean; error: string } {
-  const resolvedDir = resolve(rawDir) + "/";
+  const resolvedDir = resolve(rawDir) + sep;
   const resolvedFile = normalize(resolve(filePath));
   if (!resolvedFile.startsWith(resolvedDir)) {
     return {

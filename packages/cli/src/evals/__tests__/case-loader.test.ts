@@ -870,7 +870,7 @@ describe("real fixture inventory stays in sync with the shared eval registry", (
       return [
         ...new Set(
           Array.from(glob.scanSync(suiteRoot))
-            .map((name) => name.split("/")[0])
+            .map((name) => name.split(/[\\/]/)[0])
             .filter(
               (name): name is string => name !== undefined && name.length > 0,
             ),

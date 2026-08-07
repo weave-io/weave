@@ -525,16 +525,13 @@ describe("writeManifest", () => {
       FIXED_TIMESTAMP,
     );
 
-    const result = await writeManifest(
-      manifest,
-      "/nonexistent/deeply/nested/path/file.json",
-    );
+    const result = await writeManifest(manifest, tmpdir());
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("ManifestWriteError");
     if (error.type === "ManifestWriteError") {
-      expect(error.path).toContain("file.json");
-      expect(error.message).toContain("file.json");
+      expect(error.path).toBe(tmpdir());
+      expect(error.message).toContain(tmpdir());
     }
   });
 });
