@@ -264,11 +264,13 @@
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
   - _...6 more_
 - `packages/adapters/pi/src/child-overlay-scroll.ts`
+  - function markTailGrowth: (state) => void
+  - function clearTailGrowth: (state) => void
+  - function applyMeasuredExtent: (state, extent) => void
   - function maxScrollRows: (state) => number
   - function anchorFromScroll: (state) => ChildOverlayAnchor | undefined
   - function restoreScrollAnchor: (state, anchor) => void
-  - function scrollDelta: (data) => number | "oldest" | "follow" | undefined
-  - interface OverlayScrollState
+  - _...2 more_
 - `packages/adapters/pi/src/child-overlay-search.ts`
   - function stripPathLike: (value) => string
   - function matchingEntryIds: (entries, needle) => string[]

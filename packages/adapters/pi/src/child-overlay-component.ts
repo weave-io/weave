@@ -475,11 +475,15 @@ export function createChildOverlayCustomComponent(
             const scrollMax = Math.max(0, transcript.value.length - budget);
             // Scroll is measured here, in rendered rows, and reported back so
             // the controller clamps in the same unit the viewport paints.
-            controller.setScrollExtent(scrollMax).match(
-              () => undefined,
-              () => undefined,
+            // Paint the offset the controller returns, not the one captured
+            // before the measurement: growth at the tail is compensated inside
+            // `setScrollExtent`, and reusing the stale offset would slide this
+            // frame toward the tail before the next render corrected it.
+            const measuredOffset = controller.setScrollExtent(scrollMax).match(
+              (measured) => measured.scrollOffset,
+              () => view.scrollOffset,
             );
-            const scrollOffset = Math.min(view.scrollOffset, scrollMax);
+            const scrollOffset = Math.min(measuredOffset, scrollMax);
             const end = transcript.value.length - scrollOffset;
             lines = [
               ...header,

@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 269 lib files | 37 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~28,200 tokens. Without it, AI exploration would cost ~88,200 tokens. **Saves ~60,000 tokens per conversation.**
-> **Last scanned:** 2026-08-06 23:24 — re-run after significant changes
+> **Token savings:** this file is ~28,300 tokens. Without it, AI exploration would cost ~88,200 tokens. **Saves ~60,000 tokens per conversation.**
+> **Last scanned:** 2026-08-07 00:11 — re-run after significant changes
 
 ---
 
@@ -275,11 +275,13 @@
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
   - _...6 more_
 - `packages/adapters/pi/src/child-overlay-scroll.ts`
+  - function markTailGrowth: (state) => void
+  - function clearTailGrowth: (state) => void
+  - function applyMeasuredExtent: (state, extent) => void
   - function maxScrollRows: (state) => number
   - function anchorFromScroll: (state) => ChildOverlayAnchor | undefined
   - function restoreScrollAnchor: (state, anchor) => void
-  - function scrollDelta: (data) => number | "oldest" | "follow" | undefined
-  - interface OverlayScrollState
+  - _...2 more_
 - `packages/adapters/pi/src/child-overlay-search.ts`
   - function stripPathLike: (value) => string
   - function matchingEntryIds: (entries, needle) => string[]

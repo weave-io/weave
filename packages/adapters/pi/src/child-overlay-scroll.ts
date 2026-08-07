@@ -29,8 +29,75 @@ export interface OverlayScrollState {
    */
   scrollExtent: number | undefined;
   liveTail: boolean;
+  /**
+   * Set when content was added or replaced on the newest side while the
+   * viewport was scrolled away from the tail. The controller cannot measure
+   * how many rendered rows that content occupies, so the adjustment waits for
+   * the next `setScrollExtent` measurement and is applied exactly once.
+   */
+  pendingTailExtentAdjustment: boolean;
   entries: ChildOverlayEntry[];
   anchor: ChildOverlayAnchor | undefined;
+}
+
+/**
+ * Record that the newest side of the transcript grew (or shrank) below a
+ * manually scrolled viewport. Following the tail needs no adjustment: the
+ * offset is already zero and new rows belong on screen.
+ */
+export function markTailGrowth(state: OverlayScrollState): void {
+  if (state.liveTail) return;
+  state.pendingTailExtentAdjustment = true;
+}
+
+/** Forget a pending adjustment whose extent delta is no longer attributable. */
+export function clearTailGrowth(state: OverlayScrollState): void {
+  state.pendingTailExtentAdjustment = false;
+}
+
+/**
+ * Adopt a freshly measured rendered-row extent.
+ *
+ * Offsets count rows up from the newest rendered row, so rows appended at the
+ * tail shift every older row further from the viewport bottom. Leaving the
+ * offset alone therefore slides the viewport toward the tail and pushes the
+ * anchored content off screen. When tail growth is pending, the measured
+ * extent delta is exactly the number of rows the new content occupies, so
+ * adding it to the offset holds the same rows on screen.
+ *
+ * Any number of live events between two renders coalesce into a single delta,
+ * because the delta is measured against the extent of the last render.
+ */
+export function applyMeasuredExtent(
+  state: OverlayScrollState,
+  extent: number,
+): void {
+  const max = Math.max(0, Math.floor(extent));
+  const previous = state.scrollExtent;
+  const pending = state.pendingTailExtentAdjustment;
+  state.pendingTailExtentAdjustment = false;
+  state.scrollExtent = max;
+
+  if (
+    pending &&
+    !state.liveTail &&
+    previous !== undefined &&
+    previous !== max
+  ) {
+    // Signed: a newest-side replacement that renders fewer rows shrinks the
+    // extent, and the viewport must move back down by the same amount.
+    const next = state.scrollOffset + (max - previous);
+    state.scrollOffset = Math.min(Math.max(0, next), max);
+    state.liveTail = state.scrollOffset === 0;
+    state.anchor = anchorFromScroll(state);
+    return;
+  }
+
+  if (state.scrollOffset > max) {
+    state.scrollOffset = max;
+    state.liveTail = state.scrollOffset === 0;
+    state.anchor = anchorFromScroll(state);
+  }
 }
 
 /** Largest valid scroll offset in rendered rows. */

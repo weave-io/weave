@@ -2559,6 +2559,182 @@ describe("ChildOverlayController", () => {
     ).toBe(true);
   });
 
+  it("holds the manually scrolled viewport as live events extend the tail", async () => {
+    // Offsets count rendered rows up from the newest row, so rows appended at
+    // the tail push the anchored rows further up. Without a compensating
+    // adjustment the viewport slid toward the tail and the read content left
+    // the screen while the newer-lines cue stayed flat.
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "tail", status: "live", entries: entries(30) }),
+    ]);
+    const overlay = createChildOverlayController(source, { pageSize: 30 });
+    await mustOpen(overlay, "tail");
+    // First render measures the rendered-row extent.
+    overlay.setScrollExtent(60)._unsafeUnwrap();
+    overlay.setScrollOffset(20)._unsafeUnwrap();
+    const parked = overlay.view()._unsafeUnwrap();
+    expect(parked.liveTail).toBe(false);
+    expect(parked.scrollOffset).toBe(20);
+    const anchored = parked.anchor?.entryId;
+    expect(anchored).toBeDefined();
+
+    overlay
+      .applyLiveEvent({ type: "thinking", text: "new tail row" })
+      ._unsafeUnwrap();
+    // The controller cannot measure rows; the offset only moves once the
+    // component reports the new extent.
+    expect(overlay.view()._unsafeUnwrap().scrollOffset).toBe(20);
+
+    const after = overlay.setScrollExtent(63)._unsafeUnwrap();
+    // Three new rendered rows arrived below the viewport, so the offset grows
+    // by the same three rows and the visible body stays put.
+    expect(after.scrollOffset).toBe(23);
+    expect(after.liveTail).toBe(false);
+    // The anchor is refreshed for the new row offset. It is a coarse
+    // entry-index projection of a row offset, so it tracks the viewport rather
+    // than pinning an entry id; the component test proves the body is stable.
+    expect(after.anchor?.entryId).toBeDefined();
+  });
+
+  it("coalesces many live events into one extent-delta adjustment", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "coalesce", status: "live", entries: entries(30) }),
+    ]);
+    const overlay = createChildOverlayController(source, { pageSize: 30 });
+    await mustOpen(overlay, "coalesce");
+    overlay.setScrollExtent(60)._unsafeUnwrap();
+    overlay.setScrollOffset(20)._unsafeUnwrap();
+
+    for (let i = 0; i < 5; i += 1) {
+      overlay
+        .applyLiveEvent({ type: "thinking", text: `burst-${i}` })
+        ._unsafeUnwrap();
+    }
+    // One render, one adjustment: the delta already covers every event.
+    const after = overlay.setScrollExtent(75)._unsafeUnwrap();
+    expect(after.scrollOffset).toBe(35);
+    // A second measurement with no new content must not move again.
+    const stable = overlay.setScrollExtent(75)._unsafeUnwrap();
+    expect(stable.scrollOffset).toBe(35);
+    const grown = overlay.setScrollExtent(80)._unsafeUnwrap();
+    expect(grown.scrollOffset).toBe(35);
+  });
+
+  it("keeps following the tail when live growth arrives at offset zero", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "follow", status: "live", entries: entries(30) }),
+    ]);
+    const overlay = createChildOverlayController(source, { pageSize: 30 });
+    await mustOpen(overlay, "follow");
+    overlay.setScrollExtent(60)._unsafeUnwrap();
+    expect(overlay.view()._unsafeUnwrap().liveTail).toBe(true);
+    overlay
+      .applyLiveEvent({ type: "thinking", text: "still following" })
+      ._unsafeUnwrap();
+    const after = overlay.setScrollExtent(64)._unsafeUnwrap();
+    expect(after.scrollOffset).toBe(0);
+    expect(after.liveTail).toBe(true);
+  });
+
+  it("applies the signed delta when a live replacement shrinks the tail", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "shrink", status: "live", entries: entries(30) }),
+    ]);
+    const overlay = createChildOverlayController(source, { pageSize: 30 });
+    await mustOpen(overlay, "shrink");
+    overlay.setScrollExtent(60)._unsafeUnwrap();
+    overlay.setScrollOffset(5)._unsafeUnwrap();
+    overlay
+      .applyLiveEvent({ type: "thinking", text: "replaced" })
+      ._unsafeUnwrap();
+    const shrunk = overlay.setScrollExtent(57)._unsafeUnwrap();
+    expect(shrunk.scrollOffset).toBe(2);
+    expect(shrunk.liveTail).toBe(false);
+
+    // A shrink larger than the offset clamps at the tail and resumes follow.
+    overlay
+      .applyLiveEvent({ type: "thinking", text: "replaced again" })
+      ._unsafeUnwrap();
+    const clamped = overlay.setScrollExtent(50)._unsafeUnwrap();
+    expect(clamped.scrollOffset).toBe(0);
+    expect(clamped.liveTail).toBe(true);
+  });
+
+  it("does not tail-adjust for older prepends, search, or resize", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "prepend", entries: entries(80) }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 10,
+      windowCap: 60,
+    });
+    await mustOpen(overlay, "prepend");
+    overlay.setScrollExtent(40)._unsafeUnwrap();
+    overlay.setScrollOffset(6)._unsafeUnwrap();
+
+    // Older page: rows land above the viewport, so the offset must not move.
+    (await overlay.loadOlder())._unsafeUnwrap();
+    expect(overlay.setScrollExtent(70)._unsafeUnwrap().scrollOffset).toBe(6);
+
+    // Historical search prepends pages the same way.
+    (await overlay.search("prepend-text-3"))._unsafeUnwrap();
+    expect(overlay.setScrollExtent(120)._unsafeUnwrap().scrollOffset).toBe(6);
+
+    // Re-wrap after resize changes rows everywhere; not tail growth.
+    overlay.resize(40, 24)._unsafeUnwrap();
+    expect(overlay.setScrollExtent(200)._unsafeUnwrap().scrollOffset).toBe(6);
+  });
+
+  it("drops a pending tail adjustment when a resize intervenes", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "resize-drop", status: "live", entries: entries(30) }),
+    ]);
+    const overlay = createChildOverlayController(source, { pageSize: 30 });
+    await mustOpen(overlay, "resize-drop");
+    overlay.setScrollExtent(60)._unsafeUnwrap();
+    overlay.setScrollOffset(10)._unsafeUnwrap();
+    overlay
+      .applyLiveEvent({ type: "thinking", text: "pending" })
+      ._unsafeUnwrap();
+    overlay.resize(40, 24)._unsafeUnwrap();
+    expect(overlay.setScrollExtent(140)._unsafeUnwrap().scrollOffset).toBe(10);
+  });
+
+  it("preserves the visible body when a newer page appends below", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "newer", entries: entries(200) }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 20,
+      windowCap: 50,
+    });
+    await mustOpen(overlay, "newer");
+    // Walk back far enough that the window trims the newest side and a newer
+    // page becomes fetchable again.
+    for (let page = 0; page < 6; page += 1) {
+      (await overlay.loadOlder())._unsafeUnwrap();
+    }
+    const parked = overlay.view()._unsafeUnwrap();
+    expect(parked.hasNewer).toBe(true);
+    overlay.setScrollExtent(60)._unsafeUnwrap();
+    overlay.setScrollOffset(12)._unsafeUnwrap();
+
+    const beforeNewestId = parked.entries.at(-1)?.id;
+    let appended = parked;
+    for (let step = 0; step < 6; step += 1) {
+      appended = (await overlay.loadNewer())._unsafeUnwrap();
+      if (appended.entries.at(-1)?.id !== beforeNewestId) break;
+    }
+    // The newer page really did add content below the viewport.
+    expect(appended.entries.at(-1)?.id).not.toBe(beforeNewestId);
+    // No measurement yet, so the offset must not have moved on its own.
+    expect(overlay.view()._unsafeUnwrap().scrollOffset).toBe(12);
+
+    const measured = overlay.setScrollExtent(70)._unsafeUnwrap();
+    expect(measured.scrollOffset).toBe(22);
+    expect(measured.liveTail).toBe(false);
+  });
+
   it("exposes bounded defaults used by the controller", () => {
     expect(CHILD_OVERLAY_BOUNDS.defaultPageSize).toBe(50);
     expect(CHILD_OVERLAY_BOUNDS.defaultWindowCap).toBe(200);
@@ -2744,6 +2920,79 @@ describe("createChildOverlayCustomComponent", () => {
     expect(component.render(80).join("\n")).not.toContain(
       "newer line(s) below",
     );
+  });
+
+  it("keeps the rendered body stable while live rows extend the tail", async () => {
+    // Manual scrollback is only useful if it holds still. Before the tail
+    // adjustment, every live event grew the rendered extent while the offset
+    // stayed put, so the viewport slid toward the tail and the rows the reader
+    // had parked on left the screen while the newer-lines cue stayed flat.
+    const tall = Array.from({ length: 14 }, (_, index) => ({
+      id: `e${index}`,
+      payload: message(
+        `e${index}`,
+        index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        Array.from(
+          { length: 6 },
+          (_line, line) => `entry-${index}-line-${line}`,
+        ).join("\n"),
+      ),
+    }));
+    const { component, controller } = await mount({
+      status: "live",
+      pageSize: 50,
+      sourceEntries: tall,
+    });
+    const bodyRows = (frame: readonly string[]): string[] =>
+      frame.filter((line) => line.includes("entry-"));
+
+    component.render(80);
+    for (let press = 0; press < 4; press += 1) {
+      component.handleInput(PAGE_UP);
+      await flush();
+      component.render(80);
+    }
+    const parkedFrame = component.render(80);
+    const parkedBody = bodyRows(parkedFrame);
+    expect(parkedBody.length).toBeGreaterThan(0);
+    const parkedView = controller.view()._unsafeUnwrap();
+    expect(parkedView.liveTail).toBe(false);
+    const parkedCue = parkedView.scrollOffset;
+    expect(parkedCue).toBeGreaterThan(0);
+    expect(parkedFrame.join("\n")).toContain(
+      `${parkedCue} newer line(s) below`,
+    );
+
+    // Several live events land below the viewport before the next render.
+    for (let step = 0; step < 3; step += 1) {
+      controller
+        .applyLiveEvent({ type: "thinking", text: `live-tail-row-${step}` })
+        ._unsafeUnwrap();
+    }
+    component.invalidate();
+    const grownFrame = component.render(80);
+    const grownView = controller.view()._unsafeUnwrap();
+
+    // The parked body is byte-identical and the cue counts the new rows.
+    expect(bodyRows(grownFrame)).toEqual(parkedBody);
+    expect(grownView.liveTail).toBe(false);
+    expect(grownView.scrollOffset).toBeGreaterThan(parkedCue);
+    expect(grownView.scrollOffset).toBe(
+      parkedCue +
+        ((grownView.scrollExtent ?? 0) - (parkedView.scrollExtent ?? 0)),
+    );
+    expect(grownFrame.join("\n")).toContain(
+      `${grownView.scrollOffset} newer line(s) below`,
+    );
+    // The new rows are off-screen below, not painted over the parked body.
+    expect(grownFrame.join("\n")).not.toContain("live-tail-row-2");
+
+    // Returning to the tail exposes them.
+    component.handleInput(END);
+    await flush();
+    const tailFrame = component.render(80).join("\n");
+    expect(controller.view()._unsafeUnwrap().liveTail).toBe(true);
+    expect(tailFrame).toContain("live-tail-row-2");
   });
 
   it("requests older and newer pages at pagination edges", async () => {

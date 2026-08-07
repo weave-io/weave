@@ -36,6 +36,9 @@ import {
 } from "./child-overlay-replay.js";
 import {
   anchorFromScroll,
+  applyMeasuredExtent,
+  clearTailGrowth,
+  markTailGrowth,
   maxScrollRows,
   type OverlayScrollState,
   restoreScrollAnchor,
@@ -116,6 +119,7 @@ function emptySaved(threadId: string, touched: number): SavedChildState {
     scrollOffset: 0,
     scrollExtent: undefined,
     liveTail: true,
+    pendingTailExtentAdjustment: false,
     globalExpanded: false,
     activeRun: undefined,
     activeBranchId: undefined,
@@ -418,6 +422,9 @@ export class ChildOverlayController {
     );
     if (projected !== undefined) {
       this.mergeEntry(state, projected);
+      // The new rows land below a manually scrolled viewport; hold position
+      // once the component reports how many rows they occupy.
+      markTailGrowth(state);
     }
     if (state.liveTail) state.scrollOffset = 0;
     return ok(this.toView(child, state));
@@ -430,13 +437,7 @@ export class ChildOverlayController {
    */
   setScrollExtent(extent: number): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
-      const max = Math.max(0, Math.floor(extent));
-      state.scrollExtent = max;
-      if (state.scrollOffset > max) {
-        state.scrollOffset = max;
-        state.liveTail = state.scrollOffset === 0;
-        state.anchor = anchorFromScroll(state);
-      }
+      applyMeasuredExtent(state, extent);
       return this.toView(child, state);
     });
   }
@@ -472,8 +473,17 @@ export class ChildOverlayController {
   ): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
       const anchor = state.anchor ?? anchorFromScroll(state);
-      state.width = Math.max(1, Math.floor(width));
-      state.height = Math.max(1, Math.floor(height));
+      const nextWidth = Math.max(1, Math.floor(width));
+      const nextHeight = Math.max(1, Math.floor(height));
+      // The component calls resize on every render, so only a real geometry
+      // change may drop a pending tail adjustment. Re-wrapping changes row
+      // counts everywhere, and the next measured extent delta would no longer
+      // isolate tail growth.
+      if (nextWidth !== state.width || nextHeight !== state.height) {
+        clearTailGrowth(state);
+      }
+      state.width = nextWidth;
+      state.height = nextHeight;
       state.anchor = anchor;
       // Row counts change with width, so the next render re-measures the extent
       // and clamps. Rewriting the offset from the anchor's entry index here
@@ -850,6 +860,7 @@ export class ChildOverlayController {
     state.newerCursor = page.newerCursor;
     state.hasNewerFlag = page.hasNewer;
     restoreScrollAnchor(state, priorAnchor);
+    if (uniqueNewer.length > 0) markTailGrowth(state);
     syncTranscriptFromEntries(state);
   }
 
