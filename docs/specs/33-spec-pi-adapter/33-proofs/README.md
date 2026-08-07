@@ -1,4 +1,4 @@
-# Task 20 proof records — current status index
+# Pi adapter proof records — current status index
 
 Every file in this directory is a sanitized record of one live Pi run: digests,
 counts, and outcomes, never prompts or transcripts. Each record stays valid for
@@ -35,11 +35,12 @@ both smoke checklists.
 | `33-task20-g-child-response-missing-retryable-proof.md` | S055 | Historical — needs a settled child |
 | `33-task20-h-transition-stay-cancel-switch-proof.md` | S058 | Historical — needs descendant cancellation and settlement writes |
 | `33-task20-i-fork-clone-origin-exclusion-proof.md` | S059 | Historical — needs prior-session child data |
-| `33-task20-j-no-session-readonly-proof.md` | S056, S057 | S056 historical (delegation now fails closed earlier); S057 current for read-only surfaces |
-| `33-task20-k-history-doctor-cli-proof.md` | S063, S064, S065, S066 | S063 and S064 current (read-only); S065 and S066 historical — `children delete` is a blocked route |
+| `33-task20-j-no-session-readonly-proof.md` | S056, S057 | Historical — pre-`c24182f` behaviour, including its then-passing mutation and delegation rows; S057 is now recorded by the Task 21 record |
+| `33-task20-k-history-doctor-cli-proof.md` | S063, S064, S065, S066 | Historical — pre-`c24182f` behaviour, including its then-passing `children delete` mutation rows; S063 and S064 are now recorded by the Task 21 record |
 | `33-task20-l-resume-exclusion-proof.md` | S061 | Historical — needs a created child session |
 | `33-task20-m-pi-vim-coexistence-proof.md` | S047, S049, S050 | S050 current (keybinding conflict reporting); S047 and S049 historical — need a child overlay |
-| `33-task20-n-health-only-readonly-proof.md` | S057, S067 | Current — health-only reporting and descriptor-safe read-only surfaces |
+| `33-task20-n-health-only-readonly-proof.md` | S057, S067 | Historical — pre-`c24182f` behaviour under a reversible injected capability failure, including its then-passing mutation-rejection rows; S057 and S067 are now recorded by the Task 21 record |
+| `33-task21-final-head-fail-closed-proof.md` | S057, S063, S064, S067 | **Current** — the only record bound to the final fail-closed head `43ebc13` |
 
 ## What still holds at the fail-closed head
 
@@ -48,6 +49,13 @@ passing: status, health, plan, inspect, `/weave:history`, `/weave:doctor`, and
 `weave adapter pi children list` / `show`. Rows `S050`, `S057`, `S063`, `S064`,
 and `S067` record read availability and health reporting only. None of them is
 evidence that any mutation or spawn path works on this host.
+
+`33-task21-final-head-fail-closed-proof.md` is the current record for `S057`,
+`S063`, `S064`, and `S067`. It re-ran those four rows live against exact source
+`43ebc1379b22042ace2cb46039017a17aeea97b4` on Pi `0.83.0` and also recorded the
+fail-closed rejection of `weave_delegate`, `/weave:run`, `/weave:start`, and
+`children.delete`. `S050` is still recorded by
+`33-task20-m-pi-vim-coexistence-proof.md`.
 
 ## Supporting records
 

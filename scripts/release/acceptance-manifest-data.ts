@@ -473,6 +473,8 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S021", "S063", "S064"] },
       result: "pass",
+      notes:
+        "S063 and S064 were re-run live on the final fail-closed head 43ebc137 and are recorded by docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md: /weave:history returned exactly 50 sanitized rows plus a next cursor, /weave:doctor returned bounded counters with no paths or transcripts, children list bound 50, children show bound 100 plus 17 on the cursor page with no overlap and no paths. The Task 20 record is historical. Read availability only.",
     },
     {
       id: "PI-USG",
@@ -619,7 +621,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       result: "pass",
       notes:
-        "Pi 0.83.0 reports the required capability descriptor-relative-native-session-io as unavailable with reason path-only-session-api, so every generation on this host enters health-only mode and fails closed for all persistent session mutation and child spawn. S067 records that health-only report and S057 records that the descriptor-safe read-only surfaces (history, picker, doctor, list, show) stay available. Neither row claims any mutation or spawn support.",
+        "Pi 0.83.0 reports descriptor-relative-native-session-io unavailable (path-only-session-api), so every generation enters health-only mode and fails closed for all persistent session mutation and child spawn. S067 and S057 were re-run live on the final fail-closed head 43ebc137 and are recorded by docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md, which also shows weave_delegate absent and run, start, and children.delete rejected. Neither row claims mutation.",
     },
     {
       id: "PI-INS",
@@ -769,7 +771,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       liveSmoke: { required: true, checklistIds: ["S065", "S066"] },
       result: "pending",
       notes:
-        "ADR 0014 removes byte quotas, trimming, and automatic pruning. `weave adapter pi children delete` is a persistent session mutation, so Pi 0.83.0 fails it closed for lack of descriptor-relative-native-session-io (path-only-session-api). The Task 20 records for S065 and S066 are historical pre-c24182f proofs and are not evidence for this head, so this row stays pending on automated coverage alone.",
+        "ADR 0014 removes byte quotas, trimming, and automatic pruning. `weave adapter pi children delete` is a persistent session mutation, so Pi 0.83.0 fails it closed for lack of descriptor-relative-native-session-io. The final-head record 33-task21-final-head-fail-closed-proof.md observed RequiredCapabilityUnavailable before the children port, which is not the tombstone behaviour S065 and S066 need. The Task 20 records are historical, so this row stays pending on automated coverage.",
     },
     {
       id: "PI-SET",
@@ -813,6 +815,6 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       liveSmoke: { required: true, checklistIds: ["S054", "S057", "S060"] },
       result: "pending",
       notes:
-        "Task 20 proved read-only recovery surfaces under a non-persistent parent and health-only mode (S057), which stays valid on the fail-closed head: history, doctor, list, and show remain readable without any mutation support. Thread capacity release (S054) and the quit-and-reload bounded cancel then force-stop path (S060) were never run live, and both need a spawned child that Pi 0.83.0 fails closed, so this stays pending.",
+        "S057 was re-run live on the final fail-closed head 43ebc137 and is recorded by docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md: history, doctor, list, and show stay readable in health-only mode without mutation support. Thread capacity release (S054) and the quit-and-reload cancel then force-stop path (S060) were never run live, and both need a spawned child that Pi 0.83.0 fails closed, so this stays pending.",
     },
   ];

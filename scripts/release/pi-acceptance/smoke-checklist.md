@@ -59,6 +59,18 @@ recorded as passing: status, health, plan, inspect, `/weave:history`,
 record read availability only. They are never evidence that any mutation or
 spawn path works on this host.
 
+### Final-head re-run of the read-only rows
+
+Rows `S057`, `S063`, `S064`, and `S067` were re-run live against the final
+fail-closed head `43ebc1379b22042ace2cb46039017a17aeea97b4` on Pi `0.83.0`.
+`33-task21-final-head-fail-closed-proof.md` is their current record. It binds
+artifact SHA-256 `434654d274165c01bbace11d6b451de7a4026fe5540b3a4ebf4f159f67855180`
+and also records the fail-closed rejection of `weave_delegate`, `/weave:run`,
+`/weave:start`, and `children.delete` with no child process, execution lease,
+ref, cache mutation, or native child session. The Task 20 `(j)`, `(k)`, and
+`(n)` records are **historical** for pre-`c24182f` behaviour, including their
+formerly passing mutation rows.
+
 ### Superseded Task 20 live delegation rows
 
 Rows `S040`, `S041`, `S043`-`S049`, `S051`-`S053`, `S055`, `S056`, `S058`,
@@ -124,9 +136,26 @@ verification.
   production subject in that set is `16593bf`; earlier rows were proved on
   earlier subjects and are bound to those subjects, not to `16593bf`.
 
+### Task 21 final-head binding (rows S057, S063, S064, S067)
+
+- Package: `@weaveio/weave-adapter-pi@0.0.1`
+- Exact source subject: `43ebc1379b22042ace2cb46039017a17aeea97b4`
+- Exact host: `@earendil-works/pi-coding-agent@0.83.0`; the machine's global Pi
+  `0.84.1` stayed untouched
+- Checklist version: `3`
+- Artifact SHA-256:
+  `434654d274165c01bbace11d6b451de7a4026fe5540b3a4ebf4f159f67855180`
+- `dist/extension.js` SHA-256:
+  `9845ab775c0073c6df6c85bda13cfec92d817dc1cdb7c3dc7eb08bf5dc29322d`
+- `dist/index.js` SHA-256:
+  `c1c407cf07e2340267f15d7d7d4d576296e91e1363228b9af165e6dc36a8abed`
+- `dist/cli.js` SHA-256:
+  `b4710278a6e12b61255d50fe5c8665ba067a9701c8cbbba38b2d8b6789fde1d1`
+- Recorded in `33-task21-final-head-fail-closed-proof.md`
+
 ## Task 20 proof records
 
-The table below names the proof file that recorded each Task 20 row. Proof
+The table below names the proof file that recorded each row. Proof
 files are sanitized: they record digests, counts, and outcomes, never prompts
 or transcripts.
 
@@ -134,24 +163,28 @@ Every row in this table that required a persistent child spawn or a native
 session mutation is now `Pending`, and its proof file is **historical**: it
 documents pre-`c24182f` behaviour and is not evidence for the fail-closed
 head. Only `S050`, `S057`, `S063`, `S064`, and `S067` — read-only and
-reporting surfaces — still carry a current `Pass`.
+reporting surfaces — still carry a current `Pass`. `S057`, `S063`, `S064`, and
+`S067` are recorded by the Task 21 final-head record; the Task 20 `(j)`, `(k)`,
+and `(n)` files are historical for every row they carried, including their
+formerly passing mutation rows.
 
-| Proof record (`docs/specs/33-spec-pi-adapter/33-proofs/`) | Rows |
-| --- | --- |
-| `33-task-20-a-compact-live-settlement-proof.md` | S040, S041 |
-| `33-task20-b-overlay-live-steer-followup.md` | S043, S044, S046 |
-| `33-task20-c-historical-restart-pagination-search-proof.md` | S045 |
-| `33-task20-d-picker-navigation-proof.md` | S048, S049 |
-| `33-task20-e-double-escape-cancel-proof.md` | S051 |
-| `33-task20-f-retry-continue-frozen-block-proof.md` | S052, S053 |
-| `33-task20-g-child-response-missing-retryable-proof.md` | S055 |
-| `33-task20-h-transition-stay-cancel-switch-proof.md` | S058 |
-| `33-task20-i-fork-clone-origin-exclusion-proof.md` | S059 |
-| `33-task20-j-no-session-readonly-proof.md` | S056, S057 |
-| `33-task20-k-history-doctor-cli-proof.md` | S063, S064, S065, S066 |
-| `33-task20-l-resume-exclusion-proof.md` | S061 |
-| `33-task20-m-pi-vim-coexistence-proof.md` | S047, S049, S050 |
-| `33-task20-n-health-only-readonly-proof.md` | S057, S067 |
+| Proof record (`docs/specs/33-spec-pi-adapter/33-proofs/`) | Rows | Status |
+| --- | --- | --- |
+| `33-task-20-a-compact-live-settlement-proof.md` | S040, S041 | Historical |
+| `33-task20-b-overlay-live-steer-followup.md` | S043, S044, S046 | Historical |
+| `33-task20-c-historical-restart-pagination-search-proof.md` | S045 | Historical |
+| `33-task20-d-picker-navigation-proof.md` | S048, S049 | Historical |
+| `33-task20-e-double-escape-cancel-proof.md` | S051 | Historical |
+| `33-task20-f-retry-continue-frozen-block-proof.md` | S052, S053 | Historical |
+| `33-task20-g-child-response-missing-retryable-proof.md` | S055 | Historical |
+| `33-task20-h-transition-stay-cancel-switch-proof.md` | S058 | Historical |
+| `33-task20-i-fork-clone-origin-exclusion-proof.md` | S059 | Historical |
+| `33-task20-j-no-session-readonly-proof.md` | S056, S057 | Historical |
+| `33-task20-k-history-doctor-cli-proof.md` | S063, S064, S065, S066 | Historical |
+| `33-task20-l-resume-exclusion-proof.md` | S061 | Historical |
+| `33-task20-m-pi-vim-coexistence-proof.md` | S047, S049, S050 | S050 current; S047 and S049 historical |
+| `33-task20-n-health-only-readonly-proof.md` | S057, S067 | Historical |
+| `33-task21-final-head-fail-closed-proof.md` | S057, S063, S064, S067 | **Current** (final head `43ebc13`) |
 
 Rows `S042`, `S054`, `S060`, `S062`, `S068`, and `S069` have no Task 20 proof
 record and stay `Pending`.
