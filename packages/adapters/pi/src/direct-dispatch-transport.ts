@@ -9,10 +9,15 @@
  */
 import type { ThinkingLevelDecl } from "@weaveio/weave-core";
 import type { DelegationTarget } from "@weaveio/weave-engine";
-import { err, ok, okAsync, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, ResultAsync } from "neverthrow";
 import { toModelIdentityBody } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
+import {
+  createPiChildSessionStorageAuthority,
+  describeChildSessionStorageUnavailable,
+  type PiChildSessionStorageAuthority,
+} from "./child-session-storage-authority.js";
 import { type PiChildInspectionRegistry, ROOT_NODE_ID } from "./child-tree.js";
 import type { PiAuthenticatedDelegationRequest } from "./delegation-controller.js";
 import type {
@@ -25,6 +30,7 @@ import {
   makeChildRecordQuarantinedFailure,
   makeChildRecordQuotaExceededFailure,
   makeChildRecoveryUnavailableFailure,
+  makeChildSpawnFailedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
 import { type PiModelInfo, PiModelResolver } from "./model-resolution.js";
@@ -35,9 +41,22 @@ import type { IdGenerator, PiAdapterLogger } from "./types.js";
 
 const DIRECT_DISPATCH_PARENT_ID = ROOT_NODE_ID;
 const DIRECT_DISPATCH_DEPTH = 0;
+/**
+ * Scope used when the storage-authority preflight refuses. No child id has
+ * been drawn yet - drawing one would itself be an observable side effect - so
+ * the failure names the dispatch path rather than a child that never existed.
+ */
+const DIRECT_DISPATCH_UNAUTHORIZED_CHILD_ID = "direct-step";
 
 export interface PiDirectDispatchTransportDeps {
   readonly processPort: PiChildProcessPort;
+  /**
+   * Storage authority handed to the direct-step child. Direct dispatch
+   * deliberately bypasses `PiDelegationController`'s budget and tree, so it
+   * must name its own authority rather than inherit one. Absent means the
+   * production authority, which always refuses.
+   */
+  readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly logger: PiAdapterLogger;
@@ -139,9 +158,25 @@ export function createDirectDispatchTransport(
   deps: PiDirectDispatchTransportDeps,
   generationId: string,
 ): DirectDispatchTransport {
+  const sessionStorageAuthority =
+    deps.sessionStorageAuthority ?? createPiChildSessionStorageAuthority();
   return (
     input: PiDirectDispatchInput,
   ): ResultAsync<DirectDispatchSettlement, PiAdapterFailure> => {
+    // Storage authority first: before an id is drawn, before the transport
+    // object exists, before the bootstrap or model resolution is computed,
+    // before the inspection registry is written, and before any spawn. The
+    // dispatch input is not read at all until this passes.
+    const authority = sessionStorageAuthority.requireDescriptorSafeSessionIo();
+    if (authority.isErr()) {
+      return errAsync(
+        makeChildSpawnFailedFailure(
+          DIRECT_DISPATCH_UNAUTHORIZED_CHILD_ID,
+          describeChildSessionStorageUnavailable(authority.error),
+        ),
+      );
+    }
+
     const childId = `direct-${input.workflowInstanceId}-${input.stepName}-${deps.idGenerator.next()}`;
     let child: PiRpcChild;
     const respondToDelegation = (
@@ -158,6 +193,7 @@ export function createDirectDispatchTransport(
       DIRECT_DISPATCH_DEPTH,
       {
         processPort: deps.processPort,
+        sessionStorageAuthority,
         randomPort: deps.randomPort,
         hmacPort: deps.hmacPort,
         logger: deps.logger,

@@ -21,6 +21,7 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
+import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 function config(source: string): WeaveConfig {
   const result = parseConfig(source);
@@ -282,6 +283,8 @@ function makeController(
     idGenerator: new SequentialIdGenerator(),
     logger: noopLogger,
     processPort: port,
+    sessionStorageAuthority:
+      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     randomPort: new WebCryptoRandomPort(),
     hmacPort: new WebCryptoHmacPort(),
     timerPort: new SystemTimerPort(),
@@ -413,7 +416,10 @@ function recoverySessions(
     ({
       createChildSession: (input: { readonly childId: string }) =>
         okAsync(
-          sessionRecord(`children/${input.childId}/session.jsonl`, input.childId),
+          sessionRecord(
+            `children/${input.childId}/session.jsonl`,
+            input.childId,
+          ),
         ),
       establishThreadLeaf: (ref: string) =>
         okAsync({ record: sessionRecord(ref), leafId: "leaf-42" }),
@@ -2194,7 +2200,11 @@ describe("PiDelegationController", () => {
     await flush();
     // respondHandshakeAndSettle emits message_end (parser-approved) before
     // settlement; a throwing sink must not prevent restore success.
-    await respondHandshakeAndSettle(spawnedAt(restorePort, 0), restorePort, "gen-1");
+    await respondHandshakeAndSettle(
+      spawnedAt(restorePort, 0),
+      restorePort,
+      "gen-1",
+    );
     expect((await restorePromise).isOk()).toBe(true);
     expect(
       restoreWarns.some((entry) => entry.code === "onSessionEvent_failed"),
@@ -2251,9 +2261,7 @@ describe("PiDelegationController", () => {
     const controller = makeController(config(GENEROUS), port);
     const missing = await controller.steerChild("no-such-child", "x");
     expect(missing.isErr()).toBe(true);
-    expect(missing._unsafeUnwrapErr().code).toBe(
-      "ChildInteractionUnavailable",
-    );
+    expect(missing._unsafeUnwrapErr().code).toBe("ChildInteractionUnavailable");
 
     const promise = controller.delegate(request());
     await flush();
@@ -2436,7 +2444,9 @@ describe("PiDelegationController", () => {
     expect(descriptor.status).toBe("settled");
     expect(descriptor.title).toBe("historical-shuttle");
     expect(descriptor.sessionRef).toBe("hist-thread/session.jsonl");
-    expect(controller.resolveThreadIdForLiveChild("hist-thread")).toBeUndefined();
+    expect(
+      controller.resolveThreadIdForLiveChild("hist-thread"),
+    ).toBeUndefined();
     expect(JSON.stringify(descriptor)).not.toContain("/Users/");
     controller.disposeAll();
   });

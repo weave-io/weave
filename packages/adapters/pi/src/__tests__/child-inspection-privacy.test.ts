@@ -1,16 +1,17 @@
 import { expect, test } from "bun:test";
 import { okAsync } from "neverthrow";
+import {
+  MAX_LATEST_OUTPUT_BYTES,
+  truncateLatestOutput,
+} from "../child-tree.js";
+import { TransportDirectDispatchPort } from "../direct-dispatch.js";
 import { createPiExtension } from "../extension.js";
 import {
   FakeClock,
   FakeIdGenerator,
   RecordingFakePiHost,
 } from "./fakes/fake-pi-host.js";
-import {
-  MAX_LATEST_OUTPUT_BYTES,
-  truncateLatestOutput,
-} from "../child-tree.js";
-import { TransportDirectDispatchPort } from "../direct-dispatch.js";
+import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PRIVATE = {
   healthCanary: "PRIVATE-HEALTH-COMMAND-CANARY",
@@ -119,6 +120,8 @@ test("real /weave:health output does not include private command args", async ()
   const factory = createPiExtension({
     idGenerator: new FakeIdGenerator(),
     clock: new FakeClock(),
+    sessionStorageAuthority:
+      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
   });
   factory(host.api);
 

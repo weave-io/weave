@@ -31,6 +31,7 @@ import {
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
 import { createTestOnlyDescriptorSafeNativeSessionHost } from "./fakes/test-only-descriptor-safe-host.js";
+import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PARENT = "parent-session-hist-1";
 const CHILD = "hist-child-1";
@@ -182,6 +183,8 @@ describe("createPiExtension: historical native overlay after a parent restart", 
         name: HOST_PACKAGE_NAME,
         version: "0.83.0",
       }),
+      sessionStorageAuthority:
+        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       capabilityProber: {
         probe: () =>
           ALL_CAPABILITY_IDS.map((capabilityId) => ({

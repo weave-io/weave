@@ -51,6 +51,11 @@ import type {
   PiChildRefStatus,
 } from "./child-session-refs.js";
 import {
+  createPiChildSessionStorageAuthority,
+  describeChildSessionStorageUnavailable,
+  type PiChildSessionStorageAuthority,
+} from "./child-session-storage-authority.js";
+import {
   SystemTimerPort,
   type TimerHandle,
   type TimerPort,
@@ -109,6 +114,14 @@ export interface PiDelegationControllerDeps {
   readonly idGenerator: IdGenerator;
   readonly logger: PiAdapterLogger;
   readonly processPort: PiChildProcessPort;
+  /**
+   * Storage authority handed to every child this controller launches,
+   * including retry and continue spawns. Absent means the production
+   * authority, which always refuses: the safe default is the closed one, so
+   * a wiring omission cannot open a path-only spawn. Only a test may pass a
+   * different authority, and only by naming one explicitly.
+   */
+  readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly timerPort?: TimerPort;
@@ -588,7 +601,30 @@ export class PiDelegationController {
     Promise<Result<void, PiAdapterFailure>>
   >();
 
-  constructor(private readonly deps: PiDelegationControllerDeps) {}
+  /**
+   * The authority every child launch consults first. Resolved once, here, so
+   * no per-spawn branch can pick a different one, and defaulting to the
+   * production (always-refusing) authority when the caller names none.
+   */
+  private readonly sessionStorageAuthority: PiChildSessionStorageAuthority;
+
+  constructor(private readonly deps: PiDelegationControllerDeps) {
+    this.sessionStorageAuthority =
+      deps.sessionStorageAuthority ?? createPiChildSessionStorageAuthority();
+  }
+
+  private requireSessionStorageAuthority(
+    childId: string,
+  ): Result<void, PiAdapterFailure> {
+    return this.sessionStorageAuthority
+      .requireDescriptorSafeSessionIo()
+      .mapErr((failure) =>
+        makeChildSpawnFailedFailure(
+          childId,
+          describeChildSessionStorageUnavailable(failure),
+        ),
+      );
+  }
 
   /**
    * Steers a live child through its {@link PiRpcChild} RPC channel. Missing or
@@ -645,6 +681,8 @@ export class PiDelegationController {
   delegate(
     request: PiDelegationRequest,
   ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
+    const storageAuthority = this.requireSessionStorageAuthority("delegation");
+    if (storageAuthority.isErr()) return errAsync(storageAuthority.error);
     const childId = request.childId ?? this.deps.idGenerator.next();
     const validation = this.validateRequest(childId, request);
     if (validation.isErr()) return errAsync(validation.error);
@@ -665,6 +703,8 @@ export class PiDelegationController {
   delegateFromAuthenticatedParent(
     request: PiAuthenticatedDelegationRequest,
   ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
+    const storageAuthority = this.requireSessionStorageAuthority("delegation");
+    if (storageAuthority.isErr()) return errAsync(storageAuthority.error);
     const childId = this.deps.idGenerator.next();
     const target = this.deps.resolveDelegationTarget?.(
       request.parentAgentName,
@@ -1338,6 +1378,8 @@ export class PiDelegationController {
   resumeThread(
     request: PiThreadRunRequest,
   ): ResultAsync<PiThreadRunOutcome, PiAdapterFailure> {
+    const storageAuthority = this.requireSessionStorageAuthority("thread-run");
+    if (storageAuthority.isErr()) return errAsync(storageAuthority.error);
     const threadId = request.threadId;
     if (this.disposedAll) {
       return errAsync(
@@ -2096,6 +2138,7 @@ export class PiDelegationController {
       depth,
       {
         processPort: this.deps.processPort,
+        sessionStorageAuthority: this.sessionStorageAuthority,
         randomPort: this.deps.randomPort,
         hmacPort: this.deps.hmacPort,
         timerPort: this.deps.timerPort,
@@ -2659,6 +2702,9 @@ export class PiDelegationController {
       reason: PiChildRestoreUnavailableReason,
     ): ResultAsync<PiChildRecoverySettlement, PiChildRestoreFailure> =>
       errAsync({ type: "ChildRecoveryUnavailable" as const, reason });
+    const storageAuthority = this.requireSessionStorageAuthority("restore");
+    if (storageAuthority.isErr())
+      return unavailable("restore dependencies unavailable");
     if (this.disposedAll || input.generationId !== this.deps.generationId)
       return unavailable("stale generation");
     const record = input.record;
@@ -2748,6 +2794,7 @@ export class PiDelegationController {
           1,
           {
             processPort: this.deps.processPort,
+            sessionStorageAuthority: this.sessionStorageAuthority,
             randomPort: this.deps.randomPort,
             hmacPort: this.deps.hmacPort,
             timerPort: this.deps.timerPort,

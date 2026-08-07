@@ -68,6 +68,10 @@ import {
   parsePiChildSessionEvent,
 } from "./child-session-events.js";
 import {
+  describeChildSessionStorageUnavailable,
+  type PiChildSessionStorageAuthority,
+} from "./child-session-storage-authority.js";
+import {
   DEFAULT_CANCEL_GRACE_MS,
   DEFAULT_HANDSHAKE_TIMEOUT_MS,
   DEFAULT_REPLY_TIMEOUT_MS,
@@ -142,6 +146,14 @@ export interface PiChildSessionObserver {
 
 export interface PiRpcChildDeps {
   readonly processPort: PiChildProcessPort;
+  /**
+   * Storage authority consulted before anything else this child does. There
+   * is no default: every construction site must state, explicitly and by
+   * name, which authority governs this launch. The production authority
+   * ({@link createPiChildSessionStorageAuthority}) always refuses, and no
+   * environment variable or configuration key relaxes it.
+   */
+  readonly sessionStorageAuthority: PiChildSessionStorageAuthority;
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly timerPort?: TimerPort;
@@ -658,6 +670,7 @@ export class PiRpcChild {
   private readonly agentName: string;
   private readonly depth: number;
   private readonly processPort: PiChildProcessPort;
+  private readonly sessionStorageAuthority: PiChildSessionStorageAuthority;
   private readonly randomPort: RandomPort;
   private readonly hmacPort: HmacPort;
   private readonly timerPort: TimerPort;
@@ -802,6 +815,7 @@ export class PiRpcChild {
     this.agentName = agentName;
     this.depth = depth;
     this.processPort = deps.processPort;
+    this.sessionStorageAuthority = deps.sessionStorageAuthority;
     this.randomPort = deps.randomPort;
     this.hmacPort = deps.hmacPort;
     this.timerPort = deps.timerPort ?? new SystemTimerPort();
@@ -867,10 +881,38 @@ export class PiRpcChild {
     };
   }
 
+  /**
+   * Storage-authority preflight. The first externally observable action of
+   * every launch: it runs before the argument vector is built, before any
+   * session path is read or interpreted, before the secret is generated,
+   * before any environment or bootstrap value is assembled, and before the
+   * process port is touched. A refusal is mapped onto the closed transport
+   * failure carrying the same bounded, path-free reason.
+   */
+  private requireSessionStorageAuthority(): Result<void, PiAdapterFailure> {
+    return this.sessionStorageAuthority
+      .requireDescriptorSafeSessionIo()
+      .mapErr((unavailable) =>
+        makeChildSpawnFailedFailure(
+          this.childId,
+          describeChildSessionStorageUnavailable(unavailable),
+        ),
+      );
+  }
+
   /** Spawns the process, injects the secret via environment only, and awaits the authenticated handshake before returning. */
   spawnAndHandshake(
     input: PiRpcChildSpawnInput,
   ): ResultAsync<void, PiAdapterFailure> {
+    // Storage authority first: `input` is not read at all until this passes,
+    // so a hostile or malformed session path is never interpreted and no
+    // argument, lease, control channel, or process exists to clean up.
+    const authority = this.requireSessionStorageAuthority();
+    if (authority.isErr()) {
+      this.failOutstanding(authority.error);
+      return errAsync(authority.error);
+    }
+
     const command = buildSpawnCommand(this.command, input.session);
     if (command.isErr()) {
       const failure = makeChildSpawnFailedFailure(this.childId, command.error);

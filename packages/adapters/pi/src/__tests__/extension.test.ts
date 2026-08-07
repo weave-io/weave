@@ -88,6 +88,7 @@ import {
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
 import { MutablePlanStateProvider } from "./fakes/fake-plan-state-provider.js";
+import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const EMPTY_CONFIG = {
   agents: {},
@@ -666,6 +667,8 @@ function installExtension(
     // lose its deep-module coverage. Tests that assert real host-surface
     // behaviour override this.
     hostSurfaceReader: hostSurfaceReader(),
+    sessionStorageAuthority:
+      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     ...overrides,
   });
   factory(host.api);
@@ -771,6 +774,8 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
         version: "0.81.1",
       }),
       capabilityProber: allOkCapabilityProber(),
+      sessionStorageAuthority:
+        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       idGenerator: new FakeIdGenerator(),
       clock: new FakeClock(),
       logger: new RecordingLogger(),

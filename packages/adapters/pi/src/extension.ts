@@ -158,6 +158,7 @@ import {
   reconstructParentLocalChildren,
   renderReconstructedStatusLines,
 } from "./child-session-reconstruction.js";
+import type { PiChildSessionStorageAuthority } from "./child-session-storage-authority.js";
 import {
   applyTreeControlKey,
   EMPTY_USAGE_AGGREGATE,
@@ -535,6 +536,11 @@ export interface PiExtensionDeps {
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly processPort: PiChildProcessPort;
+  /**
+   * Test-only descriptor-safe host authority. Production omits this and the
+   * controller keeps its fail-closed path-only-session default.
+   */
+  readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
   /**
    * The private RPC child's default spawn command (Pi adapter contract finding
    * 1): the exact executable that launched this host process, never a bare
@@ -4513,6 +4519,7 @@ export function createPiExtension(
             idGenerator: deps.idGenerator,
             logger: deps.logger,
             processPort: deps.processPort,
+            sessionStorageAuthority: deps.sessionStorageAuthority,
             randomPort: deps.randomPort,
             hmacPort: deps.hmacPort,
             ...(deps.childResponseDrainMs === undefined
@@ -4900,6 +4907,7 @@ export function createPiExtension(
               createDirectDispatchTransport(
                 {
                   processPort: deps.processPort,
+                  sessionStorageAuthority: deps.sessionStorageAuthority,
                   randomPort: deps.randomPort,
                   hmacPort: deps.hmacPort,
                   logger: deps.logger,

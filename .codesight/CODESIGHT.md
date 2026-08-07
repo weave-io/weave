@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 271 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~28,600 tokens. Without it, AI exploration would cost ~89,100 tokens. **Saves ~60,500 tokens per conversation.**
-> **Last scanned:** 2026-08-07 15:41 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~28,700 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,700 tokens per conversation.**
+> **Last scanned:** 2026-08-07 16:30 — re-run after significant changes
 
 ---
 
@@ -374,6 +374,11 @@
   - function hasNoTranscriptFields: (serialized) => boolean
   - class PiChildSessionRefStore
   - _...29 more_
+- `packages/adapters/pi/src/child-session-storage-authority.ts`
+  - function createPiChildSessionStorageAuthority: () => PiChildSessionStorageAuthority
+  - function describeChildSessionStorageUnavailable: (failure) => string
+  - interface PiChildSessionStorageAuthority
+  - const CHILD_SESSION_STORAGE_UNAVAILABLE_REASON
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
   - interface TimerHandle
@@ -1618,7 +1623,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/adapters/pi/src/types.ts` — imported by **39** files
+- `packages/adapters/pi/src/types.ts` — imported by **41** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
 - `packages/adapters/pi/src/strict-json.ts` — imported by **25** files
@@ -1635,13 +1640,13 @@
 - `packages/adapters/pi/src/child-tree.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
-- `scripts/release/clock.ts` — imported by **13** files
 
 ## Import Map (who imports what)
 
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +34 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +36 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts` +20 more
@@ -1671,7 +1676,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 285 test files found
+> 289 test files found
 
 ---
 

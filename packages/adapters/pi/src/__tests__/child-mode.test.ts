@@ -35,6 +35,7 @@ import type {
   PiToolRegistration,
 } from "../types.js";
 import { FakeChildProcessPort } from "./fakes/fake-child-process-port.js";
+import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 /**
  * Layer C, private-child variant: exercises `createPiExtension()`'s real
@@ -212,6 +213,8 @@ async function buildChildExtension(
     hmacPort,
     processPort: new FakeChildProcessPort(),
     childOutputPort: output,
+    sessionStorageAuthority:
+      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     ...overrides,
   });
   factory(host);
@@ -283,6 +286,8 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       hmacPort,
       processPort: new FakeChildProcessPort(),
       childOutputPort: output,
+      sessionStorageAuthority:
+        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     });
     factory(host);
     expect(host.commands.has("weave:__control__")).toBe(false);

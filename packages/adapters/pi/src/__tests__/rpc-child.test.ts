@@ -22,17 +22,41 @@ import {
 import {
   type PiChildSessionObserver,
   type PiExtensionUiResponseInput,
-  PiRpcChild,
+  type PiRpcChildDeps,
   type PiRpcChildSpawnInput,
+  PiRpcChild as ProductionPiRpcChild,
 } from "../rpc-child.js";
 import type { JsonValue } from "../strict-json.js";
 import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
+import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const randomPort = new WebCryptoRandomPort();
 const hmacPort = new WebCryptoHmacPort();
+
+type TestPiRpcChildDeps = Omit<PiRpcChildDeps, "sessionStorageAuthority"> &
+  Partial<Pick<PiRpcChildDeps, "sessionStorageAuthority">>;
+
+/** Existing child tests opt into the descriptor-safe test seam explicitly. */
+class PiRpcChild extends ProductionPiRpcChild {
+  constructor(
+    childId: string,
+    parentId: string,
+    generationId: string,
+    agentName: string,
+    depth: number,
+    deps: TestPiRpcChildDeps,
+  ) {
+    super(childId, parentId, generationId, agentName, depth, {
+      ...deps,
+      sessionStorageAuthority:
+        deps.sessionStorageAuthority ??
+        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+    });
+  }
+}
 
 function noopLogger() {
   return { debug() {}, info() {}, warn() {}, error() {} };
@@ -1825,7 +1849,7 @@ describe("PiRpcChild", () => {
     await spawnPromise;
 
     const runPromise = child.runTask(baseSpawnInput(), validBootstrap());
-    await flush();
+    await waitFor(() => spawned.writtenLines().length >= 1);
     let lines = spawned.writtenLines();
     const bootstrapEnvelope = extractControlEnvelopeFromPrompt(lines[0]) as {
       kind: string;
@@ -2881,7 +2905,12 @@ describe("PiRpcChild", () => {
     ];
     for (const body of cases) {
       const running = await startRunningChild({ responseDrainMs: 1 });
-      await running.responder.send("settled", "child-1", body, running.secretBytes);
+      await running.responder.send(
+        "settled",
+        "child-1",
+        body,
+        running.secretBytes,
+      );
       const failure = (await running.runPromise)._unsafeUnwrapErr();
       expect(failure.code).toBe("ChildResponseMissing");
       expect(failure.retryable).toBe(true);

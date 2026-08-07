@@ -363,6 +363,11 @@
   - function hasNoTranscriptFields: (serialized) => boolean
   - class PiChildSessionRefStore
   - _...29 more_
+- `packages/adapters/pi/src/child-session-storage-authority.ts`
+  - function createPiChildSessionStorageAuthority: () => PiChildSessionStorageAuthority
+  - function describeChildSessionStorageUnavailable: (failure) => string
+  - interface PiChildSessionStorageAuthority
+  - const CHILD_SESSION_STORAGE_UNAVAILABLE_REASON
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
   - interface TimerHandle
