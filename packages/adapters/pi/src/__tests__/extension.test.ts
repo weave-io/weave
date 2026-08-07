@@ -660,6 +660,12 @@ function installExtension(
     // shortcut registration can be modelled independently of editor
     // ownership. Absent unless a test sets `effectiveKeybindingConfig`.
     hostKeybindings: () => host.hostKeybindingsForTest(),
+    // Model a descriptor-safe host by default. The production reader can never
+    // report `descriptor-relative-native-session-io` as native, so without an
+    // explicit reader every test would collapse into health-only mode and
+    // lose its deep-module coverage. Tests that assert real host-surface
+    // behaviour override this.
+    hostSurfaceReader: hostSurfaceReader(),
     ...overrides,
   });
   factory(host.api);
@@ -784,6 +790,10 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
         new Map(),
         ok("/fake/project"),
       ),
+      // Model a descriptor-safe host: the production reader always reports
+      // `descriptor-relative-native-session-io` unavailable, which is a
+      // required capability and would force health-only mode.
+      hostSurfaceReader: hostSurfaceReader(),
     });
     factory(host.api);
     await host.triggerSessionStart();

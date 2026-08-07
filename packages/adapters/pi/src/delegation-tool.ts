@@ -35,6 +35,10 @@ import {
 } from "./errors.js";
 import type { PiParentSessionState } from "./primary-session.js";
 import { requirePersistentParentSession } from "./primary-session.js";
+import {
+  type PiSessionMutationGate,
+  requireSessionMutationCapability,
+} from "./required-capability-gate.js";
 import type { PiChildSettlement } from "./rpc-child.js";
 import type { JsonValue } from "./strict-json.js";
 import type {
@@ -173,6 +177,11 @@ export interface PiDelegationToolDeps {
    * adapter logger.
    */
   readonly onCompactRenderFailure?: (code: string) => void;
+  /**
+   * The required-capability gate for persistent session mutation. Omitted
+   * only by call sites that predate the gate; a missing gate fails closed.
+   */
+  readonly sessionMutationGate?: PiSessionMutationGate;
 }
 
 /**
@@ -811,6 +820,18 @@ export function buildDelegationToolRegistration(
         deps.onCompactRenderFailure,
       ),
     execute: async (_toolCallId, params, signal, onUpdate, ctx) => {
+      // The required-capability gate runs before everything else, including
+      // the persistent-parent guard: when the host cannot prove
+      // descriptor-relative native session I/O, delegation must fail without
+      // reading the parent session state, parsing arguments, reaching the
+      // delegation controller, or creating any child, session file, cache
+      // entry, execution lease, or ref.
+      const capability = requireSessionMutationCapability(
+        deps.sessionMutationGate,
+      );
+      if (capability.isErr()) {
+        return failureResult(capability.error.code, capability.error);
+      }
       // The persistent-parent guard runs first, before this call parses
       // arguments, reads the controller, generates a child id, or touches any
       // other state: a `--no-session` or unproven parent must never produce a
@@ -994,6 +1015,8 @@ export interface PiRelayedDelegationToolDeps {
    * tool; never receives paths or exception text.
    */
   readonly onCompactRenderFailure?: (code: string) => void;
+  /** Same fail-closed required-capability gate contract as the root tool. */
+  readonly sessionMutationGate?: PiSessionMutationGate;
 }
 
 /**
@@ -1035,6 +1058,22 @@ export function buildRelayedDelegationToolRegistration(
         deps.onCompactRenderFailure,
       ),
     execute: async (_toolCallId, params) => {
+      const capability = requireSessionMutationCapability(
+        deps.sessionMutationGate,
+      );
+      if (capability.isErr()) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: false,
+                error: capability.error.code,
+              }),
+            },
+          ],
+        };
+      }
       const parsed = parseDelegationCall(params);
       // A relayed child may only start a new delegation. Thread lifecycle
       // actions belong to the owning parent session, which alone holds the

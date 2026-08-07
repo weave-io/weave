@@ -72,15 +72,15 @@ describe("lowerReadinessByProbe", () => {
 });
 
 describe("evaluateEffectiveCapabilities", () => {
-  it("requires exactly one sanitized probe outcome per capability id (20)", () => {
+  it("requires exactly one sanitized probe outcome per capability id (21)", () => {
     const evaluation = evaluateEffectiveCapabilities(
       contractWith("native"),
       probes(() => "ok"),
     );
-    expect(evaluation.effectiveCapabilities).toHaveLength(20);
+    expect(evaluation.effectiveCapabilities).toHaveLength(21);
     expect(
       new Set(evaluation.effectiveCapabilities.map((c) => c.id)).size,
-    ).toBe(20);
+    ).toBe(21);
   });
 
   it("ok probes preserve static declarations in effective readiness", () => {
@@ -128,7 +128,7 @@ describe("evaluateEffectiveCapabilities", () => {
       contractWith("native"),
       [],
     );
-    expect(evaluation.effectiveCapabilities).toHaveLength(20);
+    expect(evaluation.effectiveCapabilities).toHaveLength(21);
     for (const entry of evaluation.effectiveCapabilities) {
       expect(entry.probeResolution).toBe("missing");
       expect(entry.effectiveReadiness).toBe("unsupported");
@@ -224,7 +224,7 @@ describe("buildAdapterHealthReport effective integration", () => {
 
     expect(report.capabilityContract).toBe(contract);
     expect(report.healthOnlyMode).toBe(true);
-    expect(report.effectiveCapabilities).toHaveLength(20);
+    expect(report.effectiveCapabilities).toHaveLength(21);
     expect(report.profileResult.ready).toBe(false);
     expect(
       report.profileResult.failures.some(

@@ -9,10 +9,11 @@ import {
   looksLikeFilesystemPath,
   PI_ADAPTER_COMMAND_BOUNDS,
   PI_ADAPTER_COMMAND_NAMES,
-  stripPathsUnlessDiagnostic,
-  type PiAdapterChildrenPort,
   type PiAdapterChildListItem,
+  type PiAdapterChildrenPort,
+  stripPathsUnlessDiagnostic,
 } from "../adapter-cli-commands.js";
+import type { PiChildMetadataRecord } from "../child-metadata-cache.js";
 import {
   decodePiNativeSessionEntryCursor,
   PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
@@ -21,8 +22,8 @@ import {
   type PiNativeSessionHostPort,
   PiNativeSessionStore,
 } from "../child-native-sessions.js";
-import type { PiChildMetadataRecord } from "../child-metadata-cache.js";
 import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
+import { createOpenSessionMutationGate } from "../required-capability-gate.js";
 
 const child = (
   overrides: Partial<PiAdapterChildListItem> = {},
@@ -82,7 +83,8 @@ function fakeChildren(options: {
         ...(input.diagnostic === true
           ? {
               sessionPath:
-                options.sessionPath ?? "/tmp/weave/adapters/pi/sessions/x.jsonl",
+                options.sessionPath ??
+                "/tmp/weave/adapters/pi/sessions/x.jsonl",
               sessionRef: `${found.childId}/session.jsonl`,
             }
           : {}),
@@ -225,9 +227,9 @@ describe("Pi adapter-cli-commands", () => {
     const listBody = JSON.parse(listed._unsafeUnwrap().resultJson) as {
       children: PiAdapterChildListItem[];
     };
-    expect(
-      listBody.children.some((row) => row.childId === "child-54"),
-    ).toBe(false);
+    expect(listBody.children.some((row) => row.childId === "child-54")).toBe(
+      false,
+    );
 
     const resolved = await dispatchAdapterCommand(registry, {
       adapter: "pi",
@@ -279,14 +281,19 @@ describe("Pi adapter-cli-commands", () => {
       matches: PiAdapterChildListItem[];
     };
     expect(body.matches).toHaveLength(2);
-    expect(
-      body.matches.map((row) => row.originParentSessionId).sort(),
-    ).toEqual(["parent-a", "parent-b"]);
+    expect(body.matches.map((row) => row.originParentSessionId).sort()).toEqual(
+      ["parent-a", "parent-b"],
+    );
   });
 
   it("requires confirmation for delete and tombstones on confirm", async () => {
     const port = fakeChildren({});
-    const handlers = createPiAdapterCommandHandlers({ children: port });
+    const handlers = createPiAdapterCommandHandlers({
+      children: port,
+      // Model a descriptor-safe host so the confirmation contract below is
+      // still exercised; the fail-closed path has its own test.
+      sessionMutationGate: createOpenSessionMutationGate(),
+    });
     const refused = await handlers[PI_ADAPTER_COMMAND_NAMES.childrenDelete]!(
       JSON.stringify({
         workspaceKey: "ws",

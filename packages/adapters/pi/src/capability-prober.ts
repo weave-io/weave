@@ -363,6 +363,30 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
     // `requiredGaps`; it is reported through the host surface report's
     // `overlayFallbackGaps` and selects the existing custom-editor child
     // inspection fallback instead.
+    // `descriptor-relative-native-session-io` is answered only by the host
+    // surface report. There is no environment variable, config flag, or
+    // method-presence inference that can raise it: the host either proves the
+    // descriptor-relative contract through its own inventory or the capability
+    // is unavailable and the adapter enters health-only mode.
+    if (id === "descriptor-relative-native-session-io") {
+      const probe = context.hostSurface?.probes.find(
+        (candidate) =>
+          candidate.surfaceId === "descriptor-relative-native-session-io",
+      );
+      if (probe === undefined)
+        return {
+          capabilityId: id,
+          probeStatus: "unavailable",
+          details: "host-surface-unreported",
+        };
+      if (probe.status !== "native")
+        return {
+          capabilityId: id,
+          probeStatus: "unavailable",
+          details: probe.details,
+        };
+      return { capabilityId: id, probeStatus: "ok", details: probe.details };
+    }
     if (
       context.hostSurface !== undefined &&
       context.hostSurface.requiredGaps.length > 0 &&

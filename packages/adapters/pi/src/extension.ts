@@ -264,6 +264,12 @@ import {
   type PiRecoveryPointerStore,
 } from "./recovery-pointer.js";
 import {
+  createOpenSessionMutationGate,
+  createSessionMutationGate,
+  findSessionMutationGap,
+  SESSION_MUTATION_REQUIRED_CAPABILITY,
+} from "./required-capability-gate.js";
+import {
   type PiRuntimeStoreFactory,
   SqliteRuntimeStoreFactory,
 } from "./runtime-store-port.js";
@@ -1286,6 +1292,11 @@ async function applyChildBootstrap(
       : [
           buildRelayedDelegationToolRegistration({
             targets: parsed.delegationTargets,
+            // A relayed child cannot observe the host's session-I/O contract
+            // itself. Its parent already passed the gate before this child
+            // existed, and the parent authorizes every relayed delegation
+            // request, so the relay does not re-gate here.
+            sessionMutationGate: createOpenSessionMutationGate(),
             getRuntime: () => state.runtime,
             onCompactRenderFailure: (code) => {
               deps.logger.warn(
@@ -2258,12 +2269,29 @@ export function createPiExtension(
     },
     healthOnly: () => doctorHealthOnlyCell.value,
   });
+  /**
+   * The one required-capability gate every mutating route consults before it
+   * reaches a delegation controller, session service, filesystem, metadata
+   * cache, execution lease, or child process. It reads the live controller
+   * generation, so it always reflects the current activation, and it fails
+   * closed when no generation is active.
+   */
+  const sessionMutationGate = createSessionMutationGate(
+    () =>
+      controller.getCurrentGeneration()?.preflight.requiredCapabilityGaps ?? [
+        {
+          capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
+          reason: "no-active-generation",
+        },
+      ],
+  );
   const adapterCommandHandlersCell: {
     handlers: Readonly<Record<string, AdapterCommandHandler>>;
   } = {
     handlers: createPiAdapterCommandHandlers({
       children: unavailableChildrenPort,
       doctor: doctorPort,
+      sessionMutationGate,
     }),
   };
   const refreshAdapterCommandHandlers = (
@@ -2272,6 +2300,7 @@ export function createPiExtension(
     adapterCommandHandlersCell.handlers = createPiAdapterCommandHandlers({
       children,
       doctor: doctorPort,
+      sessionMutationGate,
     });
   };
   const workflowControllerCell: {
@@ -2486,6 +2515,7 @@ export function createPiExtension(
         return [
           buildDelegationToolRegistration({
             targets,
+            sessionMutationGate,
             getInvocationContext: () =>
               resolveDelegationInvocationContext(
                 activeSession === undefined
@@ -3890,6 +3920,10 @@ export function createPiExtension(
           healthOnly,
           hasActiveInstance: active !== undefined,
           hasPendingArtifact,
+          unavailableCapability: findSessionMutationGap(
+            controller.getCurrentGeneration()?.preflight
+              .requiredCapabilityGaps ?? [],
+          )?.capabilityId,
         });
         const visible = actions.filter((action) => action.visible);
         if (visible.length === 0) {

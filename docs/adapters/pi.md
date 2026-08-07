@@ -339,7 +339,7 @@ The adapter never logs prompts, responses, transcripts, raw RPC, tool input/outp
 
 Beyond the engine's closed capability IDs, the adapter declares the concrete Pi host surfaces it needs, each with a severity. The compatibility floor is Pi `0.81.1`.
 
-- `required-for-delegation` — a gap puts the generation into health-only mode. Native child sessions add `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` to this set, alongside the existing editor, RPC, and session-restore surfaces.
+- `required-for-delegation` — a gap puts the generation into health-only mode. Native child sessions add `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, `custom-session-directory`, and `descriptor-relative-native-session-io` to this set, alongside the existing editor, RPC, and session-restore surfaces.
 - `overlay-only` — a gap selects the custom-editor fallback and never triggers health-only mode. `child-overlay-lifecycle` is the only such surface. Session reads are deliberately not overlay-only.
 - `rendering-fallback` — a gap uses Pi's default rendering.
 
@@ -350,6 +350,21 @@ A gap reports the stable surface id plus a remediation string, for example upgra
 Static capability declarations are ceilings. Activation probes every closed capability ID once. Any missing, failed, degraded, or unsupported required effective capability enters health-only mode; optional gaps warn.
 
 Health-only mode exposes health and safe diagnostics but blocks materialization, workflow mutation, and delegation. Pi/tool-owner authorization remains in force regardless of mode.
+
+## Path-only session API on Pi 0.83
+
+Pi 0.83 addresses native sessions by caller-supplied filesystem path. The adapter therefore cannot prove that a session write lands inside host-owned storage, so the required capability `descriptor-relative-native-session-io` probes `unavailable` with reason `path-only-session-api` and every generation on this host enters health-only mode.
+
+The probe is not overridable. Session restore, custom session directories, and the presence of any `SessionManager` method do not raise it, and there is no environment variable or configuration setting that enables it. Only a test double may model a descriptor-safe host.
+
+While the capability is unavailable, the adapter fails every persistent session mutation with a typed `RequiredCapabilityUnavailable` result before it reaches a controller, session service, filesystem, metadata cache, execution lease, or child process:
+
+- `weave_delegate` (start, retry, continue, steer, follow-up) and relayed child delegation;
+- direct workflow dispatch, `/weave:start`, `/weave:run`, `/weave:advance`, `/weave:resume`, `/weave:artifact`;
+- cancellation and cleanup: `/weave:abort`, `/weave:clear-children`, `/weave:recover-children`;
+- the adapter CLI `children delete` command.
+
+`/weave:status`, `/weave:health`, `/weave:plan`, `/weave:inspect`, `/weave:history`, `/weave:doctor`, and the CLI `list`, `show`, and `doctor` commands stay available and perform no mutation. `/weave:health` and the status line name the unsupported capability and its reason without printing a path or a prompt.
 
 ## Verification
 

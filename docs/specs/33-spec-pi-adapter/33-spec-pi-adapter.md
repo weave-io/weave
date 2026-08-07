@@ -443,7 +443,21 @@ log file.
 
 - Host version floor stays `0.81.1`, with no maximum.
 - Required probes: persistent RPC session and restore, `appendEntry`,
-  `get_entries`/`get_tree`, and custom session directory support.
+  `get_entries`/`get_tree`, custom session directory support, and
+  descriptor-relative native session I/O.
+- Descriptor-relative native session I/O means every native session read and
+  write is addressed by an opaque, host-owned session descriptor rather than by
+  a caller-supplied filesystem path. Pi 0.83 exposes a path-only session API, so
+  this probe reports `unavailable` with reason `path-only-session-api` and the
+  adapter runs in health-only mode on that host. The probe is not overridable:
+  session restore, custom session directories, and RPC method presence do not
+  raise it, and no environment variable or configuration setting enables it.
+- While that capability is unavailable, every persistent session mutation —
+  delegation, direct workflow dispatch, retry, continue, steering, follow-up,
+  cancellation, clear, recovery, and adapter CLI delete — fails with a typed
+  `RequiredCapabilityUnavailable` result before any controller, session service,
+  filesystem, cache, lease, or child process call. Read-only status, health,
+  history, inspection, doctor, list, and show routes stay available.
 - Probes must be side-effect free; probing must not create a session.
 - A missing required session capability puts the adapter in health-only mode with
   a diagnostic naming the capability, host version, contract, probe result, mode,

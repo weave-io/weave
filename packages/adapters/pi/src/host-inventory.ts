@@ -348,6 +348,18 @@ export interface PiHostProbePort {
   hasCustomSessionDirectoryContract(): boolean;
   /** Pi's overlay UI boundary plus the editor-restore lifecycle are present. */
   hasOverlayLifecycle(): boolean;
+  /**
+   * Every native session read and write is addressed by an opaque,
+   * host-owned session descriptor rather than by a caller-supplied
+   * filesystem path.
+   *
+   * The production port answers `false` unconditionally: the exact tested Pi
+   * host exposes a path-only session API, so no combination of
+   * `SessionManager.open`, custom-session-directory, or other RPC method
+   * presence can prove the descriptor-relative contract. Only a test double
+   * may answer `true`, and only to model a hypothetical descriptor-safe host.
+   */
+  hasDescriptorRelativeSessionIo(): boolean;
   /** The installed host version satisfies the supported-version contract. */
   hasSupportedVersion(): boolean;
 }
@@ -390,6 +402,9 @@ export function createDefaultPiHostProbePort(
       isFn(input.ui.custom) &&
       isFn(input.ui.setEditorComponent) &&
       isFn(input.ui.getEditorComponent),
+    // Fail-closed and non-overridable: the exact tested host's session API is
+    // path-only, so the descriptor-relative contract is never provable here.
+    hasDescriptorRelativeSessionIo: () => false,
     hasSupportedVersion: () => versionValid,
   });
 }
@@ -512,6 +527,14 @@ export class DefaultPiHostSurfaceReader implements PiHostSurfaceReader {
               port.hasSessionGetTree(),
             "get-entries-and-get-tree-present",
             "get-entries-or-get-tree-missing",
+          ),
+          native(
+            "descriptor-relative-native-session-io",
+            versionValid &&
+              matrixNative("descriptor-relative-native-session-io") &&
+              port.hasDescriptorRelativeSessionIo(),
+            "descriptor-relative-session-api",
+            "path-only-session-api",
           ),
           native(
             "child-overlay-lifecycle",

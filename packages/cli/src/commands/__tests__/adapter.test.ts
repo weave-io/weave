@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  createOpenSessionMutationGate,
   createPiAdapterCommandRegistry,
   PI_ADAPTER_COMMAND_BOUNDS,
   type PiAdapterChildListItem,
@@ -15,10 +16,10 @@ import { BufferTerminal } from "../../io/terminal.js";
 import { StaticPromptAdapter } from "../../prompt/index.js";
 import { ThemeManager } from "../../theme/colors.js";
 import {
+  type AdapterCommandContext,
   parseAdapterTarget,
   resolveDeleteParentScope,
   runAdapter,
-  type AdapterCommandContext,
 } from "../adapter.js";
 
 const themeManager = new ThemeManager({ isTty: () => false });
@@ -73,7 +74,10 @@ function makeChildrenPort(options: {
         });
       }
       const page = entries.slice(
-        Math.max(0, entries.length - PI_ADAPTER_COMMAND_BOUNDS.showEntryPageSize),
+        Math.max(
+          0,
+          entries.length - PI_ADAPTER_COMMAND_BOUNDS.showEntryPageSize,
+        ),
       );
       return okAsync({
         child: found,
@@ -145,6 +149,7 @@ function makeCtx(
     prompt: new StaticPromptAdapter({ confirm: [true] }),
     registry: createPiAdapterCommandRegistry({
       children: makeChildrenPort({}),
+      sessionMutationGate: createOpenSessionMutationGate(),
     }),
     ...overrides,
   };
@@ -153,12 +158,12 @@ function makeCtx(
 
 describe("parseAdapterTarget", () => {
   it("parses children list/show/delete and doctor", () => {
-    expect(parseAdapterTarget(["pi", "children", "list"])._unsafeUnwrap()).toEqual(
-      {
-        adapter: "pi",
-        action: "children.list",
-      },
-    );
+    expect(
+      parseAdapterTarget(["pi", "children", "list"])._unsafeUnwrap(),
+    ).toEqual({
+      adapter: "pi",
+      action: "children.list",
+    });
     expect(
       parseAdapterTarget(["pi", "children", "show", "c1"])._unsafeUnwrap(),
     ).toMatchObject({ action: "children.show", childId: "c1" });
@@ -224,8 +229,11 @@ describe("parseAdapterTarget", () => {
 describe("resolveDeleteParentScope", () => {
   it("resolves a unique origin parent via children.resolve", async () => {
     const registry = createPiAdapterCommandRegistry({
+      sessionMutationGate: createOpenSessionMutationGate(),
       children: makeChildrenPort({
-        rows: [child({ childId: "child-1", originParentSessionId: "parent-a" })],
+        rows: [
+          child({ childId: "child-1", originParentSessionId: "parent-a" }),
+        ],
       }),
     });
     const resolved = await resolveDeleteParentScope(registry, "ws", {
@@ -258,7 +266,10 @@ describe("resolveDeleteParentScope", () => {
       listed._unsafeUnwrap().children.some((row) => row.childId === "child-54"),
     ).toBe(false);
 
-    const registry = createPiAdapterCommandRegistry({ children: port });
+    const registry = createPiAdapterCommandRegistry({
+      children: port,
+      sessionMutationGate: createOpenSessionMutationGate(),
+    });
     const resolved = await resolveDeleteParentScope(registry, "ws", {
       adapter: "pi",
       action: "children.delete",
@@ -269,6 +280,7 @@ describe("resolveDeleteParentScope", () => {
 
   it("requires --parent-session when the same child id exists under two parents", async () => {
     const registry = createPiAdapterCommandRegistry({
+      sessionMutationGate: createOpenSessionMutationGate(),
       children: makeChildrenPort({
         rows: [
           child({
@@ -305,6 +317,7 @@ describe("resolveDeleteParentScope", () => {
 
   it("rejects a forged parent session scope", async () => {
     const registry = createPiAdapterCommandRegistry({
+      sessionMutationGate: createOpenSessionMutationGate(),
       children: makeChildrenPort({
         rows: [
           child({ childId: "child-1", originParentSessionId: "parent-real" }),
@@ -339,6 +352,7 @@ describe("runAdapter", () => {
       json: true,
       registry: createPiAdapterCommandRegistry({
         children: makeChildrenPort({ rows }),
+        sessionMutationGate: createOpenSessionMutationGate(),
       }),
     });
     const code = await runAdapter(ctx);
@@ -361,6 +375,7 @@ describe("runAdapter", () => {
       json: true,
       registry: createPiAdapterCommandRegistry({
         children: makeChildrenPort({ entryCount: 130, sessionPath: path }),
+        sessionMutationGate: createOpenSessionMutationGate(),
       }),
     });
     const code = await runAdapter(ctx);
@@ -387,6 +402,7 @@ describe("runAdapter", () => {
       diagnostic: true,
       registry: createPiAdapterCommandRegistry({
         children: makeChildrenPort({ sessionPath: path }),
+        sessionMutationGate: createOpenSessionMutationGate(),
       }),
     });
     await runAdapter(ctx);
@@ -395,7 +411,10 @@ describe("runAdapter", () => {
 
   it("requires confirmation for delete unless --yes, then tombstones", async () => {
     const port = makeChildrenPort({});
-    const registry = createPiAdapterCommandRegistry({ children: port });
+    const registry = createPiAdapterCommandRegistry({
+      children: port,
+      sessionMutationGate: createOpenSessionMutationGate(),
+    });
     const declined = makeCtx({
       target: {
         adapter: "pi",
@@ -457,7 +476,10 @@ describe("runAdapter", () => {
         }),
       ],
     });
-    const registry = createPiAdapterCommandRegistry({ children: port });
+    const registry = createPiAdapterCommandRegistry({
+      children: port,
+      sessionMutationGate: createOpenSessionMutationGate(),
+    });
     const { terminal, ctx } = makeCtx({
       target: {
         adapter: "pi",
@@ -500,6 +522,7 @@ describe("runAdapter", () => {
       yes: true,
       registry: createPiAdapterCommandRegistry({
         children: makeChildrenPort({}),
+        sessionMutationGate: createOpenSessionMutationGate(),
       }),
     });
     const code = await runAdapter(ctx);
@@ -517,7 +540,10 @@ describe("runAdapter", () => {
       }),
     );
     const port = makeChildrenPort({ rows });
-    const registry = createPiAdapterCommandRegistry({ children: port });
+    const registry = createPiAdapterCommandRegistry({
+      children: port,
+      sessionMutationGate: createOpenSessionMutationGate(),
+    });
     const { terminal, ctx } = makeCtx({
       target: {
         adapter: "pi",
@@ -557,6 +583,7 @@ describe("runAdapter", () => {
       yes: true,
       registry: createPiAdapterCommandRegistry({
         children: makeChildrenPort({ rows }),
+        sessionMutationGate: createOpenSessionMutationGate(),
       }),
     });
     const code = await runAdapter(ctx);

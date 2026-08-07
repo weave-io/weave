@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 270 lib files | 38 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~28,300 tokens. Without it, AI exploration would cost ~88,300 tokens. **Saves ~60,000 tokens per conversation.**
-> **Last scanned:** 2026-08-07 03:47 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 271 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~28,600 tokens. Without it, AI exploration would cost ~89,100 tokens. **Saves ~60,500 tokens per conversation.**
+> **Last scanned:** 2026-08-07 05:08 — re-run after significant changes
 
 ---
 
@@ -602,6 +602,14 @@
   - interface PiRepeatedSettlementValidationOptions
   - interface PiRepeatedSettlementValidationReport
   - type PiRepeatedSettlementValidationError
+- `packages/adapters/pi/src/required-capability-gate.ts`
+  - function sanitizeCapabilityGapReason: (raw) => string
+  - function collectRequiredCapabilityGaps: (report) => readonly PiRequiredCapabilityGap[]
+  - function findSessionMutationGap: (gaps) => PiRequiredCapabilityGap | undefined
+  - function createSessionMutationGate: (readGaps) => void
+  - function createBlockedSessionMutationGate: (reason) => PiSessionMutationGate
+  - function requireSessionMutationCapability: (gate) => Result<void, PiAdapterFailure>
+  - _...5 more_
 - `packages/adapters/pi/src/rpc-child.ts`
   - function authenticateRestoreStartupSuffix: (establishedLeafId, page) => Result<void, PiRestoreAuthenticationReason>
   - class PiRpcChild
@@ -1549,7 +1557,7 @@
 - `PI_CHILD_SMOKE_DEBUG` **required** — scripts/release/pi-child-inspection-smoke.ts
 - `PI_CHILD_SMOKE_RUN_ATTEMPT` (has default) — scripts/release/pi-child-inspection-smoke.ts
 - `PI_CODING_AGENT_DIR` (has default) — scripts/release/pi-child-inspection-smoke.ts
-- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_AWAITING_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_CONTROL_DRY_RUN` **required** — scripts/release/control-main.ts
@@ -1576,6 +1584,8 @@
 - `VOLTA_HOME` (has default) — scripts/release/pi-child-inspection-smoke.ts
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
+- `WEAVE_PI_DESCRIPTOR_RELATIVE_SESSION_IO` **required** — packages/adapters/pi/src/__tests__/required-capability-gate.test.ts
+- `WEAVE_PI_UNSAFE_ENABLE_SESSION_IO` **required** — packages/adapters/pi/src/__tests__/required-capability-gate.test.ts
 - `WEAVE_RELEASE_FORCE_SCENARIO_FAILURE` **required** — scripts/release/verification-harness.ts
 
 ## Config Files
@@ -1586,16 +1596,17 @@
 
 # Middleware
 
+## validation
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
+- migrate — `packages/cli/src/commands/migrate.ts`
+- generate-acceptance-manifest — `scripts/release/generate-acceptance-manifest.ts`
+
 ## custom
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - runtime-directory-guard.d — `packages/engine/src/runtime/sqlite/runtime-directory-guard.d.ts`
 - runtime-directory-guard — `packages/engine/src/runtime/sqlite/runtime-directory-guard.ts`
 - generate-acceptance-manifest.test — `scripts/release/__tests__/generate-acceptance-manifest.test.ts`
-
-## validation
-- migrate — `packages/cli/src/commands/migrate.ts`
-- generate-acceptance-manifest — `scripts/release/generate-acceptance-manifest.ts`
 
 ## auth
 - authorization.test — `packages/engine/src/__tests__/execution-lifecycle/authorization.test.ts`
@@ -1607,8 +1618,8 @@
 
 ## Most Imported Files (change these carefully)
 
+- `packages/adapters/pi/src/types.ts` — imported by **39** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
-- `packages/adapters/pi/src/types.ts` — imported by **38** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
 - `packages/adapters/pi/src/strict-json.ts` — imported by **25** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
@@ -1630,8 +1641,8 @@
 
 ## Import Map (who imports what)
 
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +34 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +33 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts` +20 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
@@ -1660,7 +1671,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 282 test files found
+> 283 test files found
 
 ---
 

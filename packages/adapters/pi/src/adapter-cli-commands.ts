@@ -9,8 +9,8 @@
 
 import {
   type AdapterCommandHandler,
-  createAdapterCommandRegistry,
   type AdapterCommandRegistry,
+  createAdapterCommandRegistry,
 } from "@weaveio/weave-engine";
 import {
   err,
@@ -31,6 +31,11 @@ import {
   type PiNativeSessionPagedEntry,
   type PiNativeSessionStore,
 } from "./child-native-sessions.js";
+import {
+  type PiSessionMutationGate,
+  requireSessionMutationCapability,
+  SESSION_MUTATION_REQUIRED_CAPABILITY,
+} from "./required-capability-gate.js";
 
 // ---------------------------------------------------------------------------
 // Bounds and command names
@@ -101,9 +106,9 @@ export const PiChildrenListResultSchema = z
   .object({
     kind: z.literal("children.list"),
     workspaceKey: idSchema,
-    children: z.array(ChildListItemSchema).max(
-      PI_ADAPTER_COMMAND_BOUNDS.listPageSize,
-    ),
+    children: z
+      .array(ChildListItemSchema)
+      .max(PI_ADAPTER_COMMAND_BOUNDS.listPageSize),
     nextCursor: z.string().max(512).optional(),
   })
   .strict();
@@ -448,9 +453,7 @@ function pageToShowEntries(page: PiNativeSessionEntryPage): {
     entries: page.entries.map((entry, index) =>
       summarizePagedEntry(entry, index),
     ),
-    ...(page.olderCursor === undefined
-      ? {}
-      : { nextCursor: page.olderCursor }),
+    ...(page.olderCursor === undefined ? {} : { nextCursor: page.olderCursor }),
   };
 }
 
@@ -665,10 +668,7 @@ export function createPiChildrenCommandPort(
             )
             .andThen((session) =>
               options.sessions
-                .deleteSession(
-                  session,
-                  nativeSessionDeletionToken(session.ref),
-                )
+                .deleteSession(session, nativeSessionDeletionToken(session.ref))
                 .mapErr(
                   (error): PiAdapterCommandPortError =>
                     error.type === "SessionConfirmationRequired"
@@ -743,6 +743,12 @@ function handlerFromPortResult<T>(
 export interface CreatePiAdapterCommandHandlersOptions {
   readonly children: PiAdapterChildrenPort;
   readonly doctor?: PiAdapterDoctorPort;
+  /**
+   * Required-capability gate for the one mutating CLI route
+   * (`children.delete`). Omitting it fails that route closed; the read-only
+   * list/show/resolve/doctor routes never consult it.
+   */
+  readonly sessionMutationGate?: PiSessionMutationGate;
 }
 
 /** Builds Pi command handlers for the engine registry. */
@@ -814,6 +820,17 @@ export function createPiAdapterCommandHandlers(
   };
 
   const childrenDelete: AdapterCommandHandler = (payloadJson) => {
+    // The required-capability gate runs before the payload is parsed and
+    // before the children port is touched: deleting a child tombstones a
+    // native session, which is a persistent session mutation.
+    const capability = requireSessionMutationCapability(
+      options.sessionMutationGate,
+    );
+    if (capability.isErr())
+      return errAsync({
+        type: "Unavailable" as const,
+        message: `required-capability-unavailable:${SESSION_MUTATION_REQUIRED_CAPABILITY}`,
+      });
     const payload = parsePayload(DeletePayloadSchema, payloadJson);
     if (payload.isErr()) return errAsync(payload.error);
     return handlerFromPortResult(

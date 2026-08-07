@@ -742,6 +742,19 @@ export {
   validateRepeatedSettlements,
 } from "./repeated-settlement-validator.js";
 export {
+  collectRequiredCapabilityGaps,
+  createBlockedSessionMutationGate,
+  createOpenSessionMutationGate,
+  createSessionMutationGate,
+  findSessionMutationGap,
+  type PiRequiredCapabilityGap,
+  type PiSessionMutationGate,
+  requireSessionMutationCapability,
+  SESSION_MUTATION_REQUIRED_CAPABILITY,
+  sanitizeCapabilityGapReason,
+  UNKNOWN_CAPABILITY_GAP_REASON,
+} from "./required-capability-gate.js";
+export {
   type PiChildSettlement,
   PiRpcChild,
   type PiRpcChildDeps,

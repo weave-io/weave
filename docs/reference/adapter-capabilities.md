@@ -79,6 +79,8 @@ The Pi adapter declares three severities:
 
 Its native child-session storage adds four `required-for-delegation` probes — `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` — plus the `overlay-only` `child-overlay-lifecycle` surface. A missing session read surface is never treated as overlay-only, because reading recorded child work must not silently disappear.
 
+A fifth `required-for-delegation` surface, `descriptor-relative-native-session-io`, backs the required capability of the same name. It is the only surface the production probe port answers `false` for unconditionally: the exact tested Pi host addresses native sessions by caller-supplied filesystem path, so the adapter cannot prove where a session write would land. Method presence for session restore, custom session directories, or any RPC call does not override it, and no environment variable or configuration can enable it. Only a test double may model a descriptor-safe host.
+
 A gap reports the stable surface ID and a remediation string. See [Pi Adapter](../adapters/pi.md#host-surface-probes).
 
 ## Health reports
@@ -95,6 +97,14 @@ A report contains:
 - health-only status and safe diagnostics.
 
 Health-only mode may expose health and other read-only diagnostics. It blocks agent materialization, workflow mutation, and delegation.
+
+### Persistent session mutation
+
+`descriptor-relative-native-session-io` is a required capability that states one contract: every native session read and write is addressed by an opaque, host-owned session descriptor rather than by a caller-supplied filesystem path. It is supplied by the host, never emulated by an adapter.
+
+When it is unavailable, every route that would perform a persistent session mutation fails with a typed `RequiredCapabilityUnavailable` result before it calls a controller, session service, filesystem, metadata cache, execution lease, or child process. That covers delegation, direct workflow dispatch, retry, continue, steering, follow-up, cancellation, clear, recovery, and the adapter CLI's delete command. Read-only status, health, history, inspection, doctor, list, and show routes stay available and perform no mutation.
+
+Unlike an ordinary health-only gap, this capability also blocks idempotent cleanup: cleanup still writes to persistent session state, and the host cannot prove where that write would land.
 
 ## Adapter responsibilities
 

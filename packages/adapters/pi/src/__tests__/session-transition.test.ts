@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type { WeaveConfig } from "@weaveio/weave-core";
 import {
+  type AgentDescriptor,
   ALL_CAPABILITY_IDS,
   createInMemoryRuntimeStore,
-  type AgentDescriptor,
   type MaterializationPlan,
 } from "@weaveio/weave-engine";
 import { errAsync, ok, okAsync } from "neverthrow";
@@ -19,9 +19,10 @@ import {
 } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import {
-  PiDelegationController,
-  type PiThreadRefPort,
-} from "../delegation-controller.js";
+  authorizeChildAccess,
+  classifyChildAccess,
+  type PiChildAccessOperation,
+} from "../child-runtime.js";
 import type {
   AppendChildRefLifecycleInput,
   AppendChildRefRunInput,
@@ -31,18 +32,19 @@ import type {
   PiChildRefRun,
   PiChildRefScan,
 } from "../child-session-refs.js";
-import type { JsonValue } from "../strict-json.js";
 import { PiConfigActivator } from "../config-activator.js";
 import {
-  authorizeChildAccess,
-  classifyChildAccess,
-  type PiChildAccessOperation,
-} from "../child-runtime.js";
+  PiDelegationController,
+  type PiThreadRefPort,
+} from "../delegation-controller.js";
+import { createPiExtension, type PiExtensionDeps } from "../extension.js";
+import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import {
-  createPiExtension,
-  type PiExtensionDeps,
-} from "../extension.js";
+  PI_HOST_SURFACE_IDS,
+  type PiHostSurfaceReader,
+} from "../host-inventory.js";
 import { FakePathContainmentPort } from "../path-containment.js";
+import type { JsonValue } from "../strict-json.js";
 import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
@@ -55,7 +57,24 @@ import {
   RecordingFakePiHost,
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
-import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
+
+/**
+ * A hypothetical descriptor-safe host. The production reader can never report
+ * `descriptor-relative-native-session-io` as native, so these transition
+ * tests state the assumption explicitly instead of inheriting health-only.
+ */
+function descriptorSafeHostSurfaceReader(): PiHostSurfaceReader {
+  return {
+    read: () =>
+      okAsync(
+        PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+          surfaceId,
+          status: "native" as const,
+          details: "test-controlled",
+        })),
+      ),
+  };
+}
 
 const EMPTY_CONFIG = {
   agents: { loom: {}, shuttle: {} },
@@ -154,6 +173,10 @@ function installTransitionExtension(
     // tests under Bun's default 5s timeout without changing production.
     childResponseDrainMs: 20,
     childCancelGraceMs: 20,
+    // Model a descriptor-safe host so `weave_delegate` is registered; the
+    // production reader always reports the path-only session API, which is a
+    // required-capability gap and would leave the extension health-only.
+    hostSurfaceReader: descriptorSafeHostSurfaceReader(),
     ...overrides,
   });
   factory(host.api);
@@ -265,7 +288,9 @@ async function spawnChild(
 
 function makeController(
   processPort: FakeChildProcessPort,
-  overrides: Partial<ConstructorParameters<typeof PiDelegationController>[0]> = {},
+  overrides: Partial<
+    ConstructorParameters<typeof PiDelegationController>[0]
+  > = {},
 ): PiDelegationController {
   return new PiDelegationController({
     config: EMPTY_CONFIG,
@@ -357,7 +382,10 @@ class RecordingRefPort implements PiThreadRefPort {
     return "origin-session";
   }
 
-  readRefs(): import("neverthrow").ResultAsync<PiChildRefScan, PiChildRefError> {
+  readRefs(): import("neverthrow").ResultAsync<
+    PiChildRefScan,
+    PiChildRefError
+  > {
     return okAsync({
       refs: [],
       issues: [],
@@ -468,34 +496,31 @@ describe("Pi session transition contracts", () => {
     ["default", undefined],
     ["cancel", undefined],
     ["timeout", undefined],
-  ] as const)(
-    "%s vetoes without cancelling a descendant",
-    async (_label, response) => {
-      const host = new RecordingFakePiHost({
-        mode: "tui",
-        trusted: true,
-        sessionManager: persistentFakeSessionManager(),
-      });
-      const processPort = new FakeChildProcessPort();
-      installTransitionExtension(host, processPort);
-      await host.triggerSessionStart();
-      const child = await spawnChild(host, processPort);
-      if (response === "Stay") host.scriptSelect("Stay");
-      else if (_label === "cancel") host.scriptSelect(undefined);
-      else if (_label === "timeout") host.scriptSelect(undefined);
-      else host.scriptSelect(undefined);
+  ] as const)("%s vetoes without cancelling a descendant", async (_label, response) => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: persistentFakeSessionManager(),
+    });
+    const processPort = new FakeChildProcessPort();
+    installTransitionExtension(host, processPort);
+    await host.triggerSessionStart();
+    const child = await spawnChild(host, processPort);
+    if (response === "Stay") host.scriptSelect("Stay");
+    else if (_label === "cancel") host.scriptSelect(undefined);
+    else if (_label === "timeout") host.scriptSelect(undefined);
+    else host.scriptSelect(undefined);
 
-      const result = await invokeHook(host, "session_before_switch", {
-        reason: "resume",
-        targetSessionFile: "/fake/next.jsonl",
-      });
+    const result = await invokeHook(host, "session_before_switch", {
+      reason: "resume",
+      targetSessionFile: "/fake/next.jsonl",
+    });
 
-      expect(result).toEqual({ cancel: true });
-      expect(host.selectCalls).toHaveLength(1);
-      expect(child.killed).toBe(false);
-      expect(child.forceKilled).toBe(false);
-    },
-  );
+    expect(result).toEqual({ cancel: true });
+    expect(host.selectCalls).toHaveLength(1);
+    expect(child.killed).toBe(false);
+    expect(child.forceKilled).toBe(false);
+  });
 
   it("orders Proceed as prompt, full subtree cancellation, final settlement, one origin append, then allow", async () => {
     const events: string[] = [];
@@ -518,9 +543,9 @@ describe("Pi session transition contracts", () => {
 
     expect(result).toBeUndefined();
     expect(child.killed || child.forceKilled).toBe(true);
-    expect(host.notifyCalls.some((call) => call.message.includes("Proceed"))).toBe(
-      false,
-    );
+    expect(
+      host.notifyCalls.some((call) => call.message.includes("Proceed")),
+    ).toBe(false);
     expect(events).toEqual(["prompt", "hook-return"]);
   });
 
@@ -636,9 +661,9 @@ describe("Pi session transition contracts", () => {
     await host.triggerSessionStart();
 
     expect(host.appendedEntries).toHaveLength(0);
-    expect(host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value).toBe(
-      "ready",
-    );
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
   });
 
   it("graceful shutdown followed by bounded force-stop leaves no process or capacity", async () => {
@@ -658,9 +683,9 @@ describe("Pi session transition contracts", () => {
     await shutdown;
 
     expect(child.killed || child.forceKilled).toBe(true);
-    expect(processPort.spawnedProcesses.filter((process) => !process.killed)).toHaveLength(
-      0,
-    );
+    expect(
+      processPort.spawnedProcesses.filter((process) => !process.killed),
+    ).toHaveLength(0);
   });
 
   it("read-only orphan policy permits history/doctor reads but denies every mutation without deleting the child", () => {
@@ -690,7 +715,9 @@ describe("Pi session transition contracts", () => {
       expect(denied.isErr()).toBe(true);
       if (denied.isErr()) {
         expect(denied.error.code).toBe("ChildOrphanReadOnly");
-        expect(JSON.stringify(denied.error)).not.toContain("orphan-child-secret");
+        expect(JSON.stringify(denied.error)).not.toContain(
+          "orphan-child-secret",
+        );
         expect(JSON.stringify(denied.error).length).toBeLessThanOrEqual(512);
       }
     }
@@ -732,7 +759,6 @@ describe("Pi session transition contracts", () => {
     expect(host.appendedEntries).toHaveLength(0);
   });
 });
-
 
 describe("PiDelegationController transition reports", () => {
   it("does not report a descendant after transition settlement", async () => {

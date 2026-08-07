@@ -661,10 +661,21 @@ export function buildPaletteActions(input: {
   readonly healthOnly: boolean;
   readonly hasActiveInstance: boolean;
   readonly hasPendingArtifact: boolean;
+  /**
+   * Names the required capability that is unavailable, when a persistent
+   * session mutation is impossible for this generation. It takes precedence
+   * over the generic health-only reason because it is the more specific and
+   * more actionable fact.
+   */
+  readonly unavailableCapability?: string;
 }): readonly PiPaletteAction[] {
-  const disabledReason = input.healthOnly
-    ? "Weave is in health-only mode; run /weave:health."
-    : undefined;
+  const disabledReason = ((): string | undefined => {
+    if (input.unavailableCapability !== undefined)
+      return `Weave requires the ${input.unavailableCapability} host capability; run /weave:health.`;
+    if (input.healthOnly)
+      return "Weave is in health-only mode; run /weave:health.";
+    return undefined;
+  })();
   return [
     {
       id: "weave.start",

@@ -54,6 +54,10 @@ import {
   safelyListAvailableModels,
 } from "./port-safety.js";
 import { DEFAULT_PRIMARY_AGENT_NAME } from "./primary-session.js";
+import {
+  collectRequiredCapabilityGaps,
+  type PiRequiredCapabilityGap,
+} from "./required-capability-gate.js";
 import type {
   PiCommandInfo,
   PiMode,
@@ -99,6 +103,12 @@ export interface PiPreflightResult {
   readonly toolRegistrations: readonly PiToolRegistration[];
   readonly healthReport: AdapterHealthReport;
   readonly healthOnlyMode: boolean;
+  /**
+   * Every required capability that is not effective for this generation,
+   * with a sanitized reason. Mutating routes consult this through the
+   * session-mutation gate before touching any downstream service.
+   */
+  readonly requiredCapabilityGaps: readonly PiRequiredCapabilityGap[];
   /** One immutable object shared by the store, inspector, and recovery seams. */
   readonly childInspection: PiChildInspectionEffectiveSettings;
   readonly hostSurface: PiHostSurfaceReport;
@@ -229,6 +239,8 @@ export class PiSafeInitializer {
                 configActivationFailure: candidate.failure,
                 toolRegistrations: candidate.toolRegistrations,
                 healthReport,
+                requiredCapabilityGaps:
+                  collectRequiredCapabilityGaps(healthReport),
                 healthOnlyMode:
                   blocked ||
                   trust === "withheld" ||

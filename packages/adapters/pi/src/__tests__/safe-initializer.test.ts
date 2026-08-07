@@ -244,7 +244,7 @@ describe("PiSafeInitializer.preflight", () => {
     expect(preflight.healthOnlyMode).toBe(true);
     expect(preflight.modeSupported).toBe(false);
     expect(probeCalls).toBe(0);
-    expect(preflight.healthReport.effectiveCapabilities).toHaveLength(20);
+    expect(preflight.healthReport.effectiveCapabilities).toHaveLength(21);
     for (const capability of preflight.healthReport.effectiveCapabilities) {
       expect(
         capability.effectiveReadiness === "degraded" ||
@@ -429,7 +429,7 @@ describe("PiSafeInitializer.preflight", () => {
       ALL_OWNED_COMMANDS,
     );
     const preflight = result._unsafeUnwrap();
-    expect(preflight.healthReport.effectiveCapabilities).toHaveLength(20);
+    expect(preflight.healthReport.effectiveCapabilities).toHaveLength(21);
     expect(preflight.healthOnlyMode).toBe(true);
   });
 

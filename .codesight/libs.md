@@ -591,6 +591,14 @@
   - interface PiRepeatedSettlementValidationOptions
   - interface PiRepeatedSettlementValidationReport
   - type PiRepeatedSettlementValidationError
+- `packages/adapters/pi/src/required-capability-gate.ts`
+  - function sanitizeCapabilityGapReason: (raw) => string
+  - function collectRequiredCapabilityGaps: (report) => readonly PiRequiredCapabilityGap[]
+  - function findSessionMutationGap: (gaps) => PiRequiredCapabilityGap | undefined
+  - function createSessionMutationGate: (readGaps) => void
+  - function createBlockedSessionMutationGate: (reason) => PiSessionMutationGate
+  - function requireSessionMutationCapability: (gate) => Result<void, PiAdapterFailure>
+  - _...5 more_
 - `packages/adapters/pi/src/rpc-child.ts`
   - function authenticateRestoreStartupSuffix: (establishedLeafId, page) => Result<void, PiRestoreAuthenticationReason>
   - class PiRpcChild

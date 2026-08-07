@@ -21,6 +21,7 @@ import {
   makeThreadStaleFailure,
   type PiAdapterFailure,
 } from "../errors.js";
+import { createOpenSessionMutationGate } from "../required-capability-gate.js";
 import type { PiChildSettlement } from "../rpc-child.js";
 import type {
   PiSessionContext,
@@ -93,6 +94,10 @@ function baseDeps(
       identitySource: "session-header",
       sessionFile: "/sessions/test.jsonl",
     }),
+    // Model a descriptor-safe host so the deep-module coverage below still
+    // exercises the delegation path. Production derives this gate from the
+    // real health report, where the exact tested host fails it.
+    sessionMutationGate: createOpenSessionMutationGate(),
     ...overrides,
   };
 }
@@ -1305,6 +1310,7 @@ describe("weave_delegate thread lifecycle", () => {
   it("keeps a relayed child tool restricted to starting new delegations", async () => {
     const registration = buildRelayedDelegationToolRegistration({
       targets: TARGETS,
+      sessionMutationGate: createOpenSessionMutationGate(),
       getRuntime: () => {
         throw new Error("must not relay a thread action");
       },
@@ -1391,6 +1397,7 @@ describe("weave_delegate thread lifecycle", () => {
   it("nested/relayed: final compact three-line parity from structured settlement only", async () => {
     const registration = buildRelayedDelegationToolRegistration({
       targets: TARGETS,
+      sessionMutationGate: createOpenSessionMutationGate(),
       getRuntime: () =>
         ({
           requestDelegation: () =>

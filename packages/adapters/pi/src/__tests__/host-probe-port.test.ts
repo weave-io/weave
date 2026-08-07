@@ -25,6 +25,10 @@ function capablePort(): Record<keyof PiHostProbePort, boolean> {
     hasAppendEntry: true,
     hasCustomSessionDirectoryContract: true,
     hasOverlayLifecycle: true,
+    // A hypothetical descriptor-safe host. The production probe port always
+    // answers `false` here; only this test double may answer `true`, so the
+    // deep-module coverage below still exercises a fully capable host.
+    hasDescriptorRelativeSessionIo: true,
     hasSupportedVersion: true,
   };
 }
@@ -39,6 +43,8 @@ function portFrom(answers: Record<keyof PiHostProbePort, boolean>) {
     hasCustomSessionDirectoryContract: () =>
       answers.hasCustomSessionDirectoryContract,
     hasOverlayLifecycle: () => answers.hasOverlayLifecycle,
+    hasDescriptorRelativeSessionIo: () =>
+      answers.hasDescriptorRelativeSessionIo,
     hasSupportedVersion: () => answers.hasSupportedVersion,
   });
 }

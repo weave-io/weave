@@ -7,6 +7,7 @@
  */
 
 export type {
+  CreatePiAdapterCommandHandlersOptions,
   PiAdapterChildEntrySummary,
   PiAdapterChildListItem,
   PiAdapterChildrenPort,
@@ -18,9 +19,13 @@ export type {
   PiChildrenResolveResult,
   PiChildrenShowResult,
   PiDoctorResult,
-  CreatePiAdapterCommandHandlersOptions,
 } from "./adapter-cli-commands.js";
 export {
+  createPiAdapterCommandHandlers,
+  createPiAdapterCommandRegistry,
+  createPiChildrenCommandPort,
+  createPlaceholderDoctorPort,
+  looksLikeFilesystemPath,
   PI_ADAPTER_COMMAND_BOUNDS,
   PI_ADAPTER_COMMAND_NAMES,
   PI_ADAPTER_NAME,
@@ -29,11 +34,6 @@ export {
   PiChildrenResolveResultSchema,
   PiChildrenShowResultSchema,
   PiDoctorResultSchema,
-  createPiAdapterCommandHandlers,
-  createPiAdapterCommandRegistry,
-  createPiChildrenCommandPort,
-  createPlaceholderDoctorPort,
-  looksLikeFilesystemPath,
   stripPathsUnlessDiagnostic,
 } from "./adapter-cli-commands.js";
 export type {
@@ -45,3 +45,10 @@ export {
   createProductionPiAdapterCommandRegistry,
   openProductionPiAdapterCommandPorts,
 } from "./adapter-cli-production.js";
+export type { PiSessionMutationGate } from "./required-capability-gate.js";
+export {
+  createBlockedSessionMutationGate,
+  createOpenSessionMutationGate,
+  createSessionMutationGate,
+  SESSION_MUTATION_REQUIRED_CAPABILITY,
+} from "./required-capability-gate.js";
