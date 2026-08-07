@@ -8,6 +8,7 @@ import {
 import {
   createBunPiNativeSessionFs,
   MemoryPiNativeSessionFs,
+  setForcedPreadByteLimitForTests,
 } from "../native-session-fs.js";
 
 const DIR = "/data/weave/adapters/pi/sessions/child-1";
@@ -289,6 +290,39 @@ describe("MemoryPiNativeSessionFs — statFile / readFileRange", () => {
     directory.close();
   });
 
+  test("zero-size openFile EOF probe rejects mid-read growth", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = (await fs.openDirectory(DIR, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, new Uint8Array(), 0o600))._unsafeUnwrap();
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    expect(handle.identity.size).toBe(0);
+    fs.simulateMidReadGrowth(DIR, FILE, 8);
+    expect((await handle.readRange(0, 16))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("forced short read then growth rejects before a second content read", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    fs.simulateForcedShortRead(DIR, FILE, 4);
+    fs.simulateMidReadGrowth(DIR, FILE, 8);
+
+    const first = (await handle.readRange(0, 16))._unsafeUnwrap();
+    expect(first.bytes).toEqual(PAYLOAD.slice(0, 4));
+
+    expect((await handle.readRange(4, 16))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
   test("symlink and unsafe path fail closed", async () => {
     const fs = new MemoryPiNativeSessionFs();
     const directory = (await fs.openDirectory(DIR, true))._unsafeUnwrap();
@@ -342,6 +376,7 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
   });
 
   afterEach(async () => {
+    setForcedPreadByteLimitForTests(undefined);
     await $`rm -rf ${root}`.quiet();
   });
 
@@ -595,6 +630,69 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
     (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
 
     expect((await handle.readRange(0, 8))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("a real zero-size file still probes EOF and rejects concurrent growth", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, new Uint8Array(), 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    expect(handle.identity.size).toBe(0);
+
+    const eof = (await handle.readRange(0, 16))._unsafeUnwrap();
+    expect(eof.bytes).toEqual(new Uint8Array());
+
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+    expect((await handle.readRange(0, 16))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("a real zero-size leaf swapped before the EOF probe fails closed", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, new Uint8Array(), 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    await $`printf 'zzzz' > ${join(root, "other.jsonl")}`.quiet();
+    await $`chmod 600 ${join(root, "other.jsonl")}`.quiet();
+    await $`mv ${join(root, "other.jsonl")} ${join(root, FILE)}`.quiet();
+
+    expect((await handle.readRange(0, 16))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("forced short pread then rewrite is rejected before a second content read", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    setForcedPreadByteLimitForTests(4);
+    const first = (await handle.readRange(0, 16))._unsafeUnwrap();
+    expect(first.bytes).toEqual(PAYLOAD.subarray(0, 4));
+
+    // Same size, in-place rewrite through the path: only mtime moves before
+    // the retry, so the second readRange must fail closed before content.
+    const rewritten = new Uint8Array(PAYLOAD.length);
+    rewritten.fill(0x62);
+    await Bun.write(join(root, FILE), rewritten);
+    await $`chmod 600 ${join(root, FILE)}`.quiet();
+
+    expect((await handle.readRange(4, 16))._unsafeUnwrapErr()).toEqual({
       type: "identity-changed",
     });
     handle.close();

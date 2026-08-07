@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~28,800 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,500 tokens per conversation.**
-> **Last scanned:** 2026-08-07 22:50 — re-run after significant changes
+> **Token savings:** this file is ~28,900 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,500 tokens per conversation.**
+> **Last scanned:** 2026-08-07 23:03 — re-run after significant changes
 
 ---
 
@@ -543,7 +543,10 @@
   - type PiModelResolutionSource
   - type PiModelResolution
   - _...2 more_
-- `packages/adapters/pi/src/native-session-fs.ts` — function createBunPiNativeSessionFs: () => PiNativeSessionFsPort, class MemoryPiNativeSessionFs
+- `packages/adapters/pi/src/native-session-fs.ts`
+  - function setForcedPreadByteLimitForTests: (limit) => void
+  - function createBunPiNativeSessionFs: () => PiNativeSessionFsPort
+  - class MemoryPiNativeSessionFs
 - `packages/adapters/pi/src/native-session-host.ts`
   - function isPiSessionManagerStatic: (value) => value is PiSessionManagerStatic
   - function adaptPiSessionManagerHandle: (manager) => PiNativeSessionHandle

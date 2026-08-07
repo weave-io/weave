@@ -409,29 +409,42 @@ function statFileFd(
   });
 }
 
-function preadExact(
+/**
+ * Test-only one-shot cap on the next production `pread`. Cleared after use so
+ * a forced short read can be followed by a fully checked retry.
+ */
+let forcedPreadByteLimitForTests: number | undefined;
+
+/** Caps the next OS `pread` byte count, then clears. Production never calls this. */
+export function setForcedPreadByteLimitForTests(
+  limit: number | undefined,
+): void {
+  forcedPreadByteLimitForTests = limit;
+}
+
+/**
+ * One OS `pread`. Callers that need more bytes after a short read must invoke
+ * `readRange` again so held-fd and leaf checks re-run around every content
+ * read. Helpers must not loop `pread` under one check pair.
+ */
+function preadOnce(
   libc: NativeLibc,
   fd: number,
   offset: number,
   length: number,
 ): Result<Uint8Array, PiNativeSessionFsError> {
   if (length === 0) return ok(new Uint8Array());
-  const buffer = new Uint8Array(length);
-  let filled = 0;
-  let cursor = offset;
-  while (filled < length) {
-    const count = libc.pread(
-      fd,
-      buffer.subarray(filled),
-      length - filled,
-      cursor,
-    );
-    if (count < 0) return err({ type: "io" });
-    if (count === 0) break;
-    filled += count;
-    cursor += count;
-  }
-  return ok(filled === length ? buffer : buffer.subarray(0, filled));
+  const request =
+    forcedPreadByteLimitForTests === undefined
+      ? length
+      : Math.min(length, Math.max(0, forcedPreadByteLimitForTests));
+  forcedPreadByteLimitForTests = undefined;
+  if (request === 0) return ok(new Uint8Array());
+  const buffer = new Uint8Array(request);
+  const count = libc.pread(fd, buffer, request, offset);
+  if (count < 0) return err({ type: "io" });
+  if (count === 0) return ok(new Uint8Array());
+  return ok(count === request ? buffer : buffer.subarray(0, count));
 }
 
 /**
@@ -750,7 +763,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
           if (!sameFileStat(before, opened)) {
             throw { type: "identity-changed" } satisfies PiNativeSessionFsError;
           }
-          const bytes = preadExact(libc, fd, offset, length);
+          const bytes = preadOnce(libc, fd, offset, length);
           if (bytes.isErr()) throw bytes.error;
           const after = toFileStat(await unwrapResult(statFileFd(fd)));
           if (!sameFileStat(after, opened)) {
@@ -876,7 +889,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
         const before = await unwrapResult(statFileFd(file));
         const bound = this.checkFileIdentity(checked.value, before);
         if (bound.isErr()) throw bound.error;
-        const bytes = preadExact(this.libc, file, offset, length);
+        const bytes = preadOnce(this.libc, file, offset, length);
         if (bytes.isErr()) throw bytes.error;
         const after = await unwrapResult(statFileFd(file));
         if (!sameFileStat(toFileStat(before), toFileStat(after))) {
@@ -1162,6 +1175,8 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     string,
     "replacement" | "rename" | "symlink" | "hardlink"
   >();
+  /** One-shot cap on the next range read's returned byte count. */
+  private readonly midReadShortCaps = new Map<string, number>();
   private readonly exclusiveCreateFailures = new Map<
     string,
     PiNativeSessionFsError
@@ -1203,6 +1218,19 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
       file.bytes.fill(rewrite);
       file.mtimeMs = nextMemoryMtime();
     }
+  }
+
+  /**
+   * Consumes a one-shot short-read cap when present. When a short cap fires,
+   * mid-read mutations and leaf swaps stay queued for the next range call so
+   * a forced short read can succeed and the follow-up check pair can reject.
+   */
+  private takeForcedShortCap(path: string, name: string): number | undefined {
+    const key = this.midReadKey(path, name);
+    const cap = this.midReadShortCaps.get(key);
+    if (cap === undefined) return undefined;
+    this.midReadShortCaps.delete(key);
+    return Math.max(0, cap);
   }
 
   private applyPostValidationSwap(path: string, name: string): void {
@@ -1406,8 +1434,13 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
                 if (leafBefore.isErr()) {
                   return fsErrAsync<PiNativeSessionFileRange>(leafBefore.error);
                 }
-                fs.applyMidReadLeafSwap(path, name);
-                fs.applyMidReadMutation(path, name, file);
+                // One content read per check pair. A forced short cap defers
+                // mutations/swaps so the next readRange re-checks before bytes.
+                const shortCap = fs.takeForcedShortCap(path, name);
+                if (shortCap === undefined) {
+                  fs.applyMidReadLeafSwap(path, name);
+                  fs.applyMidReadMutation(path, name, file);
+                }
                 if (!sameFileStat(memoryFileStat(file), opened)) {
                   return fsErrAsync<PiNativeSessionFileRange>({
                     type: "identity-changed",
@@ -1418,7 +1451,9 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
                   return fsErrAsync<PiNativeSessionFileRange>(leafAfter.error);
                 }
                 const start = Math.min(offset, file.bytes.length);
-                const end = Math.min(offset + length, file.bytes.length);
+                const cappedLength =
+                  shortCap === undefined ? length : Math.min(length, shortCap);
+                const end = Math.min(offset + cappedLength, file.bytes.length);
                 return okAsync<
                   PiNativeSessionFileRange,
                   PiNativeSessionFsError
@@ -1725,6 +1760,16 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
    */
   simulateMidReadRewrite(path: string, name: string, fill = 0x62): void {
     this.midReadRewrites.set(this.midReadKey(path, name), fill);
+  }
+
+  /**
+   * Force the next open-file `readRange` for `path`/`name` to return at most
+   * `maxBytes`, even when more content is available. Queued mid-read mutations
+   * and leaf swaps stay deferred until the following range call so a short
+   * read can succeed and the retry's check pair can reject.
+   */
+  simulateForcedShortRead(path: string, name: string, maxBytes: number): void {
+    this.midReadShortCaps.set(this.midReadKey(path, name), maxBytes);
   }
 
   simulateFileTruncate(path: string, name: string, size: number): void {

@@ -302,8 +302,11 @@ export interface PiNativeSessionFileHandle {
   /**
    * Positional read from the open descriptor. `offset`/`length` must be
    * nonnegative safe integers with
-   * `length <= PI_NATIVE_SESSION_MAX_RANGE_LENGTH`. Returns exact bytes
-   * (possibly short at EOF) bound to the identity captured at open.
+   * `length <= PI_NATIVE_SESSION_MAX_RANGE_LENGTH`. Performs at most one OS
+   * content read surrounded by held-fd and descriptor-relative leaf checks.
+   * Returns exact bytes (possibly short at EOF or when the OS short-reads)
+   * bound to the identity captured at open. Callers resume short reads with
+   * another `readRange` so every content read is fully re-checked.
    */
   readRange(
     offset: number,
@@ -1450,11 +1453,16 @@ const MAX_DESCRIPTOR_SESSION_LINES = 32_768;
  *    `<= PI_NATIVE_SESSION_MAX_RANGE_LENGTH` windows, with the cumulative
  *    total bounded by `maxBytes + 1`. The extra sentinel byte proves a file
  *    that grew past the ceiling after the metadata check, which fails closed
- *    rather than truncating.
- * 3. Line and entry budgets are applied while reading, not after. A non-empty
+ *    rather than truncating. An initially empty file still issues one guarded
+ *    EOF probe (`readRange(0, sentinelLength)`) and final held-fd/leaf
+ *    verification before returning empty — there is no zero-size fast path.
+ * 3. Each `readRange` performs at most one OS content read. A short read is
+ *    resumed by calling `readRange` again, so held-fd and descriptor-relative
+ *    leaf checks surround every content read.
+ * 4. Line and entry budgets are applied while reading, not after. A non-empty
  *    final line without a trailing newline counts toward the line ceiling, and
  *    the ceiling is enforced before any chunk is concatenated or parsed.
- * 4. The descriptor identity is re-verified after every chunk and once more at
+ * 5. The descriptor identity is re-verified after every chunk and once more at
  *    the end. Growth, truncation, replacement, or in-place mutation yields a
  *    typed error and no partial projection.
  */
@@ -1544,11 +1552,12 @@ function readBoundedFile(
             reason: "file-too-large",
           });
         }
+        // Short or full chunk: resume with a fresh readRange so the next
+        // content read gets its own before/after fd+leaf checks.
         return readNext(offset + range.bytes.length);
       });
   };
 
-  if (opened.size === 0) return okAsync(new Uint8Array());
   return readNext(0);
 }
 

@@ -532,7 +532,10 @@
   - type PiModelResolutionSource
   - type PiModelResolution
   - _...2 more_
-- `packages/adapters/pi/src/native-session-fs.ts` — function createBunPiNativeSessionFs: () => PiNativeSessionFsPort, class MemoryPiNativeSessionFs
+- `packages/adapters/pi/src/native-session-fs.ts`
+  - function setForcedPreadByteLimitForTests: (limit) => void
+  - function createBunPiNativeSessionFs: () => PiNativeSessionFsPort
+  - class MemoryPiNativeSessionFs
 - `packages/adapters/pi/src/native-session-host.ts`
   - function isPiSessionManagerStatic: (value) => value is PiSessionManagerStatic
   - function adaptPiSessionManagerHandle: (manager) => PiNativeSessionHandle

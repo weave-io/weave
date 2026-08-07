@@ -428,6 +428,116 @@ describe("descriptor-native bounded whole-session reads", () => {
     expect(failure).toEqual({ type: "SessionMissing", ref: REF });
     expect(recording.requestedLengths).toEqual([]);
   });
+
+  test("an initially empty file still issues a guarded EOF probe", async () => {
+    const memory = new MemoryPiNativeSessionFs();
+    await seedBytes(memory, new Uint8Array());
+    const recording = new RecordingFs(memory);
+
+    const failure = (
+      await storeFor(recording).readSessionEntries(REF, PARENT)
+    )._unsafeUnwrapErr();
+
+    // Empty content reaches the parser only after a real EOF readRange.
+    expect(failure).toEqual({
+      type: "SessionCorrupt",
+      ref: REF,
+      reason: "missing-header",
+    });
+    expect(recording.opened).toEqual([FILE]);
+    expect(recording.requestedLengths.length).toBe(1);
+    expect(recording.requestedLengths[0]).toBeGreaterThan(0);
+  });
+
+  test.each([
+    [
+      "growth",
+      (fs: MemoryPiNativeSessionFs) => fs.simulateMidReadGrowth(DIR, FILE, 32),
+      { type: "SessionCorrupt", ref: REF, reason: "unreadable" },
+    ],
+    [
+      "rewrite",
+      (fs: MemoryPiNativeSessionFs) => fs.simulateMidReadRewrite(DIR, FILE),
+      { type: "SessionCorrupt", ref: REF, reason: "unreadable" },
+    ],
+    [
+      "replacement",
+      (fs: MemoryPiNativeSessionFs) =>
+        fs.simulateMidReadLeafSwap(DIR, FILE, "replacement"),
+      { type: "SessionCorrupt", ref: REF, reason: "unreadable" },
+    ],
+    [
+      "rename",
+      (fs: MemoryPiNativeSessionFs) =>
+        fs.simulateMidReadLeafSwap(DIR, FILE, "rename"),
+      { type: "SessionCorrupt", ref: REF, reason: "unreadable" },
+    ],
+    [
+      "symlink",
+      (fs: MemoryPiNativeSessionFs) =>
+        fs.simulateMidReadLeafSwap(DIR, FILE, "symlink"),
+      { type: "SessionRootViolation", reason: "symlink-rejected" },
+    ],
+    [
+      "hardlink",
+      (fs: MemoryPiNativeSessionFs) =>
+        fs.simulateMidReadLeafSwap(DIR, FILE, "hardlink"),
+      { type: "SessionCorrupt", ref: REF, reason: "unreadable" },
+    ],
+  ] as const)("zero-size EOF probe rejects concurrent %s with no empty projection", async (_kind, arm, expected) => {
+    const memory = new MemoryPiNativeSessionFs();
+    await seedBytes(memory, new Uint8Array());
+    arm(memory);
+
+    const failure = (
+      await storeFor(memory).readSessionEntries(REF, PARENT)
+    )._unsafeUnwrapErr();
+
+    expect(failure).toEqual(expected);
+  });
+
+  test.each([
+    [
+      "growth",
+      (fs: MemoryPiNativeSessionFs) => fs.simulateMidReadGrowth(DIR, FILE, 64),
+    ],
+    [
+      "rewrite",
+      (fs: MemoryPiNativeSessionFs) => fs.simulateMidReadRewrite(DIR, FILE),
+    ],
+    [
+      "replacement",
+      (fs: MemoryPiNativeSessionFs) =>
+        fs.simulateMidReadLeafSwap(DIR, FILE, "replacement"),
+    ],
+    [
+      "rename",
+      (fs: MemoryPiNativeSessionFs) =>
+        fs.simulateMidReadLeafSwap(DIR, FILE, "rename"),
+    ],
+  ] as const)("forced short read then %s is rejected before a second content read", async (_kind, armMutation) => {
+    setPiNativeSessionMaxRangeLengthForTests(256);
+    const memory = new MemoryPiNativeSessionFs();
+    const body = buildSession(40);
+    await seedJsonl(memory, body);
+    const recording = new RecordingFs(memory);
+    memory.simulateForcedShortRead(DIR, FILE, 32);
+    armMutation(memory);
+
+    const failure = (
+      await storeFor(recording).readSessionEntries(REF, PARENT)
+    )._unsafeUnwrapErr();
+
+    expect(failure).toEqual({
+      type: "SessionCorrupt",
+      ref: REF,
+      reason: "unreadable",
+    });
+    // First range returned a short chunk; the retry's check pair rejected
+    // before any further content was accepted into a projection.
+    expect(recording.requestedLengths[0]).toBe(256);
+    expect(recording.requestedLengths.length).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe("descriptor-native bounded paging", () => {
