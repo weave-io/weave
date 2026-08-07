@@ -110,6 +110,12 @@ export interface PiThreadSourceFactoryInput {
    * path-only host can never append, update, or tombstone a durable ref.
    */
   readonly storageAuthority?: PiChildSessionStorageAuthority;
+  /**
+   * When `true`, open the metadata cache with the non-creating read-only
+   * path. Health-only / path-only startup must set this so a pristine data
+   * root never gains directories, DB, WAL, or SHM from source construction.
+   */
+  readonly readOnly?: boolean;
 }
 
 export type PiThreadSourceFactory = (
@@ -269,6 +275,7 @@ function openWithSessionRoot(
     fs: input.cacheFs ?? new BunPiChildMetadataCacheFs(),
     authority,
     source: metadataSource,
+    ...(input.readOnly === true ? { readOnly: true as const } : {}),
     ...(input.openDatabase === undefined
       ? {}
       : { openDatabase: input.openDatabase }),

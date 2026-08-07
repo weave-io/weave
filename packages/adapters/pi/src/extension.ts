@@ -4346,6 +4346,26 @@ export function createPiExtension(
         };
         let allowDelegationController = !effectiveHealthOnly(generation);
         const parentForSources = session.primarySession.getParentSession();
+        // Task 21 remediation E: descriptor-safe session I/O authority is
+        // checked before mutation-capable thread sources, cache create/open,
+        // reconstruction, recovery prompting, or upsert. Pi 0.83 refuses with
+        // `path-only-session-api` (`descriptor-relative-native-session-io`);
+        // health-only / path-only generations open non-creating read-only
+        // sources only and skip every write path.
+        const sessionStorage =
+          deps.sessionStorageAuthority ??
+          createPiChildSessionStorageAuthority();
+        const sessionStorageDecision = Result.fromThrowable(
+          () => sessionStorage.requireDescriptorSafeSessionIo(),
+          () => ({
+            type: "SessionStorageUnavailable" as const,
+            reason: "path-only-session-api" as const,
+          }),
+        )();
+        const descriptorSafeSessionIo =
+          sessionStorageDecision.isOk() && sessionStorageDecision.value.isOk();
+        const useReadOnlyThreadSources =
+          !descriptorSafeSessionIo || effectiveHealthOnly(generation);
         if (
           deps.threadSourceFactory !== undefined &&
           parentForSources.persistence === "persistent"
@@ -4376,6 +4396,8 @@ export function createPiExtension(
               XDG_DATA_HOME: deps.envPort.read("XDG_DATA_HOME"),
               HOME: deps.envPort.read("HOME"),
             },
+            storageAuthority: sessionStorage,
+            ...(useReadOnlyThreadSources ? { readOnly: true as const } : {}),
           });
           if (!startupOwnsGeneration()) {
             void generationResources.dispose();
@@ -4405,41 +4427,49 @@ export function createPiExtension(
             threadSourcesCell.cache = opened.value.cache;
             threadSourcesCell.cacheMode = opened.value.cacheMode;
             threadSourcesRequired = !effectiveHealthOnly(generation);
-            // A session transition revoked the previous generation, so this
-            // parent's own settled children exist only in its authoritative
-            // ref ledger. Reconstruct them once per generation, project them
-            // into the derivative metadata cache, and publish a
-            // generation-scoped summary the status and history surfaces read.
-            // `readRefs` already excludes refs another parent minted, so a
-            // clone or fork destination reconstructs nothing from its
-            // inherited entries.
-            await reconstructParentLocalChildren({
-              refs: opened.value.refs,
-              cache: opened.value.cache,
-              workspaceKey: ctx.cwd,
-              parentSessionId: parentForSources.sessionId,
-            }).match(
-              (summary) => {
-                if (!startupOwnsGeneration()) return;
-                publishChildReconstruction(
-                  childReconstructionCell,
-                  generation.id,
-                  summary,
-                );
-              },
-              (error) => {
-                if (!startupOwnsGeneration()) return;
-                clearChildReconstruction(childReconstructionCell);
-                deps.logger.warn(
-                  {
-                    failure: error.type,
-                    reason: error.reason,
-                    safeMessage: describeChildReconstructionError(error),
-                  },
-                  "parent-local child reconstruction failed; status and history stay live-only",
-                );
-              },
-            );
+            // Reconstruction upserts into the derivative cache and must not
+            // run on path-only / health-only generations. A future
+            // descriptor-safe ready host retains the existing reconstruct
+            // + publish path below.
+            if (useReadOnlyThreadSources) {
+              clearChildReconstruction(childReconstructionCell);
+            } else {
+              // A session transition revoked the previous generation, so this
+              // parent's own settled children exist only in its authoritative
+              // ref ledger. Reconstruct them once per generation, project them
+              // into the derivative metadata cache, and publish a
+              // generation-scoped summary the status and history surfaces read.
+              // `readRefs` already excludes refs another parent minted, so a
+              // clone or fork destination reconstructs nothing from its
+              // inherited entries.
+              await reconstructParentLocalChildren({
+                refs: opened.value.refs,
+                cache: opened.value.cache,
+                workspaceKey: ctx.cwd,
+                parentSessionId: parentForSources.sessionId,
+              }).match(
+                (summary) => {
+                  if (!startupOwnsGeneration()) return;
+                  publishChildReconstruction(
+                    childReconstructionCell,
+                    generation.id,
+                    summary,
+                  );
+                },
+                (error) => {
+                  if (!startupOwnsGeneration()) return;
+                  clearChildReconstruction(childReconstructionCell);
+                  deps.logger.warn(
+                    {
+                      failure: error.type,
+                      reason: error.reason,
+                      safeMessage: describeChildReconstructionError(error),
+                    },
+                    "parent-local child reconstruction failed; status and history stay live-only",
+                  );
+                },
+              );
+            }
             const sessionStore = opened.value.sessions as PiNativeSessionStore;
             const discoveryCache = opened.value.cache as PiChildMetadataCache;
             const canList =
@@ -4751,27 +4781,17 @@ export function createPiExtension(
         // child-ref ledger is open, then prompt exactly once for this stable
         // parent session.
         //
-        // Task 21 remediation B: recovery mutates the child-ref ledger and
+        // Task 21 remediation B/E: recovery mutates the child-ref ledger and
         // spawns a restored child, so it requires the same descriptor-safe
-        // session I/O authority as every other private write. Pi 0.83's
-        // path-only host refuses with `path-only-session-api`; skip without
-        // prompting or writing status. Lower ref-mutation checks stay
-        // independent, and ref reads stay ungated.
+        // session I/O authority already checked before source construction.
+        // Path-only / health-only generations skip without prompting. Lower
+        // ref-mutation checks stay independent, and ref reads stay ungated.
         const recoveryRefs = threadSourcesCell.refs;
-        const recoveryStorage =
-          deps.sessionStorageAuthority ??
-          createPiChildSessionStorageAuthority();
-        const recoveryStorageDecision = Result.fromThrowable(
-          () => recoveryStorage.requireDescriptorSafeSessionIo(),
-          () => ({
-            type: "SessionStorageUnavailable" as const,
-            reason: "path-only-session-api" as const,
-          }),
-        )();
-        const recoveryStorageOk =
-          recoveryStorageDecision.isOk() &&
-          recoveryStorageDecision.value.isOk();
-        if (recoveryRefs !== undefined && recoveryStorageOk) {
+        if (
+          recoveryRefs !== undefined &&
+          !useReadOnlyThreadSources &&
+          descriptorSafeSessionIo
+        ) {
           const historyPort = {
             list: () => recoveryRefs.readRefs().map((scan) => scan.refs),
             updateStatus: (

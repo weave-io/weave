@@ -70,11 +70,13 @@ import type {
 import { InMemoryRecoveryPointerStore } from "../recovery-pointer.js";
 import type { JsonValue } from "../strict-json.js";
 import { serializeCompletionCandidate } from "../structured-completion.js";
-import type {
-  PiThreadSourceFactory,
-  PiThreadSources,
+import {
+  createProductionPiThreadSourceFactory,
+  type PiThreadSourceFactory,
+  type PiThreadSourceFactoryInput,
+  type PiThreadSources,
 } from "../thread-sources.js";
-import type { IdGenerator } from "../types.js";
+import type { IdGenerator, PiEnvPort } from "../types.js";
 import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
@@ -3312,6 +3314,250 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(refAppends).toBe(0);
     expect(sessionMutations).toBe(0);
     expect(restores).toBe(0);
+  });
+
+  it("checks path-only session storage before factory open and skips reconstruct/upsert/recovery", async () => {
+    const order: string[] = [];
+    const interrupted = eligibleOrdinaryRecoveryRecord({
+      childId: "path-only-gated",
+      threadId: "path-only-gated",
+      nativeSessionId: "native-path-only-gated",
+      sessionRef: "children/path-only-gated/session.jsonl",
+      originEntryId: "entry-path-only-gated",
+      title: "loom",
+      status: "running",
+    });
+    const history = mutableChildRefSource(interrupted);
+    let upsertCalls = 0;
+    let restores = 0;
+    const cache = history.sources.cache as {
+      upsertRef: PiThreadCachePort["upsertRef"];
+    };
+    const originalUpsert = cache.upsertRef.bind(history.sources.cache);
+    cache.upsertRef = ((ref, workspaceKey) => {
+      upsertCalls += 1;
+      order.push("upsert");
+      return originalUpsert(ref, workspaceKey);
+    }) as typeof cache.upsertRef;
+    const storage = {
+      requireDescriptorSafeSessionIo: () => {
+        order.push("authority");
+        return err({
+          type: "SessionStorageUnavailable" as const,
+          reason: "path-only-session-api" as const,
+        });
+      },
+    };
+    const factory: PiThreadSourceFactory = (input) => {
+      order.push(
+        input.readOnly === true ? "factory-readonly" : "factory-mutating",
+      );
+      return history.factory(input);
+    };
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Recover now");
+    installRecoveryExtension(
+      host,
+      history,
+      () => {
+        restores += 1;
+        order.push("spawn");
+        return okAsync({
+          finalOutput: "must-not-restore",
+          interventionCount: 0,
+        });
+      },
+      { recovery_countdown_seconds: 0 },
+      {
+        sessionStorageAuthority: storage,
+        threadSourceFactory: factory,
+      },
+    );
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+
+    expect(order[0]).toBe("authority");
+    expect(order).toContain("factory-readonly");
+    expect(order.indexOf("authority")).toBeLessThan(
+      order.indexOf("factory-readonly"),
+    );
+    expect(order).not.toContain("factory-mutating");
+    expect(order).not.toContain("upsert");
+    expect(order).not.toContain("spawn");
+    expect(upsertCalls).toBe(0);
+    expect(restores).toBe(0);
+    expect(host.selectCalls).toHaveLength(0);
+  });
+
+  it("retains reconstruction and recovery on a descriptor-safe ready host", async () => {
+    const order: string[] = [];
+    const interrupted = eligibleOrdinaryRecoveryRecord({
+      childId: "ready-reconstruct",
+      threadId: "ready-reconstruct",
+      nativeSessionId: "native-ready-reconstruct",
+      sessionRef: "children/ready-reconstruct/session.jsonl",
+      originEntryId: "entry-ready-reconstruct",
+      title: "loom",
+      status: "running",
+    });
+    const history = mutableChildRefSource(interrupted);
+    let upsertCalls = 0;
+    let restores = 0;
+    const cache = history.sources.cache as {
+      upsertRef: PiThreadCachePort["upsertRef"];
+    };
+    const originalUpsert = cache.upsertRef.bind(history.sources.cache);
+    cache.upsertRef = ((ref, workspaceKey) => {
+      upsertCalls += 1;
+      order.push("upsert");
+      return originalUpsert(ref, workspaceKey);
+    }) as typeof cache.upsertRef;
+    const storage = {
+      requireDescriptorSafeSessionIo: () => {
+        order.push("authority");
+        return ok(undefined);
+      },
+    };
+    const factory: PiThreadSourceFactory = (input) => {
+      order.push(
+        input.readOnly === true ? "factory-readonly" : "factory-mutating",
+      );
+      // Align fixture origin with the host-probed parent so reconstruction
+      // projects into the cache the same way a live ready generation does.
+      for (const record of history.records) {
+        (record as { originParentSessionId: string }).originParentSessionId =
+          input.parentSessionId;
+      }
+      return history.factory(input);
+    };
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Recover now");
+    installRecoveryExtension(
+      host,
+      history,
+      () => {
+        restores += 1;
+        order.push("spawn");
+        return okAsync({ finalOutput: "done", interventionCount: 0 });
+      },
+      { recovery_countdown_seconds: 0 },
+      {
+        sessionStorageAuthority: storage,
+        threadSourceFactory: factory,
+      },
+    );
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+
+    expect(order[0]).toBe("authority");
+    expect(order).toContain("factory-mutating");
+    expect(order).toContain("upsert");
+    expect(order).toContain("spawn");
+    expect(order.indexOf("authority")).toBeLessThan(
+      order.indexOf("factory-mutating"),
+    );
+    expect(order.indexOf("factory-mutating")).toBeLessThan(
+      order.indexOf("upsert"),
+    );
+    expect(order.indexOf("upsert")).toBeLessThan(order.indexOf("spawn"));
+    expect(upsertCalls).toBeGreaterThan(0);
+    expect(restores).toBe(1);
+  });
+
+  it("keeps a pristine XDG data root absent after health-only startup surfaces", async () => {
+    const xdgBase = `/private/tmp/weave-task21-failclosed-pristine-${crypto.randomUUID()}`;
+    await Bun.write(`${xdgBase}/.keep`, "");
+    await Bun.file(`${xdgBase}/.keep`).delete();
+    const envPort: PiEnvPort = {
+      read: (name) =>
+        name === "XDG_DATA_HOME" || name === "HOME" ? xdgBase : undefined,
+      deleteValue: () => undefined,
+    };
+    const order: string[] = [];
+    const storage = {
+      requireDescriptorSafeSessionIo: () => {
+        order.push("authority");
+        return err({
+          type: "SessionStorageUnavailable" as const,
+          reason: "path-only-session-api" as const,
+        });
+      },
+    };
+    let openDatabaseCalls = 0;
+    const production = createProductionPiThreadSourceFactory();
+    const factory: PiThreadSourceFactory = (
+      input: PiThreadSourceFactoryInput,
+    ) => {
+      order.push(
+        input.readOnly === true ? "factory-readonly" : "factory-mutating",
+      );
+      return production({
+        ...input,
+        openDatabase: () => {
+          openDatabaseCalls += 1;
+          order.push("openDatabase");
+          throw new Error("openDatabase must not run on pristine read-only");
+        },
+      });
+    };
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      // Pi 0.83 health-only: required descriptor-relative session I/O is absent.
+      hostSurfaceReader: hostSurfaceReader([
+        "descriptor-relative-native-session-io",
+      ]),
+      envPort,
+      sessionStorageAuthority: storage,
+      threadSourceFactory: factory,
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
+    await host.invokeCommand("weave:status");
+    await host.invokeCommand("weave:health");
+    await host.invokeCommand("weave:history");
+    await host.invokeCommand("weave:doctor");
+    await flushBackgroundWork();
+
+    expect(order[0]).toBe("authority");
+    expect(order).toContain("factory-readonly");
+    expect(order).not.toContain("factory-mutating");
+    expect(order).not.toContain("openDatabase");
+    expect(openDatabaseCalls).toBe(0);
+
+    const glob = new Bun.Glob("**/*");
+    const paths: string[] = [];
+    for await (const relative of glob.scan({
+      cwd: xdgBase,
+      onlyFiles: false,
+      dot: true,
+    })) {
+      paths.push(relative);
+    }
+    expect(paths).toEqual([]);
+    for (const name of [
+      "child-metadata.sqlite",
+      "child-metadata.sqlite-wal",
+      "child-metadata.sqlite-shm",
+      "child-metadata.sqlite-journal",
+    ]) {
+      expect(paths.some((path) => path.endsWith(name))).toBe(false);
+    }
   });
 
   it("honors exact startup choices: Recover now recovers, while Skip and Inspect preserve eligibility", async () => {

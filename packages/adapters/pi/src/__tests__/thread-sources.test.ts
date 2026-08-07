@@ -265,4 +265,52 @@ describe("openPiThreadSources", () => {
     expect(appended.isErr()).toBe(true);
     expect(parent.appended).toHaveLength(0);
   });
+
+  test("readOnly open on an absent cache never creates dirs/files or opens a database", async () => {
+    const parent = new FakeParentEntries();
+    const cacheFs = new FakePiChildMetadataCacheFs(undefined, [], "absent");
+    let openDatabaseCalls = 0;
+    const result = await openPiThreadSources({
+      workspaceKey: WORKSPACE,
+      parentSessionId: PARENT,
+      append: parent,
+      read: parent,
+      sessionRoot: ROOT,
+      fs: memoryFs(),
+      host: new MemoryHost(),
+      cacheRoot: CACHE_ROOT,
+      cacheFs,
+      readOnly: true,
+      openDatabase: () => {
+        openDatabaseCalls += 1;
+        return openBunChildMetadataDatabase(":memory:");
+      },
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) throw new Error("expected ok");
+    expect(result.value.cacheMode).toBe("degraded");
+    expect(openDatabaseCalls).toBe(0);
+    expect(cacheFs.calls.some((call) => call.startsWith("dir:"))).toBe(false);
+    expect(cacheFs.calls.some((call) => call.startsWith("file:"))).toBe(false);
+    expect(cacheFs.calls.some((call) => call.startsWith("probe:"))).toBe(true);
+    const upsert = result.value.cache.upsertRef(
+      {
+        childId: "child-1",
+        threadId: "child-1",
+        nativeSessionId: "native-1",
+        sessionRef: "child-1/session.jsonl",
+        originParentSessionId: PARENT,
+        originEntryId: "entry-1",
+        title: "t",
+        status: "running",
+        createdAt: 1,
+        updatedAt: 1,
+        runs: [],
+      },
+      WORKSPACE,
+    );
+    // Degraded NOOP cache never throws; mutation-capable open is what creates.
+    expect(upsert.isOk()).toBe(true);
+  });
 });
