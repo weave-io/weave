@@ -16,6 +16,7 @@ import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
   PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
   type PiNativeSessionDirectory,
+  type PiNativeSessionFileHandle,
   type PiNativeSessionFileRange,
   type PiNativeSessionFileStat,
   type PiNativeSessionFsError,
@@ -32,6 +33,8 @@ interface NodeIdentity {
 /** Regular-file identity including size for bounded range reads. */
 interface FileNodeIdentity extends NodeIdentity {
   readonly size: number;
+  /** Last-modification milliseconds, used to detect same-size rewrites. */
+  readonly mtimeMs: number;
 }
 
 const textEncoder = new TextEncoder();
@@ -56,12 +59,20 @@ function sameFileStat(
   right: PiNativeSessionFileStat,
 ): boolean {
   return (
-    left.dev === right.dev && left.ino === right.ino && left.size === right.size
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs
   );
 }
 
 function toFileStat(identity: FileNodeIdentity): PiNativeSessionFileStat {
-  return { dev: identity.dev, ino: identity.ino, size: identity.size };
+  return {
+    dev: identity.dev,
+    ino: identity.ino,
+    size: identity.size,
+    mtimeMs: identity.mtimeMs,
+  };
 }
 
 function validateRange(
@@ -393,6 +404,7 @@ function statFileFd(
       ino: stat.ino,
       mode,
       size: Number(stat.size),
+      mtimeMs: Number(stat.mtimeMs),
     });
   });
 }
@@ -595,9 +607,19 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
     });
   }
 
-  readFile(
+  /**
+   * Opens one regular 0600 leaf through this held directory descriptor and
+   * returns an identity-bound handle. Name resolution happens exactly once,
+   * here; every later read is a positional `pread` on the returned descriptor,
+   * so the validated leaf is never reopened by name and a post-validation
+   * rename/symlink swap cannot redirect a read.
+   */
+  openFile(
     name: string,
-  ): ResultAsync<Uint8Array | undefined, PiNativeSessionFsError> {
+  ): ResultAsync<
+    PiNativeSessionFileHandle | undefined,
+    PiNativeSessionFsError
+  > {
     const checked = this.name(name);
     if (checked.isErr()) return errAsync(checked.error);
     return this.identity().andThen(() => {
@@ -616,53 +638,110 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
             undefined,
           );
           return checkedMissing.isErr()
-            ? errAsync<Uint8Array | undefined, PiNativeSessionFsError>(
-                checkedMissing.error,
-              )
-            : okAsync<Uint8Array | undefined, PiNativeSessionFsError>(
-                undefined,
-              );
+            ? errAsync<
+                PiNativeSessionFileHandle | undefined,
+                PiNativeSessionFsError
+              >(checkedMissing.error)
+            : okAsync<
+                PiNativeSessionFileHandle | undefined,
+                PiNativeSessionFsError
+              >(undefined);
         }
-        return fsErrAsync<Uint8Array | undefined>({
+        return fsErrAsync<PiNativeSessionFileHandle | undefined>({
           type: "symlink-rejected",
         });
       }
-      return statFd(file, "file", 0o600)
-        .andThen((fileIdentity) =>
-          ResultAsync.fromThrowable(
-            () => Bun.file(file).bytes(),
-            () => ({ type: "io" }) as const,
-          )().map((bytes) => ({ bytes, fileIdentity })),
-        )
-        .map((result) => {
-          this.libc.close(file);
-          return result;
+      return statFileFd(file)
+        .andThen((opened) => {
+          const bound = this.checkFileIdentity(checked.value, opened);
+          if (bound.isErr()) {
+            return errAsync<FileNodeIdentity, PiNativeSessionFsError>(
+              bound.error,
+            );
+          }
+          return this.targetIdentity(checked.value).andThen((current) =>
+            current !== undefined && sameIdentity(opened, current)
+              ? okAsync<FileNodeIdentity, PiNativeSessionFsError>(opened)
+              : errAsync<FileNodeIdentity, PiNativeSessionFsError>({
+                  type: "identity-changed",
+                }),
+          );
         })
+        .map(
+          (opened): PiNativeSessionFileHandle =>
+            this.createFileHandle(file, toFileStat(opened)),
+        )
         .mapErr((error) => {
           this.libc.close(file);
           return error;
-        })
-        .andThen(({ bytes, fileIdentity }) =>
-          this.identity()
-            .andThen(() => {
-              const checkedFile = this.checkFileIdentity(
-                checked.value,
-                fileIdentity,
-              );
-              return checkedFile.isErr()
-                ? errAsync(checkedFile.error)
-                : okAsync(checkedFile.value);
-            })
-            .andThen(() => this.targetIdentity(checked.value))
-            .andThen((current) =>
-              current !== undefined && sameIdentity(fileIdentity, current)
-                ? okAsync<Uint8Array, PiNativeSessionFsError>(bytes)
-                : errAsync<Uint8Array, PiNativeSessionFsError>({
-                    type: "identity-changed",
-                  }),
-            ),
-        );
+        });
     });
+  }
+
+  /**
+   * Wraps one open regular-file descriptor. Reads re-`fstat` the descriptor
+   * before and after every chunk and fail closed when `{dev,ino,size,mtimeMs}`
+   * moves, so growth, truncation, or in-place mutation during a read never
+   * yields a partial projection.
+   */
+  private createFileHandle(
+    fd: number,
+    opened: PiNativeSessionFileStat,
+  ): PiNativeSessionFileHandle {
+    let closed = false;
+    const libc = this.libc;
+    const directoryIdentity = (): ResultAsync<
+      NodeIdentity,
+      PiNativeSessionFsError
+    > => this.identity();
+    return {
+      identity: opened,
+      stat(): ResultAsync<PiNativeSessionFileStat, PiNativeSessionFsError> {
+        if (closed) {
+          return fsErrAsync<PiNativeSessionFileStat>({
+            type: "unavailable",
+            operation: "open",
+          });
+        }
+        return statFileFd(fd).map(toFileStat);
+      },
+      readRange(
+        offset: number,
+        length: number,
+      ): ResultAsync<PiNativeSessionFileRange, PiNativeSessionFsError> {
+        if (closed) {
+          return fsErrAsync<PiNativeSessionFileRange>({
+            type: "unavailable",
+            operation: "open",
+          });
+        }
+        const range = validateRange(offset, length);
+        if (range.isErr()) return errAsync(range.error);
+        return ResultAsync.fromThrowable(async () => {
+          const before = toFileStat(await unwrapResult(statFileFd(fd)));
+          if (!sameFileStat(before, opened)) {
+            throw { type: "identity-changed" } satisfies PiNativeSessionFsError;
+          }
+          const bytes = preadExact(libc, fd, offset, length);
+          if (bytes.isErr()) throw bytes.error;
+          const after = toFileStat(await unwrapResult(statFileFd(fd)));
+          if (!sameFileStat(after, opened)) {
+            throw { type: "identity-changed" } satisfies PiNativeSessionFsError;
+          }
+          await unwrapResult(directoryIdentity());
+          return {
+            identity: opened,
+            bytes: bytes.value,
+            offset,
+          } satisfies PiNativeSessionFileRange;
+        }, mapThrownError)();
+      },
+      close(): void {
+        if (closed) return;
+        closed = true;
+        libc.close(fd);
+      },
+    };
   }
 
   statFile(
@@ -1017,6 +1096,8 @@ interface MemoryFileData {
   hardlink?: boolean;
   kind: "file" | "directory";
   bytes: Uint8Array;
+  /** Monotonic stand-in for `mtimeMs`; bumped on every content mutation. */
+  mtimeMs: number;
 }
 
 interface MemoryDirectoryData {
@@ -1032,6 +1113,12 @@ function nextMemoryIdentity(mode = 0o700): NodeIdentity {
   return { dev: 1, ino: memoryInode, mode };
 }
 
+let memoryMtime = 1_000;
+function nextMemoryMtime(): number {
+  memoryMtime += 1;
+  return memoryMtime;
+}
+
 export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
   private readonly directories = new Map<string, MemoryDirectoryData>();
   private readonly replaced = new Set<string>();
@@ -1040,6 +1127,8 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     "replacement" | "rename"
   >();
   private readonly midReadTruncates = new Map<string, number>();
+  private readonly midReadGrowths = new Map<string, number>();
+  private readonly midReadRewrites = new Map<string, number>();
   private readonly exclusiveCreateFailures = new Map<
     string,
     PiNativeSessionFsError
@@ -1047,6 +1136,40 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
 
   private midReadKey(path: string, name: string): string {
     return `${path}\0${name}`;
+  }
+
+  /**
+   * Applies any queued mid-read mutation to `file` between identity capture
+   * and re-check, so tests can grow or truncate a leaf during one read.
+   */
+  private applyMidReadMutation(
+    path: string,
+    name: string,
+    file: MemoryFileData,
+  ): void {
+    const key = this.midReadKey(path, name);
+    const truncateTo = this.midReadTruncates.get(key);
+    if (truncateTo !== undefined) {
+      this.midReadTruncates.delete(key);
+      file.bytes = file.bytes.slice(0, Math.max(0, truncateTo));
+      file.mtimeMs = nextMemoryMtime();
+    }
+    const growBy = this.midReadGrowths.get(key);
+    if (growBy !== undefined) {
+      this.midReadGrowths.delete(key);
+      const grown = new Uint8Array(file.bytes.length + Math.max(0, growBy));
+      grown.set(file.bytes);
+      grown.fill(0x0a, file.bytes.length);
+      file.bytes = grown;
+      file.mtimeMs = nextMemoryMtime();
+    }
+    const rewrite = this.midReadRewrites.get(key);
+    if (rewrite !== undefined) {
+      this.midReadRewrites.delete(key);
+      file.bytes = file.bytes.slice();
+      file.bytes.fill(rewrite);
+      file.mtimeMs = nextMemoryMtime();
+    }
   }
 
   private applyPostValidationSwap(path: string, name: string): void {
@@ -1110,6 +1233,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
       dev: file.identity.dev,
       ino: file.identity.ino,
       size: file.bytes.length,
+      mtimeMs: file.mtimeMs,
     });
 
     const handle: PiNativeSessionDirectory & {
@@ -1130,37 +1254,95 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
         }
         return okAsync(current.identity);
       },
-      readFile(
+      openFile(
         name,
-      ): ResultAsync<Uint8Array | undefined, PiNativeSessionFsError> {
+      ): ResultAsync<
+        PiNativeSessionFileHandle | undefined,
+        PiNativeSessionFsError
+      > {
         if (!safeName(name)) return errAsync({ type: "unsafe-path" });
-        return this.identity().andThen(() => {
+        const directoryIdentity = (): ResultAsync<
+          NodeIdentity,
+          PiNativeSessionFsError
+        > => this.identity();
+        return directoryIdentity().andThen(() => {
           const file = fs.directories.get(path)?.files.get(name);
           if (file === undefined) {
             const checkedMissing = checkFileIdentity(name, undefined);
             return checkedMissing.isErr()
-              ? errAsync<Uint8Array | undefined, PiNativeSessionFsError>(
-                  checkedMissing.error,
-                )
-              : okAsync<Uint8Array | undefined, PiNativeSessionFsError>(
-                  undefined,
-                );
+              ? errAsync<
+                  PiNativeSessionFileHandle | undefined,
+                  PiNativeSessionFsError
+                >(checkedMissing.error)
+              : okAsync<
+                  PiNativeSessionFileHandle | undefined,
+                  PiNativeSessionFsError
+                >(undefined);
           }
           const checked = validateMemoryFile(file);
           if (checked.isErr()) return errAsync(checked.error);
-          const identity = file.identity;
-          const boundFile = checkFileIdentity(name, identity);
+          const boundFile = checkFileIdentity(name, file.identity);
           if (boundFile.isErr()) return errAsync(boundFile.error);
+          const opened = memoryFileStat(file);
+          // Name resolution ends here. The handle keeps the resolved node, so
+          // a post-validation swap of the name cannot redirect later reads.
           fs.applyPostValidationSwap(path, name);
-          return this.identity().andThen(() => {
-            const current = fs.directories.get(path)?.files.get(name);
-            return current !== undefined &&
-              sameIdentity(current.identity, identity)
-              ? okAsync<Uint8Array, PiNativeSessionFsError>(
-                  new Uint8Array(current.bytes),
-                )
-              : fsErrAsync<Uint8Array>({ type: "identity-changed" });
-          });
+          let fileClosed = false;
+          const handleForFile: PiNativeSessionFileHandle = {
+            identity: opened,
+            stat(): ResultAsync<
+              PiNativeSessionFileStat,
+              PiNativeSessionFsError
+            > {
+              if (fileClosed) {
+                return fsErrAsync<PiNativeSessionFileStat>({
+                  type: "unavailable",
+                  operation: "open",
+                });
+              }
+              return directoryIdentity().map(() => memoryFileStat(file));
+            },
+            readRange(
+              offset,
+              length,
+            ): ResultAsync<PiNativeSessionFileRange, PiNativeSessionFsError> {
+              if (fileClosed) {
+                return fsErrAsync<PiNativeSessionFileRange>({
+                  type: "unavailable",
+                  operation: "open",
+                });
+              }
+              const range = validateRange(offset, length);
+              if (range.isErr()) return errAsync(range.error);
+              return directoryIdentity().andThen(() => {
+                const validated = validateMemoryFile(file);
+                if (validated.isErr()) return errAsync(validated.error);
+                fs.applyMidReadMutation(path, name, file);
+                if (!sameFileStat(memoryFileStat(file), opened)) {
+                  return fsErrAsync<PiNativeSessionFileRange>({
+                    type: "identity-changed",
+                  });
+                }
+                const start = Math.min(offset, file.bytes.length);
+                const end = Math.min(offset + length, file.bytes.length);
+                return okAsync<
+                  PiNativeSessionFileRange,
+                  PiNativeSessionFsError
+                >({
+                  identity: opened,
+                  bytes: file.bytes.slice(start, end),
+                  offset,
+                });
+              });
+            },
+            close(): void {
+              fileClosed = true;
+            },
+          };
+          return okAsync<
+            PiNativeSessionFileHandle | undefined,
+            PiNativeSessionFsError
+          >(handleForFile);
         });
       },
       statFile(
@@ -1230,11 +1412,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
           if (boundFile.isErr()) return errAsync(boundFile.error);
           fs.applyPostValidationSwap(path, name);
 
-          const truncateTo = fs.midReadTruncates.get(fs.midReadKey(path, name));
-          if (truncateTo !== undefined) {
-            file.bytes = file.bytes.slice(0, truncateTo);
-            fs.midReadTruncates.delete(fs.midReadKey(path, name));
-          }
+          fs.applyMidReadMutation(path, name, file);
 
           const start = Math.min(offset, file.bytes.length);
           const end = Math.min(offset + length, file.bytes.length);
@@ -1281,6 +1459,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
               symlink: false,
               kind: "file",
               bytes: new Uint8Array(bytes),
+              mtimeMs: nextMemoryMtime(),
             };
             current.files.set(name, created);
             fileBounds.set(name, created.identity);
@@ -1293,6 +1472,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
             next.set(existing.bytes);
             next.set(bytes, existing.bytes.length);
             existing.bytes = next;
+            existing.mtimeMs = nextMemoryMtime();
           }
           return this.identity().map<void>(() => undefined);
         });
@@ -1332,6 +1512,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
             symlink: false,
             kind: "file",
             bytes: new Uint8Array(bytes),
+            mtimeMs: nextMemoryMtime(),
           };
           current.files.set(name, created);
           fileBounds.set(name, created.identity);
@@ -1391,6 +1572,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
         symlink: true,
         kind: "file",
         bytes: new Uint8Array(),
+        mtimeMs: nextMemoryMtime(),
       });
     }
   }
@@ -1426,10 +1608,24 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     this.midReadTruncates.set(this.midReadKey(path, name), size);
   }
 
+  /** Append `bytes` newline bytes to a leaf during one in-flight range read. */
+  simulateMidReadGrowth(path: string, name: string, bytes: number): void {
+    this.midReadGrowths.set(this.midReadKey(path, name), bytes);
+  }
+
+  /**
+   * Rewrite a leaf in place, same size, during one in-flight range read. Only
+   * `mtimeMs` moves, so this proves size-only checks are not sufficient.
+   */
+  simulateMidReadRewrite(path: string, name: string, fill = 0x62): void {
+    this.midReadRewrites.set(this.midReadKey(path, name), fill);
+  }
+
   simulateFileTruncate(path: string, name: string, size: number): void {
     const file = this.directories.get(path)?.files.get(name);
     if (file) {
       file.bytes = file.bytes.slice(0, Math.max(0, size));
+      file.mtimeMs = nextMemoryMtime();
     }
   }
 
@@ -1462,6 +1658,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
         symlink: false,
         kind: "directory",
         bytes: new Uint8Array(),
+        mtimeMs: nextMemoryMtime(),
       });
     }
   }

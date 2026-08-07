@@ -25,8 +25,113 @@ async function openMemoryDir(
   return directory;
 }
 
+describe("MemoryPiNativeSessionFs — openFile descriptor defenses", () => {
+  test("openFile returns a handle bound to the identity seen at open", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    expect(handle).toBeDefined();
+    if (handle === undefined) return;
+    expect(handle.identity).toEqual({
+      dev: expect.any(Number),
+      ino: expect.any(Number),
+      size: PAYLOAD.length,
+      mtimeMs: expect.any(Number),
+    });
+    const range = (await handle.readRange(0, 8))._unsafeUnwrap();
+    expect(range.bytes).toEqual(PAYLOAD.slice(0, 8));
+    expect(range.identity).toEqual(handle.identity);
+    handle.close();
+  });
+
+  test("openFile reports a missing leaf as undefined", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    expect((await directory.openFile("absent.jsonl"))._unsafeUnwrap()).toBe(
+      undefined,
+    );
+  });
+
+  test("openFile rejects a symlinked leaf", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    fs.simulateFileSymlink(DIR, FILE);
+    expect((await directory.openFile(FILE))._unsafeUnwrapErr()).toEqual({
+      type: "symlink-rejected",
+    });
+  });
+
+  test("openFile rejects a hardlinked leaf", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    fs.simulateExternalHardlink(DIR, FILE);
+    expect((await directory.openFile(FILE))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+  });
+
+  test("openFile rejects a permissive leaf", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    fs.simulatePermissiveFile(DIR, FILE);
+    expect((await directory.openFile(FILE))._unsafeUnwrapErr()).toEqual({
+      type: "permissive-mode",
+      kind: "file",
+    });
+  });
+
+  test("openFile rejects an unsafe name", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    expect((await directory.openFile("../escape"))._unsafeUnwrapErr()).toEqual({
+      type: "unsafe-path",
+    });
+  });
+
+  test("a replaced leaf fails a later read from the same handle", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    fs.simulateFileTruncate(DIR, FILE, 4);
+    expect((await handle.readRange(0, 8))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+  });
+
+  test("reads after close fail closed", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    handle.close();
+    expect((await handle.readRange(0, 4))._unsafeUnwrapErr()).toEqual({
+      type: "unavailable",
+      operation: "open",
+    });
+    expect((await handle.stat())._unsafeUnwrapErr()).toEqual({
+      type: "unavailable",
+      operation: "open",
+    });
+  });
+
+  test("readRange rejects an out-of-bounds length", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    expect(
+      (
+        await handle.readRange(0, PI_NATIVE_SESSION_MAX_RANGE_LENGTH + 1)
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "invalid-range" });
+    handle.close();
+  });
+});
+
 describe("MemoryPiNativeSessionFs — statFile / readFileRange", () => {
-  test("statFile returns dev/ino/size for a regular leaf", async () => {
+  test("statFile returns dev/ino/size/mtime for a regular leaf", async () => {
     const fs = new MemoryPiNativeSessionFs();
     const directory = await openMemoryDir(fs);
     const stat = (await directory.statFile(FILE))._unsafeUnwrap();
@@ -34,6 +139,7 @@ describe("MemoryPiNativeSessionFs — statFile / readFileRange", () => {
       dev: expect.any(Number),
       ino: expect.any(Number),
       size: PAYLOAD.length,
+      mtimeMs: expect.any(Number),
     });
     expect(stat?.size).toBe(PAYLOAD.length);
     directory.close();
@@ -257,6 +363,103 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
     )._unsafeUnwrap();
     expect(eof?.bytes.length).toBe(2);
 
+    directory.close();
+  });
+
+  test("openFile reads exact chunks from one descriptor and closes cleanly", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    expect(handle.identity.size).toBe(PAYLOAD.length);
+    expect(handle.identity.mtimeMs).toEqual(expect.any(Number));
+
+    const first = (await handle.readRange(3, 5))._unsafeUnwrap();
+    expect(new TextDecoder().decode(first.bytes)).toBe("defgh");
+    const eof = (
+      await handle.readRange(PAYLOAD.length - 2, 32)
+    )._unsafeUnwrap();
+    expect(eof.bytes.length).toBe(2);
+    expect((await handle.stat())._unsafeUnwrap()).toEqual(handle.identity);
+
+    handle.close();
+    expect((await handle.readRange(0, 4))._unsafeUnwrapErr()).toEqual({
+      type: "unavailable",
+      operation: "open",
+    });
+    directory.close();
+  });
+
+  test("openFile rejects a symlinked leaf and reports a missing leaf", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+    await $`ln -s ${join(root, FILE)} ${join(root, "handle-link.jsonl")}`.quiet();
+
+    expect(
+      (await directory.openFile("handle-link.jsonl"))._unsafeUnwrapErr(),
+    ).toEqual({ type: "symlink-rejected" });
+    expect((await directory.openFile("absent.jsonl"))._unsafeUnwrap()).toBe(
+      undefined,
+    );
+    expect((await directory.openFile("a/b"))._unsafeUnwrapErr()).toEqual({
+      type: "unsafe-path",
+    });
+    directory.close();
+  });
+
+  test("a real file replaced after open never redirects the descriptor", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    // Swap the name to a different inode after validation.
+    await $`printf 'zzzz' > ${join(root, "other.jsonl")}`.quiet();
+    await $`chmod 600 ${join(root, "other.jsonl")}`.quiet();
+    await $`mv ${join(root, "other.jsonl")} ${join(root, FILE)}`.quiet();
+
+    // The descriptor still names the validated inode, which the swap unlinked.
+    // The read therefore fails closed; it can never return the swapped file.
+    expect((await handle.readRange(0, 8))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("a real file truncated during a read fails closed", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    await $`truncate -s 4 ${join(root, FILE)}`.quiet();
+
+    expect((await handle.readRange(0, 8))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("a real file grown during a read fails closed", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    expect((await handle.readRange(0, 8))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
     directory.close();
   });
 

@@ -63,6 +63,17 @@ Every delegated child runs in a persistent native Pi v3 session.
 - All session I/O is no-follow and descriptor-relative, strictly contained under
   the root. Path traversal and symbolic-link dereference outside the root are
   rejected, not repaired.
+- Read-only consumers open a session file once and read it through that
+  descriptor in bounded positional chunks of at most 64 KiB. The validated leaf
+  is never reopened by name, so a rename or replacement after validation cannot
+  redirect a read.
+- A whole-session descriptor read is bounded before allocation. The descriptor's
+  own size is checked against a hard 8 MiB ceiling before any body byte is read;
+  a larger file fails closed as `file-too-large`. Line and entry budgets apply
+  while chunks stream in, not after the file is in memory.
+- Descriptor identity (`dev`, `ino`, `size`, `mtime`) is captured at open and
+  re-verified after every chunk. Growth, truncation, replacement, or in-place
+  rewrite during a read returns a typed error and no partial transcript.
 - Each child session records the originating parent session through Pi's
   `parentSession` link. The link is set at creation and is immutable.
 - Session creation must succeed before the child task starts. A persistence

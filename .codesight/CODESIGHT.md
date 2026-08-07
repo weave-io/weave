@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~28,800 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,500 tokens per conversation.**
-> **Last scanned:** 2026-08-07 21:38 — re-run after significant changes
+> **Last scanned:** 2026-08-07 22:04 — re-run after significant changes
 
 ---
 
@@ -250,7 +250,7 @@
   - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
-  - _...40 more_
+  - _...42 more_
 - `packages/adapters/pi/src/child-overlay-component.ts` — function createChildOverlayCustomComponent: (tui) => void },, interface PiChildOverlayCustomComponent
 - `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
@@ -1681,7 +1681,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 290 test files found
+> 291 test files found
 
 ---
 

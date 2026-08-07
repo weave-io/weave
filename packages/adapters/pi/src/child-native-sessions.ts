@@ -115,7 +115,13 @@ export type PiNativeSessionCorruption =
   | "not-persisted"
   | "invalid-cursor"
   | "stale-cursor"
-  | "line-too-long";
+  | "line-too-long"
+  /**
+   * The session file exceeds {@link PI_NATIVE_SESSION_MAX_FILE_BYTES}. Raised
+   * from the opened descriptor's own size before any body byte is allocated,
+   * or at the sentinel bound when metadata understated the real length.
+   */
+  | "file-too-large";
 
 /** Closed failure set for every fallible operation in this module. */
 export type PiNativeSessionError =
@@ -254,11 +260,25 @@ function effectiveMaxRangeLength(): number {
   );
 }
 
+/**
+ * Hard ceiling on the bytes one descriptor-safe whole-file session read may
+ * allocate. Enforced against the opened descriptor's own size before any body
+ * byte is read, and again as a sentinel bound while chunks accumulate, so a
+ * hostile or corrupt file can never drive unbounded allocation.
+ */
+export const PI_NATIVE_SESSION_MAX_FILE_BYTES = 8 * 1024 * 1024;
+
 /** Stable regular-file identity used by bounded range reads. */
 export interface PiNativeSessionFileStat {
   readonly dev: number;
   readonly ino: number;
   readonly size: number;
+  /**
+   * Last-modification time in milliseconds when the platform exposes it.
+   * Compared alongside `{dev,ino,size}` so an in-place same-size rewrite
+   * during a read is still detected.
+   */
+  readonly mtimeMs?: number;
 }
 
 /** One exact positional chunk plus the identity observed for that read. */
@@ -268,12 +288,43 @@ export interface PiNativeSessionFileRange {
   readonly offset: number;
 }
 
+/**
+ * One open, identity-bound regular-file descriptor under a verified session
+ * directory. The handle captures `{dev,ino,size,mtimeMs}` at open time; every
+ * read re-verifies that identity against the same descriptor and fails closed
+ * on growth, truncation, replacement, or in-place mutation.
+ */
+export interface PiNativeSessionFileHandle {
+  /** Identity observed when the descriptor was opened. */
+  readonly identity: PiNativeSessionFileStat;
+  /** Current descriptor identity; diverging from {@link identity} fails closed. */
+  stat(): ResultAsync<PiNativeSessionFileStat, PiNativeSessionFsError>;
+  /**
+   * Positional read from the open descriptor. `offset`/`length` must be
+   * nonnegative safe integers with
+   * `length <= PI_NATIVE_SESSION_MAX_RANGE_LENGTH`. Returns exact bytes
+   * (possibly short at EOF) bound to the identity captured at open.
+   */
+  readRange(
+    offset: number,
+    length: number,
+  ): ResultAsync<PiNativeSessionFileRange, PiNativeSessionFsError>;
+  close(): void;
+}
+
 /** One no-follow directory handle opened under the verified session root. */
 export interface PiNativeSessionDirectory {
   readonly path: string;
-  readFile(
+  /**
+   * Opens one regular 0600 leaf through the held no-follow directory and
+   * returns a descriptor-bound handle. Every subsequent read comes from that
+   * open descriptor, so the validated file can never be reopened by name and
+   * a post-validation path swap cannot redirect reads. Missing leaves return
+   * `undefined`; symlinks and non-files fail closed.
+   */
+  openFile(
     name: string,
-  ): ResultAsync<Uint8Array | undefined, PiNativeSessionFsError>;
+  ): ResultAsync<PiNativeSessionFileHandle | undefined, PiNativeSessionFsError>;
   /**
    * No-follow `fstat` of a regular 0600 leaf. Missing leaves return
    * `undefined`; symlinks and non-files fail closed.
@@ -944,8 +995,7 @@ function isSessionHeaderLine(value: unknown): value is {
 }
 
 function readRangeExact(
-  directory: PiNativeSessionDirectory,
-  fileName: string,
+  handle: PiNativeSessionFileHandle,
   offset: number,
   length: number,
   ref: string,
@@ -965,21 +1015,11 @@ function readRangeExact(
     });
   }
   const capped = Math.min(length, remaining, effectiveMaxRangeLength());
-  return directory
-    .readFileRange(fileName, offset, capped)
+  return handle
+    .readRange(offset, capped)
     .mapErr((error) => fromFsError(error, ref))
     .andThen((range) => {
-      if (range === undefined) {
-        return errAsync<Uint8Array, PiNativeSessionError>({
-          type: "SessionMissing",
-          ref,
-        });
-      }
-      if (
-        range.identity.dev !== expected.dev ||
-        range.identity.ino !== expected.ino ||
-        range.identity.size !== expected.size
-      ) {
+      if (!sameFileIdentity(range.identity, expected)) {
         return errAsync<Uint8Array, PiNativeSessionError>({
           type: "SessionCorrupt",
           ref,
@@ -997,8 +1037,7 @@ function readRangeExact(
  * without a trailing newline is yielded only when `endExclusive` is EOF.
  */
 function readLinesForward(
-  directory: PiNativeSessionDirectory,
-  fileName: string,
+  handle: PiNativeSessionFileHandle,
   start: number,
   endExclusive: number,
   ref: string,
@@ -1045,76 +1084,70 @@ function readLinesForward(
     );
     if (want <= 0) return okAsync(lines);
 
-    return readRangeExact(
-      directory,
-      fileName,
-      cursor,
-      want,
-      ref,
-      state,
-      identity,
-    ).andThen((chunk) => {
-      if (chunk.length === 0) return okAsync(lines);
+    return readRangeExact(handle, cursor, want, ref, state, identity).andThen(
+      (chunk) => {
+        if (chunk.length === 0) return okAsync(lines);
 
-      let lineStart = 0;
-      const merged =
-        carry.length === 0
-          ? chunk
-          : (() => {
-              const next = new Uint8Array(carry.length + chunk.length);
-              next.set(carry);
-              next.set(chunk, carry.length);
-              return next;
-            })();
-      const baseOffset = carry.length === 0 ? cursor : carryOffset;
+        let lineStart = 0;
+        const merged =
+          carry.length === 0
+            ? chunk
+            : (() => {
+                const next = new Uint8Array(carry.length + chunk.length);
+                next.set(carry);
+                next.set(chunk, carry.length);
+                return next;
+              })();
+        const baseOffset = carry.length === 0 ? cursor : carryOffset;
 
-      for (let index = 0; index < merged.length; index += 1) {
-        if (merged[index] !== 0x0a) continue;
-        const length = index - lineStart;
-        if (length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
+        for (let index = 0; index < merged.length; index += 1) {
+          if (merged[index] !== 0x0a) continue;
+          const length = index - lineStart;
+          if (length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
+            return errAsync<readonly LocatedLine[], PiNativeSessionError>({
+              type: "SessionCorrupt",
+              ref,
+              reason: "line-too-long",
+            });
+          }
+          if (
+            lines.length >= maxLines ||
+            state.linesScanned >=
+              PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLinesScanned
+          ) {
+            return okAsync(lines);
+          }
+          state.linesScanned += 1;
+          lines.push({
+            offset: baseOffset + lineStart,
+            bytes: merged.subarray(lineStart, index),
+          });
+          lineStart = index + 1;
+          if (lines.length >= maxLines) return okAsync(lines);
+        }
+
+        const rest =
+          lineStart < merged.length
+            ? merged.subarray(lineStart).slice()
+            : new Uint8Array();
+        if (rest.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
           return errAsync<readonly LocatedLine[], PiNativeSessionError>({
             type: "SessionCorrupt",
             ref,
             reason: "line-too-long",
           });
         }
-        if (
-          lines.length >= maxLines ||
-          state.linesScanned >=
-            PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLinesScanned
-        ) {
-          return okAsync(lines);
-        }
-        state.linesScanned += 1;
-        lines.push({
-          offset: baseOffset + lineStart,
-          bytes: merged.subarray(lineStart, index),
-        });
-        lineStart = index + 1;
-        if (lines.length >= maxLines) return okAsync(lines);
-      }
 
-      const rest =
-        lineStart < merged.length
-          ? merged.subarray(lineStart).slice()
-          : new Uint8Array();
-      if (rest.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
-        return errAsync<readonly LocatedLine[], PiNativeSessionError>({
-          type: "SessionCorrupt",
-          ref,
-          reason: "line-too-long",
-        });
-      }
-
-      return collect(
-        cursor + chunk.length,
-        rest,
-        lineStart < merged.length
-          ? baseOffset + lineStart
-          : cursor + chunk.length,
-        lines,
-      );
-    });
+        return collect(
+          cursor + chunk.length,
+          rest,
+          lineStart < merged.length
+            ? baseOffset + lineStart
+            : cursor + chunk.length,
+          lines,
+        );
+      },
+    );
   };
 
   return collect(start, new Uint8Array(), start, []);
@@ -1164,8 +1197,7 @@ function pushCollectedLine(
  * final line at EOF is yielded when the scan reaches `startFloor`.
  */
 function readLinesBackward(
-  directory: PiNativeSessionDirectory,
-  fileName: string,
+  handle: PiNativeSessionFileHandle,
   endExclusive: number,
   startFloor: number,
   ref: string,
@@ -1228,92 +1260,94 @@ function readLinesBackward(
     }
 
     const offset = pos - want;
-    return readRangeExact(
-      directory,
-      fileName,
-      offset,
-      want,
-      ref,
-      state,
-      identity,
-    ).andThen((chunk) => {
-      const merged = concatBytes(chunk, buffer);
-      const base = offset;
+    return readRangeExact(handle, offset, want, ref, state, identity).andThen(
+      (chunk) => {
+        const merged = concatBytes(chunk, buffer);
+        const base = offset;
 
-      // Split merged into newline-terminated segments.
-      // segments[0] may still be incomplete (needs bytes to the left).
-      // segments[1..] are definitely complete.
-      // The fragment after the final newline is newer than every segment and
-      // must be emitted before them (newest-first). It is empty when merged
-      // ends with \n.
-      const segments: LocatedLine[] = [];
-      let start = 0;
-      const newlineAt: number[] = [];
-      for (let index = 0; index < merged.length; index += 1) {
-        if (merged[index] === 0x0a) newlineAt.push(index);
-      }
+        // Split merged into newline-terminated segments.
+        // segments[0] may still be incomplete (needs bytes to the left).
+        // segments[1..] are definitely complete.
+        // The fragment after the final newline is newer than every segment and
+        // must be emitted before them (newest-first). It is empty when merged
+        // ends with \n.
+        const segments: LocatedLine[] = [];
+        let start = 0;
+        const newlineAt: number[] = [];
+        for (let index = 0; index < merged.length; index += 1) {
+          if (merged[index] === 0x0a) newlineAt.push(index);
+        }
 
-      if (newlineAt.length === 0) {
-        if (merged.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
+        if (newlineAt.length === 0) {
+          if (
+            merged.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes
+          ) {
+            return errAsync(lineTooLongError(ref));
+          }
+          return step(offset, merged.slice(), base);
+        }
+
+        for (const nl of newlineAt) {
+          segments.push({
+            offset: base + start,
+            bytes: merged.subarray(start, nl),
+          });
+          start = nl + 1;
+        }
+        const rightFragment = merged.subarray(start);
+
+        // Newest-first: rightFragment (unterminated or carried right tail) is
+        // newer than every newline-terminated segment in this merge.
+        if (rightFragment.length > 0) {
+          const pushedTail = pushCollectedLine(
+            collected,
+            state,
+            maxLines,
+            { offset: base + start, bytes: rightFragment.slice() },
+            ref,
+          );
+          if (pushedTail.isErr()) return errAsync(pushedTail.error);
+          if (pushedTail.value === "full") return okAsync(collected);
+        }
+
+        const definite = segments.slice(1);
+        for (let index = definite.length - 1; index >= 0; index -= 1) {
+          const line = definite[index];
+          if (line === undefined || line.offset < startFloor) continue;
+          const pushed = pushCollectedLine(
+            collected,
+            state,
+            maxLines,
+            line,
+            ref,
+          );
+          if (pushed.isErr()) return errAsync(pushed.error);
+          if (pushed.value === "full") return okAsync(collected);
+        }
+
+        const head = segments[0];
+        if (head === undefined) return okAsync(collected);
+
+        if (offset === startFloor) {
+          const pushedHead = pushCollectedLine(
+            collected,
+            state,
+            maxLines,
+            head,
+            ref,
+          );
+          if (pushedHead.isErr()) return errAsync(pushedHead.error);
+          return okAsync(collected);
+        }
+
+        if (
+          head.bytes.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes
+        ) {
           return errAsync(lineTooLongError(ref));
         }
-        return step(offset, merged.slice(), base);
-      }
-
-      for (const nl of newlineAt) {
-        segments.push({
-          offset: base + start,
-          bytes: merged.subarray(start, nl),
-        });
-        start = nl + 1;
-      }
-      const rightFragment = merged.subarray(start);
-
-      // Newest-first: rightFragment (unterminated or carried right tail) is
-      // newer than every newline-terminated segment in this merge.
-      if (rightFragment.length > 0) {
-        const pushedTail = pushCollectedLine(
-          collected,
-          state,
-          maxLines,
-          { offset: base + start, bytes: rightFragment.slice() },
-          ref,
-        );
-        if (pushedTail.isErr()) return errAsync(pushedTail.error);
-        if (pushedTail.value === "full") return okAsync(collected);
-      }
-
-      const definite = segments.slice(1);
-      for (let index = definite.length - 1; index >= 0; index -= 1) {
-        const line = definite[index];
-        if (line === undefined || line.offset < startFloor) continue;
-        const pushed = pushCollectedLine(collected, state, maxLines, line, ref);
-        if (pushed.isErr()) return errAsync(pushed.error);
-        if (pushed.value === "full") return okAsync(collected);
-      }
-
-      const head = segments[0];
-      if (head === undefined) return okAsync(collected);
-
-      if (offset === startFloor) {
-        const pushedHead = pushCollectedLine(
-          collected,
-          state,
-          maxLines,
-          head,
-          ref,
-        );
-        if (pushedHead.isErr()) return errAsync(pushedHead.error);
-        return okAsync(collected);
-      }
-
-      if (
-        head.bytes.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes
-      ) {
-        return errAsync(lineTooLongError(ref));
-      }
-      return step(offset, head.bytes.slice(), head.offset);
-    });
+        return step(offset, head.bytes.slice(), head.offset);
+      },
+    );
   };
 
   return step(endExclusive, new Uint8Array(), endExclusive);
@@ -1397,6 +1431,166 @@ const headerLineEncoder = new TextEncoder();
  * silently truncating a transcript a caller would treat as complete.
  */
 const MAX_DESCRIPTOR_SESSION_ENTRIES = 20_000;
+
+/**
+ * Hard ceiling on lines examined by one descriptor-safe whole-session read.
+ * Applied while chunks stream in, so a pathological single-line-per-byte file
+ * fails closed before the parser allocates a projection.
+ */
+const MAX_DESCRIPTOR_SESSION_LINES = 32_768;
+
+/**
+ * Reads one whole session file through an already-open, identity-bound
+ * descriptor and never by name.
+ *
+ * Order of enforcement:
+ * 1. The size captured when the descriptor was opened is checked against
+ *    `maxBytes` before a single body byte is allocated.
+ * 2. Chunks are read positionally from that same descriptor in
+ *    `<= PI_NATIVE_SESSION_MAX_RANGE_LENGTH` windows, with the cumulative
+ *    total bounded by `maxBytes + 1`. The extra sentinel byte proves a file
+ *    that grew past the ceiling after the metadata check, which fails closed
+ *    rather than truncating.
+ * 3. Line and entry budgets are applied while reading, not after.
+ * 4. The descriptor identity is re-verified after every chunk and once more at
+ *    the end. Growth, truncation, replacement, or in-place mutation yields a
+ *    typed error and no partial projection.
+ */
+function readBoundedFile(
+  handle: PiNativeSessionFileHandle,
+  ref: string,
+  maxBytes: number,
+): ResultAsync<Uint8Array, PiNativeSessionError> {
+  const opened = handle.identity;
+  if (opened.size > maxBytes) {
+    return errAsync({ type: "SessionCorrupt", ref, reason: "file-too-large" });
+  }
+
+  const ceiling = maxBytes + 1;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let lines = 0;
+
+  const readNext = (
+    offset: number,
+  ): ResultAsync<Uint8Array, PiNativeSessionError> => {
+    const want = Math.min(effectiveMaxRangeLength(), ceiling - total);
+    if (want <= 0) {
+      return errAsync({
+        type: "SessionCorrupt",
+        ref,
+        reason: "file-too-large",
+      });
+    }
+    return handle
+      .readRange(offset, want)
+      .mapErr((error) => fromFsError(error, ref))
+      .andThen((range) => {
+        if (!sameFileIdentity(range.identity, opened)) {
+          return errAsync<Uint8Array, PiNativeSessionError>({
+            type: "SessionCorrupt",
+            ref,
+            reason: "stale-cursor",
+          });
+        }
+        if (range.bytes.length === 0) {
+          // EOF. The descriptor must still be the file we validated.
+          return handle
+            .stat()
+            .mapErr((error) => fromFsError(error, ref))
+            .andThen((current) =>
+              sameFileIdentity(current, opened) && total === opened.size
+                ? okAsync<Uint8Array, PiNativeSessionError>(
+                    concatChunks(chunks, total),
+                  )
+                : errAsync<Uint8Array, PiNativeSessionError>({
+                    type: "SessionCorrupt",
+                    ref,
+                    reason: "stale-cursor",
+                  }),
+            );
+        }
+        for (const byte of range.bytes) {
+          if (byte !== 0x0a) continue;
+          lines += 1;
+          if (lines > MAX_DESCRIPTOR_SESSION_LINES) {
+            return errAsync<Uint8Array, PiNativeSessionError>({
+              type: "SessionCorrupt",
+              ref,
+              reason: "unreadable",
+            });
+          }
+        }
+        chunks.push(range.bytes);
+        total += range.bytes.length;
+        if (total > maxBytes) {
+          return errAsync<Uint8Array, PiNativeSessionError>({
+            type: "SessionCorrupt",
+            ref,
+            reason: "file-too-large",
+          });
+        }
+        return readNext(offset + range.bytes.length);
+      });
+  };
+
+  if (opened.size === 0) return okAsync(new Uint8Array());
+  return readNext(0);
+}
+
+function sameFileIdentity(
+  left: PiNativeSessionFileStat,
+  right: PiNativeSessionFileStat,
+): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs
+  );
+}
+
+function concatChunks(
+  chunks: readonly Uint8Array[],
+  total: number,
+): Uint8Array {
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}
+
+/**
+ * Opens `fileName` through the held no-follow directory and reads it whole
+ * under {@link readBoundedFile} bounds. The descriptor is always closed.
+ */
+function readBoundedFileFromDirectory(
+  directory: PiNativeSessionDirectory,
+  fileName: string,
+  ref: string,
+  maxBytes: number,
+): ResultAsync<Uint8Array | undefined, PiNativeSessionError> {
+  return directory
+    .openFile(fileName)
+    .mapErr((error) => fromFsError(error, ref))
+    .andThen((handle) => {
+      if (handle === undefined) {
+        return okAsync<Uint8Array | undefined, PiNativeSessionError>(undefined);
+      }
+      return readBoundedFile(handle, ref, maxBytes)
+        .map((bytes): Uint8Array | undefined => {
+          handle.close();
+          return bytes;
+        })
+        .mapErr((error) => {
+          handle.close();
+          return error;
+        });
+    });
+}
 
 /**
  * Parses one native v3 session file from the exact bytes read through the
@@ -1598,10 +1792,10 @@ export class PiNativeSessionStore {
     hostHeader: PiNativeSessionHeader,
   ): ResultAsync<void, PiNativeSessionError> {
     return directory
-      .readFile(fileName)
+      .statFile(fileName)
       .mapErr((error) => this.mapCreateFsError(error, ref))
-      .andThen((bytes) => {
-        if (bytes !== undefined) {
+      .andThen((existing) => {
+        if (existing !== undefined) {
           return errAsync<void, PiNativeSessionError>({
             type: "SessionCreateFailed",
             reason: "collision",
@@ -1791,6 +1985,11 @@ export class PiNativeSessionStore {
     );
   }
 
+  /**
+   * Opens the session file once through the held no-follow directory and pages
+   * from that descriptor. The validated leaf is never reopened by name, so a
+   * path swap after validation cannot redirect a single chunk.
+   */
   private pageFromDirectory(
     directory: PiNativeSessionDirectory,
     fileName: string,
@@ -1800,20 +1999,50 @@ export class PiNativeSessionStore {
     cursorToken: string | undefined,
     limit: number,
   ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
-    const state: PageScanState = { bytesRead: 0, linesScanned: 0 };
     return directory
-      .statFile(fileName)
+      .openFile(fileName)
       .mapErr((error) => fromFsError(error, ref))
-      .andThen((identity) => {
-        if (identity === undefined) {
+      .andThen((handle) => {
+        if (handle === undefined) {
           return errAsync<PiNativeSessionEntryPage, PiNativeSessionError>({
             type: "SessionMissing",
             ref,
           });
         }
+        return this.pageFromHandle(
+          handle,
+          ref,
+          expectedParentSession,
+          direction,
+          cursorToken,
+          limit,
+        )
+          .map((page) => {
+            handle.close();
+            return page;
+          })
+          .mapErr((error) => {
+            handle.close();
+            return error;
+          });
+      });
+  }
+
+  private pageFromHandle(
+    handle: PiNativeSessionFileHandle,
+    ref: string,
+    expectedParentSession: string | undefined,
+    direction: PiNativeSessionEntryPageDirection,
+    cursorToken: string | undefined,
+    limit: number,
+  ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
+    const state: PageScanState = { bytesRead: 0, linesScanned: 0 };
+    return handle
+      .stat()
+      .mapErr((error) => fromFsError(error, ref))
+      .andThen((identity) => {
         return this.validateHeaderFromFile(
-          directory,
-          fileName,
+          handle,
           ref,
           identity,
           state,
@@ -1843,8 +2072,7 @@ export class PiNativeSessionStore {
 
           if (direction === "newest") {
             return this.pageNewest(
-              directory,
-              fileName,
+              handle,
               ref,
               identity,
               state,
@@ -1861,8 +2089,7 @@ export class PiNativeSessionStore {
           }
           if (direction === "older") {
             return this.pageOlder(
-              directory,
-              fileName,
+              handle,
               ref,
               identity,
               state,
@@ -1872,8 +2099,7 @@ export class PiNativeSessionStore {
             );
           }
           return this.pageNewer(
-            directory,
-            fileName,
+            handle,
             ref,
             identity,
             state,
@@ -1885,8 +2111,7 @@ export class PiNativeSessionStore {
   }
 
   private validateHeaderFromFile(
-    directory: PiNativeSessionDirectory,
-    fileName: string,
+    handle: PiNativeSessionFileHandle,
     ref: string,
     identity: PiNativeSessionFileStat,
     state: PageScanState,
@@ -1900,8 +2125,7 @@ export class PiNativeSessionStore {
       });
     }
     return readLinesForward(
-      directory,
-      fileName,
+      handle,
       0,
       // Header scan window stays at the production ceiling; only per-read
       // chunking uses the test override via effectiveMaxRangeLength().
@@ -2008,8 +2232,7 @@ export class PiNativeSessionStore {
   }
 
   private pageNewest(
-    directory: PiNativeSessionDirectory,
-    fileName: string,
+    handle: PiNativeSessionFileHandle,
     ref: string,
     identity: PiNativeSessionFileStat,
     state: PageScanState,
@@ -2018,8 +2241,7 @@ export class PiNativeSessionStore {
   ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
     // Scan enough lines to fill the page plus detect whether older exists.
     return readLinesBackward(
-      directory,
-      fileName,
+      handle,
       identity.size,
       headerEnd,
       ref,
@@ -2047,8 +2269,7 @@ export class PiNativeSessionStore {
   }
 
   private pageOlder(
-    directory: PiNativeSessionDirectory,
-    fileName: string,
+    handle: PiNativeSessionFileHandle,
     ref: string,
     identity: PiNativeSessionFileStat,
     state: PageScanState,
@@ -2057,8 +2278,7 @@ export class PiNativeSessionStore {
     limit: number,
   ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
     return readLinesBackward(
-      directory,
-      fileName,
+      handle,
       cursor.offset,
       headerEnd,
       ref,
@@ -2086,8 +2306,7 @@ export class PiNativeSessionStore {
   }
 
   private pageNewer(
-    directory: PiNativeSessionDirectory,
-    fileName: string,
+    handle: PiNativeSessionFileHandle,
     ref: string,
     identity: PiNativeSessionFileStat,
     state: PageScanState,
@@ -2095,8 +2314,7 @@ export class PiNativeSessionStore {
     limit: number,
   ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
     return this.lineEndAfter(
-      directory,
-      fileName,
+      handle,
       ref,
       identity,
       state,
@@ -2112,8 +2330,7 @@ export class PiNativeSessionStore {
         ).asyncAndThen((page) => okAsync(page));
       }
       return readLinesForward(
-        directory,
-        fileName,
+        handle,
         after,
         identity.size,
         ref,
@@ -2139,8 +2356,7 @@ export class PiNativeSessionStore {
 
   /** Byte offset immediately after the line that starts at `lineStart`. */
   private lineEndAfter(
-    directory: PiNativeSessionDirectory,
-    fileName: string,
+    handle: PiNativeSessionFileHandle,
     ref: string,
     identity: PiNativeSessionFileStat,
     state: PageScanState,
@@ -2152,8 +2368,7 @@ export class PiNativeSessionStore {
       lineStart + PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes + 1,
     );
     return readLinesForward(
-      directory,
-      fileName,
+      handle,
       lineStart,
       scanEnd,
       ref,
@@ -2282,10 +2497,11 @@ export class PiNativeSessionStore {
   }
 
   /**
-   * Shared descriptor-safe open path: prove the session file exists through
-   * the no-follow port, then validate header/parent and parse the bounded v3
-   * JSONL body from those exact bytes. No host call, so this stays available
-   * when the host storage-authority preflight fails.
+   * Shared descriptor-safe open path: open the session file once through the
+   * no-follow port, read it in bounded chunks from that exact descriptor, then
+   * validate header/parent and parse the bounded v3 JSONL body from those
+   * exact bytes. The validated path is never reopened by name. No host call,
+   * so this stays available when the host storage-authority preflight fails.
    */
   private openDescriptor(
     ref: string,
@@ -2295,17 +2511,19 @@ export class PiNativeSessionStore {
     if (located.isErr()) return errAsync(located.error);
     const { component, fileName, childDir, path, verified } = located.value;
     return withDirectory(this.fs, childDir, false, verified, (directory) =>
-      directory
-        .readFile(fileName)
-        .mapErr((error) => fromFsError(error, verified))
-        .andThen((bytes) =>
-          bytes === undefined
-            ? errAsync<Uint8Array, PiNativeSessionError>({
-                type: "SessionMissing",
-                ref: verified,
-              })
-            : okAsync<Uint8Array, PiNativeSessionError>(bytes),
-        ),
+      readBoundedFileFromDirectory(
+        directory,
+        fileName,
+        verified,
+        PI_NATIVE_SESSION_MAX_FILE_BYTES,
+      ).andThen((bytes) =>
+        bytes === undefined
+          ? errAsync<Uint8Array, PiNativeSessionError>({
+              type: "SessionMissing",
+              ref: verified,
+            })
+          : okAsync<Uint8Array, PiNativeSessionError>(bytes),
+      ),
     ).andThen((bytes) =>
       parseSessionFileContents(bytes, verified, expectedParentSession).map(
         ({ header, entries }): PiNativeSessionEntries => ({
@@ -2375,15 +2593,15 @@ export class PiNativeSessionStore {
     const { component, fileName, childDir, path, verified } = located.value;
     return withDirectory(this.fs, childDir, false, verified, (directory) =>
       directory
-        .readFile(fileName)
+        .statFile(fileName)
         .mapErr((error) => fromFsError(error, verified))
-        .andThen((bytes) =>
-          bytes === undefined
-            ? errAsync<Uint8Array, PiNativeSessionError>({
+        .andThen((stat) =>
+          stat === undefined
+            ? errAsync<PiNativeSessionFileStat, PiNativeSessionError>({
                 type: "SessionMissing",
                 ref: verified,
               })
-            : okAsync<Uint8Array, PiNativeSessionError>(bytes),
+            : okAsync<PiNativeSessionFileStat, PiNativeSessionError>(stat),
         ),
     ).andThen(() =>
       this.openHandle(
@@ -2576,12 +2794,12 @@ export class PiNativeSessionStore {
       false,
       PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
       (directory) =>
-        directory
-          .readFile(PI_NATIVE_SESSION_LAYOUT.tombstoneFile)
-          .mapErr((error) =>
-            fromFsError(error, PI_NATIVE_SESSION_LAYOUT.tombstoneFile),
-          )
-          .map((bytes) => parseTombstones(bytes)),
+        readBoundedFileFromDirectory(
+          directory,
+          PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+          PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+          PI_NATIVE_SESSION_MAX_FILE_BYTES,
+        ).map((bytes) => parseTombstones(bytes)),
     ).orElse((error) =>
       error.type === "SessionMissing"
         ? okAsync<readonly PiNativeSessionTombstone[], PiNativeSessionError>([])
