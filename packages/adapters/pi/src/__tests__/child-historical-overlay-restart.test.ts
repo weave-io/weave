@@ -147,6 +147,7 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     // Durable parent ref ledger, written before the "restart".
     const parentEntries: { type: string; data: unknown }[] = [];
     const seedRefs = new PiChildSessionRefStore({
+      storage: TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       parentSessionId: PARENT,
       append: {
         appendEntry: (type, data) => {

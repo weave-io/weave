@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~28,700 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,700 tokens per conversation.**
-> **Last scanned:** 2026-08-07 18:06 — re-run after significant changes
+> **Token savings:** this file is ~28,700 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,600 tokens per conversation.**
+> **Last scanned:** 2026-08-07 19:06 — re-run after significant changes
 
 ---
 
@@ -1632,6 +1632,7 @@
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
 - `packages/adapters/pi/src/errors.ts` — imported by **19** files
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `scripts/release/stable-train.ts` — imported by **16** files
@@ -1642,7 +1643,6 @@
 - `packages/adapters/pi/src/child-tree.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
-- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
 
@@ -1655,9 +1655,9 @@
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +15 more
 - `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts` +14 more
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` ← `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts`, `packages/adapters/pi/src/__tests__/child-isolation.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
-- `scripts/release/stable-train.ts` ← `scripts/release/__tests__/artifact-manifest.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts` +11 more
 
 ---
 

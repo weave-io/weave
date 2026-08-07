@@ -158,7 +158,10 @@ import {
   reconstructParentLocalChildren,
   renderReconstructedStatusLines,
 } from "./child-session-reconstruction.js";
-import type { PiChildSessionStorageAuthority } from "./child-session-storage-authority.js";
+import {
+  createPiChildSessionStorageAuthority,
+  type PiChildSessionStorageAuthority,
+} from "./child-session-storage-authority.js";
 import {
   applyTreeControlKey,
   EMPTY_USAGE_AGGREGATE,
@@ -4747,8 +4750,28 @@ export function createPiExtension(
         // Child recovery is generation-scoped. Construct it only after the
         // child-ref ledger is open, then prompt exactly once for this stable
         // parent session.
+        //
+        // Task 21 remediation B: recovery mutates the child-ref ledger and
+        // spawns a restored child, so it requires the same descriptor-safe
+        // session I/O authority as every other private write. Pi 0.83's
+        // path-only host refuses with `path-only-session-api`; skip without
+        // prompting or writing status. Lower ref-mutation checks stay
+        // independent, and ref reads stay ungated.
         const recoveryRefs = threadSourcesCell.refs;
-        if (recoveryRefs !== undefined) {
+        const recoveryStorage =
+          deps.sessionStorageAuthority ??
+          createPiChildSessionStorageAuthority();
+        const recoveryStorageDecision = Result.fromThrowable(
+          () => recoveryStorage.requireDescriptorSafeSessionIo(),
+          () => ({
+            type: "SessionStorageUnavailable" as const,
+            reason: "path-only-session-api" as const,
+          }),
+        )();
+        const recoveryStorageOk =
+          recoveryStorageDecision.isOk() &&
+          recoveryStorageDecision.value.isOk();
+        if (recoveryRefs !== undefined && recoveryStorageOk) {
           const historyPort = {
             list: () => recoveryRefs.readRefs().map((scan) => scan.refs),
             updateStatus: (

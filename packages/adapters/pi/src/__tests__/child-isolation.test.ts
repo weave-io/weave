@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { okAsync } from "neverthrow";
 import {
   type AppendNewChildRefInput,
-  type PiChildRefSourceState,
   type PiChildRefSourceAuthority,
+  type PiChildRefSourceState,
   PiChildSessionRefStore,
 } from "../child-session-refs.js";
 import { PersistentFakeNativeSessionStore } from "./fakes/fake-pi-host.js";
+import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PARENT = "parent-session";
 
@@ -22,7 +23,9 @@ class ParentSessionFake {
   }
 }
 
-function authority(states: Record<string, PiChildRefSourceState>): PiChildRefSourceAuthority {
+function authority(
+  states: Record<string, PiChildRefSourceState>,
+): PiChildRefSourceAuthority {
   return {
     checkSource: (ref, parent) =>
       okAsync(parent === PARENT ? (states[ref] ?? "missing") : "missing"),
@@ -39,6 +42,7 @@ function store(
 ): PiChildSessionRefStore {
   let entryId = 0;
   return new PiChildSessionRefStore({
+    storage: TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     parentSessionId: PARENT,
     append: parent,
     read: parent,
@@ -48,7 +52,10 @@ function store(
   });
 }
 
-function input(childId: string, ref = `${childId}/session.jsonl`): AppendNewChildRefInput {
+function input(
+  childId: string,
+  ref = `${childId}/session.jsonl`,
+): AppendNewChildRefInput {
   return {
     childId,
     threadId: `${childId}-thread`,
@@ -70,7 +77,9 @@ describe("native child isolation", () => {
     const created = await Promise.all([
       refs.appendNewChild(input("child-a")),
       refs.appendNewChild(input("child-b")),
-      refs.appendNewChild(input("child-a/nested", "child-a/nested/session.jsonl")),
+      refs.appendNewChild(
+        input("child-a/nested", "child-a/nested/session.jsonl"),
+      ),
     ]);
 
     expect(created.every((result) => result.isOk())).toBe(true);
@@ -84,6 +93,7 @@ describe("native child isolation", () => {
     ).toEqual(["child-a/nested", "child-b", "child-a"]);
 
     const foreignParent = new PiChildSessionRefStore({
+      storage: TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       parentSessionId: "other-parent",
       append: parent,
       read: parent,
@@ -110,7 +120,9 @@ describe("native child isolation", () => {
 
     const firstRecord = first._unsafeUnwrap();
     const secondRecord = second._unsafeUnwrap();
-    const completed = await refs.appendLifecycle(firstRecord, { status: "completed" });
+    const completed = await refs.appendLifecycle(firstRecord, {
+      status: "completed",
+    });
     const retried = await refs.appendRunDivider(secondRecord, {
       action: "retry",
       priorOutcome: "failed",
@@ -122,7 +134,10 @@ describe("native child isolation", () => {
     const scan = await refs.readRefs();
     expect(scan.isOk()).toBe(true);
     const records = scan._unsafeUnwrap().refs;
-    expect(records.map((record) => record.childId)).toEqual(["second", "first"]);
+    expect(records.map((record) => record.childId)).toEqual([
+      "second",
+      "first",
+    ]);
     expect(records[0]?.runs.map((run) => run.action)).toEqual(["retry"]);
     expect(records[1]?.status).toBe("completed");
   });
@@ -155,7 +170,11 @@ describe("native child isolation", () => {
         { kind: "source-unusable", childId: "missing", state: "missing" },
         { kind: "source-unusable", childId: "corrupt", state: "corrupt" },
         { kind: "source-unusable", childId: "tombstoned", state: "tombstoned" },
-        { kind: "source-unusable", childId: "unavailable", state: "unavailable" },
+        {
+          kind: "source-unusable",
+          childId: "unavailable",
+          state: "unavailable",
+        },
       ]),
     );
   });
@@ -176,9 +195,9 @@ describe("native child isolation", () => {
       { type: "message_end", data: { text: "completed before reload" } },
     ]);
     expect(reloaded.isTombstoned("child-native")).toBe(true);
-    expect(
-      reloaded.append("child-native", { type: "retry", data: {} }),
-    ).toBe(false);
+    expect(reloaded.append("child-native", { type: "retry", data: {} })).toBe(
+      false,
+    );
   });
 
   test("does not resurrect a tombstoned child during retry or continue", async () => {
@@ -211,7 +230,9 @@ describe("native child isolation", () => {
     for (let index = 0; index < 100; index += 1) {
       const ref = `child-${index}/session.jsonl`;
       states[ref] = "available";
-      expect((await refs.appendNewChild(input(`child-${index}`, ref))).isOk()).toBe(true);
+      expect(
+        (await refs.appendNewChild(input(`child-${index}`, ref))).isOk(),
+      ).toBe(true);
     }
 
     const limited = await refs.readRefs({ limit: 7 });
@@ -220,7 +241,9 @@ describe("native child isolation", () => {
     const firstRef = limited._unsafeUnwrap().refs.at(0);
     expect(firstRef).toBeDefined();
     if (firstRef === undefined) return;
-    const settled = await refs.appendLifecycle(firstRef, { status: "completed" });
+    const settled = await refs.appendLifecycle(firstRef, {
+      status: "completed",
+    });
     expect(settled.isOk()).toBe(true);
     const after = await refs.readRefs({ limit: 7 });
     expect(after._unsafeUnwrap().refs[0]?.status).toBe("completed");

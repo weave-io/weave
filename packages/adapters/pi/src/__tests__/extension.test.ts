@@ -36,6 +36,7 @@ import {
 } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import type { PiChildRefRecord } from "../child-session-refs.js";
+import { createPiChildSessionStorageAuthority } from "../child-session-storage-authority.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
 import type {
@@ -3197,6 +3198,120 @@ describe("createPiExtension: config activation, materialization consumption, pri
       "running",
       "completed",
     ]);
+  });
+
+  it("skips startup recovery for an interrupted ref when session storage is path-only", async () => {
+    const interrupted = eligibleOrdinaryRecoveryRecord({
+      childId: "legacy-interrupted",
+      threadId: "legacy-interrupted",
+      nativeSessionId: "native-legacy-interrupted",
+      sessionRef: "children/legacy-interrupted/session.jsonl",
+      originEntryId: "entry-legacy-interrupted",
+      title: "loom",
+      status: "running",
+    });
+    const history = mutableChildRefSource(interrupted);
+    const refBytesBefore = JSON.stringify(history.records);
+    let restores = 0;
+    let refAppends = 0;
+    let cacheCalls = 0;
+    let sessionMutations = 0;
+    const refs = history.sources.refs as {
+      appendNewChild: typeof history.sources.refs.appendNewChild;
+      appendLifecycle: typeof history.sources.refs.appendLifecycle;
+    };
+    const originalAppendNew = refs.appendNewChild.bind(history.sources.refs);
+    const originalLifecycle = refs.appendLifecycle.bind(history.sources.refs);
+    refs.appendNewChild = ((input) => {
+      refAppends += 1;
+      return originalAppendNew(input);
+    }) as typeof refs.appendNewChild;
+    refs.appendLifecycle = ((record, patch) => {
+      refAppends += 1;
+      return originalLifecycle(record, patch);
+    }) as typeof refs.appendLifecycle;
+    const cache = history.sources.cache as {
+      upsertRef: PiThreadCachePort["upsertRef"];
+    };
+    const originalUpsert = cache.upsertRef.bind(history.sources.cache);
+    cache.upsertRef = ((ref, workspaceKey) => {
+      cacheCalls += 1;
+      return originalUpsert(ref, workspaceKey);
+    }) as typeof cache.upsertRef;
+    const sessions = history.sources.sessions as {
+      createChildSession: PiThreadSessionPort["createChildSession"];
+      establishThreadLeaf: PiThreadSessionPort["establishThreadLeaf"];
+      appendTombstone: PiThreadSessionPort["appendTombstone"];
+    };
+    const originalCreate = sessions.createChildSession.bind(
+      history.sources.sessions,
+    );
+    const originalLeaf = sessions.establishThreadLeaf.bind(
+      history.sources.sessions,
+    );
+    const originalTombstone = sessions.appendTombstone.bind(
+      history.sources.sessions,
+    );
+    sessions.createChildSession = ((input) => {
+      sessionMutations += 1;
+      return originalCreate(input);
+    }) as typeof sessions.createChildSession;
+    sessions.establishThreadLeaf = ((ref, metadata, expectedParent) => {
+      sessionMutations += 1;
+      return originalLeaf(ref, metadata, expectedParent);
+    }) as typeof sessions.establishThreadLeaf;
+    sessions.appendTombstone = ((record) => {
+      sessionMutations += 1;
+      return originalTombstone(record);
+    }) as typeof sessions.appendTombstone;
+    const storage = createPiChildSessionStorageAuthority();
+    expect(storage.requireDescriptorSafeSessionIo()._unsafeUnwrapErr()).toEqual(
+      {
+        type: "SessionStorageUnavailable",
+        reason: "path-only-session-api",
+      },
+    );
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Recover now");
+    installRecoveryExtension(
+      host,
+      history,
+      () => {
+        restores += 1;
+        return okAsync({
+          finalOutput: "must-not-restore",
+          interventionCount: 0,
+        });
+      },
+      { recovery_countdown_seconds: 0 },
+      { sessionStorageAuthority: storage },
+    );
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    expect(host.selectCalls).toHaveLength(0);
+    expect(refAppends).toBe(0);
+    expect(history.updates).toHaveLength(0);
+    expect(restores).toBe(0);
+    expect(sessionMutations).toBe(0);
+    expect(cacheCalls).toBe(0);
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(
+      host.notifyCalls.some((call) =>
+        call.message.includes("Interrupted Weave children"),
+      ),
+    ).toBe(false);
+    expect(
+      host.notifyCalls.filter(
+        (call) =>
+          call.message === "Child recovery is unavailable in this session.",
+      ),
+    ).toHaveLength(0);
+    expect(JSON.stringify(history.records)).toBe(refBytesBefore);
+    await flushBackgroundWork();
+    expect(cacheCalls).toBe(0);
+    expect(refAppends).toBe(0);
+    expect(sessionMutations).toBe(0);
+    expect(restores).toBe(0);
   });
 
   it("honors exact startup choices: Recover now recovers, while Skip and Inspect preserve eligibility", async () => {

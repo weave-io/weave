@@ -228,6 +228,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
 
     const parentEntries: { type: string; data: unknown }[] = [];
     const seedRefs = new PiChildSessionRefStore({
+      storage: TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       parentSessionId: PARENT,
       append: {
         appendEntry: (type, data) => {
