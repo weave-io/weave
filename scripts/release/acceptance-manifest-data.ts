@@ -474,7 +474,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       liveSmoke: { required: true, checklistIds: ["S021", "S063", "S064"] },
       result: "pass",
       notes:
-        "S063 and S064 were re-run live on the final fail-closed head b0997dec and are recorded by docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md: /weave:history returned exactly 50 sanitized rows plus a next cursor, /weave:doctor returned bounded counters with no paths, children list bound 50, children show bound 100 plus 17 on the cursor page with no overlap. That record supersedes its earlier 43ebc137 binding. Read availability only.",
+        "S063 and S064 were re-run live on the final fail-closed head 9a8c6468 and are recorded by docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md: /weave:history and /weave:doctor returned bounded sanitized output with no paths, and children show returned newest 100 plus an older cursor page of 100 with no overlap, exact under forced short reads and fail-closed on premature-zero, mutation, and oversize reads. Supersedes its 43ebc137 and b0997dec bindings.",
     },
     {
       id: "PI-USG",
@@ -621,7 +621,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       result: "pass",
       notes:
-        "Pi 0.83.0 reports descriptor-relative-native-session-io unavailable (path-only-session-api), so every generation enters health-only mode and fails closed for all persistent session mutation and child spawn. S067 and S057 were re-run live on the final fail-closed head b0997dec in docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md: delegation unavailable with 0 children, $XDG_DATA_HOME/weave absent, no db, ref, lease, or child session. No mutation claim.",
+        "Pi 0.83.0 reports descriptor-relative-native-session-io unavailable (path-only-session-api), so every generation enters health-only mode and fails closed for all persistent session mutation and child spawn. S067 and S057 were re-run live on the final fail-closed head 9a8c6468 in docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md: delegation unavailable with 0 children, $XDG_DATA_HOME/weave absent, no db, ref, lease, or child session. No mutation claim.",
     },
     {
       id: "PI-INS",
@@ -815,6 +815,6 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       liveSmoke: { required: true, checklistIds: ["S054", "S057", "S060"] },
       result: "pending",
       notes:
-        "S057 was re-run live on the final fail-closed head b0997dec and is recorded by docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md: history, doctor, list, and show stay readable in health-only mode without mutation support. Thread capacity release (S054) and the quit-and-reload cancel then force-stop path (S060) were never run live, and both need a spawned child that Pi 0.83.0 fails closed, so this stays pending.",
+        "S057 was re-run live on the final fail-closed head 9a8c6468 and is recorded by docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md: history, doctor, list, and show stay readable in health-only mode without mutation support. Thread capacity release (S054) and the quit-and-reload cancel then force-stop path (S060) were never run live, and both need a spawned child that Pi 0.83.0 fails closed, so this stays pending.",
     },
   ];

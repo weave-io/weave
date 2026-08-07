@@ -62,15 +62,16 @@ spawn path works on this host.
 ### Final-head re-run of the read-only rows
 
 Rows `S057`, `S063`, `S064`, and `S067` were re-run live against the final
-fail-closed head `b0997dec207de8a953078edf4a2b92206c89778a` on Pi `0.83.0`.
+fail-closed head `9a8c64683f3e159a587119ee045dc60ae5a62e86` on Pi `0.83.0`.
 `33-task21-final-head-fail-closed-proof.md` is their current record. It binds
-artifact SHA-256 `4aed9e2f21f5262c0f5d52cd6e69b125d9512bc2ed91f4e6de97e2c9eb6f8ccf`
+artifact SHA-256 `2647e8b19cb49b5796edfb188fd1af739827d6e3098b1a9d7ab259ced536e566`
 and also records the fail-closed rejection of `weave_delegate`, `/weave:run`,
 `/weave:start`, and `children.delete` with no child process, execution lease,
 ref, cache mutation, or native child session, plus pristine non-creating
-startup, non-creating production CLI reads, explicit title provenance, and an
-inert interrupted legacy ref. It supersedes its own earlier `43ebc13` binding.
-The Task 20 `(j)`, `(k)`, and
+startup, non-creating production CLI reads, bounded and fail-closed
+native-session reads, explicit title provenance, and an inert interrupted legacy
+ref. It supersedes its own earlier `43ebc13` and `b0997de` bindings and every
+intermediate artifact run between them. The Task 20 `(j)`, `(k)`, and
 `(n)` records are **historical** for pre-`c24182f` behaviour, including their
 formerly passing mutation rows.
 
@@ -142,18 +143,18 @@ verification.
 ### Task 21 final-head binding (rows S057, S063, S064, S067)
 
 - Package: `@weaveio/weave-adapter-pi@0.0.1`
-- Exact source subject: `b0997dec207de8a953078edf4a2b92206c89778a`
+- Exact source subject: `9a8c64683f3e159a587119ee045dc60ae5a62e86`
 - Exact host: `@earendil-works/pi-coding-agent@0.83.0`; the machine's global Pi
   `0.84.1` stayed untouched
 - Checklist version: `3`
 - Artifact SHA-256:
-  `4aed9e2f21f5262c0f5d52cd6e69b125d9512bc2ed91f4e6de97e2c9eb6f8ccf`
+  `2647e8b19cb49b5796edfb188fd1af739827d6e3098b1a9d7ab259ced536e566`
 - `dist/extension.js` SHA-256:
-  `b9b094fee5711f14e1cc3ca298fc342110d38772be6195193c681796d2a19362`
+  `55b297dbd4c1be9025730868d97f34ef1c812dc977acc9999fe5aa541f374f79`
 - `dist/index.js` SHA-256:
-  `956ee95d5930d5f0c1fcf212ff8bb22236fd1f5ab2f92d0e59676a420b72c613`
+  `72234af6eec11719e10de4d87bd3cb53c3553d329454dd0c0dbcfd24846604f2`
 - `dist/cli.js` SHA-256:
-  `1b7d6e345e53cfcd5b85dedf539f4707ac8cc8e4ee4ae7932e5797dc343d5c40`
+  `1dbb9bf5fe9a27fad82c6096b58f45f5a291367ba7d61c236b29d033690f015e`
 - Recorded in `33-task21-final-head-fail-closed-proof.md`
 
 ## Task 20 proof records
@@ -187,7 +188,7 @@ formerly passing mutation rows.
 | `33-task20-l-resume-exclusion-proof.md` | S061 | Historical |
 | `33-task20-m-pi-vim-coexistence-proof.md` | S047, S049, S050 | S050 current; S047 and S049 historical |
 | `33-task20-n-health-only-readonly-proof.md` | S057, S067 | Historical |
-| `33-task21-final-head-fail-closed-proof.md` | S057, S063, S064, S067 | **Current** (final head `b0997de`) |
+| `33-task21-final-head-fail-closed-proof.md` | S057, S063, S064, S067 | **Current** (final head `9a8c646`) |
 
 Rows `S042`, `S054`, `S060`, `S062`, `S068`, and `S069` have no Task 20 proof
 record and stay `Pending`.

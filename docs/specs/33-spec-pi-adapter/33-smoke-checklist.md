@@ -44,11 +44,12 @@ recorded the row. Proof files are sanitized: they record digests, counts, and
 outcomes, never prompts or transcripts.
 
 Rows `S057`, `S063`, `S064`, and `S067` were re-run live against the final
-fail-closed head `b0997dec207de8a953078edf4a2b92206c89778a` on Pi `0.83.0`, and
+fail-closed head `9a8c64683f3e159a587119ee045dc60ae5a62e86` on Pi `0.83.0`, and
 [`33-task21-final-head-fail-closed-proof.md`](33-proofs/33-task21-final-head-fail-closed-proof.md)
-is their current record. It also records the fail-closed rejection of
-`weave_delegate`, `/weave:run`, `/weave:start`, and `children.delete` with no
-child process, lease, ref, cache mutation, or native child session. The Task 20
+is their current record. It also records bounded and fail-closed native-session
+reads and the fail-closed rejection of `weave_delegate`, `/weave:run`,
+`/weave:start`, and `children.delete` with no child process, lease, ref, cache
+mutation, or native child session. The Task 20
 `(j)`, `(k)`, and `(n)` records are historical for pre-`c24182f` behaviour,
 including their formerly passing mutation rows.
 
