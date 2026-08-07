@@ -410,6 +410,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
       root: ROOT,
       fs: fs as unknown as PiNativeSessionFsPort,
       host: {
+        requireDescriptorSafeSessionIo: () => ok(undefined),
         create(): PiNativeSessionHandle {
           throw new Error("host.create unused");
         },

@@ -4,10 +4,14 @@
  * and never construct this adapter.
  */
 
-import type {
-  PiNativeSessionHandle,
-  PiNativeSessionHeader,
-  PiNativeSessionHostPort,
+import { err, type Result } from "neverthrow";
+
+import {
+  describePiNativeSessionStorageUnavailable,
+  type PiNativeSessionHandle,
+  type PiNativeSessionHeader,
+  type PiNativeSessionHostPort,
+  type PiNativeSessionStorageUnavailable,
 } from "./child-native-sessions.js";
 
 /** Narrow static constructors from Pi's public `SessionManager`. */
@@ -47,12 +51,16 @@ export interface PiSessionManagerInstance {
 export function isPiSessionManagerStatic(
   value: unknown,
 ): value is PiSessionManagerStatic {
-  if (typeof value !== "function" && (typeof value !== "object" || value === null)) {
+  if (
+    typeof value !== "function" &&
+    (typeof value !== "object" || value === null)
+  ) {
     return false;
   }
   const candidate = value as { create?: unknown; open?: unknown };
   return (
-    typeof candidate.create === "function" && typeof candidate.open === "function"
+    typeof candidate.create === "function" &&
+    typeof candidate.open === "function"
   );
 }
 
@@ -93,21 +101,44 @@ export function adaptPiSessionManagerHandle(
 
 /**
  * Builds the Task 4 host port over Pi's static session constructors.
- * `SessionManager.create(cwd, isolatedDir, options)` and
- * `SessionManager.open(path, sessionDir)` are the only entry points used.
+ *
+ * Pi 0.83 addresses sessions only by caller-supplied filesystem path
+ * (`SessionManager.create(cwd, isolatedDir, options)` and
+ * `SessionManager.open(path, sessionDir)`), so this host cannot prove that
+ * the bytes it writes land in the descriptor-verified, Weave-owned session
+ * tree. Its storage-authority preflight therefore always fails with
+ * `path-only-session-api`, and `create` / `open` refuse before touching
+ * `SessionManager` at all. There is no option, environment variable, or flag
+ * that relaxes this.
  */
 export function createPiNativeSessionHost(
   SessionManager: PiSessionManagerStatic,
 ): PiNativeSessionHostPort {
+  const unavailable: PiNativeSessionStorageUnavailable = {
+    type: "SessionStorageUnavailable",
+    reason: "path-only-session-api",
+  };
+  // Held, never invoked: the constructors stay unreachable behind the
+  // preflight so no path-addressed session is ever created or opened.
+  void SessionManager;
   return {
-    create(cwd, sessionDir, options) {
-      return adaptPiSessionManagerHandle(
-        SessionManager.create(cwd, sessionDir, options),
+    requireDescriptorSafeSessionIo(): Result<
+      void,
+      PiNativeSessionStorageUnavailable
+    > {
+      return err(unavailable);
+    },
+    create(): PiNativeSessionHandle {
+      // Defense in depth only. The store calls the preflight above first, so
+      // this is unreachable on every expected path; a caller that bypasses
+      // the preflight must not reach `SessionManager.create`.
+      throw new Error(
+        describePiNativeSessionStorageUnavailable(unavailable.reason),
       );
     },
-    open(path, sessionDir) {
-      return adaptPiSessionManagerHandle(
-        SessionManager.open(path, sessionDir),
+    open(): PiNativeSessionHandle {
+      throw new Error(
+        describePiNativeSessionStorageUnavailable(unavailable.reason),
       );
     },
   };

@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 271 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~28,600 tokens. Without it, AI exploration would cost ~89,100 tokens. **Saves ~60,500 tokens per conversation.**
-> **Last scanned:** 2026-08-07 05:08 — re-run after significant changes
+> **Last scanned:** 2026-08-07 15:41 — re-run after significant changes
 
 ---
 
@@ -241,13 +241,13 @@
   - interface PiNativeTranscriptComponentDeps
   - const CHILD_COMPACT_NATIVE_RENDER_FAILED
 - `packages/adapters/pi/src/child-native-sessions.ts`
+  - function describePiNativeSessionStorageUnavailable: (reason) => string
   - function setPiNativeSessionMaxRangeLengthForTests: (length) => void
   - function resolvePiNativeSessionRoot: (input) => ResultAsync<string, PiNativeSessionError>
   - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
-  - function nativeSessionDeletionToken: (ref) => string
-  - _...37 more_
+  - _...40 more_
 - `packages/adapters/pi/src/child-overlay-component.ts` — function createChildOverlayCustomComponent: (tui) => void },, interface PiChildOverlayCustomComponent
 - `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
@@ -1671,7 +1671,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 283 test files found
+> 285 test files found
 
 ---
 

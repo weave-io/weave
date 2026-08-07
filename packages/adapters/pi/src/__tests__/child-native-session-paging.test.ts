@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
+import { ok, type Result } from "neverthrow";
 import {
   decodePiNativeSessionEntryCursor,
   encodePiNativeSessionEntryCursor,
@@ -10,9 +10,11 @@ import {
   type PiNativeSessionHandle,
   type PiNativeSessionHostPort,
   type PiNativeSessionPagedEntry,
+  type PiNativeSessionStorageUnavailable,
   PiNativeSessionStore,
   setPiNativeSessionMaxRangeLengthForTests,
 } from "../child-native-sessions.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 
 const ROOT = "/data/weave/adapters/pi/sessions";
 const PARENT = "parent-session-1";
@@ -64,6 +66,15 @@ function buildSession(entryCount: number): string {
 
 /** Host that throws if getEntries/open are used — paging must stay FS-only. */
 class ForbiddenHost implements PiNativeSessionHostPort {
+  requireDescriptorSafeSessionIo(): Result<
+    void,
+    PiNativeSessionStorageUnavailable
+  > {
+    // Test-only memory host: every byte goes through the injected in-memory
+    // no-follow filesystem, so descriptor-safe storage is provable here.
+    return ok(undefined);
+  }
+
   create(): PiNativeSessionHandle {
     throw new Error("host.create must not be called by paging");
   }
@@ -264,9 +275,9 @@ describe("readSessionEntryPage", () => {
     );
     expect(page.bytesRead).toBeGreaterThan(0);
     // File is far larger than the scan budget.
-    const size = (await (
-      await fs.openDirectory(DIR, false)
-    )._unsafeUnwrap().statFile(FILE))._unsafeUnwrap()?.size;
+    const size = (
+      await (await fs.openDirectory(DIR, false))._unsafeUnwrap().statFile(FILE)
+    )._unsafeUnwrap()?.size;
     expect(size).toBeGreaterThan(
       PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned,
     );
@@ -308,7 +319,8 @@ describe("readSessionEntryPage", () => {
 
     // Choose pad length so the emoji's first byte is the last byte of a chunk.
     const targetMod = PI_NATIVE_SESSION_MAX_RANGE_LENGTH - 1;
-    const current = (entryStart + emojiInProbe) % PI_NATIVE_SESSION_MAX_RANGE_LENGTH;
+    const current =
+      (entryStart + emojiInProbe) % PI_NATIVE_SESSION_MAX_RANGE_LENGTH;
     const padLen =
       (targetMod - current + PI_NATIVE_SESSION_MAX_RANGE_LENGTH) %
       PI_NATIVE_SESSION_MAX_RANGE_LENGTH;
@@ -333,9 +345,9 @@ describe("readSessionEntryPage", () => {
         break;
       }
     }
-    expect((entryStart + emojiInLine) % PI_NATIVE_SESSION_MAX_RANGE_LENGTH).toBe(
-      targetMod,
-    );
+    expect(
+      (entryStart + emojiInLine) % PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+    ).toBe(targetMod);
 
     const fillerLines = Array.from({ length: 30 }, (_, i) => entryLine(i + 1));
     await seedJsonl(fs, `${header}${line}${fillerLines.join("\n")}\n`);
@@ -355,9 +367,8 @@ describe("readSessionEntryPage", () => {
     );
     expect(utf8?.kind).toBe("entry");
     if (utf8?.kind === "entry") {
-      const content = (
-        utf8.value as { message?: { content?: string } }
-      ).message?.content;
+      const content = (utf8.value as { message?: { content?: string } }).message
+        ?.content;
       expect(content?.includes(emoji)).toBe(true);
       expect(content?.endsWith("tail")).toBe(true);
     }
@@ -503,11 +514,7 @@ describe("readSessionEntryPage", () => {
         limit: 10,
       })
     )._unsafeUnwrap();
-    expect(entryIds(page.entries)).toEqual([
-      "entry-0",
-      "entry-1",
-      "entry-2",
-    ]);
+    expect(entryIds(page.entries)).toEqual(["entry-0", "entry-1", "entry-2"]);
     for (const entry of page.entries) {
       if (entry.kind !== "entry") continue;
       expect((entry.value as { type?: unknown }).type).not.toBe("session");
@@ -640,9 +647,8 @@ describe("readSessionEntryPage", () => {
       const mid = page.entries[1];
       expect(mid?.kind).toBe("entry");
       if (mid?.kind === "entry") {
-        const content = (
-          mid.value as { message?: { content?: string } }
-        ).message?.content;
+        const content = (mid.value as { message?: { content?: string } })
+          .message?.content;
         expect(content).toBe(`pre${emoji}post`);
       }
     });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
+import { ok, type Result } from "neverthrow";
 import {
   FakePiChildMetadataCacheFs,
   openBunChildMetadataDatabase,
@@ -9,11 +9,13 @@ import type {
   PiNativeSessionHandle,
   PiNativeSessionHeader,
   PiNativeSessionHostPort,
+  PiNativeSessionStorageUnavailable,
 } from "../child-native-sessions.js";
 import type {
   PiChildRefAppendPort,
   PiChildRefEntryReadPort,
 } from "../child-session-refs.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 import { openPiThreadSources } from "../thread-sources.js";
 
 const ROOT = "/data/weave/adapters/pi/sessions";
@@ -59,6 +61,15 @@ function handleFor(
 
 /** Task 4 memory host — never touches a real harness or filesystem. */
 class MemoryHost implements PiNativeSessionHostPort {
+  requireDescriptorSafeSessionIo(): Result<
+    void,
+    PiNativeSessionStorageUnavailable
+  > {
+    // Test-only memory host: every byte goes through the injected in-memory
+    // no-follow filesystem, so descriptor-safe storage is provable here.
+    return ok(undefined);
+  }
+
   create(
     cwd: string,
     sessionDir: string,

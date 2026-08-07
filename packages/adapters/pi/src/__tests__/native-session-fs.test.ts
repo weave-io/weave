@@ -50,9 +50,7 @@ describe("MemoryPiNativeSessionFs — statFile / readFileRange", () => {
   test("readFileRange returns an exact partial chunk", async () => {
     const fs = new MemoryPiNativeSessionFs();
     const directory = await openMemoryDir(fs);
-    const range = (
-      await directory.readFileRange(FILE, 10, 6)
-    )._unsafeUnwrap();
+    const range = (await directory.readFileRange(FILE, 10, 6))._unsafeUnwrap();
     expect(range).toBeDefined();
     expect(range?.offset).toBe(10);
     expect(range?.identity.size).toBe(PAYLOAD.length);
@@ -130,6 +128,52 @@ describe("MemoryPiNativeSessionFs — statFile / readFileRange", () => {
     directory.close();
   });
 
+  test("renamed leaf fails closed after prior identity binding", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = await openMemoryDir(fs);
+    (await directory.statFile(FILE))._unsafeUnwrap();
+    fs.simulateFileRename(DIR, FILE);
+
+    expect((await directory.statFile(FILE))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    expect(
+      (await directory.readFileRange(FILE, 0, 4))._unsafeUnwrapErr(),
+    ).toEqual({ type: "identity-changed" });
+    directory.close();
+  });
+
+  test("external inode and hardlink leaves fail closed", async () => {
+    const replacementFs = new MemoryPiNativeSessionFs();
+    const replacementDirectory = await openMemoryDir(replacementFs);
+    (await replacementDirectory.statFile(FILE))._unsafeUnwrap();
+    replacementFs.simulateFileReplacement(DIR, FILE);
+    expect(
+      (await replacementDirectory.readFileRange(FILE, 0, 4))._unsafeUnwrapErr(),
+    ).toEqual({ type: "identity-changed" });
+    replacementDirectory.close();
+
+    const hardlinkFs = new MemoryPiNativeSessionFs();
+    const hardlinkDirectory = await openMemoryDir(hardlinkFs);
+    (await hardlinkDirectory.statFile(FILE))._unsafeUnwrap();
+    hardlinkFs.simulateExternalHardlink(DIR, FILE);
+    expect((await hardlinkDirectory.statFile(FILE))._unsafeUnwrapErr()).toEqual(
+      { type: "identity-changed" },
+    );
+    hardlinkDirectory.close();
+  });
+
+  test("post-validation replacement and rename swaps fail closed", async () => {
+    for (const swap of ["replacement", "rename"] as const) {
+      const fs = new MemoryPiNativeSessionFs();
+      const directory = await openMemoryDir(fs);
+      fs.simulatePostValidationSwap(DIR, FILE, swap);
+      const range = await directory.readFileRange(FILE, 0, 4);
+      expect(range._unsafeUnwrapErr()).toEqual({ type: "identity-changed" });
+      directory.close();
+    }
+  });
+
   test("mid-read truncate fails closed as identity-changed", async () => {
     const fs = new MemoryPiNativeSessionFs();
     const directory = await openMemoryDir(fs);
@@ -149,6 +193,10 @@ describe("MemoryPiNativeSessionFs — statFile / readFileRange", () => {
     expect(
       (await directory.readFileRange(FILE, 0, 4))._unsafeUnwrapErr(),
     ).toEqual({ type: "symlink-rejected" });
+    fs.simulateDirectorySymlink(DIR);
+    expect((await directory.statFile(FILE))._unsafeUnwrapErr()).toEqual({
+      type: "symlink-rejected",
+    });
     expect((await directory.statFile("../escape"))._unsafeUnwrapErr()).toEqual({
       type: "unsafe-path",
     });
@@ -161,11 +209,11 @@ describe("MemoryPiNativeSessionFs — statFile / readFileRange", () => {
   test("createExclusiveFile writes once and rejects collisions and bad modes", async () => {
     const fs = new MemoryPiNativeSessionFs();
     const directory = (await fs.openDirectory(DIR, true))._unsafeUnwrap();
-    (
-      await directory.createExclusiveFile(FILE, PAYLOAD, 0o600)
-    )._unsafeUnwrap();
+    (await directory.createExclusiveFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
     expect(
-      (await directory.createExclusiveFile(FILE, PAYLOAD, 0o600))._unsafeUnwrapErr(),
+      (
+        await directory.createExclusiveFile(FILE, PAYLOAD, 0o600)
+      )._unsafeUnwrapErr(),
     ).toEqual({ type: "already-exists" });
     expect(
       (
@@ -199,9 +247,7 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
     const stat = (await directory.statFile(FILE))._unsafeUnwrap();
     expect(stat?.size).toBe(PAYLOAD.length);
 
-    const range = (
-      await directory.readFileRange(FILE, 3, 5)
-    )._unsafeUnwrap();
+    const range = (await directory.readFileRange(FILE, 3, 5))._unsafeUnwrap();
     expect(new TextDecoder().decode(range?.bytes)).toBe("defgh");
     expect(range?.identity).toEqual(stat);
     expect(range?.offset).toBe(3);
@@ -220,9 +266,9 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
     (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
     await $`ln -s ${join(root, FILE)} ${join(root, "link.jsonl")}`.quiet();
 
-    expect(
-      (await directory.statFile("link.jsonl"))._unsafeUnwrapErr(),
-    ).toEqual({ type: "symlink-rejected" });
+    expect((await directory.statFile("link.jsonl"))._unsafeUnwrapErr()).toEqual(
+      { type: "symlink-rejected" },
+    );
     expect(
       (await directory.readFileRange("link.jsonl", 0, 4))._unsafeUnwrapErr(),
     ).toEqual({ type: "symlink-rejected" });
@@ -242,16 +288,42 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
     directory.close();
   });
 
-  test("replaced leaf after prior bind fails identity check", async () => {
+  test("rejects a symlinked ancestor directory", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const target = join(root, "target");
+    const link = join(root, "ancestor-link");
+    await $`mkdir ${target}`.quiet();
+    await $`ln -s ${target} ${link}`.quiet();
+
+    expect((await fs.openDirectory(link, true))._unsafeUnwrapErr()).toEqual({
+      type: "symlink-rejected",
+    });
+  });
+
+  test("renamed leaf after prior bind fails identity check", async () => {
     const fs = createBunPiNativeSessionFs();
     const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
     (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
-    const first = (await directory.statFile(FILE))._unsafeUnwrap();
-    expect(first).toBeDefined();
+    (await directory.statFile(FILE))._unsafeUnwrap();
 
+    await $`mv ${join(root, FILE)} ${join(root, "renamed.jsonl")}`.quiet();
+
+    const next = await directory.statFile(FILE);
+    expect(next._unsafeUnwrapErr()).toEqual({ type: "identity-changed" });
+    directory.close();
+  });
+
+  test("external hardlink after prior bind fails identity check", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+    (await directory.statFile(FILE))._unsafeUnwrap();
+
+    const external = join(root, "external.jsonl");
+    await Bun.write(external, PAYLOAD);
+    await $`chmod 600 ${external}`.quiet();
     await $`rm ${join(root, FILE)}`.quiet();
-    await Bun.write(join(root, FILE), PAYLOAD);
-    await $`chmod 600 ${join(root, FILE)}`.quiet();
+    await $`ln ${external} ${join(root, FILE)}`.quiet();
 
     const next = await directory.statFile(FILE);
     expect(next._unsafeUnwrapErr()).toEqual({ type: "identity-changed" });

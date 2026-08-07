@@ -56,9 +56,7 @@ function sameFileStat(
   right: PiNativeSessionFileStat,
 ): boolean {
   return (
-    left.dev === right.dev &&
-    left.ino === right.ino &&
-    left.size === right.size
+    left.dev === right.dev && left.ino === right.ino && left.size === right.size
   );
 }
 
@@ -338,6 +336,14 @@ function statFd(
         kind,
       });
     }
+    if (
+      kind === "file" &&
+      (stat as unknown as { nlink?: unknown }).nlink !== 1
+    ) {
+      return errAsync<NodeIdentity, PiNativeSessionFsError>({
+        type: "identity-changed",
+      });
+    }
     const mode = stat.mode & 0o7777;
     if (mode !== expectedMode) {
       return errAsync<NodeIdentity, PiNativeSessionFsError>({
@@ -368,6 +374,11 @@ function statFileFd(
       return errAsync<FileNodeIdentity, PiNativeSessionFsError>({
         type: "wrong-kind",
         kind: "file",
+      });
+    }
+    if ((stat as unknown as { nlink?: unknown }).nlink !== 1) {
+      return errAsync<FileNodeIdentity, PiNativeSessionFsError>({
+        type: "identity-changed",
       });
     }
     const mode = stat.mode & 0o7777;
@@ -600,9 +611,17 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
       );
       if (file < 0) {
         if (this.libc.errno() === ERRNO_ENOENT) {
-          return okAsync<Uint8Array | undefined, PiNativeSessionFsError>(
+          const checkedMissing = this.checkFileIdentity(
+            checked.value,
             undefined,
           );
+          return checkedMissing.isErr()
+            ? errAsync<Uint8Array | undefined, PiNativeSessionFsError>(
+                checkedMissing.error,
+              )
+            : okAsync<Uint8Array | undefined, PiNativeSessionFsError>(
+                undefined,
+              );
         }
         return fsErrAsync<Uint8Array | undefined>({
           type: "symlink-rejected",
@@ -662,10 +681,19 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
       );
       if (file < 0) {
         if (this.libc.errno() === ERRNO_ENOENT) {
-          return okAsync<
-            PiNativeSessionFileStat | undefined,
-            PiNativeSessionFsError
-          >(undefined);
+          const checkedMissing = this.checkFileIdentity(
+            checked.value,
+            undefined,
+          );
+          return checkedMissing.isErr()
+            ? errAsync<
+                PiNativeSessionFileStat | undefined,
+                PiNativeSessionFsError
+              >(checkedMissing.error)
+            : okAsync<
+                PiNativeSessionFileStat | undefined,
+                PiNativeSessionFsError
+              >(undefined);
         }
         return fsErrAsync<PiNativeSessionFileStat | undefined>({
           type: "symlink-rejected",
@@ -718,10 +746,19 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
       );
       if (file < 0) {
         if (this.libc.errno() === ERRNO_ENOENT) {
-          return okAsync<
-            PiNativeSessionFileRange | undefined,
-            PiNativeSessionFsError
-          >(undefined);
+          const checkedMissing = this.checkFileIdentity(
+            checked.value,
+            undefined,
+          );
+          return checkedMissing.isErr()
+            ? errAsync<
+                PiNativeSessionFileRange | undefined,
+                PiNativeSessionFsError
+              >(checkedMissing.error)
+            : okAsync<
+                PiNativeSessionFileRange | undefined,
+                PiNativeSessionFsError
+              >(undefined);
         }
         return fsErrAsync<PiNativeSessionFileRange | undefined>({
           type: "symlink-rejected",
@@ -977,6 +1014,7 @@ interface MemoryFileData {
   identity: NodeIdentity;
   mode: number;
   symlink: boolean;
+  hardlink?: boolean;
   kind: "file" | "directory";
   bytes: Uint8Array;
 }
@@ -997,6 +1035,10 @@ function nextMemoryIdentity(mode = 0o700): NodeIdentity {
 export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
   private readonly directories = new Map<string, MemoryDirectoryData>();
   private readonly replaced = new Set<string>();
+  private readonly postValidationSwaps = new Map<
+    string,
+    "replacement" | "rename"
+  >();
   private readonly midReadTruncates = new Map<string, number>();
   private readonly exclusiveCreateFailures = new Map<
     string,
@@ -1005,6 +1047,24 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
 
   private midReadKey(path: string, name: string): string {
     return `${path}\0${name}`;
+  }
+
+  private applyPostValidationSwap(path: string, name: string): void {
+    const key = this.midReadKey(path, name);
+    const swap = this.postValidationSwaps.get(key);
+    if (swap === undefined) return;
+    this.postValidationSwaps.delete(key);
+    const directory = this.directories.get(path);
+    const file = directory?.files.get(name);
+    if (directory === undefined || file === undefined) return;
+    if (swap === "rename") {
+      directory.files.delete(name);
+      return;
+    }
+    directory.files.set(name, {
+      ...file,
+      identity: nextMemoryIdentity(file.mode),
+    });
   }
 
   openDirectory(
@@ -1046,9 +1106,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
       return ok(identity);
     };
 
-    const memoryFileStat = (
-      file: MemoryFileData,
-    ): PiNativeSessionFileStat => ({
+    const memoryFileStat = (file: MemoryFileData): PiNativeSessionFileStat => ({
       dev: file.identity.dev,
       ino: file.identity.ino,
       size: file.bytes.length,
@@ -1078,12 +1136,22 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
         if (!safeName(name)) return errAsync({ type: "unsafe-path" });
         return this.identity().andThen(() => {
           const file = fs.directories.get(path)?.files.get(name);
-          if (file === undefined) return okAsync(undefined);
+          if (file === undefined) {
+            const checkedMissing = checkFileIdentity(name, undefined);
+            return checkedMissing.isErr()
+              ? errAsync<Uint8Array | undefined, PiNativeSessionFsError>(
+                  checkedMissing.error,
+                )
+              : okAsync<Uint8Array | undefined, PiNativeSessionFsError>(
+                  undefined,
+                );
+          }
           const checked = validateMemoryFile(file);
           if (checked.isErr()) return errAsync(checked.error);
           const identity = file.identity;
           const boundFile = checkFileIdentity(name, identity);
           if (boundFile.isErr()) return errAsync(boundFile.error);
+          fs.applyPostValidationSwap(path, name);
           return this.identity().andThen(() => {
             const current = fs.directories.get(path)?.files.get(name);
             return current !== undefined &&
@@ -1104,12 +1172,21 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
         if (!safeName(name)) return errAsync({ type: "unsafe-path" });
         return this.identity().andThen(() => {
           const file = fs.directories.get(path)?.files.get(name);
-          if (file === undefined) return okAsync(undefined);
+          if (file === undefined) {
+            const checkedMissing = checkFileIdentity(name, undefined);
+            return checkedMissing.isErr()
+              ? errAsync<
+                  PiNativeSessionFileStat | undefined,
+                  PiNativeSessionFsError
+                >(checkedMissing.error)
+              : okAsync<PiNativeSessionFileStat | undefined>(undefined);
+          }
           const checked = validateMemoryFile(file);
           if (checked.isErr()) return errAsync(checked.error);
           const boundFile = checkFileIdentity(name, file.identity);
           if (boundFile.isErr()) return errAsync(boundFile.error);
           const identity = memoryFileStat(file);
+          fs.applyPostValidationSwap(path, name);
           return this.identity().andThen(() => {
             const current = fs.directories.get(path)?.files.get(name);
             return current !== undefined &&
@@ -1137,12 +1214,21 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
         if (!safeName(name)) return errAsync({ type: "unsafe-path" });
         return this.identity().andThen(() => {
           const file = fs.directories.get(path)?.files.get(name);
-          if (file === undefined) return okAsync(undefined);
+          if (file === undefined) {
+            const checkedMissing = checkFileIdentity(name, undefined);
+            return checkedMissing.isErr()
+              ? errAsync<
+                  PiNativeSessionFileRange | undefined,
+                  PiNativeSessionFsError
+                >(checkedMissing.error)
+              : okAsync<PiNativeSessionFileRange | undefined>(undefined);
+          }
           const checked = validateMemoryFile(file);
           if (checked.isErr()) return errAsync(checked.error);
           const before = memoryFileStat(file);
           const boundFile = checkFileIdentity(name, file.identity);
           if (boundFile.isErr()) return errAsync(boundFile.error);
+          fs.applyPostValidationSwap(path, name);
 
           const truncateTo = fs.midReadTruncates.get(fs.midReadKey(path, name));
           if (truncateTo !== undefined) {
@@ -1317,6 +1403,24 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     }
   }
 
+  simulateExternalHardlink(path: string, name: string): void {
+    const file = this.directories.get(path)?.files.get(name);
+    if (file) file.hardlink = true;
+  }
+
+  simulateFileRename(path: string, name: string): void {
+    this.directories.get(path)?.files.delete(name);
+  }
+
+  /** Swap a leaf after its first identity check inside a read operation. */
+  simulatePostValidationSwap(
+    path: string,
+    name: string,
+    swap: "replacement" | "rename",
+  ): void {
+    this.postValidationSwaps.set(this.midReadKey(path, name), swap);
+  }
+
   /** Truncate a leaf between identity capture and re-check inside one range read. */
   simulateMidReadTruncate(path: string, name: string, size: number): void {
     this.midReadTruncates.set(this.midReadKey(path, name), size);
@@ -1377,6 +1481,7 @@ function validateMemoryFile(
   file: MemoryFileData,
 ): Result<MemoryFileData, PiNativeSessionFsError> {
   if (file.symlink) return err({ type: "symlink-rejected" });
+  if (file.hardlink) return err({ type: "identity-changed" });
   if (file.kind !== "file") return err({ type: "wrong-kind", kind: "file" });
   if (file.mode !== 0o600)
     return err({ type: "permissive-mode", kind: "file" });

@@ -794,7 +794,13 @@ describe("native source authority adapter", () => {
         },
         expected: "corrupt",
       },
-      { error: { type: "SessionStorageUnavailable" }, expected: "unavailable" },
+      {
+        error: {
+          type: "SessionStorageUnavailable",
+          reason: "path-only-session-api",
+        },
+        expected: "unavailable",
+      },
     ];
     for (const testCase of cases) {
       const authority = createNativeChildRefSourceAuthority(

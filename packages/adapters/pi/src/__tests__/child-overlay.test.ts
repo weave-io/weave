@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { getKeybindings } from "@earendil-works/pi-tui";
-import { errAsync, okAsync } from "neverthrow";
+import { errAsync, ok, okAsync, type Result } from "neverthrow";
 import {
   PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
   type PiNativeSessionEntryPage,
@@ -10,6 +10,7 @@ import {
   type PiNativeSessionFsPort,
   type PiNativeSessionHandle,
   type PiNativeSessionHostPort,
+  type PiNativeSessionStorageUnavailable,
   PiNativeSessionStore,
 } from "../child-native-sessions.js";
 import {
@@ -2121,6 +2122,15 @@ describe("ChildOverlayController", () => {
     directory.close();
 
     class ForbiddenHost implements PiNativeSessionHostPort {
+      requireDescriptorSafeSessionIo(): Result<
+        void,
+        PiNativeSessionStorageUnavailable
+      > {
+        // Test-only memory host: every byte goes through the injected in-memory
+        // no-follow filesystem, so descriptor-safe storage is provable here.
+        return ok(undefined);
+      }
+
       create(): PiNativeSessionHandle {
         throw new Error("host.create must not be called");
       }
@@ -2303,6 +2313,15 @@ describe("ChildOverlayController", () => {
     directory.close();
 
     class ForbiddenHost implements PiNativeSessionHostPort {
+      requireDescriptorSafeSessionIo(): Result<
+        void,
+        PiNativeSessionStorageUnavailable
+      > {
+        // Test-only memory host: every byte goes through the injected in-memory
+        // no-follow filesystem, so descriptor-safe storage is provable here.
+        return ok(undefined);
+      }
+
       create(): PiNativeSessionHandle {
         throw new Error("host.create must not be called");
       }

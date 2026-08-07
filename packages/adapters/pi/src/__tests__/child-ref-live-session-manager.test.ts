@@ -4,7 +4,7 @@ import {
   createInMemoryRuntimeStore,
   MemoryRuntimeLogFileSystem,
 } from "@weaveio/weave-engine";
-import { ok, okAsync } from "neverthrow";
+import { ok, okAsync, type Result } from "neverthrow";
 import {
   FakePiChildMetadataCacheFs,
   openBunChildMetadataDatabase,
@@ -14,6 +14,7 @@ import type {
   PiNativeSessionHandle,
   PiNativeSessionHeader,
   PiNativeSessionHostPort,
+  PiNativeSessionStorageUnavailable,
 } from "../child-native-sessions.js";
 import { PiNativeSessionStore } from "../child-native-sessions.js";
 import {
@@ -120,6 +121,15 @@ function handleFor(
  * injected {@link MemoryPiNativeSessionFs}.
  */
 class MemoryNativeSessionHost implements PiNativeSessionHostPort {
+  requireDescriptorSafeSessionIo(): Result<
+    void,
+    PiNativeSessionStorageUnavailable
+  > {
+    // Test-only memory host: every byte goes through the injected in-memory
+    // no-follow filesystem, so descriptor-safe storage is provable here.
+    return ok(undefined);
+  }
+
   create(
     cwd: string,
     sessionDir: string,

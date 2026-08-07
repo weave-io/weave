@@ -230,13 +230,13 @@
   - interface PiNativeTranscriptComponentDeps
   - const CHILD_COMPACT_NATIVE_RENDER_FAILED
 - `packages/adapters/pi/src/child-native-sessions.ts`
+  - function describePiNativeSessionStorageUnavailable: (reason) => string
   - function setPiNativeSessionMaxRangeLengthForTests: (length) => void
   - function resolvePiNativeSessionRoot: (input) => ResultAsync<string, PiNativeSessionError>
   - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
-  - function nativeSessionDeletionToken: (ref) => string
-  - _...37 more_
+  - _...40 more_
 - `packages/adapters/pi/src/child-overlay-component.ts` — function createChildOverlayCustomComponent: (tui) => void },, interface PiChildOverlayCustomComponent
 - `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`

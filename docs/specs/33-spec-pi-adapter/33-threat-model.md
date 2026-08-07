@@ -69,9 +69,10 @@ or reading unrelated data through a dangling link.
 root-relative and resolved through the containment helpers: no-follow,
 descriptor-relative I/O with containment verification on every open. Traversal
 segments and symlinks that leave the root are rejected with
-`ChildSessionRootViolation`; the adapter rejects rather than repairing or
-normalizing a hostile path. The same containment applies to the cache file and to
-tombstone appends.
+`ChildSessionRootViolation`; regular files with an external hard link are also
+rejected, and a bound leaf that is renamed, replaced, or truncated fails closed.
+The adapter rejects rather than repairing or normalizing a hostile path. The same
+containment applies to the cache file and to tombstone appends.
 
 **Owner.** `path-containment.ts` (primitives); `child-native-sessions.ts` and
 `child-metadata-cache.ts` (all I/O routed through those primitives).

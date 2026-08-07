@@ -18,7 +18,6 @@ import { createPiExtension } from "../extension.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_SURFACE_IDS } from "../host-inventory.js";
 import { createBunPiNativeSessionFs } from "../native-session-fs.js";
-import { createPiNativeSessionHost } from "../native-session-host.js";
 import { FakePathContainmentPort } from "../path-containment.js";
 import {
   openPiThreadSources,
@@ -31,6 +30,7 @@ import {
   RecordingFakePiHost,
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
+import { createTestOnlyDescriptorSafeNativeSessionHost } from "./fakes/test-only-descriptor-safe-host.js";
 
 const PARENT = "parent-session-hist-1";
 const CHILD = "hist-child-1";
@@ -102,7 +102,8 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     readonly editorOwnerBefore: unknown;
   }> {
     const fs = createBunPiNativeSessionFs();
-    const nativeHost = createPiNativeSessionHost(SessionManager);
+    const nativeHost =
+      createTestOnlyDescriptorSafeNativeSessionHost(SessionManager);
     const store = new PiNativeSessionStore({
       root: `${root}/sessions`,
       fs,

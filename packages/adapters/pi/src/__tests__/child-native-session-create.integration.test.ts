@@ -4,15 +4,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { $ } from "bun";
-import { join } from "node:path";
 import {
   PI_NATIVE_THREAD_ENTRY_TYPE,
   PiNativeSessionStore,
 } from "../child-native-sessions.js";
 import { createBunPiNativeSessionFs } from "../native-session-fs.js";
-import { createPiNativeSessionHost } from "../native-session-host.js";
+import { createTestOnlyDescriptorSafeNativeSessionHost } from "./fakes/test-only-descriptor-safe-host.js";
 
 const PARENT = "parent-session-integration-1";
 
@@ -31,7 +31,7 @@ describe("PiNativeSessionStore.createChildSession — Pi 0.83 SessionManager", (
 
   test("persists host header, reopens, and appends thread metadata durably", async () => {
     const fs = createBunPiNativeSessionFs();
-    const host = createPiNativeSessionHost(SessionManager);
+    const host = createTestOnlyDescriptorSafeNativeSessionHost(SessionManager);
     const store = new PiNativeSessionStore({ root, fs, host });
 
     const created = await store.createChildSession({
@@ -99,17 +99,14 @@ describe("PiNativeSessionStore.createChildSession — Pi 0.83 SessionManager", (
     expect(custom.customType).toBe(PI_NATIVE_THREAD_ENTRY_TYPE);
     expect(custom.data?.threadId).toBe("thread-1");
 
-    const reopened = SessionManager.open(
-      record.path,
-      join(root, "child-1"),
-    );
+    const reopened = SessionManager.open(record.path, join(root, "child-1"));
     expect(reopened.getHeader()?.id).toBe(record.sessionId);
     expect(reopened.getHeader()?.parentSession).toBe(PARENT);
     const entries = reopened.getEntries();
     expect(entries).toHaveLength(1);
-    expect(
-      (entries[0] as { customType?: string }).customType,
-    ).toBe(PI_NATIVE_THREAD_ENTRY_TYPE);
+    expect((entries[0] as { customType?: string }).customType).toBe(
+      PI_NATIVE_THREAD_ENTRY_TYPE,
+    );
   });
 
   test("refuses to invent an assistant entry when the host has not flushed", async () => {
@@ -122,7 +119,7 @@ describe("PiNativeSessionStore.createChildSession — Pi 0.83 SessionManager", (
     expect(await Bun.file(path as string).exists()).toBe(false);
 
     const fs = createBunPiNativeSessionFs();
-    const host = createPiNativeSessionHost(SessionManager);
+    const host = createTestOnlyDescriptorSafeNativeSessionHost(SessionManager);
     const store = new PiNativeSessionStore({
       root,
       fs,
