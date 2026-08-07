@@ -3,7 +3,6 @@ import { errAsync, okAsync } from "neverthrow";
 import {
   buildChildPickerEntries,
   buildChildPickerMetadataEntries,
-  childPickerTaskFirstLine,
   collectChildPickerCandidates,
   createChildPickerEntries,
   createChildPickerMetadataEntries,
@@ -201,22 +200,14 @@ describe("child picker metadata", () => {
     ]);
   });
 
-  it("resolves title precedence and never keeps raw task remainder", () => {
+  it("resolves title precedence from trusted identity only", () => {
     expect(
       resolveChildPickerTitle({
         explicitTitle: "Explicit",
-        taskFirstLine: "Task line\nSECRET_REMAINDER",
         workflowStep: "step",
         agent: "agent",
       }),
     ).toBe("Explicit");
-    expect(
-      resolveChildPickerTitle({
-        taskFirstLine: "Task line\nSECRET_REMAINDER",
-        workflowStep: "step",
-        agent: "agent",
-      }),
-    ).toBe("Task line");
     expect(
       resolveChildPickerTitle({
         workflowStep: "step",
@@ -225,25 +216,17 @@ describe("child picker metadata", () => {
     ).toBe("step");
     expect(resolveChildPickerTitle({ agent: "agent" })).toBe("agent");
 
-    const first = childPickerTaskFirstLine(
-      `\x1b[31mfirst line\x1b[0m\nsecond line must not appear`,
-    );
-    expect(first).toBe("first line");
-    expect(first).not.toContain("second");
-    expect(first).not.toContain("must not appear");
-
     const built = buildChildPickerMetadataEntries({
       formatTimestamp,
       candidates: [
         candidate("t1", {
-          taskFirstLine: "Only first\nRAW_TASK_BODY_SHOULD_NOT_LEAK",
+          explicitTitle: "shuttle-9f2ab31c",
           status: "settled",
         }),
       ],
     });
     const entry = built._unsafeUnwrap()[0];
-    expect(entry?.title).toBe("Only first");
-    expect(JSON.stringify(entry)).not.toContain("RAW_TASK_BODY");
+    expect(entry?.title).toBe("shuttle-9f2ab31c");
   });
 
   it("injects the local timestamp formatter", () => {

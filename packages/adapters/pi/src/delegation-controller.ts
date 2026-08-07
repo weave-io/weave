@@ -35,7 +35,6 @@ import type {
   PiNativeThreadMetadata,
   PiNativeThreadMetadataInput,
 } from "./child-native-sessions.js";
-import { childPickerTaskFirstLine } from "./child-picker.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
 import type {
   PiChildRecoverySettlement,
@@ -56,6 +55,7 @@ import {
   type TimerHandle,
   type TimerPort,
 } from "./child-timer.js";
+import { resolveDurableChildTitle } from "./child-title.js";
 import {
   addUsage,
   EMPTY_USAGE_AGGREGATE,
@@ -871,9 +871,13 @@ export class PiDelegationController {
                 threadId: childId,
                 nativeSessionId: record.sessionId,
                 sessionRef: record.ref,
-                // Task 13 / Spec 33 §8.2: persist only the bounded task-first-line
-                // title. Never store the remainder of a multi-line task.
-                title: childPickerTaskFirstLine(request.task),
+                // Spec 33 §4.2/§13, Threat Model T6: the durable title is
+                // derived only from trusted identity metadata. No task text,
+                // prompt text or transcript content may reach it.
+                title: resolveDurableChildTitle({
+                  agentName: request.agentName,
+                  threadId: childId,
+                }),
                 status: "running",
                 run: {
                   action: "start",

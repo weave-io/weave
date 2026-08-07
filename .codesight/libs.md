@@ -299,14 +299,14 @@
   - interface MemoryOverlaySourceEntry
   - interface MemoryOverlaySourceChild
 - `packages/adapters/pi/src/child-picker.ts`
-  - function childPickerTaskFirstLine: (value) => string
-  - function resolveChildPickerTitle: (candidate, "explicitTitle" | "taskFirstLine" | "workflowStep" | "agent"
+  - function resolveChildPickerTitle: (candidate, "explicitTitle" | "workflowStep" | "agent"
   >) => string
   - function buildChildPickerMetadataEntries: (input) => Result<readonly PiChildPickerMetadataEntry[], PiChildPickerError>
   - function collectChildPickerCandidates: (input) => ResultAsync<readonly PiChildPickerCandidate[], PiChildPickerError>
   - function buildChildPickerEntries: (input) => Result<readonly PiChildPickerEntry[], PiChildPickerError>
   - function sanitizeChildPickerPreview: (value) => string
-  - _...24 more_
+  - function moveChildPicker: (state, delta) => PiChildPickerState
+  - _...23 more_
 - `packages/adapters/pi/src/child-process-port.ts`
   - function writeAllToSink: (sink, bytes) => ResultAsync<void, ChildProcessError>
   - function resolveKillSignal: (mode) => number | undefined
@@ -371,6 +371,12 @@
   - const DEFAULT_REPLY_TIMEOUT_MS
   - const DEFAULT_SETTLEMENT_TIMEOUT_MS
   - _...2 more_
+- `packages/adapters/pi/src/child-title.ts`
+  - function durableChildTitleSuffix: (threadId) => string
+  - function resolveDurableChildTitle: (input) => string
+  - interface PiDurableChildTitleInput
+  - const PI_CHILD_TITLE_BOUNDS
+  - const PI_CHILD_TITLE_FALLBACK_LABEL
 - `packages/adapters/pi/src/child-transcript.ts`
   - function reducePiChildTranscript: (state, action) => Result<PiChildTranscriptState, PiChildTranscriptError>
   - function createPiChildTranscriptState: () => PiChildTranscriptState
@@ -491,7 +497,7 @@
   - type PiHostSurfaceId
   - type PiHostSurfaceSeverity
   - type PiHostSurfaceFallback
-  - _...3 more_
+  - _...4 more_
 - `packages/adapters/pi/src/host-compatibility.ts`
   - function parseSemver: (version) => Result<ParsedVersion, void>
   - function isSupportedHostVersion: (version) => boolean

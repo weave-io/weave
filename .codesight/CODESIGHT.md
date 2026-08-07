@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 269 lib files | 37 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~28,300 tokens. Without it, AI exploration would cost ~88,200 tokens. **Saves ~60,000 tokens per conversation.**
-> **Last scanned:** 2026-08-07 01:50 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 270 lib files | 38 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~28,300 tokens. Without it, AI exploration would cost ~88,300 tokens. **Saves ~60,000 tokens per conversation.**
+> **Last scanned:** 2026-08-07 03:47 — re-run after significant changes
 
 ---
 
@@ -310,14 +310,14 @@
   - interface MemoryOverlaySourceEntry
   - interface MemoryOverlaySourceChild
 - `packages/adapters/pi/src/child-picker.ts`
-  - function childPickerTaskFirstLine: (value) => string
-  - function resolveChildPickerTitle: (candidate, "explicitTitle" | "taskFirstLine" | "workflowStep" | "agent"
+  - function resolveChildPickerTitle: (candidate, "explicitTitle" | "workflowStep" | "agent"
   >) => string
   - function buildChildPickerMetadataEntries: (input) => Result<readonly PiChildPickerMetadataEntry[], PiChildPickerError>
   - function collectChildPickerCandidates: (input) => ResultAsync<readonly PiChildPickerCandidate[], PiChildPickerError>
   - function buildChildPickerEntries: (input) => Result<readonly PiChildPickerEntry[], PiChildPickerError>
   - function sanitizeChildPickerPreview: (value) => string
-  - _...24 more_
+  - function moveChildPicker: (state, delta) => PiChildPickerState
+  - _...23 more_
 - `packages/adapters/pi/src/child-process-port.ts`
   - function writeAllToSink: (sink, bytes) => ResultAsync<void, ChildProcessError>
   - function resolveKillSignal: (mode) => number | undefined
@@ -382,6 +382,12 @@
   - const DEFAULT_REPLY_TIMEOUT_MS
   - const DEFAULT_SETTLEMENT_TIMEOUT_MS
   - _...2 more_
+- `packages/adapters/pi/src/child-title.ts`
+  - function durableChildTitleSuffix: (threadId) => string
+  - function resolveDurableChildTitle: (input) => string
+  - interface PiDurableChildTitleInput
+  - const PI_CHILD_TITLE_BOUNDS
+  - const PI_CHILD_TITLE_FALLBACK_LABEL
 - `packages/adapters/pi/src/child-transcript.ts`
   - function reducePiChildTranscript: (state, action) => Result<PiChildTranscriptState, PiChildTranscriptError>
   - function createPiChildTranscriptState: () => PiChildTranscriptState
@@ -502,7 +508,7 @@
   - type PiHostSurfaceId
   - type PiHostSurfaceSeverity
   - type PiHostSurfaceFallback
-  - _...3 more_
+  - _...4 more_
 - `packages/adapters/pi/src/host-compatibility.ts`
   - function parseSemver: (version) => Result<ParsedVersion, void>
   - function isSupportedHostVersion: (version) => boolean
@@ -1543,7 +1549,7 @@
 - `PI_CHILD_SMOKE_DEBUG` **required** — scripts/release/pi-child-inspection-smoke.ts
 - `PI_CHILD_SMOKE_RUN_ATTEMPT` (has default) — scripts/release/pi-child-inspection-smoke.ts
 - `PI_CODING_AGENT_DIR` (has default) — scripts/release/pi-child-inspection-smoke.ts
-- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
+- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
 - `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_AWAITING_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_CONTROL_DRY_RUN` **required** — scripts/release/control-main.ts
@@ -1566,6 +1572,7 @@
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
+- `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `VOLTA_HOME` (has default) — scripts/release/pi-child-inspection-smoke.ts
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
@@ -1579,17 +1586,16 @@
 
 # Middleware
 
-## validation
-- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
-- migrate — `packages/cli/src/commands/migrate.ts`
-- generate-acceptance-manifest — `scripts/release/generate-acceptance-manifest.ts`
-
 ## custom
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - runtime-directory-guard.d — `packages/engine/src/runtime/sqlite/runtime-directory-guard.d.ts`
 - runtime-directory-guard — `packages/engine/src/runtime/sqlite/runtime-directory-guard.ts`
 - generate-acceptance-manifest.test — `scripts/release/__tests__/generate-acceptance-manifest.test.ts`
+
+## validation
+- migrate — `packages/cli/src/commands/migrate.ts`
+- generate-acceptance-manifest — `scripts/release/generate-acceptance-manifest.ts`
 
 ## auth
 - authorization.test — `packages/engine/src/__tests__/execution-lifecycle/authorization.test.ts`
@@ -1654,7 +1660,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 281 test files found
+> 282 test files found
 
 ---
 

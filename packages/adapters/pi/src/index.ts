@@ -429,7 +429,6 @@ export type {
 export {
   buildChildPickerEntries,
   buildChildPickerMetadataEntries,
-  childPickerTaskFirstLine,
   collectChildPickerCandidates,
   createChildPickerEntries,
   createChildPickerMetadataEntries,
@@ -523,6 +522,13 @@ export {
   type TimerHandle,
   type TimerPort,
 } from "./child-timer.js";
+export type { PiDurableChildTitleInput } from "./child-title.js";
+export {
+  durableChildTitleSuffix,
+  PI_CHILD_TITLE_BOUNDS,
+  PI_CHILD_TITLE_FALLBACK_LABEL,
+  resolveDurableChildTitle,
+} from "./child-title.js";
 export {
   addUsage,
   applyTreeControlKey,

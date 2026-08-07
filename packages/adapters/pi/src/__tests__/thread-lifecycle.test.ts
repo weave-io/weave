@@ -10,16 +10,21 @@ import type { DelegationTarget } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, type Result } from "neverthrow";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { WEAVE_CHILD_ID_ENV, WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
-import { signEnvelope, type PiControlEnvelope } from "../child-envelope.js";
+import { type PiControlEnvelope, signEnvelope } from "../child-envelope.js";
 import {
+  FakePiChildMetadataCacheFs,
+  openBunChildMetadataDatabase,
+  openPiChildMetadataCache,
+} from "../child-metadata-cache.js";
+import {
+  type CreateNativeChildSessionInput,
   PI_NATIVE_THREAD_ENTRY_TYPE,
   PI_NATIVE_THREAD_SCHEMA_VERSION,
-  readNativeThreadMetadata,
-  type CreateNativeChildSessionInput,
   type PiNativeSessionEntries,
   type PiNativeSessionError,
   type PiNativeSessionRecord,
   type PiNativeThreadMetadataInput,
+  readNativeThreadMetadata,
 } from "../child-native-sessions.js";
 import type {
   AppendChildRefLifecycleInput,
@@ -48,6 +53,21 @@ const OWNER_SESSION = "parent-session-1";
 const SESSION_REF = "workspace/child-1/session.jsonl";
 const SESSION_PATH =
   "/data/weave/adapters/pi/sessions/workspace/child-1/session.jsonl";
+const SECRET_TASK_SENTINEL = "SECRET_TASK_TOKEN_WARP_T6";
+const SECRET_TASK = [
+  SECRET_TASK_SENTINEL,
+  "second line with ANSI \u001b[31mred\u001b[0m text",
+  "path=/Users/jose/projects/weave/.env.production",
+  "password=correct-horse-battery-staple",
+  "Authorization: Bearer credential-like-secret",
+].join("\n");
+const SECRET_TASK_MARKERS = [
+  SECRET_TASK_SENTINEL,
+  "second line with ANSI",
+  "/Users/jose/projects/weave/.env.production",
+  "password=correct-horse-battery-staple",
+  "Authorization: Bearer credential-like-secret",
+] as const;
 
 const TARGET: DelegationTarget = {
   name: "shuttle",
@@ -62,6 +82,13 @@ const noopLogger = {
   warn: () => {},
   error: () => {},
 };
+
+function expectSecretAbsent(value: unknown): void {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  for (const marker of SECRET_TASK_MARKERS) {
+    expect(text).not.toContain(marker);
+  }
+}
 
 function config(maxChildren = 1): WeaveConfig {
   const source = `settings {\n  delegation {\n    max_children ${maxChildren}\n    max_concurrency ${maxChildren}\n    max_depth 3\n    max_processes 8\n  }\n}\nagent shuttle {\n}\n`;
@@ -453,9 +480,7 @@ class FakeSessionStore implements PiThreadSessionPort {
               value,
             })),
             ...(start > 0 ? { olderCursor: `idx:${start}` } : {}),
-            ...(all.length > 0
-              ? { newerCursor: `idx:${all.length - 1}` }
-              : {}),
+            ...(all.length > 0 ? { newerCursor: `idx:${all.length - 1}` } : {}),
             bytesRead: slice.length,
             linesScanned: slice.length,
           });
@@ -1224,7 +1249,7 @@ describe("thread lifecycle: authoritative start provisioning", () => {
       childId: "child-1",
       threadId: "child-1",
       sessionRef: SESSION_REF,
-      title: "do the thing",
+      title: "shuttle-child1",
       status: "running",
     });
     const command = h.port.spawnInputs[0]?.command ?? [];
@@ -1235,7 +1260,7 @@ describe("thread lifecycle: authoritative start provisioning", () => {
     expect((await settlement).isOk()).toBe(true);
   });
 
-  it("writes rebuildable native leaf metadata with only the bounded task-first-line title", async () => {
+  it("writes rebuildable native leaf metadata with an identity-only title", async () => {
     const h = harness();
     const settlement = h.controller.delegate(
       request({
@@ -1261,13 +1286,14 @@ describe("thread lifecycle: authoritative start provisioning", () => {
     const metadata = readNativeThreadMetadata(entries);
     expect(metadata?.schemaVersion).toBe(PI_NATIVE_THREAD_SCHEMA_VERSION);
     expect(metadata?.threadId).toBe("child-1");
-    expect(h.refs.newChildren[0]?.title).toBe("First line only");
+    expect(h.refs.newChildren[0]?.title).toBe("shuttle-child1");
     const serialized = JSON.stringify({
       leaf: leaf?.metadata,
       entries,
       refs: h.refs.newChildren,
     });
-    expect(serialized).toContain("First line only");
+    expect(serialized).toContain("shuttle-child1");
+    expect(serialized).not.toContain("First line only");
     expect(serialized).not.toContain("SECRET_TASK_REMAINDER");
     expect(serialized).not.toContain(SESSION_PATH);
     await settleChild(spawnedAt(h.port, 0), h.port, "completed");
@@ -1339,5 +1365,192 @@ describe("thread lifecycle: authoritative start provisioning", () => {
     const result = await fresh.controller.resumeThread(resume());
     expect(result._unsafeUnwrapErr().code).toBe("ThreadIntegrityError");
     expect(fresh.port.spawnedProcesses).toHaveLength(0);
+  });
+});
+
+describe("thread lifecycle: durable title privacy", () => {
+  it("keeps secret task content out of lifecycle projections across restart and resume", async () => {
+    const refs = new FakeRefStore(undefined);
+    const sessions = new FakeSessionStore();
+    const cache = new FakeCache();
+    const first = harness({ refs, sessions, cache });
+
+    const start = first.controller.delegate(request({ task: SECRET_TASK }));
+    await flush();
+    const firstProcess = spawnedAt(first.port, 0);
+    expectSecretAbsent(first.controller.snapshotTree());
+
+    const firstSigner = await authenticateChild(firstProcess, first.port);
+    firstProcess.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: "UNTRUSTED_CHILD_OUTPUT_TITLE",
+      },
+    });
+    await flush();
+    const liveOverlay = await first.controller.resolveOverlayChild("child-1");
+    if (liveOverlay.isErr()) throw new Error(JSON.stringify(liveOverlay.error));
+    expect(liveOverlay._unsafeUnwrap().title).toBe("shuttle-child1");
+    expectSecretAbsent(liveOverlay._unsafeUnwrap());
+
+    await finishChild(firstProcess, firstSigner, "failed");
+    const firstOutcome = await start;
+    if (firstOutcome.isErr())
+      throw new Error(JSON.stringify(firstOutcome.error));
+
+    expect(first.controller.threadStatus("child-1")).toEqual({
+      threadId: "child-1",
+      runs: 1,
+      status: "failed",
+      retryable: true,
+    });
+    expectSecretAbsent(first.controller.threadStatus("child-1"));
+    expectSecretAbsent(first.controller.snapshotTree());
+    expectSecretAbsent({
+      refs: refs.newChildren,
+      dividers: refs.dividers,
+      lifecycles: refs.lifecycles,
+      cacheRows: cache.writes,
+      nativeLeaves: sessions.leaves,
+    });
+
+    const restarted = harness({
+      refs,
+      sessions,
+      cache,
+      idGenerator: new SequentialIdGenerator(),
+    });
+    const retry = restarted.controller.resumeThread(
+      resume({ instruction: SECRET_TASK }),
+    );
+    await flush();
+    expectSecretAbsent(refs.dividers);
+    const retryProcess = spawnedAt(restarted.port, 0);
+    const retrySigner = await authenticateChild(retryProcess, restarted.port);
+    retryProcess.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: "UNTRUSTED_CHILD_OUTPUT_TITLE_RETRY",
+      },
+    });
+    await flush();
+    const retryOverlay =
+      await restarted.controller.resolveOverlayChild("child-1");
+    if (retryOverlay.isErr())
+      throw new Error(JSON.stringify(retryOverlay.error));
+    expect(retryOverlay._unsafeUnwrap().title).toBe("shuttle-child1");
+    await finishChild(retryProcess, retrySigner, "completed");
+    const retryOutcome = await retry;
+    if (retryOutcome.isErr())
+      throw new Error(JSON.stringify(retryOutcome.error));
+    expect(retryOutcome._unsafeUnwrap().run).toBe(2);
+
+    const continued = harness({
+      refs,
+      sessions,
+      cache,
+      idGenerator: new SequentialIdGenerator(),
+    });
+    const continuation = continued.controller.resumeThread(
+      resume({ action: "continue", instruction: SECRET_TASK }),
+    );
+    await flush();
+    expectSecretAbsent(refs.dividers);
+    const continueProcess = spawnedAt(continued.port, 0);
+    const continueSigner = await authenticateChild(
+      continueProcess,
+      continued.port,
+    );
+    continueProcess.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: "UNTRUSTED_CHILD_OUTPUT_CONTINUE",
+      },
+    });
+    await flush();
+    const continueOverlay =
+      await continued.controller.resolveOverlayChild("child-1");
+    if (continueOverlay.isErr()) {
+      throw new Error(JSON.stringify(continueOverlay.error));
+    }
+    expect(continueOverlay._unsafeUnwrap().title).toBe("shuttle-child1");
+    await finishChild(continueProcess, continueSigner, "completed");
+    const continueOutcome = await continuation;
+    if (continueOutcome.isErr()) {
+      throw new Error(JSON.stringify(continueOutcome.error));
+    }
+    expect(continueOutcome._unsafeUnwrap().run).toBe(3);
+
+    expect(continued.controller.threadStatus("child-1")).toEqual({
+      threadId: "child-1",
+      runs: 3,
+      status: "completed",
+      retryable: false,
+    });
+    expectSecretAbsent(continued.controller.threadStatus("child-1"));
+    expectSecretAbsent(continued.controller.snapshotTree());
+    const historicalOverlay =
+      await continued.controller.resolveOverlayChild("child-1");
+    if (historicalOverlay.isErr()) {
+      throw new Error(JSON.stringify(historicalOverlay.error));
+    }
+    expect(historicalOverlay._unsafeUnwrap().title).toBe("shuttle-child1");
+    expectSecretAbsent(historicalOverlay._unsafeUnwrap());
+
+    const serializedRefsAndCache = new TextEncoder().encode(
+      JSON.stringify({
+        refs: refs.newChildren,
+        dividers: refs.dividers,
+        lifecycles: refs.lifecycles,
+        cacheRows: cache.writes,
+      }),
+    );
+    expectSecretAbsent(new TextDecoder().decode(serializedRefsAndCache));
+
+    const generatedRef = refs.current();
+    if (!generatedRef) throw new Error("controller did not write a child ref");
+    const sqliteCacheOpen = await openPiChildMetadataCache({
+      root: "/tmp/weave-task21-title-privacy-controller",
+      fs: new FakePiChildMetadataCacheFs(),
+      authority: {
+        checkSource: () => okAsync("available" as const),
+      },
+      source: {
+        workspaceKey: "/project",
+        parentSessionId: OWNER_SESSION,
+        readRefs: () =>
+          okAsync<readonly PiChildRefRecord[], never>([generatedRef]),
+      },
+      openDatabase: () => openBunChildMetadataDatabase(":memory:"),
+      now: () => 4_000,
+    });
+    if (sqliteCacheOpen.isErr()) {
+      throw new Error(JSON.stringify(sqliteCacheOpen.error));
+    }
+    if (sqliteCacheOpen.value.mode !== "active") {
+      throw new Error(JSON.stringify(sqliteCacheOpen.value.error));
+    }
+    const sqliteWrite = sqliteCacheOpen.value.cache.upsertRef(
+      generatedRef,
+      "/project",
+    );
+    expect(sqliteWrite.isOk()).toBe(true);
+    const sqliteRows = await sqliteCacheOpen.value.cache.list({
+      workspaceKey: "/project",
+      parentSessionId: OWNER_SESSION,
+      limit: 10,
+    });
+    if (sqliteRows.isErr()) throw new Error(JSON.stringify(sqliteRows.error));
+    expect(sqliteRows.value.records[0]?.title).toBe("shuttle-child1");
+    expectSecretAbsent(sqliteRows.value.records);
+
+    const boundedFailure = await continued.controller.resumeThread(
+      resume({ threadId: "missing-thread", instruction: SECRET_TASK }),
+    );
+    expect(boundedFailure.isErr()).toBe(true);
+    expectSecretAbsent(boundedFailure._unsafeUnwrapErr());
   });
 });

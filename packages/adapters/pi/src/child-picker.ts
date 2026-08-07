@@ -45,7 +45,6 @@ export const PI_CHILD_PICKER_BOUNDS = Object.freeze({
   maxResults: 200,
   maxIdLength: 256,
   maxTitleLength: 200,
-  maxTaskFirstLineLength: 200,
   maxLabelLength: 128,
   maxTimestamp: 4_102_444_800_000,
 });
@@ -87,7 +86,6 @@ export interface PiChildPickerCandidate {
   readonly parentId?: string;
   readonly status: PiChildPickerStatus;
   readonly explicitTitle?: string;
-  readonly taskFirstLine?: string;
   readonly workflowStep?: string;
   readonly agent: string;
   readonly createdAt: number;
@@ -149,24 +147,17 @@ function boundLabel(value: string, max: number): string {
 }
 
 /**
- * First line of a task only. Never returns the remainder of a multi-line task.
- */
-export function childPickerTaskFirstLine(value: string | undefined): string {
-  if (!value) return "";
-  const firstLine = value.split(/\r\n|\n|\r/, 1)[0] ?? "";
-  return boundLabel(
-    sanitize(firstLine),
-    PI_CHILD_PICKER_BOUNDS.maxTaskFirstLineLength,
-  );
-}
-
-/**
- * Title precedence: explicit title → task first line → workflow step → agent.
+ * Title precedence: explicit title → workflow step → agent.
+ *
+ * Spec 33 §4.2/§13 and Threat Model T6: no branch of this function may read
+ * task text, prompt text, tool input, child output or transcript content. The
+ * `explicitTitle` here is a stored durable title that was itself derived from
+ * trusted identity metadata (see `child-title.ts`), never a caller free-text.
  */
 export function resolveChildPickerTitle(
   candidate: Pick<
     PiChildPickerCandidate,
-    "explicitTitle" | "taskFirstLine" | "workflowStep" | "agent"
+    "explicitTitle" | "workflowStep" | "agent"
   >,
 ): string {
   const explicit = boundLabel(
@@ -174,8 +165,6 @@ export function resolveChildPickerTitle(
     PI_CHILD_PICKER_BOUNDS.maxTitleLength,
   );
   if (explicit.length > 0) return explicit;
-  const taskLine = childPickerTaskFirstLine(candidate.taskFirstLine);
-  if (taskLine.length > 0) return taskLine;
   const step = boundLabel(
     sanitize(candidate.workflowStep),
     PI_CHILD_PICKER_BOUNDS.maxLabelLength,
@@ -360,7 +349,6 @@ export interface PiChildPickerActiveChild {
   readonly parentId?: string;
   readonly status: PiChildPickerStatus;
   readonly explicitTitle?: string;
-  readonly taskFirstLine?: string;
   readonly workflowStep?: string;
   readonly agent: string;
   readonly createdAt: number;
@@ -460,9 +448,6 @@ function activeCandidate(
     ...(child.explicitTitle === undefined
       ? {}
       : { explicitTitle: child.explicitTitle }),
-    ...(child.taskFirstLine === undefined
-      ? {}
-      : { taskFirstLine: child.taskFirstLine }),
     ...(child.workflowStep === undefined
       ? {}
       : { workflowStep: child.workflowStep }),
