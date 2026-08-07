@@ -1,4 +1,5 @@
 import { err, ok, okAsync, type Result, ResultAsync } from "neverthrow";
+import { enforceDurableChildTitle } from "./child-title.js";
 
 export type PiChildPickerKind =
   | "root"
@@ -461,10 +462,16 @@ function activeCandidate(
 }
 
 /**
- * A settled row's stored title is already the Task 9 resolved title, so it is
- * offered as the explicit title and never re-derived from a task string the
- * picker does not (and must not) have. The derived agent label is bounded
- * here, because a stored title may legitimately be longer than a label.
+ * A settled row's stored title is offered as the explicit title and never
+ * re-derived from a task string the picker does not (and must not) have. The
+ * derived agent label is bounded here, because a stored title may legitimately
+ * be longer than a label.
+ *
+ * The picker also proves title provenance for itself (Threat Model T6, Warp
+ * blocker 1) rather than trusting the ref or cache layer it was handed: a row
+ * whose title is not provably derived from trusted identity metadata is a
+ * legacy task-derived title, and both the displayed title and the derived
+ * agent label fall back to identity-only text.
  */
 function settledCandidate(
   row: PiChildPickerCacheRecord | PiChildPickerRefRecord,
@@ -472,15 +479,19 @@ function settledCandidate(
 ): PiChildPickerCandidate | undefined {
   const status = coerceStatus(row.status);
   if (status === undefined) return undefined;
+  const title = enforceDurableChildTitle({
+    title: row.title,
+    threadId: row.threadId,
+  });
   const agent = boundLabel(
-    sanitize(row.title),
+    sanitize(title),
     PI_CHILD_PICKER_BOUNDS.maxLabelLength,
   );
   return {
     childId: row.childId,
     threadId: row.threadId,
     status,
-    ...(row.title.length === 0 ? {} : { explicitTitle: row.title }),
+    ...(title.length === 0 ? {} : { explicitTitle: title }),
     agent: agent.length === 0 ? "child" : agent,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

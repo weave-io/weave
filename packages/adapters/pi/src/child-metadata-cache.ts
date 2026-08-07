@@ -51,6 +51,7 @@ import type {
   PiChildRefSourceAuthority,
   PiChildRefSourceState,
 } from "./child-session-refs.js";
+import { enforceDurableChildTitle } from "./child-title.js";
 
 // ---------------------------------------------------------------------------
 // Layout and bounds
@@ -320,12 +321,29 @@ export const PiChildMetadataRecordSchema = z
   .strict();
 export type PiChildMetadataRecord = z.infer<typeof PiChildMetadataRecordSchema>;
 
-/** Validates one cache record. Never throws; failures are values. */
+/**
+ * Validates one cache record. Never throws; failures are values.
+ *
+ * Rows cached before the durable-title fix hold a bounded first line of the
+ * delegated task, and a cached row may also be written by a caller that never
+ * went through the ref boundary. This boundary therefore proves title
+ * provenance for itself (Threat Model T6, Warp blocker 1): an unproven title
+ * is replaced by the deterministic identity-only fallback before the record
+ * exists as a value, so no read, write, render, log, or error can observe it.
+ * The replacement is idempotent, so a proven title never drifts.
+ */
 export function parseChildMetadataRecord(
   value: unknown,
 ): Result<PiChildMetadataRecord, PiChildMetadataCacheError> {
   const parsed = PiChildMetadataRecordSchema.safeParse(value);
-  if (parsed.success) return ok(parsed.data);
+  if (parsed.success) {
+    const record = parsed.data;
+    const title = enforceDurableChildTitle({
+      title: record.title,
+      threadId: record.threadId,
+    });
+    return ok(title === record.title ? record : { ...record, title });
+  }
   return err({
     type: "CacheRecordInvalid",
     issues: parsed.error.issues.map((issue) => issue.path.join(".")),
@@ -960,10 +978,7 @@ export interface PiChildMetadataBypass {
   ): ResultAsync<PiChildMetadataPage, PiChildMetadataCacheError>;
   findByChildId(
     input: PiChildMetadataFindByChildIdInput,
-  ): ResultAsync<
-    readonly PiChildMetadataRecord[],
-    PiChildMetadataCacheError
-  >;
+  ): ResultAsync<readonly PiChildMetadataRecord[], PiChildMetadataCacheError>;
 }
 
 /**
@@ -980,10 +995,7 @@ export function createChildMetadataBypass(
     readonly workspaceKey: string;
     readonly parentSessionId?: string;
     readonly includeTombstoned?: boolean;
-  }): ResultAsync<
-    readonly PiChildMetadataRecord[],
-    PiChildMetadataCacheError
-  > {
+  }): ResultAsync<readonly PiChildMetadataRecord[], PiChildMetadataCacheError> {
     if (input.workspaceKey !== source.workspaceKey) {
       return okAsync([]);
     }

@@ -31,6 +31,7 @@ import {
   type PiNativeSessionPagedEntry,
   type PiNativeSessionStore,
 } from "./child-native-sessions.js";
+import { enforceDurableChildTitle } from "./child-title.js";
 import {
   type PiSessionMutationGate,
   requireSessionMutationCapability,
@@ -385,11 +386,22 @@ function stripPaths(value: unknown): unknown {
 // Record projection
 // ---------------------------------------------------------------------------
 
+/**
+ * Projects one cache record onto a CLI list item.
+ *
+ * The CLI proves title provenance for itself (Threat Model T6, Warp blocker 1)
+ * instead of trusting the cache row it was handed, so `children list`,
+ * `children show`, and `children find` cannot print a legacy task-derived
+ * title even if a row reaches them without passing the cache boundary.
+ */
 function toListItem(record: PiChildMetadataRecord): PiAdapterChildListItem {
   return {
     childId: record.childId,
     threadId: record.threadId,
-    title: record.title,
+    title: enforceDurableChildTitle({
+      title: record.title,
+      threadId: record.threadId,
+    }),
     status: record.status,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,

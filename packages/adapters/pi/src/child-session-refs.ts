@@ -40,6 +40,7 @@ import {
   type PiNativeSessionTombstone,
   verifyNativeSessionRef,
 } from "./child-native-sessions.js";
+import { enforceDurableChildTitle } from "./child-title.js";
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -350,12 +351,30 @@ function issuePaths(error: z.ZodError): readonly string[] {
   return error.issues.map((issue) => issue.path.join("."));
 }
 
+/**
+ * Replaces a stored title that cannot be proven to come from trusted identity
+ * metadata (Threat Model T6, Warp blocker 1).
+ *
+ * Refs written before the durable-title fix stored a bounded first line of the
+ * delegated task, so the schema alone does not make `record.title` safe to
+ * persist, re-cache, render, log or report. This is applied on every parse, so
+ * both the write path and the read path of this module are covered, and it is
+ * idempotent for titles that are already proven.
+ */
+function withEnforcedTitle(record: PiChildRefRecord): PiChildRefRecord {
+  const title = enforceDurableChildTitle({
+    title: record.title,
+    threadId: record.threadId,
+  });
+  return title === record.title ? record : { ...record, title };
+}
+
 /** Validates one ref record. Never throws; validation failures are values. */
 export function parseChildRefRecord(
   value: unknown,
 ): Result<PiChildRefRecord, PiChildRefError> {
   const parsed = PiChildRefRecordSchema.safeParse(value);
-  if (parsed.success) return ok(parsed.data);
+  if (parsed.success) return ok(withEnforcedTitle(parsed.data));
   return err({ type: "ChildRefInvalid", issues: issuePaths(parsed.error) });
 }
 
@@ -364,8 +383,13 @@ export function parseChildRefEnvelope(
   value: unknown,
 ): Result<PiChildRefEnvelope, PiChildRefError> {
   const parsed = PiChildRefEnvelopeSchema.safeParse(value);
-  if (parsed.success) return ok(parsed.data);
-  return err({ type: "ChildRefInvalid", issues: issuePaths(parsed.error) });
+  if (!parsed.success) {
+    return err({ type: "ChildRefInvalid", issues: issuePaths(parsed.error) });
+  }
+  const record = withEnforcedTitle(parsed.data.record);
+  return ok(
+    record === parsed.data.record ? parsed.data : { ...parsed.data, record },
+  );
 }
 
 /**

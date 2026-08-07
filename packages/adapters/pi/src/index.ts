@@ -529,9 +529,14 @@ export {
   type TimerHandle,
   type TimerPort,
 } from "./child-timer.js";
-export type { PiDurableChildTitleInput } from "./child-title.js";
+export type {
+  PiDurableChildTitleInput,
+  PiStoredChildTitle,
+} from "./child-title.js";
 export {
   durableChildTitleSuffix,
+  enforceDurableChildTitle,
+  isProvenDurableChildTitle,
   PI_CHILD_TITLE_BOUNDS,
   PI_CHILD_TITLE_FALLBACK_LABEL,
   resolveDurableChildTitle,

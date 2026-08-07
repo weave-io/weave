@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~28,700 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,700 tokens per conversation.**
-> **Last scanned:** 2026-08-07 17:33 — re-run after significant changes
+> **Last scanned:** 2026-08-07 18:06 — re-run after significant changes
 
 ---
 
@@ -390,9 +390,11 @@
 - `packages/adapters/pi/src/child-title.ts`
   - function durableChildTitleSuffix: (threadId) => string
   - function resolveDurableChildTitle: (input) => string
+  - function isProvenDurableChildTitle: (stored) => boolean
+  - function enforceDurableChildTitle: (stored) => string
   - interface PiDurableChildTitleInput
-  - const PI_CHILD_TITLE_BOUNDS
-  - const PI_CHILD_TITLE_FALLBACK_LABEL
+  - interface PiStoredChildTitle
+  - _...2 more_
 - `packages/adapters/pi/src/child-transcript.ts`
   - function reducePiChildTranscript: (state, action) => Result<PiChildTranscriptState, PiChildTranscriptError>
   - function createPiChildTranscriptState: () => PiChildTranscriptState
@@ -1676,7 +1678,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 289 test files found
+> 290 test files found
 
 ---
 

@@ -34,6 +34,7 @@ import type {
   PiChildRefScan,
   PiChildRefStatus,
 } from "./child-session-refs.js";
+import { enforceDurableChildTitle } from "./child-title.js";
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -166,11 +167,22 @@ function boundedLimit(limit: number | undefined): number {
   return Math.min(floored, PI_CHILD_RECONSTRUCTION_BOUNDS.maxRefs);
 }
 
+/**
+ * Projects one authoritative ref onto a reconstructed child.
+ *
+ * Reconstruction proves title provenance for itself (Threat Model T6, Warp
+ * blocker 1) rather than trusting the ref port it was handed, so a legacy
+ * task-derived title cannot reach `/weave:status` status lines or the
+ * `/weave:history` merge even if the ref never passed its own parse boundary.
+ */
 function reconstructedFromRef(ref: PiChildRefRecord): PiReconstructedChild {
   return {
     childId: ref.childId,
     threadId: ref.threadId,
-    title: ref.title,
+    title: enforceDurableChildTitle({
+      title: ref.title,
+      threadId: ref.threadId,
+    }),
     status: ref.status,
     originParentSessionId: ref.originParentSessionId,
     createdAt: ref.createdAt,

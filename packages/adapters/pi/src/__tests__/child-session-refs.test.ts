@@ -111,7 +111,7 @@ const NEW_CHILD: AppendNewChildRefInput = {
   childId: "child-1",
   nativeSessionId: "native-1",
   sessionRef: SESSION_REF,
-  title: "Investigate flaky test",
+  title: "shuttle-child1",
 };
 
 function validRecord(
@@ -124,7 +124,7 @@ function validRecord(
     sessionRef: SESSION_REF,
     originParentSessionId: PARENT,
     originEntryId: "entry-1",
-    title: "Investigate flaky test",
+    title: "shuttle-child1",
     status: "running",
     createdAt: 1_000,
     updatedAt: 1_000,
@@ -476,7 +476,7 @@ describe("read API", () => {
       childId: "child-2",
       nativeSessionId: "native-2",
       sessionRef: "child-2/session.jsonl",
-      title: "Second child",
+      title: "shuttle-child2",
     });
     expect(first.isOk() && second.isOk()).toBe(true);
 
@@ -499,7 +499,7 @@ describe("read API", () => {
     if (!created.isOk()) throw new Error("setup failed");
     const updated = await store.appendLifecycle(created.value, {
       status: "completed",
-      title: "Done",
+      title: "loom-child1",
     });
     expect(updated.isOk()).toBe(true);
 
@@ -508,7 +508,7 @@ describe("read API", () => {
     if (!scan.isOk()) return;
     expect(scan.value.refs).toHaveLength(1);
     expect(scan.value.refs[0]?.status).toBe("completed");
-    expect(scan.value.refs[0]?.title).toBe("Done");
+    expect(scan.value.refs[0]?.title).toBe("loom-child1");
   });
 
   test("newest bounded scan keeps recent lifecycle state when older entries exceed the cap", async () => {
@@ -607,7 +607,7 @@ describe("read API", () => {
     const { session, store } = harness();
     session.seedRaw(customEntry(envelopeOf(validRecord(), 3)));
     session.seedRaw(
-      customEntry(envelopeOf(validRecord({ title: "Other" }), 3)),
+      customEntry(envelopeOf(validRecord({ title: "other-child1" }), 3)),
     );
     const scan = await store.readRefs();
     expect(scan.isOk()).toBe(true);

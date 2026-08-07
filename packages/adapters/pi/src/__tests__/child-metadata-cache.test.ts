@@ -622,13 +622,13 @@ describe("child metadata cache — scoping and pagination", () => {
     const refA = makeRef({
       childId: sharedId,
       originParentSessionId: parentA,
-      title: "From A",
+      title: "froma-redchild",
       updatedAt: 3_000,
     });
     const refB = makeRef({
       childId: sharedId,
       originParentSessionId: parentB,
-      title: "From B",
+      title: "fromb-redchild",
       updatedAt: 4_000,
     });
     const { cache } = await openHarness();
@@ -647,20 +647,20 @@ describe("child metadata cache — scoping and pagination", () => {
       parentSessionId: parentA,
     });
     expect(listedA._unsafeUnwrap().records).toHaveLength(1);
-    expect(listedA._unsafeUnwrap().records[0]?.title).toBe("From A");
+    expect(listedA._unsafeUnwrap().records[0]?.title).toBe("froma-redchild");
 
     const listedB = cache.list({
       workspaceKey: WORKSPACE,
       parentSessionId: parentB,
     });
     expect(listedB._unsafeUnwrap().records).toHaveLength(1);
-    expect(listedB._unsafeUnwrap().records[0]?.title).toBe("From B");
+    expect(listedB._unsafeUnwrap().records[0]?.title).toBe("fromb-redchild");
 
     const gotA = await cache.get(
       { workspaceKey: WORKSPACE, parentSessionId: parentA },
       sharedId,
     );
-    expect(gotA._unsafeUnwrap().title).toBe("From A");
+    expect(gotA._unsafeUnwrap().title).toBe("froma-redchild");
     expect(gotA._unsafeUnwrap().originParentSessionId).toBe(parentA);
 
     expect(
@@ -686,7 +686,7 @@ describe("child metadata cache — scoping and pagination", () => {
       { workspaceKey: WORKSPACE, parentSessionId: parentB },
       sharedId,
     );
-    expect(survivingB._unsafeUnwrap().title).toBe("From B");
+    expect(survivingB._unsafeUnwrap().title).toBe("fromb-redchild");
     expect(survivingB._unsafeUnwrap().tombstoned).toBe(false);
 
     expect(

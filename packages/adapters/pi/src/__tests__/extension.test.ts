@@ -6837,7 +6837,9 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       sessionRef: OVERLAY_SESSION_REF,
       originParentSessionId: "fake-session-1",
       originEntryId: "entry-overlay",
-      title: "loom",
+      // A post-fix durable title: trusted agent identity plus the opaque
+      // suffix of this row's own thread id.
+      title: "loom-istchild",
       status: "completed" as const,
       createdAt: 1,
       updatedAt: 2,
@@ -7060,7 +7062,7 @@ describe("createPiExtension: Task 12 native child overlay", () => {
     expect(host.customCalls.length).toBe(replacementCustomCallsBefore + 1);
     const replacementOverlay =
       host.customRenderedLines.at(-1)?.join("\n") ?? "";
-    expect(replacementOverlay).toContain("◆ loom · SETTLED");
+    expect(replacementOverlay).toContain("◆ loom-istchild · SETTLED");
     expect(replacementOverlay).toContain("native-overlay-body");
 
     expect(host.editorFactoryCalls.length).toBe(0);

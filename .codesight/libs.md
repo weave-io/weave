@@ -379,9 +379,11 @@
 - `packages/adapters/pi/src/child-title.ts`
   - function durableChildTitleSuffix: (threadId) => string
   - function resolveDurableChildTitle: (input) => string
+  - function isProvenDurableChildTitle: (stored) => boolean
+  - function enforceDurableChildTitle: (stored) => string
   - interface PiDurableChildTitleInput
-  - const PI_CHILD_TITLE_BOUNDS
-  - const PI_CHILD_TITLE_FALLBACK_LABEL
+  - interface PiStoredChildTitle
+  - _...2 more_
 - `packages/adapters/pi/src/child-transcript.ts`
   - function reducePiChildTranscript: (state, action) => Result<PiChildTranscriptState, PiChildTranscriptError>
   - function createPiChildTranscriptState: () => PiChildTranscriptState

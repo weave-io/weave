@@ -150,7 +150,7 @@ async function runCompletedChild(
     childId,
     nativeSessionId: `native-${childId}`,
     sessionRef: `${childId}/session.jsonl`,
-    title: "shuttle-mini deterministic task",
+    title: "shuttle-tlemini1",
     status: "running",
   });
   expect(created.isOk()).toBe(true);
@@ -223,7 +223,7 @@ describe("source return after clone/fork — status and history reconstruction",
     // `/weave:status` counts the parent-local child against an empty tree.
     expect(countParentLocalChildren(liveTree, value)).toBe(1);
     expect(renderReconstructedStatusLines(liveTree, value)).toEqual([
-      `  ${child.childId}  completed  shuttle-mini deterministic task`,
+      `  ${child.childId}  completed  shuttle-tlemini1`,
     ]);
 
     // `/weave:history` lists the completed row from bounded authoritative data.
@@ -235,7 +235,7 @@ describe("source return after clone/fork — status and history reconstruction",
     expect(rows[0]).toEqual({
       childId: child.childId,
       status: "completed",
-      title: "shuttle-mini deterministic task",
+      title: "shuttle-tlemini1",
       tombstoned: false,
     });
     returningCache.close();
