@@ -494,6 +494,8 @@ export function createChildInspectionRuntime(
         readonly childId: string;
         readonly threadId: string;
         readonly title: string;
+        /** Provenance marker for `title`; absent means the title is unproven. */
+        readonly titleProvenance?: string;
         readonly status: string;
         readonly createdAt: number;
         readonly updatedAt: number;
@@ -571,6 +573,12 @@ export function createChildInspectionRuntime(
                     childId: record.childId,
                     threadId: record.threadId,
                     title: record.title,
+                    // The provenance marker travels with the title: dropping
+                    // it here would make every ref-backed row look unproven
+                    // and collapse trusted titles to the fallback.
+                    ...(record.titleProvenance === undefined
+                      ? {}
+                      : { titleProvenance: record.titleProvenance }),
                     status: record.status,
                     createdAt: record.createdAt,
                     updatedAt: record.updatedAt,

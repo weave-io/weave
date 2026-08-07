@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~28,800 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,600 tokens per conversation.**
-> **Last scanned:** 2026-08-07 19:36 — re-run after significant changes
+> **Token savings:** this file is ~28,800 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,500 tokens per conversation.**
+> **Last scanned:** 2026-08-07 21:17 — re-run after significant changes
 
 ---
 
@@ -393,11 +393,11 @@
 - `packages/adapters/pi/src/child-title.ts`
   - function durableChildTitleSuffix: (threadId) => string
   - function resolveDurableChildTitle: (input) => string
+  - function isTrustedChildTitleProvenance: (value) => value is PiChildTitleProvenance
   - function isProvenDurableChildTitle: (stored) => boolean
   - function enforceDurableChildTitle: (stored) => string
-  - interface PiDurableChildTitleInput
-  - interface PiStoredChildTitle
-  - _...2 more_
+  - function enforceDurableChildTitleProvenance: (stored) => PiChildTitleProvenance
+  - _...7 more_
 - `packages/adapters/pi/src/child-transcript.ts`
   - function reducePiChildTranscript: (state, action) => Result<PiChildTranscriptState, PiChildTranscriptError>
   - function createPiChildTranscriptState: () => PiChildTranscriptState

@@ -540,15 +540,20 @@ export {
   type TimerPort,
 } from "./child-timer.js";
 export type {
+  PiChildTitleProvenance,
   PiDurableChildTitleInput,
   PiStoredChildTitle,
 } from "./child-title.js";
 export {
   durableChildTitleSuffix,
   enforceDurableChildTitle,
+  enforceDurableChildTitleProvenance,
   isProvenDurableChildTitle,
+  isTrustedChildTitleProvenance,
   PI_CHILD_TITLE_BOUNDS,
   PI_CHILD_TITLE_FALLBACK_LABEL,
+  PI_CHILD_TITLE_PROVENANCE,
+  PI_CHILD_TITLE_PROVENANCE_VALUES,
   resolveDurableChildTitle,
 } from "./child-title.js";
 export {

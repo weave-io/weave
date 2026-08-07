@@ -42,7 +42,11 @@ import {
   verifyNativeSessionRef,
 } from "./child-native-sessions.js";
 import type { PiChildSessionStorageAuthority } from "./child-session-storage-authority.js";
-import { enforceDurableChildTitle } from "./child-title.js";
+import {
+  enforceDurableChildTitle,
+  enforceDurableChildTitleProvenance,
+  PI_CHILD_TITLE_PROVENANCE_VALUES,
+} from "./child-title.js";
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -151,6 +155,14 @@ export const PiChildRefRecordSchema = z
     /** Immutable adapter-owned opaque originating parent entry id. */
     originEntryId: idSchema,
     title: titleSchema,
+    /**
+     * Versioned proof that `title` was derived from trusted identity metadata
+     * (Task 21 remediation D). Optional so refs written before the marker
+     * existed still parse; absent means unproven, and the parse boundary
+     * replaces such a title with the identity-only fallback. Unknown values
+     * are rejected by the closed enum as invalid data.
+     */
+    titleProvenance: z.enum(PI_CHILD_TITLE_PROVENANCE_VALUES).optional(),
     status: PiChildRefStatusSchema,
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
@@ -366,20 +378,31 @@ function issuePaths(error: z.ZodError): readonly string[] {
 
 /**
  * Replaces a stored title that cannot be proven to come from trusted identity
- * metadata (Threat Model T6, Warp blocker 1).
+ * metadata (Threat Model T6, Warp blocker 1, Task 21 remediation D).
  *
- * Refs written before the durable-title fix stored a bounded first line of the
- * delegated task, so the schema alone does not make `record.title` safe to
- * persist, re-cache, render, log or report. This is applied on every parse, so
- * both the write path and the read path of this module are covered, and it is
- * idempotent for titles that are already proven.
+ * Proof is the persisted `titleProvenance` marker, never the shape of the
+ * title: refs written before the marker existed stored a bounded first line of
+ * the delegated task, and such a line may coincidentally look like a derived
+ * identity title. An unmarked or unrecognized row therefore loses its stored
+ * title before the record exists as a value, and is re-marked so the safe
+ * fallback it now carries is itself proven. Applied on every parse, so both
+ * the write path and the read path of this module are covered, and idempotent
+ * for records that are already proven.
  */
 function withEnforcedTitle(record: PiChildRefRecord): PiChildRefRecord {
-  const title = enforceDurableChildTitle({
+  const stored = {
     title: record.title,
     threadId: record.threadId,
-  });
-  return title === record.title ? record : { ...record, title };
+    ...(record.titleProvenance === undefined
+      ? {}
+      : { provenance: record.titleProvenance }),
+  };
+  const title = enforceDurableChildTitle(stored);
+  const titleProvenance = enforceDurableChildTitleProvenance(stored);
+  if (title === record.title && titleProvenance === record.titleProvenance) {
+    return record;
+  }
+  return { ...record, title, titleProvenance };
 }
 
 /** Validates one ref record. Never throws; validation failures are values. */
@@ -464,6 +487,13 @@ export interface AppendNewChildRefInput {
   readonly nativeSessionId: string;
   readonly sessionRef: string;
   readonly title: string;
+  /**
+   * Provenance marker for `title`. Callers that derive the title from
+   * trusted identity metadata pass the current marker exported by
+   * `child-title.ts`; omitting it makes the ref boundary discard the title in
+   * favour of the safe fallback.
+   */
+  readonly titleProvenance?: string;
   readonly status?: PiChildRefStatus;
   readonly run?: Omit<PiChildRefRun, "run">;
 }
@@ -480,6 +510,8 @@ export interface AppendChildRefRunInput {
 export interface AppendChildRefLifecycleInput {
   readonly status: PiChildRefStatus;
   readonly title?: string;
+  /** Provenance marker for a replacement `title`. */
+  readonly titleProvenance?: string;
   readonly settledAt?: number;
 }
 
@@ -545,6 +577,9 @@ export class PiChildSessionRefStore {
       originParentSessionId: this.parentSessionId,
       originEntryId: this.newEntryId(),
       title: input.title,
+      ...(input.titleProvenance === undefined
+        ? {}
+        : { titleProvenance: input.titleProvenance }),
       status: input.status ?? "queued",
       createdAt: at,
       updatedAt: at,
@@ -619,9 +654,18 @@ export class PiChildSessionRefStore {
         (input.status === "running" || input.status === "queued"
           ? record.settledAt
           : at);
+      // A replacement title carries its own provenance; the previous marker is
+      // dropped so a caller cannot relabel arbitrary text as trusted by reusing
+      // the record's existing marker.
+      const titleProvenance =
+        input.title === undefined
+          ? record.titleProvenance
+          : input.titleProvenance;
+      const { titleProvenance: _previous, ...carried } = record;
       const candidate = {
-        ...record,
+        ...carried,
         title: input.title ?? record.title,
+        ...(titleProvenance === undefined ? {} : { titleProvenance }),
         status: input.status,
         updatedAt: at,
         ...(settledAt === undefined ? {} : { settledAt }),

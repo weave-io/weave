@@ -389,10 +389,11 @@ function stripPaths(value: unknown): unknown {
 /**
  * Projects one cache record onto a CLI list item.
  *
- * The CLI proves title provenance for itself (Threat Model T6, Warp blocker 1)
- * instead of trusting the cache row it was handed, so `children list`,
- * `children show`, and `children find` cannot print a legacy task-derived
- * title even if a row reaches them without passing the cache boundary.
+ * The CLI checks title provenance for itself (Threat Model T6, Warp blocker 1,
+ * Task 21 remediation D) instead of trusting the cache row it was handed, so
+ * `children list`, `children show`, and `children find` cannot print a legacy
+ * title that carries no provenance marker even if a row reaches them without
+ * passing the cache boundary.
  */
 function toListItem(record: PiChildMetadataRecord): PiAdapterChildListItem {
   return {
@@ -401,6 +402,9 @@ function toListItem(record: PiChildMetadataRecord): PiAdapterChildListItem {
     title: enforceDurableChildTitle({
       title: record.title,
       threadId: record.threadId,
+      ...(record.titleProvenance === undefined
+        ? {}
+        : { provenance: record.titleProvenance }),
     }),
     status: record.status,
     createdAt: record.createdAt,

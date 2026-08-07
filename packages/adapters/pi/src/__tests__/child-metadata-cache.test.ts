@@ -30,6 +30,7 @@ import type {
   PiChildRefSourceAuthority,
   PiChildRefSourceState,
 } from "../child-session-refs.js";
+import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -48,6 +49,9 @@ function makeRef(overrides: Partial<PiChildRefRecord> = {}): PiChildRefRecord {
     originParentSessionId: overrides.originParentSessionId ?? PARENT,
     originEntryId: overrides.originEntryId ?? `entry-${childId}`,
     title: overrides.title ?? `Title ${childId}`,
+    ...(overrides.titleProvenance === undefined
+      ? {}
+      : { titleProvenance: overrides.titleProvenance }),
     status: overrides.status ?? "completed",
     createdAt: overrides.createdAt ?? 1_000,
     updatedAt: overrides.updatedAt ?? 2_000,
@@ -626,12 +630,14 @@ describe("child metadata cache — scoping and pagination", () => {
       childId: sharedId,
       originParentSessionId: parentA,
       title: "froma-redchild",
+      titleProvenance: PI_CHILD_TITLE_PROVENANCE,
       updatedAt: 3_000,
     });
     const refB = makeRef({
       childId: sharedId,
       originParentSessionId: parentB,
       title: "fromb-redchild",
+      titleProvenance: PI_CHILD_TITLE_PROVENANCE,
       updatedAt: 4_000,
     });
     const { cache } = await openHarness();

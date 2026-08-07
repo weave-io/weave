@@ -20,13 +20,6 @@ const ANSI_ESCAPE_PATTERN = new RegExp(ANSI_ESCAPE_SOURCE, "g");
 const CONTROL_CHARACTER_PATTERN = new RegExp(CONTROL_CHARACTER_SOURCE, "g");
 /** Everything outside this class is dropped from an opaque suffix. */
 const OPAQUE_SUFFIX_PATTERN = /[^0-9A-Za-z]/g;
-/**
- * Shape a trusted identity label may take: declared agent names and workflow
- * step names are DSL identifiers, so they carry no whitespace, no quotes and
- * no sentence punctuation. Legacy task-derived titles were bounded first
- * lines of free prompt text and practically never match this class.
- */
-const IDENTITY_LABEL_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._:-]*$/;
 
 /** Hard bounds for a durable child title. */
 export const PI_CHILD_TITLE_BOUNDS = Object.freeze({
@@ -122,59 +115,93 @@ export function resolveDurableChildTitle(
 }
 
 // ---------------------------------------------------------------------------
-// Provenance of stored titles (Warp blocker 1)
+// Provenance of stored titles (Warp blocker 1, Task 21 remediation D)
 // ---------------------------------------------------------------------------
 
 /**
- * A stored title plus the opaque thread identity it claims to belong to.
+ * Closed set of durable title-provenance markers.
  *
- * `threadId` is the only trusted anchor available at the ref and cache
- * boundaries, so it is required: a title that cannot be bound to an identity
- * cannot be proven and is therefore replaced.
+ * A marker is written only by code that built the title from trusted identity
+ * metadata through {@link resolveDurableChildTitle}. It is a versioned literal,
+ * not a shape: no arrangement of task text can produce one, so provenance can
+ * no longer be guessed from how a stored title happens to look.
+ *
+ * The set is closed on purpose. Adding a value is a schema change: readers of
+ * older rows must keep failing closed on markers they do not understand.
+ */
+export const PI_CHILD_TITLE_PROVENANCE_VALUES = Object.freeze([
+  "trusted-identity-v1",
+] as const);
+
+/** One accepted durable title-provenance marker. */
+export type PiChildTitleProvenance =
+  (typeof PI_CHILD_TITLE_PROVENANCE_VALUES)[number];
+
+/**
+ * Marker stamped on every durable child title written from this version.
+ *
+ * Bump the version — do not redefine this string — when the meaning of a
+ * trusted title changes, so rows written by an older adapter stay
+ * distinguishable instead of silently inheriting new semantics.
+ */
+export const PI_CHILD_TITLE_PROVENANCE: PiChildTitleProvenance =
+  "trusted-identity-v1";
+
+/**
+ * Whether an arbitrary value is one of the accepted markers.
+ *
+ * Total and closed: anything that is not an exact member of
+ * {@link PI_CHILD_TITLE_PROVENANCE_VALUES} — including `undefined`, a legacy
+ * row's absent field, a near-miss version string, or a non-string — is not
+ * trusted. Pure; never throws.
+ */
+export function isTrustedChildTitleProvenance(
+  value: unknown,
+): value is PiChildTitleProvenance {
+  if (typeof value !== "string") return false;
+  return (PI_CHILD_TITLE_PROVENANCE_VALUES as readonly string[]).includes(
+    value,
+  );
+}
+
+/**
+ * A stored title plus the opaque thread identity and provenance marker of the
+ * row it was read from.
+ *
+ * `threadId` anchors the safe fallback to the row's own identity. `provenance`
+ * is the only proof that the stored title itself may be shown: it is optional
+ * so that legacy rows written before the marker existed still parse, but an
+ * absent marker means unproven, never trusted.
  */
 export interface PiStoredChildTitle {
   /** Title as read back from a durable ref or cache row. */
   readonly title: string;
   /** Opaque child/thread id of the row the title was stored on. */
   readonly threadId?: string;
+  /** Versioned provenance marker persisted alongside the title, if any. */
+  readonly provenance?: string;
 }
 
 /**
- * Whether a stored title provably came from {@link resolveDurableChildTitle}.
+ * Whether a stored title is proven to have been written from trusted identity
+ * metadata.
  *
- * Refs and cache rows written before the durable-title fix stored a bounded
- * first line of the delegated task, so a stored title is prompt content until
- * proven otherwise. Proof is structural and self-verifying:
+ * Proof is the persisted marker and nothing else. Structural resemblance to a
+ * derived title is explicitly *not* proof: a legacy row whose stored task text
+ * happens to read `agent-12345678` is still prompt content, and treating its
+ * shape as evidence would let any delegated task forge its own provenance.
  *
- *   1. the title must end with `-<suffix>`, where `<suffix>` is the bounded
- *      alphanumeric tail of this row's own opaque thread id — a binding no
- *      free-text task line can satisfy except by astronomical coincidence;
- *   2. the remaining label must look like a declared agent or workflow-step
- *      identity (no whitespace, no sentence punctuation);
- *   3. re-deriving the title from that label and thread id must reproduce the
- *      stored string exactly, so truncation or drift also fails.
+ * A proven title must additionally stay inside the durable bounds, so a row
+ * that carries a valid marker but an out-of-bounds or empty title still fails
+ * closed to the fallback rather than reaching a sink.
  *
- * Rows without a usable thread id have no anchor at all and are never proven.
  * Pure and total: it never throws and never reads transcript state.
  */
 export function isProvenDurableChildTitle(stored: PiStoredChildTitle): boolean {
+  if (!isTrustedChildTitleProvenance(stored.provenance)) return false;
   const { title } = stored;
   if (typeof title !== "string" || title.length === 0) return false;
-  if (title.length > PI_CHILD_TITLE_BOUNDS.maxTitleLength) return false;
-  const suffix = durableChildTitleSuffix(stored.threadId);
-  if (suffix.length === 0) return false;
-  const marker = `${SUFFIX_SEPARATOR}${suffix}`;
-  if (!title.endsWith(marker)) return false;
-  const label = title.slice(0, title.length - marker.length);
-  if (label.length === 0) return false;
-  if (label.length > PI_CHILD_TITLE_BOUNDS.maxLabelLength) return false;
-  if (!IDENTITY_LABEL_PATTERN.test(label)) return false;
-  return (
-    resolveDurableChildTitle({
-      agentName: label,
-      threadId: stored.threadId,
-    }) === title
-  );
+  return title.length <= PI_CHILD_TITLE_BOUNDS.maxTitleLength;
 }
 
 /**
@@ -182,14 +209,33 @@ export function isProvenDurableChildTitle(stored: PiStoredChildTitle): boolean {
  *
  * Proven titles are returned byte-identical, so reconstruction is idempotent
  * and no title drifts across ref → cache → picker → CLI. Unproven titles —
- * every legacy task-derived title — are discarded and replaced by the
- * deterministic identity-only fallback for the same thread id, which contains
- * nothing but {@link PI_CHILD_TITLE_FALLBACK_LABEL} and an opaque suffix.
+ * every legacy row, and every row whose marker is absent or unrecognized — are
+ * discarded and replaced by the deterministic identity-only fallback for the
+ * same thread id, which contains nothing but
+ * {@link PI_CHILD_TITLE_FALLBACK_LABEL} and an opaque suffix.
  *
- * Applying this twice is a no-op: the fallback is itself a proven title
- * whenever a thread id is available.
+ * Applying this twice is a no-op: the second call sees the same marker and the
+ * same fallback input, so the result never changes.
  */
 export function enforceDurableChildTitle(stored: PiStoredChildTitle): string {
   if (isProvenDurableChildTitle(stored)) return stored.title;
   return resolveDurableChildTitle({ threadId: stored.threadId });
+}
+
+/**
+ * The provenance marker that may safely be persisted for one stored row.
+ *
+ * A row whose title survives {@link enforceDurableChildTitle} keeps its marker.
+ * A row whose title was replaced by the fallback is re-marked as trusted,
+ * because the fallback itself is derived only from identity metadata. Callers
+ * therefore never persist a trusted-looking title beside an absent marker, nor
+ * an untrusted marker beside a safe title.
+ */
+export function enforceDurableChildTitleProvenance(
+  stored: PiStoredChildTitle,
+): PiChildTitleProvenance {
+  if (isProvenDurableChildTitle(stored)) {
+    return stored.provenance as PiChildTitleProvenance;
+  }
+  return PI_CHILD_TITLE_PROVENANCE;
 }

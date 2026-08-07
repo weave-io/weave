@@ -39,6 +39,7 @@ import {
   type PiChildSessionStorageAuthority,
 } from "../child-session-storage-authority.js";
 import { SystemTimerPort } from "../child-timer.js";
+import { isTrustedChildTitleProvenance } from "../child-title.js";
 import {
   PiDelegationController,
   type PiDelegationRequest,
@@ -246,6 +247,13 @@ class FakeRefStore implements PiThreadRefPort {
       originParentSessionId: this.liveSession,
       originEntryId: `entry-${this.newChildren.length}`,
       title: input.title,
+      // The fake preserves the caller's provenance marker exactly as the real
+      // ref store does, so downstream projections see what production sees.
+      // Unknown markers are dropped here just as the record schema rejects
+      // them, so the fake can never be more permissive than production.
+      ...(isTrustedChildTitleProvenance(input.titleProvenance)
+        ? { titleProvenance: input.titleProvenance }
+        : {}),
       status: input.status ?? "queued",
       createdAt: 1_700_000_000_000,
       updatedAt: 1_700_000_000_000,

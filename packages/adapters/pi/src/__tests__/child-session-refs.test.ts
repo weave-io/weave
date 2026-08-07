@@ -26,6 +26,7 @@ import {
   createPiChildSessionStorageAuthority,
   type PiChildSessionStorageAuthority,
 } from "../child-session-storage-authority.js";
+import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PARENT = "parent-session-1";
@@ -120,6 +121,7 @@ const NEW_CHILD: AppendNewChildRefInput = {
   nativeSessionId: "native-1",
   sessionRef: SESSION_REF,
   title: "shuttle-child1",
+  titleProvenance: PI_CHILD_TITLE_PROVENANCE,
 };
 
 function validRecord(
@@ -133,6 +135,7 @@ function validRecord(
     originParentSessionId: PARENT,
     originEntryId: "entry-1",
     title: "shuttle-child1",
+    titleProvenance: PI_CHILD_TITLE_PROVENANCE,
     status: "running",
     createdAt: 1_000,
     updatedAt: 1_000,
@@ -527,6 +530,7 @@ describe("read API", () => {
     const updated = await store.appendLifecycle(created.value, {
       status: "completed",
       title: "loom-child1",
+      titleProvenance: PI_CHILD_TITLE_PROVENANCE,
     });
     expect(updated.isOk()).toBe(true);
 
@@ -937,6 +941,7 @@ describe("serialization carries metadata only", () => {
       "status",
       "threadId",
       "title",
+      "titleProvenance",
       "updatedAt",
     ]);
     expect(serializeChildRefEnvelope(parsed.value)).toBe(

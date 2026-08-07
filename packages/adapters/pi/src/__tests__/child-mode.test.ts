@@ -173,6 +173,25 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/**
+ * Waits until `predicate` becomes true. One `flush()` is not enough for the
+ * large-output transfer path: each `transfer-chunk` is HMAC-signed and queued
+ * on the runtime's serialized outgoing send tail, so the first chunk can land
+ * after several macrotasks. Keeps the caller's assertion intact.
+ */
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error("test setup: timed out waiting for asynchronous event");
+    }
+    await flush();
+  }
+}
+
 function fakeCtx(overrides: Partial<PiSessionContext> = {}): PiSessionContext {
   return {
     mode: "rpc",
@@ -463,7 +482,11 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     );
 
     const settlementPending = host.fire("agent_settled", {}, fakeCtx());
-    await flush();
+    // Settlement awaits the transfer ack, so observe chunks mid-flight.
+    // Do not rely on a single flush(): signed chunk sends are serialized.
+    await waitFor(() =>
+      output.lines.some((line) => line.kind === "transfer-chunk"),
+    );
     const chunks = output.lines.filter(
       (line) => line.kind === "transfer-chunk",
     );

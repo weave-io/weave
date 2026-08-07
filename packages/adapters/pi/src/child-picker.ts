@@ -363,6 +363,8 @@ export interface PiChildPickerCacheRecord {
   readonly childId: string;
   readonly threadId: string;
   readonly title: string;
+  /** Versioned proof that `title` came from trusted identity metadata. */
+  readonly titleProvenance?: string;
   readonly status: string;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -380,6 +382,8 @@ export interface PiChildPickerRefRecord {
   readonly childId: string;
   readonly threadId: string;
   readonly title: string;
+  /** Versioned proof that `title` came from trusted identity metadata. */
+  readonly titleProvenance?: string;
   readonly status: string;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -467,11 +471,12 @@ function activeCandidate(
  * derived agent label is bounded here, because a stored title may legitimately
  * be longer than a label.
  *
- * The picker also proves title provenance for itself (Threat Model T6, Warp
- * blocker 1) rather than trusting the ref or cache layer it was handed: a row
- * whose title is not provably derived from trusted identity metadata is a
- * legacy task-derived title, and both the displayed title and the derived
- * agent label fall back to identity-only text.
+ * The picker also checks title provenance for itself (Threat Model T6, Warp
+ * blocker 1, Task 21 remediation D) rather than trusting the ref or cache layer
+ * it was handed: proof is the row's persisted provenance marker, never the
+ * shape of the title, so a row without a marker — every legacy row — falls back
+ * to identity-only text for both the displayed title and the derived agent
+ * label.
  */
 function settledCandidate(
   row: PiChildPickerCacheRecord | PiChildPickerRefRecord,
@@ -482,6 +487,9 @@ function settledCandidate(
   const title = enforceDurableChildTitle({
     title: row.title,
     threadId: row.threadId,
+    ...(row.titleProvenance === undefined
+      ? {}
+      : { provenance: row.titleProvenance }),
   });
   const agent = boundLabel(
     sanitize(title),

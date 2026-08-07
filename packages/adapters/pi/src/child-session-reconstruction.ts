@@ -34,7 +34,10 @@ import type {
   PiChildRefScan,
   PiChildRefStatus,
 } from "./child-session-refs.js";
-import { enforceDurableChildTitle } from "./child-title.js";
+import {
+  enforceDurableChildTitle,
+  enforceDurableChildTitleProvenance,
+} from "./child-title.js";
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -64,6 +67,8 @@ export interface PiReconstructedChild {
   readonly childId: string;
   readonly threadId: string;
   readonly title: string;
+  /** Versioned proof that `title` came from trusted identity metadata. */
+  readonly titleProvenance?: string;
   readonly status: PiChildRefStatus;
   readonly originParentSessionId: string;
   readonly createdAt: number;
@@ -170,19 +175,25 @@ function boundedLimit(limit: number | undefined): number {
 /**
  * Projects one authoritative ref onto a reconstructed child.
  *
- * Reconstruction proves title provenance for itself (Threat Model T6, Warp
- * blocker 1) rather than trusting the ref port it was handed, so a legacy
- * task-derived title cannot reach `/weave:status` status lines or the
- * `/weave:history` merge even if the ref never passed its own parse boundary.
+ * Reconstruction checks title provenance for itself (Threat Model T6, Warp
+ * blocker 1, Task 21 remediation D) rather than trusting the ref port it was
+ * handed, so a legacy title without a provenance marker cannot reach
+ * `/weave:status` status lines or the `/weave:history` merge even if the ref
+ * never passed its own parse boundary.
  */
 function reconstructedFromRef(ref: PiChildRefRecord): PiReconstructedChild {
+  const stored = {
+    title: ref.title,
+    threadId: ref.threadId,
+    ...(ref.titleProvenance === undefined
+      ? {}
+      : { provenance: ref.titleProvenance }),
+  };
   return {
     childId: ref.childId,
     threadId: ref.threadId,
-    title: enforceDurableChildTitle({
-      title: ref.title,
-      threadId: ref.threadId,
-    }),
+    title: enforceDurableChildTitle(stored),
+    titleProvenance: enforceDurableChildTitleProvenance(stored),
     status: ref.status,
     originParentSessionId: ref.originParentSessionId,
     createdAt: ref.createdAt,

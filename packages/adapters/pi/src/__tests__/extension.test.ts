@@ -37,6 +37,7 @@ import {
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import type { PiChildRefRecord } from "../child-session-refs.js";
 import { createPiChildSessionStorageAuthority } from "../child-session-storage-authority.js";
+import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
 import type {
@@ -291,6 +292,7 @@ function eligibleOrdinaryRecoveryRecord(
     originParentSessionId: "parent",
     originEntryId: "entry-recover-me",
     title: "loom",
+    titleProvenance: PI_CHILD_TITLE_PROVENANCE,
     status: "running",
     createdAt: 1,
     updatedAt: 1,
@@ -7199,8 +7201,10 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       originParentSessionId: "fake-session-1",
       originEntryId: "entry-overlay",
       // A post-fix durable title: trusted agent identity plus the opaque
-      // suffix of this row's own thread id.
+      // suffix of this row's own thread id, carrying the explicit provenance
+      // marker that makes it trustworthy on read.
       title: "loom-istchild",
+      titleProvenance: PI_CHILD_TITLE_PROVENANCE,
       status: "completed" as const,
       createdAt: 1,
       updatedAt: 2,
@@ -7572,6 +7576,7 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       originParentSessionId: "parent",
       originEntryId: "entry-2",
       title: "shuttle",
+      titleProvenance: PI_CHILD_TITLE_PROVENANCE,
       status: "completed" as const,
       createdAt: 1,
       updatedAt: 2,
@@ -7593,6 +7598,7 @@ describe("createPiExtension: Task 12 native child overlay", () => {
                   originParentSessionId: "parent",
                   originEntryId: "entry-overlay",
                   title: "loom",
+                  titleProvenance: PI_CHILD_TITLE_PROVENANCE,
                   status: "completed" as const,
                   createdAt: 1,
                   updatedAt: 2,

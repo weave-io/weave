@@ -245,9 +245,42 @@ to Pi while the overlay is mounted. The cancel-subtree confirmation defaults to
 
 - Lists children in all statuses with title and local timestamp.
 - Ordering: active children first, then settled children newest-first.
-- Title precedence: explicit child title, then the first line of the task, then
-  the workflow step, then the agent name.
+- Title precedence: the declared agent name, then the explicit workflow step
+  name, then the literal fallback label, always followed by an opaque suffix
+  taken from the child's own thread id. Task text, prompt text, and transcript
+  content never contribute to a title.
 - Detail views use ISO timestamps; list views use local locale formatting.
+
+### 8.3 Durable title provenance
+
+A durable title is written into parent and thread refs, cached in SQLite,
+reconstructed after restart, and shown in the picker, `/weave:history`,
+`/weave:doctor`, and the adapter CLI. Refs and cache rows written by earlier
+adapter versions stored a bounded first line of the delegated task, so a stored
+title is prompt content unless its origin is proven.
+
+Proof is an explicit versioned provenance marker persisted beside the title,
+never the shape of the title itself:
+
+- Every record created from trusted identity metadata persists the marker
+  `trusted-identity-v1`. The marker set is closed; a new meaning of "trusted"
+  requires a new version, not a redefinition.
+- Parsers accept a record with no marker so legacy rows still load, but such a
+  record is unproven: its stored title is replaced by `child-<opaque suffix>`
+  before the record exists as a value, so no sink can observe the original.
+- A marker outside the closed set is invalid data and is rejected by the record
+  schema, exactly like any other malformed field.
+- A record whose title is replaced is re-marked, because the fallback is itself
+  derived only from identity. Enforcement is therefore idempotent: a proven
+  title is returned byte-identical and never drifts across ref, cache,
+  reconstruction, picker, history, doctor, or CLI boundaries.
+- Structural resemblance to a derived title proves nothing. A legacy row whose
+  task text reads exactly `<label>-<this row's own suffix>` is still suppressed.
+
+The metadata cache stores the marker in a dedicated `title_provenance` column.
+Schema v2 adds that column; a v1 database is migrated forward in place when it
+is opened for writing, and rows carried across the migration have no marker and
+are therefore treated as unproven.
 
 ## 9. Thread lifecycle: start, retry, continue
 

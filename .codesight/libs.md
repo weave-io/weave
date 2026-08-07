@@ -382,11 +382,11 @@
 - `packages/adapters/pi/src/child-title.ts`
   - function durableChildTitleSuffix: (threadId) => string
   - function resolveDurableChildTitle: (input) => string
+  - function isTrustedChildTitleProvenance: (value) => value is PiChildTitleProvenance
   - function isProvenDurableChildTitle: (stored) => boolean
   - function enforceDurableChildTitle: (stored) => string
-  - interface PiDurableChildTitleInput
-  - interface PiStoredChildTitle
-  - _...2 more_
+  - function enforceDurableChildTitleProvenance: (stored) => PiChildTitleProvenance
+  - _...7 more_
 - `packages/adapters/pi/src/child-transcript.ts`
   - function reducePiChildTranscript: (state, action) => Result<PiChildTranscriptState, PiChildTranscriptError>
   - function createPiChildTranscriptState: () => PiChildTranscriptState

@@ -1,12 +1,16 @@
 /**
- * Legacy durable-title provenance (Threat Model T6, Warp blocker 1).
+ * Legacy durable-title provenance (Threat Model T6, Warp blocker 1, Task 21
+ * remediation D).
  *
  * Refs and cache rows written before the durable-title fix stored a bounded
  * first line of the delegated task. Those rows still exist on disk, so a
- * stored title is prompt content until its provenance is proven from trusted
- * identity. Every test here starts from a *real serialized* legacy shape - the
- * exact JSON a pre-fix adapter appended into a parent session or wrote into
- * the SQLite cache - and asserts the sentinel cannot reach any sink.
+ * stored title is prompt content unless the row carries an explicit versioned
+ * provenance marker. Proof is the marker and never the shape of the title, so
+ * a legacy task line that happens to look exactly like a derived identity
+ * title is still suppressed. Every test here starts from a *real serialized*
+ * legacy shape - the exact JSON a pre-fix adapter appended into a parent
+ * session or wrote into the SQLite cache - and asserts the sentinel cannot
+ * reach any sink.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -46,6 +50,9 @@ import {
 import {
   enforceDurableChildTitle,
   isProvenDurableChildTitle,
+  isTrustedChildTitleProvenance,
+  PI_CHILD_TITLE_PROVENANCE,
+  PI_CHILD_TITLE_PROVENANCE_VALUES,
   resolveDurableChildTitle,
 } from "../child-title.js";
 import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
@@ -75,6 +82,19 @@ const PROVEN_TITLE = resolveDurableChildTitle({
   threadId: THREAD_ID,
 });
 
+/**
+ * A legacy row whose stored *task text* is byte-identical to what the old
+ * structural check accepted as proof: an identity-shaped label bound to this
+ * row's own opaque thread suffix. Nothing but the absent marker separates it
+ * from a genuinely derived title, which is exactly the forgery Warp found.
+ */
+const FORGED_THREAD_ID = "thread-forged-12345678";
+const FORGED_SENTINEL = "LEGACY_TASK_SENTINEL";
+const FORGED_TITLE = `${FORGED_SENTINEL}-12345678`;
+const FORGED_SAFE_TITLE = resolveDurableChildTitle({
+  threadId: FORGED_THREAD_ID,
+});
+
 function expectSentinelAbsent(value: unknown): void {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   expect(text).not.toContain(TASK_SENTINEL);
@@ -82,7 +102,11 @@ function expectSentinelAbsent(value: unknown): void {
 }
 
 /** The serialized parent custom entry a pre-fix adapter actually appended. */
-function legacyEntryJson(title: string = LEGACY_TITLE): string {
+function legacyEntryJson(
+  title: string = LEGACY_TITLE,
+  provenance?: string,
+  overrides: { readonly childId?: string; readonly threadId?: string } = {},
+): string {
   return JSON.stringify({
     type: "custom",
     customType: PI_CHILD_REF_ENTRY_TYPE,
@@ -93,13 +117,14 @@ function legacyEntryJson(title: string = LEGACY_TITLE): string {
       sequence: 1,
       appendedAt: 1_000,
       record: {
-        childId: CHILD_ID,
-        threadId: THREAD_ID,
+        childId: overrides.childId ?? CHILD_ID,
+        threadId: overrides.threadId ?? THREAD_ID,
         nativeSessionId: "native-legacy-77",
         sessionRef: SESSION_REF,
         originParentSessionId: PARENT,
         originEntryId: "entry-legacy-77",
         title,
+        ...(provenance === undefined ? {} : { titleProvenance: provenance }),
         status: "completed",
         createdAt: 1_000,
         updatedAt: 2_000,
@@ -111,7 +136,10 @@ function legacyEntryJson(title: string = LEGACY_TITLE): string {
 }
 
 /** The serialized cache row a pre-fix adapter actually stored. */
-function legacyCacheRowJson(title: string = LEGACY_TITLE): string {
+function legacyCacheRowJson(
+  title: string = LEGACY_TITLE,
+  provenance?: string,
+): string {
   return JSON.stringify({
     childId: CHILD_ID,
     threadId: THREAD_ID,
@@ -121,6 +149,7 @@ function legacyCacheRowJson(title: string = LEGACY_TITLE): string {
     originEntryId: "entry-legacy-77",
     workspaceKey: WORKSPACE,
     title,
+    ...(provenance === undefined ? {} : { titleProvenance: provenance }),
     status: "completed",
     createdAt: 1_000,
     updatedAt: 2_000,
@@ -152,9 +181,12 @@ class FakeParentSession
   }
 }
 
-function legacyRefRecord(title: string = LEGACY_TITLE): PiChildRefRecord {
+function legacyRefRecord(
+  title: string = LEGACY_TITLE,
+  provenance?: string,
+): PiChildRefRecord {
   const parsed = parseChildRefEnvelope(
-    (JSON.parse(legacyEntryJson(title)) as { data: unknown }).data,
+    (JSON.parse(legacyEntryJson(title, provenance)) as { data: unknown }).data,
   );
   if (parsed.isErr()) throw new Error(JSON.stringify(parsed.error));
   return parsed.value.record;
@@ -165,62 +197,96 @@ function legacyRefRecord(title: string = LEGACY_TITLE): PiChildRefRecord {
 // ---------------------------------------------------------------------------
 
 describe("stored durable title provenance", () => {
-  it("never proves a legacy task-derived title", () => {
+  it("never proves an unmarked title, whatever its shape", () => {
     expect(
       isProvenDurableChildTitle({ title: LEGACY_TITLE, threadId: THREAD_ID }),
     ).toBe(false);
-    // Nor a bare identity with no binding to this row's own thread id.
+    // Nor a bare identity.
     expect(
       isProvenDurableChildTitle({ title: "shuttle", threadId: THREAD_ID }),
     ).toBe(false);
-    // Nor an identity bound to somebody else's thread id.
-    expect(
-      isProvenDurableChildTitle({
-        title: resolveDurableChildTitle({
-          agentName: "shuttle",
-          threadId: "thread-other-99",
-        }),
-        threadId: THREAD_ID,
-      }),
-    ).toBe(false);
-    // Nor a task line that merely ends with identity-looking text.
-    expect(
-      isProvenDurableChildTitle({
-        title: `${TASK_SENTINEL} ${PROVEN_TITLE}`,
-        threadId: THREAD_ID,
-      }),
-    ).toBe(false);
-  });
-
-  it("proves post-fix titles and leaves them byte-identical", () => {
+    // Nor a title that is byte-identical to a derived one: shape is not proof.
     expect(
       isProvenDurableChildTitle({ title: PROVEN_TITLE, threadId: THREAD_ID }),
-    ).toBe(true);
+    ).toBe(false);
+    // Nor legacy task text shaped exactly like this row's own derived title.
     expect(
-      enforceDurableChildTitle({ title: PROVEN_TITLE, threadId: THREAD_ID }),
-    ).toBe(PROVEN_TITLE);
-    // The safe fallback is itself proven, so enforcement never drifts.
-    expect(
-      enforceDurableChildTitle({ title: SAFE_TITLE, threadId: THREAD_ID }),
-    ).toBe(SAFE_TITLE);
+      isProvenDurableChildTitle({
+        title: FORGED_TITLE,
+        threadId: FORGED_THREAD_ID,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects malformed and unknown provenance markers", () => {
+    for (const forged of [
+      "",
+      "trusted-identity",
+      "trusted-identity-v2",
+      "TRUSTED-IDENTITY-V1",
+      " trusted-identity-v1",
+      "trusted-identity-v1 ",
+    ]) {
+      expect(isTrustedChildTitleProvenance(forged)).toBe(false);
+      expect(
+        isProvenDurableChildTitle({
+          title: PROVEN_TITLE,
+          threadId: THREAD_ID,
+          provenance: forged,
+        }),
+      ).toBe(false);
+    }
+    for (const forged of [
+      undefined,
+      null,
+      1,
+      true,
+      {},
+      ["trusted-identity-v1"],
+    ]) {
+      expect(isTrustedChildTitleProvenance(forged)).toBe(false);
+    }
+    expect(PI_CHILD_TITLE_PROVENANCE_VALUES).toEqual(["trusted-identity-v1"]);
+    expect(isTrustedChildTitleProvenance(PI_CHILD_TITLE_PROVENANCE)).toBe(true);
+  });
+
+  it("proves marked titles and leaves them byte-identical", () => {
+    const marked = {
+      title: PROVEN_TITLE,
+      threadId: THREAD_ID,
+      provenance: PI_CHILD_TITLE_PROVENANCE,
+    };
+    expect(isProvenDurableChildTitle(marked)).toBe(true);
+    expect(enforceDurableChildTitle(marked)).toBe(PROVEN_TITLE);
+    // Re-applying enforcement to its own output never drifts.
     expect(
       enforceDurableChildTitle({
-        title: enforceDurableChildTitle({
-          title: LEGACY_TITLE,
-          threadId: THREAD_ID,
-        }),
+        title: enforceDurableChildTitle(marked),
         threadId: THREAD_ID,
+        provenance: PI_CHILD_TITLE_PROVENANCE,
+      }),
+    ).toBe(PROVEN_TITLE);
+    // A replaced title is re-marked, so the safe fallback is stable too.
+    const safe = enforceDurableChildTitle({
+      title: LEGACY_TITLE,
+      threadId: THREAD_ID,
+    });
+    expect(safe).toBe(SAFE_TITLE);
+    expect(
+      enforceDurableChildTitle({
+        title: safe,
+        threadId: THREAD_ID,
+        provenance: PI_CHILD_TITLE_PROVENANCE,
       }),
     ).toBe(SAFE_TITLE);
   });
 
-  it("has no anchor without a thread id, so it fails closed", () => {
-    expect(isProvenDurableChildTitle({ title: PROVEN_TITLE })).toBe(false);
+  it("has no anchor without a thread id, so the fallback is bare", () => {
     expect(enforceDurableChildTitle({ title: LEGACY_TITLE })).toBe("child");
     expectSentinelAbsent(enforceDurableChildTitle({ title: LEGACY_TITLE }));
   });
 
-  it("replaces the legacy title with identity-only text", () => {
+  it("replaces an unmarked title with identity-only text", () => {
     const safe = enforceDurableChildTitle({
       title: LEGACY_TITLE,
       threadId: THREAD_ID,
@@ -228,6 +294,14 @@ describe("stored durable title provenance", () => {
     expect(safe).toBe(SAFE_TITLE);
     expect(safe).toBe("child-legacy77");
     expectSentinelAbsent(safe);
+
+    const forgedSafe = enforceDurableChildTitle({
+      title: FORGED_TITLE,
+      threadId: FORGED_THREAD_ID,
+    });
+    expect(forgedSafe).toBe(FORGED_SAFE_TITLE);
+    expect(forgedSafe).toBe("child-12345678");
+    expect(forgedSafe).not.toContain(FORGED_SENTINEL);
   });
 });
 
@@ -311,8 +385,10 @@ describe("ref boundary suppresses unproven legacy titles", () => {
     expectSentinelAbsent(session.getEntries());
   });
 
-  it("keeps a proven title stable across serialize and reparse", () => {
-    const entry = JSON.parse(legacyEntryJson(PROVEN_TITLE)) as {
+  it("keeps a marked title stable across serialize and reparse", () => {
+    const entry = JSON.parse(
+      legacyEntryJson(PROVEN_TITLE, PI_CHILD_TITLE_PROVENANCE),
+    ) as {
       data: unknown;
     };
     const parsed = parseChildRefEnvelope(entry.data);
@@ -500,7 +576,7 @@ describe("picker suppresses unproven legacy titles", () => {
     expectSentinelAbsent(entries.value.map((entry) => entry.title));
   });
 
-  it("keeps a proven ref title in the picker", async () => {
+  it("keeps a marked ref title in the picker", async () => {
     const candidates = await collectChildPickerCandidates({
       active: [],
       workspaceKey: WORKSPACE,
@@ -508,11 +584,32 @@ describe("picker suppresses unproven legacy titles", () => {
       refs: {
         readRefs: () =>
           okAsync<readonly PiChildRefRecord[], never>([
-            legacyRefRecord(PROVEN_TITLE),
+            legacyRefRecord(PROVEN_TITLE, PI_CHILD_TITLE_PROVENANCE),
           ]),
       },
     });
     if (candidates.isErr()) throw new Error(JSON.stringify(candidates.error));
     expect(candidates.value[0]?.explicitTitle).toBe(PROVEN_TITLE);
+  });
+
+  it("suppresses an identity-shaped legacy title with no marker", async () => {
+    const raw = JSON.parse(
+      legacyEntryJson(FORGED_TITLE, undefined, {
+        childId: "child-forged-12345678",
+        threadId: FORGED_THREAD_ID,
+      }),
+    ) as { data: { record: PiChildRefRecord } };
+    const candidates = await collectChildPickerCandidates({
+      active: [],
+      workspaceKey: WORKSPACE,
+      parentSessionId: PARENT,
+      refs: {
+        readRefs: () =>
+          okAsync<readonly PiChildRefRecord[], never>([raw.data.record]),
+      },
+    });
+    if (candidates.isErr()) throw new Error(JSON.stringify(candidates.error));
+    expect(candidates.value[0]?.explicitTitle).toBe(FORGED_SAFE_TITLE);
+    expect(JSON.stringify(candidates.value)).not.toContain(FORGED_SENTINEL);
   });
 });

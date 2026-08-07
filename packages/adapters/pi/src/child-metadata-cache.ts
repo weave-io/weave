@@ -51,7 +51,11 @@ import type {
   PiChildRefSourceAuthority,
   PiChildRefSourceState,
 } from "./child-session-refs.js";
-import { enforceDurableChildTitle } from "./child-title.js";
+import {
+  enforceDurableChildTitle,
+  enforceDurableChildTitleProvenance,
+  PI_CHILD_TITLE_PROVENANCE_VALUES,
+} from "./child-title.js";
 
 // ---------------------------------------------------------------------------
 // Layout and bounds
@@ -69,8 +73,18 @@ export const PI_CHILD_METADATA_CACHE_LAYOUT = Object.freeze({
   fileMode: 0o600,
 });
 
-/** Versioned schema identity. A different stored version degrades the cache. */
-export const PI_CHILD_METADATA_CACHE_SCHEMA_VERSION = 1 as const;
+/**
+ * Versioned schema identity. A different stored version degrades the cache.
+ *
+ * v2 adds the `title_provenance` column (Task 21 remediation D). A v1 database
+ * is migrated in place when the cache is opened for writing; rows carried
+ * across the migration have no marker, so their stored titles are treated as
+ * unproven and replaced by the safe fallback on read.
+ */
+export const PI_CHILD_METADATA_CACHE_SCHEMA_VERSION = 2 as const;
+
+/** Stored versions this module knows how to migrate forward in place. */
+const MIGRATABLE_SCHEMA_VERSIONS: readonly string[] = ["1"];
 
 /** Hard bounds applied to every query, independent of caller input. */
 export const PI_CHILD_METADATA_CACHE_BOUNDS = Object.freeze({
@@ -110,6 +124,7 @@ export const PI_CHILD_METADATA_CACHE_COLUMNS: readonly string[] = Object.freeze(
     "origin_entry_id",
     "workspace_key",
     "title",
+    "title_provenance",
     "status",
     "created_at",
     "updated_at",
@@ -300,6 +315,13 @@ export const PiChildMetadataRecordSchema = z
     originEntryId: idSchema,
     workspaceKey: idSchema,
     title: boundedString(PI_CHILD_METADATA_CACHE_BOUNDS.maxTitleLength),
+    /**
+     * Versioned proof that `title` came from trusted identity metadata
+     * (Task 21 remediation D). Optional so rows cached by schema v1 still
+     * parse; absent means unproven and the title is replaced. Unknown values
+     * are rejected by the closed enum as invalid data.
+     */
+    titleProvenance: z.enum(PI_CHILD_TITLE_PROVENANCE_VALUES).optional(),
     status: statusSchema,
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
@@ -324,13 +346,15 @@ export type PiChildMetadataRecord = z.infer<typeof PiChildMetadataRecordSchema>;
 /**
  * Validates one cache record. Never throws; failures are values.
  *
- * Rows cached before the durable-title fix hold a bounded first line of the
- * delegated task, and a cached row may also be written by a caller that never
- * went through the ref boundary. This boundary therefore proves title
- * provenance for itself (Threat Model T6, Warp blocker 1): an unproven title
- * is replaced by the deterministic identity-only fallback before the record
- * exists as a value, so no read, write, render, log, or error can observe it.
- * The replacement is idempotent, so a proven title never drifts.
+ * Rows cached before the provenance marker existed hold a bounded first line
+ * of the delegated task, and a cached row may also be written by a caller that
+ * never went through the ref boundary. This boundary therefore checks title
+ * provenance for itself (Threat Model T6, Warp blocker 1, Task 21 remediation
+ * D): proof is the persisted `titleProvenance` marker, never the shape of the
+ * title, so a legacy task line that happens to read like a derived identity
+ * title is still replaced by the deterministic identity-only fallback before
+ * the record exists as a value. The replacement is idempotent, so a proven
+ * title never drifts.
  */
 export function parseChildMetadataRecord(
   value: unknown,
@@ -338,11 +362,19 @@ export function parseChildMetadataRecord(
   const parsed = PiChildMetadataRecordSchema.safeParse(value);
   if (parsed.success) {
     const record = parsed.data;
-    const title = enforceDurableChildTitle({
+    const stored = {
       title: record.title,
       threadId: record.threadId,
-    });
-    return ok(title === record.title ? record : { ...record, title });
+      ...(record.titleProvenance === undefined
+        ? {}
+        : { provenance: record.titleProvenance }),
+    };
+    const title = enforceDurableChildTitle(stored);
+    const titleProvenance = enforceDurableChildTitleProvenance(stored);
+    if (title === record.title && titleProvenance === record.titleProvenance) {
+      return ok(record);
+    }
+    return ok({ ...record, title, titleProvenance });
   }
   return err({
     type: "CacheRecordInvalid",
@@ -372,6 +404,9 @@ export function childMetadataRecordFromRef(input: {
     originEntryId: ref.originEntryId,
     workspaceKey: input.workspaceKey,
     title: ref.title,
+    ...(ref.titleProvenance === undefined
+      ? {}
+      : { titleProvenance: ref.titleProvenance }),
     status: input.tombstoned === true ? ("tombstoned" as const) : ref.status,
     createdAt: ref.createdAt,
     updatedAt: ref.updatedAt,
@@ -1249,6 +1284,7 @@ CREATE TABLE IF NOT EXISTS children (
   origin_parent_session TEXT NOT NULL,
   origin_entry_id       TEXT NOT NULL,
   title                 TEXT NOT NULL,
+  title_provenance      TEXT,
   status                TEXT NOT NULL,
   created_at            INTEGER NOT NULL,
   updated_at            INTEGER NOT NULL,
@@ -1277,6 +1313,7 @@ const ROW_COLUMNS = [
   "origin_entry_id",
   "workspace_key",
   "title",
+  "title_provenance",
   "status",
   "created_at",
   "updated_at",
@@ -1301,6 +1338,8 @@ const RowSchema = z.looseObject({
   origin_entry_id: z.string(),
   workspace_key: z.string(),
   title: z.string(),
+  // Absent in schema v1 rows and NULL immediately after migration.
+  title_provenance: z.string().nullish(),
   status: z.string(),
   created_at: z.number(),
   updated_at: z.number(),
@@ -1337,6 +1376,7 @@ function rowToRecord(
   const initiator = optional(value.latest_run_initiator);
   const model = optional(value.latest_run_model);
   const reasoning = optional(value.latest_run_reasoning);
+  const provenance = optional(value.title_provenance ?? null);
   return parseChildMetadataRecord({
     childId: value.child_id,
     threadId: value.thread_id,
@@ -1346,6 +1386,7 @@ function rowToRecord(
     originEntryId: value.origin_entry_id,
     workspaceKey: value.workspace_key,
     title: value.title,
+    ...("value" in provenance ? { titleProvenance: provenance.value } : {}),
     status: value.status,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
@@ -1372,6 +1413,7 @@ function recordParams(record: PiChildMetadataRecord): readonly unknown[] {
     record.originParentSessionId,
     record.originEntryId,
     record.title,
+    record.titleProvenance ?? null,
     record.status,
     record.createdAt,
     record.updatedAt,
@@ -1391,17 +1433,18 @@ function recordParams(record: PiChildMetadataRecord): readonly unknown[] {
 const UPSERT_SQL = `
 INSERT INTO children (
   workspace_key, child_id, thread_id, native_session_id, session_ref,
-  origin_parent_session, origin_entry_id, title, status, created_at,
-  updated_at, settled_at, run_count, latest_run_action, latest_run_at,
-  latest_run_initiator, latest_run_model, latest_run_reasoning, stale,
-  tombstoned, cached_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  origin_parent_session, origin_entry_id, title, title_provenance, status,
+  created_at, updated_at, settled_at, run_count, latest_run_action,
+  latest_run_at, latest_run_initiator, latest_run_model, latest_run_reasoning,
+  stale, tombstoned, cached_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (workspace_key, origin_parent_session, child_id) DO UPDATE SET
   thread_id = excluded.thread_id,
   native_session_id = excluded.native_session_id,
   session_ref = excluded.session_ref,
   origin_entry_id = excluded.origin_entry_id,
   title = excluded.title,
+  title_provenance = excluded.title_provenance,
   status = CASE WHEN children.tombstoned = 1 THEN children.status ELSE excluded.status END,
   created_at = excluded.created_at,
   updated_at = excluded.updated_at,
@@ -1605,6 +1648,19 @@ function initializeDatabase(
         const sql = statement.trim();
         if (sql.length > 0) database.run(sql);
       }
+      // Forward-only, additive migration for databases created by schema v1.
+      // `CREATE TABLE IF NOT EXISTS` above leaves an existing table untouched,
+      // so the column is added here before any statement selects it.
+      const columns = database.all("PRAGMA table_info(children)");
+      const columnNames = new Set(
+        columns.flatMap((column) => {
+          const named = z.looseObject({ name: z.string() }).safeParse(column);
+          return named.success ? [named.data.name] : [];
+        }),
+      );
+      if (!columnNames.has("title_provenance")) {
+        database.run("ALTER TABLE children ADD COLUMN title_provenance TEXT");
+      }
       const rows = database.all("SELECT value FROM cache_meta WHERE key = ?", [
         "schema_version",
       ]);
@@ -1617,12 +1673,19 @@ function initializeDatabase(
         return "ready" as const;
       }
       const parsed = z.looseObject({ value: z.string() }).safeParse(stored);
+      if (!parsed.success) return "schema-mismatch" as const;
       if (
-        !parsed.success ||
-        parsed.data.value !== String(PI_CHILD_METADATA_CACHE_SCHEMA_VERSION)
+        parsed.data.value === String(PI_CHILD_METADATA_CACHE_SCHEMA_VERSION)
       ) {
+        return "ready" as const;
+      }
+      if (!MIGRATABLE_SCHEMA_VERSIONS.includes(parsed.data.value)) {
         return "schema-mismatch" as const;
       }
+      database.run("UPDATE cache_meta SET value = ? WHERE key = ?", [
+        String(PI_CHILD_METADATA_CACHE_SCHEMA_VERSION),
+        "schema_version",
+      ]);
       return "ready" as const;
     },
     (): PiChildMetadataCacheError => ({

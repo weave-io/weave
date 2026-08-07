@@ -60,7 +60,10 @@ import {
   type TimerHandle,
   type TimerPort,
 } from "./child-timer.js";
-import { resolveDurableChildTitle } from "./child-title.js";
+import {
+  PI_CHILD_TITLE_PROVENANCE,
+  resolveDurableChildTitle,
+} from "./child-title.js";
 import {
   addUsage,
   EMPTY_USAGE_AGGREGATE,
@@ -913,11 +916,15 @@ export class PiDelegationController {
                 sessionRef: record.ref,
                 // Spec 33 §4.2/§13, Threat Model T6: the durable title is
                 // derived only from trusted identity metadata. No task text,
-                // prompt text or transcript content may reach it.
+                // prompt text or transcript content may reach it. The explicit
+                // provenance marker (Task 21 remediation D) is what lets every
+                // later reader trust this title; a row without it is replaced
+                // by the safe fallback.
                 title: resolveDurableChildTitle({
                   agentName: request.agentName,
                   threadId: childId,
                 }),
+                titleProvenance: PI_CHILD_TITLE_PROVENANCE,
                 status: "running",
                 run: {
                   action: "start",

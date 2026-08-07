@@ -40,6 +40,7 @@ import {
   type PiChildRefSourceState,
   PiChildSessionRefStore,
 } from "../child-session-refs.js";
+import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 // ---------------------------------------------------------------------------
@@ -153,6 +154,7 @@ async function runCompletedChild(
     nativeSessionId: `native-${childId}`,
     sessionRef: `${childId}/session.jsonl`,
     title: "shuttle-tlemini1",
+    titleProvenance: PI_CHILD_TITLE_PROVENANCE,
     status: "running",
   });
   expect(created.isOk()).toBe(true);
@@ -565,6 +567,7 @@ describe("fail-closed, bounded, metadata-only", () => {
         "status",
         "threadId",
         "title",
+        "titleProvenance",
         "updatedAt",
       ].sort(),
     );

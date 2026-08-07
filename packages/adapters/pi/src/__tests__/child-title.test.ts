@@ -34,6 +34,7 @@ import type {
 import {
   durableChildTitleSuffix,
   PI_CHILD_TITLE_BOUNDS,
+  PI_CHILD_TITLE_PROVENANCE,
   resolveDurableChildTitle,
 } from "../child-title.js";
 
@@ -82,6 +83,7 @@ function makeRef(title: string): PiChildRefRecord {
     originParentSessionId: "parent-session-privacy",
     originEntryId: "entry-privacy-42",
     title,
+    titleProvenance: PI_CHILD_TITLE_PROVENANCE,
     status: "completed",
     createdAt: 1_000,
     updatedAt: 2_000,
