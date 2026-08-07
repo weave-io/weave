@@ -431,6 +431,144 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
     directory.close();
   });
 
+  test("a real leaf renamed away after open fails the leaf check", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    // The descriptor still holds the very same inode with identical metadata,
+    // so only a directory-relative leaf check can catch this.
+    await $`mv ${join(root, FILE)} ${join(root, "moved.jsonl")}`.quiet();
+
+    expect((await handle.readRange(0, 4))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    expect((await handle.stat())._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("a real leaf deleted after open fails the leaf check", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    await $`rm ${join(root, FILE)}`.quiet();
+
+    expect((await handle.readRange(0, 4))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("a real leaf atomically exchanged after open fails closed", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    // Same byte length and same mode; only the inode behind the name moves.
+    const decoy = join(root, "decoy.jsonl");
+    await Bun.write(decoy, PAYLOAD);
+    await $`chmod 600 ${decoy}`.quiet();
+    await $`mv ${decoy} ${join(root, FILE)}`.quiet();
+
+    expect((await handle.readRange(0, 4))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("a real leaf replaced by a symlink after open fails closed", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    const elsewhere = join(root, "elsewhere.jsonl");
+    await Bun.write(elsewhere, PAYLOAD);
+    await $`chmod 600 ${elsewhere}`.quiet();
+    await $`rm ${join(root, FILE)}`.quiet();
+    await $`ln -s ${elsewhere} ${join(root, FILE)}`.quiet();
+
+    expect((await handle.readRange(0, 4))._unsafeUnwrapErr()).toEqual({
+      type: "symlink-rejected",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("a new hardlink to the open leaf fails the link-count check", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    // Same inode, same size, same mtime: only st_nlink moves.
+    await $`ln ${join(root, FILE)} ${join(root, "second-name.jsonl")}`.quiet();
+
+    expect((await handle.readRange(0, 4))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("a real leaf chmoded after open fails closed", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    await $`chmod 644 ${join(root, FILE)}`.quiet();
+
+    expect((await handle.readRange(0, 4))._unsafeUnwrapErr()).toEqual({
+      type: "permissive-mode",
+      kind: "file",
+    });
+    handle.close();
+    directory.close();
+  });
+
+  test("an untouched real leaf still reads and pages normally", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    const handle = (await directory.openFile(FILE))._unsafeUnwrap();
+    if (handle === undefined) throw new Error("expected handle");
+    const decoder = new TextDecoder();
+    const first = (await handle.readRange(0, 4))._unsafeUnwrap();
+    const second = (await handle.readRange(4, 4))._unsafeUnwrap();
+    const stat = (await handle.stat())._unsafeUnwrap();
+
+    expect(decoder.decode(first.bytes) + decoder.decode(second.bytes)).toBe(
+      decoder.decode(PAYLOAD.subarray(0, 8)),
+    );
+    expect(stat.ino).toBe(handle.identity.ino);
+    expect(stat.size).toBe(handle.identity.size);
+    handle.close();
+    // Closing twice must stay safe, and reads after close must fail closed.
+    handle.close();
+    expect((await handle.readRange(0, 4))._unsafeUnwrapErr()).toEqual({
+      type: "unavailable",
+      operation: "open",
+    });
+    directory.close();
+  });
+
   test("a real file truncated during a read fails closed", async () => {
     const fs = createBunPiNativeSessionFs();
     const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();

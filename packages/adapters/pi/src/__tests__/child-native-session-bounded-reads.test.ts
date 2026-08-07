@@ -5,7 +5,11 @@
  * validated descriptor in bounded chunks: the file is opened once, the byte
  * ceiling is enforced against descriptor metadata before allocation, and any
  * growth, truncation, in-place rewrite, or post-validation path swap fails
- * closed with a typed error instead of yielding a partial projection.
+ * closed with a typed error instead of yielding a partial projection. The leaf
+ * name itself is re-checked with no-follow, directory-relative metadata around
+ * every chunk, so a rename, replacement, deletion, symlink, or hardlink of the
+ * name is rejected even though content only ever comes from the open
+ * descriptor.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -30,6 +34,8 @@ const PARENT = "parent-session-1";
 const REF = "child-1/session.jsonl";
 const DIR = `${ROOT}/child-1`;
 const FILE = "session.jsonl";
+/** Mirrors `MAX_DESCRIPTOR_SESSION_LINES` in the bounded reader. */
+const MAX_DESCRIPTOR_SESSION_LINES = 32_768;
 
 const textEncoder = new TextEncoder();
 
@@ -237,6 +243,74 @@ describe("descriptor-native bounded whole-session reads", () => {
     }
   });
 
+  test("exactly the line ceiling is accepted by the line budget", async () => {
+    const memory = new MemoryPiNativeSessionFs();
+    // First line is valid JSON but not a session header, so parsing reports
+    // `missing-header`. Total lines are exactly the ceiling, all newline
+    // terminated, so the line budget must not fire.
+    const notAHeader = JSON.stringify({ type: "message", id: "x" });
+    const body = `${notAHeader}${"\n".repeat(MAX_DESCRIPTOR_SESSION_LINES)}`;
+    await seedJsonl(memory, body);
+
+    const failure = (
+      await storeFor(memory).readSessionEntries(REF, PARENT)
+    )._unsafeUnwrapErr();
+
+    // Reaching the parser at all proves the bounded read accepted 32,768 lines.
+    expect(failure).toEqual({
+      type: "SessionCorrupt",
+      ref: REF,
+      reason: "missing-header",
+    });
+  });
+
+  test("the ceiling of terminated lines plus an unterminated final line fails closed", async () => {
+    const memory = new MemoryPiNativeSessionFs();
+    // Byte-for-byte the previous payload plus one unterminated final line:
+    // 32,768 newline-terminated lines and one more, so 32,769 in total.
+    const notAHeader = JSON.stringify({ type: "message", id: "x" });
+    const body = `${notAHeader}${"\n".repeat(MAX_DESCRIPTOR_SESSION_LINES)}{`;
+    await seedJsonl(memory, body);
+
+    const failure = (
+      await storeFor(memory).readSessionEntries(REF, PARENT)
+    )._unsafeUnwrapErr();
+
+    // `unreadable`, not the `missing-header` the parser would have produced:
+    // the line budget rejected the file before concatenation and parsing.
+    expect(failure).toEqual({
+      type: "SessionCorrupt",
+      ref: REF,
+      reason: "unreadable",
+    });
+  });
+
+  test("a valid session whose final line lacks a newline still reads", async () => {
+    const memory = new MemoryPiNativeSessionFs();
+    const body = buildSession(6);
+    expect(body.endsWith("\n")).toBe(true);
+    await seedJsonl(memory, body.slice(0, -1));
+
+    const entries = (
+      await storeFor(memory).readSessionEntries(REF, PARENT)
+    )._unsafeUnwrap();
+
+    expect(entries.entries).toHaveLength(6);
+  });
+
+  test("a trailing newline is not counted as an extra empty line", async () => {
+    const memory = new MemoryPiNativeSessionFs();
+    const body = buildSession(4);
+    expect(body.endsWith("\n")).toBe(true);
+    await seedJsonl(memory, body);
+
+    const entries = (
+      await storeFor(memory).readSessionEntries(REF, PARENT)
+    )._unsafeUnwrap();
+
+    expect(entries.entries).toHaveLength(4);
+  });
+
   test("growth during a chunked read fails closed with no partial projection", async () => {
     setPiNativeSessionMaxRangeLengthForTests(256);
     const memory = new MemoryPiNativeSessionFs();
@@ -288,33 +362,58 @@ describe("descriptor-native bounded whole-session reads", () => {
     });
   });
 
-  test("a path swapped after validation cannot redirect the read", async () => {
+  test("a path swapped after validation is rejected, never projected", async () => {
     setPiNativeSessionMaxRangeLengthForTests(256);
     const memory = new MemoryPiNativeSessionFs();
     await seedJsonl(memory, buildSession(12));
     memory.simulatePostValidationSwap(DIR, FILE, "replacement");
 
-    const entries = (
+    const failure = (
       await storeFor(memory).readSessionEntries(REF, PARENT)
-    )._unsafeUnwrap();
+    )._unsafeUnwrapErr();
 
-    // The swap replaced the name after validation; the read still came from
-    // the validated descriptor, so the projection is the validated content.
-    expect(entries.entries).toHaveLength(12);
-    expect(entries.record.sessionId).toBe("native-session-1");
+    // The name no longer resolves to the descriptor we hold open, so the read
+    // fails closed instead of projecting either file.
+    expect(failure).toEqual({
+      type: "SessionCorrupt",
+      ref: REF,
+      reason: "unreadable",
+    });
   });
 
-  test("a leaf renamed after validation cannot redirect the read", async () => {
+  test("a leaf renamed after validation is rejected, never projected", async () => {
     setPiNativeSessionMaxRangeLengthForTests(256);
     const memory = new MemoryPiNativeSessionFs();
     await seedJsonl(memory, buildSession(9));
     memory.simulatePostValidationSwap(DIR, FILE, "rename");
 
-    const entries = (
+    const failure = (
       await storeFor(memory).readSessionEntries(REF, PARENT)
-    )._unsafeUnwrap();
+    )._unsafeUnwrapErr();
 
-    expect(entries.entries).toHaveLength(9);
+    expect(failure).toEqual({
+      type: "SessionCorrupt",
+      ref: REF,
+      reason: "unreadable",
+    });
+  });
+
+  test.each([
+    ["replacement", { type: "SessionCorrupt", ref: REF, reason: "unreadable" }],
+    ["rename", { type: "SessionCorrupt", ref: REF, reason: "unreadable" }],
+    ["symlink", { type: "SessionRootViolation", reason: "symlink-rejected" }],
+    ["hardlink", { type: "SessionCorrupt", ref: REF, reason: "unreadable" }],
+  ] as const)("%s of the leaf during an in-flight read fails closed", async (swap, expected) => {
+    setPiNativeSessionMaxRangeLengthForTests(256);
+    const memory = new MemoryPiNativeSessionFs();
+    await seedJsonl(memory, buildSession(40));
+    memory.simulateMidReadLeafSwap(DIR, FILE, swap);
+
+    const failure = (
+      await storeFor(memory).readSessionEntries(REF, PARENT)
+    )._unsafeUnwrapErr();
+
+    expect(failure).toEqual(expected);
   });
 
   test("a missing session reports SessionMissing without a body read", async () => {

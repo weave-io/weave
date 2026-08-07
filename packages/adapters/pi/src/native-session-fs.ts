@@ -669,7 +669,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
         })
         .map(
           (opened): PiNativeSessionFileHandle =>
-            this.createFileHandle(file, toFileStat(opened)),
+            this.createFileHandle(file, checked.value, opened),
         )
         .mapErr((error) => {
           this.libc.close(file);
@@ -679,21 +679,47 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
   }
 
   /**
-   * Wraps one open regular-file descriptor. Reads re-`fstat` the descriptor
-   * before and after every chunk and fail closed when `{dev,ino,size,mtimeMs}`
-   * moves, so growth, truncation, or in-place mutation during a read never
-   * yields a partial projection.
+   * Wraps one open regular-file descriptor together with the directory
+   * descriptor and leaf name it was resolved through.
+   *
+   * Every read is guarded twice over. The open descriptor is re-`fstat`ed
+   * before and after each chunk, so growth, truncation, or in-place mutation
+   * fails closed. The directory leaf is separately re-checked with
+   * descriptor-relative, no-follow metadata (`openat(dirfd, name,
+   * O_NOFOLLOW|O_CLOEXEC)` + `fstat`, i.e. `fstatat` semantics) before and
+   * after each chunk, so a rename, atomic replacement or exchange, deletion,
+   * symlink swap, hardlink, or mode change of the name fails closed as well.
+   * That metadata probe is never read from and is closed immediately; content
+   * only ever comes from the descriptor opened once in {@link openFile}.
    */
   private createFileHandle(
     fd: number,
-    opened: PiNativeSessionFileStat,
+    name: string,
+    openedIdentity: FileNodeIdentity,
   ): PiNativeSessionFileHandle {
     let closed = false;
     const libc = this.libc;
+    const opened = toFileStat(openedIdentity);
     const directoryIdentity = (): ResultAsync<
       NodeIdentity,
       PiNativeSessionFsError
     > => this.identity();
+    /**
+     * Metadata-only, descriptor-relative, no-follow check that `name` still
+     * resolves to the exact node this handle holds open, with the same mode
+     * and a single link. The probe descriptor is closed by
+     * {@link targetIdentity} and is never used for content.
+     */
+    const verifyLeaf = (): ResultAsync<void, PiNativeSessionFsError> =>
+      this.targetIdentity(name).andThen((current) =>
+        current !== undefined &&
+        sameIdentity(current, openedIdentity) &&
+        current.mode === openedIdentity.mode
+          ? okAsync<void, PiNativeSessionFsError>(undefined)
+          : errAsync<void, PiNativeSessionFsError>({
+              type: "identity-changed",
+            }),
+      );
     return {
       identity: opened,
       stat(): ResultAsync<PiNativeSessionFileStat, PiNativeSessionFsError> {
@@ -703,7 +729,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
             operation: "open",
           });
         }
-        return statFileFd(fd).map(toFileStat);
+        return verifyLeaf().andThen(() => statFileFd(fd).map(toFileStat));
       },
       readRange(
         offset: number,
@@ -718,6 +744,8 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
         const range = validateRange(offset, length);
         if (range.isErr()) return errAsync(range.error);
         return ResultAsync.fromThrowable(async () => {
+          await unwrapResult(directoryIdentity());
+          await unwrapResult(verifyLeaf());
           const before = toFileStat(await unwrapResult(statFileFd(fd)));
           if (!sameFileStat(before, opened)) {
             throw { type: "identity-changed" } satisfies PiNativeSessionFsError;
@@ -728,6 +756,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
           if (!sameFileStat(after, opened)) {
             throw { type: "identity-changed" } satisfies PiNativeSessionFsError;
           }
+          await unwrapResult(verifyLeaf());
           await unwrapResult(directoryIdentity());
           return {
             identity: opened,
@@ -1129,6 +1158,10 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
   private readonly midReadTruncates = new Map<string, number>();
   private readonly midReadGrowths = new Map<string, number>();
   private readonly midReadRewrites = new Map<string, number>();
+  private readonly midReadLeafSwaps = new Map<
+    string,
+    "replacement" | "rename" | "symlink" | "hardlink"
+  >();
   private readonly exclusiveCreateFailures = new Map<
     string,
     PiNativeSessionFsError
@@ -1187,6 +1220,35 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     directory.files.set(name, {
       ...file,
       identity: nextMemoryIdentity(file.mode),
+    });
+  }
+
+  /**
+   * Swaps, renames, symlinks, or hardlinks the directory leaf between the two
+   * leaf checks that surround one in-flight range read, so tests can prove the
+   * post-read leaf verification rejects it.
+   */
+  private applyMidReadLeafSwap(path: string, name: string): void {
+    const key = this.midReadKey(path, name);
+    const swap = this.midReadLeafSwaps.get(key);
+    if (swap === undefined) return;
+    this.midReadLeafSwaps.delete(key);
+    const directory = this.directories.get(path);
+    const file = directory?.files.get(name);
+    if (directory === undefined || file === undefined) return;
+    if (swap === "rename") {
+      directory.files.delete(name);
+      return;
+    }
+    if (swap === "hardlink") {
+      file.hardlink = true;
+      return;
+    }
+    directory.files.set(name, {
+      ...file,
+      identity: nextMemoryIdentity(file.mode),
+      symlink: swap === "symlink",
+      bytes: swap === "symlink" ? new Uint8Array() : file.bytes.slice(),
     });
   }
 
@@ -1284,10 +1346,26 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
           const boundFile = checkFileIdentity(name, file.identity);
           if (boundFile.isErr()) return errAsync(boundFile.error);
           const opened = memoryFileStat(file);
-          // Name resolution ends here. The handle keeps the resolved node, so
-          // a post-validation swap of the name cannot redirect later reads.
+          // Name resolution ends here. The handle keeps the resolved node and
+          // the leaf name it came from, so later reads both read the resolved
+          // node and re-check that the name still points at it.
           fs.applyPostValidationSwap(path, name);
           let fileClosed = false;
+          /**
+           * Mirrors the production no-follow, directory-relative leaf probe:
+           * the name must still resolve to this exact node, unswapped,
+           * unrenamed, not a symlink, not hardlinked, same mode.
+           */
+          const verifyLeaf = (): Result<void, PiNativeSessionFsError> => {
+            const current = fs.directories.get(path)?.files.get(name);
+            if (current === undefined) return err({ type: "identity-changed" });
+            const validated = validateMemoryFile(current);
+            if (validated.isErr()) return err(validated.error);
+            return sameIdentity(current.identity, file.identity) &&
+              current.mode === file.mode
+              ? ok(undefined)
+              : err({ type: "identity-changed" });
+          };
           const handleForFile: PiNativeSessionFileHandle = {
             identity: opened,
             stat(): ResultAsync<
@@ -1300,7 +1378,14 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
                   operation: "open",
                 });
               }
-              return directoryIdentity().map(() => memoryFileStat(file));
+              return directoryIdentity().andThen(() => {
+                const leaf = verifyLeaf();
+                return leaf.isErr()
+                  ? fsErrAsync<PiNativeSessionFileStat>(leaf.error)
+                  : okAsync<PiNativeSessionFileStat, PiNativeSessionFsError>(
+                      memoryFileStat(file),
+                    );
+              });
             },
             readRange(
               offset,
@@ -1317,11 +1402,20 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
               return directoryIdentity().andThen(() => {
                 const validated = validateMemoryFile(file);
                 if (validated.isErr()) return errAsync(validated.error);
+                const leafBefore = verifyLeaf();
+                if (leafBefore.isErr()) {
+                  return fsErrAsync<PiNativeSessionFileRange>(leafBefore.error);
+                }
+                fs.applyMidReadLeafSwap(path, name);
                 fs.applyMidReadMutation(path, name, file);
                 if (!sameFileStat(memoryFileStat(file), opened)) {
                   return fsErrAsync<PiNativeSessionFileRange>({
                     type: "identity-changed",
                   });
+                }
+                const leafAfter = verifyLeaf();
+                if (leafAfter.isErr()) {
+                  return fsErrAsync<PiNativeSessionFileRange>(leafAfter.error);
                 }
                 const start = Math.min(offset, file.bytes.length);
                 const end = Math.min(offset + length, file.bytes.length);
@@ -1601,6 +1695,18 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     swap: "replacement" | "rename",
   ): void {
     this.postValidationSwaps.set(this.midReadKey(path, name), swap);
+  }
+
+  /**
+   * Swap the directory leaf during one in-flight range read, after the
+   * pre-read leaf check and before the post-read leaf check.
+   */
+  simulateMidReadLeafSwap(
+    path: string,
+    name: string,
+    swap: "replacement" | "rename" | "symlink" | "hardlink",
+  ): void {
+    this.midReadLeafSwaps.set(this.midReadKey(path, name), swap);
   }
 
   /** Truncate a leaf between identity capture and re-check inside one range read. */

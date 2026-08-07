@@ -64,13 +64,20 @@ Every delegated child runs in a persistent native Pi v3 session.
   the root. Path traversal and symbolic-link dereference outside the root are
   rejected, not repaired.
 - Read-only consumers open a session file once and read it through that
-  descriptor in bounded positional chunks of at most 64 KiB. The validated leaf
-  is never reopened by name, so a rename or replacement after validation cannot
-  redirect a read.
+  descriptor in bounded positional chunks of at most 64 KiB. Content is never
+  read by name after that first resolution, so a rename or replacement after
+  validation cannot redirect a read.
+- Around every positional chunk, the directory leaf is re-verified with
+  no-follow, directory-relative metadata against the open descriptor's
+  identity, mode, and link count. A rename, atomic replacement or exchange,
+  deletion, symlink replacement, added hardlink, or mode change of the leaf
+  fails closed with a typed error and no partial projection.
 - A whole-session descriptor read is bounded before allocation. The descriptor's
   own size is checked against a hard 8 MiB ceiling before any body byte is read;
   a larger file fails closed as `file-too-large`. Line and entry budgets apply
-  while chunks stream in, not after the file is in memory.
+  while chunks stream in, not after the file is in memory. A non-empty final
+  line without a trailing newline counts toward the 32,768-line ceiling, and the
+  ceiling is enforced before any chunk is concatenated or parsed.
 - Descriptor identity (`dev`, `ino`, `size`, `mtime`) is captured at open and
   re-verified after every chunk. Growth, truncation, replacement, or in-place
   rewrite during a read returns a typed error and no partial transcript.

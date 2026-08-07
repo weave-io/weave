@@ -1451,7 +1451,9 @@ const MAX_DESCRIPTOR_SESSION_LINES = 32_768;
  *    total bounded by `maxBytes + 1`. The extra sentinel byte proves a file
  *    that grew past the ceiling after the metadata check, which fails closed
  *    rather than truncating.
- * 3. Line and entry budgets are applied while reading, not after.
+ * 3. Line and entry budgets are applied while reading, not after. A non-empty
+ *    final line without a trailing newline counts toward the line ceiling, and
+ *    the ceiling is enforced before any chunk is concatenated or parsed.
  * 4. The descriptor identity is re-verified after every chunk and once more at
  *    the end. Growth, truncation, replacement, or in-place mutation yields a
  *    typed error and no partial projection.
@@ -1470,6 +1472,7 @@ function readBoundedFile(
   const chunks: Uint8Array[] = [];
   let total = 0;
   let lines = 0;
+  let lastByte: number | undefined;
 
   const readNext = (
     offset: number,
@@ -1494,7 +1497,17 @@ function readBoundedFile(
           });
         }
         if (range.bytes.length === 0) {
-          // EOF. The descriptor must still be the file we validated.
+          // EOF. A non-empty unterminated final line still counts as a line,
+          // and that budget is checked before anything is concatenated.
+          const totalLines = total > 0 && lastByte !== 0x0a ? lines + 1 : lines;
+          if (totalLines > MAX_DESCRIPTOR_SESSION_LINES) {
+            return errAsync<Uint8Array, PiNativeSessionError>({
+              type: "SessionCorrupt",
+              ref,
+              reason: "unreadable",
+            });
+          }
+          // The descriptor must still be the file we validated.
           return handle
             .stat()
             .mapErr((error) => fromFsError(error, ref))
@@ -1523,6 +1536,7 @@ function readBoundedFile(
         }
         chunks.push(range.bytes);
         total += range.bytes.length;
+        lastByte = range.bytes[range.bytes.length - 1];
         if (total > maxBytes) {
           return errAsync<Uint8Array, PiNativeSessionError>({
             type: "SessionCorrupt",
