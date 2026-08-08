@@ -1,7 +1,6 @@
 import { logger } from "@weaveio/weave-engine";
 import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
 import {
-  BUNDLED_SOURCE_IMPACTS,
   BunChangesetFileSystem,
   type ChangesetBump,
   ChangesetPolicyValidator,
@@ -9,7 +8,7 @@ import {
 } from "./changeset-policy.js";
 import type { Clock } from "./clock.js";
 import { BunCommandRunner } from "./command-runner.js";
-import type { PublicPackageName } from "./constants.js";
+import { PUBLIC_PACKAGES, type PublicPackageName } from "./constants.js";
 import {
   type ReleaseInvocation,
   validateReleaseInvocation,
@@ -156,7 +155,7 @@ function collectBumps(
   const bumps = new Map<PublicPackageName, ChangesetBump>();
   for (const changeset of changesets)
     for (const [name, bump] of changeset.releases)
-      if (name in BUNDLED_SOURCE_IMPACTS) {
+      if (name in PUBLIC_PACKAGES) {
         const publicName = name as PublicPackageName;
         const previous = bumps.get(publicName);
         if (previous === undefined || BUMP_WEIGHT[bump] > BUMP_WEIGHT[previous])

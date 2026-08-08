@@ -42,6 +42,11 @@ const stableOnly = `---
 ---
 
 Stable release`;
+const piOnly = `---
+"@weaveio/weave-adapter-pi": minor
+---
+
+Pi release`;
 
 describe("ChangesetPolicyValidator", () => {
   it("accepts stable-only and Claude-only changesets and partitions them", async () => {
@@ -76,6 +81,35 @@ Private`,
       },
       "PrivateTarget",
       ".changeset/private.md",
+    ],
+    [
+      "a nightly-only Pi target mixed with a stable target",
+      {
+        "pi-mixed.md": `---
+"@weaveio/weave-adapter-pi": minor
+"@weaveio/weave-cli": patch
+---
+
+Pi mixed`,
+      },
+      "MixedChannels",
+      ".changeset/pi-mixed.md",
+    ],
+    [
+      "a private engine target even when every public impact is present",
+      {
+        "private-engine.md": `---
+"@weaveio/weave-engine": patch
+"@weaveio/weave-cli": patch
+"@weaveio/weave-adapter-opencode": patch
+"@weaveio/weave-adapter-claude-code": patch
+"@weaveio/weave-adapter-pi": patch
+---
+
+Private engine`,
+      },
+      "PrivateTarget",
+      ".changeset/private-engine.md",
     ],
     [
       "unknown package",
@@ -116,6 +150,54 @@ Bump`,
     ).toBe(true);
   });
 
+  it("accepts a Pi-only changeset and keeps it off a stable cut", async () => {
+    const result = await validate({ "pi.md": piOnly, "stable.md": stableOnly });
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+    expect(result.value.stableFiles).toEqual([".changeset/stable.md"]);
+    expect(result.value.remainOnMainFiles).toEqual([".changeset/pi.md"]);
+  });
+
+  it("accepts nightly-only Pi and Claude targets in one changeset", async () => {
+    const result = await validate({
+      "nightly.md": `---
+"@weaveio/weave-adapter-claude-code": patch
+"@weaveio/weave-adapter-pi": patch
+---
+
+Nightly release`,
+    });
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+    expect(result.value.stableFiles).toEqual([]);
+    expect(result.value.remainOnMainFiles).toEqual([".changeset/nightly.md"]);
+  });
+
+  it("requires the Pi adapter among a private core source's public impacts", async () => {
+    const result = await validate({
+      "core.md": `---
+"@weaveio/weave-core": patch
+"@weaveio/weave-cli": patch
+"@weaveio/weave-adapter-opencode": patch
+"@weaveio/weave-adapter-claude-code": patch
+---
+
+Core`,
+    });
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(
+      result.error.filter((error) => error.type === "MissingPublicImpact"),
+    ).toEqual([
+      {
+        type: "MissingPublicImpact",
+        path: ".changeset/core.md",
+        source: "@weaveio/weave-core",
+        packageName: "@weaveio/weave-adapter-pi",
+      },
+    ]);
+  });
+
   it("reports every required public impact omitted for a private source", async () => {
     const result = await validate({
       "under-covered.md": `---
@@ -142,6 +224,12 @@ Under-covered`,
         path: ".changeset/under-covered.md",
         source: "@weaveio/weave-engine",
         packageName: "@weaveio/weave-adapter-claude-code",
+      },
+      {
+        type: "MissingPublicImpact",
+        path: ".changeset/under-covered.md",
+        source: "@weaveio/weave-engine",
+        packageName: "@weaveio/weave-adapter-pi",
       },
     ]);
   });

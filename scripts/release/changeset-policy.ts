@@ -5,34 +5,47 @@ import {
   type PrivatePackageName,
   PUBLIC_PACKAGES,
   type PublicPackageName,
+  type ReleaseChannel,
 } from "./constants.js";
 
 export const CHANGESET_BUMPS = ["patch", "minor", "major"] as const;
 export type ChangesetBump = (typeof CHANGESET_BUMPS)[number];
 
-/** Public artifacts containing each workspace's bundled source. */
-export const BUNDLED_SOURCE_IMPACTS = {
+/** Public artifacts that bundle each private workspace's source. */
+export const PRIVATE_SOURCE_IMPACTS = {
   "@weaveio/weave-core": [
     "@weaveio/weave-cli",
     "@weaveio/weave-adapter-opencode",
     "@weaveio/weave-adapter-claude-code",
+    "@weaveio/weave-adapter-pi",
   ],
   "@weaveio/weave-engine": [
     "@weaveio/weave-cli",
     "@weaveio/weave-adapter-opencode",
     "@weaveio/weave-adapter-claude-code",
+    "@weaveio/weave-adapter-pi",
   ],
   "@weaveio/weave-config": [
     "@weaveio/weave-cli",
     "@weaveio/weave-adapter-opencode",
+    "@weaveio/weave-adapter-pi",
   ],
-  "@weaveio/weave-adapter-claude-code": [
-    "@weaveio/weave-adapter-claude-code",
-    "@weaveio/weave-cli",
-  ],
-  "@weaveio/weave-cli": ["@weaveio/weave-cli"],
-  "@weaveio/weave-adapter-opencode": ["@weaveio/weave-adapter-opencode"],
-} as const satisfies Record<string, readonly PublicPackageName[]>;
+} as const satisfies Record<PrivatePackageName, readonly PublicPackageName[]>;
+
+/** A package is releasable when the canonical catalog publishes or bundles it. */
+export function isKnownPackage(packageName: string): boolean {
+  return (
+    packageName in PUBLIC_PACKAGES ||
+    PRIVATE_PACKAGE_NAMES.includes(packageName as PrivatePackageName)
+  );
+}
+
+/** Nightly-only artifacts cannot ride a stable cut, so they never share a file. */
+export function isNightlyOnly(packageName: PublicPackageName): boolean {
+  const channels: readonly ReleaseChannel[] =
+    PUBLIC_PACKAGES[packageName].channels;
+  return !channels.includes("stable");
+}
 
 export type ChangesetPolicyError =
   | { type: "Filesystem"; path: string; operation: "list" | "read" }
@@ -102,7 +115,7 @@ export function partitionChangesets(
   for (const changeset of changesets) {
     const targets = [...changeset.releases.keys()] as PublicPackageName[];
     const isStableOnly = targets.every(
-      (target) => target !== "@weaveio/weave-adapter-claude-code",
+      (target) => !(target in PUBLIC_PACKAGES) || !isNightlyOnly(target),
     );
     if (isStableOnly) stableFiles.push(changeset.path);
     else remainOnMainFiles.push(changeset.path);
@@ -172,7 +185,7 @@ export class ChangesetPolicyValidator {
   private validateReleases(changeset: ParsedChangeset): ChangesetPolicyError[] {
     const errors: ChangesetPolicyError[] = [];
     for (const [packageName, bump] of changeset.releases) {
-      if (!(packageName in BUNDLED_SOURCE_IMPACTS)) {
+      if (!isKnownPackage(packageName)) {
         errors.push({
           type: "UnknownPackage",
           path: changeset.path,
@@ -195,7 +208,7 @@ export class ChangesetPolicyValidator {
         path: changeset.path,
         packageName: source,
       });
-      for (const impact of BUNDLED_SOURCE_IMPACTS[source])
+      for (const impact of PRIVATE_SOURCE_IMPACTS[source])
         if (!changeset.releases.has(impact))
           errors.push({
             type: "MissingPublicImpact",
@@ -204,16 +217,14 @@ export class ChangesetPolicyValidator {
             packageName: impact,
           });
     }
-    const targets = [...changeset.releases.keys()];
-    const includesClaude = targets.includes(
-      "@weaveio/weave-adapter-claude-code",
+    const publicTargets = [...changeset.releases.keys()].filter(
+      (target): target is PublicPackageName => target in PUBLIC_PACKAGES,
     );
-    const includesStable = targets.some(
-      (target) =>
-        target in PUBLIC_PACKAGES &&
-        target !== "@weaveio/weave-adapter-claude-code",
+    const includesNightlyOnly = publicTargets.some(isNightlyOnly);
+    const includesStable = publicTargets.some(
+      (target) => !isNightlyOnly(target),
     );
-    if (includesClaude && includesStable)
+    if (includesNightlyOnly && includesStable)
       errors.push({ type: "MixedChannels", path: changeset.path });
     return errors;
   }

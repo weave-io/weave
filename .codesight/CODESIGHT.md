@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~28,900 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,500 tokens per conversation.**
-> **Last scanned:** 2026-08-07 23:40 — re-run after significant changes
+> **Last scanned:** 2026-08-08 00:08 — re-run after significant changes
 
 ---
 
@@ -1420,13 +1420,13 @@
   - interface BindingCliDependencies
   - type BindingCliError
 - `scripts/release/changeset-policy.ts`
+  - function isKnownPackage: (packageName) => boolean
+  - function isNightlyOnly: (packageName) => boolean
   - function partitionChangesets: (changesets) => ChangesetPartition
   - class BunChangesetFileSystem
   - class ChangesetPolicyValidator
   - interface ChangesetFileSystem
-  - interface ParsedChangeset
-  - interface ChangesetPartition
-  - _...4 more_
+  - _...6 more_
 - `scripts/release/clock.ts` — class SystemClock, interface Clock
 - `scripts/release/command-runner.ts`
   - class BunCommandRunner

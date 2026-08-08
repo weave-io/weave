@@ -1409,13 +1409,13 @@
   - interface BindingCliDependencies
   - type BindingCliError
 - `scripts/release/changeset-policy.ts`
+  - function isKnownPackage: (packageName) => boolean
+  - function isNightlyOnly: (packageName) => boolean
   - function partitionChangesets: (changesets) => ChangesetPartition
   - class BunChangesetFileSystem
   - class ChangesetPolicyValidator
   - interface ChangesetFileSystem
-  - interface ParsedChangeset
-  - interface ChangesetPartition
-  - _...4 more_
+  - _...6 more_
 - `scripts/release/clock.ts` — class SystemClock, interface Clock
 - `scripts/release/command-runner.ts`
   - class BunCommandRunner
