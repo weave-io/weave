@@ -15,6 +15,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { parseConfig, parseModelIntentEntry } from "@weaveio/weave-core";
 import type { AgentDescriptor, EffectiveToolPolicy } from "@weaveio/weave-engine";
 import { DEFAULT_FALLBACK_MODEL } from "@weaveio/weave-engine";
 import {
@@ -71,7 +72,7 @@ describe("resolveModelForAgent — constant fallback", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe(DEFAULT_FALLBACK_MODEL);
+      expect(result.value.model).toBe(DEFAULT_FALLBACK_MODEL);
     }
   });
 
@@ -97,7 +98,7 @@ describe("resolveModelForAgent — agent preference", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe("claude-sonnet-4-5");
+      expect(result.value.model).toBe("claude-sonnet-4-5");
     }
   });
 
@@ -115,7 +116,7 @@ describe("resolveModelForAgent — agent preference", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe("claude-sonnet-4-5");
+      expect(result.value.model).toBe("claude-sonnet-4-5");
     }
   });
 
@@ -127,7 +128,247 @@ describe("resolveModelForAgent — agent preference", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe("any-model");
+      expect(result.value.model).toBe("any-model");
+    }
+  });
+
+  it("maps Pi's openai-codex provider to OpenCode's openai provider", () => {
+    const descriptor = makeDescriptor({
+      models: ["openai-codex/gpt-5.3-codex"],
+    });
+    const context = makeContext({
+      availableModels: new Set(["openai/gpt-5.3-codex"]),
+    });
+
+    const result = resolveModelForAgent(descriptor, context);
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.model).toBe("openai/gpt-5.3-codex");
+    }
+  });
+
+  it("leaves OpenCode's openai provider unchanged", () => {
+    const descriptor = makeDescriptor({
+      models: ["openai/gpt-5.3-codex"],
+    });
+    const context = makeContext({
+      availableModels: new Set(["openai/gpt-5.3-codex"]),
+    });
+
+    const result = resolveModelForAgent(descriptor, context);
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.model).toBe("openai/gpt-5.3-codex");
+    }
+  });
+
+  it("strips the suffix before prefix normalization and availability matching", () => {
+    const descriptor = makeDescriptor({
+      models: ["openai-codex/gpt-5.3-codex#high"],
+    });
+    const context = makeContext({
+      availableModels: new Set(["openai/gpt-5.3-codex"]),
+    });
+
+    const result = resolveModelForAgent(descriptor, context);
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value).toEqual({
+        model: "openai/gpt-5.3-codex",
+        thinkingLevel: "high",
+      });
+    }
+  });
+
+  it("preserves ordered fallback selection and the winning suffix", () => {
+    const descriptor = makeDescriptor({
+      models: [
+        "openai-codex/unavailable-model#high",
+        "openai-codex/gpt-5.3-codex#low",
+      ],
+      mode: "primary",
+    });
+    const context = makeContext({
+      availableModels: new Set(["openai/gpt-5.3-codex"]),
+    });
+
+    const result = resolveModelForAgent(descriptor, context);
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value).toEqual({
+        model: "openai/gpt-5.3-codex",
+        thinkingLevel: "low",
+      });
+    }
+  });
+
+  it("preserves an escaped literal hash in the normalized base model", () => {
+    const descriptor = makeDescriptor({
+      models: ["provider/weird\\#model"],
+      mode: "primary",
+    });
+    const context = makeContext({
+      availableModels: new Set(["provider/weird#model"]),
+    });
+
+    const result = resolveModelForAgent(descriptor, context);
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value).toEqual({
+        model: "provider/weird#model",
+        thinkingLevel: undefined,
+      });
+    }
+  });
+
+  it("uses core grammar for zero through four source backslashes before #", () => {
+    const cases = [
+      {
+        sourceSlashCount: 0,
+        rawModel: "provider/#high",
+        expected: { baseModel: "provider/", thinkingLevel: "high" },
+      },
+      {
+        sourceSlashCount: 1,
+        rawModel: "provider/\\#high",
+        expected: { baseModel: "provider/#high" },
+      },
+      {
+        sourceSlashCount: 2,
+        rawModel: "provider/\\#high",
+        expected: { baseModel: "provider/#high" },
+      },
+      {
+        sourceSlashCount: 3,
+        rawModel: "provider/\\\\#high",
+        expected: { baseModel: "provider/\\\\", thinkingLevel: "high" },
+      },
+      {
+        sourceSlashCount: 4,
+        rawModel: "provider/\\\\#high",
+        expected: { baseModel: "provider/\\\\", thinkingLevel: "high" },
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const sourceModel =
+        `provider/${"\\".repeat(testCase.sourceSlashCount)}#high`;
+      const parsedConfig = parseConfig(
+        `agent parity { models ["${sourceModel}"] }`,
+      );
+
+      expect(parsedConfig.isOk()).toBe(true);
+      if (parsedConfig.isErr()) continue;
+
+      const rawModel = parsedConfig.value.agents.parity?.models?.[0];
+      expect(rawModel).toBe(testCase.rawModel);
+      if (rawModel === undefined) continue;
+
+      const parsedIntent = parseModelIntentEntry(rawModel);
+      expect(parsedIntent.isOk()).toBe(true);
+      if (parsedIntent.isOk()) {
+        expect(parsedIntent.value).toEqual(testCase.expected);
+      }
+    }
+  });
+
+  it("proves core-parsed literal hashes have even backslash parity", () => {
+    for (const baseSlashCount of [0, 1, 2, 3, 4]) {
+      // The lexer consumes pairs of backslashes. An odd source run leaves the
+      // final slash to escape the hash, so this is the source spelling that
+      // attempts to produce `baseSlashCount` slashes before a literal hash.
+      const sourceSlashCount = baseSlashCount * 2 + 1;
+      const sourceModel =
+        `provider/${"\\".repeat(sourceSlashCount)}#literal`;
+      const parsedConfig = parseConfig(
+        `agent parity { models ["${sourceModel}"] }`,
+      );
+
+      if (baseSlashCount % 2 === 1) {
+        // An odd parsed run is not representable: the core parser leaves an
+        // even run before #, making it a suffix delimiter, and the non-level
+        // suffix is rejected by the schema.
+        expect(parsedConfig.isErr()).toBe(true);
+        if (parsedConfig.isErr()) {
+          expect(parsedConfig.error).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: "ValidationError",
+                path: "agents.parity.models.0",
+              }),
+            ]),
+          );
+        }
+        continue;
+      }
+
+      expect(parsedConfig.isOk()).toBe(true);
+      if (parsedConfig.isErr()) continue;
+
+      const rawModel = parsedConfig.value.agents.parity?.models?.[0];
+      expect(rawModel).toBeDefined();
+      if (rawModel === undefined) continue;
+
+      const parsedIntent = parseModelIntentEntry(rawModel);
+      expect(parsedIntent.isOk()).toBe(true);
+      if (parsedIntent.isErr()) continue;
+
+      const expectedBaseModel =
+        `provider/${"\\".repeat(baseSlashCount)}#literal`;
+      expect(parsedIntent.value).toEqual({ baseModel: expectedBaseModel });
+
+      const result = resolveModelForAgent(
+        makeDescriptor({ models: [rawModel], mode: "primary" }),
+        makeContext({ availableModels: new Set([expectedBaseModel]) }),
+      );
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value).toEqual({
+          model: expectedBaseModel,
+          thinkingLevel: undefined,
+        });
+      }
+    }
+  });
+
+  it("keeps malformed descriptor bypasses defensive without changing result shape", () => {
+    const malformedModel = "provider/model#not-a-thinking-level";
+    expect(parseModelIntentEntry(malformedModel).isErr()).toBe(true);
+
+    const result = resolveModelForAgent(
+      makeDescriptor({ models: [malformedModel], mode: "primary" }),
+      makeContext({ availableModels: new Set([malformedModel]) }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value).toEqual({
+        model: malformedModel,
+        thinkingLevel: undefined,
+      });
+    }
+  });
+
+  it("keeps malformed escaped-hash suffixes as raw fallback models", () => {
+    const malformedModel = String.raw`provider/model\#bogus#bad`;
+    expect(parseModelIntentEntry(malformedModel).isErr()).toBe(true);
+
+    const result = resolveModelForAgent(
+      makeDescriptor({ models: [malformedModel], mode: "primary" }),
+      makeContext({ availableModels: new Set([malformedModel]) }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value).toEqual({
+        model: malformedModel,
+        thinkingLevel: undefined,
+      });
     }
   });
 });
@@ -145,7 +386,7 @@ describe("resolveModelForAgent — system default", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe("system-default-model");
+      expect(result.value.model).toBe("system-default-model");
     }
   });
 
@@ -163,7 +404,7 @@ describe("resolveModelForAgent — system default", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe("agent-preferred-model");
+      expect(result.value.model).toBe("agent-preferred-model");
     }
   });
 });
@@ -181,7 +422,7 @@ describe("resolveModelForAgent — UI-selected model", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe("ui-selected-model");
+      expect(result.value.model).toBe("ui-selected-model");
     }
   });
 
@@ -198,7 +439,7 @@ describe("resolveModelForAgent — UI-selected model", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       // Should fall through to system default, not UI-selected
-      expect(result.value).toBe("system-default-model");
+      expect(result.value.model).toBe("system-default-model");
     }
   });
 
@@ -210,7 +451,7 @@ describe("resolveModelForAgent — UI-selected model", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe("ui-selected-model");
+      expect(result.value.model).toBe("ui-selected-model");
     }
   });
 });
@@ -234,6 +475,29 @@ describe("resolveModelForAgent — fail-fast for unsupported subagent model", ()
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("ModelNotAvailableError");
+    }
+  });
+
+  it("checks the first suffixed subagent preference by normalized base model", () => {
+    const descriptor = makeDescriptor({
+      models: [
+        "openai-codex/unavailable-model#high",
+        "openai-codex/gpt-5.3-codex#low",
+      ],
+      mode: "subagent",
+    });
+    const context = makeContext({
+      availableModels: new Set(["openai/gpt-5.3-codex"]),
+    });
+
+    const result = resolveModelForAgent(descriptor, context);
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("ModelNotAvailableError");
+      expect(result.error.message).toContain(
+        "openai-codex/unavailable-model#high",
+      );
     }
   });
 
@@ -322,7 +586,7 @@ describe("resolveModelForAgent — fail-fast for unsupported subagent model", ()
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe("any-model");
+      expect(result.value.model).toBe("any-model");
     }
   });
 
@@ -382,7 +646,7 @@ describe("resolveModelForAgent — fail-fast for unsupported subagent model", ()
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe("claude-sonnet-4-5");
+      expect(result.value.model).toBe("claude-sonnet-4-5");
     }
   });
 });
@@ -407,7 +671,7 @@ describe("resolveModelForAgent — resolveAdapterModelIntent() integration", () 
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value).toBe("claude-sonnet-4-5");
+      expect(result.value.model).toBe("claude-sonnet-4-5");
     }
   });
 
@@ -425,8 +689,8 @@ describe("resolveModelForAgent — resolveAdapterModelIntent() integration", () 
 
     if (subagentResult.isOk() && primaryResult.isOk()) {
       // Primary gets UI-selected; subagent falls through to fallback
-      expect(primaryResult.value).toBe("ui-model");
-      expect(subagentResult.value).toBe(DEFAULT_FALLBACK_MODEL);
+      expect(primaryResult.value.model).toBe("ui-model");
+      expect(subagentResult.value.model).toBe(DEFAULT_FALLBACK_MODEL);
     }
   });
 
@@ -445,7 +709,7 @@ describe("resolveModelForAgent — resolveAdapterModelIntent() integration", () 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       // First available model in the declared list
-      expect(result.value).toBe("gpt-4o");
+      expect(result.value.model).toBe("gpt-4o");
     }
   });
 });

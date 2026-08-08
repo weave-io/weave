@@ -90,6 +90,7 @@ import {
   makeCapabilityEntry,
   makeContractWithCommandEntrypoints,
   noopProjectEffect,
+  okProbesForAll,
   PLAN_COMPLETION_WORKFLOWS,
   SIMPLE_WORKFLOWS,
 } from "./runtime-command-operations/fixtures.js";
@@ -1358,7 +1359,7 @@ describe("runtime-health — pure operation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("native"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1388,7 +1389,7 @@ describe("runtime-health — pure operation", () => {
           makeCapabilityEntry("token-usage-reporting", "degraded"),
         ],
       },
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1405,7 +1406,7 @@ describe("runtime-health — commandEntrypointsSupported derivation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("native"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1420,7 +1421,7 @@ describe("runtime-health — commandEntrypointsSupported derivation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("emulated"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1435,7 +1436,7 @@ describe("runtime-health — commandEntrypointsSupported derivation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("degraded"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1450,7 +1451,7 @@ describe("runtime-health — commandEntrypointsSupported derivation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("unsupported"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1467,7 +1468,7 @@ describe("runtime-health — degraded/unsupported operation lists", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("native"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({
@@ -1487,7 +1488,7 @@ describe("runtime-health — degraded/unsupported operation lists", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("native"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({
@@ -1507,7 +1508,7 @@ describe("runtime-health — degraded/unsupported operation lists", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("degraded"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1526,7 +1527,7 @@ describe("runtime-health — degraded/unsupported operation lists", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("native"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });

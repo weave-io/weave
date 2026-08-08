@@ -1,0 +1,33 @@
+---
+title: Claude Code
+description: Materialize Weave agents for Claude Code with the compose command.
+---
+
+## Generate the configuration
+
+The CLI includes Claude Code materialization:
+
+```sh
+weave compose --adapter claude-code --init
+```
+
+The composed Claude Code output defaults to `.weave/plugins/claude-code/`. Use `--project-root` to select another project and `--out-dir` to select another compose output directory.
+
+`--init` separately creates the Claude Code bootstrap plugin at `./weave-bootstrap-plugin` by default. If you use `--bootstrap-dir`, it writes that bootstrap plugin there instead; it does not change the compose output directory.
+
+## Use the result
+
+Reload Claude Code or start a new session after generation. The generated files provide Weave's agents and prompts to Claude Code; they do not add OpenCode's runtime command surface.
+
+The generated files provide the plan-entry command only: `/weave:start`, with `/start-work` as a compatibility alias that behaves identically.
+
+Validate before composing:
+
+```sh
+weave validate --project
+weave compose --adapter claude-code
+```
+
+The standalone `@weaveio/weave-adapter-claude-code` package is a nightly distribution. For the stable CLI path, use the bundled `weave compose` command.
+
+See [Packages](../../packages/) for package roles and the [support matrix](./) for release status.

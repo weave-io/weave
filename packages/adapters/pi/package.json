@@ -1,0 +1,60 @@
+{
+  "name": "@weaveio/weave-adapter-pi",
+  "version": "0.0.1",
+  "description": "Pi adapter for the Weave orchestration framework",
+  "keywords": ["pi-package", "weave", "agent-orchestration"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    },
+    "./extension": {
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "pi": {
+    "extensions": ["./dist/extension.js"]
+  },
+  "scripts": {
+    "build": "bun ../../../scripts/build-public-packages.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test src",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "kysely": "^0.27.5",
+    "mustache": "^4.2.0",
+    "neverthrow": "^8.2.0",
+    "pino": "^9.6.0",
+    "typebox": "1.1.38",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.81.1",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@weaveio/weave-config": "workspace:*",
+    "@weaveio/weave-core": "workspace:*",
+    "@weaveio/weave-engine": "workspace:*",
+    "typescript": "^5.4.5"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/weave-io/weave"
+  }
+}

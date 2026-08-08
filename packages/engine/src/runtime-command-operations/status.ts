@@ -16,8 +16,8 @@
  * - Active lease resolution is performed through the runtime store — the
  *   engine does not scan harness-owned directories.
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
- * @see docs/adapter-boundary.md
+ * @see docs/reference/cli.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/inspection.ts — inspectExecution
  * @see packages/engine/src/runtime-command-operations/types.ts
  */

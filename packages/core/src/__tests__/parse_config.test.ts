@@ -1,6 +1,84 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig } from "../parse-config.js";
 
+describe("parseConfig — opaque adapter settings", () => {
+  it("round-trips null and nested JSON values", () => {
+    const result = parseConfig(
+      `settings { adapters { test { value null nested { ok true } } } }`,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.adapters?.test).toEqual({
+      value: null,
+      nested: { ok: true },
+    });
+  });
+});
+
+describe("parseConfig — model thinking suffix", () => {
+  it("preserves plain, suffixed, and escaped raw entries for agents, reviews, and categories", () => {
+    const result = parseConfig(`agent shuttle {
+  models ["plain-model", "provider/model#high", "weird\\#model"]
+  review_models ["plain-review", "review/model#low", "review\\#model"]
+}
+category backend {
+  description "Backend services and persistence"
+  patterns ["src/**"]
+  models ["plain-category", "category/model#max", "category\\#model"]
+}`);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.shuttle?.models).toEqual([
+      "plain-model",
+      "provider/model#high",
+      "weird\\#model",
+    ]);
+    expect(config.agents.shuttle?.review_models).toEqual([
+      "plain-review",
+      "review/model#low",
+      "review\\#model",
+    ]);
+    expect(config.categories.backend?.models).toEqual([
+      "plain-category",
+      "category/model#max",
+      "category\\#model",
+    ]);
+  });
+
+  it("surfaces invalid suffixes as typed validation errors with field indexes", () => {
+    const result = parseConfig(`agent shuttle {
+  models ["plain-model", "provider/model#hgih"]
+  review_models ["plain-review", "review/model#bad"]
+}
+category backend {
+  description "Backend services and persistence"
+  patterns ["src/**"]
+  models ["plain-category", "category/model#invalid"]
+}`);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "ValidationError",
+            path: "agents.shuttle.models.1",
+            message: expect.stringContaining("Allowed levels"),
+          }),
+          expect.objectContaining({
+            type: "ValidationError",
+            path: "agents.shuttle.review_models.1",
+            message: expect.stringContaining("Allowed levels"),
+          }),
+          expect.objectContaining({
+            type: "ValidationError",
+            path: "categories.backend.models.1",
+            message: expect.stringContaining("Allowed levels"),
+          }),
+        ]),
+      );
+    }
+  });
+});
+
 describe("parseConfig — valid sources", () => {
   it("minimal valid source: single agent with inline prompt", () => {
     const src = `agent helper {
@@ -194,6 +272,72 @@ describe("parseConfig — validation errors", () => {
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
     expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+});
+
+describe("parseConfig — category description", () => {
+  it("a described category survives the full pipeline", () => {
+    const src = `category backend {
+  description "Backend services, APIs, and persistence"
+  patterns ["src/api/**"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().categories.backend?.description).toBe(
+      "Backend services, APIs, and persistence",
+    );
+  });
+
+  it("a category with no description → ValidationError at categories.<name>.description", () => {
+    const src = `category backend {
+  patterns ["src/api/**"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "ValidationError",
+          path: "categories.backend.description",
+        }),
+      ]),
+    );
+  });
+
+  it("an empty category description → ValidationError with the non-empty message", () => {
+    const src = `category backend {
+  description ""
+  patterns ["src/api/**"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "ValidationError",
+          path: "categories.backend.description",
+          message: "category description must be a non-empty string",
+        }),
+      ]),
+    );
+  });
+
+  it("a whitespace-only category description → ValidationError with the non-empty message", () => {
+    const src = `category backend {
+  description "   "
+  patterns ["src/api/**"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "ValidationError",
+          path: "categories.backend.description",
+          message: "category description must be a non-empty string",
+        }),
+      ]),
+    );
   });
 });
 
@@ -549,6 +693,7 @@ describe("parseConfig — workflows", () => {
 }
 
 category backend {
+  description "Backend API surface"
   patterns ["src/api/**"]
 }
 
@@ -587,6 +732,21 @@ describe("parseConfig — settings block", () => {
     expect(config.settings.runtime.journal.strict).toBe(false);
   });
 
+  it("settings { enforce_permissions false } parses end-to-end", () => {
+    const result = parseConfig(`settings {
+  enforce_permissions false
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.enforce_permissions).toBe(false);
+  });
+
+  it("rejects a non-boolean enforce_permissions value end-to-end", () => {
+    const result = parseConfig(`settings {
+  enforce_permissions off
+}`);
+    expect(result.isErr()).toBe(true);
+  });
+
   it("settings { log_level WARN runtime { journal { strict true } } } parses correctly", () => {
     const src = `settings {
   log_level WARN
@@ -608,7 +768,57 @@ describe("parseConfig — settings block", () => {
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
     expect(config.settings.log_level).toBe("INFO");
+    expect(config.settings.enforce_permissions).toBeUndefined();
     expect(config.settings.runtime.journal.strict).toBe(false);
+    expect(config.settings.runtime.journal.retention_days).toBe(30);
+    expect(config.settings.runtime.journal.max_entries).toBe(10_000);
+    expect(config.settings.runtime.usage.detail_retention_days).toBe(30);
+    expect(config.settings.runtime.usage.max_observations).toBe(100_000);
+    expect(config.settings.runtime.log.max_segment_bytes).toBe(5_242_880);
+    expect(config.settings.runtime.log.max_segments).toBe(3);
+  });
+
+  it("settings runtime retention pipeline parses end-to-end", () => {
+    const src = `settings {
+  log_level INFO
+  runtime {
+    journal {
+      strict true
+      retention_days 45
+      max_entries 2000
+    }
+    usage {
+      detail_retention_days 10
+      max_observations 5000
+    }
+    log {
+      max_segment_bytes 131072
+      max_segments 5
+    }
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const runtime = result._unsafeUnwrap().settings.runtime;
+    expect(runtime.journal.strict).toBe(true);
+    expect(runtime.journal.retention_days).toBe(45);
+    expect(runtime.journal.max_entries).toBe(2000);
+    expect(runtime.usage.detail_retention_days).toBe(10);
+    expect(runtime.usage.max_observations).toBe(5000);
+    expect(runtime.log.max_segment_bytes).toBe(131_072);
+    expect(runtime.log.max_segments).toBe(5);
+  });
+
+  it("settings runtime retention out of range fails parseConfig", () => {
+    const src = `settings {
+  runtime {
+    log {
+      max_segments 101
+    }
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
   });
 
   it("top-level log_level → err with ValidationError", () => {
@@ -936,7 +1146,7 @@ extend before-plan ["spec-review"]`;
 // ---------------------------------------------------------------------------
 
 describe("parseConfig — before-plan non-reconciling in v1", () => {
-  // Spec 22 Unit 2: "before-plan steps do not participate in reconciliation
+  // execution lifecycle contract: "before-plan steps do not participate in reconciliation
   // semantics" in v1. As of Task 4.1, `reconciliation_handlers` is a valid
   // schema field. The v1 non-reconciling constraint for before-plan steps is
   // enforced at the engine/runtime layer, not the schema/validate layer.
@@ -1227,7 +1437,7 @@ describe("parseConfig — reconciliation_handlers on workflow steps", () => {
 });
 
 // ---------------------------------------------------------------------------
-// parseConfig — workflow-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// parseConfig — workflow-level prompt_append and prompt_append_file (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("parseConfig — workflow-level prompt_append and prompt_append_file", () => {
@@ -1358,7 +1568,7 @@ describe("parseConfig — workflow-level prompt_append and prompt_append_file", 
 });
 
 // ---------------------------------------------------------------------------
-// parseConfig — step-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// parseConfig — step-level prompt_append and prompt_append_file (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("parseConfig — step-level prompt_append and prompt_append_file", () => {
@@ -1618,5 +1828,110 @@ describe("parseConfig — review_models field", () => {
         (e) => e.type === "ValidationError" && e.path.includes("review_models"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("parseConfig — delegation limits", () => {
+  it("parses project caps and agent overrides end to end", () => {
+    const result = parseConfig(`settings {
+  delegation {
+    max_children 7
+    max_concurrency 3
+    max_depth 4
+    max_processes 10
+  }
+}
+agent loom {
+  delegation { max_children 4 max_concurrency 2 }
+}`);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.settings.delegation?.max_depth).toBe(4);
+    expect(config.agents.loom?.delegation?.max_children).toBe(4);
+  });
+
+  it("accepts max_concurrency 9 for project and agent settings", () => {
+    const result = parseConfig(`settings {
+  delegation { max_concurrency 9 }
+}
+agent loom {
+  delegation { max_concurrency 9 }
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(9);
+    expect(
+      result._unsafeUnwrap().agents.loom?.delegation?.max_concurrency,
+    ).toBe(9);
+  });
+
+  it("rejects max_concurrency 10 with precise project and agent paths", () => {
+    const project = parseConfig(
+      `settings { delegation { max_concurrency 10 } }`,
+    );
+    expect(project.isErr()).toBe(true);
+    expect(project._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        type: "ValidationError",
+        path: "settings.delegation.max_concurrency",
+      }),
+    );
+
+    const agent = parseConfig(
+      `agent loom { delegation { max_concurrency 10 } }`,
+    );
+    expect(agent.isErr()).toBe(true);
+    expect(agent._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        type: "ValidationError",
+        path: "agents.loom.delegation.max_concurrency",
+      }),
+    );
+  });
+
+  it("accepts project max_children without max_concurrency and preserves omission", () => {
+    const result = parseConfig(`settings {
+  delegation { max_children 2 }
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 2,
+    });
+  });
+
+  it("reports one local agent concurrency issue without a duplicate project issue", () => {
+    const result = parseConfig(`settings {
+  delegation { max_children 4 max_concurrency 2 }
+}
+agent loom {
+  delegation { max_children 1 max_concurrency 3 }
+}`);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
+      type: "ValidationError",
+      path: "agents.loom.delegation.max_concurrency",
+      message: "max_concurrency must be less than or equal to max_children",
+    });
+  });
+
+  it("keeps delegation settings absent so merge can preserve lower layers", () => {
+    const result = parseConfig("");
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toBeUndefined();
+  });
+
+  it("returns a precise validation path for max_concurrency above the cap", () => {
+    const result = parseConfig(`settings {
+  delegation { max_children 2 max_concurrency 3 }
+}`);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors).toHaveLength(1);
+    const firstError = errors[0];
+    expect(firstError?.type).toBe("ValidationError");
+    if (firstError?.type === "ValidationError") {
+      expect(firstError.path).toBe("settings.delegation.max_concurrency");
+    }
   });
 });

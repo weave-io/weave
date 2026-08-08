@@ -12,7 +12,7 @@
  * The writer itself does not fingerprint — callers fingerprint content before
  * placing it in `data`.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import {

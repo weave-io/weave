@@ -7,10 +7,11 @@
  * Designed for use in unit and integration tests. Supports configurable
  * failure injection to exercise error paths without a real SQLite database.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { InMemoryPermissionApprovalRepository } from "../permissions/repository.js";
 import {
   conflictError,
   notFoundError,
@@ -18,6 +19,7 @@ import {
   type RuntimeStoreError,
 } from "./errors.js";
 import { RuntimeJournalWriter } from "./journal-writer.js";
+import { registerPermissionApprovalRepository } from "./permission-repository.js";
 import { sanitizeSnapshotMetadata } from "./sanitizer.js";
 import type {
   AcquireLeaseInput,
@@ -30,6 +32,7 @@ import type {
   SessionSnapshotRepository,
   TransactionCallback,
   UpdateWorkflowInstanceInput,
+  UsageRepository,
   WorkflowInstanceRepository,
 } from "./store.js";
 import type {
@@ -43,11 +46,18 @@ import type {
   JournalQueryFilter,
   JsonObject,
   OwnerId,
+  RetentionPruneStats,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
   StepAttemptRecord,
+  UsageObservation,
+  UsageObservationId,
+  UsageObservationQueryFilter,
+  UsageObservationRecordResult,
+  UsageRollup,
+  UsageRollupQueryFilter,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -59,6 +69,15 @@ import {
   createSessionSnapshotId,
   createWorkflowInstanceId,
 } from "./types.js";
+import {
+  applyObservationToRollup,
+  denormalizeUsageObservation,
+  emptyUsageRollup,
+  type NormalizedUsageObservation,
+  normalizeUsageObservation,
+  reconcileUsageReplay,
+  usageRollupKey,
+} from "./usage.js";
 
 // ---------------------------------------------------------------------------
 // Failure injection configuration
@@ -91,6 +110,12 @@ export interface InMemoryRuntimeStoreFailureConfig {
   snapshotRecord?: RuntimeStoreError;
   /** Injected error for `RuntimeJournalRepository.append`. */
   journalAppend?: RuntimeStoreError;
+  /** Injected error for `RuntimeJournalRepository.prune`. */
+  journalPrune?: RuntimeStoreError;
+  /** Injected error for `UsageRepository.recordObservation`. */
+  usageRecord?: RuntimeStoreError;
+  /** Injected error for `UsageRepository.pruneDetails`. */
+  usagePrune?: RuntimeStoreError;
   /** Injected error for `RuntimeStore.transaction`. */
   transaction?: RuntimeStoreError;
   /** Injected error for `RuntimeStore.close`. */
@@ -323,6 +348,12 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     id: WorkflowInstanceId,
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
+    approval?: {
+      readonly actor: import("./types.js").ArtifactApprovalActor;
+      readonly decidedAt: string;
+      readonly expectedRevision: number;
+      readonly expectedDigest?: string;
+    },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     if (this.failures.workflowUpdateArtifactApproval) {
       return errAsync(this.failures.workflowUpdateArtifactApproval);
@@ -342,9 +373,42 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     if (artifactIndex === -1) {
       return errAsync(notFoundError("ArtifactRef", artifactId as string));
     }
-    const updatedArtifacts = existing.artifacts.map((a, i) =>
-      i === artifactIndex ? { ...a, approvalState } : a,
-    );
+    const currentArtifact = existing.artifacts[artifactIndex];
+    if (
+      approval !== undefined &&
+      currentArtifact.revision !== approval.expectedRevision
+    ) {
+      return errAsync(
+        conflictError(
+          "ArtifactRevision",
+          `Artifact revision changed before approval commit`,
+          artifactId as string,
+        ),
+      );
+    }
+    if (
+      approval !== undefined &&
+      currentArtifact.integrity !== undefined &&
+      currentArtifact.integrity.digest !== approval.expectedDigest
+    ) {
+      return errAsync(
+        conflictError(
+          "ArtifactDigest",
+          `Artifact digest changed before approval commit`,
+          artifactId as string,
+        ),
+      );
+    }
+    const updatedArtifacts = existing.artifacts.map((a, i) => {
+      if (i !== artifactIndex) return a;
+      if (approval === undefined) return { ...a, approvalState };
+      return {
+        ...a,
+        approvalState,
+        approvalActor: approval.actor,
+        approvalDecidedAt: approval.decidedAt,
+      };
+    });
     const updated: WorkflowInstance = {
       ...existing,
       artifacts: updatedArtifacts,
@@ -376,10 +440,16 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
   private readonly store = new Map<string, ExecutionLease>();
   private failures: InMemoryRuntimeStoreFailureConfig;
   private readonly clock: () => Date;
+  private readonly onRelease?: (leaseId: ExecutionLeaseId) => void;
 
-  constructor(failures: InMemoryRuntimeStoreFailureConfig, clock: () => Date) {
+  constructor(
+    failures: InMemoryRuntimeStoreFailureConfig,
+    clock: () => Date,
+    onRelease?: (leaseId: ExecutionLeaseId) => void,
+  ) {
     this.failures = failures;
     this.clock = clock;
+    this.onRelease = onRelease;
   }
 
   /** Update the shared failure config reference. */
@@ -516,6 +586,10 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
       );
     }
     this.store.delete(id);
+    // Parity with the SQLite store's ON DELETE SET NULL: sever historical
+    // SessionSnapshot references to the released lease instead of dropping
+    // the snapshot itself.
+    this.onRelease?.(id);
     return okAsync(undefined);
   }
 
@@ -548,6 +622,20 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
   /** Update the shared failure config reference. */
   setFailures(failures: InMemoryRuntimeStoreFailureConfig): void {
     this.failures = failures;
+  }
+
+  /**
+   * Sever every SessionSnapshot's reference to a released ExecutionLease.
+   *
+   * Mirrors the SQLite store's `ON DELETE SET NULL` foreign key action:
+   * the snapshot rows survive, only the `leaseId` link is cleared.
+   */
+  severLeaseReferences(leaseId: ExecutionLeaseId): void {
+    for (const [id, snapshot] of this.store) {
+      if (snapshot.leaseId !== leaseId) continue;
+      const { leaseId: _severed, ...rest } = snapshot;
+      this.store.set(id, rest as SessionSnapshot);
+    }
   }
 
   record(
@@ -715,6 +803,18 @@ class InMemoryRuntimeJournalRepository implements RuntimeJournalRepository {
     return okAsync(entries);
   }
 
+  prune(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    if (this.failures.journalPrune) {
+      return errAsync(this.failures.journalPrune);
+    }
+    return okAsync(
+      pruneByAgeThenCount(this.store, options, (entry) => entry.timestamp),
+    );
+  }
+
   /** Snapshot current store state for transaction staging. */
   snapshot(): Map<string, RuntimeJournalEntry> {
     return new Map(this.store);
@@ -730,18 +830,202 @@ class InMemoryRuntimeJournalRepository implements RuntimeJournalRepository {
 }
 
 // ---------------------------------------------------------------------------
-// InMemoryRuntimeStore
+// InMemoryUsageRepository
 // ---------------------------------------------------------------------------
 
+class InMemoryUsageRepository implements UsageRepository {
+  private readonly observations = new Map<string, NormalizedUsageObservation>();
+  private readonly rollups = new Map<string, UsageRollup>();
+  private failures: InMemoryRuntimeStoreFailureConfig;
+
+  constructor(failures: InMemoryRuntimeStoreFailureConfig) {
+    this.failures = failures;
+  }
+
+  setFailures(failures: InMemoryRuntimeStoreFailureConfig): void {
+    this.failures = failures;
+  }
+
+  recordObservation(
+    observation: UsageObservation,
+  ): ResultAsync<UsageObservationRecordResult, RuntimeStoreError> {
+    if (this.failures.usageRecord) {
+      return errAsync(this.failures.usageRecord);
+    }
+
+    const normalizedResult = normalizeUsageObservation(observation);
+    if (normalizedResult.isErr()) return errAsync(normalizedResult.error);
+    const normalized = normalizedResult.value;
+
+    const existing = this.observations.get(normalized.id);
+    if (existing !== undefined) {
+      const replay = reconcileUsageReplay(existing, normalized);
+      if (replay.isErr()) return errAsync(replay.error);
+      return okAsync({
+        kind: "noop",
+        observation: denormalizeUsageObservation(existing),
+      });
+    }
+
+    this.observations.set(normalized.id, normalized);
+    const key = usageRollupKey(normalized);
+    const prior = this.rollups.get(key) ?? emptyUsageRollup(normalized);
+    this.rollups.set(key, applyObservationToRollup(prior, normalized));
+
+    return okAsync({
+      kind: "inserted",
+      observation: denormalizeUsageObservation(normalized),
+    });
+  }
+
+  findObservationById(
+    id: UsageObservationId,
+  ): ResultAsync<UsageObservation | null, RuntimeStoreError> {
+    const found = this.observations.get(id);
+    if (found === undefined) return okAsync(null);
+    return okAsync(denormalizeUsageObservation(found));
+  }
+
+  listObservations(
+    filter?: UsageObservationQueryFilter,
+  ): ResultAsync<readonly UsageObservation[], RuntimeStoreError> {
+    let entries = Array.from(this.observations.values()).sort((a, b) =>
+      a.timestamp.localeCompare(b.timestamp),
+    );
+    if (filter?.workflowInstanceId) {
+      entries = entries.filter(
+        (e) => e.workflowInstanceId === filter.workflowInstanceId,
+      );
+    }
+    if (filter?.sourceKind) {
+      entries = entries.filter((e) => e.sourceKind === filter.sourceKind);
+    }
+    if (filter?.sourceName) {
+      entries = entries.filter((e) => e.sourceName === filter.sourceName);
+    }
+    if (filter?.agentName) {
+      entries = entries.filter((e) => e.agentName === filter.agentName);
+    }
+    if (filter?.model) {
+      entries = entries.filter((e) => e.model === filter.model);
+    }
+    if (filter?.after) {
+      const after = filter.after;
+      entries = entries.filter((e) => e.timestamp > after);
+    }
+    if (filter?.before) {
+      const before = filter.before;
+      entries = entries.filter((e) => e.timestamp < before);
+    }
+    if (filter?.limit) {
+      entries = entries.slice(0, filter.limit);
+    }
+    return okAsync(entries.map(denormalizeUsageObservation));
+  }
+
+  listRollups(
+    filter?: UsageRollupQueryFilter,
+  ): ResultAsync<readonly UsageRollup[], RuntimeStoreError> {
+    let entries = Array.from(this.rollups.values());
+    if (filter?.workflowInstanceId) {
+      entries = entries.filter(
+        (e) => e.workflowInstanceId === filter.workflowInstanceId,
+      );
+    }
+    if (filter?.sourceKind) {
+      entries = entries.filter((e) => e.source.kind === filter.sourceKind);
+    }
+    if (filter?.sourceName) {
+      entries = entries.filter((e) => e.source.name === filter.sourceName);
+    }
+    if (filter?.agentName) {
+      entries = entries.filter((e) => e.agentName === filter.agentName);
+    }
+    if (filter?.model) {
+      entries = entries.filter((e) => e.model === filter.model);
+    }
+    return okAsync(entries);
+  }
+
+  pruneDetails(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    if (this.failures.usagePrune) {
+      return errAsync(this.failures.usagePrune);
+    }
+    // Detail pruning never touches rollups.
+    return okAsync(
+      pruneByAgeThenCount(
+        this.observations,
+        options,
+        (entry) => entry.timestamp,
+      ),
+    );
+  }
+
+  snapshot(): {
+    observations: Map<string, NormalizedUsageObservation>;
+    rollups: Map<string, UsageRollup>;
+  } {
+    return {
+      observations: new Map(this.observations),
+      rollups: new Map(this.rollups),
+    };
+  }
+
+  restore(snapshot: {
+    observations: Map<string, NormalizedUsageObservation>;
+    rollups: Map<string, UsageRollup>;
+  }): void {
+    this.observations.clear();
+    for (const [k, v] of snapshot.observations) {
+      this.observations.set(k, v);
+    }
+    this.rollups.clear();
+    for (const [k, v] of snapshot.rollups) {
+      this.rollups.set(k, v);
+    }
+  }
+}
+
 /**
- * In-memory implementation of `RuntimeStore`.
- *
- * Uses `Map<string, T>` collections for each entity type.
- * Transactions collect operations in a staging area and commit atomically
- * on success, or discard on failure.
- *
- * Supports configurable failure injection via `failureConfig`.
+ * Age-first then oldest-above-count pruning against a Map keyed by id.
  */
+function pruneByAgeThenCount<T>(
+  store: Map<string, T>,
+  options: { readonly olderThan?: string; readonly maxCount?: number },
+  timestampOf: (value: T) => string,
+): RetentionPruneStats {
+  let removedByAge = 0;
+  let removedByCount = 0;
+
+  if (options.olderThan !== undefined) {
+    const olderThan = options.olderThan;
+    for (const [id, value] of store) {
+      if (timestampOf(value) < olderThan) {
+        store.delete(id);
+        removedByAge += 1;
+      }
+    }
+  }
+
+  if (options.maxCount !== undefined && store.size > options.maxCount) {
+    const ordered = Array.from(store.entries()).sort((a, b) =>
+      timestampOf(a[1]).localeCompare(timestampOf(b[1])),
+    );
+    const overflow = store.size - options.maxCount;
+    for (let i = 0; i < overflow; i += 1) {
+      const entry = ordered[i];
+      if (entry === undefined) break;
+      store.delete(entry[0]);
+      removedByCount += 1;
+    }
+  }
+
+  return { removedByAge, removedByCount };
+}
+
 // ---------------------------------------------------------------------------
 // InMemoryJournalWriterRepository
 // ---------------------------------------------------------------------------
@@ -811,6 +1095,13 @@ class InMemoryJournalWriterRepository implements RuntimeJournalRepository {
   ): ResultAsync<readonly RuntimeJournalEntry[], RuntimeStoreError> {
     return this.inner.query(filter);
   }
+
+  prune(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    return this.inner.prune(options);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -822,6 +1113,8 @@ export class InMemoryRuntimeStore implements RuntimeStore {
   readonly leases: InMemoryExecutionLeaseRepository;
   readonly snapshots: InMemorySessionSnapshotRepository;
   readonly journal: InMemoryRuntimeJournalRepository;
+  readonly usage: InMemoryUsageRepository;
+  #permissions: InMemoryPermissionApprovalRepository;
 
   private readonly clock: () => Date;
   private readonly strictJournal: boolean;
@@ -839,12 +1132,20 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     this.failureConfig = { ...(options.failOn ?? {}) };
 
     this.instances = new InMemoryWorkflowInstanceRepository(this.failureConfig);
+    this.snapshots = new InMemorySessionSnapshotRepository(this.failureConfig);
     this.leases = new InMemoryExecutionLeaseRepository(
       this.failureConfig,
       this.clock,
+      (leaseId) => this.snapshots.severLeaseReferences(leaseId),
     );
-    this.snapshots = new InMemorySessionSnapshotRepository(this.failureConfig);
     this.journal = new InMemoryRuntimeJournalRepository(this.failureConfig);
+    this.usage = new InMemoryUsageRepository(this.failureConfig);
+    // Construct after the injected Date clock is assigned so revoke/list/match
+    // timestamps share the store clock (parity with SqliteRuntimeStore).
+    this.#permissions = new InMemoryPermissionApprovalRepository({}, () =>
+      this.clock().getTime(),
+    );
+    registerPermissionApprovalRepository(this, this.#permissions);
   }
 
   /**
@@ -856,6 +1157,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     this.leases.setFailures(config);
     this.snapshots.setFailures(config);
     this.journal.setFailures(config);
+    this.usage.setFailures(config);
   }
 
   transaction<T>(
@@ -870,6 +1172,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     const leasesSnap = this.leases.snapshot();
     const snapshotsSnap = this.snapshots.snapshot();
     const journalSnap = this.journal.snapshot();
+    const usageSnap = this.usage.snapshot();
 
     // Wrap the journal with a writer that enforces strict/best-effort semantics
     const journalForTx = new InMemoryJournalWriterRepository(
@@ -882,6 +1185,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
       leases: this.leases,
       snapshots: this.snapshots,
       journal: journalForTx,
+      usage: this.usage,
     };
 
     return ResultAsync.fromPromise(Promise.resolve(callback(tx)), (cause) =>
@@ -893,6 +1197,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
         this.leases.restore(leasesSnap);
         this.snapshots.restore(snapshotsSnap);
         this.journal.restore(journalSnap);
+        this.usage.restore(usageSnap);
         return errAsync(result.error);
       }
       // Commit: changes are already applied in-place

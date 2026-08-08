@@ -24,8 +24,8 @@
  * - The engine never reads `.weave/plans/**`; plan state stays behind
  *   `PlanStateProvider` (not used here — plan validation is caller-owned).
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
- * @see docs/adapter-boundary.md
+ * @see docs/reference/cli.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/start.ts — startExecution
  * @see packages/engine/src/execution-lifecycle/dispatch.ts — dispatchStep
  * @see packages/engine/src/execution-lifecycle/completion.ts — completeStep

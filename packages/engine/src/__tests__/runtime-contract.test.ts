@@ -5,7 +5,7 @@
  * Uses a simple in-memory stub to verify behavioral contracts without
  * requiring a real SQLite implementation.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { describe, expect, it } from "bun:test";
@@ -13,11 +13,11 @@ import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   EXECUTION_AUTHORIZATION_SOURCES,
   type ExecutionAuthorizationSource,
-  validateAuthorizationSource,
   RECONCILIATION_AUTHORIZATION_SOURCES,
   RECONCILIATION_REASONS,
-  validateReconciliationSource,
   type ReconciliationAuthorizationSource,
+  validateAuthorizationSource,
+  validateReconciliationSource,
 } from "../execution-lifecycle.js";
 import type { RuntimeStoreError } from "../runtime/errors.js";
 import {
@@ -41,6 +41,7 @@ import type {
   SessionSnapshotRepository,
   TransactionCallback,
   UpdateWorkflowInstanceInput,
+  UsageRepository,
   WorkflowInstanceRepository,
 } from "../runtime/store.js";
 import type {
@@ -266,6 +267,10 @@ class StubWorkflowInstanceRepository implements WorkflowInstanceRepository {
     id: WorkflowInstanceId,
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
+    approval?: {
+      readonly actor: import("../runtime/types.js").ArtifactApprovalActor;
+      readonly decidedAt: string;
+    },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     const existing = this.store.get(id);
     if (!existing) {
@@ -282,9 +287,16 @@ class StubWorkflowInstanceRepository implements WorkflowInstanceRepository {
     if (artifactIndex === -1) {
       return errAsync(notFoundError("ArtifactRef", artifactId as string));
     }
-    const updatedArtifacts = existing.artifacts.map((a, i) =>
-      i === artifactIndex ? { ...a, approvalState } : a,
-    );
+    const updatedArtifacts = existing.artifacts.map((a, i) => {
+      if (i !== artifactIndex) return a;
+      if (approval === undefined) return { ...a, approvalState };
+      return {
+        ...a,
+        approvalState,
+        approvalActor: approval.actor,
+        approvalDecidedAt: approval.decidedAt,
+      };
+    });
     const updated: WorkflowInstance = {
       ...existing,
       artifacts: updatedArtifacts,
@@ -584,16 +596,63 @@ class StubRuntimeJournalRepository implements RuntimeJournalRepository {
   injectFailure(): void {
     this.failNextAppend = true;
   }
+
+  prune(_options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<
+    { removedByAge: number; removedByCount: number },
+    RuntimeStoreError
+  > {
+    return okAsync({ removedByAge: 0, removedByCount: 0 });
+  }
 }
 
 /**
  * Minimal in-memory RuntimeStore stub for contract testing.
  */
+
+class StubUsageRepository implements UsageRepository {
+  recordObservation(
+    observation: import("../runtime/types.js").UsageObservation,
+  ): ResultAsync<
+    import("../runtime/types.js").UsageObservationRecordResult,
+    RuntimeStoreError
+  > {
+    return okAsync({ kind: "inserted", observation });
+  }
+  findObservationById(): ResultAsync<
+    import("../runtime/types.js").UsageObservation | null,
+    RuntimeStoreError
+  > {
+    return okAsync(null);
+  }
+  listObservations(): ResultAsync<
+    readonly import("../runtime/types.js").UsageObservation[],
+    RuntimeStoreError
+  > {
+    return okAsync([]);
+  }
+  listRollups(): ResultAsync<
+    readonly import("../runtime/types.js").UsageRollup[],
+    RuntimeStoreError
+  > {
+    return okAsync([]);
+  }
+  pruneDetails(): ResultAsync<
+    import("../runtime/types.js").RetentionPruneStats,
+    RuntimeStoreError
+  > {
+    return okAsync({ removedByAge: 0, removedByCount: 0 });
+  }
+}
+
 class StubRuntimeStore implements RuntimeStore {
   readonly instances = new StubWorkflowInstanceRepository();
   readonly leases = new StubExecutionLeaseRepository();
   readonly snapshots = new StubSessionSnapshotRepository();
   readonly journal = new StubRuntimeJournalRepository();
+  readonly usage = new StubUsageRepository();
 
   transaction<T>(
     callback: TransactionCallback<T>,
@@ -603,6 +662,7 @@ class StubRuntimeStore implements RuntimeStore {
       leases: this.leases,
       snapshots: this.snapshots,
       journal: this.journal,
+      usage: this.usage,
     };
     return callback(tx);
   }
@@ -1254,6 +1314,7 @@ describe("RuntimeStore transaction API", () => {
       expect(tx.leases).toBeDefined();
       expect(tx.snapshots).toBeDefined();
       expect(tx.journal).toBeDefined();
+      expect(tx.usage).toBeDefined();
       return okAsync("ok" as const);
     });
     expect(result.isOk()).toBe(true);
@@ -1366,11 +1427,11 @@ describe("WorkflowInstance CRUD", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Spec 22 Unit 1 — WorkflowInstance and ExecutionLease are only created
+// Tests: execution lifecycle contract — WorkflowInstance and ExecutionLease are only created
 // through explicit user-authorized execution transitions
 // ---------------------------------------------------------------------------
 
-describe("Spec 22 Unit 1 — explicit execution boundary (WorkflowInstance + ExecutionLease)", () => {
+describe("execution lifecycle contract — explicit execution boundary (WorkflowInstance + ExecutionLease)", () => {
   it("WorkflowInstance starts in 'created' status — not 'running' — before any execution transition", async () => {
     // A newly created WorkflowInstance must be in 'created' status.
     // Only an explicit execution transition (startExecution) may move it to 'running'.
@@ -1486,10 +1547,10 @@ describe("Spec 22 Unit 1 — explicit execution boundary (WorkflowInstance + Exe
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Spec 22 Unit 1 — ExecutionAuthorizationSource contract (Task 1.3)
+// Tests: execution lifecycle contract — ExecutionAuthorizationSource contract (Task 1.3)
 // ---------------------------------------------------------------------------
 
-describe("Spec 22 Unit 1 — ExecutionAuthorizationSource contract (ADR 0004)", () => {
+describe("execution lifecycle contract — ExecutionAuthorizationSource contract (ADR 0004)", () => {
   it("EXECUTION_AUTHORIZATION_SOURCES contains exactly 4 values", () => {
     expect(EXECUTION_AUTHORIZATION_SOURCES).toHaveLength(4);
   });
@@ -1611,7 +1672,7 @@ describe("Spec 22 Unit 1 — ExecutionAuthorizationSource contract (ADR 0004)", 
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Task 3.1 — Artifact identity, monotonic revisions, approval state,
+// Tests: Artifact identity, monotonic revisions, approval state,
 // and integrity-verification metadata
 // ---------------------------------------------------------------------------
 
@@ -1734,9 +1795,11 @@ describe("ArtifactRef monotonic revision", () => {
       })
     )._unsafeUnwrap();
 
-    const planArt = updated.artifacts.find((a) => a.name === "plan")!;
-    const outputArt = updated.artifacts.find((a) => a.name === "output")!;
-    expect(planArt.id as string).not.toBe(outputArt.id as string);
+    const planArt = updated.artifacts.find((a) => a.name === "plan");
+    const outputArt = updated.artifacts.find((a) => a.name === "output");
+    expect(planArt).toBeDefined();
+    expect(outputArt).toBeDefined();
+    expect(planArt?.id as string).not.toBe(outputArt?.id as string);
   });
 });
 
@@ -1919,10 +1982,10 @@ describe("ArtifactRef integrity-verification metadata", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Reconciliation contract — Spec 22 Unit 3
+// Reconciliation contract — execution lifecycle contract
 // ---------------------------------------------------------------------------
 
-describe("Reconciliation contract — closed reason set (Spec 22 Unit 3)", () => {
+describe("Reconciliation contract — closed reason set (execution lifecycle contract)", () => {
   it("RECONCILIATION_REASONS contains exactly the four closed built-in values", () => {
     expect(RECONCILIATION_REASONS).toHaveLength(4);
     expect(RECONCILIATION_REASONS).toContain("execution-mismatch");
@@ -1993,19 +2056,19 @@ describe("Reconciliation contract — closed reason set (Spec 22 Unit 3)", () =>
     expect(result.error.message).toContain('"user"');
   });
 
-  it("validateReconciliationSource error message references the spec", () => {
+  it("validateReconciliationSource error message references the lifecycle contract", () => {
     const result = validateReconciliationSource(
       "security-rejection",
       "runtime",
     );
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
-    // Error message should reference the spec for traceability
-    expect(result.error.message).toContain("22-spec-workflow-first-execution");
+    // Error message should reference the maintained lifecycle contract.
+    expect(result.error.message).toContain("docs/reference/execution-lifecycle.md");
   });
 });
 
-describe("Reconciliation contract — WorkflowInstance and ExecutionLease invariants (Spec 22 Unit 3)", () => {
+describe("Reconciliation contract — WorkflowInstance and ExecutionLease invariants (execution lifecycle contract)", () => {
   it("WorkflowInstance status 'paused' is the fail-closed state for reconciliation without a handler", () => {
     // Structural: 'paused' must be a valid WorkflowInstanceStatus
     const validStatuses = WORKFLOW_INSTANCE_STATUSES;
@@ -2060,10 +2123,10 @@ describe("Reconciliation contract — WorkflowInstance and ExecutionLease invari
 });
 
 // ---------------------------------------------------------------------------
-// Reconciliation contract — gate re-run (Spec 22 Unit 3)
+// Reconciliation contract — gate re-run (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("Reconciliation contract — gate re-run (Spec 22 Unit 3)", () => {
+describe("Reconciliation contract — gate re-run (execution lifecycle contract)", () => {
   it("ReconcileExecutionOutput carries gateReRunStepName for gate-originated reasons", () => {
     // Structural: the output type must support gateReRunStepName as an optional field.
     // This test documents the contract shape without requiring a live store.
@@ -2163,10 +2226,10 @@ describe("Reconciliation contract — gate re-run (Spec 22 Unit 3)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Reconciliation contract — before-plan exclusion (Spec 22 Unit 3)
+// Reconciliation contract — before-plan exclusion (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("Reconciliation contract — before-plan exclusion (Spec 22 Unit 3)", () => {
+describe("Reconciliation contract — before-plan exclusion (execution lifecycle contract)", () => {
   it("before-plan steps do not participate in reconciliation — v1 rule is documented", () => {
     // Structural proof: the v1 rule is that before-plan steps do not participate
     // in reconciliation semantics. This test documents the invariant.
@@ -2244,10 +2307,10 @@ describe("Reconciliation contract — before-plan exclusion (Spec 22 Unit 3)", (
 });
 
 // ---------------------------------------------------------------------------
-// Reconciliation contract — immutable completed plan tasks (Spec 22 Unit 3)
+// Reconciliation contract — immutable completed plan tasks (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("Reconciliation contract — immutable completed plan tasks (Spec 22 Unit 3)", () => {
+describe("Reconciliation contract — immutable completed plan tasks (execution lifecycle contract)", () => {
   it("ReconcileExecutionInput accepts an optional planStateProvider field", () => {
     // Structural: ReconcileExecutionInput must support planStateProvider as an
     // optional field. This test documents the contract shape.

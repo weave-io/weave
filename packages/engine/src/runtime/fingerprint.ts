@@ -5,7 +5,7 @@
  * - Fingerprinting uses `crypto.subtle.digest` (Web Crypto API, available in Bun).
  * - Fingerprints replace raw prompt/completion content — raw content is never stored.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { ResultAsync } from "neverthrow";

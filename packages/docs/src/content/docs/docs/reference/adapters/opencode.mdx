@@ -1,8 +1,53 @@
 ---
-title: OpenCode Adapter Reference Moved
-description: Compatibility route for consolidated OpenCode and adapter docs.
+title: OpenCode
+description: Install and configure the published Weave adapter for OpenCode.
 ---
 
-This page is kept for existing links after the public docs consolidation. OpenCode setup and debugging now live in [OpenCode](../../../opencode/), and adapter support lookup lives in [Adapters](../).
+## Install
 
-Current support note: use `@weave/adapter-opencode/plugin`; the registered commands are `/weave:start` and `/start-work`.
+Use the canonical package name:
+
+```text
+@weaveio/weave-adapter-opencode
+```
+
+The package root is the canonical OpenCode plugin entry. Add it to OpenCode's `opencode.json` or `opencode.jsonc` with an exact version:
+
+```json
+{
+  "plugin": ["@weaveio/weave-adapter-opencode@<exact-version>"]
+}
+```
+
+The optional `@weaveio/weave-adapter-opencode/plugin` export is available for integrations that require an explicit plugin subpath. Do not use an older package alias.
+
+## Configure Weave
+
+Create `.weave/config.weave`, then validate it:
+
+```sh
+weave init --scope local --yes
+weave validate --project
+```
+
+OpenCode fetches the plugin package at startup. Restart OpenCode after changing the plugin version or Weave configuration.
+
+## Commands
+
+The adapter registers:
+
+- `/weave:start` to start work from the configured workflow surface.
+- `/start-work` as a compatibility alias for `/weave:start`.
+
+The adapter also maps Weave agents, model preferences, prompt composition, and supported policy fields to OpenCode's native configuration.
+
+## Verify loading
+
+Use OpenCode's own diagnostics:
+
+```sh
+opencode debug config
+opencode debug info
+```
+
+These commands verify the resolved plugin and configuration. See the [support matrix](./) for the boundary between implementation and release status.

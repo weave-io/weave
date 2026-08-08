@@ -38,7 +38,16 @@ const log = logger.child({ module: "compose" });
 
 type AgentMode = NonNullable<AgentConfig["mode"]>;
 
+/**
+ * Category metadata attached to a generated category shuttle.
+ *
+ * `description` is required here — the DSL requires a non-blank description on
+ * every category block, so generated shuttles always carry routing text. The
+ * looser `CategoryInput` stays optional for externally supplied descriptors
+ * that build template contexts directly.
+ */
 export interface CategoryMetadata extends CategoryInput {
+  description: string;
   patterns: string[];
   isCategory: true;
 }
@@ -60,7 +69,7 @@ export interface AgentDescriptor {
 
 export interface AgentDescriptorCategory {
   name: string;
-  description?: string;
+  description: string;
   patterns: string[];
 }
 
@@ -78,9 +87,7 @@ export type PromptTemplateReason =
   | { kind: "UnsupportedTag"; tag: string; message: string }
   | { kind: "UnknownPath"; path: string; message: string }
   | { kind: "UnsafePath"; path: string; message: string }
-  | { kind: "FunctionValue"; path: string; message: string }
-  | { kind: "SectionMismatch"; message: string }
-  | { kind: "UnresolvedTag"; tag: string; message: string };
+  | { kind: "FunctionValue"; path: string; message: string };
 
 export type ComposeError =
   | {
@@ -245,12 +252,10 @@ function mapRendererErrorToReason(
     };
   }
 
-  // UnresolvedTag
-  return {
-    kind: "UnresolvedTag",
-    tag: rendererError.tag,
-    message: rendererError.message,
-  };
+  // FunctionValue is the last RendererError variant. Exhaustiveness is enforced
+  // by the assignment below: if a new variant is added, `never` fails to compile.
+  const exhaustive: never = rendererError;
+  return exhaustive;
 }
 
 /**
@@ -574,7 +579,7 @@ function loadAppendSourceFromInput(
 /**
  * Compose the final prompt for a single workflow step.
  *
- * ## Precedence rules (Spec 22 Unit 4)
+ * ## Precedence rules (execution lifecycle contract)
  *
  * 1. **Step-local precedence**: when the step declares its own
  *    `prompt_append` / `prompt_append_file`, that append is used exclusively.
@@ -583,7 +588,7 @@ function loadAppendSourceFromInput(
  * 2. **Workflow-scope fallback**: when the step has no append of its own,
  *    the workflow-level `prompt_append` / `prompt_append_file` is applied.
  *
- * 3. **No append**: when neither scope has an append, the step prompt is
+ * 3. **No append**: when neither scope has an append, the step is
  *    returned as-is (after template rendering).
  *
  * 4. **Same-scope last-append-wins**: within a single scope, the config-merge

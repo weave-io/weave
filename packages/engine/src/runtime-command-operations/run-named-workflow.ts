@@ -15,8 +15,8 @@
  *   execution (see `start-plan.ts` for the plan-first path).
  * - `/start-work` is out of scope for this operation.
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
- * @see docs/adapter-boundary.md
+ * @see docs/reference/cli.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/runtime-command-operations/workflow-runner.ts
  * @see packages/engine/src/runtime-command-operations/types.ts
  */

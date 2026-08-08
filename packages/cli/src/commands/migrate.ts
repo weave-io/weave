@@ -70,7 +70,7 @@ function renderMigratePreflight(
 ): string {
   const overwriteLine = destExists
     ? theme.boldYellow(
-        "yes — backup will be created at " + plan.destinationPath + ".bak",
+        `yes — backup will be created at ${plan.destinationPath}.bak`,
       )
     : "no (destination does not exist)";
   const warningLine =
@@ -219,7 +219,7 @@ export async function runMigrateMode(
   ) => Promise<number>,
 ): Promise<Result<number, CliError>> {
   const { fs, prompt } = ctx;
-  const scope = ctx.flags.scope ?? "local";
+  const scope = ctx.flags.scope ?? "global";
 
   // Step 1: Build preliminary plan (skippedWarningCount=0) for path resolution
   const preliminaryPlan = buildMigrationPlan(scope, fs);

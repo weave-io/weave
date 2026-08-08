@@ -18,7 +18,7 @@
  * @see packages/adapters/opencode/src/run-workflow.ts
  * @see packages/adapters/opencode/src/start-plan-execution.ts
  * @see packages/adapters/opencode/src/runtime-command-projection.ts
- * @see docs/adapter-boundary.md
+ * @see docs/architecture/adapter-boundary.md
  */
 
 import type {

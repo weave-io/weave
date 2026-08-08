@@ -103,9 +103,29 @@ function mapPlanStateError(
       "plan_name",
     );
   }
+  if (providerErr.type === "PlanMissing") {
+    return lifecycleValidationError(
+      `plan "${planName}" does not exist`,
+      "plan_name",
+    );
+  }
+  if (providerErr.type === "ProviderUnavailable") {
+    const causeMessage =
+      providerErr.cause instanceof Error
+        ? providerErr.cause.message
+        : providerErr.cause.message;
+    return lifecyclePersistenceError(
+      `PlanStateProvider unavailable for plan "${planName}"`,
+      { type: "query", message: causeMessage },
+    );
+  }
+  const detail =
+    "reason" in providerErr && typeof providerErr.reason === "string"
+      ? providerErr.reason
+      : providerErr.type;
   return lifecyclePersistenceError(
-    `PlanStateProvider unavailable for plan "${planName}"`,
-    { type: "query", message: String(providerErr.cause) },
+    `PlanStateProvider error for plan "${planName}": ${detail}`,
+    { type: "query", message: String(detail) },
   );
 }
 
@@ -142,22 +162,30 @@ function buildUpdateInput(
  * - `"fail"`  — updates instance to `failed`, releases lease, emits `complete-execution`
  * - `"retry"` — re-dispatches the same gate step with a fresh correlation ID
  */
+interface GateRejectionResult {
+  readonly effects: readonly LifecycleEffect[];
+  /** EPHEMERAL — see `CompleteStepOutput.stepPromptText`. Never persisted or logged. */
+  readonly stepPromptText?: string;
+}
+
 function applyGateRejection(
   store: RuntimeStore,
   workflowInstanceId: WorkflowInstanceId,
   activeLease: ExecutionLease,
   step: WorkflowStep,
   message: string | undefined,
-): ResultAsync<readonly LifecycleEffect[], LifecycleError> {
+): ResultAsync<GateRejectionResult, LifecycleError> {
   const policy = step.on_reject ?? "pause";
 
   if (policy === "pause") {
     return store.instances
       .update(workflowInstanceId, { status: "paused" })
       .mapErr((storeError): LifecycleError => mapStoreError(storeError))
-      .map((): readonly LifecycleEffect[] => [
-        { kind: "pause-execution", workflowInstanceId },
-      ]);
+      .map(
+        (): GateRejectionResult => ({
+          effects: [{ kind: "pause-execution", workflowInstanceId }],
+        }),
+      );
   }
 
   if (policy === "fail") {
@@ -172,9 +200,11 @@ function applyGateRejection(
           .release(activeLease.id, activeLease.ownerId)
           .mapErr((storeError): LifecycleError => mapStoreError(storeError)),
       )
-      .map((): readonly LifecycleEffect[] => [
-        { kind: "complete-execution", workflowInstanceId },
-      ]);
+      .map(
+        (): GateRejectionResult => ({
+          effects: [{ kind: "complete-execution", workflowInstanceId }],
+        }),
+      );
   }
 
   // policy === "retry" — re-dispatch the same gate step with a fresh correlation ID.
@@ -190,11 +220,13 @@ function applyGateRejection(
         artifactNames,
       );
       if (promptResult.isErr()) return errAsync(promptResult.error);
-      const promptMetadata = promptResult.value;
+      const promptMetadata = { byteLength: promptResult.value.byteLength };
+      const stepPromptText = promptResult.value.text;
       const runAgent = buildConfiguredRunAgentEffect(step, promptMetadata);
-      return okAsync([
-        { kind: "dispatch-agent" as const, runAgent },
-      ] as readonly LifecycleEffect[]);
+      return okAsync<GateRejectionResult, LifecycleError>({
+        effects: [{ kind: "dispatch-agent" as const, runAgent }],
+        stepPromptText,
+      });
     });
 }
 
@@ -217,7 +249,7 @@ function buildAutoAdvanceEffects(
   activeLease: ExecutionLease,
   workflowConfig: WorkflowConfig,
   completedStepName: string,
-): ResultAsync<readonly LifecycleEffect[], LifecycleError> {
+): ResultAsync<GateRejectionResult, LifecycleError> {
   const currentIndex = workflowConfig.steps.findIndex(
     (s) => s.name === completedStepName,
   );
@@ -233,9 +265,11 @@ function buildAutoAdvanceEffects(
           .release(activeLease.id, activeLease.ownerId)
           .mapErr((storeError): LifecycleError => mapStoreError(storeError)),
       )
-      .map((): readonly LifecycleEffect[] => [
-        { kind: "complete-execution", workflowInstanceId },
-      ]);
+      .map(
+        (): GateRejectionResult => ({
+          effects: [{ kind: "complete-execution", workflowInstanceId }],
+        }),
+      );
   }
 
   return store.instances
@@ -261,12 +295,14 @@ function buildAutoAdvanceEffects(
         artifactNames,
       );
       if (promptResult.isErr()) return errAsync(promptResult.error);
-      const promptMetadata = promptResult.value;
+      const promptMetadata = { byteLength: promptResult.value.byteLength };
+      const stepPromptText = promptResult.value.text;
 
       const runAgent = buildConfiguredRunAgentEffect(nextStep, promptMetadata);
-      return okAsync([
-        { kind: "dispatch-agent" as const, runAgent },
-      ] as readonly LifecycleEffect[]);
+      return okAsync<GateRejectionResult, LifecycleError>({
+        effects: [{ kind: "dispatch-agent" as const, runAgent }],
+        stepPromptText,
+      });
     });
 }
 
@@ -499,7 +535,14 @@ export function completeStep(
                   activeLease,
                   stepConfig,
                   message,
-                ).map((effects): CompleteStepOutput => ({ effects }));
+                ).map(
+                  (result): CompleteStepOutput => ({
+                    effects: result.effects,
+                    ...(result.stepPromptText !== undefined
+                      ? { stepPromptText: result.stepPromptText }
+                      : {}),
+                  }),
+                );
               }
             }
 
@@ -585,7 +628,14 @@ export function completeStep(
                   input.stepName,
                 ),
               )
-              .map((effects): CompleteStepOutput => ({ effects }));
+              .map(
+                (result): CompleteStepOutput => ({
+                  effects: result.effects,
+                  ...(result.stepPromptText !== undefined
+                    ? { stepPromptText: result.stepPromptText }
+                    : {}),
+                }),
+              );
           }
 
           // Legacy path (no context)

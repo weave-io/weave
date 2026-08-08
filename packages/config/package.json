@@ -1,10 +1,7 @@
 {
   "name": "@weaveio/weave-config",
   "version": "0.0.1",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
+  "private": true,
   "description": "Config discovery, merge, and loading pipeline for Weave",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

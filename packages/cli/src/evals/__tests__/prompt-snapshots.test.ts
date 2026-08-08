@@ -44,6 +44,16 @@ const PATTERN_PROMPT_SCOPE_CONTRACT =
 const PATTERN_PROMPT_ORDER_CONTRACT = "## Dependencies and Order";
 const PATTERN_PROMPT_ACCEPTANCE_CONTRACT =
   "Put acceptance criteria under each task's `**Acceptance**` field";
+const PATTERN_PROMPT_OUTLINE_CONTRACT =
+  "Every implementation task must include a concise numbered `**Implementation outline**`";
+const PATTERN_PROMPT_PITFALLS_CONTRACT =
+  "a `**Pitfalls / non-goals**` list covering edge cases, preserved behavior, or explicit non-goals";
+const PATTERN_PROMPT_FLAT_TASKS_CONTRACT =
+  "Keep executable tasks flat. Internal implementation steps and pitfalls must use plain numbered or list bullets, never nested `- [ ]` checklist items.";
+const PATTERN_PROMPT_SPLIT_CONTRACT =
+  "Split a task only when its parts have separate file ownership or can be independently verified";
+const PATTERN_PROMPT_ONE_TURN_CONTRACT =
+  "Keep each executable task small enough for one specialist turn.";
 const SHUTTLE_PROMPT_TASK_INTAKE_CONTRACT = "1. `Task intake`";
 const SHUTTLE_PROMPT_HONESTY_CONTRACT =
   "Do not claim hidden proof of file mutation, tool-call telemetry, browser activity, network activity, or runtime events you did not directly observe.";
@@ -91,7 +101,11 @@ function makeMinimalConfig(
     disabled: { agents: [], hooks: [], skills: [] },
     settings: {
       log_level: "INFO" as const,
-      runtime: { journal: { strict: false } },
+      runtime: {
+        journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+        usage: { detail_retention_days: 30, max_observations: 100_000 },
+        log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+      },
     },
     extend_before_plan: { steps: [] },
   };
@@ -499,6 +513,18 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
     expect(artifact?.composedPrompt).toContain(
       PATTERN_PROMPT_ACCEPTANCE_CONTRACT,
     );
+    expect(artifact?.composedPrompt).toContain(PATTERN_PROMPT_OUTLINE_CONTRACT);
+    expect(artifact?.composedPrompt).toContain(
+      PATTERN_PROMPT_PITFALLS_CONTRACT,
+    );
+    expect(artifact?.composedPrompt).toContain(
+      PATTERN_PROMPT_FLAT_TASKS_CONTRACT,
+    );
+    expect(artifact?.composedPrompt).toContain(PATTERN_PROMPT_SPLIT_CONTRACT);
+    expect(artifact?.composedPrompt).toContain(
+      PATTERN_PROMPT_ONE_TURN_CONTRACT,
+    );
+    expect(artifact?.composedPrompt).not.toMatch(/\n {2,}- \[ \]/);
   });
 
   it("shuttle snapshot raw prompt preserves the delegated-task reporting contract", async () => {

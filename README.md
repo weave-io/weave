@@ -6,19 +6,18 @@ Weave is a TypeScript framework for describing multi-agent systems and materiali
 
 The engine is pure and harness-agnostic. Adapters own everything harness-specific: available models, tool vocabulary, skill discovery, lifecycle hooks, and file/plugin generation.
 
-For the product story and conceptual docs, see the website: <https://tryweave.io>. This README is the developer and contributor reference. For a configuration → engine → adapter → harness flow diagram, see [System Architecture](./docs/system-architecture.md).
+For the product story and conceptual docs, see the website: <https://tryweave.io>. This README is the developer and contributor reference. For a configuration → engine → adapter → harness flow diagram, see [System Architecture](./docs/architecture/system-overview.md).
 
-## Packages
+## Published packages
 
 | Package | Description |
 | --- | --- |
-| [`@weaveio/weave-core`](./packages/core) | DSL lexer, parser, AST, Zod schemas, and validated config types |
-| [`@weaveio/weave-config`](./packages/config) | Builtin DSL defaults, config discovery, merge semantics, and prompt path resolution |
-| [`@weaveio/weave-engine`](./packages/engine) | Pure composition APIs for descriptors, model intent, skill resolution, prompts, and policy |
 | [`@weaveio/weave-cli`](./packages/cli) | `weave` executable for scaffolding, validation, and adapter materialization |
 | [`@weaveio/weave-docs`](./packages/docs) | In-repo Astro + Starlight documentation site |
 | [`@weaveio/weave-adapter-opencode`](./packages/adapters/opencode) | OpenCode plugin adapter (runtime) |
 | [`@weaveio/weave-adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter (file materialization) |
+
+`core`, `config`, and `engine` are internal workspace layers bundled into the public packages. They are not supported npm installation targets.
 
 ## Requirements
 
@@ -53,11 +52,11 @@ The `@weaveio/weave-cli` package exposes the `weave` executable.
 | `weave prompt inspect <agent>` | Render an agent's fully composed prompt (`--json`, or `list`) |
 | `weave eval run` | Run the routing/planning eval suites |
 
-`weave` does not launch harness runtimes. Start each harness with its own command (`opencode`, `claude`, `pi`). See [docs/cli.md](./docs/cli.md) for the full command contract, init safety rules, and migration behavior.
+`weave` does not launch harness runtimes. Start each harness with its own command (`opencode`, `claude`, `pi`). See [docs/reference/cli.md](./docs/reference/cli.md) for the full command contract, init safety rules, and migration behavior.
 
 ## Using with OpenCode
 
-`@weaveio/weave-adapter-opencode` is an OpenCode plugin. Install it by adding the package to the `plugin` array in your OpenCode config, or point at a local `dist/plugin.js` build for development.
+`@weaveio/weave-adapter-opencode` is an OpenCode plugin, released on stable and nightly channels. Pin an exact version in the `plugin` array, or point at a local `dist/plugin.js` build for development.
 
 The adapter README is the authoritative install and validation guide, including the exact plugin entry point, isolated-config testing, and logging behavior:
 
@@ -95,7 +94,7 @@ claude --plugin-dir ./weave-bootstrap-plugin --plugin-dir ./.weave/plugins/claud
 
 Run `/reload-plugins` on the first session if the agents do not appear immediately. Add `.weave/plugins/` to your `.gitignore`.
 
-**What you get:** agent prompts, model selection, tool lists, category shuttles, and delegation via Claude Code's `Task` tool. **What is out of scope:** durable workflows, plan execution, command entrypoints, idle continuation, and analytics. Those require a Claude Code runtime API that does not exist today. See [Claude Code Adapter](./docs/claude-code-adapter.md) for the full scope and rationale.
+**What you get:** agent prompts, model selection, tool lists, category shuttles, and delegation via Claude Code's `Task` tool. **What is out of scope:** durable workflows, plan execution, command entrypoints, idle continuation, and analytics. Those require a Claude Code runtime API that does not exist today. See [Claude Code Adapter](./docs/adapters/claude-code.md) for the full scope and rationale.
 
 > The bootstrap plugin's `SessionStart` hook runs `weave compose`, which assumes `weave` is resolvable in the project. If it is not linked, skip the bootstrap plugin and re-run `weave compose --adapter claude-code` manually after config changes.
 
@@ -107,7 +106,7 @@ Run `/reload-plugins` on the first session if the agents do not appear immediate
 | Claude Code | File materialization. Generates a Claude Code plugin via `weave compose` (agents, model aliasing, tool classification, skill discovery, settings). No runtime workflow or lifecycle features. |
 | Pi and others | Planned. The engine/adapter boundary supports additional harnesses; no adapter package exists yet. |
 
-For normative status and non-goals, see [Adapter Readiness Status](./docs/adapter-readiness-status.md).
+For normative status and non-goals, see [Adapter Readiness Status](./docs/reference/adapter-capabilities.md).
 
 ## Development
 
@@ -121,7 +120,7 @@ bun run clean            # remove all dist/ folders
 
 ## Publishing
 
-All packages are published under the `@weaveio` scope.
+The supported public packages are the CLI and OpenCode adapter on `latest`/`next`/`nightly`, plus the nightly standalone Claude Code adapter. Claude Code also ships bundled in the CLI. `preview` is retired; published versions are never unpublished. See [RELEASING.md](./RELEASING.md) for provenance, checksums, and operator policy.
 
 ## License
 

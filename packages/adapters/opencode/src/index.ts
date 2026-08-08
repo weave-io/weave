@@ -42,6 +42,8 @@
  * `./plugin.ts`.
  */
 
+export { OPENCODE_ADAPTER_CAPABILITY_CONTRACT } from "./capability-declarations.js";
+
 // ---------------------------------------------------------------------------
 // Adapter class and options
 // ---------------------------------------------------------------------------
@@ -56,6 +58,7 @@ export { OpenCodeAdapter, OpenCodeAdapterError } from "./adapter.js";
 export type {
   ModelResolutionError,
   OpenCodeModelContext,
+  OpenCodeModelResolution,
 } from "./model-resolution.js";
 export { resolveModelForAgent } from "./model-resolution.js";
 

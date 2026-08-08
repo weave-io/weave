@@ -22,8 +22,8 @@
  * introduced to export only functions. This test is the regression guard that
  * keeps the plugin subpath safe.
  *
- * See: docs/adr/0003-opencode-adapter-materialization-shape.md §1
- * See: docs/adapter-readiness-status.md — Installation and runtime story
+ * See: docs/adr/0003-opencode-adapter-materialization-shape.md#decision
+ * See: docs/reference/adapter-capabilities.md — Installation and runtime story
  */
 
 import { describe, expect, it } from "bun:test";

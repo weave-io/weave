@@ -20,6 +20,7 @@ export type Command =
   | "run"
   | "prompt"
   | "runtime"
+  | "adapter"
   | "eval"
   | "compose"
   | "unknown";
@@ -86,6 +87,12 @@ export interface ParsedArgs {
     init?: boolean;
     /** --bootstrap-dir <path> for `weave compose --init` — overrides default output path */
     bootstrapDir?: string;
+    /** --diagnostic — include path-bearing diagnostic fields in adapter output */
+    diagnostic?: boolean;
+    /** --cursor <token> for adapter children show pagination */
+    cursor?: string;
+    /** --parent-session <id> for adapter children show/delete scope */
+    parentSession?: string;
   };
 }
 
@@ -172,6 +179,34 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
     }
     if (arg === "--raw-artifacts") {
       flags.rawArtifacts = true;
+      continue;
+    }
+    if (arg === "--diagnostic") {
+      flags.diagnostic = true;
+      continue;
+    }
+    if (arg === "--cursor") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--cursor",
+          message: "--cursor requires an opaque cursor token",
+        });
+      }
+      flags.cursor = val;
+      continue;
+    }
+    if (arg === "--parent-session") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--parent-session",
+          message: "--parent-session requires a parent session id",
+        });
+      }
+      flags.parentSession = val;
       continue;
     }
     if (arg === "--adapter") {
@@ -367,6 +402,9 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
           break;
         case "compose":
           command = "compose";
+          break;
+        case "adapter":
+          command = "adapter";
           break;
         default:
           command = "unknown";

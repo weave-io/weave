@@ -7,5 +7,10 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@weaveio/weave-docs"]
+  "ignore": [
+    "@weaveio/weave-core",
+    "@weaveio/weave-config",
+    "@weaveio/weave-engine",
+    "@weaveio/weave-docs"
+  ]
 }

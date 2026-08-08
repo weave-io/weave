@@ -2,36 +2,36 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages\cli\src\evals\types.ts` — imported by **39** files
-- `packages\cli\src\theme\colors.ts` — imported by **20** files
-- `packages\cli\src\io\terminal.ts` — imported by **18** files
-- `packages\cli\src\evals\openrouter-client.ts` — imported by **18** files
-- `packages\cli\src\evals\report-schema.ts` — imported by **17** files
-- `packages\engine\src\runtime\types.ts` — imported by **16** files
-- `packages\cli\src\args.ts` — imported by **14** files
-- `packages\engine\src\runtime\store.ts` — imported by **13** files
-- `packages\cli\src\fs\file-system.ts` — imported by **12** files
-- `packages\engine\src\logger.ts` — imported by **12** files
-- `packages\engine\src\compose.ts` — imported by **11** files
-- `packages\engine\src\execution-lifecycle\metadata.ts` — imported by **11** files
-- `packages\engine\src\runtime\errors.ts` — imported by **11** files
-- `packages\cli\src\errors.ts` — imported by **10** files
-- `packages\engine\src\execution-lifecycle\lease.ts` — imported by **10** files
-- `packages\engine\src\execution-lifecycle\errors.ts` — imported by **10** files
-- `packages\adapters\opencode\src\sdk-types.ts` — imported by **9** files
-- `packages\cli\src\evals\prompt-snapshots.ts` — imported by **9** files
-- `packages\core\src\tokens.ts` — imported by **8** files
-- `packages\adapters\opencode\src\adapter.ts` — imported by **7** files
+- `packages/adapters/pi/src/types.ts` — imported by **41** files
+- `packages/cli/src/evals/types.ts` — imported by **39** files
+- `packages/engine/src/runtime/types.ts` — imported by **28** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **25** files
+- `packages/cli/src/theme/colors.ts` — imported by **22** files
+- `packages/cli/src/io/terminal.ts` — imported by **20** files
+- `packages/adapters/pi/src/errors.ts` — imported by **19** files
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **18** files
+- `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
+- `packages/cli/src/evals/report-schema.ts` — imported by **17** files
+- `scripts/release/stable-train.ts` — imported by **16** files
+- `packages/cli/src/args.ts` — imported by **15** files
+- `packages/engine/src/runtime/store.ts` — imported by **15** files
+- `scripts/release/npm-registry-client.ts` — imported by **15** files
+- `packages/adapters/pi/src/child-envelope.ts` — imported by **14** files
+- `packages/adapters/pi/src/child-tree.ts` — imported by **14** files
+- `packages/engine/src/tool-policy.ts` — imported by **14** files
+- `scripts/release/model.ts` — imported by **14** files
+- `packages/engine/src/logger.ts` — imported by **13** files
+- `scripts/release/filesystem.ts` — imported by **13** files
 
 ## Import Map (who imports what)
 
-- `packages\cli\src\evals\types.ts` ← `packages\cli\src\evals\github-contents-publisher.ts`, `packages\cli\src\evals\input-validation.ts`, `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\loom-routing-runner.ts` +34 more
-- `packages\cli\src\theme\colors.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +15 more
-- `packages\cli\src\io\terminal.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +13 more
-- `packages\cli\src\evals\openrouter-client.ts` ← `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\pattern-planning-runner.ts`, `packages\cli\src\evals\runner.ts`, `packages\cli\src\evals\shuttle-execution-runner.ts`, `packages\cli\src\evals\spindle-tools-runner.ts` +13 more
-- `packages\cli\src\evals\report-schema.ts` ← `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts` +12 more
-- `packages\engine\src\runtime\types.ts` ← `packages\engine\src\execution-lifecycle\resume.ts`, `packages\engine\src\execution-lifecycle\start.ts`, `packages\engine\src\execution-lifecycle\types.ts`, `packages\engine\src\runtime\journal-writer.ts`, `packages\engine\src\runtime\sanitizer.ts` +11 more
-- `packages\cli\src\args.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +9 more
-- `packages\engine\src\runtime\store.ts` ← `packages\engine\src\execution-lifecycle\artifacts.ts`, `packages\engine\src\execution-lifecycle\dispatch.ts`, `packages\engine\src\execution-lifecycle\inspection.ts`, `packages\engine\src\execution-lifecycle\interrupts.ts`, `packages\engine\src\execution-lifecycle\reconciliation.ts` +8 more
-- `packages\cli\src\fs\file-system.ts` ← `packages\cli\src\commands\migrate.ts`, `packages\cli\src\commands\validate.ts`, `packages\cli\src\commands\__tests__\init.test.ts`, `packages\cli\src\commands\__tests__\migrate-conversion.test.ts`, `packages\cli\src\commands\__tests__\migrate.test.ts` +7 more
-- `packages\engine\src\logger.ts` ← `packages\engine\src\compose.ts`, `packages\engine\src\index.ts`, `packages\engine\src\runtime\journal-writer.ts`, `packages\engine\src\runtime\sqlite\store.ts`, `packages\engine\src\runtime-command-operations\control.ts` +7 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +36 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
+- `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
+- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts` +20 more
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +15 more
+- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts` +14 more
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` ← `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts`, `packages/adapters/pi/src/__tests__/child-isolation.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +13 more
+- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
+- `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more

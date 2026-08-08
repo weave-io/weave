@@ -13,7 +13,7 @@
  * - All required native → ready: true
  * - Mixed required+optional failures/warnings
  * - Token-usage-reporting special case (conditionally required)
- * - Coverage guard: all 19 capability IDs are present in the profile
+ * - Coverage guard: all 20 capability IDs are present in the profile
  * - Sanitized JSON fixture with blocking and warning entries
  */
 
@@ -49,7 +49,7 @@ function allRequiredAt(
   };
 }
 
-/** Build a contract with all 19 capabilities at the given readiness. */
+/** Build a contract with all 21 capabilities at the given readiness. */
 function allCapabilitiesAt(
   readiness: CapabilityReadiness,
 ): AdapterCapabilityContract {
@@ -181,7 +181,7 @@ describe("required capability: native → pass", () => {
     const result = evaluateCoreReadinessProfile(contract);
     expect(result.ready).toBe(true);
     expect(result.failures).toHaveLength(0);
-    expect(result.passes).toHaveLength(12);
+    expect(result.passes).toHaveLength(13);
   });
 
   it("all required native → ready: true", () => {
@@ -369,7 +369,7 @@ describe("token-usage-reporting: conditionally required", () => {
 // ---------------------------------------------------------------------------
 
 describe("coverage guard: all spec capabilities are in the profile", () => {
-  it("REQUIRED_CAPABILITIES contains exactly the 12 capabilities from the spec", () => {
+  it("REQUIRED_CAPABILITIES contains exactly the 13 capabilities from the spec", () => {
     const specRequired: CapabilityId[] = [
       "config-materialization",
       "agent-materialization",
@@ -383,12 +383,13 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
       "command-entrypoints",
       "event-logging",
       "token-usage-reporting",
+      "descriptor-relative-native-session-io",
     ];
     expect(new Set(REQUIRED_CAPABILITIES)).toEqual(new Set(specRequired));
-    expect(REQUIRED_CAPABILITIES).toHaveLength(12);
+    expect(REQUIRED_CAPABILITIES).toHaveLength(13);
   });
 
-  it("OPTIONAL_CAPABILITIES contains exactly the 7 capabilities from the spec", () => {
+  it("OPTIONAL_CAPABILITIES contains exactly the 8 capabilities from the spec", () => {
     const specOptional: CapabilityId[] = [
       "idle-continuation",
       "compaction-recovery",
@@ -397,9 +398,10 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
       "eval-integration",
       "static-artifact-generation",
       "multiple-active-workflows",
+      "model-thinking-activation",
     ];
     expect(new Set(OPTIONAL_CAPABILITIES)).toEqual(new Set(specOptional));
-    expect(OPTIONAL_CAPABILITIES).toHaveLength(7);
+    expect(OPTIONAL_CAPABILITIES).toHaveLength(8);
   });
 
   it("every capability ID appears in exactly one group (required XOR optional)", () => {
@@ -412,12 +414,12 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
     }
   });
 
-  it("evaluation result accounts for all 19 capabilities when all are declared", () => {
+  it("evaluation result accounts for all 21 capabilities when all are declared", () => {
     const contract = fullPassingContract();
     const result = evaluateCoreReadinessProfile(contract);
     const total =
       result.passes.length + result.failures.length + result.warnings.length;
-    expect(total).toBe(19);
+    expect(total).toBe(21);
   });
 });
 
@@ -516,11 +518,11 @@ describe("sanitized JSON fixture", () => {
 });
 
 // ---------------------------------------------------------------------------
-// § 9 — Spec 22 Unit 4: command-entrypoints as canonical execution-entry
+// § 9 — execution lifecycle contract: command-entrypoints as canonical execution-entry
 // ---------------------------------------------------------------------------
 
 /**
- * Spec 22 Unit 4 proof: `command-entrypoints` is the canonical execution-entry
+ * execution lifecycle contract proof: `command-entrypoints` is the canonical execution-entry
  * capability. `workflow-step-dispatch` is supporting execution context — it is
  * NOT a second execution-entry capability.
  *
@@ -534,7 +536,7 @@ describe("sanitized JSON fixture", () => {
  * 4. `workflow-step-dispatch` alone cannot substitute for `command-entrypoints`.
  */
 
-describe("Spec 22 Unit 4: command-entrypoints is the canonical execution-entry capability", () => {
+describe("execution lifecycle contract: command-entrypoints is the canonical execution-entry capability", () => {
   it("command harness with native command support passes the profile", () => {
     // A harness that exposes literal /run-workflow commands declares native.
     const contract = withOverride(
@@ -559,7 +561,7 @@ describe("Spec 22 Unit 4: command-entrypoints is the canonical execution-entry c
 
   it("non-command harness with emulated delivery passes the profile", () => {
     // A harness without literal commands (e.g. skill/script/UI delivery)
-    // declares emulated — this is the Spec 22 Unit 4 non-OpenCode proof path.
+    // declares emulated — this is the execution lifecycle contract non-OpenCode proof path.
     const contract = withOverride(
       fullPassingContract(),
       "command-entrypoints",

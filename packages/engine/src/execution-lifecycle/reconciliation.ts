@@ -6,7 +6,7 @@
  * the nearest explicitly declared upstream handler step, and fails closed
  * by pausing the instance when no handler exists.
  *
- * @see docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3
+ * @see docs/reference/execution-lifecycle.md
  */
 
 import type {
@@ -124,7 +124,7 @@ function resolveReconciliationHandler(
  * Check whether the plan associated with the triggering step is already
  * complete, and if so, return a `policy_decision` error.
  *
- * **Immutability rule** (Spec 22 Unit 3):
+ * **Immutability rule** (execution lifecycle contract):
  * Completed `Plan Markdown` tasks are immutable. Reconciliation must not
  * revise them in place. Corrective work must be expressed as follow-up tasks.
  */
@@ -155,9 +155,29 @@ function checkCompletedPlanImmutability(
           "plan_name",
         );
       }
+      if (providerErr.type === "PlanMissing") {
+        return lifecycleValidationError(
+          `plan "${planName}" does not exist`,
+          "plan_name",
+        );
+      }
+      if (providerErr.type === "ProviderUnavailable") {
+        const causeMessage =
+          providerErr.cause instanceof Error
+            ? providerErr.cause.message
+            : providerErr.cause.message;
+        return lifecyclePersistenceError(
+          `PlanStateProvider unavailable for plan "${planName}"`,
+          { type: "query", message: causeMessage },
+        );
+      }
+      const detail =
+        "reason" in providerErr && typeof providerErr.reason === "string"
+          ? providerErr.reason
+          : providerErr.type;
       return lifecyclePersistenceError(
-        `PlanStateProvider unavailable for plan "${planName}"`,
-        { type: "query", message: String(providerErr.cause) },
+        `PlanStateProvider error for plan "${planName}": ${detail}`,
+        { type: "query", message: String(detail) },
       );
     })
     .andThen((complete) => {
@@ -167,7 +187,7 @@ function checkCompletedPlanImmutability(
         lifecyclePolicyDecisionError(
           `Reconciliation rejected: plan "${planPath}" has all tasks completed. ` +
             `Completed Plan Markdown tasks are immutable — corrective work must be expressed as follow-up tasks, not in-place revisions. ` +
-            `See docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3.`,
+            `See docs/reference/execution-lifecycle.md.`,
           "completed_plan_immutability",
         ),
       );
@@ -239,7 +259,8 @@ function dispatchHandlerOrPause(
         artifactNames,
       );
       if (promptResult.isErr()) return errAsync(promptResult.error);
-      const promptMetadata = promptResult.value;
+      const promptMetadata = { byteLength: promptResult.value.byteLength };
+      const stepPromptText = promptResult.value.text;
       const runAgent = buildConfiguredRunAgentEffect(
         handlerStep,
         promptMetadata,
@@ -249,6 +270,7 @@ function dispatchHandlerOrPause(
         handlerFound: true,
         ...(gateReRunStepName !== undefined ? { gateReRunStepName } : {}),
         effects: [{ kind: "dispatch-agent", runAgent }],
+        stepPromptText,
       });
     });
 }

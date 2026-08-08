@@ -16,8 +16,8 @@
  * - Effect projection seams (`effects`) carry `LifecycleEffect` values that
  *   adapters apply through their own projection behavior.
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
- * @see docs/adapter-boundary.md
+ * @see docs/reference/cli.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/types.ts — lifecycle I/O types
  * @see packages/engine/src/plan-state-provider.ts — plan existence/completion
  * @see packages/engine/src/runtime/store.ts — RuntimeStore

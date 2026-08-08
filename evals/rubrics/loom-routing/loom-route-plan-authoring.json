@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-plan-authoring",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Score the observable primary route to Pattern for authoring an implementation plan. Do not require a specific heading, delegation telemetry, or exact wording; follow-up review or implementation mentions are secondary unless Pattern is absent."
+  }
+}

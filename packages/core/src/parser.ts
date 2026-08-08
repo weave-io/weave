@@ -19,6 +19,7 @@ import type {
   ExtendBeforePlanDirective,
   IdentifierValue,
   NumberValue,
+  NullValue,
   Property,
   SettingAssignment,
   StepBlock,
@@ -544,6 +545,13 @@ class Parser {
           value: false,
           pos: { line: token.line, column: token.column },
         } satisfies BooleanValue;
+      }
+      if (token.value === "null") {
+        return {
+          kind: "null",
+          value: null,
+          pos: { line: token.line, column: token.column },
+        } satisfies NullValue;
       }
       // Named block value pattern: `identifier { ... }` — e.g. `completion plan_created { plan_name "x" }`.
       // The identifier is injected as a synthetic `__name` property so the validator can recover the

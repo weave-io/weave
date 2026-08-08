@@ -1,0 +1,706 @@
+import { describe, expect, it } from "bun:test";
+import type {
+  AgentDescriptor,
+  EffectiveToolPolicy,
+} from "@weaveio/weave-engine";
+import { errAsync, okAsync } from "neverthrow";
+import type { PiModelApplyPort } from "../model-resolution.js";
+import {
+  appendWeaveBlockOnce,
+  isReadOnlyChildAccessAllowed,
+  PiPrimarySession,
+  probeParentSession,
+  renderWeavePromptBlock,
+  requirePersistentParentSession,
+  UNKNOWN_PARENT_SESSION,
+} from "../primary-session.js";
+import { PiSkillCatalog } from "../skill-catalog.js";
+import type { PiModelInfo } from "../types.js";
+import { RecordingLogger } from "./fakes/fake-pi-host.js";
+
+const POLICY: EffectiveToolPolicy = {
+  read: "allow",
+  write: "allow",
+  execute: "allow",
+  delegate: "allow",
+  network: "ask",
+};
+
+function descriptor(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
+  return {
+    name: "loom",
+    composedPrompt: "You are Loom, the orchestrator.",
+    models: ["claude-sonnet-4-5"],
+    mode: "primary",
+    effectiveToolPolicy: POLICY,
+    rawToolPolicy: undefined,
+    delegationTargets: [],
+    skills: [],
+    ...overrides,
+  };
+}
+
+const CATALOG: PiModelInfo[] = [
+  { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+];
+
+interface FakeApplier extends PiModelApplyPort {
+  readonly calls: PiModelInfo[];
+}
+
+function fakeApplier(succeed = true): FakeApplier {
+  const calls: PiModelInfo[] = [];
+  return {
+    calls,
+    applyModel: (model) => {
+      calls.push(model);
+      return succeed
+        ? okAsync(undefined)
+        : errAsync(new Error("setModel rejected"));
+    },
+  };
+}
+
+function context(overrides: Record<string, unknown> = {}) {
+  return {
+    availableModels: CATALOG,
+    currentModel: undefined,
+    modelApplier: fakeApplier(),
+    ...overrides,
+  };
+}
+
+describe("renderWeavePromptBlock / appendWeaveBlockOnce", () => {
+  it("renders one delimited block with the descriptor's stable identity and final composedPrompt", () => {
+    const block = renderWeavePromptBlock(descriptor());
+    expect(block).toContain('name="loom"');
+    expect(block).toContain("You are Loom, the orchestrator.");
+  });
+
+  it("appends to a non-empty system prompt without dropping existing content", () => {
+    const result = appendWeaveBlockOnce(
+      "Pi's native system prompt.",
+      descriptor(),
+    );
+    expect(result).toContain("Pi's native system prompt.");
+    expect(result).toContain("You are Loom, the orchestrator.");
+  });
+
+  it("does not append twice for the same descriptor identity", () => {
+    const once = appendWeaveBlockOnce("base", descriptor());
+    const twice = appendWeaveBlockOnce(once, descriptor());
+    expect(twice).toBe(once);
+    expect(twice.split('weave:agent:start name="loom"').length - 1).toBe(1);
+  });
+});
+
+describe("PiPrimarySession.prepareComposedPrompt", () => {
+  it("loads available skills for a delegated agent and warns for missing ones", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([{ name: "tdd" }]),
+      logger: new RecordingLogger(),
+    });
+
+    const prompt = session.prepareComposedPrompt(
+      descriptor({
+        name: "shuttle",
+        mode: "subagent",
+        skills: ["tdd", "missing-skill"],
+      }),
+    );
+
+    expect(prompt).toContain(
+      'Required skill names to load before work: ["tdd"]',
+    );
+    expect(prompt).not.toContain('["tdd","missing-skill"]');
+    expect(prompt).toContain("You are Loom, the orchestrator.");
+    expect(session.getCapabilityWarnings()).toEqual([
+      {
+        capability: "skill",
+        agentName: "shuttle",
+        detail:
+          'required skill "missing-skill" is unavailable in Pi; continuing without it',
+      },
+    ]);
+  });
+
+  it("silently filters a disabled delegated skill", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+
+    expect(
+      session.prepareComposedPrompt(
+        descriptor({ name: "shuttle", skills: ["disabled-skill"] }),
+        ["disabled-skill"],
+      ),
+    ).toBe("You are Loom, the orchestrator.");
+    expect(session.getCapabilityWarnings()).toEqual([]);
+  });
+});
+
+describe("PiPrimarySession.activate", () => {
+  it("atomically activates a primary-mode descriptor: identity, prompt, applied model, skills", async () => {
+    const applier = fakeApplier();
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([{ name: "tdd" }]),
+      logger: new RecordingLogger(),
+    });
+
+    const result = await session.activate(
+      descriptor({ skills: ["tdd"] }),
+      context({ modelApplier: applier }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    const active = result._unsafeUnwrap();
+    expect(active.descriptor.name).toBe("loom");
+    expect(active.promptBlock).toContain("You are Loom, the orchestrator.");
+    expect(active.promptBlock).toContain(
+      'Required skill names to load before work: ["tdd"]',
+    );
+    expect(active.modelActivation).toEqual({
+      status: "applied",
+      model: CATALOG[0],
+      intentEntry: "claude-sonnet-4-5",
+      source: "bare-id",
+    });
+    expect(applier.calls).toEqual([CATALOG[0]]);
+    expect(active.resolvedSkills.map((s) => s.name)).toEqual(["tdd"]);
+    expect(session.getCurrent()).toEqual(active);
+  });
+
+  it("preserves a native user-selected model without applying descriptor model intent", async () => {
+    const userModel = { provider: "openai", id: "gpt-5" };
+    const applier = fakeApplier();
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+
+    const result = await session.activate(
+      descriptor(),
+      context({
+        currentModel: userModel,
+        modelApplier: applier,
+        preserveCurrentModel: true,
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().modelActivation).toEqual({
+      status: "preserved",
+      currentModel: userModel,
+      reason: "user-selected",
+    });
+    expect(applier.calls).toEqual([]);
+    expect(session.getCapabilityWarnings()).toEqual([]);
+  });
+
+  it("allows mode: all descriptors as primary", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor({ mode: "all" }),
+      context({ availableModels: [] }),
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("rejects mode: subagent descriptors and leaves prior state untouched", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const first = await session.activate(descriptor(), context());
+    expect(first.isOk()).toBe(true);
+
+    const rejected = await session.activate(
+      descriptor({ name: "shuttle", mode: "subagent" }),
+      context(),
+    );
+    expect(rejected.isErr()).toBe(true);
+    expect(rejected._unsafeUnwrapErr()).toEqual({
+      type: "NotEligiblePrimary",
+      agentName: "shuttle",
+      mode: "subagent",
+    });
+    // Atomicity: the rejected candidate never replaces the current primary.
+    expect(session.getCurrent()?.descriptor.name).toBe("loom");
+  });
+
+  it("activates with available skills and emits one visible warning for each missing skill", async () => {
+    const applier = fakeApplier();
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([{ name: "tdd" }]),
+      logger: new RecordingLogger(),
+    });
+    const first = await session.activate(
+      descriptor(),
+      context({ modelApplier: applier }),
+    );
+    expect(first.isOk()).toBe(true);
+
+    const activated = await session.activate(
+      descriptor({
+        name: "loom-v2",
+        skills: ["tdd", "missing-skill", "missing-skill"],
+      }),
+      context({ modelApplier: applier }),
+    );
+    expect(activated.isOk()).toBe(true);
+    expect(
+      activated._unsafeUnwrap().resolvedSkills.map((skill) => skill.name),
+    ).toEqual(["tdd"]);
+    expect(session.getCurrent()?.descriptor.name).toBe("loom-v2");
+    expect(applier.calls).toEqual([CATALOG[0], CATALOG[0]]);
+    expect(session.getCapabilityWarnings()).toEqual([
+      {
+        capability: "skill",
+        agentName: "loom-v2",
+        detail:
+          'required skill "missing-skill" is unavailable in Pi; continuing without it',
+      },
+    ]);
+  });
+
+  it("reports the model degraded (unresolved) when nothing in the intent matches, but still commits the descriptor", async () => {
+    const applier = fakeApplier();
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor({ models: ["nonexistent"] }),
+      context({ modelApplier: applier, currentModel: CATALOG[0] }),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().modelActivation).toEqual({
+      status: "degraded",
+      reason: "unresolved",
+      currentModel: CATALOG[0],
+    });
+    expect(applier.calls).toEqual([]);
+    expect(session.getCurrent()?.descriptor.name).toBe(descriptor().name);
+  });
+
+  it("reports the model degraded (apply-failed) when the host rejects setModel, but still commits the descriptor", async () => {
+    const applier = fakeApplier(false);
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor(),
+      context({ modelApplier: applier, currentModel: CATALOG[0] }),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().modelActivation).toEqual({
+      status: "degraded",
+      reason: "apply-failed",
+      currentModel: CATALOG[0],
+    });
+  });
+
+  it("exposes a visible, deduplicated model capability warning when the model is degraded", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await session.activate(descriptor({ models: ["nonexistent"] }), context());
+    await session.activate(
+      descriptor({ name: "loom-v2", models: ["nonexistent"] }),
+      context(),
+    );
+
+    const warnings = session
+      .getCapabilityWarnings()
+      .filter((w) => w.capability === "model");
+    // Same agentName + detail combination is deduplicated; a different
+    // agentName is a distinct, separately-surfaced warning.
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]?.agentName).toBe("loom");
+    expect(warnings[1]?.agentName).toBe("loom-v2");
+  });
+
+  it("ignores a declared temperature, keeps the descriptor usable, and exposes exactly one deduplicated capability warning across the session", async () => {
+    const logger = new RecordingLogger();
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger,
+    });
+
+    const first = await session.activate(
+      descriptor({ temperature: 0.7 }),
+      context(),
+    );
+    expect(first.isOk()).toBe(true);
+    expect(first._unsafeUnwrap().temperatureDegraded).toBe(true);
+
+    const second = await session.activate(
+      descriptor({ name: "loom-v2", temperature: 0.9 }),
+      context(),
+    );
+    expect(second.isOk()).toBe(true);
+    expect(second._unsafeUnwrap().temperatureDegraded).toBe(true);
+
+    // Same agentName+detail is deduplicated; a *different* descriptor name
+    // declaring temperature is still its own distinct, visible warning.
+    const tempWarnings = session
+      .getCapabilityWarnings()
+      .filter((w) => w.capability === "temperature");
+    expect(tempWarnings.map((w) => w.agentName)).toEqual(["loom", "loom-v2"]);
+
+    const warnEntries = logger.entries.filter((e) => e.level === "warn");
+    expect(warnEntries.length).toBeGreaterThan(0);
+  });
+
+  it("does not warn when temperature is undeclared", async () => {
+    const logger = new RecordingLogger();
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger,
+    });
+    await session.activate(descriptor(), context());
+    expect(
+      session
+        .getCapabilityWarnings()
+        .filter((w) => w.capability === "temperature"),
+    ).toHaveLength(0);
+  });
+
+  it("does not re-warn for the same descriptor+detail combination on repeated activation", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await session.activate(descriptor({ temperature: 0.7 }), context());
+    await session.activate(descriptor({ temperature: 0.7 }), context());
+    expect(
+      session
+        .getCapabilityWarnings()
+        .filter((w) => w.capability === "temperature"),
+    ).toHaveLength(1);
+  });
+});
+
+describe("PiPrimarySession.restorePrevious", () => {
+  it("re-activates the descriptor active before the current one", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const loom = descriptor();
+    const tapestry = descriptor({ name: "tapestry", mode: "all" });
+    const byName = new Map([
+      ["loom", loom],
+      ["tapestry", tapestry],
+    ]);
+
+    await session.activate(loom, context());
+    await session.activate(tapestry, context());
+    expect(session.getCurrent()?.descriptor.name).toBe("tapestry");
+
+    const restored = await session.restorePrevious(byName, context());
+    expect(restored.isOk()).toBe(true);
+    expect(restored._unsafeUnwrap().descriptor.name).toBe("loom");
+    expect(session.getCurrent()?.descriptor.name).toBe("loom");
+  });
+
+  it("errs with NoPriorPrimary when nothing was ever activated before", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const restored = await session.restorePrevious(new Map(), context());
+    expect(restored.isErr()).toBe(true);
+    expect(restored._unsafeUnwrapErr()).toEqual({ type: "NoPriorPrimary" });
+  });
+
+  it("errs with DescriptorNotFound when the prior descriptor no longer exists in the catalog", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await session.activate(descriptor(), context());
+    await session.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context(),
+    );
+
+    const restored = await session.restorePrevious(new Map(), context());
+    expect(restored.isErr()).toBe(true);
+    expect(restored._unsafeUnwrapErr()).toEqual({
+      type: "DescriptorNotFound",
+      agentName: "loom",
+    });
+  });
+});
+
+describe("PiPrimarySession.appendToSystemPrompt", () => {
+  it("returns the prompt unchanged when there is no active primary", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    expect(session.appendToSystemPrompt("native prompt")).toBe("native prompt");
+  });
+
+  it("appends the current primary's block", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await session.activate(descriptor(), context());
+    const result = session.appendToSystemPrompt("native prompt");
+    expect(result).toContain("native prompt");
+    expect(result).toContain("You are Loom, the orchestrator.");
+  });
+});
+
+describe("parent session persistence", () => {
+  function probe(overrides: {
+    persisted?: boolean;
+    file?: string | undefined;
+    id?: string;
+    throws?: boolean;
+    header?: unknown;
+    headerThrows?: boolean;
+  }) {
+    const base = {
+      isPersisted: () => {
+        if (overrides.throws === true) throw new Error("host exploded");
+        return overrides.persisted ?? true;
+      },
+      getSessionFile: () => overrides.file,
+      getSessionId: () => overrides.id ?? "session-1",
+    };
+    if (overrides.header === undefined && overrides.headerThrows !== true) {
+      return base;
+    }
+    return {
+      ...base,
+      getHeader: () => {
+        if (overrides.headerThrows === true) throw new Error("header exploded");
+        return overrides.header as { id?: unknown } | null;
+      },
+    };
+  }
+
+  it("records the host-probed identity of a persisted parent", () => {
+    const state = probeParentSession(
+      probe({ persisted: true, file: "/sessions/a.jsonl", id: "session-a" }),
+    );
+    expect(state).toEqual({
+      persistence: "persistent",
+      sessionId: "session-a",
+      runtimeSessionId: "session-a",
+      identitySource: "runtime",
+      sessionFile: "/sessions/a.jsonl",
+    });
+  });
+
+  it("prefers the persisted header id over an ephemeral runtime id", () => {
+    // A restart that reopens the same parent session can probe while the
+    // host still reports a freshly minted runtime id. The persisted header
+    // is the stable identity historical refs were written against.
+    const state = probeParentSession(
+      probe({
+        persisted: true,
+        file: "/sessions/a.jsonl",
+        id: "runtime-9",
+        header: { type: "session", id: "session-a", cwd: "/w" },
+      }),
+    );
+    expect(state).toEqual({
+      persistence: "persistent",
+      sessionId: "session-a",
+      runtimeSessionId: "runtime-9",
+      identitySource: "session-header",
+      sessionFile: "/sessions/a.jsonl",
+    });
+  });
+
+  it("uses the fork's own header id, never the source session id", () => {
+    // Forking writes a new header id and records the source in
+    // `parentSession`. Origin authority follows the new id, so refs copied
+    // from the source session stay excluded.
+    const state = probeParentSession(
+      probe({
+        persisted: true,
+        file: "/sessions/fork.jsonl",
+        id: "session-fork",
+        header: {
+          type: "session",
+          id: "session-fork",
+          parentSession: "/sessions/a.jsonl",
+        },
+      }),
+    );
+    expect(state.persistence === "persistent" && state.sessionId).toBe(
+      "session-fork",
+    );
+  });
+
+  it.each([
+    ["absent header", null],
+    ["non-object header", "session-a"],
+    ["empty header id", { type: "session", id: "" }],
+    ["non-string header id", { type: "session", id: 42 }],
+    ["oversized header id", { type: "session", id: "x".repeat(257) }],
+  ])("falls back to the runtime id for %s", (_name, header) => {
+    const state = probeParentSession(
+      probe({
+        persisted: true,
+        file: "/sessions/a.jsonl",
+        id: "runtime-9",
+        header,
+      }),
+    );
+    expect(state).toEqual({
+      persistence: "persistent",
+      sessionId: "runtime-9",
+      runtimeSessionId: "runtime-9",
+      identitySource: "runtime",
+      sessionFile: "/sessions/a.jsonl",
+    });
+  });
+
+  it("treats a throwing header probe as unknown, never fabricating an id", () => {
+    const state = probeParentSession(
+      probe({
+        persisted: true,
+        file: "/sessions/a.jsonl",
+        id: "runtime-9",
+        headerThrows: true,
+      }),
+    );
+    expect(state).toEqual({ persistence: "unknown", reason: "probe-failed" });
+  });
+
+  it("reports a --no-session parent as ephemeral from the host answer alone", () => {
+    expect(
+      probeParentSession(probe({ persisted: false, file: undefined })),
+    ).toEqual({
+      persistence: "ephemeral",
+      reason: "host-reports-not-persisted",
+    });
+  });
+
+  it("treats a persisted parent without a session file as ephemeral", () => {
+    expect(probeParentSession(probe({ persisted: true, file: "" }))).toEqual({
+      persistence: "ephemeral",
+      reason: "no-session-file",
+    });
+  });
+
+  it("never infers persistence when no probe or a throwing probe is available", () => {
+    expect(probeParentSession(undefined)).toEqual(UNKNOWN_PARENT_SESSION);
+    expect(probeParentSession(probe({ throws: true }))).toEqual({
+      persistence: "unknown",
+      reason: "probe-failed",
+    });
+  });
+
+  it("rejects every mutation boundary on a non-persistent parent with one stable failure", () => {
+    const state = probeParentSession(probe({ persisted: false }));
+    for (const operation of [
+      "delegate",
+      "steer",
+      "follow-up",
+      "retry",
+      "continue",
+      "delete",
+    ] as const) {
+      const result = requirePersistentParentSession(state, operation);
+      expect(result.isErr()).toBe(true);
+      const failure = result._unsafeUnwrapErr();
+      expect(failure.code).toBe("PersistentParentSessionRequired");
+      expect(failure.retryable).toBe(false);
+      expect(failure.correlation).toEqual({
+        operation,
+        reason: "host-reports-not-persisted",
+        remediation:
+          "Start or reopen Pi with a persistent session (do not use --no-session).",
+      });
+      expect(failure.safeMessage).toContain("persistent Pi session");
+      expect(JSON.stringify(failure)).not.toContain("session-1");
+    }
+  });
+
+  it("allows mutations only on a host-proven persistent parent", () => {
+    expect(
+      requirePersistentParentSession(
+        probeParentSession(probe({ file: "/sessions/a.jsonl" })),
+        "delegate",
+      ).isOk(),
+    ).toBe(true);
+  });
+
+  it("fails closed for unknown parents (no-probe and probe-failed)", () => {
+    for (const reason of ["no-probe", "probe-failed"] as const) {
+      const result = requirePersistentParentSession(
+        { persistence: "unknown", reason },
+        "delegate",
+      );
+      expect(result.isErr()).toBe(true);
+      const failure = result._unsafeUnwrapErr();
+      expect(failure.code).toBe("PersistentParentSessionRequired");
+      expect(failure.correlation).toMatchObject({
+        operation: "delegate",
+        reason,
+      });
+    }
+  });
+
+  it("keeps read-only child access allowed for every parent state", () => {
+    expect(
+      isReadOnlyChildAccessAllowed(
+        probeParentSession(probe({ persisted: false })),
+      ),
+    ).toBe(true);
+    expect(isReadOnlyChildAccessAllowed(UNKNOWN_PARENT_SESSION)).toBe(true);
+    expect(
+      isReadOnlyChildAccessAllowed(
+        probeParentSession(probe({ file: "/sessions/a.jsonl" })),
+      ),
+    ).toBe(true);
+  });
+
+  it("records the parent session on the primary session and re-probes on transition", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+      parentSessionProbe: probe({ persisted: false }),
+    });
+    expect(session.getParentSession().persistence).toBe("ephemeral");
+    expect(session.requirePersistentParent("delegate").isErr()).toBe(true);
+
+    session.refreshParentSession(
+      probe({ persisted: true, file: "/sessions/b.jsonl", id: "session-b" }),
+    );
+    expect(session.getParentSession()).toEqual({
+      persistence: "persistent",
+      sessionId: "session-b",
+      runtimeSessionId: "session-b",
+      identitySource: "runtime",
+      sessionFile: "/sessions/b.jsonl",
+    });
+    expect(session.requirePersistentParent("delegate").isOk()).toBe(true);
+  });
+
+  it("defaults to unknown and fails closed when no probe is wired", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    expect(session.getParentSession()).toEqual(UNKNOWN_PARENT_SESSION);
+    expect(session.requirePersistentParent("retry").isErr()).toBe(true);
+    expect(
+      session.requirePersistentParent("retry")._unsafeUnwrapErr().correlation,
+    ).toMatchObject({ reason: "no-probe" });
+  });
+});

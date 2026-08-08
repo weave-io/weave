@@ -65,14 +65,16 @@ Supported top-level forms include:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `description` | string | Human-readable domain summary. |
+| `description` | string | **Required.** Non-blank routing guidance shown for the generated category shuttle. |
 | `patterns` | string[] | Glob-like routing metadata. |
 | `models` | string[] | Category-specific model preference override. |
 | `prompt_append` / `prompt_append_file` | string | Added to the generated shuttle prompt. |
 | `temperature` | number | Optional generation preference. |
 | `tool_policy` | block | Category-specific policy applied to the generated shuttle. |
 
-Categories generate agents named `shuttle-{category}`.
+Categories generate agents named `shuttle-{category}`. The generated agent uses the category description in Loom and Tapestry delegation tables and does not inherit the base Shuttle's triggers; its description and patterns provide category routing, while generic Shuttle triggers cover fallback work.
+
+This is a breaking config requirement: every existing category block must add a non-blank `description`. Legacy migration skips categories without descriptions and reports a warning rather than writing invalid DSL.
 
 ## Tool Policy
 
@@ -113,6 +115,8 @@ Workflow step fields include `name`, `type`, `agent`, `prompt`, `completion`, `i
 
 ```weave
 workflow plan-and-implement {
+  version 1
+
   extension_points {
     before-plan
   }
@@ -149,6 +153,7 @@ disable skills ["tdd"]
 
 settings {
   log_level INFO
+  enforce_permissions true
   runtime {
     journal {
       strict false
@@ -156,6 +161,12 @@ settings {
   }
 }
 ```
+
+`enforce_permissions` defaults to enabled behavior. Set it to `false` to let supporting adapters preserve native or tool-owner permission behavior. The Pi adapter applies the setting to parent and authenticated child sessions.
+
+`settings.adapters.<harness>` contains adapter-owned JSON-like settings. Core validates the shared shape and limits, then preserves the block for the named adapter; it does not interpret harness-specific keys. Objects deep-merge, arrays union-merge, and scalars override across built-in, global, and project layers. See [Config Loading](../../configuration/) for merge behavior and the [Pi adapter reference](../adapters/pi/) for harness-facing behavior. The repository's [DSL reference](https://github.com/weaveio/weave/blob/main/docs/reference/dsl.md#settings-and-disables) is the canonical contract for shared limits.
+
+Pi's `child_inspection` settings, exact defaults, bounds, private storage, controls, quotas, and recovery limits are canonical in the repository's [amended Spec 33](https://github.com/weaveio/weave/blob/main/docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings). The [Pi adapter reference](../adapters/pi/) explains how the adapter exposes them without making history engine-owned.
 
 `continuation` and `analytics` are not current validated public schema blocks.
 
@@ -170,8 +181,7 @@ Do not use these as current public instructions:
 | `routes` | Unsupported in current public DSL. |
 | `continuation { ... }` | Not current validated public schema. |
 | `analytics { ... }` | Not current validated public schema. |
-| `weave build` | No current CLI command. |
 
-## Related Guides
+## Related pages
 
-Use [Configuration](../../configuration/) for authoring and validation workflow. Use [Agents and Categories](../../agents-and-categories/) and [Workflows](../../workflows/) for task-oriented examples.
+Use [Configuration](../../configuration/) for authoring and validation. Use [Agents and categories](../../agents-and-categories/) and [Workflows](../../workflows/) for examples.

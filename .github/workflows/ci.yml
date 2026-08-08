@@ -6,8 +6,7 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,6 +16,8 @@ jobs:
   ci:
     name: Lint, Typecheck, Build & Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -30,6 +31,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Changeset policy
+        run: bun run changeset:check
+
       - name: Lint
         run: bun run lint
 
@@ -41,3 +45,12 @@ jobs:
 
       - name: Test
         run: bun run test
+
+      - name: Verify action pins
+        run: bun run verify:action-pins
+
+      - name: Verify CODEOWNERS
+        run: bun run verify:codeowners
+
+      - name: Check documentation links
+        run: bun run docs:check-links

@@ -21,6 +21,7 @@ export type {
   ExtendBeforePlanDirective,
   IdentifierValue,
   NumberValue,
+  NullValue,
   Property,
   SettingAssignment,
   SourcePos,
@@ -28,6 +29,14 @@ export type {
   StringValue,
   WorkflowBlock,
 } from "./ast.js";
+// ---------------------------------------------------------------------------
+// Model thinking syntax
+// ---------------------------------------------------------------------------
+export type {
+  ModelIntentEntry,
+  ModelIntentParseError,
+} from "./model-thinking-syntax.js";
+export { parseModelIntentEntry } from "./model-thinking-syntax.js";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -52,10 +61,13 @@ export { parse } from "./parser.js";
 // ---------------------------------------------------------------------------
 export type {
   AgentConfig,
+  AgentDelegationConfig,
   ArtifactDecl,
   CategoryConfig,
   CompletionMethod,
+  DelegationSettings,
   DelegationTrigger,
+  JsonValue,
   ExtendBeforePlan,
   ExtensionPoints,
   LogLevel,
@@ -63,8 +75,12 @@ export type {
   ReconciliationHandler,
   ReconciliationReason,
   RoutingConfig,
+  RuntimeJournalSettings,
+  RuntimeLogSettings,
   RuntimeSettings,
+  RuntimeUsageSettings,
   SettingsConfig,
+  ThinkingLevelDecl,
   ToolPermission,
   ToolPolicy,
   WeaveConfig,
@@ -77,11 +93,20 @@ export type {
 // Schemas (Zod objects — useful for re-validation or extension)
 // ---------------------------------------------------------------------------
 export {
+  AdapterSettingsSchema,
   AgentConfigSchema,
+  AgentDelegationConfigSchema,
   ArtifactDeclSchema,
   CategoryConfigSchema,
   CompletionMethodSchema,
+  DEFAULT_DELEGATION_LIMITS,
+  DEFAULT_RUNTIME_JOURNAL_SETTINGS,
+  DEFAULT_RUNTIME_LOG_SETTINGS,
+  DEFAULT_RUNTIME_SETTINGS,
+  DEFAULT_RUNTIME_USAGE_SETTINGS,
+  DelegationSettingsSchema,
   DelegationTriggerSchema,
+  JsonValueSchema,
   ExtendBeforePlanSchema,
   ExtensionPointsSchema,
   LogLevelSchema,
@@ -90,8 +115,13 @@ export {
   ReconciliationHandlerSchema,
   ReconciliationReasonSchema,
   RoutingConfigSchema,
+  RuntimeJournalSettingsSchema,
+  RuntimeLogSettingsSchema,
   RuntimeSettingsSchema,
+  RuntimeUsageSettingsSchema,
   SettingsConfigSchema,
+  ThinkingLevelSchema,
+  THINKING_LEVEL_VALUES,
   ToolPermissionSchema,
   ToolPolicySchema,
   WeaveConfigSchema,

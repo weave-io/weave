@@ -111,6 +111,16 @@ class MockPlanStateProvider implements PlanStateProvider {
     private readonly planExistsResult: boolean = true,
     private readonly isPlanCompleteResult: boolean = true,
   ) {}
+  readSnapshot(planName: string) {
+    return errAsync({ type: "PlanMissing" as const, planName });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
 
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     this.planExistsCalls.push(planName);
@@ -1547,5 +1557,13 @@ describe("RuntimeCommandProjection.handleAdvanceStep — unsupported automatic s
       expect(advanceEntry.reason).toContain("TUI");
       expect(advanceEntry.equivalent.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("OpenCode RuntimeStore boundary", () => {
+  it("receives no durable permission mutation surface", () => {
+    const store = createInMemoryRuntimeStore();
+    expect("permissions" in store).toBe(false);
+    expect(Object.keys(store)).not.toContain("permissions");
   });
 });

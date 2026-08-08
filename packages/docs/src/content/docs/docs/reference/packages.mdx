@@ -1,58 +1,24 @@
 ---
 title: Packages
-description: Public package responsibilities and ownership boundaries in the Weave workspace.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+description: Public Weave packages and their roles.
 ---
 
-## Workspace Shape
+## Installable packages
 
-Weave is a Bun workspace. Runtime, package management, testing, and builds use Bun. The package split mirrors the architecture boundary: core parsing and validation, config loading, engine composition, adapters, CLI, and docs.
-
-## Package Responsibilities
-
-| Package | Responsibility |
+| Package | Role |
 | --- | --- |
-| `@weave/core` | Lexer, parser, AST, Zod schemas, validation, config types, and parse errors. |
-| `@weave/config` | Builtin DSL defaults, config discovery, prompt path resolution, merge semantics, and plan state provider integration. |
-| `@weave/engine` | Prompt composition, descriptor generation, model intent helpers, skill resolution from adapter context, tool policy, lifecycle semantics, runtime store, command operations, and logging. |
-| `@weave/cli` | Argument routing, init, migrate, validate, prompt inspection, runtime inspection, and refusal boundary for `weave run`. |
-| `@weave/adapter-opencode` | Implemented OpenCode adapter, plugin entry, descriptor translation, command registration/projection helpers, skill discovery, model resolution, and tool-policy mapping. |
-| `@weave/docs` | Public Astro/Starlight documentation site and prototype-derived UI shell. |
+| `@weaveio/weave-cli` | Stable and nightly CLI. Provides the `weave` command, configuration scaffolding, validation, inspection, evals, and adapter composition. |
+| `@weaveio/weave-adapter-opencode` | Stable and nightly OpenCode plugin surface. |
+| `@weaveio/weave-adapter-claude-code` | Standalone Claude Code adapter, distributed nightly only. Stable Claude Code setup uses the CLI. |
+| `@weaveio/weave-adapter-pi` | Implemented Pi extension, distributed nightly only. |
 
-## Ownership Rules
+The CLI bundles Weave's core, config, and engine layers. Those layers support the public packages but are not consumer-facing installation targets.
 
-| If you are changing | Check |
-| --- | --- |
-| DSL syntax or schemas | Update core tests and public DSL docs. |
-| Config discovery or merge | Keep config docs and compatibility behavior aligned. |
-| Engine APIs | Confirm the API accepts explicit adapter context and does not scan harness-owned resources. |
-| Adapter code | Keep harness-specific discovery, commands, models, and tool names inside the adapter. |
-| CLI commands | Update CLI reference and guide workflows in the same change. |
-| Public docs UI | Verify base-path-safe links and static build navigation. |
+## Choose a package
 
-## Common Commands
+- Install the CLI for `.weave` scaffolding, validation, prompt inspection, runtime inspection, evals, and Claude Code composition.
+- Install the OpenCode adapter when OpenCode should load Weave as a plugin.
+- Install the Pi adapter from the nightly channel when Pi should load Weave as an extension.
+- Use the standalone Claude Code package only when you intentionally use the nightly channel.
 
-```bash
-bun install
-bun run build
-bun run typecheck
-bun test
-bun run docs:build
-bun run --filter '@weave/docs' typecheck
-```
-
-## Boundary Examples
-
-Correct engine API shape: an adapter passes available skills, available models, selected model, or runtime context into an engine helper and receives normalized output.
-
-Incorrect engine API shape: engine code scans OpenCode directories, calls OpenCode runtime APIs, or registers OpenCode slash commands directly.
-
-## Current Adapter Implementation
-
-Only `@weave/adapter-opencode` is implemented today. Other adapter packages or product targets should not be described as implemented unless source code and tests prove the integration exists.
-
-## Related Guides
-
-Read [Concepts](../../concepts/) for architecture context and [Adapter Reference](adapters/) for harness support status.
+See [Releases](../releases/) for channels and [Support matrix](../adapters/) for implementation versus distribution status.

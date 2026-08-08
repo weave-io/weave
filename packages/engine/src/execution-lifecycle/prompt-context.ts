@@ -4,8 +4,13 @@
  * Provides helpers for building Mustache template contexts from workflow
  * instance state and rendering step prompts with security invariants.
  *
- * Security invariant: rendered prompt text is NEVER stored in lifecycle
- * effects — only its byte length is returned as `PromptMetadata`.
+ * Security invariant: rendered prompt text is NEVER stored in
+ * `LifecycleEffect`/`RunAgentEffect` — only its byte length is carried there
+ * as `PromptMetadata`. The rendered text itself is returned separately (see
+ * `renderStepPrompt`'s return value) and may only be threaded into the
+ * *ephemeral* `stepPromptText` field of `DispatchStepOutput`,
+ * `CompleteStepOutput`, or `ReconcileExecutionOutput` — never persisted,
+ * never logged, and never copied into an effect.
  */
 
 import type { WorkflowStep } from "@weaveio/weave-core";
@@ -67,11 +72,19 @@ export function buildStepPromptContext(
 }
 
 /**
- * Render a step prompt template and return sanitized prompt metadata.
+ * Render a step prompt template and return both the rendered text and
+ * sanitized prompt metadata.
  *
- * The rendered prompt text is NOT stored in the effect — only its byte length
- * is returned as `PromptMetadata`. This preserves the security invariant that
- * raw prompts never appear in lifecycle effects.
+ * Callers MUST observe the split security contract on the return value:
+ * - `byteLength` is persisted-safe — it is the only piece derived from
+ *   rendering that may be placed on a `RunAgentEffect.promptMetadata`
+ *   (which travels inside a `LifecycleEffect` and may be logged/observed).
+ * - `text` is the actual rendered prompt. It is EPHEMERAL — callers may only
+ *   surface it via the top-level `stepPromptText` field of
+ *   `DispatchStepOutput`, `CompleteStepOutput`, or `ReconcileExecutionOutput`
+ *   (never inside an effect, never persisted to the Runtime Store, never
+ *   logged). Adapters read it once, compose it with their own
+ *   `AgentDescriptor.composedPrompt`, and discard it.
  *
  * Artifact names from the instance are added to the allowed paths set as
  * `artifacts.<name>` so that templates like `{{artifacts.plan_path}}` resolve
@@ -83,7 +96,7 @@ export function renderStepPrompt(
   promptTemplate: string,
   context: TemplateContext,
   artifactNames: readonly string[],
-): Result<{ byteLength: number }, LifecycleError> {
+): Result<{ text: string; byteLength: number }, LifecycleError> {
   const allowedPaths = new Set(STEP_PROMPT_ALLOWED_PATHS);
   for (const name of artifactNames) {
     allowedPaths.add(`artifacts.${name}`);
@@ -103,7 +116,7 @@ export function renderStepPrompt(
   }
   const rendered = renderResult.value;
   const byteLength = new TextEncoder().encode(rendered).byteLength;
-  return ok({ byteLength });
+  return ok({ text: rendered, byteLength });
 }
 
 /**

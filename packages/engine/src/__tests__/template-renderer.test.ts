@@ -13,7 +13,7 @@
  * - Function/callable values in context
  * - Unsupported tags (partials, delimiter changes)
  * - Malformed template syntax
- * - Unresolved tags after rendering
+ * - Source-aware validation: Mustache-shaped context values stay literal
  */
 
 import { describe, expect, it } from "bun:test";
@@ -466,20 +466,18 @@ describe("renderTemplate — malformed syntax", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Unresolved tags
+// Source-aware validation: context values are opaque
 // ---------------------------------------------------------------------------
 
-describe("renderTemplate — unresolved tags", () => {
-  it("returns UnresolvedTag error when a variable has no value in context", () => {
-    // When Mustache renders {{missing}} with no value, it outputs empty string
-    // So this test verifies that missing values render as empty (Mustache default)
-    // and do NOT trigger the unresolved-tag check
+describe("renderTemplate — context values are opaque", () => {
+  const LITERAL = "Literal {{agent.name}} docs";
+
+  it("renders an allowed-but-absent value as empty (intentional contract)", () => {
     const output = render("{{name}}", {}, allowed("name"));
-    // Mustache renders missing values as empty string
     expect(output).toBe("");
   });
 
-  it("does not flag empty-string renders as unresolved", () => {
+  it("does not flag empty-string renders", () => {
     const result = renderTemplate(
       "{{name}}",
       { name: "" },
@@ -489,11 +487,125 @@ describe("renderTemplate — unresolved tags", () => {
     expect(result._unsafeUnwrap()).toBe("");
   });
 
-  it("restored escaped literals do not trigger unresolved-tag check", () => {
-    // After restoration, output contains {{ but it came from escaped input
-    // The check runs BEFORE restoration, so this should pass
+  it("restored escaped literals survive rendering", () => {
     const output = render("\\{{path}} is literal", {}, allowed());
     expect(output).toBe("{{path}} is literal");
+  });
+
+  it("keeps Mustache-shaped text in a direct field literal", () => {
+    // HTML-escaping applies to {{...}} but braces and dots are not escaped.
+    const output = render(
+      "Description: {{category.description}}",
+      { category: { description: LITERAL } },
+      allowed("category.description"),
+    );
+    expect(output).toBe(`Description: ${LITERAL}`);
+  });
+
+  it("keeps Mustache-shaped text in object-loop descriptions literal", () => {
+    const output = render(
+      "{{#categories}}- {{name}}: {{description}}\n{{/categories}}",
+      {
+        categories: [
+          { name: "docs", description: LITERAL },
+          { name: "api", description: "Raw {{{delegation.targets}}} form" },
+        ],
+      },
+      allowed("categories", "categories.name", "categories.description"),
+    );
+    expect(output).toBe(
+      `- docs: ${LITERAL}\n- api: Raw {{{delegation.targets}}} form\n`,
+    );
+  });
+
+  it("keeps Mustache-shaped text inside a conditional field literal", () => {
+    const output = render(
+      "{{#category.description}}Has: {{category.description}}{{/category.description}}",
+      { category: { description: LITERAL } },
+      allowed("category.description"),
+    );
+    expect(output).toBe(`Has: ${LITERAL}`);
+  });
+
+  it("keeps Mustache-shaped scalar loop items literal via {{.}}", () => {
+    const output = render(
+      "{{#patterns}}[{{.}}]{{/patterns}}",
+      { patterns: [LITERAL, "{{#section}} inner"] },
+      allowed("patterns"),
+    );
+    expect(output).toBe(`[${LITERAL}][{{#section}} inner]`);
+  });
+
+  it("keeps raw scalar loop items literal via {{{.}}}", () => {
+    // Triple-brace bypasses HTML escaping, so closing-section text also survives.
+    const output = render(
+      "{{#patterns}}[{{{.}}}]{{/patterns}}",
+      { patterns: ["{{#section}}x{{/section}}"] },
+      allowed("patterns"),
+    );
+    expect(output).toBe("[{{#section}}x{{/section}}]");
+  });
+
+  it("keeps Mustache-shaped text literal in raw triple-brace and & forms", () => {
+    const triple = render(
+      "{{{category.description}}}",
+      { category: { description: LITERAL } },
+      allowed("category.description"),
+    );
+    expect(triple).toBe(LITERAL);
+
+    const ampersand = render(
+      "{{&category.description}}",
+      { category: { description: LITERAL } },
+      allowed("category.description"),
+    );
+    expect(ampersand).toBe(LITERAL);
+  });
+
+  it("does not re-render Mustache syntax supplied by a context value", () => {
+    // The injected tag must not be interpolated even though `secret` is in context.
+    const output = render(
+      "{{category.description}}",
+      { category: { description: "{{secret}}" }, secret: "LEAKED" },
+      allowed("category.description", "secret"),
+    );
+    expect(output).toBe("{{secret}}");
+    expect(output).not.toContain("LEAKED");
+  });
+
+  it("still fails closed on unknown source tags", () => {
+    const error = renderErr("{{nope}}", { nope: "x" }, allowed("name"));
+    expect(error.type).toBe("UnknownPath");
+  });
+
+  it("still fails closed on unknown source tags nested in a section", () => {
+    const error = renderErr(
+      "{{#categories}}{{nope}}{{/categories}}",
+      { categories: [{ nope: "x" }] },
+      allowed("categories", "categories.name"),
+    );
+    expect(error.type).toBe("UnknownPath");
+  });
+
+  it("still fails closed on unsafe source paths", () => {
+    const error = renderErr("{{__proto__.x}}", {}, allowed("__proto__.x"));
+    expect(error.type).toBe("UnsafePath");
+  });
+
+  it("still fails closed on partials", () => {
+    const error = renderErr("{{> header}}", {}, allowed("header"));
+    expect(error.type).toBe("UnsupportedFeature");
+    if (error.type === "UnsupportedFeature") {
+      expect(error.feature).toBe("partial");
+    }
+  });
+
+  it("still fails closed on delimiter changes", () => {
+    const error = renderErr("{{=<% %>=}}<% name %>", {}, allowed("name"));
+    expect(error.type).toBe("UnsupportedFeature");
+    if (error.type === "UnsupportedFeature") {
+      expect(error.feature).toBe("delimiter-change");
+    }
   });
 });
 
@@ -711,10 +823,10 @@ describe("renderTemplate — strict full-path validation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Spec 22 Unit 4 — Trust boundary: bounded template context for appends
+// execution lifecycle contract — Trust boundary: bounded template context for appends
 // ---------------------------------------------------------------------------
 
-describe("renderTemplate — Spec 22 Unit 4 trust boundary", () => {
+describe("renderTemplate — execution lifecycle contract trust boundary", () => {
   /**
    * Simulates the bounded allowed-paths set used for workflow step appends.
    * Append instructions must only reference the bounded AgentPromptTemplateContext

@@ -248,7 +248,9 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
         await this.mkdir(commandsDir);
       } else {
         // Clean up any .md files not in the current command set so stale
-        // commands don't remain after tapestry is removed.
+        // commands don't remain after tapestry is removed. Command files Weave
+        // no longer generates (such as the old `goal.md`) are removed by this
+        // same stale sweep.
         const commandNames = new Set(["start.md", "start-work.md"]);
         const existing = await this.readDir(commandsDir).catch(
           () => [] as string[],

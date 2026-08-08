@@ -6,8 +6,9 @@
  * 2. No file contains the placeholder text shipped before real prompts existed.
  * 3. No file contains banned tokens that would indicate Weave-repo-only policy
  *    or harness-specific tool names leaking into product-level defaults.
- * 4. Intentional Mustache placeholders (e.g. {{{delegation.section}}}) are
- *    allowed — they are resolved at compose time, not in the source file.
+ * 4. Intentional Mustache placeholders (for example, the
+ *    `delegation.targets` loop) are allowed — they are resolved at compose
+ *    time, not in the source file.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -68,9 +69,6 @@ const BANNED_LEAKAGE_TOKENS = [
  * These are resolved at compose time by the template renderer.
  */
 const ALLOWED_MUSTACHE_PLACEHOLDERS = [
-  // Triple-brace (unescaped HTML) placeholders
-  "{{{delegation.section}}}",
-  "{{{delegation.mermaid}}}",
   // Double-brace scalar placeholders
   "{{agent.name}}",
   "{{agent.description}}",
@@ -114,6 +112,14 @@ const PLACEHOLDER_TEXT =
   "Placeholder — full prompt content is a future deliverable.";
 
 /**
+ * Runtime-resolved delegation settings are the sole authority for dispatch
+ * limits. Builtin prompts may describe safe parallelism, but must not impose
+ * a numeric limit of their own.
+ */
+const NUMERIC_DISPATCH_LIMIT =
+  /\b(?:maximum|at most|up to|no more than)\s+\d+\s+(?:concurrent\s+)?(?:delegations?|tasks?|children|subagents?|parallel[- ]safe\s+tasks?)\b|\b\d+\s+concurrent\s+delegations?\b/i;
+
+/**
  * Absolute path to the prompts directory shipped with @weaveio/weave-config.
  * Resolved relative to this test file: src/__tests__/ → src/ → packages/config/ → prompts/
  */
@@ -143,6 +149,11 @@ describe("builtin prompt files", () => {
       it("does not contain placeholder text", async () => {
         const content = await Bun.file(filePath).text();
         expect(content).not.toContain(PLACEHOLDER_TEXT);
+      });
+
+      it("does not impose a numeric dispatch limit", async () => {
+        const content = await Bun.file(filePath).text();
+        expect(content).not.toMatch(NUMERIC_DISPATCH_LIMIT);
       });
 
       it("contains substantive Markdown (has at least one heading)", async () => {
@@ -352,25 +363,5 @@ describe("builtin prompt files", () => {
         content.includes("execute");
       expect(hasExecution).toBe(true);
     });
-  });
-
-  describe("non-delegating prompts — no artificial template tags", () => {
-    const NON_DELEGATING = [
-      "shuttle",
-      "pattern",
-      "thread",
-      "spindle",
-      "weft",
-      "warp",
-    ] as const;
-
-    for (const agentName of NON_DELEGATING) {
-      it(`${agentName}.md does not contain delegation.section placeholder`, async () => {
-        const content = await Bun.file(
-          join(PROMPTS_DIR, `${agentName}.md`),
-        ).text();
-        expect(content).not.toContain("{{{delegation.section}}}");
-      });
-    }
   });
 });

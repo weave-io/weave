@@ -111,8 +111,8 @@ export interface OpenCodeAdapterOptions {
    * filesystem scanning.
    *
    * When omitted, `loadAvailableSkills()` returns an empty list. The engine
-   * will then emit `MissingSkill` errors for any declared skills that cannot
-   * be resolved — this is the correct hard-error behavior.
+   * reports declared skills as unavailable warnings, and activation continues
+   * without them.
    *
    * @example
    * ```ts
@@ -238,9 +238,8 @@ export class OpenCodeAdapter implements HarnessAdapter {
    * is responsible for discovering which skills exist; the adapter's role is to
    * receive that list and forward it to the engine for skill resolution.
    *
-   * When no skills were injected, returns an empty list. The engine will then
-   * emit `MissingSkill` errors for any declared skills that cannot be resolved —
-   * this is the correct hard-error behavior (no silent skips).
+   * When no skills were injected, returns an empty list. The engine reports
+   * each declared skill as unavailable and activation continues without it.
    *
    * Boundary rule: this method must not scan the filesystem, query harness
    * directories, or perform any harness-owned discovery. All discovery is
@@ -302,7 +301,7 @@ export class OpenCodeAdapter implements HarnessAdapter {
       );
     }
 
-    const resolvedModel = modelResult.value;
+    const resolvedModel = modelResult.value.model;
 
     // Step 2: Translate descriptor to OpenCode AgentConfig with resolved model.
     const translateResult = translateAgent(descriptor, resolvedModel);

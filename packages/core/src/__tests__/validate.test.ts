@@ -14,6 +14,56 @@ function validateSource(src: string) {
   return validate(parseResult.value);
 }
 
+describe("validate — model thinking suffix", () => {
+  it("preserves plain, suffixed, and escaped raw model entries", () => {
+    const result = validateSource(`agent shuttle {
+  models ["plain-model", "gpt-4o#high", "weird\\#model"]
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.shuttle?.models).toEqual([
+      "plain-model",
+      "gpt-4o#high",
+      "weird\\#model",
+    ]);
+  });
+
+  it("preserves raw review and category model entries", () => {
+    const result = validateSource(`agent weft {
+  review_models ["plain-review", "review-model#low", "review\\#model"]
+}
+category backend {
+  description "Backend services and persistence"
+  patterns ["src/**"]
+  models ["plain-category", "category-model#max", "category\\#model"]
+}`);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.weft?.review_models).toEqual([
+      "plain-review",
+      "review-model#low",
+      "review\\#model",
+    ]);
+    expect(config.categories.backend?.models).toEqual([
+      "plain-category",
+      "category-model#max",
+      "category\\#model",
+    ]);
+  });
+
+  it("rejects invalid suffixes with the field and entry index", () => {
+    const result = validateSource(`agent shuttle {
+  models ["plain-model", "gpt-4o#hgih"]
+}`);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error[0]).toMatchObject({
+        path: "agents.shuttle.models.1",
+        message: expect.stringContaining("Allowed levels"),
+      });
+    }
+  });
+});
+
 describe("validate — valid agent", () => {
   it("valid agent with all fields", () => {
     const src = `agent loom {
@@ -151,12 +201,90 @@ describe("validate — schema constraint errors", () => {
 
   it("empty patterns array on category → err", () => {
     const src = `category empty {
+  description "Category with no patterns"
   patterns []
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
     expect(errors.some((e) => e.path.includes("patterns"))).toBe(true);
+  });
+});
+
+describe("validate — category description is required and non-blank", () => {
+  const patternsOnly = `  patterns ["src/**"]`;
+
+  it("category with a non-blank description → ok and preserved", () => {
+    const src = `category backend {
+  description "Backend services and persistence"
+${patternsOnly}
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.categories.backend?.description).toBe(
+      "Backend services and persistence",
+    );
+  });
+
+  it("category with no description → err at categories.<name>.description", () => {
+    const src = `category backend {
+${patternsOnly}
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const issue = errors.find(
+      (e) => e.path === "categories.backend.description",
+    );
+    expect(issue).toBeDefined();
+  });
+
+  it("category with an empty description → err with the non-empty message", () => {
+    const src = `category backend {
+  description ""
+${patternsOnly}
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const issue = errors.find(
+      (e) => e.path === "categories.backend.description",
+    );
+    expect(issue?.message).toBe(
+      "category description must be a non-empty string",
+    );
+  });
+
+  it("category with a whitespace-only description → err with the non-empty message", () => {
+    const src = `category backend {
+  description "   "
+${patternsOnly}
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const issue = errors.find(
+      (e) => e.path === "categories.backend.description",
+    );
+    expect(issue?.message).toBe(
+      "category description must be a non-empty string",
+    );
+  });
+
+  it("reports each undescribed category separately", () => {
+    const src = `category backend {
+${patternsOnly}
+}
+
+category frontend {
+  patterns ["src/components/**"]
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const paths = result._unsafeUnwrapErr().map((e) => e.path);
+    expect(paths).toContain("categories.backend.description");
+    expect(paths).toContain("categories.frontend.description");
   });
 });
 
@@ -490,6 +618,7 @@ describe("validate — prompt_append_file (agent)", () => {
 describe("validate — prompt_append_file (category)", () => {
   it("category with prompt_append_file → ok and field preserved", () => {
     const src = `category frontend {
+  description "Frontend components"
   patterns ["src/components/**"]
   prompt_append_file "cat-extra.md"
 }`;
@@ -502,6 +631,7 @@ describe("validate — prompt_append_file (category)", () => {
 
   it("category with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
     const src = `category frontend {
+  description "Frontend components"
   patterns ["src/components/**"]
   prompt_append "inline extra"
   prompt_append_file "cat-extra.md"
@@ -532,6 +662,21 @@ describe("validate — settings block", () => {
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap().settings.log_level).toBe("DEBUG");
+  });
+
+  it("settings { enforce_permissions false } disables permission enforcement", () => {
+    const result = validateSource(`settings {
+  enforce_permissions false
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.enforce_permissions).toBe(false);
+  });
+
+  it("rejects a non-boolean enforce_permissions value", () => {
+    const result = validateSource(`settings {
+  enforce_permissions off
+}`);
+    expect(result.isErr()).toBe(true);
   });
 
   it("settings block with all valid log levels", () => {
@@ -577,7 +722,55 @@ describe("validate — settings block", () => {
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
     expect(config.settings.log_level).toBe("INFO");
+    expect(config.settings.enforce_permissions).toBeUndefined();
     expect(config.settings.runtime.journal.strict).toBe(false);
+    expect(config.settings.runtime.journal.retention_days).toBe(30);
+    expect(config.settings.runtime.journal.max_entries).toBe(10_000);
+    expect(config.settings.runtime.usage.detail_retention_days).toBe(30);
+    expect(config.settings.runtime.usage.max_observations).toBe(100_000);
+    expect(config.settings.runtime.log.max_segment_bytes).toBe(5_242_880);
+    expect(config.settings.runtime.log.max_segments).toBe(3);
+  });
+
+  it("settings runtime retention values are accepted", () => {
+    const src = `settings {
+  runtime {
+    journal {
+      strict false
+      retention_days 14
+      max_entries 500
+    }
+    usage {
+      detail_retention_days 7
+      max_observations 1000
+    }
+    log {
+      max_segment_bytes 65536
+      max_segments 2
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const runtime = result._unsafeUnwrap().settings.runtime;
+    expect(runtime.journal.retention_days).toBe(14);
+    expect(runtime.journal.max_entries).toBe(500);
+    expect(runtime.usage.detail_retention_days).toBe(7);
+    expect(runtime.usage.max_observations).toBe(1000);
+    expect(runtime.log.max_segment_bytes).toBe(65_536);
+    expect(runtime.log.max_segments).toBe(2);
+  });
+
+  it("settings runtime retention out of range → err", () => {
+    const src = `settings {
+  runtime {
+    journal {
+      retention_days 0
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
   });
 
   it("invalid log_level inside settings block → err", () => {
@@ -826,7 +1019,7 @@ extend before-plan ["requirements"]`;
 // ---------------------------------------------------------------------------
 
 describe("validate — before-plan non-reconciling in v1", () => {
-  // Spec 22 Unit 2: "before-plan steps do not participate in reconciliation
+  // execution lifecycle contract: "before-plan steps do not participate in reconciliation
   // semantics" in v1. As of Task 4.1, `reconciliation_handlers` is a valid
   // schema field. The v1 non-reconciling constraint for before-plan steps is
   // enforced at the engine/runtime layer, not the schema/validate layer.
@@ -1029,7 +1222,7 @@ describe("validate — reconciliation_handlers on workflow steps", () => {
 });
 
 // ---------------------------------------------------------------------------
-// validate — workflow-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// validate — workflow-level prompt_append and prompt_append_file (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("validate — workflow-level prompt_append and prompt_append_file", () => {
@@ -1154,7 +1347,7 @@ describe("validate — workflow-level prompt_append and prompt_append_file", () 
 });
 
 // ---------------------------------------------------------------------------
-// validate — step-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// validate — step-level prompt_append and prompt_append_file (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("validate — step-level prompt_append and prompt_append_file", () => {
@@ -1393,5 +1586,148 @@ describe("validate — review_models field", () => {
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
     expect(errors.some((e) => e.path.includes("review_models"))).toBe(true);
+  });
+});
+
+describe("validate — delegation limits", () => {
+  it("normalizes valid project caps and narrower agent overrides", () => {
+    const result = validateSource(`settings {
+  delegation {
+    max_children 6
+    max_concurrency 3
+    max_depth 4
+    max_processes 12
+  }
+}
+agent tapestry {
+  delegation {
+    max_children 2
+    max_concurrency 1
+  }
+}`);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.settings.delegation).toEqual({
+      max_children: 6,
+      max_concurrency: 3,
+      max_depth: 4,
+      max_processes: 12,
+    });
+    expect(config.agents.tapestry?.delegation).toEqual({
+      max_children: 2,
+      max_concurrency: 1,
+    });
+  });
+
+  it("accepts max_concurrency 9 for project and agent settings", () => {
+    const result = validateSource(`settings {
+  delegation { max_concurrency 9 }
+}
+agent tapestry {
+  delegation { max_concurrency 9 }
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(9);
+    expect(
+      result._unsafeUnwrap().agents.tapestry?.delegation?.max_concurrency,
+    ).toBe(9);
+  });
+
+  it("rejects max_concurrency 10 with precise project and agent paths", () => {
+    const project = validateSource(
+      `settings { delegation { max_concurrency 10 } }`,
+    );
+    expect(project.isErr()).toBe(true);
+    expect(project._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({ path: "settings.delegation.max_concurrency" }),
+    );
+
+    const agent = validateSource(
+      `agent tapestry { delegation { max_concurrency 10 } }`,
+    );
+    expect(agent.isErr()).toBe(true);
+    expect(agent._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path: "agents.tapestry.delegation.max_concurrency",
+      }),
+    );
+  });
+
+  it("accepts project max_children without max_concurrency and preserves omission", () => {
+    const result = validateSource(`settings { delegation { max_children 2 } }`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 2,
+    });
+  });
+
+  it("rejects an agent child cap above the project cap with a precise path", () => {
+    const result = validateSource(`settings {
+  delegation { max_children 3 max_concurrency 2 }
+}
+agent tapestry {
+  delegation { max_children 4 }
+}`);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(
+      errors.some(
+        (error) => error.path === "agents.tapestry.delegation.max_children",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects unsupported agent delegation fields", () => {
+    const result = validateSource(`agent tapestry {
+  delegation { max_depth 2 }
+}`);
+    expect(result.isErr()).toBe(true);
+    expect(
+      result
+        ._unsafeUnwrapErr()
+        .some((error) => error.path.includes("delegation")),
+    ).toBe(true);
+  });
+
+  it("accepts all JSON-like opaque adapter values", () => {
+    const result = validateSource(
+      `settings { adapters { test { text "x" number 1.5 flag true empty null list [1, false] object { key "value" } } } }`,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.adapters?.test).toEqual({
+      text: "x",
+      number: 1.5,
+      flag: true,
+      empty: null,
+      list: [1, false],
+      object: { key: "value" },
+    });
+  });
+
+  it("aggregates duplicate, non-JSON, and depth errors with adapter paths", () => {
+    const result = validateSource(
+      `settings { adapters { test { bad nope duplicate true duplicate false deep { a { b { c { d { e true } } } } } } } }`,
+    );
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const paths = errors.map((error) => error.path);
+    expect(paths).toContain("settings.adapters.test.bad");
+    expect(paths).toContain("settings.adapters.test.duplicate");
+    expect(paths).toContain("settings.adapters.test.deep.a.b.c.d");
+    expect(errors.every((error) => error.message.length > 0)).toBe(true);
+  });
+
+  it("rejects an adapter block larger than 64 KiB of canonical JSON", () => {
+    const payload = "x".repeat(65 * 1024);
+    const result = validateSource(
+      `settings { adapters { test { payload "${payload}" } } }`,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path: "settings.adapters.test",
+        message: expect.stringContaining("64 KiB"),
+      }),
+    );
   });
 });

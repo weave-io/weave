@@ -3,7 +3,7 @@
  * Landing page (`/`) — Astro replica of the prototype `landing-static.html`.
  *
  * The prototype DOM, classes, and section order are reproduced verbatim. Only
- * the following are adapted for Astro + GitHub Pages base-path safety:
+ * route links are adapted for Astro base-path safety:
  *   - the topbar markup is extracted into `Topbar.astro` (same DOM/classes);
  *   - the inline `<style>` block is loaded from `styles/prototype/landing.css`
  *     (extracted verbatim in Task 2) plus shared `tokens.css`;
@@ -32,20 +32,20 @@ const articleHref = withBaseUrl(base, 'docs/workflows/');
 const homeHref = base;
 const designSystemHref = withBaseUrl(base, 'design-system/');
 const githubHref = 'https://github.com/weave-io/weave';
-const quickstartHref = withBaseUrl(base, 'docs/getting-started/');
+const quickstartHref = withBaseUrl(base, 'docs/quickstart/');
 const referenceHref = withBaseUrl(base, 'docs/reference/cli/');
 
 // Page description — preserved as document metadata for the landing route
 // (custom Astro page, so it is owned here rather than by Starlight's Head).
 const description =
-  'A single .weave file describes prompts, agents, workflows, model preferences, and policy once. Weave validates that config, composes prompts, and materializes the current implementation in OpenCode.';
+  'A single .weave file describes prompts, agents, workflows, model preferences, and policy once. Weave validates that config, composes prompts, and connects that intent to OpenCode, Claude Code, and Pi adapter surfaces.';
 
 // Verbatim inner HTML of the prototype's `#dslCode` <pre> (landing-static.html
 // line 265). Rendered via `set:html` so Astro does not interpret the literal
 // `{`/`}` punctuation tokens as JSX expression delimiters — they must survive
 // as `<span class="pn">{</span>` to match the prototype exactly.
 const currentDslCode = [
-  '<span class="l"><span class="cm"># .weave/config.weave — current v0.4 surface</span></span>',
+  '<span class="l"><span class="cm"># .weave/config.weave — current public surface</span></span>',
   '<span class="l"><span class="kw">agent</span> <span class="id">reviewer</span> <span class="pn">{</span></span>',
   '<span class="l">  <span class="kw">description</span> <span class="str">"Review docs changes"</span></span>',
   '<span class="l">  <span class="kw">prompt_file</span> <span class="str">"reviewer.md"</span></span>',
@@ -91,17 +91,16 @@ const currentDslCode = [
       <div class="bg"></div>
       <div class="wrap inner">
         <div class="eyebrow">
-          <span class="pill">v0.4.7</span>
           <span class="ann">multi-agent · dsl · harness-agnostic</span>
         </div>
         <h1>Orchestrate agents in a <span class="b">language</span> <span class="d">they share.</span></h1>
-        <p class="lede">A single <code>.weave</code> file declares agents, category shuttles, workflows, model preferences and tool policy. Today Weave materializes that intent in OpenCode and gives you CLI tools to validate configs and inspect composed prompts before a harness uses them.</p>
+        <p class="lede">A single <code>.weave</code> file declares agents, category shuttles, workflows, model preferences and tool policy. Weave validates that intent, composes prompts, and maps it to OpenCode, Claude Code, or Pi through their public adapter surfaces.</p>
         <div class="ctas">
           <a class="w-btn primary lg" href={docsHref}>Read the docs</a>
           <a class="w-btn lg" href="#dsl">Explore the DSL</a>
           <a class="w-btn ghost lg" href="#architecture">See architecture</a>
         </div>
-        <div class="hero-meta">DSL-first config · implemented OpenCode adapter · Bun-only TypeScript packages <span class="dot"></span> MIT</div>
+        <div class="hero-meta">DSL-first config · OpenCode, Claude Code, and Pi adapters <span class="dot"></span> MIT</div>
 
         <!-- HERO DIAGRAM -->
         <div class="editor reveal">
@@ -160,7 +159,7 @@ const currentDslCode = [
     <section class="section" id="how">
       <div class="wrap reveal">
         <span class="kicker">how it works</span>
-        <h2>Define → Validate → Compose → Materialize → Use in OpenCode.</h2>
+        <h2>Define → Validate → Compose → Use through an adapter.</h2>
         <div class="how">
           <div class="how-tabs" id="howTabs">
             <button class="how-tab active" data-step="define">define</button>
@@ -215,8 +214,8 @@ const currentDslCode = [
             <h3 style="color:var(--secondary-2)">adapters · per-harness</h3>
             <ul>
               <li><span class="d2"></span> opencode · implemented</li>
-              <li><span class="d2"></span> claude-code · placeholder</li>
-              <li><span class="d2"></span> pi · placeholder</li>
+              <li><span class="d2"></span> claude-code · compose surface</li>
+              <li><span class="d2"></span> pi · extension surface</li>
               <li><span class="d2"></span> adapter experiments · external</li>
             </ul>
             <p class="rule"><b>MAY</b> add capabilities · <b>MUST NOT</b> mutate normalized intent.</p>
@@ -232,21 +231,21 @@ const currentDslCode = [
         <h2>Docs treated as a first-class surface.</h2>
         <div class="docs-cta">
           <div class="card">
-            <p>The public docs now follow the working product: author <code>.weave</code>, validate it, inspect composed prompts, install the OpenCode plugin, and inspect runtime state. Future adapter ideas are marked separately from implemented behavior.</p>
+            <p>The public docs follow the working product: author <code>.weave</code>, validate it, inspect composed prompts, choose an adapter, and inspect runtime state. Implementation and release status are shown separately.</p>
             <div class="row">
               <a class="w-btn primary" href={docsHref}>Open the docs</a>
               <a class="w-btn" href={articleHref}>View an article</a>
             </div>
           </div>
           <div class="docs-tree">
-            <div class="t"><span class="n">01</span> Getting started</div>
-            <div class="t"><span class="n">02</span> Core concepts</div>
-            <div class="t"><span class="n">03</span> Configuration</div>
-            <div class="t"><span class="n">04</span> Agents & categories</div>
+            <div class="t"><span class="n">01</span> Overview</div>
+            <div class="t"><span class="n">02</span> Quickstart</div>
+            <div class="t"><span class="n">03</span> Concepts</div>
+            <div class="t"><span class="n">04</span> Configuration</div>
             <div class="t cur"><span class="n">05</span> Prompts, models & policy</div>
             <div class="t"><span class="n">06</span> Workflows</div>
-            <div class="t"><span class="n">07</span> OpenCode adapter</div>
-            <div class="t"><span class="n">08</span> Runtime operations</div>
+            <div class="t"><span class="n">07</span> Adapter support</div>
+            <div class="t"><span class="n">08</span> Runtime inspection</div>
             <div class="t"><span class="n">09</span> CLI reference</div>
             <div class="t"><span class="n">10</span> DSL reference</div>
           </div>
@@ -257,9 +256,9 @@ const currentDslCode = [
     <!-- FINAL CTA -->
     <section class="final w-gridbg">
       <div class="wrap reveal">
-        <span class="tag">v0.4.7 · current docs</span>
+        <span class="tag">current docs</span>
         <h2>Stop authoring prompts. Author <span class="b">intent</span>.</h2>
-        <p>MIT-licensed and small enough to inspect. Configure once; materialize accurately in OpenCode today while the core stays ready for future harness adapters.</p>
+        <p>MIT-licensed and small enough to inspect. Configure once, then connect the same intent to the adapter that fits your harness.</p>
         <div class="ctas">
           <a class="w-btn primary lg" href={docsHref}>Read the docs</a>
           <a class="w-btn lg" href="#dsl">Explore the DSL</a>
@@ -303,7 +302,7 @@ const currentDslCode = [
             </ul>
           </div>
         </div>
-        <div class="foot-meta">weave · v0.4.7 · 2026 — made for infrastructure people</div>
+        <div class="foot-meta">weave · 2026 — made for infrastructure people</div>
       </div>
     </footer>
 

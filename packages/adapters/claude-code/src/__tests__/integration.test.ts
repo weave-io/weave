@@ -5,22 +5,23 @@
  * → verify output files. Uses injectable mock I/O — no real file system access.
  */
 
-import { describe, it, expect, beforeEach } from "bun:test";
-import { ClaudeCodeAdapter } from "../adapter.js";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
+import { ClaudeCodeAdapter } from "../adapter.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const OUT_DIR = "C:\\Users\\piete\\AppData\\Local\\Temp\\opencode\\weave-cc-integration";
+const OUT_DIR =
+  "C:\\Users\\piete\\AppData\\Local\\Temp\\opencode\\weave-cc-integration";
 
 /** Parses YAML frontmatter from a markdown string (between the first two ---). */
 function parseFrontmatter(markdown: string): Record<string, unknown> {
   const parts = markdown.split("---");
   // parts[0] is empty string before first ---, parts[1] is frontmatter body
   if (parts.length < 3) return {};
-  const body = parts[1]!;
+  const body = parts[1] ?? "";
   const result: Record<string, unknown> = {};
   let currentKey: string | null = null;
   let currentArray: string[] | null = null;
@@ -183,9 +184,9 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     );
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
-    expect(fm["name"]).toBe("loom");
-    expect(typeof fm["model"]).toBe("string");
-    expect((fm["model"] as string).length).toBeGreaterThan(0);
+    expect(fm.name).toBe("loom");
+    expect(typeof fm.model).toBe("string");
+    expect((fm.model as string).length).toBeGreaterThan(0);
   });
 
   it("loom.md frontmatter includes Agent (delegate) in tools", () => {
@@ -194,7 +195,7 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     );
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
-    const tools = fm["tools"] as string[];
+    const tools = fm.tools as string[];
     expect(Array.isArray(tools)).toBe(true);
     // "Task" is the Claude Code tool that maps to delegate capability
     expect(tools).toContain("Task");
@@ -230,7 +231,7 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     );
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
-    expect(fm["name"]).toBe("shuttle");
+    expect(fm.name).toBe("shuttle");
   });
 
   // -------------------------------------------------------------------------
@@ -243,8 +244,8 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     );
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
-    expect(typeof fm["description"]).toBe("string");
-    expect((fm["description"] as string).toLowerCase()).toContain("core");
+    expect(typeof fm.description).toBe("string");
+    expect((fm.description as string).toLowerCase()).toContain("core");
   });
 
   it("shuttle-core.md delegate denied — Task absent from tools", () => {
@@ -292,7 +293,9 @@ describe("ClaudeCodeAdapter — negative case (no loom agent)", () => {
     await adapter.spawnSubagent(shuttleCoreDescriptor);
     await adapter.flush();
 
-    const settingsKey = Object.keys(written).find((k) => k.endsWith("settings.json"));
+    const settingsKey = Object.keys(written).find((k) =>
+      k.endsWith("settings.json"),
+    );
     expect(settingsKey).toBeUndefined();
   });
 
@@ -304,7 +307,9 @@ describe("ClaudeCodeAdapter — negative case (no loom agent)", () => {
     await adapter.spawnSubagent(shuttleDescriptor);
     await adapter.flush();
 
-    const pluginKey = Object.keys(written).find((k) => k.endsWith("plugin.json"));
+    const pluginKey = Object.keys(written).find((k) =>
+      k.endsWith("plugin.json"),
+    );
     expect(pluginKey).toBeDefined();
 
     const agentFiles = Object.keys(written).filter(

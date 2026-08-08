@@ -33,8 +33,8 @@
  * @see packages/engine/src/runtime-command-operations/types.ts — engine types
  * @see packages/adapters/opencode/src/start-plan-execution.ts — /weave:start delivery path
  * @see packages/adapters/opencode/src/run-workflow.ts — named-workflow execution
- * @see docs/adapter-boundary.md
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
+ * @see docs/architecture/adapter-boundary.md
+ * @see docs/reference/cli.md
  */
 
 import type {
@@ -821,6 +821,13 @@ export function buildOpenCodeHealthReport(overrides?: {
           readiness: "unsupported",
           notes:
             "OpenCode SDK does not expose per-session token usage in this version",
+        },
+        {
+          id: "model-thinking-activation",
+          description: "Activate descriptor model thinking intent",
+          readiness: "degraded",
+          notes:
+            "The OpenCode SDK per-request reasoning-effort surface is not confirmed.",
         },
       ],
     },

@@ -20,6 +20,27 @@ function parseSource(src: string) {
   return parse(lexResult.value);
 }
 
+describe("Parser — model strings", () => {
+  it("keeps plain, suffixed, and escaped hashes opaque inside string values", () => {
+    const result = parseSource(`agent shuttle {
+  models ["plain-model", "provider/model#high", "weird\\#model"]
+}`);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const models = agent.properties.find(
+      (property) => property.key === "models",
+    );
+    expect(models?.value).toMatchObject({
+      kind: "array",
+      elements: [
+        { kind: "string", value: "plain-model" },
+        { kind: "string", value: "provider/model#high" },
+        { kind: "string", value: "weird\\#model" },
+      ],
+    });
+  });
+});
+
 describe("Parser — agent block", () => {
   it("parses a minimal agent block", () => {
     const result = parseSource("agent loom {\n  temperature 0.1\n}");
@@ -393,6 +414,19 @@ describe("Parser — settings block", () => {
     });
   });
 
+  it("parses settings { enforce_permissions false } as a boolean property", () => {
+    const result = parseSource(`settings {
+  enforce_permissions false
+}`);
+    expect(result.isOk()).toBe(true);
+    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    const block = node.value as BlockValue;
+    expect(block.properties[0]).toMatchObject({
+      key: "enforce_permissions",
+      value: { kind: "boolean", value: false },
+    });
+  });
+
   it("parses settings { runtime { journal { strict true } } } as nested blocks", () => {
     const src = `settings {
   log_level WARN
@@ -428,6 +462,66 @@ describe("Parser — settings block", () => {
       key: "strict",
       value: { kind: "boolean", value: true },
     });
+  });
+
+  it("parses full runtime retention settings as nested blocks", () => {
+    const src = `settings {
+  runtime {
+    journal {
+      strict false
+      retention_days 30
+      max_entries 10000
+    }
+    usage {
+      detail_retention_days 30
+      max_observations 100000
+    }
+    log {
+      max_segment_bytes 5242880
+      max_segments 3
+    }
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    const outer = node.value as BlockValue;
+    const runtimeBlock = outer.properties.find((p) => p.key === "runtime")
+      ?.value as BlockValue;
+    expect(runtimeBlock.properties.map((p) => p.key).sort()).toEqual([
+      "journal",
+      "log",
+      "usage",
+    ]);
+
+    const journalBlock = runtimeBlock.properties.find(
+      (p) => p.key === "journal",
+    )?.value as BlockValue;
+    expect(
+      journalBlock.properties.find((p) => p.key === "retention_days")?.value,
+    ).toMatchObject({ kind: "number", value: 30 });
+    expect(
+      journalBlock.properties.find((p) => p.key === "max_entries")?.value,
+    ).toMatchObject({ kind: "number", value: 10000 });
+
+    const usageBlock = runtimeBlock.properties.find((p) => p.key === "usage")
+      ?.value as BlockValue;
+    expect(
+      usageBlock.properties.find((p) => p.key === "detail_retention_days")
+        ?.value,
+    ).toMatchObject({ kind: "number", value: 30 });
+    expect(
+      usageBlock.properties.find((p) => p.key === "max_observations")?.value,
+    ).toMatchObject({ kind: "number", value: 100000 });
+
+    const logBlock = runtimeBlock.properties.find((p) => p.key === "log")
+      ?.value as BlockValue;
+    expect(
+      logBlock.properties.find((p) => p.key === "max_segment_bytes")?.value,
+    ).toMatchObject({ kind: "number", value: 5242880 });
+    expect(
+      logBlock.properties.find((p) => p.key === "max_segments")?.value,
+    ).toMatchObject({ kind: "number", value: 3 });
   });
 });
 
@@ -615,5 +709,88 @@ describe("Parser — agent review_models field", () => {
     const agent = result._unsafeUnwrap()[0] as AgentBlock;
     const prop = agent.properties.find((p) => p.key === "review_models");
     expect(prop).toBeUndefined();
+  });
+});
+
+describe("Parser — delegation limits", () => {
+  it("parses project and agent delegation blocks", () => {
+    const source = `settings {
+  delegation {
+    max_children 9
+    max_concurrency 9
+    max_depth 3
+    max_processes 9
+  }
+}
+
+agent tapestry {
+  delegation {
+    max_children 3
+    max_concurrency 2
+  }
+}`;
+    const result = parseSource(source);
+    expect(result.isOk()).toBe(true);
+    const nodes = result._unsafeUnwrap();
+    const settings = nodes[0] as SettingAssignment;
+    const settingsBlock = settings.value as BlockValue;
+    const delegation = settingsBlock.properties.find(
+      (property) => property.key === "delegation",
+    )?.value as BlockValue;
+    expect(delegation.properties.map((property) => property.key)).toEqual([
+      "max_children",
+      "max_concurrency",
+      "max_depth",
+      "max_processes",
+    ]);
+    expect(
+      delegation.properties.find(
+        (property) => property.key === "max_concurrency",
+      )?.value,
+    ).toMatchObject({ kind: "number", value: 9 });
+
+    const agent = nodes[1] as AgentBlock;
+    const agentDelegation = agent.properties.find(
+      (property) => property.key === "delegation",
+    )?.value as BlockValue;
+    expect(agentDelegation.properties[0]?.value).toMatchObject({
+      kind: "number",
+      value: 3,
+    });
+  });
+
+  it("parses JSON number forms inside opaque adapter settings", () => {
+    const result = parseSource(
+      `settings { adapters { test { negative -1 exponent 1.25e+2 } } }`,
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const test = ((result.value[0] as SettingAssignment).value as BlockValue)
+        .properties[0]?.value as BlockValue;
+      const adapter = test.properties[0]?.value as BlockValue;
+      expect(
+        adapter.properties.map((property) => property.value),
+      ).toMatchObject([
+        { kind: "number", value: -1 },
+        { kind: "number", value: 125 },
+      ]);
+    }
+  });
+
+  it("parses null inside opaque adapter settings", () => {
+    const result = parse(
+      tokenize(`settings { adapters { test { value null } } }`)._unsafeUnwrap(),
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const settings = result.value[0] as SettingAssignment;
+      const adapters = (settings.value as BlockValue).properties[0]
+        ?.value as BlockValue;
+      const test = adapters.properties[0]?.value as BlockValue;
+      expect(test.properties[0]?.value).toMatchObject({
+        kind: "null",
+        value: null,
+      });
+    }
   });
 });

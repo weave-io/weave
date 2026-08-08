@@ -2,7 +2,7 @@
 
 **Status**: Accepted  
 **Date**: 2026-05-26  
-**Related**: [Adapter Boundary](../adapter-boundary.md) · [Adapter Readiness Status](../adapter-readiness-status.md) · [Spec 20 — OpenCode Adapter Materialization](../specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [ADR 0001 — Prompt Composition Templates](0001-prompt-composition-templates.md) · [ADR 0002 — Runtime Persistence Store](0002-runtime-persistence-store.md) · [Legacy Architecture](../legacy-architecture.md)
+**Related**: [Adapter Boundary](../architecture/adapter-boundary.md) · [Adapter Capabilities](../reference/adapter-capabilities.md) · [OpenCode Adapter](../adapters/opencode.md) · [ADR 0001 — Prompt Composition Templates](0001-prompt-composition-templates.md) · [ADR 0002 — Runtime Persistence Store](0002-runtime-persistence-store.md)
 
 ---
 
@@ -91,13 +91,13 @@ Skill discovery is harness-owned. The OpenCode SDK/runtime knows which skills ar
 
 1. Accept the harness-provided `SkillInfo[]` list via `OpenCodeAdapterOptions.availableSkills`.
 2. Return it from `loadAvailableSkills()` without any filesystem scanning.
-3. Let the engine's `resolveSkillsForAgent()` match declared skill names against the list and emit `MissingSkill` errors for unresolved names.
+3. Let the engine's `resolveSkillsForAgent()` match declared skill names against the list and emit warnings for unresolved names.
 
-`skill-discovery.ts` provides only two helpers:
+`skill-discovery.ts` provides two compatibility helpers:
 - `buildSkillInfoList(names)` — wraps harness-provided skill names as `SkillInfo[]`.
-- `validateDeclaredSkills(declared, available, disabled)` — validates declared names against the harness-provided list; returns `err(string[])` for missing skills.
+- `validateDeclaredSkills(declared, available, disabled)` — reports missing names to callers that need a strict validation result. Adapter activation must convert this diagnostic into warnings rather than fail an agent.
 
-The module contains no filesystem I/O. When no skills are injected, `loadAvailableSkills()` returns `[]` and the engine hard-errors on any declared skills — no silent skips.
+The module contains no filesystem I/O. When no skills are injected, `loadAvailableSkills()` returns `[]`; each declared skill is reported as unavailable and agent activation continues without it.
 
 ### 5. Ownership-safe upsert via `[weave-managed]` tag
 
@@ -166,6 +166,5 @@ The `[weave-managed]` ownership tag is embedded in the agent's `description` fie
 - [`packages/adapters/opencode/src/model-resolution.ts`](../../packages/adapters/opencode/src/model-resolution.ts) — Adapter-local model resolution with fail-fast rule.
 - [`packages/adapters/opencode/src/skill-discovery.ts`](../../packages/adapters/opencode/src/skill-discovery.ts) — Harness-injection-based skill validation helpers.
 - [`packages/adapters/opencode/src/sdk-types.ts`](../../packages/adapters/opencode/src/sdk-types.ts) — Sole SDK import surface for the adapter.
-- [Spec 20 — OpenCode Adapter Materialization](../specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) — Normative spec for this work.
-- [Adapter Boundary](../adapter-boundary.md) — Ownership rules that this ADR must not violate.
-- [Legacy Architecture](../legacy-architecture.md) — Alpha/OpenCode-era reference for the plugin install/runtime story.
+- [OpenCode Adapter](../adapters/opencode.md) — Current implementation contract.
+- [Adapter Boundary](../architecture/adapter-boundary.md) — Ownership rules that this ADR must not violate.

@@ -1,32 +1,29 @@
 ---
-title: CLI Reference
-description: Current Weave CLI commands, flags, examples, output expectations, and exit behavior.
+title: CLI
+description: Command syntax and flags for the installed Weave CLI.
 tableOfContents:
   minHeadingLevel: 2
   maxHeadingLevel: 3
 ---
 
-## Overview
+The CLI creates, validates, composes, and inspects configuration. It does not launch a harness runtime. Run `weave --help` for the installed version's command list. Adapter-specific limitations are listed in the [support matrix](../adapters/).
 
-The Weave CLI initializes, migrates, validates, and inspects configuration. It does not launch harness runtimes. Any command that can fail reports a non-zero exit code and a formatted error; JSON output is available on selected inspection commands.
-
-For the public eval overview, see [Evals](../evals/).
-
-## Global Flags
+## Common flags
 
 | Flag | Meaning |
 | --- | --- |
-| `--help`, `-h` | Show command help. |
-| `--version`, `-V` | Show CLI version when no command is provided. |
-| `--json` | Emit JSON for commands that support it. |
-| `--yes`, `-y` | Confirm interactive init or migrate prompts non-interactively. |
-| `--force` | Allow overwrites where the command supports them. |
+| `--help`, `-h` | Show help. |
+| `--version`, `-V` | Show the CLI version. |
+| `--json` | Emit JSON for commands that support it, including `validate` and prompt list/inspect. |
+| `--yes`, `-y` | Accept init or migration prompts. |
+| `--force` | Allow supported overwrites. |
+| `--scope global\|local` | Select a scope for `init`, migration, or prompt self-modification. |
 
 ## `weave init`
 
-Create global or project config and optionally configure a detected harness.
+Create configuration and configure detected harnesses:
 
-```bash
+```sh
 weave init
 weave init --scope local --yes
 weave init --scope global --yes
@@ -35,211 +32,83 @@ weave init --scope local --harness opencode --yes
 weave init --scope local --all-harnesses --yes
 ```
 
-| Flag | Meaning |
-| --- | --- |
-| `--scope global|local` | Choose `~/.weave` or project `.weave`. |
-| `--install-dir <dir>` | Override the directory written by init. |
-| `--harness <name>` | Configure one detected supported harness. Currently OpenCode is the implemented adapter. |
-| `--all-harnesses` | Configure all detected supported harnesses. |
-
-Expected output: a setup summary describing created config and any harness installation work. Exit `0` means init completed or was cancelled without an error; exit `1` means the requested setup was unavailable or failed.
+`--install-dir` changes the scaffold location. `--harness` selects one detected harness; `--all-harnesses` selects every detected harness. The current installer supports OpenCode. Claude Code uses [`weave compose`](#weave-compose), and Pi uses its extension installer.
 
 ## `weave init migrate`
 
-Migrate legacy OpenCode JSONC config into `.weave` DSL.
+Convert a supported legacy OpenCode JSONC configuration into `.weave`:
 
-```bash
+```sh
 weave init migrate --scope local
 weave init migrate --scope global
 weave init migrate --scope local --yes
 weave init migrate --scope local --yes --force
 ```
 
-| Scope | Source | Destination |
-| --- | --- | --- |
-| Local | `./.opencode/weave-opencode.jsonc` | `.weave/config.weave` |
-| Global | `~/.config/opencode/weave-opencode.jsonc` | `~/.weave/config.weave` |
-
-Expected output: migration plan, warnings when legacy fields cannot map exactly, and the destination path. Use `--force` only after reviewing the destination.
+Review the generated configuration and validate it before use.
 
 ## `weave validate`
 
-Validate config and print either a summary or JSON.
+Validate one scope or an explicit file:
 
-```bash
+```sh
 weave validate
 weave validate --project
 weave validate --global
-weave validate --path .weave/config.weave
 weave validate --path .weave/config.weave --json
 ```
 
-Without `--path`, `--project`, or `--global`, validation loads the effective config from builtins, global config, and project config.
+Without a selector, the CLI loads the effective configuration. Exit `0` means valid; exit `1` means a read, parse, validation, or merge failure.
 
-Text output includes:
+## Prompt commands
 
-```text
-Weave config is valid.
-agents: <count>
-categories: <count>
-workflows: <count>
-disabled: <count>
-log_level: <level>
-```
-
-Exit `0` means parsing and validation succeeded. Exit `1` means file read, parse, validation, or merge failure.
-
-## `weave prompt list`
-
-List all available agent descriptors after loading config and generating category shuttles.
-
-```bash
+```sh
 weave prompt list
 weave prompt list --json
-```
-
-Text output is one agent name per line. JSON output includes names, descriptions, and modes.
-
-## `weave prompt inspect`
-
-Render one composed prompt and metadata.
-
-```bash
 weave prompt inspect loom
 weave prompt inspect loom --json
+weave prompt self-modify --scope local
 ```
 
-JSON output includes:
+`prompt inspect <agent>` renders a composed prompt and metadata. `prompt self-modify` prints a text-only guide and accepts only `--scope`; it does not edit files or support `--json`.
 
-- `name`
-- `description`
-- `mode`
-- `models`
-- `temperature`
-- `effectiveToolPolicy`
-- `skills`
-- `delegationTargets`
-- `composedPrompt`
+## `weave runtime`
 
-Use this command to verify prompt files, prompt appends, delegation rendering, category shuttles, and tool-policy defaults.
+Inspect runtime state for the current project root without starting or changing a harness. Runtime commands have no scope selector or JSON output:
 
-## `weave prompt self-modify`
-
-Print a deterministic, text-only guide that tells an agent exactly which files to read, what rules to follow, and how to verify changes when modifying Weave's own configuration.
-
-```bash
-weave prompt self-modify                  # guide for global scope (default)
-weave prompt self-modify --scope global   # explicit global scope
-weave prompt self-modify --scope local    # guide for project scope
-```
-
-| Flag | Meaning |
-| --- | --- |
-| `--scope global\|local` | Target scope for the guide. Defaults to `global`. |
-
-### v1 constraints
-
-| Constraint | Detail |
-| --- | --- |
-| **Text-only output** | The guide is always plain Markdown text. `--json` is rejected with exit code `1`. |
-| **Scope-only tailoring** | The only accepted flag is `--scope global\|local`. No other tailoring flags exist in v1. |
-| **Default scope: global** | When `--scope` is omitted, the guide targets the global scope (`~/.weave/`). |
-| **No extra positional args** | Any extra positional arguments after `self-modify` are rejected with exit code `1`. |
-| **No config loading** | The command does not load or validate the current Weave config. It prints the guide unconditionally. |
-
-### What the guide covers
-
-The printed guide includes:
-
-- The selected scope label and canonical config/prompts paths for that scope.
-- A pre-flight checklist naming `docs/dsl-reference.md` and `docs/config-loading.md` as required reading.
-- A note that `docs/prompt-composition.md` must be read before any prompt-related change.
-- A clear statement that **`packages/docs/` is a public mirror, not the canonical source** — the authoritative docs live in `docs/` at the repo root.
-- Target-aware rules for global vs. local scope differences.
-- A step-by-step workflow: identify → read DSL section → edit config → place prompt files → validate → inspect.
-- Common DSL patterns (override builtin, add agent, add category, disable agent).
-- Prompt-specific rules (Mustache context fields, `{{{delegation.section}}}`, mutual exclusivity of `prompt`/`prompt_file`).
-- Verification commands (`weave validate`, `weave prompt list`, `weave prompt inspect`).
-
-### Canonical doc authority
-
-The guide explicitly names repo-root `docs/` as the canonical source and `packages/docs/` as a public mirror. Agents following the guide must load `docs/dsl-reference.md` and `docs/config-loading.md` from the repo root — not from `packages/docs/`. The two may diverge; `docs/` always wins.
-
-### Base docs first
-
-The guide enforces a **base docs first** reading order:
-
-1. `docs/dsl-reference.md` — DSL syntax reference
-2. `docs/config-loading.md` — merge rules, builtin agents, prompt-file resolution
-3. `docs/prompt-composition.md` — only when the change touches prompt text or prompt fields
-
-Agents must not skip to target-specific sections without first reading the base docs.
-
-### Loom routing note
-
-When Loom receives a self-modification request, it should:
-
-1. Clarify the config object type before asking about scope.
-2. Ask about scope only after the object type is clear.
-3. Run `weave prompt self-modify [--scope <scope>]` to obtain the guide.
-4. Load `docs/dsl-reference.md` and `docs/config-loading.md` before any edits.
-5. Load `docs/prompt-composition.md` before any prompt-related edits.
-
-## `weave runtime status`
-
-Inspect the default runtime store without mutating it.
-
-```bash
+```sh
 weave runtime status
-```
-
-The default database path is `.weave/runtime/weave.db` relative to the current project. Exit `0` means the inspection command completed, even if the store has no active entries to report.
-
-## `weave runtime journal`
-
-Show recent journal entries.
-
-```bash
-weave runtime journal
 weave runtime journal --limit 20
 ```
 
-Journal output is for operational inspection. It should not contain raw secrets or large payloads because the runtime journal writer sanitizes and size-limits entries.
-
 ## `weave eval run`
 
-Run Weave's public eval suites against the configured model matrix.
+Run text-based evaluation cases:
 
-```bash
-weave eval run
-weave eval run --agent loom
-weave eval run --model anthropic/claude-sonnet-4.5
+```sh
 weave eval run --case loom-route-backend-api
-weave eval run --dry-run
+weave eval run --case loom-route-backend-api --agent loom --model anthropic/claude-sonnet-4.5
+weave eval run --case loom-route-backend-api --dry-run
+weave eval run --case loom-route-backend-api --raw-artifacts
 ```
 
-Current support is limited to **seven text-only suite families**:
+Use `--agent`, `--model`, and `--case` to filter. `--dry-run` validates filters without making model calls. Results cover text-observable behavior, not hidden tool activity or live harness events.
 
-- `loom-routing`
-- `tapestry-execution`
-- `shuttle-execution`
-- `spindle-tools`
-- `pattern-planning`
-- `weft-review`
-- `warp-security`
+## `weave compose`
 
-`--agent` also accepts the short aliases `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`.
+Compose adapter output. The CLI currently supports Claude Code:
 
-Important boundary: this command scores **text-observable output only**. It does not run runtime-backed harness evals or verify hidden tool activity, filesystem mutation, browser events, or network traces.
+```sh
+weave compose --adapter claude-code
+weave compose --adapter claude-code --init
+weave compose --adapter claude-code --project-root ./project
+weave compose --adapter claude-code --out-dir .weave/plugins/claude-code
+```
 
-`--dry-run` validates the requested filters and prints what would run without making model calls. Completed eval runs report threshold misses in artifacts rather than failing the command for ordinary case-level misses. Hard input, environment, or orchestration failures still exit non-zero.
-
-See [Evals](../evals/) for the public overview and reporting model.
+`--init` also creates the separate bootstrap plugin at `./weave-bootstrap-plugin` by default. Use `--bootstrap-dir` to choose its location; `--out-dir` controls the composed Claude Code output only.
 
 ## `weave run`
 
-`weave run` intentionally refuses to run harness runtimes directly. It exits with guidance to launch the harness yourself and use adapter-native explicit execution commands, such as OpenCode's `/weave:start` or `/start-work`.
+`weave run` does not start a harness. Launch the harness yourself and use its adapter-native start command, such as OpenCode's `/weave:start` or Pi's `/weave:start`.
 
-## Unsupported Commands
-
-There is no current `weave build` command. Use repository scripts such as `bun run build`, `bun run docs:build`, and `bun run typecheck` for workspace operations.
+There is no current `weave build` command.

@@ -12,13 +12,18 @@ import type { SkillInfo } from "./skill-resolution.js";
  * skills live, how lifecycle hooks are registered, or how selected model state
  * is queried. Adapters own those details and provide explicit context to engine
  * composition helpers.
+ *
+ * Opaque adapter CLI/extension commands are not members of this interface.
+ * They route through the harness-neutral envelope and registry in
+ * `adapter-command.ts` (`dispatchAdapterCommand`), which validates shape only
+ * and never parses adapter payloads.
  */
 export interface HarnessAdapter {
   /**
    * Perform any one-time initialisation required by the harness before
    * normalized Weave intent can be materialised. Called exactly once by the
    * bootstrap entry point before any other adapter method (see
-   * `docs/adapter-bootstrap.md`).
+   * `docs/guides/adapter-development.md`).
    */
   init(): Promise<void>;
 
@@ -40,7 +45,7 @@ export interface HarnessAdapter {
    * Return the list of skills available in this harness instance.
    *
    * The engine calls this once during the bootstrap sequence — after `init()`
-   * and before agent materialisation (see `docs/adapter-bootstrap.md`) — to
+   * and before agent materialisation (see `docs/guides/adapter-development.md`) — to
    * obtain the adapter-provided skill context used for skill resolution. The
    * engine matches each agent's declared
    * `skills [...]` entries against `SkillInfo.name` values in the returned

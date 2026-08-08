@@ -390,7 +390,7 @@ describe("evaluateEffectiveToolPolicy", () => {
 //
 // All fixtures use synthetic tool identifiers (synthetic.*) only.
 // No harness names (opencode, claude-code, pi, bash, etc.) appear here.
-// Aligned with Spec 07 `tool-policy-mapping` capability.
+// Aligned with adapter capability contract `tool-policy-mapping` capability.
 
 describe("resolveToolDecisions", () => {
   // Shared all-allow effective policy for basic classification tests

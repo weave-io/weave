@@ -7,6 +7,10 @@
 
 import { z } from "zod";
 import {
+  parseModelIntentEntry,
+  THINKING_LEVEL_VALUES,
+} from "./model-thinking-syntax.js";
+import {
   refinePromptAppendExclusive,
   refinePromptExclusive,
   refinePromptFileSafe,
@@ -17,6 +21,40 @@ import {
 // ---------------------------------------------------------------------------
 
 export const ToolPermissionSchema = z.enum(["allow", "deny", "ask"]);
+
+/**
+ * A required string that must carry actual content.
+ *
+ * Rejects both `""` and whitespace-only values with `message`, while preserving
+ * the author's original value verbatim — no trimming, so surrounding
+ * formatting the author chose survives into the typed config.
+ */
+function NonBlankStringSchema(message: string) {
+  return z
+    .string({ error: message })
+    .refine((value) => value.trim().length > 0, { message });
+}
+
+/** Closed, harness-neutral vocabulary for per-model thinking intent. */
+export const ThinkingLevelSchema = z.enum(THINKING_LEVEL_VALUES);
+export { THINKING_LEVEL_VALUES };
+
+function addModelIntentIssues(
+  entries: string[] | undefined,
+  fieldPath: string[],
+  ctx: z.RefinementCtx,
+): void {
+  if (entries === undefined) return;
+  entries.forEach((entry, index) => {
+    const parsed = parseModelIntentEntry(entry);
+    if (parsed.isOk()) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [...fieldPath, index],
+      message: parsed.error.message,
+    });
+  });
+}
 
 export const DelegationTriggerSchema = z.object({
   domain: z.string(),
@@ -33,6 +71,55 @@ export const ToolPolicySchema = z
     network: ToolPermissionSchema.optional(),
   })
   .strict();
+
+export const DEFAULT_DELEGATION_LIMITS = {
+  max_children: 9,
+  max_concurrency: 3,
+  max_depth: 3,
+  max_processes: 9,
+} as const;
+
+const PositiveSafeIntegerSchema = z
+  .number()
+  .int()
+  .positive()
+  .max(Number.MAX_SAFE_INTEGER);
+
+export const DelegationSettingsSchema = z
+  .object({
+    max_children: PositiveSafeIntegerSchema.max(9).optional(),
+    max_concurrency: PositiveSafeIntegerSchema.max(9).optional(),
+    max_depth: PositiveSafeIntegerSchema.optional(),
+    max_processes: PositiveSafeIntegerSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (limits) =>
+      limits.max_children === undefined ||
+      limits.max_concurrency === undefined ||
+      limits.max_concurrency <= limits.max_children,
+    {
+      message: "max_concurrency must be less than or equal to max_children",
+      path: ["max_concurrency"],
+    },
+  );
+
+export const AgentDelegationConfigSchema = z
+  .object({
+    max_children: PositiveSafeIntegerSchema.max(9).optional(),
+    max_concurrency: PositiveSafeIntegerSchema.max(9).optional(),
+  })
+  .strict()
+  .refine(
+    (limits) =>
+      limits.max_children === undefined ||
+      limits.max_concurrency === undefined ||
+      limits.max_concurrency <= limits.max_children,
+    {
+      message: "max_concurrency must be less than or equal to max_children",
+      path: ["max_concurrency"],
+    },
+  );
 
 // ---------------------------------------------------------------------------
 // Routing
@@ -67,6 +154,7 @@ export const AgentConfigSchema = z
     temperature: z.number().min(0).max(2).optional(),
     mode: z.enum(["primary", "subagent", "all"]).optional(),
     tool_policy: ToolPolicySchema.optional(),
+    delegation: AgentDelegationConfigSchema.optional(),
     routing: RoutingConfigSchema.optional(),
     skills: z.array(z.string()).optional(),
     triggers: z.array(DelegationTriggerSchema).optional(),
@@ -74,16 +162,28 @@ export const AgentConfigSchema = z
   .refine(...refinePromptExclusive())
   .refine(...refinePromptFileSafe("prompt_file"))
   .refine(...refinePromptAppendExclusive())
-  .refine(...refinePromptFileSafe("prompt_append_file"));
+  .refine(...refinePromptFileSafe("prompt_append_file"))
+  .superRefine((agent, ctx) => {
+    addModelIntentIssues(agent.models, ["models"], ctx);
+    addModelIntentIssues(agent.review_models, ["review_models"], ctx);
+  });
 
 // ---------------------------------------------------------------------------
 // Category
 // ---------------------------------------------------------------------------
 
+/**
+ * A routing category. Each category generates a `shuttle-<name>` subagent, so
+ * the `description` is required: it is the routing text delegators read when
+ * choosing between generated shuttles. Without it a generated shuttle would
+ * advertise the generic Shuttle description, which contradicts its domain.
+ */
 export const CategoryConfigSchema = z
   .object({
     name: z.string().optional(),
-    description: z.string().optional(),
+    description: NonBlankStringSchema(
+      "category description must be a non-empty string",
+    ),
     patterns: z
       .array(z.string())
       .min(1, "patterns must have at least one entry"),
@@ -94,7 +194,10 @@ export const CategoryConfigSchema = z
     prompt_append_file: z.string().optional(),
   })
   .refine(...refinePromptAppendExclusive())
-  .refine(...refinePromptFileSafe("prompt_append_file"));
+  .refine(...refinePromptFileSafe("prompt_append_file"))
+  .superRefine((category, ctx) => {
+    addModelIntentIssues(category.models, ["models"], ctx);
+  });
 
 // ---------------------------------------------------------------------------
 // Disabled
@@ -157,11 +260,11 @@ export const ArtifactDeclSchema = z.object({
 export const OnRejectSchema = z.enum(["pause", "fail", "retry"]);
 
 // ---------------------------------------------------------------------------
-// Reconciliation reason (closed built-in set — Spec 22 Unit 3)
+// Reconciliation reason (closed built-in set — execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 /**
- * The closed built-in set of reconciliation reasons defined by Spec 22 Unit 3.
+ * The closed built-in set of reconciliation reasons defined by the execution lifecycle contract.
  *
  * - `execution-mismatch`    — runtime validation or execution checks detected a
  *                             mismatch between expected and actual execution state.
@@ -181,7 +284,7 @@ export const ReconciliationReasonSchema = z.enum([
 ]);
 
 // ---------------------------------------------------------------------------
-// Reconciliation handler (step-local declaration — Spec 22 Unit 3)
+// Reconciliation handler (step-local declaration — execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 /**
@@ -290,7 +393,7 @@ export const WorkflowStepSchema = z
     outputs: z.array(ArtifactDeclSchema).optional(),
     on_reject: OnRejectSchema.optional(),
     /**
-     * Step-local reconciliation handler declarations (Spec 22 Unit 3).
+     * Step-local reconciliation handler declarations (execution lifecycle contract).
      *
      * Declares that this step is the upstream handler for the listed
      * reconciliation reasons. The engine routes reconciliation to the nearest
@@ -472,6 +575,83 @@ export const WorkflowConfigSchema = z
 // Settings
 // ---------------------------------------------------------------------------
 
+/** Harness-neutral JSON data carried by opaque adapter settings. */
+export type JsonValue =
+  | null
+  | boolean
+  | string
+  | number
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.boolean(),
+    z.string(),
+    z.number().finite(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ]),
+);
+
+const ADAPTER_SETTINGS_MAX_DEPTH = 4;
+const ADAPTER_SETTINGS_MAX_BYTES = 64 * 1024;
+
+function canonicalJson(value: JsonValue): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function checkAdapterValue(
+  value: JsonValue,
+  path: (string | number)[],
+  depth: number,
+  ctx: z.RefinementCtx,
+): void {
+  if (depth > ADAPTER_SETTINGS_MAX_DEPTH) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path,
+      message: `adapter setting nesting exceeds maximum depth of ${ADAPTER_SETTINGS_MAX_DEPTH}`,
+    });
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      checkAdapterValue(entry, [...path, index], depth + 1, ctx);
+    });
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    Object.entries(value).forEach(([key, entry]) => {
+      checkAdapterValue(entry, [...path, key], depth + 1, ctx);
+    });
+  }
+}
+
+export const AdapterSettingsSchema = z
+  .record(z.string(), JsonValueSchema)
+  .superRefine((adapters, ctx) => {
+    for (const [harness, value] of Object.entries(adapters)) {
+      checkAdapterValue(value, [harness], 0, ctx);
+      const bytes = new TextEncoder().encode(canonicalJson(value)).byteLength;
+      if (bytes > ADAPTER_SETTINGS_MAX_BYTES) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [harness],
+          message: `adapter settings exceed the 64 KiB canonical JSON limit (${bytes} bytes)`,
+        });
+      }
+    }
+  });
+
 /** Valid log level values (uppercase bare identifiers in DSL). */
 export const LogLevelSchema = z.enum([
   "TRACE",
@@ -482,16 +662,80 @@ export const LogLevelSchema = z.enum([
   "FATAL",
 ]);
 
+/** Defaults for Runtime Store journaling and retention. */
+export const DEFAULT_RUNTIME_JOURNAL_SETTINGS = {
+  strict: false,
+  retention_days: 30,
+  max_entries: 10_000,
+} as const;
+
+export const DEFAULT_RUNTIME_USAGE_SETTINGS = {
+  detail_retention_days: 30,
+  max_observations: 100_000,
+} as const;
+
+export const DEFAULT_RUNTIME_LOG_SETTINGS = {
+  max_segment_bytes: 5_242_880,
+  max_segments: 3,
+} as const;
+
+export const DEFAULT_RUNTIME_SETTINGS = {
+  journal: { ...DEFAULT_RUNTIME_JOURNAL_SETTINGS },
+  usage: { ...DEFAULT_RUNTIME_USAGE_SETTINGS },
+  log: { ...DEFAULT_RUNTIME_LOG_SETTINGS },
+} as const;
+
+/** Runtime journal retention + strictness. Bounds: days 1..3650, entries 1..10_000_000. */
+export const RuntimeJournalSettingsSchema = z
+  .object({
+    strict: z.boolean().default(DEFAULT_RUNTIME_JOURNAL_SETTINGS.strict),
+    retention_days: PositiveSafeIntegerSchema.max(3650).default(
+      DEFAULT_RUNTIME_JOURNAL_SETTINGS.retention_days,
+    ),
+    max_entries: PositiveSafeIntegerSchema.max(10_000_000).default(
+      DEFAULT_RUNTIME_JOURNAL_SETTINGS.max_entries,
+    ),
+  })
+  .default({ ...DEFAULT_RUNTIME_JOURNAL_SETTINGS });
+
+/** Usage-detail retention. Bounds: days 1..3650, observations 1..10_000_000. */
+export const RuntimeUsageSettingsSchema = z
+  .object({
+    detail_retention_days: PositiveSafeIntegerSchema.max(3650).default(
+      DEFAULT_RUNTIME_USAGE_SETTINGS.detail_retention_days,
+    ),
+    max_observations: PositiveSafeIntegerSchema.max(10_000_000).default(
+      DEFAULT_RUNTIME_USAGE_SETTINGS.max_observations,
+    ),
+  })
+  .default({ ...DEFAULT_RUNTIME_USAGE_SETTINGS });
+
+/**
+ * Rotating log segment bounds.
+ * `max_segment_bytes` 65_536..1_073_741_824; `max_segments` 1..100.
+ */
+export const RuntimeLogSettingsSchema = z
+  .object({
+    max_segment_bytes: z
+      .number()
+      .int()
+      .min(65_536)
+      .max(1_073_741_824)
+      .default(DEFAULT_RUNTIME_LOG_SETTINGS.max_segment_bytes),
+    max_segments: PositiveSafeIntegerSchema.max(100).default(
+      DEFAULT_RUNTIME_LOG_SETTINGS.max_segments,
+    ),
+  })
+  .default({ ...DEFAULT_RUNTIME_LOG_SETTINGS });
+
 /** Runtime-specific settings nested inside `settings { runtime { ... } }`. */
 export const RuntimeSettingsSchema = z
   .object({
-    journal: z
-      .object({
-        strict: z.boolean().default(false),
-      })
-      .default({ strict: false }),
+    journal: RuntimeJournalSettingsSchema,
+    usage: RuntimeUsageSettingsSchema,
+    log: RuntimeLogSettingsSchema,
   })
-  .default({ journal: { strict: false } });
+  .default({ ...DEFAULT_RUNTIME_SETTINGS });
 
 /**
  * The `settings { ... }` block — canonical home for log level and runtime
@@ -500,9 +744,17 @@ export const RuntimeSettingsSchema = z
 export const SettingsConfigSchema = z
   .object({
     log_level: LogLevelSchema.default("INFO"),
+    delegation: DelegationSettingsSchema.optional(),
     runtime: RuntimeSettingsSchema,
+    // Resolve the semantic default after layered config merge. Keeping this
+    // optional preserves whether a higher-priority scope omitted the field.
+    enforce_permissions: z.boolean().optional(),
+    adapters: AdapterSettingsSchema.optional(),
   })
-  .default({ log_level: "INFO", runtime: { journal: { strict: false } } });
+  .default({
+    log_level: "INFO",
+    runtime: { ...DEFAULT_RUNTIME_SETTINGS },
+  });
 
 // ---------------------------------------------------------------------------
 // Top-level WeaveConfig
@@ -517,38 +769,96 @@ export const SettingsConfigSchema = z
  *
  * `extend_before_plan` holds the merged result of all `extend before-plan [...]`
  * top-level directives. The step list is applied globally — there is no
- * per-workflow targeting in v1. The config layer inserts these steps into every
- * workflow that publishes `extension_points { before-plan }`.
+ * per-workflow targeting in v1. The config layer inserts these steps into
+ * every workflow that publishes `extension_points { before-plan }`.
  */
-export const WeaveConfigSchema = z.object({
-  agents: z.record(z.string(), AgentConfigSchema).default({}),
-  categories: z.record(z.string(), CategoryConfigSchema).default({}),
-  disabled: DisabledConfigSchema.default({
-    agents: [],
-    hooks: [],
-    skills: [],
-  }),
-  settings: SettingsConfigSchema,
-  workflows: z.record(z.string(), WorkflowConfigSchema).default({}),
-  /**
-   * Merged `extend before-plan [...]` directives.
-   *
-   * v1 contract: a single global bucket — no per-workflow targeting.
-   * The config layer applies this step list to every workflow that publishes
-   * `extension_points { before-plan }`.
-   *
-   * Defaults to `{ steps: [] }` when no `extend before-plan` directive is present.
-   */
-  extend_before_plan: ExtendBeforePlanSchema.default({ steps: [] }),
-});
+export const WeaveConfigSchema = z
+  .object({
+    agents: z.record(z.string(), AgentConfigSchema).default({}),
+    categories: z.record(z.string(), CategoryConfigSchema).default({}),
+    disabled: DisabledConfigSchema.default({
+      agents: [],
+      hooks: [],
+      skills: [],
+    }),
+    settings: SettingsConfigSchema,
+    workflows: z.record(z.string(), WorkflowConfigSchema).default({}),
+    /**
+     * Merged `extend before-plan [...]` directives.
+     *
+     * v1 contract: a single global bucket — no per-workflow targeting.
+     * The config layer applies this step list to every workflow that publishes
+     * `extension_points { before-plan }`.
+     *
+     * Defaults to `{ steps: [] }` when no `extend before-plan` directive is present.
+     */
+    extend_before_plan: ExtendBeforePlanSchema.default({ steps: [] }),
+  })
+  .superRefine((config, ctx) => {
+    const project = config.settings.delegation;
+    const projectMaxChildren = project?.max_children;
+    const projectMaxConcurrency = project?.max_concurrency;
+
+    for (const [agentName, agent] of Object.entries(config.agents)) {
+      const agentLimits = agent.delegation;
+      if (agentLimits === undefined) continue;
+
+      if (
+        projectMaxChildren !== undefined &&
+        agentLimits.max_children !== undefined &&
+        agentLimits.max_children > projectMaxChildren
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", agentName, "delegation", "max_children"],
+          message: "agent max_children may not exceed the project cap",
+        });
+      }
+
+      // AgentDelegationConfigSchema reports this local contradiction. Do not
+      // also report it as a project-scope concurrency violation.
+      const hasLocalConcurrencyContradiction =
+        agentLimits.max_children !== undefined &&
+        agentLimits.max_concurrency !== undefined &&
+        agentLimits.max_concurrency > agentLimits.max_children;
+      if (hasLocalConcurrencyContradiction) continue;
+
+      if (
+        projectMaxConcurrency !== undefined &&
+        agentLimits.max_concurrency !== undefined &&
+        agentLimits.max_concurrency > projectMaxConcurrency
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", agentName, "delegation", "max_concurrency"],
+          message: "agent max_concurrency may not exceed the project cap",
+        });
+      } else if (
+        agentLimits.max_children === undefined &&
+        projectMaxChildren !== undefined &&
+        agentLimits.max_concurrency !== undefined &&
+        agentLimits.max_concurrency > projectMaxChildren
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", agentName, "delegation", "max_concurrency"],
+          message:
+            "agent max_concurrency must be less than or equal to effective max_children",
+        });
+      }
+    }
+  });
 
 // ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
 
 export type ToolPermission = z.infer<typeof ToolPermissionSchema>;
+export type ThinkingLevelDecl = z.infer<typeof ThinkingLevelSchema>;
 export type DelegationTrigger = z.infer<typeof DelegationTriggerSchema>;
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
+export type DelegationSettings = z.infer<typeof DelegationSettingsSchema>;
+export type AgentDelegationConfig = z.infer<typeof AgentDelegationConfigSchema>;
 /** Per-agent routing configuration (delegation_exclude, etc.). */
 export type RoutingConfig = z.infer<typeof RoutingConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
@@ -564,7 +874,7 @@ export type ArtifactDecl = z.infer<typeof ArtifactDeclSchema>;
 /** Behaviour when a gate step rejects. */
 export type OnReject = z.infer<typeof OnRejectSchema>;
 /**
- * One of the four closed built-in reconciliation reasons (Spec 22 Unit 3).
+ * One of the four closed built-in reconciliation reasons.
  * `execution-mismatch` | `user-revision-request` | `review-rejection` | `security-rejection`
  */
 export type ReconciliationReason = z.infer<typeof ReconciliationReasonSchema>;
@@ -580,8 +890,17 @@ export type ExtendBeforePlan = z.infer<typeof ExtendBeforePlanSchema>;
 export type WorkflowConfig = z.infer<typeof WorkflowConfigSchema>;
 /** Valid log level string. */
 export type LogLevel = z.infer<typeof LogLevelSchema>;
-/** Runtime-specific settings (journal.strict, etc.). */
+/** Runtime journal retention/strict settings. */
+export type RuntimeJournalSettings = z.infer<
+  typeof RuntimeJournalSettingsSchema
+>;
+/** Runtime usage-detail retention settings. */
+export type RuntimeUsageSettings = z.infer<typeof RuntimeUsageSettingsSchema>;
+/** Runtime rotating-log segment settings. */
+export type RuntimeLogSettings = z.infer<typeof RuntimeLogSettingsSchema>;
+/** Runtime-specific settings (journal, usage, log retention). */
 export type RuntimeSettings = z.infer<typeof RuntimeSettingsSchema>;
 /** The `settings { ... }` block config shape. */
+export type JsonAdapterSettings = z.infer<typeof AdapterSettingsSchema>;
 export type SettingsConfig = z.infer<typeof SettingsConfigSchema>;
 export type WeaveConfig = z.infer<typeof WeaveConfigSchema>;

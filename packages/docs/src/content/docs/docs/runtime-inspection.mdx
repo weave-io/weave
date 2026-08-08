@@ -1,0 +1,27 @@
+---
+title: Runtime inspection
+description: Inspect configuration-driven runtime state with the Weave CLI.
+---
+
+Runtime inspection helps you see what the current project has recorded without changing it. Run these commands from the project root; runtime state is resolved only from that project's `.weave/runtime/weave.db`.
+
+## Show status
+
+```sh
+weave runtime status
+```
+
+Status prints the available runtime state for the current project. Runtime inspection has no global-scope selector and no JSON output mode.
+
+## Read the journal
+
+```sh
+weave runtime journal
+weave runtime journal --limit 20
+```
+
+The journal is an inspection surface for workflow and execution events. It is not a replacement for the harness's own transcript or logs.
+
+## Scope and safety
+
+Inspection commands do not start a harness, execute a workflow, or edit configuration. Use [Configuration](../configuration/) to validate inputs and the [CLI reference](../reference/cli/) for flags.

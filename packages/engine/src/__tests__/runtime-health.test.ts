@@ -43,6 +43,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   type AdapterCapabilityContract,
+  ALL_CAPABILITY_IDS,
   buildAdapterHealthReport,
   type CapabilityEntry,
   type SafeAdapterInitInput,
@@ -91,6 +92,7 @@ function makeContractWithCommandEntrypoints(
     "command-entrypoints",
     "event-logging",
     "token-usage-reporting",
+    "descriptor-relative-native-session-io",
   ];
 
   return {
@@ -107,6 +109,13 @@ function makeContractWithCommandEntrypoints(
  * Build a fixture `SafeAdapterInitInput` with all required capabilities native
  * and the `command-entrypoints` capability set to the given readiness.
  */
+function okProbesForAll(): import("../capability-contract.js").CapabilityProbeResult[] {
+  return ALL_CAPABILITY_IDS.map((id) => ({
+    capabilityId: id,
+    probeStatus: "ok" as const,
+  }));
+}
+
 function makeInitInput(
   commandEntrypointsReadiness: CapabilityEntry["readiness"],
   harness = "test-harness",
@@ -116,7 +125,7 @@ function makeInitInput(
     capabilityContract: makeContractWithCommandEntrypoints(
       commandEntrypointsReadiness,
     ),
-    probeResults: [],
+    probeResults: okProbesForAll(),
   };
 }
 
@@ -178,7 +187,7 @@ describe("runtimeHealth — pure operation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "degraded-harness",
       capabilityContract: contract,
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -193,7 +202,7 @@ describe("runtimeHealth — pure operation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "empty-harness",
       capabilityContract: { capabilities: [] },
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -256,7 +265,7 @@ describe("runtimeHealth — commandEntrypointsSupported", () => {
           makeCapabilityEntry("agent-materialization", "native"),
         ],
       },
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -317,7 +326,7 @@ describe("runtimeHealth — degradedOperations", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "partial-harness",
       capabilityContract: contract,
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -371,7 +380,7 @@ describe("runtimeHealth — degradedOperations", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "partial-harness",
       capabilityContract: contract,
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     // Empty array → falls back to derived
@@ -434,7 +443,7 @@ describe("runtimeHealth — unsupportedOperations", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "failing-harness",
       capabilityContract: contract,
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -483,7 +492,7 @@ describe("runtimeHealth — unsupportedOperations", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "failing-harness",
       capabilityContract: contract,
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     // Empty array → falls back to derived
@@ -616,7 +625,7 @@ describe("runtimeHealth — combined adapter-supplied lists", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "mixed-harness",
       capabilityContract: contract,
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     // Adapter supplies degradedOperations but not unsupportedOperations

@@ -1,56 +1,57 @@
 # @weaveio/weave — AI Context Map
 
 > **Stack:** raw-http | none | unknown | typescript
-> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
+> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 129 lib files | 9 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~12.000 tokens. Without it, AI exploration would cost ~45.100 tokens. **Saves ~33.100 tokens per conversation.**
-> **Last scanned:** 2026-07-21 19:08 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~28,900 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,500 tokens per conversation.**
+> **Last scanned:** 2026-08-08 01:24 — re-run after significant changes
 
 ---
 
 # Libraries
 
-- `packages\adapters\claude-code\src\adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
-- `packages\adapters\claude-code\src\agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
-- `packages\adapters\claude-code\src\bootstrap.ts` — function getBootstrapDir: () => string, const BOOTSTRAP_FILES
-- `packages\adapters\claude-code\src\model-resolution.ts` — function buildClaudeCodeModelInput: (descriptor) => ModelResolutionInput, const CLAUDE_CODE_AVAILABLE_MODELS: Set<string>
-- `packages\adapters\claude-code\src\skill-discovery.ts` — function discoverClaudeCodeSkills: (projectRoot, homeDir, readDir) => void
-- `packages\adapters\claude-code\src\tool-classification.ts`
+- `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
+- `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
+- `packages/adapters/claude-code/src/bootstrap.ts` — function getBootstrapDir: () => string, const BOOTSTRAP_FILES
+- `packages/adapters/claude-code/src/model-resolution.ts` — function buildClaudeCodeModelInput: (descriptor) => ModelResolutionInput, const CLAUDE_CODE_AVAILABLE_MODELS: Set<string>
+- `packages/adapters/claude-code/src/skill-discovery.ts` — function discoverClaudeCodeSkills: (projectRoot, homeDir, readDir) => void
+- `packages/adapters/claude-code/src/tool-classification.ts`
   - function getClaudeCodeToolClassifications: () => readonly ConcreteToolClassification[]
   - const CLAUDE_CODE_TOOL_CLASSIFICATIONS: readonly ConcreteToolClassification[]
   - const CLAUDE_CODE_TOOL_IDS: readonly string[]
-- `packages\adapters\opencode\src\adapter.ts`
+- `packages/adapters/opencode/src/adapter.ts`
   - class OpenCodeAdapterError
   - class OpenCodeAdapter
   - interface OpenCodeAdapterOptions
-- `packages\adapters\opencode\src\model-resolution.ts`
-  - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
+- `packages/adapters/opencode/src/model-resolution.ts`
+  - function resolveModelForAgent: (descriptor, context) => Result<OpenCodeModelResolution, ModelResolutionError>
+  - interface OpenCodeModelResolution
   - interface OpenCodeModelContext
   - type ModelResolutionError
-- `packages\adapters\opencode\src\opencode-client.ts`
+- `packages/adapters/opencode/src/opencode-client.ts`
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
   - type OpenCodeClientError
-- `packages\adapters\opencode\src\plugin.ts`
+- `packages/adapters/opencode/src/plugin.ts`
   - function createWeavePlugin: (options) => Plugin
   - interface WeavePluginOptions
   - const WeavePlugin: Plugin
   - const server
-- `packages\adapters\opencode\src\projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
-- `packages\adapters\opencode\src\reconcile-agent.ts`
+- `packages/adapters/opencode/src/projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
+- `packages/adapters/opencode/src/reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
   - function tagWithOwnership: (config) => OpenCodeAgentConfig
   - function reconcileAgent: (agentName, config, client) => ResultAsync<void, ReconcileAgentError>
   - type ReconcileAgentError
   - type ReconcileDecision
   - const WEAVE_OWNERSHIP_TAG
-- `packages\adapters\opencode\src\run-workflow.ts`
+- `packages/adapters/opencode/src/run-workflow.ts`
   - function runWorkflow: (input) => ResultAsync<RunWorkflowResult, RunWorkflowError>
   - interface RunWorkflowInput
   - interface RunWorkflowResult
   - type RunWorkflowError
-- `packages\adapters\opencode\src\runtime-command-projection.ts`
+- `packages/adapters/opencode/src/runtime-command-projection.ts`
   - function buildOpenCodeHealthReport: (overrides?) => AdapterHealthReport
   - class RuntimeCommandProjection
   - interface ProjectionSuccess
@@ -58,55 +59,700 @@
   - interface ProjectionDegraded
   - interface StartPlanProjectionInput
   - _...7 more_
-- `packages\adapters\opencode\src\skill-discovery.ts`
+- `packages/adapters/opencode/src/skill-discovery.ts`
   - function buildSkillInfoList: (names) => SkillInfo[]
   - function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, MissingSkillsError>
   - interface MissingSkillsError
-- `packages\adapters\opencode\src\start-plan-execution.ts`
+- `packages/adapters/opencode/src/start-plan-execution.ts`
   - function startPlanExecution: (input) => ResultAsync<RunWorkflowResult, StartPlanExecutionError>
   - interface StartPlanExecutionInput
   - type StartPlanExecutionError
   - const WEAVE_START_COMMAND
   - const WEAVE_START_LEGACY_COMMAND
   - const DEFAULT_EXECUTION_WORKFLOW
-- `packages\adapters\opencode\src\tool-policy-mapping.ts`
+- `packages/adapters/opencode/src/tool-policy-mapping.ts`
   - function toOpenCodePermission: (permission) => OpenCodePermissionValue
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
   - function mapToolPolicy: (policy) => void
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
-- `packages\adapters\opencode\src\translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
-- `packages\cli\src\args.ts`
+- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/pi/src/active-plan-ui-state.ts`
+  - function isTerminalWorkflowStatus: (status) => boolean
+  - function resolveActivePlanIdentity: (port) => ResultAsync<ActivePlanIdentity | ActivePlanEmptyReason, ActivePlanUiError>
+  - function resolveActivePlanView: (port) => ResultAsync<ActivePlanView, ActivePlanUiError>
+  - function createActivePlanUiState: () => ActivePlanUiState
+  - interface ActivePlanIdentity
+  - interface ActivePlanUiError
+  - _...7 more_
+- `packages/adapters/pi/src/adapter-cli-commands.ts`
+  - function createPlaceholderDoctorPort: () => PiAdapterDoctorPort
+  - function looksLikeFilesystemPath: (value) => boolean
+  - function stripPathsUnlessDiagnostic: (value, diagnostic) => T
+  - function createPiChildrenCommandPort: (options) => PiAdapterChildrenPort
+  - function createPiAdapterCommandHandlers: (options) => Readonly<Record<string, AdapterCommandHandler>>
+  - function createPiAdapterCommandRegistry: (options) => AdapterCommandRegistry
+  - _...20 more_
+- `packages/adapters/pi/src/adapter-cli-production.ts`
+  - function evaluateProductionChildrenDeleteGate: (options, "SessionManager"
+  >) => Result<void, PiAdapterFailure>
+  - function openProductionPiAdapterCommandPorts: (options) => ResultAsync<
+  - function createProductionPorts: (options) => ResultAsync<
+  - function createProductionPiAdapterCommandRegistry: (options) => ResultAsync<AdapterCommandRegistry, PiProductionAdapterCommandError>
+  - function resolveProductionAdapterCliRegistry: (input) => ResultAsync<AdapterCommandRegistry, PiProductionAdapterCliOpenError>
+  - interface PiProductionAdapterCommandPorts
+  - _...5 more_
+- `packages/adapters/pi/src/agent-cycle.ts`
+  - function normalizeAgentBadgeKey: (agentName) => string
+  - function selectAgentBadgeBg: (agentName) => PiUiThemeBgColor
+  - function listCycleablePrimaryAgents: (descriptors, AgentDescriptor>) => readonly AgentDescriptor[]
+  - function nextCycleablePrimaryAgent: (descriptors, AgentDescriptor>, currentName) => AgentDescriptor | undefined
+  - function renderActiveAgentBadge: (agentName, theme?) => string
+  - const PI_PRIMARY_AGENT_CYCLE_SHORTCUT
+  - _...1 more_
+- `packages/adapters/pi/src/artifact-provider.ts`
+  - function createPiSanitizedChildIndex: (entries) => Result<PiSanitizedChildIndex, PiSanitizedChildIndexError>
+  - class PiSanitizedChildIndexExporter
+  - class BunPiArtifactProvider
+  - class FakePiArtifactProvider
+  - interface PiArtifactReadInput
+  - interface PiArtifactDigest
+  - _...9 more_
+- `packages/adapters/pi/src/capability-prober.ts`
+  - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
+  - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
+  - class DefaultPiCapabilityProber
+  - interface PiCandidatePlanContext
+  - interface PiPreflightContext
+  - interface PiCapabilityProbeSource
+  - _...3 more_
+- `packages/adapters/pi/src/child-compact-render.ts`
+  - function createChildCompactState: (threadId) => ChildCompactState
+  - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
+  - function sanitizeChildCompactText: (value) => string
+  - function mapPiChildSessionEventToCompactInput: (event, itemId) => NeverthrowResult<ChildCompactReducerInput | undefined, ChildCompactError>
+  - function reduceChildCompact: (state, input) => NeverthrowResult<ChildCompactState, ChildCompactError>
+  - function reduceChildCompactSafe: (state, input) => ChildCompactState
+  - _...24 more_
+- `packages/adapters/pi/src/child-control-bodies.ts`
+  - function toModelIdentityBody: (model) => PiModelIdentityBody
+  - function parseControlBody: (kind, body) => void
+  - interface HostModelIdentity
+  - type PiBootstrapBody
+  - type PiOrdinaryBootstrapBody
+  - type PiDirectStepBootstrapBody
+  - _...16 more_
+- `packages/adapters/pi/src/child-crypto.ts`
+  - function bytesToHex: (bytes) => string
+  - function hexToBytes: (hex) => Uint8Array | undefined
+  - function timingSafeEqualHex: (a, b) => boolean
+  - function generateChildSecret: (random) => ErasableSecret
+  - function generateNonceHex: (random) => string
+  - class WebCryptoRandomPort
+  - _...5 more_
+- `packages/adapters/pi/src/child-doctor.ts`
+  - function runChildDoctor: (input) => ResultAsync<PiDoctorResult, PiAdapterCommandPortError>
+  - function createPiDoctorPort: (options) => void
+  - function skippedDoctorCheck: (detail) => PiDoctorCheckOutcome
+  - function passedDoctorCheck: (detail) => PiDoctorCheckOutcome
+  - function failedDoctorCheck: (detail, code?) => PiDoctorCheckOutcome
+  - function createSkippedDoctorCheckPorts: (reason) => PiDoctorCheckPorts
+  - _...15 more_
+- `packages/adapters/pi/src/child-env.ts`
+  - function resolveCurrentPiExecutablePath: (envPort) => string | undefined
+  - function buildDefaultPiChildCommand: (envPort) => readonly string[]
+  - function sanitizedBaseEnv: (isDeniedKey) => void
+  - class BunEnvPort
+  - const WEAVE_CHILD_SECRET_ENV
+  - const WEAVE_CHILD_ID_ENV
+  - _...5 more_
+- `packages/adapters/pi/src/child-envelope.ts`
+  - function signEnvelope: (input, secret, hmac) => ResultAsync<PiControlEnvelope, EnvelopeError>
+  - function verifyEnvelope: (candidate, secret, hmac) => ResultAsync<PiControlEnvelope, EnvelopeError>
+  - function looksLikeControlEnvelope: (candidate) => boolean
+  - class PiChildAuthState
+  - interface PiControlEnvelope
+  - interface UnsignedEnvelopeInput
+  - _...8 more_
+- `packages/adapters/pi/src/child-extension-ui.ts`
+  - function normalizePiExtensionUiRequest: (value) => Result<
+  - function createPiChildExtensionUiBridge: (options) => PiChildExtensionUiBridge<E>
+  - class PiChildExtensionUiBridge
+  - interface PiExtensionUiRequestNormalizationError
+  - interface PiChildExtensionUiWidgetSnapshot
+  - interface PiChildExtensionUiDialogSnapshot
+  - _...10 more_
+- `packages/adapters/pi/src/child-framing.ts`
+  - class PiLineFramer
+  - interface ParsedFrame
+  - type FramingError
+  - const MAX_NATIVE_RECORD_BYTES
+  - const MAX_FRAME_RECORD_BYTES
+- `packages/adapters/pi/src/child-inspection-custom.ts`
+  - function createChildInspectionCustomComponent: (tui, theme, keybindings, editor, getInput) => void
+  - interface PiCustomTui
+  - interface PiChildInspectionCustomComponent
+- `packages/adapters/pi/src/child-inspection-editor.ts`
+  - function createChildInspectionEditor: (inspector, host?) => PiChildInspectionEditor
+  - class PiChildInspectionEditor
+  - interface PiChildInspectionEditorHost
+  - type PiChildInspectionEditorResult
+- `packages/adapters/pi/src/child-inspection-render.ts`
+  - function renderChildInspection: (input, width) => Result<PiChildInspectionRenderOutput, PiChildInspectionRenderError>
+  - function createChildInspectionRenderer: (transcriptInput?) => PiChildInspectionRenderer
+  - class PiChildInspectionRenderer
+  - interface InspectionBreadcrumbSegment
+  - interface InspectionWorkflowMeta
+  - interface InspectionSummary
+  - _...6 more_
+- `packages/adapters/pi/src/child-inspection-runtime.ts`
+  - function createDelegationControllerCell: () => PiDelegationControllerCell
+  - function createThreadSourcesCell: () => PiThreadSourcesCell
+  - function clearThreadSources: (cell) => void
+  - function createChildOverlayCell: () => PiChildOverlayCell
+  - function createChildOverlayKeysCell: (now) => void
+  - function createChildInspectionEditorCell: () => PiChildInspectionEditorCell
+  - _...15 more_
+- `packages/adapters/pi/src/child-inspection-settings.ts`
+  - function childInspectionOverlayKeyOverrides: (settings, "keys">) => ReadonlyMap<PiChildOverlayActionId, readonly PiChildOverlayKey[]>
+  - function parsePiChildInspectionSettings: (value) => Result<
+  - function resolvePiChildInspectionSettings: (config, "settings">) => Result<
+  - function effectivePiChildInspectionSettings: (resolution, choice?) => PiChildInspectionEffectiveSettings
+  - function formatPiChildInspectionSettingsIssues: (issues) => string
+  - interface PiChildInspectionSettingsShape
+  - _...8 more_
+- `packages/adapters/pi/src/child-inspector.ts`
+  - function interceptChildSlashCommand: (input, isParentView) => Result<
+  - class PiChildSlots
+  - class PiChildInspector
+  - interface PiInspectorChild
+  - interface PiInspectorViewState
+  - interface PiInspectorView
+  - _...7 more_
+- `packages/adapters/pi/src/child-metadata-cache.ts`
+  - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
+  - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
+  - function resolvePiChildMetadataCacheRoot: (input) => Result<string, PiChildMetadataCacheError>
+  - function createChildMetadataBypass: (source, reason, now) => void
+  - function openPiChildMetadataCache: (options) => ResultAsync<PiChildMetadataCacheOpenOutcome, never>
+  - function openPiChildMetadataCacheReadOnly: (options) => ResultAsync<PiChildMetadataCacheOpenOutcome, never>
+  - _...31 more_
+- `packages/adapters/pi/src/child-native-components.ts`
+  - function renderPiChildCompactComponent: (output, options, theme) => NeverthrowResult<
+  - function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory
+  - interface PiNativeTranscriptComponentDeps
+  - const CHILD_COMPACT_NATIVE_RENDER_FAILED
+- `packages/adapters/pi/src/child-native-sessions.ts`
+  - function describePiNativeSessionStorageUnavailable: (reason) => string
+  - function setPiNativeSessionMaxRangeLengthForTests: (length) => void
+  - function resolvePiNativeSessionRoot: (input) => ResultAsync<string, PiNativeSessionError>
+  - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
+  - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
+  - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
+  - _...42 more_
+- `packages/adapters/pi/src/child-overlay-component.ts` — function createChildOverlayCustomComponent: (tui) => void },, interface PiChildOverlayCustomComponent
+- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
+- `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
+  - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
+  - function formatPiChildOverlayFallbackDiagnostic: (code) => string
+  - function piChildOverlayFallbackReasonCode: (reason, stage, sourceErrorType?) => PiChildOverlayFallbackReasonCode
+  - function piChildOverlayOpenErrorReasonCode: (error) => PiChildOverlayFallbackReasonCode
+  - function piChildOverlayOpenErrorReasonCodeFromUnknown: (error) => PiChildOverlayFallbackReasonCode
+  - type ChildOverlayOpenTerminalError
+  - _...4 more_
+- `packages/adapters/pi/src/child-overlay-keys.ts`
+  - function isPiChildOverlayActionId: (value) => value is PiChildOverlayActionId
+  - function childOverlayActionFromId: (id) => PiChildOverlayAction | undefined
+  - function isPiChildOverlayKeySyntax: (value) => value is PiChildOverlayKey
+  - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
+  - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
+  - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
+  - _...45 more_
+- `packages/adapters/pi/src/child-overlay-replay.ts`
+  - function boundText: (value) => string
+  - function messageText: (message) => void
+  - function recordOf: (value) => Record<string, unknown> | undefined
+  - function nonEmptyString: (value) => string | undefined
+  - function boundLabel: (value) => string
+  - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
+  - _...6 more_
+- `packages/adapters/pi/src/child-overlay-scroll.ts`
+  - function markTailGrowth: (state) => void
+  - function clearTailGrowth: (state) => void
+  - function applyMeasuredExtent: (state, extent) => void
+  - function maxScrollRows: (state) => number
+  - function anchorFromScroll: (state) => ChildOverlayAnchor | undefined
+  - function restoreScrollAnchor: (state, anchor) => void
+  - _...2 more_
+- `packages/adapters/pi/src/child-overlay-search.ts`
+  - function stripPathLike: (value) => string
+  - function matchingEntryIds: (entries, needle) => string[]
+  - function mergeMatchIds: (older, newer) => string[]
+- `packages/adapters/pi/src/child-overlay-terminal-input.ts`
+  - function normalizeChildOverlayScrollFrame: (data) => string | undefined
+  - function isChildOverlayScrollFrame: (data) => boolean
+  - function releaseChildOverlayTerminalInput: (state) => void
+  - function createChildOverlayTerminalInputBinder: (deps) => PiChildOverlayTerminalInputBinder
+  - interface PiChildOverlayTerminalInputState
+  - interface PiChildOverlayTerminalInputDeps
+  - _...1 more_
+- `packages/adapters/pi/src/child-overlay-types.ts`
+  - function clampPageSize: (pageSize) => number
+  - function clampWindowCap: (windowCap) => number
+  - interface ChildOverlayEntry
+  - interface ChildOverlayPage
+  - interface ChildOverlaySourcePort
+  - interface ChildOverlayConfig
+  - _...26 more_
+- `packages/adapters/pi/src/child-overlay.ts`
+  - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
+  - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
+  - function mapNativeSessionEntryPageToOverlay: (page) => ChildOverlayPage
+  - function createReadSessionEntryPageOverlaySource: (deps) => void
+  - interface MemoryOverlaySourceEntry
+  - interface MemoryOverlaySourceChild
+- `packages/adapters/pi/src/child-picker.ts`
+  - function resolveChildPickerTitle: (candidate, "explicitTitle" | "workflowStep" | "agent"
+  >) => string
+  - function buildChildPickerMetadataEntries: (input) => Result<readonly PiChildPickerMetadataEntry[], PiChildPickerError>
+  - function collectChildPickerCandidates: (input) => ResultAsync<readonly PiChildPickerCandidate[], PiChildPickerError>
+  - function buildChildPickerEntries: (input) => Result<readonly PiChildPickerEntry[], PiChildPickerError>
+  - function sanitizeChildPickerPreview: (value) => string
+  - function moveChildPicker: (state, delta) => PiChildPickerState
+  - _...23 more_
+- `packages/adapters/pi/src/child-process-port.ts`
+  - function writeAllToSink: (sink, bytes) => ResultAsync<void, ChildProcessError>
+  - function resolveKillSignal: (mode) => number | undefined
+  - class BunPiChildProcessPort
+  - interface PiChildStdout
+  - interface PiSpawnedChildProcess
+  - interface PiChildSpawnInput
+  - _...4 more_
+- `packages/adapters/pi/src/child-recovery.ts`
+  - function findOrdinaryRecoveryCandidates: (records) => readonly PiChildRecoveryRecord[]
+  - function boundedRecoveryOutput: (value) => string
+  - class PiChildRecoveryCoordinator
+  - interface PiChildRecoveryUi
+  - interface PiChildRecoveryHistory
+  - interface PiChildRecoveryDescriptor
+  - _...8 more_
+- `packages/adapters/pi/src/child-runtime.ts`
+  - function classifyChildAccess: (input) => PiChildAccessState
+  - function authorizeChildAccess: (childId, state, operation) => Result<void, PiChildAccessDenial>
+  - class PiChildRuntime
+  - interface PiChildOutputTransfer
+  - interface PiChildOutputPort
+  - interface PiChildRuntimeDeps
+  - _...7 more_
+- `packages/adapters/pi/src/child-session-checkpoint.ts`
+  - function parsePiChildSessionCheckpoint: (value) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
+  - function decodePiChildSessionCheckpoint: (bytes) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
+  - function encodePiChildSessionCheckpoint: (value) => Result<Uint8Array, PiChildCheckpointError>
+  - function appendUnseenCheckpointEntries: (checkpoint, entries, activeLeaf, now, nextCursor?) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
+  - function createEmptyPiChildSessionCheckpoint: (now) => PiChildSessionCheckpoint
+  - type PiChildSessionCheckpoint
+  - _...4 more_
+- `packages/adapters/pi/src/child-session-events.ts`
+  - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
+  - function parsePiChildSessionEvent
+  - type PiChildSessionEvent
+  - type PiChildEventType
+  - type PiExtensionUiResponse
+  - const MAX_CHILD_EVENT_STRING
+  - _...4 more_
+- `packages/adapters/pi/src/child-session-reconstruction.ts`
+  - function describeChildReconstructionError: (error) => string
+  - function reconstructParentLocalChildren: (input) => ResultAsync<PiChildReconstructionSummary, PiChildReconstructionError>
+  - function createChildReconstructionCell: () => PiChildReconstructionCell
+  - function publishChildReconstruction: (cell, generationId, summary) => void
+  - function clearChildReconstruction: (cell) => void
+  - function readChildReconstruction: (cell, generationId, parentSessionId) => PiChildReconstructionSummary | undefined
+  - _...15 more_
+- `packages/adapters/pi/src/child-session-refs.ts`
+  - function createNativeChildRefSourceAuthority: (store) => PiChildRefSourceAuthority
+  - function parseChildRefRecord: (value) => Result<PiChildRefRecord, PiChildRefError>
+  - function parseChildRefEnvelope: (value) => Result<PiChildRefEnvelope, PiChildRefError>
+  - function serializeChildRefEnvelope: (envelope) => string
+  - function hasNoTranscriptFields: (serialized) => boolean
+  - class PiChildSessionRefStore
+  - _...29 more_
+- `packages/adapters/pi/src/child-session-storage-authority.ts`
+  - function createPiChildSessionStorageAuthority: () => PiChildSessionStorageAuthority
+  - function describeChildSessionStorageUnavailable: (failure) => string
+  - interface PiChildSessionStorageAuthority
+  - const CHILD_SESSION_STORAGE_UNAVAILABLE_REASON
+- `packages/adapters/pi/src/child-timer.ts`
+  - class SystemTimerPort
+  - interface TimerHandle
+  - interface TimerPort
+  - const DEFAULT_HANDSHAKE_TIMEOUT_MS
+  - const DEFAULT_REPLY_TIMEOUT_MS
+  - const DEFAULT_SETTLEMENT_TIMEOUT_MS
+  - _...2 more_
+- `packages/adapters/pi/src/child-title.ts`
+  - function durableChildTitleSuffix: (threadId) => string
+  - function resolveDurableChildTitle: (input) => string
+  - function isTrustedChildTitleProvenance: (value) => value is PiChildTitleProvenance
+  - function isProvenDurableChildTitle: (stored) => boolean
+  - function enforceDurableChildTitle: (stored) => string
+  - function enforceDurableChildTitleProvenance: (stored) => PiChildTitleProvenance
+  - _...7 more_
+- `packages/adapters/pi/src/child-transcript.ts`
+  - function reducePiChildTranscript: (state, action) => Result<PiChildTranscriptState, PiChildTranscriptError>
+  - function createPiChildTranscriptState: () => PiChildTranscriptState
+  - function createPiChildTranscriptRenderer: (input) => PiChildTranscriptRenderer
+  - function renderPiChildTranscript: (state, width, input?) => PiChildTranscriptRender
+  - function renderPiChildTranscriptRows: (state, width, input?) => readonly PiChildTranscriptRenderedRow[]
+  - function renderPiChildTranscriptLines: (state, width, input?) => string[]
+  - _...46 more_
+- `packages/adapters/pi/src/child-transfer.ts`
+  - function encodeTransferChunks: (payload, transferId, overrides?) => Result<readonly TransferChunk[], TransferEncodeError>
+  - class ChunkTransferAssembler
+  - interface TransferRejection
+  - interface TransferChunk
+  - interface TransferLimits
+  - type TransferRejectionReason
+  - _...2 more_
+- `packages/adapters/pi/src/child-tree-keys.ts`
+  - function classifyChildTreeKey: (data) => PiTreeControlKey | undefined
+  - function classifyChildInspectorKey: (data) => PiChildInspectorKey | undefined
+  - type PiChildInspectorKey
+- `packages/adapters/pi/src/child-tree-render.ts`
+  - function renderChildTreeLines: (nodes, selectedId, cumulativeUsage, options) => string[]
+  - interface ChildTreeRenderNodeMetadata
+  - interface ChildTreeRenderOptions
+- `packages/adapters/pi/src/child-tree.ts`
+  - function addUsage: (a, b) => PiChildUsageAggregate
+  - function truncateLatestOutput: (text) => string
+  - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
+  - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
+  - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
+  - function applyTreeControlKey: (nodes, PiChildTreeNode>, selectedId, key) => PiTreeControlOutcome
+  - _...15 more_
+- `packages/adapters/pi/src/commands.ts`
+  - function classifyWeaveCommand: (name) => WeaveCommandClassification
+  - function parseNpmSourceName: (source) => string | undefined
+  - function isOwnSourceInfo: (sourceInfo) => boolean
+  - type WeaveCommandName
+  - type WeaveCommandClassification
+  - const WEAVE_INSPECT_COMMAND_NAME
+  - _...7 more_
+- `packages/adapters/pi/src/config-activator.ts`
+  - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
+  - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
+  - function logMaterializationErrors: (errors, logger) => void
+  - class PiConfigActivator
+  - interface PiConfigLoaderPort
+  - interface PiMaterializerPort
+  - _...7 more_
+- `packages/adapters/pi/src/controller.ts`
+  - class PiExtensionController
+  - interface PiGeneration
+  - interface PiOperationHandle
+  - interface PiCommandGateDecision
+  - interface PiExtensionControllerDeps
+- `packages/adapters/pi/src/delegate-request-chunking.ts`
+  - function encodeDelegateRequestChunks: (task, transferId, agentName) => Result<readonly PiDelegateRequestChunk[], DelegateRequestChunkError>
+  - class DelegateRequestAssembler
+  - interface PiDelegateRequestChunk
+  - type DelegateRequestChunkError
+  - const DELEGATE_REQUEST_CHUNK_BYTES
+  - const MAX_DELEGATE_REQUEST_CHUNKS
+  - _...1 more_
+- `packages/adapters/pi/src/delegation-controller.ts`
+  - class PiDelegationController
+  - interface PiDelegationContext
+  - interface PiDelegationControllerDeps
+  - interface PiOverlayChildDescriptor
+  - interface PiThreadRunAssignment
+  - interface PiThreadRunRequest
+  - _...13 more_
+- `packages/adapters/pi/src/delegation-tool.ts`
+  - function formatDelegationAgentName: (agentName) => string
+  - function renderDelegationCompactResult: (result, options, theme, context, onCompactRenderFailure?) => void
+  - function buildDelegationToolRegistration: (deps) => PiToolRegistration
+  - function buildRelayedDelegationToolRegistration: (deps) => PiToolRegistration
+  - interface PiDelegationInvocationContext
+  - interface PiDelegationToolDeps
+  - _...4 more_
+- `packages/adapters/pi/src/direct-dispatch-transport.ts`
+  - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
+  - class PiDirectStepChildRegistry
+  - interface PiDirectDispatchTransportDeps
+  - interface PiDirectStepBootstrap
+- `packages/adapters/pi/src/direct-dispatch.ts`
+  - class TransportDirectDispatchPort
+  - class FakeDirectDispatchPort
+  - interface PiDirectDispatchInput
+  - interface PiDirectDispatchCandidate
+  - interface PiDirectDispatchPort
+  - interface DirectDispatchSettlement
+  - _...1 more_
+- `packages/adapters/pi/src/errors.ts`
+  - function makeHostIdentityUnknownFailure: (reason) => PiAdapterFailure
+  - function makeHostVersionUnsupportedFailure: (version, reason) => PiAdapterFailure
+  - function makeInteractiveTuiRequiredFailure: (mode) => PiAdapterFailure
+  - function makePersistentParentSessionRequiredFailure: (operation, reason) => PiAdapterFailure
+  - function makeActivationFailedFailure: (reason) => PiAdapterFailure
+  - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
+  - _...92 more_
+- `packages/adapters/pi/src/extension.ts`
+  - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
+  - function createDefaultPiExtensionDeps: () => PiExtensionDeps
+  - function resolveAgentRuntimeMeta: (descriptorsByName, AgentDescriptor>, agentName, ctx?) => void
+  - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
+  - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
+  - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
+  - _...10 more_
+- `packages/adapters/pi/src/generation-resources.ts`
+  - function createGenerationSessionCtxCell: () => PiGenerationSessionCtxCell
+  - function readSessionManagerEntries: (ctx, report) => void
+  - class PiGenerationResourceOwner
+  - interface PiGenerationSessionCtxCell
+  - type PiChildRefEntryReadDegradation
+- `packages/adapters/pi/src/host-compatibility-matrix.ts`
+  - function validateHostCompatibilityMatrix: (matrix) => Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>
+  - interface PiHostSurfaceDeclaration
+  - interface PiHostCompatibilityMatrix
+  - type PiHostSurfaceId
+  - type PiHostSurfaceSeverity
+  - type PiHostSurfaceFallback
+  - _...4 more_
+- `packages/adapters/pi/src/host-compatibility.ts`
+  - function parseSemver: (version) => Result<ParsedVersion, void>
+  - function isSupportedHostVersion: (version) => boolean
+  - function checkHostCompatibility: (info) => Result<HostPackageInfo, PiAdapterFailure>
+  - function renderHostCapabilityGapDiagnostic: (diagnostic) => string
+  - class BunHostPackageReader
+  - interface HostCapabilityGapDiagnostic
+  - _...7 more_
+- `packages/adapters/pi/src/host-inventory.ts`
+  - function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>
+  - function readHostSurfaceReport: (raw) => PiHostSurfaceReport
+  - function safeReadHostSurfaceReport: (reader, input) => ResultAsync<PiHostSurfaceReport, never>
+  - function buildHostSurfaceGapDiagnostics: (report, hostVersion) => readonly HostCapabilityGapDiagnostic[]
+  - function selectsCustomEditorFallback: (report) => boolean
+  - function createDefaultPiHostProbePort: (input) => PiHostProbePort
+  - _...11 more_
+- `packages/adapters/pi/src/model-resolution.ts`
+  - class PiModelResolver
+  - class PiModelActivator
+  - interface PiModelApplyPort
+  - interface PiThinkingApplyPort
+  - type PiModelResolutionSource
+  - type PiModelResolution
+  - _...2 more_
+- `packages/adapters/pi/src/native-session-fs.ts`
+  - function setForcedPreadByteLimitForTests: (limit) => void
+  - function createBunPiNativeSessionFs: () => PiNativeSessionFsPort
+  - class MemoryPiNativeSessionFs
+- `packages/adapters/pi/src/native-session-host.ts`
+  - function isPiSessionManagerStatic: (value) => value is PiSessionManagerStatic
+  - function adaptPiSessionManagerHandle: (manager) => PiNativeSessionHandle
+  - function createPiNativeSessionHost: (SessionManager) => PiNativeSessionHostPort
+  - interface PiSessionManagerStatic
+  - interface PiSessionManagerInstance
+- `packages/adapters/pi/src/path-containment.ts`
+  - function isLexicallyContained: (relativePath) => boolean
+  - function inspectNoFollowDirectory: (path, mode) => ResultAsync<NoFollowEntryIdentity, NoFollowInspectionError>
+  - function inspectNoFollowFile: (path, mode) => ResultAsync<NoFollowEntryIdentity | undefined, NoFollowInspectionError>
+  - function isDirectoryContainmentSafeWith: (port, projectRoot, relativeDir) => ResultAsync<boolean, never>
+  - class BunPathContainmentPort
+  - class NullPathContainmentPort
+  - _...11 more_
+- `packages/adapters/pi/src/plan-catalog.ts`
+  - class BunPiPlanCatalogPort
+  - class FakePiPlanCatalogPort
+  - interface PiPlanCatalogPort
+- `packages/adapters/pi/src/plan-provider.ts` — function createPiPlanStateProvider: (projectRoot) => PlanStateProvider, const PI_PLAN_COORDINATOR_AGENT
+- `packages/adapters/pi/src/plan-render.ts` — function renderPlanWidgetLines: (snapshot) => string[]
+- `packages/adapters/pi/src/plan-task-list.ts`
+  - function planTaskListVisibleRows: (rows) => number
+  - function planTaskListRowBudget: (terminalRows) => number
+  - function planTaskListMaxScroll: (taskCount, rows) => number
+  - function planTaskListOffsetForIndex: (index, taskCount, rows) => number
+  - function renderPlanTaskListLines: (input) => string[]
+  - function createPlanTaskListComponent: (input) => PlanTaskListComponent
+  - _...8 more_
+- `packages/adapters/pi/src/port-safety.ts`
+  - function safelyAwaitPortResult: (call) => void
+  - function safelyListAvailableModels: (modelRegistry, "getAvailable">) => Result<readonly PiModelInfo[], string>
+  - const MODEL_REGISTRY_THREW_REASON
+- `packages/adapters/pi/src/primary-session.ts`
+  - function renderRequiredSkillsPrompt: (composedPrompt, resolvedSkills) => string
+  - function renderWeavePromptBlock: (descriptor, resolvedSkills) => string
+  - function appendWeaveBlockOnce: (systemPrompt, descriptor, resolvedSkills) => string
+  - function probeParentSession: (probe) => PiParentSessionState
+  - function requirePersistentParentSession: (state, operation) => Result<PiParentSessionState, PiAdapterFailure>
+  - function isReadOnlyChildAccessAllowed: (_state) => boolean
+  - _...12 more_
+- `packages/adapters/pi/src/prompt-chunking.ts`
+  - function promptTransferNackReason: (error) => PromptTransferNackReason
+  - function encodePromptChunksBounded: (task, transferId) => Result<readonly PromptChunk[], PromptChunkError>
+  - function encodePromptChunks: (task, transferId) => readonly PromptChunk[]
+  - function parsePromptChunk: (raw) => Result<PromptChunk, PromptChunkError>
+  - class PromptChunkAssembler
+  - interface PromptChunk
+  - _...4 more_
+- `packages/adapters/pi/src/recovery-pointer.ts`
+  - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
+  - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
+  - function isPointerEligibleForExplicitResume: (pointer) => boolean
+  - function createWorkflowAttemptLinkage: (previousAttemptId, newAttemptId?) => Result<PiWorkflowAttemptLinkage, WorkflowAttemptLinkageValidationFailure>
+  - function activeInstanceFromRecoveryPointer: (pointer) => |
+  - class InMemoryRecoveryPointerStore
+  - _...9 more_
+- `packages/adapters/pi/src/render-width.ts`
+  - function fitLineToWidth: (line, width) => string
+  - function fitLineWithSuffix: (head, suffix, width) => string
+  - function fitLinesToWidth: (lines, width) => string[]
+  - function fitRuleToWidth: (rule, width, cap) => string
+- `packages/adapters/pi/src/repeated-settlement-validator.ts`
+  - function validateRepeatedSettlements: (options) => ResultAsync<
+  - interface PiSettlementValidationRun
+  - interface PiSettlementValidationObservation
+  - interface PiRepeatedSettlementValidationOptions
+  - interface PiRepeatedSettlementValidationReport
+  - type PiRepeatedSettlementValidationError
+- `packages/adapters/pi/src/required-capability-gate.ts`
+  - function sanitizeCapabilityGapReason: (raw) => string
+  - function collectRequiredCapabilityGaps: (report) => readonly PiRequiredCapabilityGap[]
+  - function findSessionMutationGap: (gaps) => PiRequiredCapabilityGap | undefined
+  - function createSessionMutationGate: (readGaps) => void
+  - function createBlockedSessionMutationGate: (reason) => PiSessionMutationGate
+  - function requireSessionMutationCapability: (gate) => Result<void, PiAdapterFailure>
+  - _...5 more_
+- `packages/adapters/pi/src/rpc-child.ts`
+  - function authenticateRestoreStartupSuffix: (establishedLeafId, page) => Result<void, PiRestoreAuthenticationReason>
+  - class PiRpcChild
+  - interface PiRestoreContextMetadata
+  - interface PiChildSessionObserver
+  - interface PiRpcChildDeps
+  - interface PiRpcChildSpawnInput
+  - _...7 more_
+- `packages/adapters/pi/src/runtime-store-port.ts`
+  - class SqliteRuntimeStoreFactory
+  - class InMemoryRuntimeStoreFactory
+  - class FailingRuntimeStoreFactory
+  - interface PiRuntimeStoreFactory
+- `packages/adapters/pi/src/safe-initializer.ts`
+  - class PiSafeInitializer
+  - interface PiPreflightResult
+  - interface PiSafeInitializerDeps
+- `packages/adapters/pi/src/session-transition-runtime.ts`
+  - function createSessionTransitionNoticeCell: () => PiSessionTransitionNoticeCell
+  - function notifySessionTransition: (ctx, notice) => void
+  - function readTransitionEventString: (event, field) => string | undefined
+  - function labelSessionBeforeSwitch: (event) => string
+  - function labelSessionBeforeFork: (event) => string
+  - function labelSessionBeforeTree: (_event) => string
+  - _...36 more_
+- `packages/adapters/pi/src/skill-catalog.ts` — function toEngineSkillInfo: (skill) => SkillInfo, class PiSkillCatalog
+- `packages/adapters/pi/src/strict-json.ts`
+  - function parseStrictJson: (text) => Result<JsonValue, StrictJsonParseError>
+  - function canonicalizeToBytes: (value) => Result<Uint8Array, CanonicalizeError>
+  - type JsonPrimitive
+  - type JsonValue
+  - type StrictJsonParseError
+  - type CanonicalizeError
+- `packages/adapters/pi/src/structured-completion.ts`
+  - function parseStructuredCompletionCandidate: (raw, stepName) => Result<StepCompletionSignal, PiAdapterFailure>
+  - function serializeCompletionCandidate: (candidate) => string
+  - function tryParseCompletionCandidateJson: (raw) => unknown
+  - function buildWeaveCompleteStepParameters: () => void
+  - function recordCompletionAttempt: (recorder, windowOpen, raw, stepName) => CompletionRecordAttempt
+  - function buildWeaveCompleteStepToolRegistration: (deps) => void
+  - _...4 more_
+- `packages/adapters/pi/src/telemetry.ts`
+  - function sanitizeDiagnosticValue: (value) => unknown
+  - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
+  - function createPiTelemetryLogger: (options) => ResultAsync<
+  - function createPiTelemetry: (options) => ResultAsync<
+  - class PiTelemetry
+  - interface PiJournalEventInput
+  - _...12 more_
+- `packages/adapters/pi/src/thread-sources.ts`
+  - function openPiThreadSources: (input) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>
+  - function createProductionPiThreadSourceFactory: (options) => PiThreadSourceFactory
+  - interface PiThreadSources
+  - interface PiThreadSourceFactoryInput
+  - type PiThreadSourceFactoryError
+  - type PiThreadSourceFactory
+- `packages/adapters/pi/src/trusted-data-root.ts`
+  - function createBunPiTrustedDataRootPort: () => PiTrustedDataRootPort
+  - class BunPiTrustedDataRootPort
+  - class IdentityPiTrustedDataRootPort
+  - class FakePiTrustedDataRootPort
+  - interface PiTrustedDataRootPort
+  - type PiTrustedDataRootViolation
+- `packages/adapters/pi/src/workflow-commands.ts`
+  - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
+  - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>
+  - function handleWeaveStatus: (ui, controller, tracker) => Promise<void>
+  - function handleWeaveAbort: (ui, controller, tracker) => Promise<void>
+  - function handleWeaveAdvance: (ui, controller, tracker) => Promise<void>
+  - function handleWeaveResume: (ui, controller, tracker) => Promise<void>
+  - _...10 more_
+- `packages/adapters/pi/src/workflow-controller.ts`
+  - function authorizeByExplicitUser: (confirmed) => Result<AuthorizedByUser, PiAdapterFailure>
+  - class PiWorkflowController
+  - interface AuthorizedByUser
+  - interface PiWorkflowControllerDeps
+  - interface PiStartWorkflowInput
+  - interface PiResumeWorkflowInput
+  - _...2 more_
+- `packages/adapters/pi/src/workflow-task-status.ts`
+  - function renderWorkflowTaskFooter: (input) => string | undefined
+  - interface RenderWorkflowTaskFooterInput
+  - const WEAVE_WORKFLOW_TASK_STATUS_KEY
+  - const WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH
+- `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
   - type Command
   - type ArgParseError
-- `packages\cli\src\cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
-- `packages\cli\src\commands\compose.ts` — function runCompose: (ctx) => Promise<Result<number, CliError>>, interface ComposeContext
-- `packages\cli\src\commands\eval.ts`
+- `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
+- `packages/cli/src/commands/adapter.ts`
+  - function renderAdapterHelp: (theme) => string
+  - function runAdapter: (ctx) => Promise<Result<number, CliError>>
+  - function resolveDeleteParentScope: (registry, workspaceKey, target, {...}) => Promise<
+  - function parseAdapterTarget: (rest) => Result<AdapterCliTarget, CliError>
+  - interface AdapterCommandContext
+  - type AdapterCliTarget
+- `packages/cli/src/commands/compose.ts`
+  - function mapConfigLoadErrors: (path, errors) => CliError
+  - function runCompose: (ctx) => Promise<Result<number, CliError>>
+  - interface ComposeContext
+- `packages/cli/src/commands/eval.ts`
   - function readPublishMode: (env, string | undefined>) => BundleWriteMode
   - function buildLangChainScorer: (evalEnv, langchainModuleLoader?) => void
   - function runEval: (ctx) => Promise<Result<number, CliError>>
   - interface EvalContext
   - interface LangChainOpenAIModule
   - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
-- `packages\cli\src\commands\init.ts`
+- `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
   - function installHarnesses: (input) => Promise<number>
   - interface InitContext
-- `packages\cli\src\commands\migrate.ts`
+- `packages/cli/src/commands/migrate.ts`
   - function renderMigrateSuccess: (theme, plan, result) => string
   - function resolveSelectedHarnesses: (flags, harnesses) => SupportedHarnessId[]
   - function runMigrateMode: (ctx, installHarnesses, harnesses) => void
   - interface MigrateContext
   - type InitScope
   - type InitPlan
-- `packages\cli\src\commands\prompt.ts` — function runPrompt: (ctx) => Promise<Result<number, CliError>>, interface PromptContext
-- `packages\cli\src\commands\runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
-- `packages\cli\src\commands\validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
-- `packages\cli\src\config\starter-config.ts` — function starterConfig: (scope) => string
-- `packages\cli\src\detect\index.ts`
+- `packages/cli/src/commands/prompt.ts`
+  - function mapConfigLoadErrors: (cwd, errors) => PromptError
+  - function runPrompt: (ctx) => Promise<Result<number, CliError>>
+  - interface PromptContext
+- `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
+- `packages/cli/src/commands/validate.ts`
+  - function mapConfigLoadErrors: (cwd, errors) => ValidateError
+  - function runValidate: (ctx) => Promise<Result<number, CliError>>
+  - interface ValidateContext
+- `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
+- `packages/cli/src/detect/index.ts`
   - function isHarnessId: (value) => value is SupportedHarnessId
   - function detectHarnesses: (probes) => void
   - function formatDetectionSummary: (harnesses) => string[]
@@ -114,12 +760,12 @@
   - type DetectedHarness
   - type DetectionError
   - _...1 more_
-- `packages\cli\src\detect\probes.ts`
+- `packages/cli/src/detect/probes.ts`
   - class BunDetectionProbes
   - class MemoryDetectionProbes
   - interface DetectionProbes
   - type ProbeError
-- `packages\cli\src\errors.ts`
+- `packages/cli/src/errors.ts`
   - function formatCliError: (error) => string
   - type CliError
   - type InvalidArgsError
@@ -127,7 +773,7 @@
   - type FileReadError
   - type ParseFailureError
   - _...5 more_
-- `packages\cli\src\evals\artifact-bundle.ts`
+- `packages/cli/src/evals/artifact-bundle.ts`
   - function computeRunIdPrefix: (gitSha, assembledAt) => string
   - function computeRunId: (prefix, sequence) => string
   - function computeBundleDirName: (gitSha, assembledAt) => string
@@ -135,7 +781,7 @@
   - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
   - _...11 more_
-- `packages\cli\src\evals\case-loader.ts`
+- `packages/cli/src/evals/case-loader.ts`
   - function loadCaseFile: (filePath) => ResultAsync<EvalCase, FixtureSchemaError>
   - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
   - function loadSuiteCases: (suite, evalsRoot) => ResultAsync<EvalCase[], FixtureSchemaError>
@@ -143,7 +789,7 @@
   - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
   - const EVALS_ROOT
   - _...1 more_
-- `packages\cli\src\evals\dashboard-indexes.ts`
+- `packages/cli/src/evals/dashboard-indexes.ts`
   - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
   - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
   - function buildScenarioHistories: (runsOldestFirst, updatedAt) => Map<string, ScenarioHistoryIndex>
@@ -151,14 +797,14 @@
   - function validateDashboardManifestCompatibility: (raw) => Result<DashboardManifest, DashboardIndexError>
   - function validateSuiteHistoryCompatibility: (raw, suiteName) => Result<SuiteHistoryManifest, DashboardIndexError>
   - _...19 more_
-- `packages\cli\src\evals\env.ts`
+- `packages/cli/src/evals/env.ts`
   - function readEvalEnv: (env, string | undefined>, {...}) => Result<EvalEnv, EvalEnvError>
   - interface EvalEnv
   - type EvalEnvError
   - const DEFAULT_OPENROUTER_BASE_URL
   - const OPENROUTER_API_KEY_ENV_VAR
   - const OPENROUTER_BASE_URL_ENV_VAR
-- `packages\cli\src\evals\github-contents-publisher.ts`
+- `packages/cli/src/evals/github-contents-publisher.ts`
   - function isIndexArtifactAllowed: (fileName) => boolean
   - class GitHubContentsPublisher
   - type FetchImpl
@@ -166,14 +812,14 @@
   - const TARGET_REPO
   - const TARGET_BRANCH
   - _...9 more_
-- `packages\cli\src\evals\input-validation.ts`
+- `packages/cli/src/evals/input-validation.ts`
   - function parseEvalRunRequest: (inputs) => Result<EvalRunRequest, EvalInputValidationError>
   - type EvalRunRequest
   - type EvalRunInputs
   - type EvalInputValidationError
   - const KNOWN_EVAL_AGENTS
   - const KNOWN_EVAL_AGENTS_SORTED: readonly string[]
-- `packages\cli\src\evals\langchain-agent-evals.ts`
+- `packages/cli/src/evals/langchain-agent-evals.ts`
   - function buildRationaleProjection: (run) => string
   - function buildCaseExplanation: (scoreBucket, _passed, required, outcomeKind, applicableDimensions, dryRun) => string
   - function buildPublicExplanation: (scoreRecord, "weightedTotal" | "passed" | "required" | "dimensions"
@@ -182,7 +828,7 @@
   - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
   - class RealLangChainJudge
   - _...10 more_
-- `packages\cli\src\evals\loom-routing-runner.ts`
+- `packages/cli/src/evals/loom-routing-runner.ts`
   - function analyzeLoomRouting: (content) => LoomRoutingAnalysis
   - function buildRoutingRunnerDiagnostics: (evalCase, analysis) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> | undefined
   - function extractRoutedAgents: (content) => string[]
@@ -190,14 +836,14 @@
   - class LoomRoutingRunner
   - interface LoomRoutingAnalysis
   - _...3 more_
-- `packages\cli\src\evals\model-matrix.ts`
+- `packages/cli/src/evals/model-matrix.ts`
   - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
   - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]
   - function filterMatrix: (matrix, filterId) => ModelMatrixEntry[]
   - function validateModelInMatrix: (matrix, modelId) => Result<ModelMatrixEntry, FixtureSchemaError>
   - const MATRIX_PATH
   - const MIN_DEFAULT_MODELS
-- `packages\cli\src\evals\openrouter-client.ts`
+- `packages/cli/src/evals/openrouter-client.ts`
   - class OpenRouterClient
   - class StubModelClient
   - interface ChatMessage
@@ -205,7 +851,7 @@
   - interface ModelResponse
   - interface ModelClient
   - _...1 more_
-- `packages\cli\src\evals\pattern-planning-runner.ts`
+- `packages/cli/src/evals/pattern-planning-runner.ts`
   - function extractPlanningSignals: (content) => void
   - function buildPlanningRunnerDiagnostics: (evalCase, signals) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]>
   - function buildModelRunOutput: (evalCase, modelId, userMessage, content) => ModelRunOutput
@@ -213,7 +859,7 @@
   - function buildUserMessage: (evalCase) => string
   - class PatternPlanningRunner
   - _...3 more_
-- `packages\cli\src\evals\prompt-snapshots.ts`
+- `packages/cli/src/evals/prompt-snapshots.ts`
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
   - interface ComposeSnapshotInput
@@ -221,7 +867,7 @@
   - interface ComposeAgentSnapshotsOptions
   - interface ComposeAgentSnapshotsResult
   - _...1 more_
-- `packages\cli\src\evals\provenance.ts`
+- `packages/cli/src/evals/provenance.ts`
   - function deriveSummary: (snapshot) => string
   - function deriveProvenanceRecord: (snapshot, gitSha, capturedAt) => void
   - function buildManifest: (records, gitSha, producedAt) => void
@@ -229,7 +875,7 @@
   - function deriveProvenanceManifest: (snapshots, options) => Result<PromptProvenanceManifest, ProvenanceError>
   - function deriveAndWriteManifest: (snapshots, options) => ResultAsync<PromptProvenanceManifest, ProvenanceError>
   - _...4 more_
-- `packages\cli\src\evals\raw-artifacts.ts`
+- `packages/cli/src/evals/raw-artifacts.ts`
   - function sanitizeFilenamePart: (raw) => string
   - function rawCaseResultFilename: (caseId, modelId, date) => string
   - function rawPromptFilename: (agentName, date) => string
@@ -237,7 +883,7 @@
   - class RawArtifactsWriter
   - class MemoryFileWriter
   - _...3 more_
-- `packages\cli\src\evals\report-bundle.ts`
+- `packages/cli/src/evals/report-bundle.ts`
   - function assembleCaseEntry: (row, suite) => PublicCaseEntry
   - function assembleSuiteSummary: (scoreFile, gitSha, assembledAt) => Result<SuiteSummaryEntry, ReportAssemblyError>
   - function assemblePublicReportBundle: (bundle, runId) => Result<PublicReportBundle, ReportAssemblyError>
@@ -245,13 +891,13 @@
   - function buildDashboardEntry: (bundle, runId, bundleReportPath) => DashboardEntry
   - function assembleModelComparisonManifest: (bundle, runId) => Result<ModelComparisonManifest, ReportAssemblyError>
   - _...2 more_
-- `packages\cli\src\evals\report-markdown.ts`
+- `packages/cli/src/evals/report-markdown.ts`
   - function isMarkdownSafe: (text) => boolean
   - function sanitizeMdValue: (text) => string
   - function renderCaseRow: (entry) => string
   - function renderSuiteSummary: (summary) => string
   - function renderPublicReportBundle: (bundle) => string
-- `packages\cli\src\evals\report-schema.ts`
+- `packages/cli/src/evals/report-schema.ts`
   - function computeScoreBucket: (weightedTotal, dryRun) => ScoreBucket
   - type ExplanationSource
   - type ScoreBucket
@@ -259,7 +905,7 @@
   - type PublicCaseEntry
   - type SuiteSummaryEntry
   - _...36 more_
-- `packages\cli\src\evals\results-repo.ts`
+- `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
   - function enforcePublishPolicy: (bundle) => ResultAsync<undefined, ResultsRepoError>
@@ -267,7 +913,7 @@
   - class StubResultsRepoPublisher
   - interface PublishBundleRequest
   - _...2 more_
-- `packages\cli\src\evals\runner.ts`
+- `packages/cli/src/evals/runner.ts`
   - function buildEvalRunner: (orchestrator) => (request: EvalRunRequest) => Promise<Result<number, CliError>>
   - function getEvalCoveredPromptAgents: () => readonly string[]
   - class EvalOrchestrator
@@ -275,7 +921,7 @@
   - interface ModelRollup
   - interface RepeatabilityComparisonKey
   - _...16 more_
-- `packages\cli\src\evals\sanitizer.ts`
+- `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
   - function sanitizeProvenanceRecord: (record) => SanitizedProvenanceRecord
@@ -283,7 +929,7 @@
   - function dropUnknownFields: (input, allowedKeys) => Partial<T>
   - function assertPublishSafe: (obj, unknown>, context) => Result<undefined, SanitizerError>
   - _...11 more_
-- `packages\cli\src\evals\shuttle-execution-runner.ts`
+- `packages/cli/src/evals/shuttle-execution-runner.ts`
   - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
@@ -291,7 +937,7 @@
   - interface ShuttleExecutionSignals
   - interface ShuttleExecutionRunnerOptions
   - _...2 more_
-- `packages\cli\src\evals\spindle-tools-runner.ts`
+- `packages/cli/src/evals/spindle-tools-runner.ts`
   - function extractSpindleResearchSignals: (content) => SpindleResearchSignals
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
@@ -299,7 +945,7 @@
   - interface SpindleResearchSignals
   - interface SpindleToolsRunnerOptions
   - _...2 more_
-- `packages\cli\src\evals\tapestry-category-routing-runner.ts`
+- `packages/cli/src/evals/tapestry-category-routing-runner.ts`
   - function extractCategoryShuttles: (content) => string[]
   - function detectGenericShuttleFallback: (content) => boolean
   - function analyzeCategoryRouting: (content, expectedTarget, acceptedAlternates) => CategoryRoutingAnalysis
@@ -307,7 +953,7 @@
   - function scoreDelegationCorrectness: (content, analysis) => DimensionScore
   - function scoreExecutionCompleteness: (content, analysis) => DimensionScore
   - _...10 more_
-- `packages\cli\src\evals\tapestry-execution-runner.ts`
+- `packages/cli/src/evals/tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
   - function extractProducedArtifacts: (content, expectedArtifacts) => string[]
@@ -315,7 +961,7 @@
   - class TapestryExecutionRunner
   - interface TapestryExecutionRunnerOptions
   - _...2 more_
-- `packages\cli\src\evals\types.ts`
+- `packages/cli/src/evals/types.ts`
   - function getEvalSuiteMetadata: (suiteId) => EvalSuiteMetadata | undefined
   - function isKnownEvalSuiteId: (suiteId) => boolean
   - interface EvalSuiteMetadata
@@ -323,7 +969,7 @@
   - interface PromptSnapshot
   - interface RawPromptArtifact
   - _...51 more_
-- `packages\cli\src\evals\warp-security-runner.ts`
+- `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
@@ -331,7 +977,7 @@
   - interface SecuritySignals
   - interface WarpSecurityRunnerOptions
   - _...2 more_
-- `packages\cli\src\evals\weft-review-runner.ts`
+- `packages/cli/src/evals/weft-review-runner.ts`
   - function extractReviewSignals: (content) => ReviewSignals
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
@@ -339,13 +985,13 @@
   - interface ReviewSignals
   - interface WeftReviewRunnerOptions
   - _...2 more_
-- `packages\cli\src\fs\file-system.ts`
+- `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
   - class BunFileSystem
   - class MemoryFileSystem
   - interface FileSystem
   - type FileSystemError
-- `packages\cli\src\installers\index.ts`
+- `packages/cli/src/installers/index.ts`
   - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
   - function installAllSupported: (input, string[]>;
 }) => ResultAsync<InstallResult[], InstallError>
@@ -354,90 +1000,105 @@
   - type InstallRequest
   - type InstallResult
   - _...1 more_
-- `packages\cli\src\installers\opencode.ts` — class OpenCodeInstaller
-- `packages\cli\src\io\terminal.ts`
+- `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
+- `packages/cli/src/io/terminal.ts`
   - class RealTerminal
   - class BufferTerminal
   - interface TerminalIO
-- `packages\cli\src\migration\conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
-- `packages\cli\src\migration\legacy-jsonc-converter.ts` — function stripJsoncComments: (source) => string, function convertLegacyJsonc: (source) => ConversionResult
-- `packages\cli\src\migration\migration-plan.ts`
+- `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
+- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
   - const LEGACY_SOURCE_RELATIVE: Record<MigrationScope, string>
   - const CANONICAL_WEAVE_DIR: Record<MigrationScope, string>
-- `packages\cli\src\migration\migration-write.ts`
+- `packages/cli/src/migration/migration-write.ts`
   - function buildMigratedContent: (plan, conversion) => string
   - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
   - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
-- `packages\cli\src\prompt\index.ts`
+- `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter
   - class StaticPromptAdapter
   - interface PromptAdapter
   - type PromptError
   - type PromptOption
-- `packages\cli\src\prompts\self-modify.ts`
+- `packages/cli/src/prompts/self-modify.ts`
   - function resolveSelfModifyPaths: (ctx) => SelfModifyPaths
   - function renderSelfModifyPrompt: (ctx) => string
   - interface SelfModifyContext
   - interface SelfModifyPaths
   - type SelfModifyScope
-- `packages\cli\src\theme\ascii-logo.ts`
+- `packages/cli/src/theme/ascii-logo.ts`
   - function renderLogo: (theme) => string[]
   - const PLAIN_LOGO_LINES: string[]
   - const LOGO_WIDTH
-- `packages\cli\src\theme\colors.ts`
+- `packages/cli/src/theme/colors.ts`
   - class ThemeManager
   - interface ThemeColors
   - interface ThemeManagerDeps
   - const defaultThemeManager
-- `packages\cli\src\theme\render.ts`
+- `packages/cli/src/theme/render.ts`
   - class ThemeRenderer
   - interface VersionSource
   - const defaultThemeRenderer
-- `packages\config\src\builtins.ts`
+- `packages/config/src/builtins.ts`
   - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
   - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
   - const BUILTIN_WEAVE_SOURCE
-- `packages\config\src\discovery.ts`
+- `packages/config/src/discovery.ts`
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
   - interface FileReader
   - type DiscoveredConfig
   - const bunFileReader: FileReader
-- `packages\config\src\loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
-- `packages\config\src\merge.ts`
+- `packages/config/src/loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
+- `packages/config/src/merge.ts`
   - function mergeWorkflow: (workflowName, base, override, workflowMap, WorkflowConfig>) => Result<WorkflowConfig, WorkflowExtensionError>
   - function mergeConfigsResult: (...configs) => Result<WeaveConfig, MergeError[]>
   - function mergeConfigs: (...configs) => WeaveConfig
   - type WorkflowExtensionError
   - type MergeError
-- `packages\config\src\normalize-path.ts` — function normalizePath: (p) => string
-- `packages\config\src\plan-state-provider.ts` — class BunFilesystemPlanStateProvider
-- `packages\config\src\resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
-- `packages\core\src\errors.ts`
+- `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
+- `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
+- `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
+- `packages/core/src/errors.ts`
   - function formatError: (error) => string
   - type LexError
   - type ParseError
   - type ValidationError
   - type ConfigError
-- `packages\core\src\lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>
-- `packages\core\src\parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
-- `packages\core\src\parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>
-- `packages\core\src\prompt-schema-helpers.ts`
+- `packages/core/src/lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>
+- `packages/core/src/model-thinking-syntax.ts`
+  - function parseModelIntentEntry: (raw) => Result<ModelIntentEntry, ModelIntentParseError>
+  - type ThinkingLevelDecl
+  - type ModelIntentEntry
+  - type ModelIntentParseError
+  - const THINKING_LEVEL_VALUES
+- `packages/core/src/parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
+- `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>
+- `packages/core/src/prompt-schema-helpers.ts`
   - function refinePromptAppendExclusive: () => [
   - function refinePromptExclusive: () => [
   - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
-- `packages\core\src\validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
-- `packages\docs\src\utils\base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
-- `packages\engine\src\capability-contract.ts`
+- `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
+- `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
+- `packages/engine/src/adapter-command.ts`
+  - function createAdapterCommandRegistry: (adapters, Readonly<Record<string, AdapterCommandHandler>>>
+  >) => AdapterCommandRegistry
+  - function parseAdapterCommandRequest: (value) => Result<AdapterCommandRequest, AdapterCommandError>
+  - function dispatchAdapterCommand: (registry, request) => ResultAsync<AdapterCommandResult, AdapterCommandError>
+  - type AdapterCommandRequest
+  - type AdapterCommandResult
+  - type AdapterCommandError
+  - _...4 more_
+- `packages/engine/src/capability-contract.ts`
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
+  - function lowerReadinessByProbe: (declared, resolution) => CapabilityReadiness
+  - function evaluateEffectiveCapabilities: (contract, probeResults) => EffectiveCapabilityEvaluation
   - function buildAdapterHealthReport: (input) => AdapterHealthReport
   - function buildHumanRows: (report) => HumanReadinessRow[]
   - function buildToonRows: (report) => ToonReadinessRow[]
-  - function toJson: (report) => string
-  - interface CapabilityEntry
-  - _...18 more_
-- `packages\engine\src\compose.ts`
+  - _...23 more_
+- `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function buildReviewRoutingContext: (reviewVariants, delegationTargetNames) => ReviewRoutingContext | undefined
@@ -445,17 +1106,25 @@
   - interface CategoryMetadata
   - interface AgentDescriptor
   - _...7 more_
-- `packages\engine\src\descriptors.ts`
+- `packages/engine/src/delegation-limits.ts`
+  - function resolveEffectiveDelegationLimits: (config, agentName?) => Result<EffectiveDelegationLimits, DelegationLimitsError>
+  - function authorizeDelegation: (input) => Result<
+  - interface EffectiveDelegationLimits
+  - interface DelegationAuthorizationInput
+  - type DelegationLimitsError
+  - type DelegationAuthorizationDecision
+  - _...1 more_
+- `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle
   - type CategoryShuttleConflictError
-- `packages\engine\src\env.ts`
+- `packages/engine/src/env.ts`
   - function parseEnv: (raw, string | undefined>) => Result<Env, EnvValidationError>
   - type Env
   - type EnvValidationError
   - const envSchema
   - const env: Env
-- `packages\engine\src\execution-lifecycle\artifacts.ts`
+- `packages/engine/src/execution-lifecycle/artifacts.ts`
   - function latestArtifactByName: (instance, name) => ArtifactRef | undefined
   - function latestAttemptForStep: (instance, stepName) => StepAttemptRecord | undefined
   - function isApprovalInvalidated: (instance, artifactName) => boolean
@@ -463,52 +1132,108 @@
   - function inputRole: (input) => "normative" | "informational"
   - function validateStepInputs: (step, instance, artifactDigests?, string>>, pinnedNames?) => Result<ArtifactInputSummary, LifecycleError>
   - _...3 more_
-- `packages\engine\src\execution-lifecycle\authorization.ts` — function validateAuthorizationSource: (source, operation) => Result<undefined, LifecyclePolicyDecisionError>, function validateReconciliationSource: (reason, source) => Result<undefined, LifecyclePolicyDecisionError>
-- `packages\engine\src\execution-lifecycle\before-tool.ts` — function beforeTool: (input) => BeforeToolResult
-- `packages\engine\src\execution-lifecycle\completion.ts` — function completeStep: (input, store) => ResultAsync<CompleteStepOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\dispatch.ts`
+- `packages/engine/src/execution-lifecycle/authorization.ts` — function validateAuthorizationSource: (source, operation) => Result<undefined, LifecyclePolicyDecisionError>, function validateReconciliationSource: (reason, source) => Result<undefined, LifecyclePolicyDecisionError>
+- `packages/engine/src/execution-lifecycle/before-tool.ts` — function previewToolPolicy: (input) => StaticToolPolicyPreviewResult, function beforeTool: (input) => RegisteredBeforeToolResult
+- `packages/engine/src/execution-lifecycle/completion.ts` — function completeStep: (input, store) => ResultAsync<CompleteStepOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/dispatch.ts`
   - function buildConfiguredRunAgentEffect: (step, promptMetadata) => RunAgentEffect
   - function resolveWorkflowStep: (workflowConfig, stepName) => Result<WorkflowStep, LifecycleError>
   - function dispatchStep: (input, store) => ResultAsync<DispatchStepOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\errors.ts`
+- `packages/engine/src/execution-lifecycle/errors.ts`
   - function lifecycleValidationError: (message, field?) => LifecycleValidationError
   - function lifecycleNotFoundError: (entity, id, message?) => LifecycleNotFoundError
   - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
-- `packages\engine\src\execution-lifecycle\inspection.ts` — function inspectExecution: (input, store) => InspectExecutionResult
-- `packages\engine\src\execution-lifecycle\interrupts.ts` — function handleUserInterrupt: (input, store) => ResultAsync<HandleUserInterruptOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\lease.ts`
+- `packages/engine/src/execution-lifecycle/inspection.ts` — function inspectExecution: (input, store) => InspectExecutionResult
+- `packages/engine/src/execution-lifecycle/interrupts.ts` — function handleUserInterrupt: (input, store) => ResultAsync<HandleUserInterruptOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/lease.ts`
   - function mapStoreError: (storeError) => LifecyclePersistenceError
   - function mapConflictToLeaseConflict: (workflowInstanceId, storeError) => LifecycleLeaseConflictError
   - function validateActiveLease: (activeLease, workflowInstanceId, leaseId) => Result<ExecutionLease, LifecycleError>
-- `packages\engine\src\execution-lifecycle\metadata.ts` — function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
-- `packages\engine\src\execution-lifecycle\prompt-context.ts`
+- `packages/engine/src/execution-lifecycle/metadata.ts` — function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
+- `packages/engine/src/execution-lifecycle/prompt-context.ts`
   - function buildStepPromptContext: (instance, step) => TemplateContext
   - function renderStepPrompt: (promptTemplate, context, artifactNames) => Result<
   - function renderPlanName: (planNameTemplate, instance) => Result<string, LifecycleError>
-- `packages\engine\src\execution-lifecycle\reconciliation.ts` — function reconcileExecution: (input, store) => ReconcileExecutionResult
-- `packages\engine\src\execution-lifecycle\resume.ts` — function resumeExecution: (input, store) => ResultAsync<ResumeExecutionOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\session.ts` — function observeSession: (input, store) => ResultAsync<ObserveSessionOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\start.ts` — function startExecution: (input, store) => ResultAsync<StartExecutionOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\terminal-outcomes.ts` — function approveArtifact: (input, store) => ApproveArtifactResult
-- `packages\engine\src\logger.ts`
+- `packages/engine/src/execution-lifecycle/reconciliation.ts` — function reconcileExecution: (input, store) => ReconcileExecutionResult
+- `packages/engine/src/execution-lifecycle/resume.ts` — function resumeExecution: (input, store) => ResultAsync<ResumeExecutionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/session.ts` — function observeSession: (input, store) => ResultAsync<ObserveSessionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/start.ts` — function startExecution: (input, store) => ResultAsync<StartExecutionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/terminal-outcomes.ts` — function approveArtifact: (input, store) => ApproveArtifactResult
+- `packages/engine/src/logger.ts`
   - function redirectLogsToFile: (filePath) => Promise<void>
   - const logDestination
   - const logger
-- `packages\engine\src\materialization.ts`
+- `packages/engine/src/materialization.ts`
   - function materializeAgents: (input) => ResultAsync<MaterializationPlan, never>
   - interface MaterializationInput
   - interface MaterializedAgent
   - interface MaterializationPlan
   - type MaterializationError
-- `packages\engine\src\model-resolution.ts`
+- `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
-- `packages\engine\src\review-orchestration.ts`
+- `packages/engine/src/permissions/array-snapshot.ts` — function snapshotArrayOnce: (value) => Result<readonly unknown[], ArraySnapshotError>, type ArraySnapshotError
+- `packages/engine/src/permissions/canonical.ts`
+  - function cloneAndFreezeJson: (value) => Result<JsonValue, PermissionError>
+  - function utf8Bytes: (value, max) => Result<Uint8Array, PermissionError>
+  - function canonicalizeJson: (value) => Result<string, PermissionError>
+  - function permissionDigest: (value) => Result<string, PermissionError>
+  - function sanitizePermissionDisplay: (value) => Result<PermissionDisplay, PermissionError>
+  - function normalizePermissionRequests: (input) => Result<readonly PermissionRequest[], PermissionError>
+  - _...10 more_
+- `packages/engine/src/permissions/coverage.ts`
+  - function verifyPermissionCoverage: (context) => Result<PermissionCoverageProof, PermissionCoverageError>
+  - interface PermissionCoverageDiagnosticsPolicy
+  - interface PermissionCoverageContext
+  - interface PermissionCoverageProof
+  - type PermissionCoverageIncompleteReason
+  - type PermissionCoverageError
+- `packages/engine/src/permissions/registry.ts`
+  - function createPermissionRegistryBuilderForTesting: (deps) => PermissionRegistryBuilder
+  - function lookupRegistryRegistration: (generation, toolIdentity) => Result<PermissionRegistration | undefined, PermissionError>
+  - function readRegistryInventory: (generation) => Result<readonly PermissionRegistrationMetadata[], PermissionError>
+  - function readRegistryGenerationMeta: (generation) => Result<
+  - function validatePermissionRegistryGeneration: (value) => Result<PermissionRegistryGeneration, PermissionError>
+  - function invokePermissionResolver: (resolver, call, context) => Result<readonly PermissionRequest[], PermissionError>
+  - _...4 more_
+- `packages/engine/src/permissions/repository.ts`
+  - function validateGrantIdentityResult: (value) => Result<GrantIdentityEnvelope, PermissionError>
+  - function validateGrantIdentity: (value) => value is GrantIdentityEnvelope
+  - function validateDurableGrantRecordResult: (value) => Result<DurablePermissionGrantRecord, PermissionError>
+  - function validateDurableGrantRecord: (value) => value is DurablePermissionGrantRecord
+  - function hydrateDurableGrant: (row) => Result<DurablePermissionGrantRecord, PermissionError>
+  - function grantIdentityKey: (identity) => Result<string, PermissionError>
+  - _...5 more_
+- `packages/engine/src/permissions/service.ts`
+  - function createPermissionService: (store) => PermissionService
+  - class PermissionService
+  - interface PermissionServiceActivationInput
+- `packages/engine/src/permissions/session.ts`
+  - function validatePermissionSession: (value) => Result<PermissionSession, PermissionError>
+  - function authorizePermissionSessionCall: (session, input) => ResultAsync<PermissionOutcome, PermissionError>
+  - function consumePermissionSessionPermit: (session, input) => ResultAsync<PermissionExecutionSnapshot, PermissionError>
+  - function activatePermissionSessionInternal: (input) => ResultAsync<PermissionSession, PermissionError>
+  - function activatePermissionSessionForTesting: (input) => ResultAsync<PermissionSession, PermissionError>
+  - class PermissionSession
+  - _...2 more_
+- `packages/engine/src/plan-active-task.ts`
+  - function selectActivePlanTask: (snapshot) => Result<ActivePlanTask, PlanActiveTaskError>
+  - interface ActivePlanTask
+  - type PlanActiveTaskError
+- `packages/engine/src/plan-state-provider.ts`
+  - function isAllowedPlanLeafTransition: (from, to) => boolean
+  - function derivePlanParentState: (childStates) => PlanTaskState
+  - function isPlanSnapshotComplete: (parents) => boolean
+  - function findPlanLeaf: (parents, taskId) => PlanTaskNode | undefined
+  - function authorizePlanCoordinator: (coordinatorAgent, planName, authorizedCoordinator) => Result<undefined, PlanStateError>
+  - function validatePlanTransition: (snapshot, input, authorizedCoordinator) => Result<PlanTaskNode, PlanStateError>
+  - _...10 more_
+- `packages/engine/src/review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
   - class ReviewOrchestrator
@@ -516,68 +1241,112 @@
   - type ReviewOrchestrationError
   - type ReviewExecutionResult
   - _...4 more_
-- `packages\engine\src\review-variants.ts`
+- `packages/engine/src/review-variants.ts`
   - function reviewVariantName: (agentName, model) => string
   - function generateReviewVariants: (config) => Result<Record<string, GeneratedReviewVariant>, ReviewVariantConflictError>
   - interface GeneratedReviewVariant
   - type ReviewVariantConflictError
-- `packages\engine\src\runtime\errors.ts`
+- `packages/engine/src/runtime/errors.ts`
   - function initializationError: (message, cause?) => RuntimeStoreInitializationError
   - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError
   - function serializationError: (message, cause?) => RuntimeStoreSerializationError
   - function queryError: (message, cause?) => RuntimeStoreQueryError
   - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
   - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
-  - _...11 more_
-- `packages\engine\src\runtime\fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
-- `packages\engine\src\runtime\journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
-- `packages\engine\src\runtime\memory-store.ts`
+  - _...15 more_
+- `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
+- `packages/engine/src/runtime/journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
+- `packages/engine/src/runtime/log-sink.ts`
+  - function createRotatingRuntimeLogSink: (options) => ResultAsync<RotatingRuntimeLogSink, RuntimeLogSinkError>
+  - function asPinoDestination: (sink) => DestinationStream
+  - function wouldRotate: (bytesInSegment, incomingBytes, maxSegmentBytes) => boolean
+  - function identitiesMatch: (a, b) => boolean
+  - function validateLogSettings: (settings) => Result<RuntimeLogSettings, RuntimeLogSinkError>
+  - class BunRuntimeLogFileSystem
+  - _...8 more_
+- `packages/engine/src/runtime/memory-store.ts`
   - function createInMemoryRuntimeStore: (options) => InMemoryRuntimeStore
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
-- `packages\engine\src\runtime\sanitizer.ts`
+- `packages/engine/src/runtime/nofollow-ffi.ts`
+  - function platformFlags: () => PlatformFlags | undefined
+  - function libcPath: () => string | undefined
+  - function cstr: (value) => Uint8Array
+  - function toResultAsync: (result, E>) => ResultAsync<T, E>
+  - function sanitizeCause: (cause) => string
+  - function withRestrictiveCreateMask: (symbols, fn) => void
+  - _...15 more_
+- `packages/engine/src/runtime/permission-repository.ts` — function registerPermissionApprovalRepository: (store, repository) => void, function getPermissionApprovalRepository: (store) => Result<PermissionApprovalRepository, PermissionError>
+- `packages/engine/src/runtime/retention.ts`
+  - class RuntimeRetentionService
+  - interface RuntimeRetentionServiceOptions
+  - interface RetentionScheduler
+  - interface RetentionRunResult
+  - const DEFAULT_RETENTION_WRITE_THRESHOLD
+  - const DEFAULT_RETENTION_INTERVAL_MS
+- `packages/engine/src/runtime/sanitizer.ts`
   - function isDeniedKey: (key) => boolean
   - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
   - function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
-- `packages\engine\src\runtime\sqlite\kysely-bun-sqlite.ts` — class BunSqliteDialect
-- `packages\engine\src\runtime\sqlite\migrations.ts`
+- `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts`
+  - class BunSqliteDialect
+  - class BunSqliteMemoryDialect
+  - interface MemoryStoreCoordinator
+- `packages/engine/src/runtime/sqlite/migrations.ts`
   - function runMigrations: (db) => Result<void, RuntimeStoreError>
   - function readSchemaVersion: (db) => number
   - const CURRENT_SCHEMA_VERSION
-- `packages\engine\src\runtime\sqlite\store.ts`
+- `packages/engine/src/runtime/sqlite/runtime-directory-guard.ts`
+  - function runtimeLeafName: (dbPath) => string
+  - function directoryIdentitiesMatch: (a, b) => boolean
+  - class BunRuntimeDirectoryGuard
+  - class MemoryRuntimeDirectoryGuard
+  - interface VerifyLeafOptions
+  - interface RuntimeDirectoryHandle
+  - _...3 more_
+- `packages/engine/src/runtime/sqlite/store.ts`
   - function createSqliteRuntimeStore: (options) => SqliteRuntimeStore
+  - class SqlitePermissionApprovalRepository
   - class SqliteRuntimeStore
   - interface SqliteRuntimeStoreOptions
-- `packages\engine\src\runtime\types.ts`
+- `packages/engine/src/runtime/types.ts`
   - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
   - function createExecutionLeaseId: (raw) => ExecutionLeaseId
   - function createSessionSnapshotId: (raw) => SessionSnapshotId
   - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
+  - function createUsageObservationId: (raw) => UsageObservationId
   - function createOwnerId: (raw) => OwnerId
-  - function createArtifactId: (raw) => ArtifactId
-  - _...30 more_
-- `packages\engine\src\runtime-command-operations\control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
-- `packages\engine\src\runtime-command-operations\health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
-- `packages\engine\src\runtime-command-operations\run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
-- `packages\engine\src\runtime-command-operations\start-plan.ts` — function startPlan: (input, projectEffect) => void
-- `packages\engine\src\runtime-command-operations\status.ts` — function inspectStatus: (input) => import("neverthrow").ResultAsync<
-- `packages\engine\src\runtime-command-operations\workflow-runner.ts`
+  - _...41 more_
+- `packages/engine/src/runtime/usage.ts`
+  - function normalizeUsageObservation: (input) => Result<NormalizedUsageObservation, RuntimeStoreError>
+  - function denormalizeUsageObservation: (normalized) => UsageObservation
+  - function normalizedUsageEqual: (a, b) => boolean
+  - function usageRollupKey: (normalized) => string
+  - function emptyUsageRollup: (normalized) => UsageRollup
+  - function applyObservationToRollup: (rollup, normalized) => UsageRollup
+  - _...3 more_
+- `packages/engine/src/runtime-command-operations/control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
+- `packages/engine/src/runtime-command-operations/health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
+- `packages/engine/src/runtime-command-operations/run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
+- `packages/engine/src/runtime-command-operations/start-plan.ts` — function startPlan: (input, projectEffect) => void
+- `packages/engine/src/runtime-command-operations/status.ts` — function inspectStatus: (input) => import("neverthrow").ResultAsync<
+- `packages/engine/src/runtime-command-operations/workflow-runner.ts`
   - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
   - function mapWorkflowRunnerErrorToLifecycle: (error) => CommandLifecycleError
   - function mapRunnerErrorToCommandError: (error, operation) => CommandOperationError
   - interface WorkflowRunnerInput
   - interface WorkflowRunnerOutput
   - type WorkflowRunnerError
-- `packages\engine\src\skill-resolution.ts`
-  - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
-  - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
+- `packages/engine/src/skill-resolution.ts`
+  - function resolveSkillsForAgent: (input) => Result<SkillResolutionResult, never>
+  - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, CategoryShuttleConflictError>
   - interface SkillInfo
   - interface ResolvedSkill
+  - interface SkillResolutionResult
   - interface SkillResolutionInput
-  - interface SkillResolutionConfigInput
-  - _...2 more_
-- `packages\engine\src\template-context.ts`
+  - _...4 more_
+- `packages/engine/src/template-context.ts`
   - function buildTemplateContext: (input) => Result<AgentPromptTemplateContext, TemplateContextError>
   - interface AgentContextEntry
   - interface CategoryContextEntry
@@ -585,13 +1354,13 @@
   - interface DelegationTargetContextEntry
   - interface DelegationContextEntry
   - _...8 more_
-- `packages\engine\src\template-renderer.ts`
+- `packages/engine/src/template-renderer.ts`
   - function renderTemplate: (source, context, options) => Result<string, RendererError>
   - function extractTemplatePaths: (source) => Result<string[], RendererError>
   - interface TemplateContext
   - interface RenderOptions
   - type RendererError
-- `packages\engine\src\tool-policy.ts`
+- `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
   - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]
   - type EffectiveToolPolicy
@@ -599,6 +1368,191 @@
   - type MappedToolDecision
   - type UnmappedToolDecision
   - _...3 more_
+- `scripts/build-public-packages.ts`
+  - function hasPrivateDependencyReference: (contents, packageName) => boolean
+  - function hasPrivateDeclarationReference: (contents, packageName) => boolean
+  - class BunPublicPackageFileSystem
+  - class PublicPackageBuilder
+  - interface PublicPackageFileSystem
+  - type PublicPackageBuildError
+- `scripts/ci/verify-action-pins.ts`
+  - function verifyActionPins: (files, string>>) => Result<void, ActionPinError[]>
+  - function loadActionFiles: (root) => Promise<Record<string, string>>
+  - type ActionPinError
+  - const ALLOWED_ACTION_OWNERS
+- `scripts/ci/verify-codeowners.ts`
+  - function parseCodeowners: (source) => Result<readonly CodeownersRule[], CodeownersError[]>
+  - function matchesCodeownersPattern: (pattern, path) => boolean
+  - function resolveCodeowners: (rules, path) => readonly string[] | undefined
+  - function verifyCodeowners: (source) => Result<void, CodeownersError[]>
+  - function loadCodeowners: (root) => Promise<string>
+  - type CodeownersRule
+  - _...3 more_
+- `scripts/docs/check-links.ts`
+  - function checkLinks: (store) => Result<void, LinkCheckError[]>
+  - function loadDocuments: (root) => Promise<DocumentStore>
+  - interface DocumentStore
+  - type LinkCheckError
+- `scripts/release/acceptance-manifest.ts`
+  - function validateAcceptanceManifestStructure: (candidate) => Result<AcceptanceManifest, AcceptanceManifestError[]>
+  - function verifyAcceptanceManifestEvidence: (manifest, deps, TestEvidence>>;
+    checklistResults, SmokeChecklistResult>;
+  }) => Promise<EvidenceVerificationReport>
+  - function buildAcceptanceManifest: (input) => AcceptanceManifest
+  - class BunEvidenceFileReader
+  - interface ClosedSetSpec
+  - interface EvidenceFileReader
+  - _...18 more_
+- `scripts/release/artifact-binding.ts`
+  - function createBindingRecord: (input) => Result<ArtifactBindingRecord, BindingError>
+  - function verifyBindingRecord: (record, context, github) => ResultAsync<ArtifactBindingRecord, BindingError>
+  - interface UploadedArtifact
+  - interface BindingRecordInput
+  - interface BindingVerificationContext
+  - type BindingError
+- `scripts/release/artifact-manifest.ts`
+  - function validateArtifactManifest: (input) => Result<ArtifactManifest, ArtifactManifestError>
+  - function validateArtifactBindingRecord: (input) => Result<ArtifactBindingRecord, ArtifactManifestError>
+  - type ArtifactManifestError
+- `scripts/release/bind-artifacts.ts`
+  - function parseBindingCliInput: (env, string | undefined>) => Result<ArtifactBindingCliInput, BindingCliError>
+  - function bindArtifacts: (input, dependencies) => ResultAsync<void, BindingCliError>
+  - interface BindingCliDependencies
+  - type BindingCliError
+- `scripts/release/changeset-policy.ts`
+  - function isKnownPackage: (packageName) => boolean
+  - function isNightlyOnly: (packageName) => boolean
+  - function partitionChangesets: (changesets) => ChangesetPartition
+  - class BunChangesetFileSystem
+  - class ChangesetPolicyValidator
+  - interface ChangesetFileSystem
+  - _...6 more_
+- `scripts/release/clock.ts` — class SystemClock, interface Clock
+- `scripts/release/command-runner.ts`
+  - class BunCommandRunner
+  - interface CommandResult
+  - interface CommandRunner
+- `scripts/release/filesystem.ts` — class BunFileSystem, interface FileSystem
+- `scripts/release/generate-acceptance-manifest.ts`
+  - function generateAcceptanceManifest: (root) => ResultAsync<
+  - interface GeneratedAcceptanceManifestResult
+  - type GenerateAcceptanceManifestError
+- `scripts/release/github-client.ts`
+  - class GitHubRestClient
+  - interface WorkflowRunMetadata
+  - interface WorkflowJobMetadata
+  - interface ActionsArtifactMetadata
+  - interface GitHubClient
+  - interface GitHubRefClient
+  - _...4 more_
+- `scripts/release/input-validation.ts`
+  - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
+  - function validateReleaseControlEnvironment: (input) => Result<ReleaseControlEnvironment, InputValidationError>
+  - function releaseGitHubApiUrl: (dryRun, configuredUrl) => string | undefined
+  - type ArtifactBindingCliInput
+  - type ReleaseControlEnvironment
+  - type ReleaseInvocation
+  - _...4 more_
+- `scripts/release/metadata-replay.ts`
+  - function metadataReplayDigest: (record, "recordDigest">) => string
+  - function validateReplay: (record, branch) => Result<MetadataReplayRecord, MetadataReplayError>
+  - function validatePullRequestHead: (head) => Result<void, MetadataReplayError>
+  - class MetadataReplay
+  - interface ReplayPlan
+  - interface ReleaseBranchDeletion
+  - _...2 more_
+- `scripts/release/model.ts`
+  - function packageArtifactFilename: (packageName, version) => string
+  - type ArtifactManifest
+  - type ArtifactBindingRecord
+  - type StableTrainRecord
+  - type MetadataReplayRecord
+  - const FullShaSchema
+  - _...22 more_
+- `scripts/release/nightly-plan.ts`
+  - function runPreflight: (environment, string | undefined>) => Promise<number>
+  - class NightlyPlanner
+  - interface NightlyPlanInput
+  - type NightlyPlan
+  - type NightlyPlanError
+- `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
+- `scripts/release/package-policy.ts`
+  - function scanCredentialSources: (input) => Result<void, string>
+  - class PackagePolicyValidator
+  - interface CredentialScanInput
+  - type PackagePolicyError
+- `scripts/release/packager.ts`
+  - function stablePackageVersions: (versions, string>> | undefined) => Readonly<Record<string, string>> | undefined
+  - class BunReleaseCheckout
+  - class BunPackageCommandRunner
+  - class PublicPackagePackager
+  - interface ReleaseCheckout
+  - interface PackageCommandRunner
+  - _...2 more_
+- `scripts/release/pi-child-inspection-smoke.ts`
+  - function validateSmokeBinding: (binding) => Result<SmokeBinding, SmokeValidationError>
+  - function validateLargeOutputSmoke: (run) => void
+  - function sanitizedAssertion: (value) => string
+  - function artifactDigest: (bytes) => string
+  - function runAutonomousSmoke: (input) => void
+  - interface SmokeBinding
+  - _...5 more_
+- `scripts/release/promotion-commands.ts`
+  - function promotionCommands: (authorization, priorLatestVersions?, string>>) => Result<PromotionCommandSummary,
+  - function promotionCommandsFromRegistry: (authorization, registry) => ResultAsync<PromotionCommandSummary, PromotionCommandError>
+  - interface PromotionCommandSummary
+  - type PromotionCommandError
+- `scripts/release/public-manifest.ts`
+  - class BunPublicManifestFileSystem
+  - class PublicManifestBuilder
+  - interface PublicManifestFileSystem
+  - interface StagedPublicManifest
+  - type PublicManifestError
+- `scripts/release/release-fixtures.ts`
+  - function archive: () => Uint8Array
+  - function nightlyFixture: () => void
+  - function digest
+  - class FixtureGitHub
+  - const FIXTURE_SHA
+  - const FIXTURE_WORKFLOW_SHA
+  - _...1 more_
+- `scripts/release/release-orchestrator.ts`
+  - class ReleaseOrchestrator
+  - interface PublishRequest
+  - interface PromotionAuthorization
+  - interface PromotionCommandRequest
+  - interface PromotionCommands
+  - interface StableFinalizeResult
+  - _...4 more_
+- `scripts/release/smoke-checklist.ts`
+  - function parseSmokeChecklist: (markdown) => Result<ParsedSmokeChecklist, SmokeChecklistParseError>
+  - class BunSmokeChecklistReader
+  - interface SmokeChecklistItem
+  - interface ParsedSmokeChecklist
+  - interface SmokeChecklistReader
+  - type SmokeChecklistResult
+  - _...3 more_
+- `scripts/release/stable-lineage.ts` — function hasProgressedLineage: (original, progressed) => boolean
+- `scripts/release/stable-train.ts`
+  - function canonicalTrainJson: (record) => string
+  - function trainRecordDigest: (record) => string
+  - function partialPublishRecoveryMetadata: (record) => PartialPublishRecoveryMetadata
+  - function assertCurrentArtifactIdentity: (record, artifactManifestDigest, artifactIds) => Result<void, StableTrainError>
+  - function validateStableTrain: (record) => Result<StableTrainRecord, StableTrainError>
+  - function transitionStableTrain: (record, state) => Result<StableTrainRecord, StableTrainError>
+  - _...13 more_
+- `scripts/release/tar-inspector.ts`
+  - class TarInspector
+  - interface TarEntry
+  - type TarInspectionError
+- `scripts/release/verification-harness.ts`
+  - function runScenarios: (runner, scenarios) => void
+  - class FixtureRegistry
+  - interface ScenarioResult
+  - const FIXTURE_CLOCK
+  - const FIXTURE_VERSIONS
+- `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha, stableTrainText) => ResultAsync<void, ManifestWriteError>
+- `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<
 
 ---
 
@@ -606,15 +1560,46 @@
 
 ## Environment Variables
 
-- `BASE_PATH` **required** — packages\docs\astro.config.mjs
-- `BASE_URL` **required** — packages\docs\src\data\docs-search.ts
-- `HOME` **required** — packages\cli\src\detect\probes.ts
-- `LOG_LEVEL` **required** — packages\config\src\logger.ts
-- `PWD` **required** — packages\adapters\opencode\src\adapter.ts
-- `RUN_HARNESS_SMOKE` **required** — packages\adapters\opencode\src\__tests__\category-routing-smoke.test.ts
-- `SITE_URL` **required** — packages\docs\astro.config.mjs
-- `USERPROFILE` **required** — packages\cli\src\detect\probes.ts
-- `WEAVE_LOG_FILE` **required** — packages\engine\src\env.ts
+- `BASE_PATH` (has default) — packages/docs/astro.config.mjs
+- `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
+- `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
+- `HOME` (has default) — packages/adapters/pi/src/__tests__/config-activator.test.ts
+- `LOG_LEVEL` (has default) — packages/config/src/logger.ts
+- `PATH` **required** — packages/adapters/pi/src/__tests__/child-env.test.ts
+- `PI_BIN` (has default) — scripts/release/pi-child-inspection-smoke.ts
+- `PI_CHILD_SMOKE_DEBUG` **required** — scripts/release/pi-child-inspection-smoke.ts
+- `PI_CHILD_SMOKE_RUN_ATTEMPT` (has default) — scripts/release/pi-child-inspection-smoke.ts
+- `PI_CODING_AGENT_DIR` (has default) — scripts/release/pi-child-inspection-smoke.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
+- `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_AWAITING_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_CONTROL_DRY_RUN` **required** — scripts/release/control-main.ts
+- `RELEASE_GITHUB_API_URL` **required** — scripts/release/control-main.ts
+- `RELEASE_HEAD_REF` **required** — scripts/release/control-main.ts
+- `RELEASE_HEAD_SHA` **required** — scripts/release/control-main.ts
+- `RELEASE_METADATA_REPLAY_INPUT` **required** — scripts/release/metadata-replay-main.ts
+- `RELEASE_OPERATION` **required** — scripts/release/packager.ts
+- `RELEASE_PAYLOAD_DIRECTORY` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_PLANNED_VERSIONS` **required** — scripts/release/packager.ts
+- `RELEASE_PROGRESSED_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_PUBLISH_ENABLED` **required** — scripts/release/dry-run-nightly.ts
+- `RELEASE_RELEASE_NOTES` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_RUN_ATTEMPT` **required** — scripts/release/control-main.ts
+- `RELEASE_RUN_ID` **required** — scripts/release/control-main.ts
+- `RELEASE_STABLE_PLAN_INPUT` **required** — scripts/release/stable-plan-main.ts
+- `RELEASE_STABLE_TRAIN` **required** — scripts/release/stable-finalize.ts
+- `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
+- `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
+- `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
+- `SITE_URL` (has default) — packages/docs/astro.config.mjs
+- `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
+- `VOLTA_HOME` (has default) — scripts/release/pi-child-inspection-smoke.ts
+- `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
+- `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
+- `WEAVE_PI_DESCRIPTOR_RELATIVE_SESSION_IO` **required** — packages/adapters/pi/src/__tests__/required-capability-gate.test.ts
+- `WEAVE_PI_UNSAFE_ENABLE_SESSION_IO` **required** — packages/adapters/pi/src/__tests__/required-capability-gate.test.ts
+- `WEAVE_RELEASE_FORCE_SCENARIO_FAILURE` **required** — scripts/release/verification-harness.ts
 
 ## Config Files
 
@@ -625,15 +1610,20 @@
 # Middleware
 
 ## validation
-- migrate — `packages\cli\src\commands\migrate.ts`
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
+- migrate — `packages/cli/src/commands/migrate.ts`
+- generate-acceptance-manifest — `scripts/release/generate-acceptance-manifest.ts`
 
 ## custom
-- migrate-conversion.test — `packages\cli\src\commands\__tests__\migrate-conversion.test.ts`
-- migrate.test — `packages\cli\src\commands\__tests__\migrate.test.ts`
+- migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
+- migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
+- runtime-directory-guard.d — `packages/engine/src/runtime/sqlite/runtime-directory-guard.d.ts`
+- runtime-directory-guard — `packages/engine/src/runtime/sqlite/runtime-directory-guard.ts`
+- generate-acceptance-manifest.test — `scripts/release/__tests__/generate-acceptance-manifest.test.ts`
 
 ## auth
-- authorization — `packages\engine\src\execution-lifecycle\authorization.ts`
-- authorization.test — `packages\engine\src\__tests__\execution-lifecycle\authorization.test.ts`
+- authorization.test — `packages/engine/src/__tests__/execution-lifecycle/authorization.test.ts`
+- authorization — `packages/engine/src/execution-lifecycle/authorization.ts`
 
 ---
 
@@ -641,60 +1631,83 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages\cli\src\evals\types.ts` — imported by **39** files
-- `packages\cli\src\theme\colors.ts` — imported by **20** files
-- `packages\cli\src\io\terminal.ts` — imported by **18** files
-- `packages\cli\src\evals\openrouter-client.ts` — imported by **18** files
-- `packages\cli\src\evals\report-schema.ts` — imported by **17** files
-- `packages\engine\src\runtime\types.ts` — imported by **16** files
-- `packages\cli\src\args.ts` — imported by **14** files
-- `packages\engine\src\runtime\store.ts` — imported by **13** files
-- `packages\cli\src\fs\file-system.ts` — imported by **12** files
-- `packages\engine\src\logger.ts` — imported by **12** files
-- `packages\engine\src\compose.ts` — imported by **11** files
-- `packages\engine\src\execution-lifecycle\metadata.ts` — imported by **11** files
-- `packages\engine\src\runtime\errors.ts` — imported by **11** files
-- `packages\cli\src\errors.ts` — imported by **10** files
-- `packages\engine\src\execution-lifecycle\lease.ts` — imported by **10** files
-- `packages\engine\src\execution-lifecycle\errors.ts` — imported by **10** files
-- `packages\adapters\opencode\src\sdk-types.ts` — imported by **9** files
-- `packages\cli\src\evals\prompt-snapshots.ts` — imported by **9** files
-- `packages\core\src\tokens.ts` — imported by **8** files
-- `packages\adapters\opencode\src\adapter.ts` — imported by **7** files
+- `packages/adapters/pi/src/types.ts` — imported by **41** files
+- `packages/cli/src/evals/types.ts` — imported by **39** files
+- `packages/engine/src/runtime/types.ts` — imported by **28** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **25** files
+- `packages/cli/src/theme/colors.ts` — imported by **22** files
+- `packages/cli/src/io/terminal.ts` — imported by **20** files
+- `packages/adapters/pi/src/errors.ts` — imported by **19** files
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **18** files
+- `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
+- `packages/cli/src/evals/report-schema.ts` — imported by **17** files
+- `scripts/release/stable-train.ts` — imported by **16** files
+- `packages/cli/src/args.ts` — imported by **15** files
+- `packages/engine/src/runtime/store.ts` — imported by **15** files
+- `scripts/release/npm-registry-client.ts` — imported by **15** files
+- `packages/adapters/pi/src/child-envelope.ts` — imported by **14** files
+- `packages/adapters/pi/src/child-tree.ts` — imported by **14** files
+- `packages/engine/src/tool-policy.ts` — imported by **14** files
+- `scripts/release/model.ts` — imported by **14** files
+- `packages/engine/src/logger.ts` — imported by **13** files
+- `scripts/release/filesystem.ts` — imported by **13** files
 
 ## Import Map (who imports what)
 
-- `packages\cli\src\evals\types.ts` ← `packages\cli\src\evals\github-contents-publisher.ts`, `packages\cli\src\evals\input-validation.ts`, `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\loom-routing-runner.ts` +34 more
-- `packages\cli\src\theme\colors.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +15 more
-- `packages\cli\src\io\terminal.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +13 more
-- `packages\cli\src\evals\openrouter-client.ts` ← `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\pattern-planning-runner.ts`, `packages\cli\src\evals\runner.ts`, `packages\cli\src\evals\shuttle-execution-runner.ts`, `packages\cli\src\evals\spindle-tools-runner.ts` +13 more
-- `packages\cli\src\evals\report-schema.ts` ← `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts` +12 more
-- `packages\engine\src\runtime\types.ts` ← `packages\engine\src\execution-lifecycle\resume.ts`, `packages\engine\src\execution-lifecycle\start.ts`, `packages\engine\src\execution-lifecycle\types.ts`, `packages\engine\src\runtime\journal-writer.ts`, `packages\engine\src\runtime\sanitizer.ts` +11 more
-- `packages\cli\src\args.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +9 more
-- `packages\engine\src\runtime\store.ts` ← `packages\engine\src\execution-lifecycle\artifacts.ts`, `packages\engine\src\execution-lifecycle\dispatch.ts`, `packages\engine\src\execution-lifecycle\inspection.ts`, `packages\engine\src\execution-lifecycle\interrupts.ts`, `packages\engine\src\execution-lifecycle\reconciliation.ts` +8 more
-- `packages\cli\src\fs\file-system.ts` ← `packages\cli\src\commands\migrate.ts`, `packages\cli\src\commands\validate.ts`, `packages\cli\src\commands\__tests__\init.test.ts`, `packages\cli\src\commands\__tests__\migrate-conversion.test.ts`, `packages\cli\src\commands\__tests__\migrate.test.ts` +7 more
-- `packages\engine\src\logger.ts` ← `packages\engine\src\compose.ts`, `packages\engine\src\index.ts`, `packages\engine\src\runtime\journal-writer.ts`, `packages\engine\src\runtime\sqlite\store.ts`, `packages\engine\src\runtime-command-operations\control.ts` +7 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +36 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
+- `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
+- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts` +20 more
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +15 more
+- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts` +14 more
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` ← `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts`, `packages/adapters/pi/src/__tests__/child-isolation.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +13 more
+- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
+- `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
+
+---
+
+# Events & Queues
+
+- `\u001b1` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `\u001bi` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `\u001b2` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `\u001b[1;3D` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `\x1b[1;2:1A` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `\x1b[1;2:3A` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `\x1b[1;2:1B` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `\x1b[5~` [event] — `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`
+- `\x1b[6~` [event] — `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 115 test files found
+> 292 test files found
 
 ---
 
 # CI/CD Pipelines
 
-## GitHub Actions (5 workflows)
+## GitHub Actions (4 workflows)
 
 | Workflow | Triggers | Jobs | Deploy | Environments |
 |---|---|---|---|---|
-| Agent Evals | — | 0 | — | — |
+| Agent Evals | workflow_dispatch | 2 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
-| Release | release | 2 | — | — |
-| Snapshot | push | 2 | — | — |
+| Publish control plane | schedule, workflow_dispatch | 8 | — | ${{ needs.preflight.outputs.operation == 'stable-publish' && 'release' \|\| '' }}, release, release-refs |
+
+### Agent Evals
+
+> `.github/workflows/agent-evals.yml`
+
+- **validate-inputs** on `ubuntu-latest` — 1 steps
+- **run-evals** on `ubuntu-latest` — 7 steps (needs: validate-inputs)
+  - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
 
 ### Deploy Docs
 
@@ -703,47 +1716,61 @@
 > Concurrency: `github-pages`
 
 - **build** on `ubuntu-latest` — 6 steps
-  - `actions/checkout@v4`
-  - `actions/configure-pages@v5`
-  - `oven-sh/setup-bun@v2`
-  - `actions/upload-pages-artifact@v3`
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-pages-artifact@b8130d9ab958b325bbde9786d62f2c97a9885a0e`
 - **deploy** on `ubuntu-latest` — 1 steps (needs: build)
-  - `actions/deploy-pages@v4`
+  - `actions/deploy-pages@1f0c5cde4bc74cd7e1254d0cb4de8d49e9068c7d`
 
-### Release
+### Publish control plane
 
-> `.github/workflows/release.yml`
+> `.github/workflows/publish.yml`
 
-> Concurrency: `release`
+> Concurrency: `publish`
 
-- **build-and-test** on `ubuntu-latest` — 6 steps
+- **preflight** on `ubuntu-latest` — 4 steps
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **publish** on `ubuntu-latest` — 6 steps (needs: build-and-test)
+- **build** on `ubuntu-latest` — 9 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-
-### Snapshot
-
-> `.github/workflows/snapshot.yml`
-
-> Concurrency: `snapshot`
-
-- **build-and-test** on `ubuntu-latest` — 6 steps
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **bind** on `ubuntu-latest` — 7 steps (needs: preflight, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **publish** on `ubuntu-latest` — 8 steps (needs: build-and-test)
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **publish** on `ubuntu-latest` — 10 steps (needs: preflight, build, bind)
+  - `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+- **stable-plan** on `ubuntu-latest` — 4 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **metadata-replay-plan** on `ubuntu-latest` — 5 steps (needs: preflight)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **stable-finalize** on `ubuntu-latest` — 4 steps (needs: preflight)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **release-refs** on `ubuntu-latest` — 5 steps (needs: preflight, stable-finalize)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
 
 ### Secrets
 
 - `EVAL_RESULTS_REPO_TOKEN`
 - `OPENROUTER_API_KEY`
-- `WEAVEIO_NPM_TOKEN`
+- `RELEASE_APP_TOKEN`
 
 ---
-_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml, .github/workflows/release.yml, .github/workflows/snapshot.yml_
+_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml, .github/workflows/publish.yml_
 _Generated by codesight-cicd-plugin_
 
 ---

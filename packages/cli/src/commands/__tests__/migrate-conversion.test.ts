@@ -1100,6 +1100,7 @@ describe("convertLegacyJsonc — model + fallback_models → ordered models [...
       JSON.stringify({
         categories: {
           backend: {
+            description: "Backend APIs",
             patterns: ["src/api/**"],
             model: "gpt-4o",
             fallback_models: ["claude-sonnet-4-5"],
@@ -1135,7 +1136,10 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
-          backend: { patterns: ["src/api/**"] },
+          backend: {
+            description: "Backend APIs",
+            patterns: ["src/api/**"],
+          },
         },
       }),
     );
@@ -1148,8 +1152,14 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
-          backend: { patterns: ["src/api/**"] },
-          frontend: { patterns: ["src/components/**"] },
+          backend: {
+            description: "Backend APIs",
+            patterns: ["src/api/**"],
+          },
+          frontend: {
+            description: "Frontend UI",
+            patterns: ["src/components/**"],
+          },
         },
       }),
     );
@@ -1163,6 +1173,7 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
       JSON.stringify({
         categories: {
           backend: {
+            description: "Backend APIs",
             patterns: ["src/api/**"],
             temperature: 0.2,
             prompt_append: "Focus on API contracts.",
@@ -1175,7 +1186,7 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     expect(result.dsl).toContain('prompt_append "Focus on API contracts."');
   });
 
-  it("warns when patterns is not an array", () => {
+  it("warns and skips a category when patterns is not an array", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
@@ -1185,7 +1196,90 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     );
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]!.field).toBe("categories.backend.patterns");
-    expect(result.warnings[0]!.reason).toContain("expected an array");
+    expect(result.warnings[0]!.reason).toContain("non-empty array");
+    expect(result.dsl).not.toContain("category backend");
+  });
+
+  it("warns and skips a category when patterns is missing", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          mini: {
+            description: "Fast mechanical changes",
+            model: "openai/gpt-5.3-codex-spark",
+          },
+        },
+      }),
+    );
+
+    expect(result.warnings).toEqual([
+      {
+        field: "categories.mini.patterns",
+        reason:
+          "a non-empty array of glob patterns is required; category skipped",
+      },
+    ]);
+    expect(result.dsl).not.toContain("category mini");
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+
+  it("warns and skips a category when patterns has no string entries", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          tests: { patterns: [null, 42] },
+        },
+      }),
+    );
+
+    expect(result.warnings[0]).toEqual({
+      field: "categories.tests.patterns",
+      reason:
+        "a non-empty array of glob patterns is required; category skipped",
+    });
+    expect(result.dsl).not.toContain("category tests");
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+
+  it.each([
+    ["a missing", undefined],
+    ["an empty", ""],
+    ["a whitespace-only", "   "],
+  ])("warns and skips a category with %s description", (_, description) => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          backend: { description, patterns: ["src/api/**"] },
+        },
+      }),
+    );
+
+    expect(result.warnings).toEqual([
+      {
+        field: "categories.backend.description",
+        reason: "a non-empty string is required; category skipped",
+      },
+    ]);
+    expect(result.dsl).not.toContain("category backend");
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+
+  it("preserves Mustache-shaped category descriptions verbatim", () => {
+    const description = "Literal {{agent.name}} docs";
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          docs: { description, patterns: ["docs/**"] },
+        },
+      }),
+    );
+
+    expect(result.warnings).toEqual([]);
+    const parsed = parseConfig(result.dsl);
+    expect(parsed.isOk()).toBe(true);
+    expect(parsed._unsafeUnwrap().categories.docs?.description).toBe(
+      description,
+    );
   });
 
   it("warns when categories value is not an object", () => {
@@ -1342,6 +1436,7 @@ describe("convertLegacyJsonc — tool_policy mapping", () => {
       JSON.stringify({
         categories: {
           backend: {
+            description: "Backend APIs",
             patterns: ["src/api/**"],
             tools: { write: true, read: true },
           },
@@ -1525,7 +1620,10 @@ describe("convertLegacyJsonc — full agent/category fixture", () => {
         "my-helper": { prompt: "I help." }, // non-collision
       },
       categories: {
-        backend: { patterns: ["src/api/**"] },
+        backend: {
+          description: "Backend APIs",
+          patterns: ["src/api/**"],
+        },
       },
     });
     const result = convertLegacyJsonc(source);
@@ -1651,7 +1749,10 @@ describe("runInit migration — agent/category conversion written to destination
             "my-helper": { prompt: "I help.", mode: "subagent" },
           },
           categories: {
-            backend: { patterns: ["src/api/**"] },
+            backend: {
+              description: "Backend APIs",
+              patterns: ["src/api/**"],
+            },
           },
         }),
       },
@@ -1778,7 +1879,7 @@ describe("convertLegacyJsonc — non-boolean tool permission guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 5 — stripJsoncComments: URL preservation in string literals
+// Fix 5 — JSONC parser: URL preservation in string literals
 // ---------------------------------------------------------------------------
 
 describe("convertLegacyJsonc — URL preservation in string literals", () => {
@@ -1935,7 +2036,10 @@ describe("convertLegacyJsonc — control character escaping in string fields", (
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
-          backend: { description: "APIs\x02services", patterns: [] },
+          backend: {
+            description: "APIs\x02services",
+            patterns: ["src/api/**"],
+          },
         },
       }),
     );
@@ -1954,5 +2058,88 @@ describe("convertLegacyJsonc — control character escaping in string fields", (
     expect(result.warnings).toHaveLength(0);
     const parseResult = parseConfig(result.dsl);
     expect(parseResult.isOk()).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression — real-world JSONC with comments AND trailing commas
+//
+// `JSON.parse` rejected valid JSONC trailing commas. Conversion then returned
+// an empty DSL body, so migration wrote the starter models instead of the
+// legacy agent model overrides.
+// ---------------------------------------------------------------------------
+
+describe("convertLegacyJsonc — real-world JSONC trailing commas and comments (regression)", () => {
+  // Mirrors the shape of a real legacy weave-opencode.jsonc: a leading block
+  // comment, inline line comments, and trailing commas after the last
+  // property in both a nested object (modelOptions) and its enclosing
+  // agent block, plus a trailing comma after the whole "agents" block.
+  const jsoncWithCommentsAndTrailingCommas = `{
+  /* legacy weave-opencode config */
+  "log_level": "INFO", // project log level
+  "agents": {
+    "loom": {
+      "model": "openai/gpt-5.6-sol", // primary orchestrator model
+      "temperature": 0.1
+    },
+    "spindle": {
+      "model": "openai/gpt-5.6-luna",
+      "modelOptions": {
+        "reasoningEffort": "xhigh"
+      },
+    },
+  },
+}`;
+
+  it("parses without a <source> failure warning", () => {
+    const result = convertLegacyJsonc(jsoncWithCommentsAndTrailingCommas);
+    expect(result.warnings.some((w) => w.field === "<source>")).toBe(false);
+  });
+
+  it("preserves builtin agent model overrides through the converter", () => {
+    const result = convertLegacyJsonc(jsoncWithCommentsAndTrailingCommas);
+    expect(result.dsl).toContain("agent loom {");
+    expect(result.dsl).toContain('models ["openai/gpt-5.6-sol"]');
+    expect(result.dsl).toContain("agent spindle {");
+    expect(result.dsl).toContain('models ["openai/gpt-5.6-luna"]');
+    expect(result.dsl).toContain("log_level INFO");
+  });
+
+  it("converted DSL from the comments+trailing-comma fixture passes parseConfig validation", () => {
+    const { dsl } = convertLegacyJsonc(jsoncWithCommentsAndTrailingCommas);
+    const parseResult = parseConfig(dsl);
+    expect(parseResult.isOk()).toBe(true);
+  });
+
+  it("survives the full migration write seam: builtin agent models land in config.weave", async () => {
+    const fs = new MemoryFileSystem(
+      {
+        "/project/.opencode/weave-opencode.jsonc":
+          jsoncWithCommentsAndTrailingCommas,
+      },
+      "/project",
+      "/home/user",
+    );
+    const { ctx } = migrateContext({
+      fs,
+      overrides: { initSubmode: "migrate", scope: "local", yes: true },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    const content = fs.snapshot()["/project/.weave/config.weave"] ?? "";
+    // The bug regressed to the starter-config fallback (no migrated agent
+    // overrides at all); assert the actual builtin model values survived.
+    expect(content).toContain("agent loom {");
+    expect(content).toContain('models ["openai/gpt-5.6-sol"]');
+    expect(content).toContain("agent spindle {");
+    expect(content).toContain('models ["openai/gpt-5.6-luna"]');
+  });
+
+  it("still rejects genuinely malformed JSON (invalid-input warning behavior preserved)", () => {
+    const result = convertLegacyJsonc("{ invalid json !!!");
+    expect(result.dsl).toBe("");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]!.field).toBe("<source>");
+    expect(result.warnings[0]!.reason).toContain("failed to parse");
   });
 });

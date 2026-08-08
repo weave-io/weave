@@ -40,6 +40,20 @@ describe("mergeConfigs", () => {
     expect(merged.settings.log_level).toBe("WARN");
   });
 
+  it("preserves a global permission opt-out when project scope omits it", () => {
+    const global = cfg("settings { enforce_permissions false }");
+    const project = cfg("");
+    const merged = mergeConfigs(global, project);
+    expect(merged.settings.enforce_permissions).toBe(false);
+  });
+
+  it("allows project scope to explicitly re-enable permission enforcement", () => {
+    const global = cfg("settings { enforce_permissions false }");
+    const project = cfg("settings { enforce_permissions true }");
+    const merged = mergeConfigs(global, project);
+    expect(merged.settings.enforce_permissions).toBe(true);
+  });
+
   // -------------------------------------------------------------------------
   // Agent deep-merge
   // -------------------------------------------------------------------------
@@ -768,7 +782,27 @@ describe("mergeConfigsResult", () => {
     );
     const result = mergeConfigsResult(a);
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().agents.loom).toBeDefined();
+    expect(result._unsafeUnwrap()).toEqual(a);
+  });
+
+  it("validates effective delegation limits for a single config", () => {
+    const a = cfg(`
+      settings { delegation { max_children 4 } }
+      agent loom { delegation { max_children 4 max_concurrency 4 } }
+    `);
+    const result = mergeConfigsResult(a);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual([
+      {
+        type: "ConfigValidationError",
+        errors: [
+          {
+            path: "agents.loom.delegation.max_concurrency",
+            message: "agent max_concurrency may not exceed the project cap",
+          },
+        ],
+      },
+    ]);
   });
 
   it("insert_before via mergeConfigsResult: spec step before plan in plan-and-execute", () => {
@@ -1433,7 +1467,7 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
   });
 
   it("(bp-10a) before-plan non-reconciling in v1: no reconciliation fields on steps after merge", () => {
-    // Spec 22 Unit 2: "before-plan steps do not participate in reconciliation
+    // execution lifecycle contract: "before-plan steps do not participate in reconciliation
     // semantics" in v1. After merge, no step in the merged workflow has
     // reconciliation_handler or on_reconcile fields.
     const base = cfg(`
@@ -1540,5 +1574,155 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
     // spec step inserted before plan
     const stepNames = wf?.steps.map((s) => s.name) ?? [];
     expect(stepNames.indexOf("spec")).toBe(stepNames.indexOf("plan") - 1);
+  });
+});
+
+describe("mergeConfigsResult — delegation limits", () => {
+  it("deep-merges only authored project delegation fields", () => {
+    const global = cfg(`settings {
+  delegation {
+    max_children 6
+    max_concurrency 3
+    max_depth 4
+    max_processes 12
+  }
+}`);
+    const project = cfg(`settings {
+  delegation { max_concurrency 2 }
+}`);
+
+    const result = mergeConfigsResult(global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 6,
+      max_concurrency: 2,
+      max_depth: 4,
+      max_processes: 12,
+    });
+  });
+
+  it("preserves lower-layer delegation caps when an upper layer omits them", () => {
+    const global = cfg(`settings {
+  delegation { max_children 4 max_concurrency 2 }
+}`);
+    const result = mergeConfigsResult(global, cfg(""));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation?.max_children).toBe(4);
+    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(2);
+  });
+
+  it("deep-merges per-agent delegation overrides", () => {
+    const base = cfg(`agent loom {
+  delegation { max_children 4 }
+}`);
+    const override = cfg(`agent loom {
+  delegation { max_concurrency 2 }
+}`);
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.loom?.delegation).toEqual({
+      max_children: 4,
+      max_concurrency: 2,
+    });
+  });
+
+  it("validates delegation caps after the full left-fold merge", () => {
+    const builtin = cfg(`agent loom {
+  delegation { max_children 5 }
+}`);
+    const global = cfg(`settings {
+  delegation { max_children 4 max_concurrency 2 }
+}`);
+    const project = cfg(`agent loom {
+  delegation { max_children 3 }
+}`);
+    const result = mergeConfigsResult(builtin, global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.loom?.delegation?.max_children).toBe(
+      3,
+    );
+  });
+
+  it("preserves an omitted project concurrency limit when children are narrowed", () => {
+    const result = mergeConfigsResult(
+      emptyConfig,
+      cfg(`settings { delegation { max_children 2 } }`),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 2,
+    });
+  });
+
+  it("allows a temporarily contradictory layer when the final layer repairs it", () => {
+    const builtin = cfg(
+      `settings { delegation { max_children 2 max_concurrency 2 } }`,
+    );
+    const global = cfg(`settings { delegation { max_concurrency 3 } }`);
+    const project = cfg(`settings { delegation { max_children 3 } }`);
+    const result = mergeConfigsResult(builtin, global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toMatchObject({
+      max_children: 3,
+      max_concurrency: 3,
+    });
+  });
+
+  it("fails when merged agent limits exceed a lower-layer project cap", () => {
+    const global = cfg(`settings {
+  delegation { max_children 3 max_concurrency 2 }
+}`);
+    const project = cfg(`agent loom {
+  delegation { max_children 4 }
+}`);
+    const result = mergeConfigsResult(global, project);
+    expect(result.isErr()).toBe(true);
+    const validation = result
+      ._unsafeUnwrapErr()
+      .find((error) => error.type === "ConfigValidationError");
+    expect(validation?.type).toBe("ConfigValidationError");
+    if (validation?.type === "ConfigValidationError") {
+      expect(
+        validation.errors.some(
+          (error) => error.path === "agents.loom.delegation.max_children",
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects an invalid source layer before a later override can hide it", () => {
+    const invalid = {
+      ...emptyConfig,
+      settings: {
+        ...emptyConfig.settings,
+        adapters: { generic: { payload: "x".repeat(65 * 1024) } },
+      },
+    } as WeaveConfig;
+    const valid = cfg(`settings { adapters { generic { payload "ok" } } }`);
+    const result = mergeConfigsResult(invalid, valid);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual({
+      type: "ConfigValidationError",
+      errors: [expect.objectContaining({ path: "settings.adapters.generic" })],
+    });
+  });
+
+  it("deep-merges three adapter layers and preserves null overrides", () => {
+    const builtin = cfg(
+      `settings { adapters { generic { object { base true } list [1, 2] value "base" } } }`,
+    );
+    const global = cfg(
+      `settings { adapters { generic { object { global true } list [2, 3] value null } } }`,
+    );
+    const project = cfg(
+      `settings { adapters { generic { object { project true } list [3, 4] } } }`,
+    );
+    const result = mergeConfigsResult(builtin, global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.adapters?.generic).toEqual({
+      object: { base: true, global: true, project: true },
+      list: [3, 4, 2, 1],
+      value: null,
+    });
   });
 });

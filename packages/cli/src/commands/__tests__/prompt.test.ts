@@ -29,7 +29,14 @@ const testConfig: WeaveConfig = {
   },
   workflows: {},
   disabled: { agents: [], hooks: [], skills: [] },
-  settings: { log_level: "INFO", runtime: { journal: { strict: false } } },
+  settings: {
+    log_level: "INFO",
+    runtime: {
+      journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+      usage: { detail_retention_days: 30, max_observations: 100_000 },
+      log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+    },
+  },
   extend_before_plan: { steps: [] },
 };
 
@@ -197,7 +204,14 @@ describe("prompt command", () => {
       categories: {},
       workflows: {},
       disabled: { agents: [], hooks: [], skills: [] },
-      settings: { log_level: "INFO", runtime: { journal: { strict: false } } },
+      settings: {
+        log_level: "INFO",
+        runtime: {
+          journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+          usage: { detail_retention_days: 30, max_observations: 100_000 },
+          log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+        },
+      },
       extend_before_plan: { steps: [] },
     };
 
@@ -287,7 +301,11 @@ describe("prompt command", () => {
         disabled: { agents: [], hooks: [], skills: [] },
         settings: {
           log_level: "INFO",
-          runtime: { journal: { strict: false } },
+          runtime: {
+            journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+            usage: { detail_retention_days: 30, max_observations: 100_000 },
+            log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+          },
         },
         extend_before_plan: { steps: [] },
       };
@@ -323,7 +341,11 @@ describe("prompt command", () => {
         disabled: { agents: [], hooks: [], skills: [] },
         settings: {
           log_level: "INFO",
-          runtime: { journal: { strict: false } },
+          runtime: {
+            journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+            usage: { detail_retention_days: 30, max_observations: 100_000 },
+            log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+          },
         },
         extend_before_plan: { steps: [] },
       };
@@ -391,7 +413,14 @@ describe("prompt command", () => {
       categories: {},
       workflows: {},
       disabled: { agents: [], hooks: [], skills: [] },
-      settings: { log_level: "INFO", runtime: { journal: { strict: false } } },
+      settings: {
+        log_level: "INFO",
+        runtime: {
+          journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+          usage: { detail_retention_days: 30, max_observations: 100_000 },
+          log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+        },
+      },
       extend_before_plan: { steps: [] },
     };
 
@@ -445,7 +474,11 @@ describe("prompt command", () => {
         disabled: { agents: [], hooks: [], skills: [] },
         settings: {
           log_level: "INFO",
-          runtime: { journal: { strict: false } },
+          runtime: {
+            journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+            usage: { detail_retention_days: 30, max_observations: 100_000 },
+            log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+          },
         },
         extend_before_plan: { steps: [] },
       };
@@ -578,9 +611,28 @@ describe("prompt command", () => {
 
       expect(result._unsafeUnwrap()).toBe(0);
       const output = terminal.out.join("\n");
-      expect(output).toContain("docs/dsl-reference.md");
-      expect(output).toContain("docs/config-loading.md");
-      expect(output).toContain("docs/prompt-composition.md");
+      expect(output).toContain("docs/reference/dsl.md");
+      expect(output).toContain("docs/reference/configuration.md");
+      expect(output).toContain("docs/reference/prompts.md");
+    });
+
+    it("Should_describe_current_delegation_template_fields", async () => {
+      const { terminal, ctx } = context({ promptSubcommand: "self-modify" });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("delegation.targets");
+      expect(output).toContain("{{name}}");
+      expect(output).toContain("{{description}}");
+      expect(output).toContain("{{domains}}");
+      expect(output).toContain("{{#triggers}}");
+      expect(output).toContain("sole detailed\nself-modification contract");
+      expect(output).not.toContain("delegation.section");
+      expect(output).not.toContain("delegation.mermaid");
+      expect(output).not.toContain("fallback suppression");
+      expect(output).not.toContain("Mermaid");
     });
 
     it("Should_use_explicit_global_scope_when_scope_flag_is_global", async () => {
@@ -634,9 +686,9 @@ describe("prompt command", () => {
 
       expect(result._unsafeUnwrap()).toBe(0);
       const output = terminal.out.join("\n");
-      expect(output).toContain("docs/dsl-reference.md");
-      expect(output).toContain("docs/config-loading.md");
-      expect(output).toContain("docs/prompt-composition.md");
+      expect(output).toContain("docs/reference/dsl.md");
+      expect(output).toContain("docs/reference/configuration.md");
+      expect(output).toContain("docs/reference/prompts.md");
     });
 
     it("Should_use_injected_cwd_for_local_scope_paths", async () => {

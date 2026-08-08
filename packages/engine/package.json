@@ -1,10 +1,7 @@
 {
   "name": "@weaveio/weave-engine",
   "version": "0.0.1",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
+  "private": true,
   "description": "Weave orchestration engine: agent runner, hooks, skills, and background manager",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -55,7 +55,7 @@ type PromptInspectJson = {
   composedPrompt: string;
 };
 
-function mapConfigLoadErrors(
+export function mapConfigLoadErrors(
   cwd: string,
   errors: ConfigLoadError[],
 ): PromptError {
@@ -74,9 +74,14 @@ function mapConfigLoadErrors(
       }
 
       if (error.type === "MergeError") {
-        return error.errors.map(
-          (mergeError) => `merge:${mergeError.type}:${mergeError.error.type}`,
-        );
+        return error.errors.flatMap((mergeError) => {
+          if (mergeError.type === "WorkflowExtensionError")
+            return `merge:${mergeError.type}:${mergeError.error.type}`;
+          return mergeError.errors.map(
+            (issue) =>
+              `merge:${mergeError.type}:${issue.path}:${issue.message}`,
+          );
+        });
       }
 
       return error.errors.map(

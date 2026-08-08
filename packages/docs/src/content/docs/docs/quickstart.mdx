@@ -1,0 +1,59 @@
+---
+title: Quickstart
+description: Install Weave, create a project configuration, and validate it.
+---
+
+## Install the CLI
+
+Weave is distributed as `@weaveio/weave-cli` and provides the `weave` command.
+
+```sh
+bun add --global @weaveio/weave-cli@latest
+weave --version
+```
+
+For a one-off run, use `bunx @weaveio/weave-cli@latest` instead of `weave`.
+
+## Create a configuration
+
+From the project that should use Weave, scaffold a local configuration:
+
+```sh
+weave init --scope local --yes
+```
+
+This creates `.weave/config.weave` and `.weave/prompts/`. Edit the config to declare agents, categories, prompts, and workflows.
+
+To create shared defaults in your home directory, use:
+
+```sh
+weave init --scope global --yes
+```
+
+## Validate and inspect
+
+```sh
+weave validate
+weave prompt list
+weave prompt inspect loom
+```
+
+These inspection commands read the effective configuration from the current project root. Use the explicit `--project` or `--global` selector only with `weave validate` when you need to validate one scope.
+
+## Choose a harness
+
+OpenCode loads the published adapter as a plugin. See [OpenCode](../reference/adapters/opencode/).
+
+Claude Code can receive generated files from:
+
+```sh
+weave compose --adapter claude-code --init
+```
+
+See [Claude Code](../reference/adapters/claude-code/) for the generated output and [Pi](../reference/adapters/pi/) for the Pi extension.
+
+## Next steps
+
+- [Concepts](../concepts/) explains the configuration model.
+- [Configuration](../configuration/) covers scopes and merge behavior.
+- [DSL reference](../reference/dsl/) lists the supported syntax.

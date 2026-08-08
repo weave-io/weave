@@ -8,12 +8,13 @@
  * - `find*()` — returns `ResultAsync<T | null, RuntimeStoreError>` (null if not found)
  * - `get*()` — returns `ResultAsync<T, RuntimeStoreError>` (errors with `not_found` if missing)
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import type { ResultAsync } from "neverthrow";
 import type { RuntimeStoreError } from "./errors.js";
 import type {
+  ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactIntegrityMetadata,
@@ -22,11 +23,17 @@ import type {
   ExecutionLeaseId,
   JournalQueryFilter,
   OwnerId,
+  RetentionPruneStats,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
-  StepAttemptRecord,
+  UsageObservation,
+  UsageObservationId,
+  UsageObservationQueryFilter,
+  UsageObservationRecordResult,
+  UsageRollup,
+  UsageRollupQueryFilter,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -147,6 +154,14 @@ export interface WorkflowInstanceRepository {
     id: WorkflowInstanceId,
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
+    approval?: {
+      readonly actor: ArtifactApprovalActor;
+      readonly decidedAt: string;
+      /** Compare-and-swap binding for the exact reviewed revision. */
+      readonly expectedRevision: number;
+      /** Required when the stored revision carries integrity metadata. */
+      readonly expectedDigest?: string;
+    },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError>;
 
   /**
@@ -241,6 +256,11 @@ export interface ExecutionLeaseRepository {
    *
    * Fails with `not_found` if the lease does not exist.
    * Fails with `conflict` if the lease is owned by a different owner.
+   *
+   * Any `SessionSnapshot` that observed this lease is preserved: its
+   * `leaseId` link is severed (set to `undefined`/`NULL`), not deleted.
+   * Terminal workflow completion must be able to release the lease that
+   * drove it without losing that historical record.
    */
   release(
     id: ExecutionLeaseId,
@@ -257,6 +277,7 @@ export interface ExecutionLeaseRepository {
  */
 export interface RecordSessionSnapshotInput {
   readonly workflowInstanceId: WorkflowInstanceId;
+  /** The active ExecutionLease at record time. Always required to record. */
   readonly leaseId: ExecutionLeaseId;
   readonly harnessName: string;
   readonly harnessVersion?: string;
@@ -357,6 +378,62 @@ export interface RuntimeJournalRepository {
   query(
     filter?: JournalQueryFilter,
   ): ResultAsync<readonly RuntimeJournalEntry[], RuntimeStoreError>;
+
+  /**
+   * Prune journal entries by age first, then oldest above count.
+   *
+   * `olderThan` is an exclusive ISO 8601 upper bound for age deletion.
+   * `maxCount` retains the newest N entries after age pruning.
+   */
+  prune(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError>;
+}
+
+// ---------------------------------------------------------------------------
+// Usage repository
+// ---------------------------------------------------------------------------
+
+/**
+ * Repository for idempotent usage observations and durable rollups.
+ *
+ * Adapters submit normalized observations; they never write rollup tables
+ * directly. Insert + rollup update are atomic. Detail pruning never subtracts
+ * durable rollups.
+ */
+export interface UsageRepository {
+  /**
+   * Record one detailed observation and update durable rollups atomically.
+   *
+   * - Same ID + same normalized values → `{ kind: "noop" }`
+   * - Same ID + different values → `invariant_violation`
+   * - New ID → insert observation and add present fields to the matching rollup
+   */
+  recordObservation(
+    observation: UsageObservation,
+  ): ResultAsync<UsageObservationRecordResult, RuntimeStoreError>;
+
+  findObservationById(
+    id: UsageObservationId,
+  ): ResultAsync<UsageObservation | null, RuntimeStoreError>;
+
+  listObservations(
+    filter?: UsageObservationQueryFilter,
+  ): ResultAsync<readonly UsageObservation[], RuntimeStoreError>;
+
+  listRollups(
+    filter?: UsageRollupQueryFilter,
+  ): ResultAsync<readonly UsageRollup[], RuntimeStoreError>;
+
+  /**
+   * Prune detailed observations by age first, then oldest above count.
+   * Never mutates durable rollups.
+   */
+  pruneDetails(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +460,8 @@ export interface RuntimeStoreTransaction {
   readonly snapshots: SessionSnapshotRepository;
   /** RuntimeJournal repository within this transaction. */
   readonly journal: RuntimeJournalRepository;
+  /** Usage repository within this transaction. */
+  readonly usage: UsageRepository;
 }
 
 /**
@@ -404,7 +483,7 @@ export type TransactionCallback<T> = (
  * Implementations include the default SQLite/Kysely store and the
  * in-memory test utility.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 export interface RuntimeStore {
   /** WorkflowInstance repository. */
@@ -415,7 +494,8 @@ export interface RuntimeStore {
   readonly snapshots: SessionSnapshotRepository;
   /** RuntimeJournal repository. */
   readonly journal: RuntimeJournalRepository;
-
+  /** Usage observation/rollup repository. */
+  readonly usage: UsageRepository;
   /**
    * Execute a unit-of-work transaction.
    *

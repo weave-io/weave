@@ -91,29 +91,45 @@ describe("renderSelfModifyPrompt — config and prompt paths", () => {
 });
 
 describe("renderSelfModifyPrompt — base doc references", () => {
-  it("references docs/dsl-reference.md", () => {
+  it("references docs/reference/dsl.md", () => {
     const out = renderSelfModifyPrompt(localCtx());
-    expect(out).toContain("docs/dsl-reference.md");
+    expect(out).toContain("docs/reference/dsl.md");
   });
 
-  it("references docs/config-loading.md", () => {
+  it("references docs/reference/configuration.md", () => {
     const out = renderSelfModifyPrompt(localCtx());
-    expect(out).toContain("docs/config-loading.md");
+    expect(out).toContain("docs/reference/configuration.md");
   });
 
-  it("references docs/prompt-composition.md for prompt-related changes", () => {
+  it("references docs/reference/prompts.md for prompt-related changes", () => {
     const out = renderSelfModifyPrompt(localCtx());
-    expect(out).toContain("docs/prompt-composition.md");
+    expect(out).toContain("docs/reference/prompts.md");
   });
 });
 
-describe("renderSelfModifyPrompt — packages/docs mirror note", () => {
-  it("notes that packages/docs/ is a public mirror, not the canonical source", () => {
+describe("renderSelfModifyPrompt — documentation audience split", () => {
+  it("distinguishes internal contracts from public user guidance", () => {
     const out = renderSelfModifyPrompt(localCtx());
-    expect(out).toContain("packages/docs/");
-    expect(out).toContain("public mirror");
-    // Canonical source is docs/ at repo root
-    expect(out).toContain("docs/` at the");
+    expect(out).toContain("docs/` and `packages/docs/");
+    expect(out).toContain("serve different audiences");
+    expect(out).toContain("public user guidance");
+    expect(out).not.toContain("public mirror");
+  });
+});
+
+describe("renderSelfModifyPrompt — current prompt composition guidance", () => {
+  it("uses current delegation target iteration fields", () => {
+    const out = renderSelfModifyPrompt(localCtx());
+
+    expect(out).toContain("{{#delegation.targets}}");
+    expect(out).toContain("{{name}}");
+    expect(out).toContain("{{description}}");
+    expect(out).toContain("{{domains}}");
+    expect(out).toContain("{{#triggers}}");
+    expect(out).not.toContain("delegation.section");
+    expect(out).not.toContain("delegation.mermaid");
+    expect(out).not.toContain("fallback suppression");
+    expect(out).not.toContain("Mermaid");
   });
 });
 

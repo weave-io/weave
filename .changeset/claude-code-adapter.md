@@ -1,5 +1,4 @@
 ---
-"@weaveio/weave-adapter-claude-code": minor
 "@weaveio/weave-cli": minor
 ---
 

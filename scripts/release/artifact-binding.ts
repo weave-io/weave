@@ -1,0 +1,316 @@
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "neverthrow";
+import type {
+  ActionsArtifactMetadata,
+  GitHubClient,
+  WorkflowRunMetadata,
+} from "./github-client.js";
+import {
+  type ArtifactBindingRecord,
+  ArtifactBindingRecordSchema,
+  type ArtifactManifest,
+  type StableTrainRecord,
+} from "./model.js";
+
+export interface UploadedArtifact {
+  name: string;
+  serverArtifactId: number;
+  uploadDigest: string;
+  sizeInBytes: number;
+}
+
+export interface BindingRecordInput {
+  repositoryId: number;
+  workflowSha: string;
+  runId: number;
+  runAttempt: number;
+  event: "schedule" | "workflow_dispatch";
+  operation: ArtifactBindingRecord["operation"];
+  headRef: ArtifactBindingRecord["headRef"];
+  headSha: string;
+  originJobConclusion: "success";
+  originJobId?: number;
+  originJobName?: "build";
+  artifacts: readonly UploadedArtifact[];
+  manifest: ArtifactManifest;
+  manifestDigest: string;
+  files: readonly { filename: string; sha256: string }[];
+  stableTrain?: StableTrainRecord;
+}
+
+export type BindingError =
+  | { type: "InvalidBindingRecord"; issues: readonly string[] }
+  | {
+      type: "BindingMismatch";
+      field: string;
+      expected: unknown;
+      actual: unknown;
+    }
+  | { type: "ArtifactExpired"; artifactId: number }
+  | { type: "ArtifactDeleted"; artifactId: number }
+  | { type: "ArtifactDigestMissing"; artifactId: number }
+  | { type: "GitHubLookupFailed"; operation: string; message: string };
+
+export interface BindingVerificationContext {
+  expectedWorkflowSha: string;
+  expectedRunId: number;
+  expectedRunAttempt: number;
+  expectedOperation: ArtifactBindingRecord["operation"];
+  expectedHeadRef: ArtifactBindingRecord["headRef"];
+  expectedHeadSha: string;
+  expectedManifest: ArtifactManifest;
+  expectedManifestDigest: string;
+  expectedFiles: readonly { filename: string; sha256: string }[];
+}
+
+/** Creates the content-addressed record only after all upload responses exist. */
+export function createBindingRecord(
+  input: BindingRecordInput,
+): Result<ArtifactBindingRecord, BindingError> {
+  const unsigned = {
+    schemaVersion: 1 as const,
+    repositoryId: input.repositoryId,
+    repository: "weave-io/weave" as const,
+    workflowPath: ".github/workflows/publish.yml" as const,
+    workflowSha: input.workflowSha,
+    runId: input.runId,
+    runAttempt: input.runAttempt,
+    event: input.event,
+    operation: input.operation,
+    headRef: input.headRef,
+    headSha: input.headSha,
+    originJobConclusion: input.originJobConclusion,
+    // Pre-existing standalone harness fixtures did not model job identity. Live
+    // binding supplies the server job ID; this compatibility default is never
+    // used by the workflow path.
+    originJobId: input.originJobId ?? 1,
+    originJobName: input.originJobName ?? "build",
+    artifacts: input.artifacts,
+    packages: input.manifest.packages,
+    versions: input.manifest.versions,
+    releaseSubjectSha: input.manifest.releaseSubjectSha,
+    manifestDigest: input.manifestDigest,
+    ...(input.stableTrain === undefined
+      ? {}
+      : { stableTrain: input.stableTrain }),
+    files: input.files,
+  };
+  const record = { ...unsigned, recordDigest: digest(canonicalJson(unsigned)) };
+  const parsed = ArtifactBindingRecordSchema.safeParse(record);
+  if (!parsed.success)
+    return err(invalid(parsed.error.issues.map((issue) => issue.message)));
+  return ok(parsed.data);
+}
+
+/**
+ * Verifies Actions metadata before consumers may request credentials or publish.
+ * Artifact retrieval is exclusively by numeric server ID, never a display name.
+ */
+export function verifyBindingRecord(
+  record: unknown,
+  context: BindingVerificationContext,
+  github: GitHubClient,
+): ResultAsync<ArtifactBindingRecord, BindingError> {
+  const parsed = ArtifactBindingRecordSchema.safeParse(record);
+  if (!parsed.success)
+    return errAsync(invalid(parsed.error.issues.map((issue) => issue.message)));
+  const digestMismatch = verifyRecordDigest(parsed.data);
+  if (digestMismatch !== undefined) return errAsync(digestMismatch);
+  return github
+    .getWorkflowRun(parsed.data.runId)
+    .mapErr((error) => githubError(error))
+    .andThen((run) => verifyRun(parsed.data, context, run, github))
+    .andThen((bound) => verifyArtifacts(bound, github));
+}
+
+function verifyRun(
+  record: ArtifactBindingRecord,
+  context: BindingVerificationContext,
+  run: WorkflowRunMetadata,
+  github: GitHubClient,
+): ResultAsync<ArtifactBindingRecord, BindingError> {
+  const checks: readonly [string, unknown, unknown][] = [
+    ["repositoryId", record.repositoryId, run.repositoryId],
+    ["runId", record.runId, run.id],
+    ["runAttempt", record.runAttempt, run.runAttempt],
+    ["event", record.event, run.event],
+    ["workflowPath", record.workflowPath, run.workflowPath],
+    ["workflowSha", record.workflowSha, run.workflowSha],
+    ["protectedWorkflowSha", context.expectedWorkflowSha, run.workflowSha],
+    ["expectedRunId", context.expectedRunId, run.id],
+    ["expectedRunAttempt", context.expectedRunAttempt, run.runAttempt],
+    ["operation", record.operation, context.expectedOperation],
+    ["headRef", record.headRef, run.headRef],
+    ["expectedHeadRef", context.expectedHeadRef, run.headRef],
+    ["headSha", record.headSha, run.headSha],
+    ["expectedHeadSha", context.expectedHeadSha, run.headSha],
+    ["packages", record.packages, context.expectedManifest.packages],
+    ["versions", record.versions, context.expectedManifest.versions],
+    [
+      "releaseSubjectSha",
+      record.releaseSubjectSha,
+      context.expectedManifest.releaseSubjectSha,
+    ],
+    ["manifestDigest", record.manifestDigest, context.expectedManifestDigest],
+    ["files", record.files, context.expectedFiles],
+  ];
+  for (const [field, expected, actual] of checks)
+    if (canonicalJson(expected) !== canonicalJson(actual))
+      return errAsync({ type: "BindingMismatch", field, expected, actual });
+  // The run's conclusion is null while downstream jobs execute.  Bind to the
+  // completed, named build job instead; this preserves live identity checks
+  // without accepting a failed or substituted origin job.
+  if (github.listWorkflowRunJobs === undefined)
+    return run.conclusion === "success"
+      ? okAsync(record)
+      : errAsync({
+          type: "BindingMismatch",
+          field: "jobConclusion",
+          expected: record.originJobConclusion,
+          actual: run.conclusion,
+        });
+  return github
+    .listWorkflowRunJobs(record.runId)
+    .mapErr(githubError)
+    .andThen((jobs) => {
+      const job = jobs.find((candidate) => candidate.id === record.originJobId);
+      if (job === undefined)
+        return errAsync({
+          type: "BindingMismatch" as const,
+          field: "originJobId",
+          expected: record.originJobId,
+          actual: undefined,
+        });
+      if (job.name !== record.originJobName)
+        return errAsync({
+          type: "BindingMismatch" as const,
+          field: "originJobName",
+          expected: record.originJobName,
+          actual: job.name,
+        });
+      if (job.conclusion !== record.originJobConclusion)
+        return errAsync({
+          type: "BindingMismatch" as const,
+          field: "jobConclusion",
+          expected: record.originJobConclusion,
+          actual: job.conclusion,
+        });
+      return okAsync(record);
+    });
+}
+
+function verifyArtifacts(
+  record: ArtifactBindingRecord,
+  github: GitHubClient,
+): ResultAsync<ArtifactBindingRecord, BindingError> {
+  return github
+    .listRunArtifacts(record.runId)
+    .mapErr((error) => githubError(error))
+    .andThen((runArtifacts) => {
+      let result = okAsync<ArtifactBindingRecord, BindingError>(record);
+      for (const expected of record.artifacts) {
+        const listed = runArtifacts.find(
+          (artifact) => artifact.id === expected.serverArtifactId,
+        );
+        if (listed === undefined)
+          return errAsync({
+            type: "ArtifactDeleted" as const,
+            artifactId: expected.serverArtifactId,
+          });
+        result = result.andThen(() =>
+          github
+            .getArtifact(expected.serverArtifactId)
+            .mapErr((error) => githubError(error, expected.serverArtifactId))
+            .andThen((actual) => verifyArtifact(expected, actual, github))
+            .map(() => record),
+        );
+      }
+      return result;
+    });
+}
+
+function verifyArtifact(
+  expected: ArtifactBindingRecord["artifacts"][number],
+  actual: ActionsArtifactMetadata,
+  github: GitHubClient,
+): ResultAsync<void, BindingError> {
+  if (actual.id !== expected.serverArtifactId)
+    return errAsync(
+      mismatch("artifactId", expected.serverArtifactId, actual.id),
+    );
+  if (actual.expired)
+    return errAsync({ type: "ArtifactExpired", artifactId: actual.id });
+  if (actual.digest === undefined)
+    return errAsync({ type: "ArtifactDigestMissing", artifactId: actual.id });
+  const checks: readonly [string, unknown, unknown][] = [
+    ["artifactName", expected.name, actual.name],
+    ["uploadDigest", expected.uploadDigest, actual.digest],
+    ["artifactSizeInBytes", expected.sizeInBytes, actual.sizeInBytes],
+  ];
+  for (const [field, expectedValue, actualValue] of checks)
+    if (expectedValue !== actualValue)
+      return errAsync(mismatch(field, expectedValue, actualValue));
+  return github
+    .downloadArtifact(expected.serverArtifactId)
+    .mapErr((error) => githubError(error, expected.serverArtifactId))
+    .andThen((bytes) => {
+      const downloaded = digest(bytes);
+      if (downloaded !== expected.uploadDigest)
+        return errAsync(
+          mismatch("downloadDigest", expected.uploadDigest, downloaded),
+        );
+      return okAsync(undefined);
+    });
+}
+
+function verifyRecordDigest(
+  record: ArtifactBindingRecord,
+): BindingError | undefined {
+  const { recordDigest, ...unsigned } = record;
+  const expected = digest(canonicalJson(unsigned));
+  if (recordDigest === expected) return undefined;
+  return mismatch("recordDigest", expected, recordDigest);
+}
+function digest(value: string | Uint8Array): string {
+  return `sha256:${new Bun.CryptoHasher("sha256").update(value).digest("hex")}`;
+}
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(sort(value));
+}
+function sort(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sort);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, sort((value as Record<string, unknown>)[key])]),
+  );
+}
+function mismatch(
+  field: string,
+  expected: unknown,
+  actual: unknown,
+): BindingError {
+  return { type: "BindingMismatch", field, expected, actual };
+}
+function invalid(issues: readonly string[]): BindingError {
+  return { type: "InvalidBindingRecord", issues };
+}
+function githubError(
+  error: { operation: string; message: string; status?: number },
+  artifactId?: number,
+): BindingError {
+  if (error.status === 404 && artifactId !== undefined)
+    return { type: "ArtifactDeleted", artifactId };
+  return {
+    type: "GitHubLookupFailed",
+    operation: error.operation,
+    message: error.message,
+  };
+}

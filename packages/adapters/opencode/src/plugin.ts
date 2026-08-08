@@ -272,7 +272,10 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         continue;
       }
 
-      const translateResult = translateAgent(descriptor, modelResult.value);
+      const translateResult = translateAgent(
+        descriptor,
+        modelResult.value.model,
+      );
 
       if (translateResult.isErr()) {
         log.warn(
@@ -332,10 +335,10 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         }
 
         // --- Command injection ---
-        // Register /start-work and /weave:start as OpenCode slash commands.
-        // These are prompt-based commands (not LLM tools) — they inject the
-        // Tapestry execution template into the conversation when the user
-        // types the command in the TUI.
+        // Register /start-work and /weave:start as OpenCode
+        // slash commands. These are prompt-based commands (not LLM tools) —
+        // they inject the Tapestry execution template into the conversation
+        // when the user types the command in the TUI.
         if (cfg.command === undefined) {
           cfg.command = {};
         }

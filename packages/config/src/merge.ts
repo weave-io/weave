@@ -1,4 +1,6 @@
 import {
+  AdapterSettingsSchema,
+  DEFAULT_DELEGATION_LIMITS,
   type WeaveConfig,
   WeaveConfigSchema,
   type WorkflowConfig,
@@ -50,13 +52,18 @@ export type WorkflowExtensionError =
 // ---------------------------------------------------------------------------
 
 /**
- * Top-level merge error type. Currently wraps `WorkflowExtensionError`
- * entries produced during step-aware workflow merging.
+ * Top-level merge error type. Workflow failures preserve their focused error;
+ * effective config validation failures carry precise schema-style paths.
  */
-export type MergeError = {
-  type: "WorkflowExtensionError";
-  error: WorkflowExtensionError;
-};
+export type MergeError =
+  | {
+      type: "WorkflowExtensionError";
+      error: WorkflowExtensionError;
+    }
+  | {
+      type: "ConfigValidationError";
+      errors: Array<{ path: string; message: string }>;
+    };
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -358,6 +365,84 @@ function mergeWorkflowRecord(
   return ok(combined);
 }
 
+function adapterSettingsIssues(
+  config: WeaveConfig,
+): Array<{ path: string; message: string }> {
+  const adapters = config.settings.adapters;
+  if (adapters === undefined) return [];
+  const parsed = AdapterSettingsSchema.safeParse(adapters);
+  if (parsed.success) return [];
+  return parsed.error.issues.map((issue) => ({
+    path: ["settings", "adapters", ...issue.path].join("."),
+    message: issue.message,
+  }));
+}
+
+function validateMergedConfig(
+  config: WeaveConfig,
+): Result<WeaveConfig, MergeError[]> {
+  const issues: Array<{ path: string; message: string }> =
+    adapterSettingsIssues(config);
+  const project = config.settings.delegation;
+  const projectMaxChildren =
+    project?.max_children ?? DEFAULT_DELEGATION_LIMITS.max_children;
+  const declaredProjectMaxConcurrency = project?.max_concurrency;
+  const projectMaxConcurrency = Math.min(
+    declaredProjectMaxConcurrency ?? DEFAULT_DELEGATION_LIMITS.max_concurrency,
+    projectMaxChildren,
+  );
+
+  if (
+    declaredProjectMaxConcurrency !== undefined &&
+    declaredProjectMaxConcurrency > projectMaxChildren
+  ) {
+    issues.push({
+      path: "settings.delegation.max_concurrency",
+      message: "max_concurrency must be less than or equal to max_children",
+    });
+  }
+
+  for (const [agentName, agent] of Object.entries(config.agents)) {
+    const limits = agent.delegation;
+    if (limits === undefined) continue;
+
+    if (
+      limits.max_children !== undefined &&
+      limits.max_children > projectMaxChildren
+    ) {
+      issues.push({
+        path: `agents.${agentName}.delegation.max_children`,
+        message: "agent max_children may not exceed the project cap",
+      });
+    }
+
+    const effectiveMaxChildren = limits.max_children ?? projectMaxChildren;
+    if (
+      limits.max_concurrency !== undefined &&
+      limits.max_concurrency > projectMaxConcurrency
+    ) {
+      issues.push({
+        path: `agents.${agentName}.delegation.max_concurrency`,
+        message: "agent max_concurrency may not exceed the project cap",
+      });
+    } else if (
+      limits.max_concurrency !== undefined &&
+      limits.max_concurrency > effectiveMaxChildren
+    ) {
+      issues.push({
+        path: `agents.${agentName}.delegation.max_concurrency`,
+        message:
+          "agent max_concurrency must be less than or equal to effective max_children",
+      });
+    }
+  }
+
+  if (issues.length > 0) {
+    return err([{ type: "ConfigValidationError", errors: issues }]);
+  }
+  return ok(config);
+}
+
 function deepMerge2Result(
   base: WeaveConfig,
   override: WeaveConfig,
@@ -435,8 +520,18 @@ export function mergeConfigsResult(
   if (configs.length === 0) {
     return ok(WeaveConfigSchema.parse({}));
   }
+
+  // Validate every source before merging. Otherwise a later override could
+  // hide an invalid adapter block and bypass the per-source contract.
+  const sourceIssues = configs.flatMap((config) =>
+    adapterSettingsIssues(config),
+  );
+  if (sourceIssues.length > 0) {
+    return err([{ type: "ConfigValidationError", errors: sourceIssues }]);
+  }
+
   if (configs.length === 1) {
-    return ok(configs[0] as WeaveConfig);
+    return validateMergedConfig(configs[0] as WeaveConfig);
   }
 
   let acc: WeaveConfig = configs[0] as WeaveConfig;
@@ -446,7 +541,7 @@ export function mergeConfigsResult(
     if (result.isErr()) return err(result.error);
     acc = result.value;
   }
-  return ok(acc);
+  return validateMergedConfig(acc);
 }
 
 /**
@@ -468,12 +563,11 @@ export function mergeConfigsResult(
  * **Immutability:** Input configs are never mutated.
  *
  * @param configs - Zero or more configs to merge. If no configs are provided,
- *   returns the default (empty) `WeaveConfig`. If exactly one config is
- *   provided, returns it as-is.
+ *   returns the default (empty) `WeaveConfig`. A single config is still checked
+ *   against effective delegation limits.
  *
  * @deprecated Prefer `mergeConfigsResult` which returns `Result<WeaveConfig, MergeError[]>`
- *   and avoids throwing. This wrapper throws a `MergeError` aggregate on the first
- *   workflow extension failure.
+ *   and avoids throwing. This wrapper throws the first merge error.
  */
 export function mergeConfigs(...configs: WeaveConfig[]): WeaveConfig {
   const result = mergeConfigsResult(...configs);

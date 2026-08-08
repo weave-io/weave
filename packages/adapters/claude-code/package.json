@@ -20,12 +20,14 @@
     }
   },
   "scripts": {
-    "build": "bun run --filter @weaveio/weave-core build && bun run --filter @weaveio/weave-engine build && bun build ./src/index.ts --outdir ./dist --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly && node -e \"require('fs').cpSync('./src/bootstrap', './dist/bootstrap', {recursive:true})\"",
+    "build": "bun ../../../scripts/build-public-packages.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "neverthrow": "^8.2.0"
+    "neverthrow": "^8.2.0",
+    "mustache": "^4.2.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@weaveio/weave-core": "workspace:*",

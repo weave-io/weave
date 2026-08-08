@@ -467,6 +467,35 @@ describe("WeavePlugin — slash command registration", () => {
     expect(cmd.agent).toBe("tapestry");
   });
 
+  it("Config_hook_does_not_register_a_weave_goal_command", async () => {
+    const root = await makeTempProject("cmd-weave-goal-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    const cfg: {
+      agent?: Record<string, unknown>;
+      command?: Record<string, unknown>;
+    } = {};
+    await hooks.config?.(cfg as never);
+
+    expect(cfg.command?.["weave:goal"]).toBeUndefined();
+    const templates = Object.values(cfg.command ?? {}).map((entry) =>
+      typeof entry === "object" && entry !== null
+        ? ((entry as { template?: unknown }).template ?? "")
+        : "",
+    );
+    for (const template of templates) {
+      expect(String(template)).not.toContain("weave:goal");
+    }
+  });
+
   it("Command_templates_contain_execution_instructions", async () => {
     const root = await makeTempProject("cmd-template-agent");
     const client = new MockOpenCodeClient();

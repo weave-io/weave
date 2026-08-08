@@ -3,7 +3,7 @@
  *
  * Effects are pure data records — they carry no side effects themselves.
  * Callers receive them via the `onEffect` callback supplied to the bootstrap
- * entry point (see `docs/adapter-bootstrap.md`) and may use them for logging,
+ * entry point (see `docs/guides/adapter-development.md`) and may use them for logging,
  * telemetry, testing, or adapter-side policy enforcement.
  *
  * No harness-specific tool names appear here. The `effectiveToolPolicy` field

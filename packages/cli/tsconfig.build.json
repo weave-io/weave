@@ -4,7 +4,9 @@
     "composite": false,
     "incremental": false,
     "rootDir": "./src",
-    "outDir": "./dist",
+    "outDir": "./dist-types",
+    "emitDeclarationOnly": true,
+    "declarationMap": false,
     "types": ["bun-types"]
   },
   "include": ["src/**/*"],

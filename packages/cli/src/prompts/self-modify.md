@@ -1,7 +1,11 @@
 # Weave Self-Modification Guide
 
-You are modifying Weave's own configuration. This guide tells you exactly which
-files to read, what rules to follow, and how to verify your changes.
+You are modifying Weave's own configuration. This command is the sole detailed
+self-modification contract. Other agent prompts should direct you here instead
+of duplicating this procedure.
+
+This guide tells you exactly which files to read, what rules to follow, and how
+to verify your changes.
 
 ---
 
@@ -14,16 +18,16 @@ files to read, what rules to follow, and how to verify your changes.
 
 ## Before you start
 
-- [ ] Read `docs/dsl-reference.md` — canonical DSL syntax reference
-- [ ] Read `docs/config-loading.md` — three-layer merge rules, builtin agents,
+- [ ] Read `docs/reference/dsl.md` — canonical DSL syntax reference
+- [ ] Read `docs/reference/configuration.md` — three-layer merge rules, builtin agents,
       prompt-file resolution, and config discovery
 - [ ] If your change touches prompt text, `prompt_file`, `prompt_append`, or
-      `prompt_append_file`: also read `docs/prompt-composition.md`
+      `prompt_append_file`: also read `docs/reference/prompts.md`
 
-> **`packages/docs/` is a public mirror, not the canonical source.**
-> The Astro/Starlight site under `packages/docs/` publishes a subset of the
-> docs for the public website. The authoritative docs live in `docs/` at the
-> repo root. When the two diverge, `docs/` wins.
+> **`docs/` and `packages/docs/` serve different audiences.**
+> Use the repo-root references above for internal configuration and composition
+> contracts. `packages/docs/` owns public user guidance. If a change affects
+> both audiences, update both surfaces; neither one is a mirror of the other.
 
 ---
 
@@ -63,7 +67,7 @@ files to read, what rules to follow, and how to verify your changes.
 
 1. **Identify the change** — agent override, new agent, category, workflow,
    settings, or disable block.
-2. **Read the relevant DSL section** in `docs/dsl-reference.md`.
+2. **Read the relevant DSL section** in `docs/reference/dsl.md`.
 3. **Edit `{{{configPath}}}`** using the DSL syntax (block-structured, no
    semicolons, double-quoted strings, bare enums).
 4. **Place prompt files** (if any) in `{{{promptsDir}}}`.
@@ -133,14 +137,17 @@ This auto-generates a `shuttle-backend` agent descriptor.
 
 If you are editing prompt text or `prompt_file` / `prompt_append` values:
 
-- [ ] Read `docs/prompt-composition.md` for Mustache template context fields,
-      delegation section rendering, and fallback suppression rules.
-- [ ] Use `{{{delegation.section}}}` (triple braces) to embed the delegation
-      routing block — it contains Markdown.
+{{=<% %>=}}
+- [ ] Read `docs/reference/prompts.md` for the supported Mustache template
+      context and composition rules.
+- [ ] Use `{{#delegation.targets}}` to iterate over eligible delegation targets;
+      inside the loop, use fields such as `{{name}}`, `{{description}}`,
+      `{{domains}}`, and `{{#triggers}}`.
 - [ ] `prompt` and `prompt_file` are mutually exclusive per agent.
 - [ ] `prompt_append` and `prompt_append_file` are mutually exclusive per agent.
 - [ ] Unsupported Mustache features (partials, helpers, lambdas) are rejected
       at composition time.
+<%={{ }}=%>
 
 ---
 

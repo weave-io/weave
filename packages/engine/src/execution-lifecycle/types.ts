@@ -5,14 +5,20 @@
  * and the `SafeMetadata` type used across lifecycle modules.
  *
  * @see packages/engine/src/execution-lifecycle.ts — compatibility barrel
- * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
+ * @see docs/reference/execution-lifecycle.md
  */
 
 import type { ReconciliationReason, WorkflowConfig } from "@weaveio/weave-core";
 import type { ResultAsync } from "neverthrow";
+import type {
+  PermissionError,
+  PermissionOutcome,
+  PermissionSession,
+} from "../permissions/index.js";
 import type { PlanStateProvider } from "../plan-state-provider.js";
 import type { RunAgentEffect } from "../run-agent-effects.js";
 import type {
+  ArtifactApprovalActor,
   ArtifactId,
   ArtifactInputDecl,
   ArtifactInputRole,
@@ -22,6 +28,7 @@ import type {
   ConsumedArtifactRecord,
   ExecutionLease,
   ExecutionLeaseId,
+  OwnerId,
   SessionSnapshotId,
   StepAttemptRecord,
   WorkflowInstance,
@@ -31,6 +38,7 @@ import type { EffectiveToolPolicy } from "../tool-policy.js";
 
 // Re-export types needed by consumers of this module
 export type {
+  ArtifactApprovalActor,
   ArtifactId,
   ArtifactInputDecl,
   ArtifactInputRole,
@@ -175,7 +183,7 @@ export type LifecycleEffect =
 // ---------------------------------------------------------------------------
 
 /**
- * Structured signal describing how a workflow step finished.
+ * Structured signal describing how a workflow step completed.
  */
 export interface StepCompletionSignal {
   readonly outcome: "success" | "blocked" | "failed" | "paused";
@@ -319,12 +327,32 @@ export interface StartExecutionOutput {
 // 3. resumeExecution — Input / Output
 // ---------------------------------------------------------------------------
 
+/**
+ * Explicit, user-authorized takeover correlation for one exact pre-reload
+ * lease. Combined with the sibling
+ * `workflowInstanceId`, this must match the active `ExecutionLease` exactly
+ * (lease ID and owner) or `resumeExecution` fails closed with the ordinary
+ * `lease_conflict` error - never a broad foreign-lease steal.
+ */
+export interface ResumeRecoveryTakeover {
+  /** The exact lease ID the durable pointer correlated to this instance. */
+  readonly expectedLeaseId: ExecutionLeaseId;
+  /** The exact owner ID the currently active lease must be held by. */
+  readonly expectedOwnerId: OwnerId;
+}
+
 export interface ResumeExecutionInput {
   readonly workflowInstanceId: WorkflowInstanceId;
   readonly ownerId: string;
   readonly authorizationSource?: ExecutionAuthorizationSource;
   readonly now?: string;
   readonly metadata?: SafeMetadata;
+  /**
+   * Optional explicit takeover correlation. See {@link ResumeRecoveryTakeover}.
+   * Absent by default; ordinary resume behavior (acquire, replacing only an
+   * already-expired lease) is unchanged when omitted.
+   */
+  readonly recoveryTakeover?: ResumeRecoveryTakeover;
 }
 
 export interface ResumeExecutionOutput {
@@ -365,6 +393,18 @@ export interface DispatchStepOutput {
   readonly stepName: string;
   readonly effects: readonly LifecycleEffect[];
   readonly artifactInputSummary?: ArtifactInputSummary;
+  /**
+   * EPHEMERAL — the fully rendered `step.prompt` text for `stepName`, present
+   * only when a configured step's prompt was rendered during this dispatch.
+   *
+   * This is NOT part of any `LifecycleEffect` and MUST NOT be persisted,
+   * logged, or copied into one. Adapters read it exactly once, compose it
+   * with their own resolved `AgentDescriptor.composedPrompt`, and discard it.
+   * `RunAgentEffect.promptMetadata.byteLength` remains the only
+   * effect-visible trace of the rendered prompt; see the Pi adapter's
+   * composed-prompt security invariant.
+   */
+  readonly stepPromptText?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,13 +423,28 @@ export interface CompleteStepInput {
 
 export interface CompleteStepOutput {
   readonly effects: readonly LifecycleEffect[];
+  /**
+   * EPHEMERAL — the fully rendered `step.prompt` text for the step targeted
+   * by this output's `dispatch-agent` effect (if any), present only when
+   * `completeStep` auto-advanced to a next step or re-dispatched a gate step
+   * on retry. See `DispatchStepOutput.stepPromptText` for the same security
+   * contract: never persisted, never logged, never copied into an effect.
+   */
+  readonly stepPromptText?: string;
 }
 
 // ---------------------------------------------------------------------------
 // 7. beforeTool — Input / Output
 // ---------------------------------------------------------------------------
 
-export interface BeforeToolInput {
+/**
+ * Non-authoritative static policy preview input.
+ *
+ * This describes adapter-resolved policy intent only. It does not prove that
+ * a tool call is authorized to execute, establish adapter readiness, or issue
+ * a permission permit.
+ */
+export interface StaticToolPolicyPreviewInput {
   readonly workflowInstanceId: WorkflowInstanceId;
   readonly leaseId: ExecutionLeaseId;
   readonly agentName: string;
@@ -404,10 +459,36 @@ export interface BeforeToolInput {
   readonly metadata?: SafeMetadata;
 }
 
-export interface BeforeToolOutput {
+export interface StaticToolPolicyPreviewOutput {
   readonly decision: "allow" | "deny" | "ask";
   readonly reason?: string;
 }
+
+export type StaticToolPolicyPreviewResult = ResultAsync<
+  StaticToolPolicyPreviewOutput,
+  LifecycleError
+>;
+
+/** Inputs for the authoritative, registered permission-session path. */
+export interface RegisteredBeforeToolInput {
+  readonly workflowInstanceId: WorkflowInstanceId;
+  readonly leaseId: ExecutionLeaseId;
+  readonly agentName: string;
+  readonly toolName: string;
+  readonly permission: {
+    readonly session: PermissionSession;
+    readonly project: string;
+    readonly controllerSession: string;
+    readonly registryGeneration: string;
+    readonly call: unknown;
+    readonly approvalUiAvailable: boolean;
+  };
+}
+
+export type RegisteredBeforeToolResult = ResultAsync<
+  PermissionOutcome,
+  LifecycleError | PermissionError
+>;
 
 // ---------------------------------------------------------------------------
 // 8. inspectExecution — Input / Output
@@ -431,6 +512,23 @@ export interface InspectExecutionOutput {
   readonly errorMessage?: string;
   readonly artifacts: readonly ArtifactRef[];
   readonly hasActiveLease: boolean;
+  /**
+   * All recorded step attempts for this instance, in dispatch order.
+   *
+   * Exposes `WorkflowInstance.stepAttempts` through the read-only
+   * `inspectExecution` projection so
+   * adapters can determine, before calling `dispatchStep`, whether the
+   * current step already has a prior attempt and — if so — which exact
+   * artifact revisions it consumed. This is what lets an adapter compute
+   * `pinnedArtifactRevisions` that reuse the prior attempt's revisions on
+   * retry (the engine's own default when `pinnedArtifactRevisions` is
+   * omitted; see `latestAttemptForStep` in
+   * `execution-lifecycle/artifacts.ts`) instead of re-deriving "latest
+   * revision" from scratch, which silently rebinds to newer artifact
+   * revisions and violates the no-automatic-latest-artifact-rebinding
+   * invariant.
+   */
+  readonly stepAttempts: readonly StepAttemptRecord[];
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +540,26 @@ export interface ApproveArtifactInput {
   readonly leaseId: ExecutionLeaseId;
   readonly artifactId: ArtifactId;
   readonly approvalState: "approved" | "rejected";
-  readonly approverAgent: string;
+  /**
+   * Structured approval actor (user provenance or gate agent).
+   * Replaces the bare `approverAgent` string.
+   */
+  readonly actor: ArtifactApprovalActor;
+  /**
+   * Expected artifact revision. Must match the stored revision or the
+   * approval fails closed as a policy decision (`stale_revision`).
+   */
+  readonly expectedRevision: number;
+  /**
+   * When the artifact carries integrity metadata, callers must bind the
+   * expected digest. Mismatch fails closed (`digest_mismatch`).
+   */
+  readonly expectedDigest?: string;
+  /**
+   * Required for agent actors so the engine can verify the agent is an
+   * authorized gate on the active workflow definition.
+   */
+  readonly context?: WorkflowExecutionContext;
   readonly metadata?: SafeMetadata;
 }
 
@@ -470,6 +587,13 @@ export interface ReconcileExecutionOutput {
   readonly handlerFound: boolean;
   readonly effects: readonly LifecycleEffect[];
   readonly gateReRunStepName?: string;
+  /**
+   * EPHEMERAL — the fully rendered `step.prompt` text for `handlerStepName`,
+   * present only when a handler step was found and dispatched. See
+   * `DispatchStepOutput.stepPromptText` for the same security contract:
+   * never persisted, never logged, never copied into an effect.
+   */
+  readonly stepPromptText?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -500,7 +624,6 @@ export type CompleteStepResult = ResultAsync<
   CompleteStepOutput,
   LifecycleError
 >;
-export type BeforeToolResult = ResultAsync<BeforeToolOutput, LifecycleError>;
 export type InspectExecutionResult = ResultAsync<
   InspectExecutionOutput,
   LifecycleError

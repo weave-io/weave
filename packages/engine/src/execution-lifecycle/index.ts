@@ -18,7 +18,7 @@
  * - artifacts.ts      — artifact validation, integrity, and persistence
  * - dispatch.ts       — dispatchStep implementation
  * - completion.ts     — completeStep implementation
- * - before-tool.ts    — beforeTool implementation
+ * - before-tool.ts    — beforeTool compatibility and previewToolPolicy implementation
  * - inspection.ts     — inspectExecution implementation
  * - terminal-outcomes.ts — approveArtifact implementation
  * - reconciliation.ts — reconcileExecution implementation
@@ -29,7 +29,7 @@ export {
   validateAuthorizationSource,
   validateReconciliationSource,
 } from "./authorization.js";
-export { beforeTool } from "./before-tool.js";
+export { beforeTool, previewToolPolicy } from "./before-tool.js";
 export { completeStep } from "./completion.js";
 export { dispatchStep } from "./dispatch.js";
 // Error factories
@@ -55,9 +55,6 @@ export type {
   ApproveArtifactInput,
   ApproveArtifactOutput,
   ApproveArtifactResult,
-  BeforeToolInput,
-  BeforeToolOutput,
-  BeforeToolResult,
   CompleteExecutionEffect,
   CompleteStepInput,
   CompleteStepOutput,
@@ -89,13 +86,19 @@ export type {
   ReconcileExecutionOutput,
   ReconcileExecutionResult,
   ReconciliationAuthorizationSource,
+  RegisteredBeforeToolInput,
+  RegisteredBeforeToolResult,
   ResumeExecutionInput,
   ResumeExecutionOutput,
   ResumeExecutionResult,
+  ResumeRecoveryTakeover,
   SafeMetadata,
   StartExecutionInput,
   StartExecutionOutput,
   StartExecutionResult,
+  StaticToolPolicyPreviewInput,
+  StaticToolPolicyPreviewOutput,
+  StaticToolPolicyPreviewResult,
   StepCompletionSignal,
   WorkflowExecutionContext,
 } from "./types.js";
