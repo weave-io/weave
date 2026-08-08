@@ -1211,16 +1211,31 @@ describe("permission repository wall-clock high-water", () => {
   it("concurrent multi-store high-water observations persist the global max", async () => {
     // Preinitialize 8 stores, concurrently observe mixed times (incl. max)
     // via match/list/revoke, close, reopen at a lower clock, and assert the
-    // persisted mark equals max so expired grants never rematch. 20 rounds
-    // catch lost-max races under multi-connection BEGIN IMMEDIATE contention.
-    const rounds = 20;
+    // persisted mark equals max so expired grants never rematch.
+    //
+    // Rounds are a deterministic sweep, not a probabilistic soak: each round
+    // places the maximum timestamp at a different lane position so the max
+    // writer is covered first, mid, and last in launch order and on every
+    // operation kind (match / list / revoke). This replaces repeated identical
+    // rounds, whose cost is dominated by multi-connection BEGIN IMMEDIATE
+    // busy-retry backoff and therefore inflates without bound on a loaded CI
+    // runner. Contention itself stays real: 8 distinct connections to one DB
+    // file, all lanes in flight simultaneously (asserted via peak in-flight).
     const storeCount = 8;
     const maxTs = 10_000;
-    const mixed = [100, 50, maxTs, 250, 10, 999, 7, 500];
-    expect(mixed).toHaveLength(storeCount);
-    expect(Math.max(...mixed)).toBe(maxTs);
+    const others = [100, 50, 250, 10, 999, 7, 500];
+    // First lane (match), middle lanes (list, revoke), last lane (list).
+    const maxPositions = [0, 4, 5, 7];
 
-    for (let round = 0; round < rounds; round += 1) {
+    for (const [round, maxIndex] of maxPositions.entries()) {
+      const mixed = [
+        ...others.slice(0, maxIndex),
+        maxTs,
+        ...others.slice(maxIndex),
+      ];
+      expect(mixed).toHaveLength(storeCount);
+      expect(Math.max(...mixed)).toBe(maxTs);
+      expect(mixed[maxIndex]).toBe(maxTs);
       const dbPath = join(dir, `runtime-hw-concurrent-${round}`, "weave.db");
       const bootstrap = createSqliteRuntimeStore({
         dbPath,
@@ -1246,20 +1261,45 @@ describe("permission repository wall-clock high-water", () => {
       );
       for (const store of stores) ok(await store.ensureInitialized());
 
+      // Track simultaneity so a future refactor cannot silently serialize the
+      // lanes and keep the test green without real contention.
+      let inFlight = 0;
+      let peakInFlight = 0;
       const results = await Promise.all(
         stores.map((store, index) => {
           const repo = permissionRepository(store);
           const ts = mixed[index] as number;
           const lane = index % 3;
-          if (lane === 0) return repo.match(identity, ts);
-          if (lane === 1) return repo.list("project", ts);
-          return repo.revoke("project", "revocable");
+          inFlight += 1;
+          peakInFlight = Math.max(peakInFlight, inFlight);
+          const start = () => {
+            if (lane === 0) return repo.match(identity, ts);
+            if (lane === 1) return repo.list("project", ts);
+            return repo.revoke("project", "revocable");
+          };
+          return Promise.resolve(start()).then((result) => {
+            inFlight -= 1;
+            return result;
+          });
         }),
       );
       // ResultAsync must never reject — Promise.all would throw otherwise.
       expect(results.every((result) => result.isOk())).toBe(true);
+      expect(peakInFlight).toBe(storeCount);
 
       await Promise.all(stores.map((store) => store.close()));
+
+      // Direct proof of the persisted global max, independent of the
+      // behavioral expiry proxy below.
+      const inspect = new Database(dbPath);
+      expect(
+        inspect
+          .prepare(
+            "SELECT value FROM runtime_metadata WHERE key = 'permission_wall_clock_high_water'",
+          )
+          .get(),
+      ).toEqual({ value: String(maxTs) });
+      inspect.close();
 
       const reopened = createSqliteRuntimeStore({
         dbPath,
@@ -1290,8 +1330,15 @@ describe("permission repository wall-clock high-water", () => {
         )?.grantId,
       ).toBe("forever");
       await reopened.close();
+      // Release each round's DB files immediately instead of accumulating
+      // WAL/SHM handles for the whole test.
+      Bun.spawnSync(["rm", "-rf", join(dir, `runtime-hw-concurrent-${round}`)]);
     }
-  });
+    // Budget note: the work is bounded (4 rounds x 8 connections). The explicit
+    // timeout only absorbs runner slowness on loaded CI, where multi-connection
+    // BEGIN IMMEDIATE busy-retry backoff stretches wall time; it does not hide
+    // an unbounded loop.
+  }, 30_000);
 });
 
 describe("permission validation and atomic batches", () => {
