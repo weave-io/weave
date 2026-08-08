@@ -87,8 +87,27 @@ function terminalAssistantMessage(
   };
 }
 
+/**
+ * Awaits the direct-step spawn itself. `transport()` spawns asynchronously, so
+ * reading `spawnedProcesses[0]` after a fixed number of `flush()` ticks is a
+ * race under load. The port resolves `spawnCalled` from inside `spawn()`, after
+ * it has already recorded the spawn input, so awaiting it makes both the
+ * process and its input awaited facts rather than timing assumptions.
+ */
+async function awaitSpawnedChild(
+  port: FakeChildProcessPort,
+): Promise<FakeSpawnedProcess> {
+  const spawned = await port.spawnCalled;
+  expect(port.spawnedProcesses[0]).toBe(spawned);
+  return spawned;
+}
+
 function extractSecretFromSpawn(port: FakeChildProcessPort): Uint8Array {
-  const hex = port.spawnInputs.at(-1)?.env[WEAVE_CHILD_SECRET_ENV];
+  // Every transport call in this file spawns exactly one child, and callers
+  // reach here only after `awaitSpawnedChild` has guaranteed the spawn input
+  // was recorded, so index 0 is an awaited fact, not a fixed-tick guess.
+  expect(port.spawnInputs).toHaveLength(1);
+  const hex = port.spawnInputs[0]?.env[WEAVE_CHILD_SECRET_ENV];
   if (hex === undefined) throw new Error("test setup: secret env missing");
   const bytes = hexToBytes(hex);
   if (bytes === undefined) throw new Error("test setup: malformed secret hex");
@@ -105,15 +124,6 @@ interface ParsedControlEnvelope {
     readonly resolvedModel?: unknown;
     readonly thinkingLevel?: string;
   };
-}
-
-function extractControlEnvelopeFromPrompt(
-  line: unknown,
-): ParsedControlEnvelope {
-  const record = line as { type: string; message: string };
-  expect(record.type).toBe("prompt");
-  expect(record.message.startsWith(CONTROL_PROMPT_PREFIX)).toBe(true);
-  return JSON.parse(record.message.slice(CONTROL_PROMPT_PREFIX.length));
 }
 
 /**
@@ -163,6 +173,40 @@ async function waitForControlEnvelope(
     throw new Error(`test setup: missing control envelope for ${description}`);
   }
   return found;
+}
+
+/** Waits for the one signed bootstrap envelope addressed to this child. */
+function waitForBootstrapEnvelope(
+  spawned: FakeSpawnedProcess,
+  childId: string,
+): Promise<ParsedControlEnvelope> {
+  return waitForControlEnvelope(
+    spawned,
+    "the signed bootstrap control prompt",
+    (envelope) =>
+      envelope.kind === "bootstrap" && envelope.correlationId === childId,
+  );
+}
+
+/**
+ * Waits for the ordinary, unsigned task prompt. The transport writes it only
+ * after it has verified and applied the child's `bootstrap-ack`, so this line
+ * is the observable proof that the ack was consumed; a fixed `flush()` after
+ * sending the ack proves nothing, because envelope verification uses real
+ * WebCrypto and the write is serialized behind a send tail.
+ */
+async function waitForTaskPrompt(spawned: FakeSpawnedProcess): Promise<void> {
+  await waitFor("the task prompt to be written to the child", () =>
+    spawned
+      .writtenLines()
+      .some(
+        (line) =>
+          typeof line === "object" &&
+          line !== null &&
+          (line as { readonly type?: unknown }).type === "prompt" &&
+          decodeControlEnvelopeFromPrompt(line) === undefined,
+      ),
+  );
 }
 
 /** Plays the part of a well-behaved direct-step child process. */
@@ -246,16 +290,14 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const resultPromise = transport(
       baseInput({ models: ["anthropic/claude-sonnet-5#high"] }),
     );
-    await flush();
-
-    const spawned = processPort.spawnedProcesses[0];
+    const spawned = await awaitSpawnedChild(processPort);
     expect(spawned).toBeDefined();
     // The transport builds `childId` as
     // `direct-${workflowInstanceId}-${stepName}-${idGenerator.next()}`; the
     // fake id generator deterministically returns `generation-1` on its
     // first call.
     const expectedChildId = "direct-wf-1-verify-generation-1";
-    expect(processPort.spawnInputs.at(-1)?.command).toBeDefined();
+    expect(processPort.spawnInputs[0]?.command).toBeDefined();
 
     const secretBytes = extractSecretFromSpawn(processPort);
     const responder = new ScriptedChildResponder(
@@ -267,12 +309,9 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     // Outgoing control writes are serialized on a send tail and can land
     // after ordinary task prompts, so wait for the signed bootstrap envelope
     // by content rather than assuming writtenLines()[0] after a fixed flush.
-    const bootstrapEnvelope = await waitForControlEnvelope(
+    const bootstrapEnvelope = await waitForBootstrapEnvelope(
       spawned,
-      "the signed bootstrap control prompt",
-      (envelope) =>
-        envelope.kind === "bootstrap" &&
-        envelope.correlationId === expectedChildId,
+      expectedChildId,
     );
     expect(bootstrapEnvelope.kind).toBe("bootstrap");
     // The envelope's own top-level `correlationId` (child-authentication
@@ -295,7 +334,8 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
       secretBytes,
     );
-    await flush();
+    // The task prompt is written only once the ack is verified and applied.
+    await waitForTaskPrompt(spawned);
     spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
@@ -354,9 +394,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const resultPromise = transport(
       baseInput({ models: ["unavailable/model"] }),
     );
-    await flush();
-
-    const spawned = processPort.spawnedProcesses[0];
+    const spawned = await awaitSpawnedChild(processPort);
     expect(spawned).toBeDefined();
     const expectedChildId = "direct-wf-1-verify-generation-1";
     const secretBytes = extractSecretFromSpawn(processPort);
@@ -366,18 +404,19 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
     await responder.send("handshake", expectedChildId, {}, secretBytes);
-    await flush();
-    await flush();
-
-    const bootstrapEnvelope = extractControlEnvelopeFromPrompt(
-      spawned.writtenLines()[0],
+    // Wait for the specific signed bootstrap envelope: signing plus the
+    // serialized send tail means no fixed tick count guarantees it has landed
+    // at writtenLines()[0].
+    const bootstrapEnvelope = await waitForBootstrapEnvelope(
+      spawned,
+      expectedChildId,
     );
     expect(bootstrapEnvelope.correlationId).toBe(expectedChildId);
     expect(bootstrapEnvelope.body.correlationId).toBe(expectedChildId);
     expect("resolvedModel" in bootstrapEnvelope.body).toBe(false);
 
     await responder.send("bootstrap-ack", expectedChildId, {}, secretBytes);
-    await flush();
+    await waitForTaskPrompt(spawned);
     spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
@@ -431,9 +470,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
         ],
       }),
     );
-    await flush();
-
-    const spawned = processPort.spawnedProcesses[0];
+    const spawned = await awaitSpawnedChild(processPort);
     expect(spawned).toBeDefined();
     const expectedChildId = "direct-wf-1-verify-generation-1";
     const secretBytes = extractSecretFromSpawn(processPort);
@@ -443,12 +480,9 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
     await responder.send("handshake", expectedChildId, {}, secretBytes);
-    const bootstrapEnvelope = await waitForControlEnvelope(
+    const bootstrapEnvelope = await waitForBootstrapEnvelope(
       spawned,
-      "the signed bootstrap control prompt",
-      (envelope) =>
-        envelope.kind === "bootstrap" &&
-        envelope.correlationId === expectedChildId,
+      expectedChildId,
     );
     await responder.send(
       "bootstrap-ack",
@@ -550,7 +584,9 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
     const resultPromise = transport(baseInput());
-    await flush();
+    // Registration happens before spawn (asserted inside `register` above);
+    // awaiting the spawn makes both facts observable without a fixed tick.
+    const spawned = await awaitSpawnedChild(processPort);
     expect(registration).toMatchObject({
       parentId: ROOT_NODE_ID,
       kind: "workflow-step",
@@ -559,32 +595,24 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     });
     expect(processPort.spawnInputs).toHaveLength(1);
 
-    const spawned = processPort.spawnedProcesses[0];
     const childId = "direct-wf-1-verify-generation-1";
     const secretBytes = extractSecretFromSpawn(processPort);
     const responder = new ScriptedChildResponder(spawned, childId, "gen-1");
     await responder.send("handshake", childId, {}, secretBytes);
-    await flush();
-    await flush();
-    const bootstrap = extractControlEnvelopeFromPrompt(
-      spawned.writtenLines()[0],
-    );
+    const bootstrap = await waitForBootstrapEnvelope(spawned, childId);
     await responder.send(
       "bootstrap-ack",
       childId,
       { resolvedModel: bootstrap.body.resolvedModel } as JsonValue,
       secretBytes,
     );
-    await flush();
+    await waitForTaskPrompt(spawned);
     spawned.emitLine({
       type: "message_update",
       workflowInstanceId: "forged-workflow",
       stepName: "forged-step",
       delta: { text: "forged" },
     });
-    await flush();
-    expect(registration?.workflowInstanceId).toBe("wf-1");
-    expect(registration?.stepName).toBe("verify");
     spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
@@ -598,6 +626,11 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       secretBytes,
     );
     expect((await resultPromise).isOk()).toBe(true);
+    // The forged line was delivered on the same ordered stdout stream ahead of
+    // the terminal message, so a settled transport has necessarily consumed it;
+    // the trusted metadata must still be the parent's own values.
+    expect(registration?.workflowInstanceId).toBe("wf-1");
+    expect(registration?.stepName).toBe("verify");
   });
 
   it("persists terminal history before disposal, retains it, disposes on failure, and remains outside ordinary budgets", async () => {
@@ -626,24 +659,19 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
     const resultPromise = transport(baseInput());
-    await flush();
-    const spawned = processPort.spawnedProcesses[0];
+    const spawned = await awaitSpawnedChild(processPort);
     const childId = "direct-wf-1-verify-generation-1";
     const secretBytes = extractSecretFromSpawn(processPort);
     const responder = new ScriptedChildResponder(spawned, childId, "gen-1");
     await responder.send("handshake", childId, {}, secretBytes);
-    await flush();
-    await flush();
-    const bootstrap = extractControlEnvelopeFromPrompt(
-      spawned.writtenLines()[0],
-    );
+    const bootstrap = await waitForBootstrapEnvelope(spawned, childId);
     await responder.send(
       "bootstrap-ack",
       childId,
       { resolvedModel: bootstrap.body.resolvedModel } as JsonValue,
       secretBytes,
     );
-    await flush();
+    await waitForTaskPrompt(spawned);
     spawned.emitLine(terminalAssistantMessage("terminal"));
     await responder.send(
       "settled",
@@ -687,8 +715,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
     const failed = failingTransport(baseInput());
-    await flush();
-    const failedProcess = failingProcess.spawnedProcesses[0];
+    const failedProcess = await awaitSpawnedChild(failingProcess);
     const failedSecret = extractSecretFromSpawn(failingProcess);
     const failedResponder = new ScriptedChildResponder(
       failedProcess,
@@ -696,10 +723,9 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
     await failedResponder.send("handshake", childId, {}, failedSecret);
-    await flush();
-    await flush();
-    const failedBootstrap = extractControlEnvelopeFromPrompt(
-      failedProcess.writtenLines()[0],
+    const failedBootstrap = await waitForBootstrapEnvelope(
+      failedProcess,
+      childId,
     );
     await failedResponder.send(
       "bootstrap-ack",
@@ -707,7 +733,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       { resolvedModel: failedBootstrap.body.resolvedModel } as JsonValue,
       failedSecret,
     );
-    await flush();
+    await waitForTaskPrompt(failedProcess);
     failedProcess.emitLine(terminalAssistantMessage());
     await failedResponder.send(
       "settled",
@@ -744,13 +770,9 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     );
 
     const resultPromise = transport(baseInput());
-    await waitFor(
-      "the direct-step child to spawn",
-      () => processPort.spawnedProcesses.length > 0,
-    );
+    const spawned = await awaitSpawnedChild(processPort);
     expect(registry.isActive()).toBe(true);
 
-    const spawned = processPort.spawnedProcesses[0];
     const expectedChildId = "direct-wf-1-verify-generation-1";
     const secretBytes = extractSecretFromSpawn(processPort);
     const responder = new ScriptedChildResponder(
@@ -759,12 +781,9 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
     await responder.send("handshake", expectedChildId, {}, secretBytes);
-    await waitFor(
-      "the bootstrap prompt to be written to the child",
-      () => spawned.writtenLines().length > 0,
-    );
-    const bootstrapEnvelope = extractControlEnvelopeFromPrompt(
-      spawned.writtenLines()[0],
+    const bootstrapEnvelope = await waitForBootstrapEnvelope(
+      spawned,
+      expectedChildId,
     );
     expect("thinkingLevel" in bootstrapEnvelope.body).toBe(false);
     await responder.send(
@@ -773,10 +792,8 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
       secretBytes,
     );
-    await waitFor(
-      "the acknowledged bootstrap to be followed by the task prompt",
-      () => spawned.writtenLines().length > 1,
-    );
+    // The task prompt proves the acknowledged bootstrap was applied.
+    await waitForTaskPrompt(spawned);
     spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",
