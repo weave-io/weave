@@ -264,14 +264,16 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
     await responder.send("handshake", expectedChildId, {}, secretBytes);
-    // The transport's own bootstrap-body construction (HMAC signing) takes
-    // one additional microtask/macrotask turn beyond the handshake reply
-    // itself, so this awaits two ticks rather than one.
-    await flush();
-    await flush();
-
-    const lines = spawned.writtenLines();
-    const bootstrapEnvelope = extractControlEnvelopeFromPrompt(lines[0]);
+    // Outgoing control writes are serialized on a send tail and can land
+    // after ordinary task prompts, so wait for the signed bootstrap envelope
+    // by content rather than assuming writtenLines()[0] after a fixed flush.
+    const bootstrapEnvelope = await waitForControlEnvelope(
+      spawned,
+      "the signed bootstrap control prompt",
+      (envelope) =>
+        envelope.kind === "bootstrap" &&
+        envelope.correlationId === expectedChildId,
+    );
     expect(bootstrapEnvelope.kind).toBe("bootstrap");
     // The envelope's own top-level `correlationId` (child-authentication
     // correlation) and the bootstrap body's `correlationId` (what
