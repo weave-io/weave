@@ -151,7 +151,7 @@ describe("PiChildRuntime.admitControlLine", () => {
   it("silently ignores JSON that does not look like our own control envelope", async () => {
     const { runtime } = await buildActivatedRuntime();
     let bootstrapCalled = false;
-    runtime.admitControlLine(
+    await runtime.admitControlLine(
       { type: "agent_start" },
       {
         onBootstrap: () => {
@@ -223,13 +223,15 @@ describe("PiChildRuntime.admitControlLine", () => {
       hmacPort,
     );
     let cancelled = false;
-    runtime.admitControlLine(signed._unsafeUnwrap() as unknown as JsonValue, {
-      onBootstrap: () => {},
-      onCancel: () => {
-        cancelled = true;
+    await runtime.admitControlLine(
+      signed._unsafeUnwrap() as unknown as JsonValue,
+      {
+        onBootstrap: () => {},
+        onCancel: () => {
+          cancelled = true;
+        },
       },
-    });
-    await flush();
+    );
     expect(cancelled).toBe(true);
   });
 
@@ -250,11 +252,17 @@ describe("PiChildRuntime.admitControlLine", () => {
       secretBytes,
       hmacPort,
     );
-    runtime.admitControlLine(signed._unsafeUnwrap() as unknown as JsonValue, {
-      onBootstrap: () => {},
-      onCancel: () => {},
-    });
-    await flush();
+    // `admitControlLine` resolves only after envelope verification and
+    // admission have actually run, so awaiting it is the deterministic wait
+    // for this assertion. A fixed `flush()` merely hoped multi-tick WebCrypto
+    // verification had finished by then.
+    await runtime.admitControlLine(
+      signed._unsafeUnwrap() as unknown as JsonValue,
+      {
+        onBootstrap: () => {},
+        onCancel: () => {},
+      },
+    );
     expect(runtime.isCancelled()).toBe(true);
   });
 
@@ -276,13 +284,15 @@ describe("PiChildRuntime.admitControlLine", () => {
       hmacPort,
     );
     let bootstrapCalled = false;
-    runtime.admitControlLine(signed._unsafeUnwrap() as unknown as JsonValue, {
-      onBootstrap: () => {
-        bootstrapCalled = true;
+    await runtime.admitControlLine(
+      signed._unsafeUnwrap() as unknown as JsonValue,
+      {
+        onBootstrap: () => {
+          bootstrapCalled = true;
+        },
+        onCancel: () => {},
       },
-      onCancel: () => {},
-    });
-    await flush();
+    );
     expect(bootstrapCalled).toBe(false);
     expect(runtime.isActivated()).toBe(false);
   });
@@ -300,11 +310,13 @@ describe("PiChildRuntime.admitControlLine", () => {
       body: { reason: "first" },
     };
     const signed = await signEnvelope(envelope, secretBytes, hmacPort);
-    runtime.admitControlLine(signed._unsafeUnwrap() as unknown as JsonValue, {
-      onBootstrap: () => {},
-      onCancel: () => {},
-    });
-    await flush();
+    await runtime.admitControlLine(
+      signed._unsafeUnwrap() as unknown as JsonValue,
+      {
+        onBootstrap: () => {},
+        onCancel: () => {},
+      },
+    );
     expect(runtime.isActivated()).toBe(true);
 
     // Same nonce, next sequence: this must be caught as a replay/sequence
@@ -314,11 +326,13 @@ describe("PiChildRuntime.admitControlLine", () => {
       secretBytes,
       hmacPort,
     );
-    runtime.admitControlLine(replay._unsafeUnwrap() as unknown as JsonValue, {
-      onBootstrap: () => {},
-      onCancel: () => {},
-    });
-    await flush();
+    await runtime.admitControlLine(
+      replay._unsafeUnwrap() as unknown as JsonValue,
+      {
+        onBootstrap: () => {},
+        onCancel: () => {},
+      },
+    );
     expect(runtime.isActivated()).toBe(false);
   });
 
@@ -353,11 +367,10 @@ describe("PiChildRuntime.admitControlLine", () => {
       secretBytes,
       hmacPort,
     );
-    runtime.admitControlLine(
+    await runtime.admitControlLine(
       first._unsafeUnwrap() as unknown as JsonValue,
       handlers,
     );
-    await flush();
     expect(bootstrapCalls).toBe(1);
 
     const second = await signEnvelope(
@@ -374,11 +387,10 @@ describe("PiChildRuntime.admitControlLine", () => {
       secretBytes,
       hmacPort,
     );
-    runtime.admitControlLine(
+    await runtime.admitControlLine(
       second._unsafeUnwrap() as unknown as JsonValue,
       handlers,
     );
-    await flush();
     expect(bootstrapCalls).toBe(1);
     expect(runtime.isActivated()).toBe(false);
   });
@@ -408,19 +420,21 @@ describe("PiChildRuntime.admitControlLine", () => {
         hmacPort,
       );
     const first = await makeCancel(1);
-    runtime.admitControlLine(
+    // `admitControlLine` resolves only after envelope verification, admission
+    // and the handler/dispose side effects have actually run, so awaiting it
+    // is the deterministic wait for this assertion. A fixed `flush()` merely
+    // hoped multi-tick WebCrypto verification had finished by then.
+    await runtime.admitControlLine(
       first._unsafeUnwrap() as unknown as JsonValue,
       handlers,
     );
-    await flush();
     expect(cancelCalls).toBe(1);
 
     const second = await makeCancel(2);
-    runtime.admitControlLine(
+    await runtime.admitControlLine(
       second._unsafeUnwrap() as unknown as JsonValue,
       handlers,
     );
-    await flush();
     expect(cancelCalls).toBe(1);
     expect(runtime.isActivated()).toBe(false);
   });
@@ -443,13 +457,15 @@ describe("PiChildRuntime.admitControlLine", () => {
       secretBytes,
       hmacPort,
     );
-    runtime.admitControlLine(signed._unsafeUnwrap() as unknown as JsonValue, {
-      onBootstrap: () => {
-        bootstrapCalled = true;
+    await runtime.admitControlLine(
+      signed._unsafeUnwrap() as unknown as JsonValue,
+      {
+        onBootstrap: () => {
+          bootstrapCalled = true;
+        },
+        onCancel: () => {},
       },
-      onCancel: () => {},
-    });
-    await flush();
+    );
     expect(bootstrapCalled).toBe(false);
     expect(runtime.isActivated()).toBe(false);
   });
@@ -470,11 +486,13 @@ describe("PiChildRuntime.admitControlLine", () => {
       secretBytes,
       hmacPort,
     );
-    runtime.admitControlLine(signed._unsafeUnwrap() as unknown as JsonValue, {
-      onBootstrap: () => {},
-      onCancel: () => {},
-    });
-    await flush();
+    await runtime.admitControlLine(
+      signed._unsafeUnwrap() as unknown as JsonValue,
+      {
+        onBootstrap: () => {},
+        onCancel: () => {},
+      },
+    );
     expect(runtime.isActivated()).toBe(false);
   });
 

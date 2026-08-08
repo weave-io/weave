@@ -55,6 +55,28 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/**
+ * Awaits the exact observable state an assertion needs instead of guessing a
+ * fixed number of `flush()` ticks. Envelope signing and verification use real
+ * WebCrypto and outgoing writes are serialized on a send tail, so the number of
+ * macrotasks before an effect lands varies with host load; under a loaded CI
+ * runner a fixed tick count is a timing race, not a wait. The bound keeps a
+ * genuinely stuck path a fast, diagnosable failure rather than a hang.
+ */
+async function waitFor(
+  description: string,
+  predicate: () => boolean,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`test setup: timed out waiting for ${description}`);
+    }
+    await flush();
+  }
+}
+
 /** Parser-approved terminal assistant text that satisfies the result contract. */
 function terminalAssistantMessage(
   text = "ordinary terminal assistant prose",
@@ -659,7 +681,10 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     );
 
     const resultPromise = transport(baseInput());
-    await flush();
+    await waitFor(
+      "the direct-step child to spawn",
+      () => processPort.spawnedProcesses.length > 0,
+    );
     expect(registry.isActive()).toBe(true);
 
     const spawned = processPort.spawnedProcesses[0];
@@ -671,8 +696,10 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
     await responder.send("handshake", expectedChildId, {}, secretBytes);
-    await flush();
-    await flush();
+    await waitFor(
+      "the bootstrap prompt to be written to the child",
+      () => spawned.writtenLines().length > 0,
+    );
     const bootstrapEnvelope = extractControlEnvelopeFromPrompt(
       spawned.writtenLines()[0],
     );
@@ -683,7 +710,10 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
       secretBytes,
     );
-    await flush();
+    await waitFor(
+      "the acknowledged bootstrap to be followed by the task prompt",
+      () => spawned.writtenLines().length > 1,
+    );
     spawned.emitLine(terminalAssistantMessage());
     await responder.send(
       "settled",

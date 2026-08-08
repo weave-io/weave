@@ -243,14 +243,23 @@ function createDeferred<T>(): TestDeferred<T> {
   };
 }
 
+/**
+ * Awaits the exact observable state an assertion needs instead of guessing a
+ * fixed number of `flush()` ticks. Envelope signing and verification use real
+ * WebCrypto and outgoing writes are serialized on a send tail, so the number of
+ * macrotasks before an effect lands varies with host load; under a loaded CI
+ * runner a fixed tick count is a timing race, not a wait. The bound keeps a
+ * genuinely stuck path a fast, diagnosable failure rather than a hang.
+ */
 async function waitFor(
   predicate: () => boolean,
-  timeoutMs = 2_000,
+  timeoutMs = 5_000,
+  description = "asynchronous event",
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
     if (Date.now() >= deadline) {
-      throw new Error("test setup: timed out waiting for asynchronous event");
+      throw new Error(`test setup: timed out waiting for ${description}`);
     }
     await flushMs(1);
   }
@@ -2278,7 +2287,11 @@ describe("PiRpcChild", () => {
       logger: noopLogger(),
     });
     const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
-    await flush();
+    await waitFor(
+      () => processPort.spawnedProcesses.length > 0,
+      5_000,
+      "the child process to spawn",
+    );
     const spawned = processPort.spawnedProcesses[0];
     const secretBytes = extractSecretFromSpawn(processPort);
     const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
@@ -2286,7 +2299,14 @@ describe("PiRpcChild", () => {
     await spawnPromise;
 
     const cancelPromise = child.cancel();
-    await flush();
+    await waitFor(
+      () =>
+        spawned
+          .writtenLines()
+          .some((line) => (line as { type: string }).type === "abort"),
+      5_000,
+      "the ordinary abort command to be written to the child",
+    );
     const lines = spawned.writtenLines();
     expect(
       lines.some((line) => (line as { type: string }).type === "abort"),
