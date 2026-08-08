@@ -368,6 +368,42 @@ describe("MemoryPiNativeSessionFs — statFile / readFileRange", () => {
   });
 });
 
+/**
+ * Rewrites `path` in place with identical-length bytes and does not return
+ * until the rewrite is observable through `stat` as a moved `mtimeMs`.
+ *
+ * Linux stamps file times from the kernel's coarse clock, so an immediate
+ * same-size rewrite can land in the same timestamp tick as the original write;
+ * the identity tuple would then be byte-identical and the fixture would prove
+ * nothing. Repeating the write until the timestamp moves makes the mutation
+ * deterministically visible to the production checks without relaxing them.
+ */
+async function rewriteInPlaceUntilObservable(
+  path: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const before = await Bun.file(path).stat();
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    await Bun.write(path, bytes);
+    await $`chmod 600 ${path}`.quiet();
+    const after = await Bun.file(path).stat();
+    if (after.mtimeMs !== before.mtimeMs) {
+      if (Number(after.size) !== Number(before.size)) {
+        throw new Error("test setup: in-place rewrite changed the file size");
+      }
+      if (after.ino !== before.ino) {
+        throw new Error("test setup: in-place rewrite replaced the inode");
+      }
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("test setup: timed out waiting for the rewrite mtime");
+    }
+    await Bun.sleep(1);
+  }
+}
+
 describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
   let root: string;
 
@@ -691,12 +727,18 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
     // the retry, so the second readRange must fail closed before content.
     const rewritten = new Uint8Array(PAYLOAD.length);
     rewritten.fill(0x62);
-    await Bun.write(join(root, FILE), rewritten);
-    await $`chmod 600 ${join(root, FILE)}`.quiet();
+    await rewriteInPlaceUntilObservable(join(root, FILE), rewritten);
 
-    expect((await handle.readRange(4, 16))._unsafeUnwrapErr()).toEqual({
+    const second = await handle.readRange(4, 16);
+    expect(second.isErr()).toBe(true);
+    expect(second._unsafeUnwrapErr()).toEqual({
       type: "identity-changed",
     });
+    // The rejection is not an artifact of unchanged bytes: the leaf really
+    // holds the rewritten payload, and no part of it was returned.
+    expect(
+      new Uint8Array(await Bun.file(join(root, FILE)).arrayBuffer()),
+    ).toEqual(rewritten);
     handle.close();
     directory.close();
   });

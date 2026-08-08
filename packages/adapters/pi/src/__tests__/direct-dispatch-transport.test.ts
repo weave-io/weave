@@ -95,7 +95,9 @@ function extractSecretFromSpawn(port: FakeChildProcessPort): Uint8Array {
   return bytes;
 }
 
-function extractControlEnvelopeFromPrompt(line: unknown): {
+const CONTROL_PROMPT_PREFIX = "/weave:__control__ ";
+
+interface ParsedControlEnvelope {
   readonly kind: string;
   readonly correlationId: string;
   readonly body: {
@@ -103,12 +105,64 @@ function extractControlEnvelopeFromPrompt(line: unknown): {
     readonly resolvedModel?: unknown;
     readonly thinkingLevel?: string;
   };
-} {
+}
+
+function extractControlEnvelopeFromPrompt(
+  line: unknown,
+): ParsedControlEnvelope {
   const record = line as { type: string; message: string };
   expect(record.type).toBe("prompt");
-  const prefix = "/weave:__control__ ";
-  expect(record.message.startsWith(prefix)).toBe(true);
-  return JSON.parse(record.message.slice(prefix.length));
+  expect(record.message.startsWith(CONTROL_PROMPT_PREFIX)).toBe(true);
+  return JSON.parse(record.message.slice(CONTROL_PROMPT_PREFIX.length));
+}
+
+/**
+ * Decodes a written line only when it is a signed control prompt. Ordinary
+ * task prompts and non-prompt writes yield `undefined` so callers can scan for
+ * the exact control envelope they need instead of assuming a line index.
+ */
+function decodeControlEnvelopeFromPrompt(
+  line: unknown,
+): ParsedControlEnvelope | undefined {
+  if (typeof line !== "object" || line === null) return undefined;
+  const record = line as {
+    readonly type?: unknown;
+    readonly message?: unknown;
+  };
+  if (record.type !== "prompt") return undefined;
+  if (typeof record.message !== "string") return undefined;
+  if (!record.message.startsWith(CONTROL_PROMPT_PREFIX)) return undefined;
+  return JSON.parse(
+    record.message.slice(CONTROL_PROMPT_PREFIX.length),
+  ) as ParsedControlEnvelope;
+}
+
+/**
+ * Waits boundedly for the specific signed control prompt an assertion needs.
+ * Outgoing writes are serialized on a send tail and interleaved with ordinary
+ * task prompts, so neither a fixed line index nor a fixed tick count is a
+ * sound wait; matching on the decoded envelope is.
+ */
+async function waitForControlEnvelope(
+  spawned: FakeSpawnedProcess,
+  description: string,
+  matches: (envelope: ParsedControlEnvelope) => boolean,
+): Promise<ParsedControlEnvelope> {
+  let found: ParsedControlEnvelope | undefined;
+  await waitFor(description, () => {
+    for (const line of spawned.writtenLines()) {
+      const envelope = decodeControlEnvelopeFromPrompt(line);
+      if (envelope !== undefined && matches(envelope)) {
+        found = envelope;
+        return true;
+      }
+    }
+    return false;
+  });
+  if (found === undefined) {
+    throw new Error(`test setup: missing control envelope for ${description}`);
+  }
+  return found;
 }
 
 /** Plays the part of a well-behaved direct-step child process. */
@@ -387,10 +441,12 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
     await responder.send("handshake", expectedChildId, {}, secretBytes);
-    await flush();
-    await flush();
-    const bootstrapEnvelope = extractControlEnvelopeFromPrompt(
-      spawned.writtenLines()[0],
+    const bootstrapEnvelope = await waitForControlEnvelope(
+      spawned,
+      "the signed bootstrap control prompt",
+      (envelope) =>
+        envelope.kind === "bootstrap" &&
+        envelope.correlationId === expectedChildId,
     );
     await responder.send(
       "bootstrap-ack",
@@ -398,7 +454,6 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
       secretBytes,
     );
-    await flush();
 
     await responder.send(
       "delegate-request",
@@ -409,8 +464,10 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       },
       secretBytes,
     );
-    await flush();
-    await flush();
+    await waitFor(
+      "the nested delegation to reach the shared parent controller",
+      () => relayRequests.length > 0,
+    );
 
     expect(relayRequests).toEqual([
       {
@@ -422,9 +479,13 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
         cwd: "/project",
       },
     ]);
-    const delegationResponse = extractControlEnvelopeFromPrompt(
-      spawned.writtenLines().at(-1),
-    ) as unknown as {
+    const delegationResponse = (await waitForControlEnvelope(
+      spawned,
+      "the signed delegate-response control prompt",
+      (envelope) =>
+        envelope.kind === "delegate-response" &&
+        envelope.correlationId === `${expectedChildId}-delegate-0`,
+    )) as unknown as {
       readonly kind: string;
       readonly correlationId: string;
       readonly body: {
