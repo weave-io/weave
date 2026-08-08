@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~28,900 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,500 tokens per conversation.**
-> **Last scanned:** 2026-08-08 00:08 — re-run after significant changes
+> **Last scanned:** 2026-08-08 00:23 — re-run after significant changes
 
 ---
 
@@ -1684,7 +1684,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 291 test files found
+> 292 test files found
 
 ---
 

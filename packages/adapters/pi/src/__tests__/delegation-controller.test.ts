@@ -327,7 +327,7 @@ async function sendChildToRunning(
 
 function controlEnvelopesFromWritten(
   process: FakeSpawnedProcess,
-): Array<{ kind: string; body: unknown }> {
+): Array<{ kind: string; correlationId?: string; body: unknown }> {
   const prefix = "/weave:__control__ ";
   return (process.writtenLines() as Array<{ message?: string }>)
     .filter(
@@ -339,7 +339,7 @@ function controlEnvelopesFromWritten(
 
 async function waitForDelegateResponses(
   process: FakeSpawnedProcess,
-): Promise<Array<{ kind: string; body: unknown }>> {
+): Promise<Array<{ kind: string; correlationId?: string; body: unknown }>> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const responses = controlEnvelopesFromWritten(process).filter(
       (envelope) => envelope.kind === "delegate-response",
@@ -350,6 +350,36 @@ async function waitForDelegateResponses(
   return controlEnvelopesFromWritten(process).filter(
     (envelope) => envelope.kind === "delegate-response",
   );
+}
+
+/**
+ * Bounded, deterministic wait for one written control envelope.
+ *
+ * Draining the microtask/timer queue a fixed number of times is load
+ * insensitive: each attempt yields to the loop and re-reads the written lines,
+ * so the wait ends as soon as the envelope appears instead of betting on a
+ * single fixed delay.
+ */
+async function waitForControlEnvelope(
+  process: FakeSpawnedProcess,
+  predicate: (envelope: {
+    kind: string;
+    correlationId?: string;
+    body: unknown;
+  }) => boolean,
+): Promise<
+  { kind: string; correlationId?: string; body: unknown } | undefined
+> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const match = controlEnvelopesFromWritten(process)
+      .reverse()
+      .find((envelope) => predicate(envelope));
+    if (match !== undefined) return match;
+    await flush();
+  }
+  return controlEnvelopesFromWritten(process)
+    .reverse()
+    .find((envelope) => predicate(envelope));
 }
 
 const GENEROUS = limitsSource({
@@ -1994,22 +2024,12 @@ describe("PiDelegationController", () => {
     const grandchild = spawnedAt(port, 1);
     await respondHandshakeAndSettle(grandchild, port, "gen-1");
     await flush();
-    const response = parent
-      .writtenLines()
-      .map((line) => {
-        if (typeof line !== "object" || line === null) return undefined;
-        const message = (line as { message?: unknown }).message;
-        const prefix = "/weave:__control__ ";
-        if (typeof message !== "string" || !message.startsWith(prefix))
-          return undefined;
-        return JSON.parse(message.slice(prefix.length)) as {
-          kind: string;
-          correlationId?: string;
-          body: unknown;
-        };
-      })
-      .reverse()
-      .find((envelope) => envelope?.kind === "delegate-response");
+    const response = await waitForControlEnvelope(
+      parent,
+      (envelope) =>
+        envelope.kind === "delegate-response" &&
+        envelope.correlationId === "nested-correlation",
+    );
     expect(response).toBeDefined();
     expect(response?.kind).toBe("delegate-response");
     expect(response?.correlationId).toBe("nested-correlation");

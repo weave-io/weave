@@ -6,12 +6,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { $ } from "bun";
 import {
   PI_NATIVE_THREAD_ENTRY_TYPE,
   PiNativeSessionStore,
 } from "../child-native-sessions.js";
 import { createBunPiNativeSessionFs } from "../native-session-fs.js";
+import {
+  makeRealTempRoot,
+  removeRealTempRoot,
+} from "./fakes/real-temp-root.js";
 import { createTestOnlyDescriptorSafeNativeSessionHost } from "./fakes/test-only-descriptor-safe-host.js";
 
 const PARENT = "parent-session-integration-1";
@@ -20,13 +23,11 @@ describe("PiNativeSessionStore.createChildSession — Pi 0.83 SessionManager", (
   let root: string;
 
   beforeEach(async () => {
-    root = (await $`mktemp -d /private/tmp/weave-ns-create-XXXXXX`.quiet())
-      .text()
-      .trim();
+    root = await makeRealTempRoot("weave-ns-create");
   });
 
   afterEach(async () => {
-    await $`rm -rf ${root}`.quiet();
+    await removeRealTempRoot(root);
   });
 
   test("persists host header, reopens, and appends thread metadata durably", async () => {

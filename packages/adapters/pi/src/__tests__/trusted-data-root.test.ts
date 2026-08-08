@@ -18,6 +18,10 @@ import {
   BunPiTrustedDataRootPort,
   IdentityPiTrustedDataRootPort,
 } from "../trusted-data-root.js";
+import {
+  makeRealTempRoot,
+  removeRealTempRoot,
+} from "./fakes/real-temp-root.js";
 
 const port = new BunPiTrustedDataRootPort();
 
@@ -25,16 +29,14 @@ describe("BunPiTrustedDataRootPort — real filesystem", () => {
   let root: string;
 
   beforeEach(async () => {
-    // `/private/tmp` is already canonical on Darwin, so the fixture controls
-    // exactly which components are symlinks.
-    root = (await $`mktemp -d /private/tmp/weave-tdr-XXXXXX`.quiet())
-      .text()
-      .trim();
+    // A canonical (symlink-free) root keeps the fixture in control of exactly
+    // which components are symlinks.
+    root = await makeRealTempRoot("weave-tdr");
     await $`chmod 700 ${root}`.quiet();
   });
 
   afterEach(async () => {
-    await $`rm -rf ${root}`.quiet();
+    await removeRealTempRoot(root);
   });
 
   test("accepts a user-owned symlinked base and returns its canonical target", async () => {

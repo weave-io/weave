@@ -92,6 +92,10 @@ import {
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
 import { MutablePlanStateProvider } from "./fakes/fake-plan-state-provider.js";
+import {
+  removeRealTempRoot,
+  reserveRealTempPath,
+} from "./fakes/real-temp-root.js";
 import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const EMPTY_CONFIG = {
@@ -3467,7 +3471,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
   });
 
   it("keeps a pristine XDG data root absent after health-only startup surfaces", async () => {
-    const xdgBase = `/private/tmp/weave-task21-failclosed-pristine-${crypto.randomUUID()}`;
+    const xdgBase = await reserveRealTempPath("weave-pi-pristine");
     await Bun.write(`${xdgBase}/.keep`, "");
     await Bun.file(`${xdgBase}/.keep`).delete();
     const envPort: PiEnvPort = {
@@ -3560,6 +3564,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
     ]) {
       expect(paths.some((path) => path.endsWith(name))).toBe(false);
     }
+    await removeRealTempRoot(xdgBase);
   });
 
   it("honors exact startup choices: Recover now recovers, while Skip and Inspect preserve eligibility", async () => {

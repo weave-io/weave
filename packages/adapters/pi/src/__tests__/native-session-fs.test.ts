@@ -10,6 +10,10 @@ import {
   MemoryPiNativeSessionFs,
   setForcedPreadByteLimitForTests,
 } from "../native-session-fs.js";
+import {
+  makeRealTempRoot,
+  removeRealTempRoot,
+} from "./fakes/real-temp-root.js";
 
 const DIR = "/data/weave/adapters/pi/sessions/child-1";
 const FILE = "session.jsonl";
@@ -368,16 +372,14 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
   let root: string;
 
   beforeEach(async () => {
-    // Prefer a real (non-symlinked) prefix. On Darwin `/tmp` → `/private/tmp`,
-    // and the no-follow open chain rejects symlink components.
-    root = (await $`mktemp -d /private/tmp/weave-ns-XXXXXX`.quiet())
-      .text()
-      .trim();
+    // A canonical (symlink-free) prefix is required: the no-follow open chain
+    // rejects symlink components anywhere below the root.
+    root = await makeRealTempRoot("weave-ns");
   });
 
   afterEach(async () => {
     setForcedPreadByteLimitForTests(undefined);
-    await $`rm -rf ${root}`.quiet();
+    await removeRealTempRoot(root);
   });
 
   test("stat and positional pread return exact chunks with stable identity", async () => {

@@ -4,7 +4,6 @@ import {
   ALL_CAPABILITY_IDS,
   createInMemoryRuntimeStore,
 } from "@weaveio/weave-engine";
-import { $ } from "bun";
 import { ok, okAsync } from "neverthrow";
 import { PiNativeSessionStore } from "../child-native-sessions.js";
 import { CHILD_OVERLAY_BOUNDS } from "../child-overlay-types.js";
@@ -30,6 +29,10 @@ import {
   RecordingFakePiHost,
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
+import {
+  makeRealTempRoot,
+  removeRealTempRoot,
+} from "./fakes/real-temp-root.js";
 import { createTestOnlyDescriptorSafeNativeSessionHost } from "./fakes/test-only-descriptor-safe-host.js";
 import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
@@ -85,10 +88,10 @@ async function flushBackgroundWork(ticks = 40): Promise<void> {
 describe("createPiExtension: historical native overlay after a parent restart", () => {
   let root = "";
   beforeEach(async () => {
-    root = (await $`mktemp -d /private/tmp/weave-hist-XXXXXX`.text()).trim();
+    root = await makeRealTempRoot("weave-hist");
   });
   afterEach(async () => {
-    if (root.length > 0) await $`rm -rf ${root}`.quiet();
+    if (root.length > 0) await removeRealTempRoot(root);
   });
 
   /**
