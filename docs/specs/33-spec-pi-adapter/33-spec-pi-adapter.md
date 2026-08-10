@@ -237,8 +237,16 @@ Required behavior:
 - Search operates over the loaded window and fetches further pages on demand.
 - Live-tail follows new output, disengages on manual scroll, and resumes at the
   bottom. Resize reflows. PageUp, PageDown, Shift+Up, Shift+Down, Home, and End
-  accept legacy and Kitty event-aware terminal frames; Kitty release frames do
-  not repeat an action. A global expansion toggle applies to all entries.
+  must be matched semantically, never by raw byte comparison, so legacy CSI,
+  Kitty event-aware, and SS3 (`ESC O H` / `ESC O F`) encodings of the same key
+  all scroll. Kitty release frames do not repeat an action. A global expansion
+  toggle applies to all entries.
+- The ownership-independent terminal-input route that carries scroll frames must
+  prove its liveness by installation, never by inference from an unchanged host
+  object. The host may clear extension listeners while keeping the same context,
+  so each bind must release any handle it holds and subscribe again, keeping the
+  handle that subscription returned. Superseded closures must be made inert so a
+  host that fails to remove a listener cannot double-deliver a frame.
 - Run and branch navigation uses run-divider metadata (§9).
 - For active children, a fresh overlay-owned Pi `CustomEditor` owns cursor
   movement, deletion, multiline input, and the draft. `Enter` submits steering
@@ -251,6 +259,27 @@ Required behavior:
   the primary editor. Drafts and scroll positions are preserved per child. The
   overlay never borrows or replaces the primary editor, so pi-vim and other
   foreign editors remain untouched through mount and unmount.
+- `Escape` closes inspection only. One press closes the overlay, restores the
+  parent's focus, and leaves the inspected child running. `Escape` must never
+  cancel a child, arm a cancel hint, or fall through to Pi while the overlay is
+  mounted. Search-mode `Escape` leaves search only.
+- Cancellation is a separate explicit route (§8.1). Only an explicit confirm
+  choice cancels a subtree; dismissal, an absent choice, or a select failure
+  leaves the child running.
+- The header renders exactly one telemetry row for the focused child: provider,
+  model, context percentage, and input/output token counts. Values come only
+  from bounded, parser-approved host usage reports and existing model metadata.
+  Only the latest report is retained, per child, replacing the prior one; runs
+  are never summed. A field the host did not report authoritatively, or reported
+  outside its pinned bounds, renders `—`. No value may be estimated: a missing
+  context window means no percentage, never `0%`.
+- The overlay offers a per-child view mode of `full` or `compact`, defaulting to
+  `full`. Compact renders bounded one-line entry summaries. Compact is a
+  render-time projection only: it must not fork, drop, or rewrite entry state.
+  Toggling discards the measured scroll extent to force a re-measure and
+  restores the viewport from a stable anchor, so a large row-count change cannot
+  jump the viewport. Draft, search state, and per-child isolation survive a
+  toggle.
 - A renderer failure falls back to the existing custom-editor inspection path
   with the same transcript.
 - Pi does not enable terminal mouse reporting, so wheel events cannot reach the
@@ -270,11 +299,27 @@ existing user keybindings are reported as a diagnostic and are never overwritten
 | Select active child | `Alt+1`..`Alt+9` | Indexes active children in stable tree order |
 | Sibling navigation | `Alt+Left` / `Alt+Right`, `Alt+H` / `Alt+L` | Moves between siblings |
 | Parent navigation | empty `Backspace` | Moves to parent, or closes the overlay when opened directly |
-| Cancel subtree | double `Escape` within `750 ms` | Opens the cancel-subtree confirmation |
+| Close inspection | `Escape` | Closes the overlay and leaves the child running |
+| Cancel subtree | empty-draft `q` / `Q` | Opens the cancel-subtree confirmation |
+| Toggle compact view | `Ctrl+O` | Switches the focused child between `full` and `compact` |
 
-`Escape` is consumed by the overlay and arms a hint; it must never fall through
-to Pi while the overlay is mounted. The cancel-subtree confirmation defaults to
-**Keep running**. Non-empty `Backspace` edits draft text.
+`Escape` is consumed by the overlay and must never fall through to Pi while the
+overlay is mounted. It closes inspection and never cancels.
+
+`q` and `Q` are matched semantically and are never registered as host shortcuts,
+so typing `q` outside the overlay, or into a non-empty overlay draft, keeps its
+ordinary meaning. The key opens the confirmation only on an empty draft over a
+live focused child; a settled, orphan, or absent target reports no target rather
+than prompting for nothing. The confirmation lists **Keep running** first and
+defaults to it. Only the explicit **Cancel subtree** choice cancels, through the
+existing subtree-cancel authority; no new authority is introduced. The
+generation guard is re-checked after the modal resolves. Non-empty `Backspace`
+edits draft text.
+
+`Ctrl+O` is non-printable and is offered to the same conflict port as every other
+overlay key. When the host already owns it, the route is skipped, the toggle is
+not advertised in the help rows, and the conflict is reported once as a bounded
+diagnostic line. The key is never taken over.
 
 ### 8.2 Picker contract
 
@@ -544,6 +589,7 @@ implementation may apply a superseded rule alongside its replacement.
 | Persist an adapter-owned JSONL store with `index.v1.json`, per-child `checkpoint.v1.json`, quotas, trimming, quarantine, and orphan pruning. | Native session files plus bounded parent refs (§4) and a derivative metadata cache (§5); explicit cleanup with tombstones only (§2). |
 | Migrate or quarantine prior V1 history. | No migration (ADR 0014). Weave neither reads nor deletes prior JSONL history. |
 | Expose only a transient 4 KiB inspector view and discard child history. | Compact block (§6), full-screen overlay (§7), picker and keys (§8). |
+| Cancel a child subtree with a double `Escape` within `750 ms`. | `Escape` closes inspection only; empty-draft `q` / `Q` opens the cancel confirmation (§7, §8.1). |
 | Blanket prohibition on private-child auto-resume. | Explicit thread retry and continue with ownership, capacity, and integrity semantics (§9). |
 | Settings `persist_history`, `max_bytes_per_child`, `max_bytes_total`, `orphan_retention_days`, `recovery_enabled`, `recovery_countdown_seconds`. | Removed. Storage is native, unquota'd, and cleaned up explicitly. |
 

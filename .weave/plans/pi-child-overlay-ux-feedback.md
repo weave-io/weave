@@ -178,7 +178,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - All listed tests pass; full↔compact toggle preserves draft, search state, and a stable anchor; bounds pinned.
     - Commit: `feat(pi): add compact child overlay view mode`.
 
-- [ ] 8. Update spec, docs, and smoke checklist
+- [x] 8. Update spec, docs, and smoke checklist
   - **What**: Make the docs corpus reflect the new contract: Escape exit, `q` confirm-cancel, telemetry header, compact mode, and the scroll fix.
   - **Files**: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` (§7 overlay behavior: scroll frame coverage per Task 1 findings, Escape/`q` semantics, telemetry line with unavailable-state rule, compact mode; §8 key table; §14 any new stable diagnostic codes; §17 supersede the double-escape rule), `docs/specs/33-spec-pi-adapter/33-smoke-checklist.md` (new steps: live scroll, Escape exit, `q` cancel both branches, telemetry visible/unavailable, compact toggle), `docs/specs/33-spec-pi-adapter/33-proofs/33-task20-e-double-escape-cancel-proof.md` (superseded banner pointing at the new proof), `docs/adapters/pi.md` (user-facing key/feature summary).
   - **Depends on**: Tasks 2–7.

@@ -1,6 +1,15 @@
 # Task 20(e) double-Escape subtree cancellation proof
 
-**Verdict: PASS**
+> **Superseded — historical record only.** The double-`Escape` cancel rule this
+> record proves no longer exists. `Escape` now closes child inspection and
+> leaves the child running, and cancellation moved behind an empty-draft `q`
+> confirmation (Spec 33 §7, §8.1, §17). Nothing below describes current
+> behaviour, and this file is not release evidence for smoke row `S051`.
+> The current record is
+> [`33-overlay-ux-live-proof.md`](33-overlay-ux-live-proof.md).
+> The contents are retained unchanged as history.
+
+**Verdict: PASS (against the superseded double-`Escape` rule)**
 
 This record covers acceptance-matrix item (e) and
 [smoke checklist](../33-smoke-checklist.md) row `S051`: a single `Escape` inside a mounted child
