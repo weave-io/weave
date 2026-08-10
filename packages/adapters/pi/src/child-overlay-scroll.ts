@@ -18,6 +18,31 @@ import {
   SCROLL_PAGE,
 } from "./child-overlay-types.js";
 
+/**
+ * Rendered rows one loaded entry occupies in the layout that produced it.
+ *
+ * Compact renders exactly one row per entry; the full transcript can render
+ * many. Only the component knows either number, so it reports the spans of the
+ * layout it just painted and the controller uses them to translate between
+ * rendered rows and logical entries.
+ */
+export interface OverlayLayoutSpan {
+  readonly entryId: string;
+  /** Rendered rows this entry occupies; at least one. */
+  readonly rows: number;
+}
+
+/**
+ * Ceiling on the remembered intra-entry row of a viewport anchor.
+ *
+ * A viewport anchor is carried across a layout change, so it must stay bounded
+ * independently of how tall an entry rendered before the change.
+ */
+export const MAX_ANCHOR_LINE_OFFSET = 4_096;
+
+/** Ceiling on remembered layout spans; matches the overlay window ceiling. */
+export const MAX_LAYOUT_SPANS = 512;
+
 /** Scroll-relevant slice of the controller's saved per-child state. */
 export interface OverlayScrollState {
   /** Hidden rendered rows between the viewport bottom and the newest row. */
@@ -38,6 +63,139 @@ export interface OverlayScrollState {
   pendingTailExtentAdjustment: boolean;
   entries: ChildOverlayEntry[];
   anchor: ChildOverlayAnchor | undefined;
+  /**
+   * Per-entry rendered row counts measured by the last component render, in
+   * transcript order (oldest first). `undefined` until a layout is measured,
+   * and cleared whenever the layout changes so a stale mapping is never used.
+   */
+  layoutSpans: readonly OverlayLayoutSpan[] | undefined;
+  /**
+   * Logical viewport captured before a layout change, waiting for the target
+   * layout to be measured. Applied exactly once, by the next measurement.
+   */
+  pendingViewportAnchor: ChildOverlayAnchor | undefined;
+  /** Live tail at capture time; re-followed instead of mapping an anchor. */
+  pendingViewportLiveTail: boolean;
+}
+
+/** Adopt freshly measured per-entry row spans for the current layout. */
+export function setLayoutSpans(
+  state: OverlayScrollState,
+  spans: readonly OverlayLayoutSpan[] | undefined,
+): void {
+  if (spans === undefined) {
+    state.layoutSpans = undefined;
+    return;
+  }
+  state.layoutSpans = spans
+    .map((span) => ({
+      entryId: span.entryId,
+      rows: Math.max(0, Math.floor(span.rows)),
+    }))
+    // Entries that render nothing occupy no row and can hold no viewport.
+    .filter((span) => span.rows > 0)
+    .slice(0, MAX_LAYOUT_SPANS);
+}
+
+/** Total rendered rows described by a measured layout. */
+function layoutRowTotal(spans: readonly OverlayLayoutSpan[]): number {
+  let total = 0;
+  for (const span of spans) total += span.rows;
+  return total;
+}
+
+/**
+ * Logical content at the viewport bottom, as an entry plus the row inside it.
+ *
+ * Offsets count rendered rows up from the newest row, so the bottom visible row
+ * sits at `total - 1 - scrollOffset` from the oldest row. Without a measured
+ * layout there is nothing to translate, so the legacy entry-indexed anchor is
+ * the only available approximation.
+ */
+export function captureViewportAnchor(
+  state: OverlayScrollState,
+): ChildOverlayAnchor | undefined {
+  const spans = state.layoutSpans;
+  if (spans === undefined || spans.length === 0) return anchorFromScroll(state);
+  const total = layoutRowTotal(spans);
+  if (total === 0) return anchorFromScroll(state);
+  const bottomRow = Math.max(
+    0,
+    Math.min(total - 1, total - 1 - Math.max(0, state.scrollOffset)),
+  );
+  let start = 0;
+  for (const span of spans) {
+    if (bottomRow < start + span.rows) {
+      return {
+        entryId: span.entryId,
+        lineOffset: Math.min(bottomRow - start, MAX_ANCHOR_LINE_OFFSET),
+      };
+    }
+    start += span.rows;
+  }
+  return anchorFromScroll(state);
+}
+
+/**
+ * Park a logical viewport for the layout that has not been measured yet.
+ *
+ * The row counts of the target layout are unknown until it renders, so the
+ * anchor is held and applied by the next measurement rather than converted now.
+ * Following the tail is preserved as an intent instead of an anchor: the tail
+ * is the newest row in every layout.
+ */
+export function captureViewportForLayoutChange(
+  state: OverlayScrollState,
+): void {
+  state.pendingViewportLiveTail = state.liveTail;
+  state.pendingViewportAnchor = state.liveTail
+    ? undefined
+    : captureViewportAnchor(state);
+  state.layoutSpans = undefined;
+}
+
+/**
+ * Place a logical viewport into the freshly measured layout.
+ *
+ * The anchored entry keeps the same intra-entry row when the target layout
+ * renders it that tall, and otherwise degrades to that entry's last row. A row
+ * offset from the previous layout is never reused directly.
+ */
+export function applyViewportAnchor(
+  state: OverlayScrollState,
+  anchor: ChildOverlayAnchor,
+): void {
+  const spans = state.layoutSpans;
+  const total = spans === undefined ? 0 : layoutRowTotal(spans);
+  if (spans === undefined || spans.length === 0 || total === 0) {
+    // No measured layout to place the anchor in: clamp instead of leaving an
+    // offset from the previous layout in force.
+    state.scrollOffset = Math.min(state.scrollOffset, maxScrollRows(state));
+    state.liveTail = state.scrollOffset === 0;
+    state.anchor = anchorFromScroll(state);
+    return;
+  }
+  let start = 0;
+  for (const span of spans) {
+    if (span.entryId === anchor.entryId) {
+      const withinEntry = Math.min(
+        Math.max(0, Math.floor(anchor.lineOffset)),
+        span.rows - 1,
+      );
+      const bottomRow = start + withinEntry;
+      const offset = total - 1 - bottomRow;
+      state.scrollOffset = Math.min(Math.max(0, offset), maxScrollRows(state));
+      state.liveTail = state.scrollOffset === 0;
+      state.anchor = anchorFromScroll(state);
+      return;
+    }
+    start += span.rows;
+  }
+  // Anchored entry left the window between the capture and the measurement:
+  // clamp rather than reinterpret the stale offset.
+  state.scrollOffset = Math.min(state.scrollOffset, maxScrollRows(state));
+  state.liveTail = state.scrollOffset === 0;
+  state.anchor = anchorFromScroll(state);
 }
 
 /**
@@ -71,8 +229,30 @@ export function clearTailGrowth(state: OverlayScrollState): void {
 export function applyMeasuredExtent(
   state: OverlayScrollState,
   extent: number,
+  spans?: readonly OverlayLayoutSpan[],
 ): void {
   const max = Math.max(0, Math.floor(extent));
+  if (spans !== undefined) setLayoutSpans(state, spans);
+
+  const parkedAnchor = state.pendingViewportAnchor;
+  const parkedLiveTail = state.pendingViewportLiveTail;
+  if (parkedAnchor !== undefined || parkedLiveTail) {
+    // A layout change is being resolved: the stored offset belongs to the old
+    // layout and carries no meaning here.
+    state.pendingViewportAnchor = undefined;
+    state.pendingViewportLiveTail = false;
+    state.pendingTailExtentAdjustment = false;
+    state.scrollExtent = max;
+    if (parkedLiveTail || parkedAnchor === undefined) {
+      state.scrollOffset = 0;
+      state.liveTail = true;
+      state.anchor = anchorFromScroll(state);
+      return;
+    }
+    applyViewportAnchor(state, parkedAnchor);
+    return;
+  }
+
   const previous = state.scrollExtent;
   const pending = state.pendingTailExtentAdjustment;
   state.pendingTailExtentAdjustment = false;

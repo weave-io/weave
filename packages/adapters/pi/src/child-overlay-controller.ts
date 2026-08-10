@@ -35,9 +35,11 @@ import {
 import {
   anchorFromScroll,
   applyMeasuredExtent,
+  captureViewportForLayoutChange,
   clearTailGrowth,
   markTailGrowth,
   maxScrollRows,
+  type OverlayLayoutSpan,
   type OverlayScrollState,
   restoreScrollAnchor,
   scrollDelta,
@@ -142,6 +144,9 @@ function emptySaved(threadId: string, touched: number): SavedChildState {
     hasOlderFlag: false,
     hasNewerFlag: false,
     entries: [],
+    layoutSpans: undefined,
+    pendingViewportAnchor: undefined,
+    pendingViewportLiveTail: false,
     viewMode: DEFAULT_CHILD_OVERLAY_VIEW_MODE,
     compact: createChildCompactState(threadId),
     usage: undefined,
@@ -456,9 +461,20 @@ export class ChildOverlayController {
    * uses visual rows. Only the component knows wrapped row counts, so the
    * controller cannot derive this itself.
    */
-  setScrollExtent(extent: number): Result<ChildOverlayView, ChildOverlayError> {
+  /**
+   * Adopt what the component just painted.
+   *
+   * `spans` describes how many rendered rows each loaded entry occupies in the
+   * layout that produced `extent`. It is what lets a logical viewport survive a
+   * layout change; callers that cannot measure it (tests of pure row
+   * bookkeeping) may omit it and keep the previous row-only behaviour.
+   */
+  setScrollExtent(
+    extent: number,
+    spans?: readonly OverlayLayoutSpan[],
+  ): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
-      applyMeasuredExtent(state, extent);
+      applyMeasuredExtent(state, extent, spans);
       return this.toView(child, state);
     });
   }
@@ -538,19 +554,24 @@ export class ChildOverlayController {
    * projection.
    *
    * Entry state is untouched: compact is a render-time projection, so nothing
-   * is dropped or rewritten here. Row counts do change everywhere, so the
-   * measured extent is discarded to force a re-measure on the next render, any
-   * pending tail adjustment is dropped (its delta would no longer isolate tail
-   * growth), and the viewport anchor is restored against the same entries so a
-   * large row-count change cannot jump the viewport.
+   * is dropped or rewritten here.
+   *
+   * The two layouts do not share a row coordinate system — full can render many
+   * rows for an entry that compact renders in one — so the current rendered-row
+   * offset is meaningless in the target layout and is never carried over. The
+   * logical viewport (the entry at the viewport bottom, plus the row inside it)
+   * is captured instead and re-placed once the target layout has been measured.
+   * The measured extent and spans are discarded to force that re-measure, and
+   * any pending tail adjustment is dropped because its delta would no longer
+   * isolate tail growth.
    */
   toggleViewMode(): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
-      const anchor = state.anchor ?? anchorFromScroll(state);
       state.viewMode = state.viewMode === "compact" ? "full" : "compact";
       clearTailGrowth(state);
+      captureViewportForLayoutChange(state);
+      state.anchor = state.pendingViewportAnchor ?? state.anchor;
       state.scrollExtent = undefined;
-      restoreScrollAnchor(state, anchor);
       return this.toView(child, state);
     });
   }

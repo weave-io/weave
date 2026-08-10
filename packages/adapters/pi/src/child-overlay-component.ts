@@ -40,6 +40,7 @@ import {
   PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
 } from "./child-overlay-keys.js";
 import { boundText } from "./child-overlay-replay.js";
+import type { OverlayLayoutSpan } from "./child-overlay-scroll.js";
 import { normalizeChildOverlayScrollFrame } from "./child-overlay-terminal-input.js";
 import {
   type ChildOverlayEntry,
@@ -53,6 +54,7 @@ import {
 } from "./child-overlay-types.js";
 import {
   createPiChildTranscriptRenderer,
+  type PiChildTranscriptRenderedRow,
   type PiTranscriptComponentFactory,
 } from "./child-transcript.js";
 import {
@@ -261,6 +263,42 @@ export function compactChildOverlayLines(
   width: number,
 ): readonly string[] {
   return entries.map((entry) => compactChildOverlayEntryLine(entry, width));
+}
+
+/** Painted transcript rows plus the per-entry row spans that produced them. */
+export interface OverlayRenderedTranscript {
+  readonly lines: readonly string[];
+  readonly spans: readonly OverlayLayoutSpan[];
+}
+
+/**
+ * Collapse the native renderer's per-fact rows into per-entry row spans.
+ *
+ * One entry can emit several rows, and each row can wrap to several lines, so
+ * the span of an entry is the total lines of its consecutive rows. Rows arrive
+ * in transcript order, so accumulating while the entry id repeats preserves
+ * that order without sorting.
+ */
+export function spansFromRows(
+  rows: readonly PiChildTranscriptRenderedRow[],
+): readonly OverlayLayoutSpan[] {
+  const spans: OverlayLayoutSpan[] = [];
+  let currentId: string | undefined;
+  let currentRows = 0;
+  for (const row of rows) {
+    if (row.entryId !== currentId) {
+      if (currentId !== undefined) {
+        spans.push({ entryId: currentId, rows: currentRows });
+      }
+      currentId = row.entryId;
+      currentRows = 0;
+    }
+    currentRows += row.lines.length;
+  }
+  if (currentId !== undefined) {
+    spans.push({ entryId: currentId, rows: currentRows });
+  }
+  return spans;
 }
 
 /**
@@ -535,30 +573,53 @@ export function createChildOverlayCustomComponent(
     return help.map((line) => fitLineToWidth(boundText(line), width));
   };
 
+  /**
+   * Paint the transcript for the active layout and report how many rendered
+   * rows each entry occupies.
+   *
+   * The spans are what let the controller keep a logical viewport across a
+   * layout change: compact renders exactly one row per entry while full can
+   * render many, so the two layouts share no row coordinate system.
+   */
   const renderTranscriptLines = (
     view: ChildOverlayView,
     width: number,
-  ): Result<readonly string[], ChildOverlayFallbackRequired> => {
+  ): Result<OverlayRenderedTranscript, ChildOverlayFallbackRequired> => {
     if (view.viewMode === "compact") {
       // Render-time projection of the same bounded entries; the native
       // transcript model is left untouched so toggling back is lossless.
-      return ok(compactChildOverlayLines(view.entries, width));
+      const lines = compactChildOverlayLines(view.entries, width);
+      return ok({
+        lines,
+        spans: view.entries
+          .slice(0, lines.length)
+          .map((entry) => ({ entryId: entry.id, rows: 1 })),
+      });
     }
     return Result.fromThrowable(
-      () => {
+      (): OverlayRenderedTranscript => {
         const rendered = transcriptRenderer.render(view.transcript, width, {
           componentFactory: factory(),
         });
-        if (rendered.lines.length > 0) return rendered.lines;
+        if (rendered.lines.length > 0) {
+          return { lines: rendered.lines, spans: spansFromRows(rendered.rows) };
+        }
         // Native factory may suppress bookkeeping rows; fall back to overlay
         // entry text so kinds remain visible in the bounded window.
-        return view.entries.map((entry) =>
+        const lines = view.entries.map((entry) =>
           boundText(
             entry.expanded || entry.text.length <= 120
               ? `[${entry.kind}] ${entry.text}`
               : `[${entry.kind}] ${entry.text.slice(0, 117)}…`,
           ),
         );
+        return {
+          lines,
+          spans: view.entries.map((entry) => ({
+            entryId: entry.id,
+            rows: 1,
+          })),
+        };
       },
       (): ChildOverlayFallbackRequired =>
         controller.requireFallback("render-failed"),
@@ -870,27 +931,35 @@ export function createChildOverlayCustomComponent(
             const transcript =
               transcriptBudget > 0
                 ? renderTranscriptLines(view, width)
-                : ok<readonly string[], ChildOverlayFallbackRequired>([]);
+                : ok<OverlayRenderedTranscript, ChildOverlayFallbackRequired>({
+                    lines: [],
+                    spans: [],
+                  });
             if (transcript.isErr()) {
               emitFallback(transcript.error);
               return lines;
             }
 
+            const transcriptLines = transcript.value.lines;
             const contentBudget =
               view.scrollOffset > 0 && transcriptBudget > 0
                 ? transcriptBudget - 1
                 : transcriptBudget;
             const scrollMax = Math.max(
               0,
-              transcript.value.length - contentBudget,
+              transcriptLines.length - contentBudget,
             );
-            let scrollOffset = controller.setScrollExtent(scrollMax).match(
-              (measured) => measured.scrollOffset,
-              () => view.scrollOffset,
-            );
+            // Spans travel with the extent so the controller can translate a
+            // logical viewport into this layout's rendered rows.
+            let scrollOffset = controller
+              .setScrollExtent(scrollMax, transcript.value.spans)
+              .match(
+                (measured) => measured.scrollOffset,
+                () => view.scrollOffset,
+              );
             scrollOffset = Math.min(scrollOffset, scrollMax);
-            const end = transcript.value.length - scrollOffset;
-            const visibleTranscript = transcript.value.slice(
+            const end = transcriptLines.length - scrollOffset;
+            const visibleTranscript = transcriptLines.slice(
               Math.max(0, end - contentBudget),
               end,
             );

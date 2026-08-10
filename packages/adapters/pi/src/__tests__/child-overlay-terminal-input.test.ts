@@ -445,6 +445,9 @@ function scrollRoute(): {
     pendingTailExtentAdjustment: false,
     entries: [],
     anchor: undefined,
+    layoutSpans: undefined,
+    pendingViewportAnchor: undefined,
+    pendingViewportLiveTail: false,
   };
   const dispatched: string[] = [];
   const binder = createChildOverlayTerminalInputBinder({
