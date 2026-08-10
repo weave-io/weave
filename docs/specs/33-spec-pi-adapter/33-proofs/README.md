@@ -41,6 +41,7 @@ both smoke checklists.
 | `33-task20-m-pi-vim-coexistence-proof.md` | S047, S049, S050 | S050 current (keybinding conflict reporting); S047 and S049 historical — need a child overlay |
 | `33-task20-n-health-only-readonly-proof.md` | S057, S067 | Historical — pre-`c24182f` behaviour under a reversible injected capability failure, including its then-passing mutation-rejection rows; S057 and S067 are now recorded by the Task 21 record |
 | `33-task21-final-head-fail-closed-proof.md` | S057, S063, S064, S067 | **Current** — the only record bound to the final fail-closed head `9a8c646` |
+| `33-true-overlay-owned-editor-proof.md` | S043, S044, S046, S047 | **Current local-development proof** — Task 10 passed; S044 and S046 pass, while S043 and S047 retain noted gaps |
 
 ## What still holds at the fail-closed head
 
