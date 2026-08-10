@@ -421,10 +421,12 @@ export type {
   ChildOverlaySourceErrorType,
   ChildOverlaySourcePort,
   ChildOverlayStatus,
+  ChildOverlayTelemetry,
   ChildOverlayView,
 } from "./child-overlay-types.js";
 export {
   CHILD_OVERLAY_BOUNDS,
+  CHILD_OVERLAY_TELEMETRY_BOUNDS,
   ChildOverlayChildSchema,
   ChildOverlayRunDividerSchema,
   ChildOverlayStatusSchema,

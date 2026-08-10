@@ -126,7 +126,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - Test matrix above passes; child provably still running on every non-confirm path.
     - Commit: `feat(pi): confirm child cancellation with q instead of double escape`.
 
-- [ ] 5. Add a bounded, authoritative telemetry model (provider, model, tokens, context)
+- [x] 5. Add a bounded, authoritative telemetry model (provider, model, tokens, context)
   - **What**: Project parser-approved `usage` events and existing model metadata into typed, bounded per-child telemetry on `ChildOverlayView`, with every field optional and absent when not authoritatively known.
   - **Files**: `packages/adapters/pi/src/child-session-events.ts` (typed narrow of the `usage` payload), `child-overlay-types.ts` (bounds + `ChildOverlayTelemetry` on the view), `child-overlay-controller.ts` (retain latest usage per child in saved state), `child-overlay-replay.ts` or the reducer wiring that feeds live events (route `usage` events to the controller), `__tests__/child-overlay.test.ts` (or a new `__tests__/child-overlay-telemetry.test.ts`).
   - **Depends on**: None (parallel with Tasks 2–4; merges before Task 6).

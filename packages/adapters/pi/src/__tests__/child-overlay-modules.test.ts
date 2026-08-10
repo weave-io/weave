@@ -20,6 +20,7 @@ const SRC_DIR = join(import.meta.dir, "..");
 /** Overlay modules in dependency order; earlier modules may not import later ones. */
 const LAYERS = [
   "child-overlay-types.ts",
+  "child-overlay-telemetry.ts",
   "child-overlay-scroll.ts",
   "child-overlay-replay.ts",
   "child-overlay-controller.ts",

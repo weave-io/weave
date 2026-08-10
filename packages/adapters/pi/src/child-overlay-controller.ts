@@ -50,6 +50,10 @@ import {
   stripPathLike,
 } from "./child-overlay-search.js";
 import {
+  deriveChildOverlayTelemetry,
+  latestUsageInWindow,
+} from "./child-overlay-telemetry.js";
+import {
   CHILD_OVERLAY_BOUNDS,
   type ChildOverlayAnchor,
   type ChildOverlayChild,
@@ -73,7 +77,9 @@ import {
 } from "./child-overlay-types.js";
 import {
   type PiChildSessionEvent,
+  type PiChildUsageReport,
   parsePiChildSessionEvent,
+  parsePiChildUsageReport,
 } from "./child-session-events.js";
 import {
   createPiChildTranscriptState,
@@ -105,6 +111,8 @@ interface SavedChildState extends OverlayScrollState {
   hasOlderFlag: boolean;
   hasNewerFlag: boolean;
   compact: ChildCompactState;
+  /** Latest parsed usage report: replaces prior state, never summed. */
+  usage: PiChildUsageReport | undefined;
   transcript: PiChildTranscriptState;
   width: number;
   height: number;
@@ -129,6 +137,7 @@ function emptySaved(threadId: string, touched: number): SavedChildState {
     hasNewerFlag: false,
     entries: [],
     compact: createChildCompactState(threadId),
+    usage: undefined,
     transcript: createPiChildTranscriptState(),
     anchor: undefined,
     width: 80,
@@ -408,6 +417,11 @@ export class ChildOverlayController {
     if (mapped.isOk() && mapped.value !== undefined) {
       state.compact = reduceChildCompactSafe(state.compact, mapped.value);
     }
+
+    // Latest-wins: a parsed report replaces the prior one outright, while an
+    // unparsable one carries no information and leaves it untouched.
+    const usage = parsePiChildUsageReport(sessionEvent);
+    if (usage.isOk()) state.usage = usage.value;
 
     const transcriptNext = reducePiChildTranscript(state.transcript, {
       kind: "event",
@@ -806,6 +820,10 @@ export class ChildOverlayController {
       state.hasOlderFlag = page.hasOlder;
       state.hasNewerFlag = page.hasNewer;
       syncTranscriptFromEntries(state);
+      // Historical telemetry may come only from a usage event replayed in the
+      // loaded window; a window without one leaves a live report untouched.
+      const replacedUsage = latestUsageInWindow(state.entries);
+      if (replacedUsage !== undefined) state.usage = replacedUsage;
       return;
     }
 
@@ -837,6 +855,8 @@ export class ChildOverlayController {
       }
       restoreScrollAnchor(state, priorAnchor);
       syncTranscriptFromEntries(state);
+      // Older pages never carry a newer report; only fill an empty slot.
+      state.usage ??= latestUsageInWindow(incoming);
       return;
     }
 
@@ -863,6 +883,9 @@ export class ChildOverlayController {
     restoreScrollAnchor(state, priorAnchor);
     if (uniqueNewer.length > 0) markTailGrowth(state);
     syncTranscriptFromEntries(state);
+    // Appended entries are newer, so a report they replay supersedes.
+    const appendedUsage = latestUsageInWindow(uniqueNewer);
+    if (appendedUsage !== undefined) state.usage = appendedUsage;
   }
 
   private mergeEntry(state: SavedChildState, entry: ChildOverlayEntry): void {
@@ -936,6 +959,7 @@ export class ChildOverlayController {
       anchor: state.anchor,
       compact: state.compact,
       transcript: state.transcript,
+      telemetry: deriveChildOverlayTelemetry(state.usage, child),
     };
   }
 

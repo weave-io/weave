@@ -11,7 +11,11 @@
 import type { ResultAsync } from "neverthrow";
 import { z } from "zod";
 import type { ChildCompactState } from "./child-compact-render.js";
-import type { PiChildSessionEvent } from "./child-session-events.js";
+import {
+  MAX_CHILD_USAGE_MODEL_LENGTH,
+  MAX_CHILD_USAGE_TOKENS,
+  type PiChildSessionEvent,
+} from "./child-session-events.js";
 import type { PiChildTranscriptState } from "./child-transcript.js";
 
 // ---------------------------------------------------------------------------
@@ -348,7 +352,44 @@ export interface ChildOverlayView {
   readonly anchor: ChildOverlayAnchor | undefined;
   readonly compact: ChildCompactState;
   readonly transcript: PiChildTranscriptState;
+  /**
+   * Latest authoritative usage report for this child, or `undefined` when the
+   * host has reported nothing usable. Never summed across runs and never
+   * estimated: absent means unavailable.
+   */
+  readonly telemetry: ChildOverlayTelemetry | undefined;
 }
+
+/**
+ * Bounded, all-optional projection of the latest host usage report.
+ *
+ * Field provenance (Pi 0.83, isolated install) is documented on
+ * `parsePiChildUsageReport` in `child-session-events.ts`. Any field the host
+ * did not report authoritatively, or reported outside
+ * {@link CHILD_OVERLAY_TELEMETRY_BOUNDS}, is absent rather than guessed.
+ */
+export interface ChildOverlayTelemetry {
+  /** Only the prefix of an unambiguous `provider/model` identifier. */
+  readonly provider?: string;
+  readonly model?: string;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+  readonly reasoningTokens?: number;
+  readonly totalTokens?: number;
+  readonly contextTokens?: number;
+  readonly contextWindow?: number;
+  /** Present only when the host reported both context tokens and window. */
+  readonly contextPercent?: number;
+}
+
+export const CHILD_OVERLAY_TELEMETRY_BOUNDS = Object.freeze({
+  /** Ceiling on any single reported token count (pinned to the parser). */
+  maxTokens: MAX_CHILD_USAGE_TOKENS,
+  /** Ceiling on model and provider label characters (pinned to the parser). */
+  maxModelLength: MAX_CHILD_USAGE_MODEL_LENGTH,
+});
 
 export type ChildOverlayInputOutcome =
   | { readonly kind: "consumed" }

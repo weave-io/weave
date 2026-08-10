@@ -1,3 +1,4 @@
+import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 /** Bounds applied to observed private Pi protocol data. */
@@ -66,6 +67,141 @@ const Image = event("image", {
   source: boundedJson.optional(),
 });
 const Usage = event("usage", { usage: boundedJson.optional() });
+
+// ---------------------------------------------------------------------------
+// Usage telemetry (Pi 0.83 field mapping)
+// ---------------------------------------------------------------------------
+
+/**
+ * Exact Pi 0.83 shapes this narrow parses, read from the isolated install at
+ * `/private/tmp/weave-pi083/node_modules` (`@earendil-works/pi-coding-agent`
+ * 0.83.0, `@earendil-works/pi-ai`):
+ *
+ * - `@earendil-works/pi-ai/dist/types.d.ts:260` —
+ *   `interface Usage { input: number; output: number; cacheRead: number;
+ *   cacheWrite: number; cacheWrite1h?: number; reasoning?: number;
+ *   totalTokens: number; cost: { input; output; cacheRead; cacheWrite; total } }`.
+ *   `reasoning` is documented as a subset of `output`; `cost` is money, not
+ *   tokens, and is deliberately not projected.
+ * - `@earendil-works/pi-ai/dist/types.d.ts` `interface AssistantMessage` —
+ *   `{ api; provider: ProviderId; model: string; responseModel?: string;
+ *   usage: Usage; ... }`. Only `model` is read here; `provider` is never read
+ *   from the host, it is derived from an unambiguous `provider/model` string.
+ * - `@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts:193` —
+ *   `interface ContextUsage { tokens: number | null; contextWindow: number;
+ *   percent: number | null }`. `tokens` is the used figure, `contextWindow`
+ *   the limit. `percent` is host-computed and intentionally ignored: the
+ *   overlay derives a percentage only from both operands it can verify.
+ * - `@earendil-works/pi-coding-agent/dist/core/usage-totals.d.ts` —
+ *   `UsageTotals { input; output; cacheRead; cacheWrite; cost }`, the same
+ *   token field names, which is why the flat token names are accepted at the
+ *   top level of the `usage` payload as well as inside a nested `usage`.
+ *
+ * Everything is optional: the child `usage` event carries `boundedJson`, so a
+ * report with no usable field is a legitimate "unavailable" state.
+ */
+export const MAX_CHILD_USAGE_TOKENS = 1_000_000_000;
+
+/** Bounded, non-negative integer token counts. Anything else is absent. */
+const UsageTokenCountSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_CHILD_USAGE_TOKENS);
+
+/** Model labels are bounded the same way run-divider model labels are. */
+export const MAX_CHILD_USAGE_MODEL_LENGTH = 128;
+
+const UsageModelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_CHILD_USAGE_MODEL_LENGTH);
+
+/** One parsed, bounded usage report. Every field is independently optional. */
+export interface PiChildUsageReport {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+  readonly reasoningTokens?: number;
+  readonly totalTokens?: number;
+  /** `ContextUsage.tokens` — context tokens used, as reported by the host. */
+  readonly contextTokens?: number;
+  /** `ContextUsage.contextWindow` — the host-reported context limit. */
+  readonly contextWindow?: number;
+  /** `AssistantMessage.model`, when the host reports it beside the usage. */
+  readonly model?: string;
+}
+
+/** No usable usage payload was present on the event. */
+export type PiChildUsageError = { readonly type: "UsageUnavailable" };
+
+const recordOrUndefined = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+/** Per-field parse: malformed, negative, fractional, or oversized → absent. */
+const tokenCount = (value: unknown): number | undefined => {
+  const parsed = UsageTokenCountSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+};
+
+const modelLabel = (value: unknown): string | undefined => {
+  const parsed = UsageModelSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+};
+
+const firstDefined = <T>(
+  ...values: readonly (T | undefined)[]
+): T | undefined => values.find((value) => value !== undefined);
+
+/**
+ * Narrow a parser-approved `usage` event into a bounded report.
+ *
+ * Never throws: expected failure is the typed {@link PiChildUsageError}, and
+ * every individual field that is missing, malformed, or out of bounds is
+ * simply absent from the returned report.
+ */
+export function parsePiChildUsageReport(
+  event: PiChildSessionEvent,
+): Result<PiChildUsageReport, PiChildUsageError> {
+  if (event.type !== "usage") return err({ type: "UsageUnavailable" });
+  const record = event as unknown as Record<string, unknown>;
+  const payload = recordOrUndefined(record["usage"]);
+  if (payload === undefined) return err({ type: "UsageUnavailable" });
+
+  // `usage.usage` covers hosts that nest the pi-ai `Usage` inside the payload.
+  const tokens = recordOrUndefined(payload["usage"]) ?? payload;
+  // `ContextUsage` may travel nested beside the usage or flattened onto it.
+  const context =
+    recordOrUndefined(payload["context"]) ??
+    recordOrUndefined(payload["contextUsage"]) ??
+    payload;
+
+  const report: PiChildUsageReport = {
+    inputTokens: tokenCount(tokens["input"]),
+    outputTokens: tokenCount(tokens["output"]),
+    cacheReadTokens: tokenCount(tokens["cacheRead"]),
+    cacheWriteTokens: tokenCount(tokens["cacheWrite"]),
+    reasoningTokens: tokenCount(tokens["reasoning"]),
+    totalTokens: tokenCount(tokens["totalTokens"]),
+    contextTokens: firstDefined(
+      tokenCount(context["tokens"]),
+      tokenCount(context["contextTokens"]),
+    ),
+    contextWindow: tokenCount(context["contextWindow"]),
+    model: firstDefined(
+      modelLabel(record["model"]),
+      modelLabel(payload["model"]),
+      modelLabel(tokens["model"]),
+    ),
+  };
+  return ok(report);
+}
 const QueueChange = event("queue_change", {
   size: z.number().int().min(0).max(MAX_CHILD_EVENT_ITEMS).optional(),
   queue: z.array(boundedJson).max(MAX_CHILD_EVENT_ITEMS).optional(),
