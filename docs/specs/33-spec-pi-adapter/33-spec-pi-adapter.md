@@ -220,9 +220,10 @@ Each delegation run renders one compact native-style tool block.
 
 ## 7. Full-screen child overlay
 
-One full-screen overlay renders the complete child transcript, live and
-historical. There is exactly one overlay instance; opening another child swaps
-content instead of stacking, and nested children open into the same overlay.
+One centered, bordered Pi overlay renders the complete child transcript, live
+and historical, above the still-visible parent UI. There is exactly one overlay
+instance; opening another child swaps content instead of stacking, and nested
+children open into the same overlay.
 
 Required content, in order: the originating prompt first, then user messages,
 assistant text, thinking, tool calls and results, errors, retry dividers, and
@@ -235,15 +236,26 @@ Required behavior:
   The overlay must never load an entire large transcript.
 - Search operates over the loaded window and fetches further pages on demand.
 - Live-tail follows new output, disengages on manual scroll, and resumes at the
-  bottom. Resize reflows. A global expansion toggle applies to all entries.
+  bottom. Resize reflows. PageUp, PageDown, Shift+Up, Shift+Down, Home, and End
+  accept legacy and Kitty event-aware terminal frames; Kitty release frames do
+  not repeat an action. A global expansion toggle applies to all entries.
 - Run and branch navigation uses run-divider metadata (§9).
-- For active children, `Enter` submits steering and `Alt+Enter` submits a
-  follow-up. Settled children are read-only with an explicit banner.
+- For active children, a fresh overlay-owned Pi `CustomEditor` owns cursor
+  movement, deletion, multiline input, and the draft. `Enter` submits steering
+  and `Alt+Enter` submits a follow-up. Settled children are read-only with an
+  explicit banner.
+- The overlay row budget matches Pi's percentage floor, vertical margins, and
+  top-only `maxHeight` truncation. It removes transcript rows before the owned
+  editor or bottom border can be clipped on a short terminal.
 - The overlay owns the keyboard while mounted; focused input must never leak to
-  the primary editor. Drafts and scroll positions are preserved per child.
-  Unmounting restores primary editor state, including pi-vim mode.
+  the primary editor. Drafts and scroll positions are preserved per child. The
+  overlay never borrows or replaces the primary editor, so pi-vim and other
+  foreign editors remain untouched through mount and unmount.
 - A renderer failure falls back to the existing custom-editor inspection path
   with the same transcript.
+- Pi does not enable terminal mouse reporting, so wheel events cannot reach the
+  overlay. Mouse-wheel scrolling is outside this contract until Pi exposes a
+  mouse input surface.
 
 ## 8. Picker, keys, and hierarchy navigation
 

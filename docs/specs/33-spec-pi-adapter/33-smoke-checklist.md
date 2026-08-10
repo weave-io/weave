@@ -1,13 +1,14 @@
 # Pi child-session smoke checklist
 
-Version: 3
+Version: 4
 
 This checklist covers the acceptance surfaces defined in
 [Spec 33](33-spec-pi-adapter.md). A row is `Pending` until a real-harness Pi
 `0.83.0` run records a proof under [`33-proofs/`](33-proofs/), indexed by
-[`33-proofs/README.md`](33-proofs/README.md). Each row runs in a
-fresh Herdr pane that the test creates and closes; pre-existing panes are never
-touched. The driver uses disposable `XDG_DATA_HOME` and `PI_CODING_AGENT_DIR`
+[`33-proofs/README.md`](33-proofs/README.md). Version 4 adds the true-overlay,
+owned-editor, short-terminal, Kitty-key, and primary-editor coexistence checks
+in rows S043–S047. Each row runs in a fresh Herdr pane that the test creates and
+closes; pre-existing panes are never touched. The driver uses disposable `XDG_DATA_HOME` and `PI_CODING_AGENT_DIR`
 and project roots.
 
 ## Pi 0.83 fail-closed session contract
@@ -58,11 +59,11 @@ including their formerly passing mutation rows.
 | S040 | Compact block shows the latest meaningful fragment in a fixed 3-line tail while running | §6 | Pending | historical: [`33-task-20-a-compact-live-settlement-proof.md`](33-proofs/33-task-20-a-compact-live-settlement-proof.md) |
 | S041 | Compact block shows the assembled final response tail or error on settlement, and freezes prior-run blocks | §6 | Pending | historical: [`33-task-20-a-compact-live-settlement-proof.md`](33-proofs/33-task-20-a-compact-live-settlement-proof.md) |
 | S042 | Compact block renders safely at narrow widths, sanitizes terminal control sequences, and isolates render errors | §6 | Pending | not run in Task 20 |
-| S043 | Overlay renders a live child transcript with live-tail, scroll disengage, resize, and expansion toggle | §7 | Pending | historical: [`33-task20-b-overlay-live-steer-followup.md`](33-proofs/33-task20-b-overlay-live-steer-followup.md) |
-| S044 | Overlay steers a running child with `Enter` and queues a follow-up with `Alt+Enter` | §7 | Pending | historical: [`33-task20-b-overlay-live-steer-followup.md`](33-proofs/33-task20-b-overlay-live-steer-followup.md) |
+| S043 | A centered four-sided overlay leaves the parent UI visible, renders the live child transcript, and supports live-tail, resize, expansion, and PageUp/PageDown/Shift+Up/Shift+Down/Home/End with Kitty press frames but no release repeats | §7 | Pending | version 4 not run |
+| S044 | The owned native editor shows its cursor and border, supports cursor movement and multiline input, steers with `Enter`, and queues a follow-up with `Alt+Enter` | §7 | Pending | version 4 not run |
 | S045 | Overlay renders a historical child after parent restart with bounded pagination and search | §7 | Pending | historical: [`33-task20-c-historical-restart-pagination-search-proof.md`](33-proofs/33-task20-c-historical-restart-pagination-search-proof.md) |
-| S046 | Overlay keeps settled children read-only and never leaks focused input to the primary editor | §7 | Pending | historical: [`33-task20-b-overlay-live-steer-followup.md`](33-proofs/33-task20-b-overlay-live-steer-followup.md) |
-| S047 | Overlay falls back to the custom-editor path on renderer failure and restores pi-vim mode on unmount | §7, §16 | Pending | historical: [`33-task20-m-pi-vim-coexistence-proof.md`](33-proofs/33-task20-m-pi-vim-coexistence-proof.md) |
+| S046 | A terminal of 12 rows or fewer keeps the owned editor and bottom border visible; settled children remain read-only and focused input never reaches the primary editor | §7 | Pending | version 4 not run |
+| S047 | Renderer failure uses the custom-editor fallback; normal overlay mount and unmount never replace the primary editor, and pi-vim remains usable after close | §7, §16 | Pending | version 4 not run |
 | S048 | Picker lists all statuses with title precedence and active-first, newest-settled ordering | §8.2 | Pending | historical: [`33-task20-d-picker-navigation-proof.md`](33-proofs/33-task20-d-picker-navigation-proof.md) |
 | S049 | Named keys route correctly: `Alt+I`, `Alt+1..9`, sibling keys, empty `Backspace` parent-or-close | §8.1 | Pending | historical: [`33-task20-d-picker-navigation-proof.md`](33-proofs/33-task20-d-picker-navigation-proof.md), [`33-task20-m-pi-vim-coexistence-proof.md`](33-proofs/33-task20-m-pi-vim-coexistence-proof.md) |
 | S050 | Keybinding conflicts are reported and never overwrite user bindings | §8.1 | Pass | [`33-task20-m-pi-vim-coexistence-proof.md`](33-proofs/33-task20-m-pi-vim-coexistence-proof.md) |

@@ -188,9 +188,9 @@ Recovery is deliberately narrow: it may recover an interrupted ordinary top-leve
 
 The inspection view renders with Pi's own chat components, so a streamed child reads like a native Pi session: user and task blocks, markdown answer text, italic reasoning, and Pi's tool-execution blocks with real diffs and bash output. Tool calls render through Pi's builtin tool definitions, so a row reads `read <path>` rather than a bare tool name. The adapter injects those components through a narrow port (`PiTranscriptComponentFactory`); the transcript reducer and its dependency-free fallback renderer stay pure, and the fallback text still renders when a component cannot be built. Bookkeeping facts Pi never shows — usage, queue, status, retry, extension-UI requests, and unknown events — are suppressed instead of printed as event prose.
 
-A pinned header names the child and its runtime: status, the concrete model, the reasoning level it was bootstrapped with, turn and queue counts, and token cost. Messages sit one blank row apart. Below the header the transcript scrolls: PageUp and PageDown move a page, Shift+Up and Shift+Down a line, Home jumps to the oldest output, and End follows the live tail again. While scrolled back, the view says how many newer lines wait below. Escape leaves the view at the root or in a completed child, and leaving returns the tree editor to the root so typing goes to the parent session again, not to the child.
+A pinned header names the child and its runtime: status, the concrete model, the reasoning level it was bootstrapped with, turn and queue counts, and token cost. Messages sit one blank row apart. Below the header the transcript scrolls: PageUp and PageDown move a page, Shift+Up and Shift+Down a line, Home jumps to the oldest output, and End follows the live tail again. The overlay accepts both legacy terminal frames and Kitty event-aware key frames, and it ignores Kitty release frames. While scrolled back, the view says how many newer lines wait below. Escape leaves the view at the root or in a completed child, and leaving returns the tree editor to the root so typing goes to the parent session again, not to the child.
 
-The session editor is a single shared Pi surface, so Weave never claims it away from another extension. If a foreign editor factory (for example `pi-vim`'s modal editor) is already installed, Weave leaves it in place for the rest of the generation and does not reassert its own on `session_start`, `before_agent_start`, or `agent_start`. If a foreign factory appears after Weave activated, Weave yields on the next lifecycle event instead of reclaiming. Child inspection still works: it borrows the editor only while the overlay is mounted, and every teardown path hands the editor back to the previous owner. The overlay carries its own local editor, so inspection input does not depend on owning the session surface. Root-level child-tree keys are the only optional convenience lost when Weave yields.
+The session editor is a single shared Pi surface, so Weave never claims it away from another extension. If a foreign editor factory (for example `pi-vim`'s modal editor) is already installed, Weave leaves it in place for the rest of the generation and does not reassert its own on `session_start`, `before_agent_start`, or `agent_start`. If a foreign factory appears after Weave activated, Weave yields on the next lifecycle event instead of reclaiming. Child inspection still works because the overlay carries its own local editor. It never borrows, replaces, or restores the primary session editor during mount or teardown. Root-level child-tree keys are the only optional convenience lost when Weave yields.
 
 #### Compact delegation block
 
@@ -206,11 +206,13 @@ Line one names the child, its concrete model, and its reasoning level. Line two 
 
 The block is fail-closed: invalid state or a render failure produces a degraded three-line block rather than a partial or missing entry. Chrome lines never echo opaque thread ids, session paths, or native session ids. The reducer keeps at most 64 runs per thread and 128 items per run; older runs stay frozen exactly as they last rendered.
 
-#### Full-screen child overlay
+#### True child overlay
 
-Opening a child mounts a full-screen overlay built from Pi's own `CustomEditor` and native transcript components, so a child reads like a native Pi session. The overlay owns pagination through recorded history, search, live tail, and per-child view state, and it isolates input: while it is mounted, no key reaches Pi or the primary editor.
+Opening a child mounts a centered, bordered Pi overlay above the parent UI. The parent stays visible around it. The overlay uses Pi's native transcript components and a fresh Weave-owned `CustomEditor`, so it never replaces or borrows the primary editor. Its row budget matches Pi's `90%` maximum-height and margin rules. On short terminals it reduces transcript rows first, which keeps the draft editor and bottom border visible.
 
-Historical pages adapt native session entries directly through the host's read API. Live output flows through the same parser and compact pipeline as the collapsed block, so the two views cannot disagree.
+The local editor owns cursor movement, deletion, multiline text, and draft state. `Enter` steers the active child, and `Alt+Enter` queues a follow-up. Settled and orphan children hide the editor and remain read-only. The overlay owns pagination through recorded history, search, live tail, and per-child view state, and it isolates input: while mounted, no key reaches Pi or the primary editor.
+
+Historical pages adapt native session entries directly through the host's read API. Live output flows through the same parser and compact pipeline as the collapsed block, so the two views cannot disagree. The visible help lists PageUp, PageDown, Shift+Up, Shift+Down, Home, and End. Pi does not enable terminal mouse reporting (including SGR-1006 and modes 1002/1003), so mouse-wheel events cannot reach the component. Mouse-wheel scrolling remains unavailable until Pi exposes a mouse input surface.
 
 When the host does not provide the `child-overlay-lifecycle` surface, the overlay degrades to the existing custom-editor inspection path instead of disappearing. Delegation itself is unaffected: overlay gaps never trigger health-only mode.
 
@@ -231,7 +233,7 @@ Every key is checked against your effective Pi keybindings before it is claimed.
 
 Escape is a two-step, non-destructive control. The first Escape shows `Press Escape again to cancel this child subtree`. A second Escape within 750 ms opens a confirmation whose choices are `Keep running` and `Cancel subtree`, defaulting to `Keep running`. A later press re-arms the hint rather than acting on stale intent.
 
-Backspace edits your draft when the draft is non-empty. On an empty draft it moves focus to the parent child, or closes the overlay when the focused child is already a direct child of the session.
+Backspace edits at the owned editor's cursor when its draft is non-empty. On an empty editor draft it moves focus to the parent child, or closes the overlay when the focused child is already a direct child of the session.
 
 #### Transcript search
 
