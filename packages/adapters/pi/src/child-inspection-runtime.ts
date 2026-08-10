@@ -24,7 +24,7 @@ import type {
 import {
   applyChildOverlayKeyPlan,
   CHILD_OVERLAY_CANCEL_CHOICES,
-  CHILD_OVERLAY_ESCAPE_HINT,
+  CHILD_OVERLAY_CANCEL_PROMPT,
   captureChildOverlayKeybindings,
   childOverlayConflictPortFromHost,
   createChildOverlayKeyInterceptor,
@@ -242,7 +242,6 @@ export function closeChildOverlay(
   overlayCell.open = false;
   overlayCell.component = undefined;
   overlayCell.tui = undefined;
-  overlayKeysCell.machine.disarmEscape();
   const overlay = overlayCell.controller;
   if (overlay?.isOpen()) {
     Result.fromThrowable(
@@ -766,9 +765,6 @@ export function createChildInspectionRuntime(
           () => undefined,
         );
       },
-      showHint: (hint) => {
-        reportOverlayKeyDiagnostic(hint);
-      },
       confirmCancelSubtree: (childId) => {
         const ctx = deps.latestSessionCtx();
         if (ctx === undefined || deps.activeGenerationId() !== generationId) {
@@ -777,7 +773,7 @@ export function createChildInspectionRuntime(
         void (async () => {
           const choice = await ResultAsync.fromThrowable(
             () =>
-              ctx.ui.select(CHILD_OVERLAY_ESCAPE_HINT, [
+              ctx.ui.select(CHILD_OVERLAY_CANCEL_PROMPT, [
                 ...CHILD_OVERLAY_CANCEL_CHOICES,
               ]),
             () => "cancel confirm unavailable",

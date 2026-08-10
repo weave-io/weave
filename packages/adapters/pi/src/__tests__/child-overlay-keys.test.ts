@@ -3,7 +3,6 @@ import {
   applyChildOverlayKeyPlan,
   CHILD_OVERLAY_CANCEL_CHOICES,
   CHILD_OVERLAY_CANCEL_DEFAULT_CHOICE,
-  CHILD_OVERLAY_ESCAPE_HINT,
   childOverlayActionFromId,
   childOverlayActiveSlots,
   childOverlaySibling,
@@ -351,53 +350,33 @@ describe("child-overlay-keys Backspace, Escape, and cancel", () => {
     expect(closeUnfocused._unsafeUnwrap()).toEqual({ kind: "close-overlay" });
   });
 
-  it("arms Escape below the window, confirms at exact 750ms, and rearms above", () => {
+  it("closes the overlay on a single Escape and never cancels", () => {
     let now = 1_000;
-    const machine = createChildOverlayKeyMachine({
-      now: () => now,
-      escapeWindowMs: PI_CHILD_OVERLAY_KEY_BOUNDS.escapeWindowMs,
-    });
+    const machine = createChildOverlayKeyMachine({ now: () => now });
     const plan = mustPlan();
     const hierarchy = nodes([{ childId: "child", order: 1 }]);
     const ctx = context(plan, hierarchy, "child");
 
     expect(machine.handleEscape(ctx)._unsafeUnwrap()).toEqual({
-      kind: "escape-armed",
-      hint: CHILD_OVERLAY_ESCAPE_HINT,
+      kind: "close-overlay",
     });
-    expect(machine.isEscapeArmed()).toBe(true);
 
-    now = 1_000 + 749;
-    expect(machine.handleEscape(ctx)._unsafeUnwrap()).toMatchObject({
-      kind: "confirm-cancel-subtree",
-      childId: "child",
-      defaultChoice: CHILD_OVERLAY_CANCEL_DEFAULT_CHOICE,
-      choices: [...CHILD_OVERLAY_CANCEL_CHOICES],
-    });
-    expect(machine.isEscapeArmed()).toBe(false);
-
-    now = 2_000;
+    // No arming state survives: a second, much later Escape closes too.
+    now = 90_000;
     expect(machine.handleEscape(ctx)._unsafeUnwrap()).toEqual({
-      kind: "escape-armed",
-      hint: CHILD_OVERLAY_ESCAPE_HINT,
+      kind: "close-overlay",
     });
 
-    now = 2_000 + PI_CHILD_OVERLAY_KEY_BOUNDS.escapeWindowMs;
-    expect(machine.handleEscape(ctx)._unsafeUnwrap()).toMatchObject({
-      kind: "confirm-cancel-subtree",
-      childId: "child",
+    // Immediate repeat presses stay plain closes, never a cancel confirmation.
+    now = 90_010;
+    expect(machine.handleInput("\x1b", ctx)._unsafeUnwrap()).toEqual({
+      kind: "close-overlay",
     });
 
-    now = 4_000;
-    expect(machine.handleEscape(ctx)._unsafeUnwrap()).toEqual({
-      kind: "escape-armed",
-      hint: CHILD_OVERLAY_ESCAPE_HINT,
-    });
-    now = 4_000 + PI_CHILD_OVERLAY_KEY_BOUNDS.escapeWindowMs + 1;
-    expect(machine.handleEscape(ctx)._unsafeUnwrap()).toEqual({
-      kind: "escape-rearmed",
-      hint: CHILD_OVERLAY_ESCAPE_HINT,
-    });
+    // Unfocused overlay still closes rather than reporting no-target.
+    expect(
+      machine.handleEscape(context(plan, hierarchy, undefined))._unsafeUnwrap(),
+    ).toEqual({ kind: "close-overlay" });
   });
 
   it("defaults cancel confirmation to Keep running and cancels only when explicit", () => {

@@ -1,6 +1,6 @@
 /**
  * Named, configurable shortcut actions for the single Task 12 child overlay,
- * plus the hierarchy / Backspace / Escape state machines.
+ * plus the hierarchy / Backspace / Escape input machines.
  *
  * ## Host capability gap (Pi 0.83)
  *
@@ -40,8 +40,6 @@ export const PI_CHILD_OVERLAY_KEY_BOUNDS = Object.freeze({
   maxKeysPerAction: 4,
   maxKeyLength: 32,
   maxDiagnostics: 64,
-  /** Double-Escape window. A second Escape at exactly this age still counts. */
-  escapeWindowMs: 750,
   maxHierarchyNodes: 512,
 });
 
@@ -664,8 +662,8 @@ export function childOverlayParent(
 // Outcomes and the input state machine
 // ---------------------------------------------------------------------------
 
-export const CHILD_OVERLAY_ESCAPE_HINT =
-  "Press Escape again to cancel this child subtree";
+/** Title of the Task 4 cancel confirmation. Escape never opens it. */
+export const CHILD_OVERLAY_CANCEL_PROMPT = "Cancel this child subtree?";
 
 export const CHILD_OVERLAY_CANCEL_CHOICES = Object.freeze([
   "Keep running",
@@ -681,8 +679,10 @@ export type PiChildOverlayKeyOutcome =
   | { readonly kind: "close-overlay" }
   | { readonly kind: "no-target" }
   | { readonly kind: "draft-updated"; readonly draft: string }
-  | { readonly kind: "escape-armed"; readonly hint: string }
-  | { readonly kind: "escape-rearmed"; readonly hint: string }
+  /**
+   * Reserved for the explicit Task 4 cancel route. Escape never produces it:
+   * one Escape closes the overlay and leaves the child running.
+   */
   | {
       readonly kind: "confirm-cancel-subtree";
       readonly childId: string;
@@ -717,37 +717,16 @@ export interface PiChildOverlayKeyContext {
 export interface PiChildOverlayKeyMachineDeps {
   /** Injected monotonic clock in milliseconds — never `Date.now()` directly. */
   readonly now: () => number;
-  readonly escapeWindowMs?: number;
 }
 
 /**
  * Owns the overlay-mounted keyboard. While mounted, no outcome ever asks the
  * caller to forward input to Pi or the primary editor: every key resolves to a
- * navigation outcome, a draft edit, an Escape state change, or
- * `overlay-input`, which the Task 12 controller consumes.
+ * navigation outcome, a draft edit, a close, or `overlay-input`, which the
+ * Task 12 controller consumes.
  */
 export class PiChildOverlayKeyMachine {
-  private readonly now: () => number;
-  private readonly escapeWindowMs: number;
-  private escapeArmedAt: number | undefined;
-
-  constructor(deps: PiChildOverlayKeyMachineDeps) {
-    this.now = deps.now;
-    this.escapeWindowMs = Math.max(
-      0,
-      deps.escapeWindowMs ?? PI_CHILD_OVERLAY_KEY_BOUNDS.escapeWindowMs,
-    );
-  }
-
-  /** True while the first Escape's hint is visible. */
-  isEscapeArmed(): boolean {
-    return this.escapeArmedAt !== undefined;
-  }
-
-  /** Clears the armed hint, e.g. after the overlay swaps or unmounts. */
-  disarmEscape(): void {
-    this.escapeArmedAt = undefined;
-  }
+  constructor(_deps: PiChildOverlayKeyMachineDeps) {}
 
   handleAction(
     action: PiChildOverlayAction,
@@ -797,32 +776,17 @@ export class PiChildOverlayKeyMachine {
   }
 
   /**
-   * Escape. Always consumed while mounted. The first press arms a hint; a
-   * second press within the window opens the cancel-subtree confirmation;
-   * a later press rearms.
+   * Escape. Always consumed while mounted, and always a plain exit: one press
+   * closes the overlay, restores the parent's focus, and leaves the inspected
+   * child running. Cancelling a subtree is a separate, explicit route.
+   *
+   * Search-mode Escape never reaches here — the overlay component's search
+   * route consumes it first and only leaves search.
    */
   handleEscape(
-    context: PiChildOverlayKeyContext,
+    _context: PiChildOverlayKeyContext,
   ): Result<PiChildOverlayKeyOutcome, PiChildOverlayKeyError> {
-    const now = this.now();
-    const armedAt = this.escapeArmedAt;
-    if (armedAt !== undefined && now - armedAt <= this.escapeWindowMs) {
-      this.escapeArmedAt = undefined;
-      const focused = context.focusedChildId;
-      if (focused === undefined) return ok({ kind: "no-target" });
-      return ok({
-        kind: "confirm-cancel-subtree",
-        childId: focused,
-        choices: CHILD_OVERLAY_CANCEL_CHOICES,
-        defaultChoice: CHILD_OVERLAY_CANCEL_DEFAULT_CHOICE,
-      });
-    }
-    this.escapeArmedAt = now;
-    return ok(
-      armedAt === undefined
-        ? { kind: "escape-armed", hint: CHILD_OVERLAY_ESCAPE_HINT }
-        : { kind: "escape-rearmed", hint: CHILD_OVERLAY_ESCAPE_HINT },
-    );
+    return ok({ kind: "close-overlay" });
   }
 
   /** Single entry point for overlay-mounted raw input. */
@@ -867,7 +831,7 @@ export interface PiChildOverlayKeyInterceptorDeps {
   readonly focusChild: (childId: string) => void;
   readonly closeOverlay: () => void;
   readonly updateDraft: (draft: string) => void;
-  readonly showHint: (hint: string) => void;
+  /** Reserved for the explicit Task 4 cancel route; Escape never calls it. */
   readonly confirmCancelSubtree: (childId: string) => void;
   /** One bounded line per stale / no-target / invalid-hierarchy outcome. */
   readonly report: (detail: string) => void;
@@ -916,10 +880,6 @@ export function createChildOverlayKeyInterceptor(
         return true;
       case "draft-updated":
         deps.updateDraft(outcome.value.draft);
-        return true;
-      case "escape-armed":
-      case "escape-rearmed":
-        deps.showHint(outcome.value.hint);
         return true;
       case "confirm-cancel-subtree":
         deps.confirmCancelSubtree(outcome.value.childId);

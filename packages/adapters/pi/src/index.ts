@@ -392,7 +392,7 @@ export {
   applyChildOverlayKeyPlan,
   CHILD_OVERLAY_CANCEL_CHOICES,
   CHILD_OVERLAY_CANCEL_DEFAULT_CHOICE,
-  CHILD_OVERLAY_ESCAPE_HINT,
+  CHILD_OVERLAY_CANCEL_PROMPT,
   captureChildOverlayKeybindings,
   childOverlayActionFromId,
   childOverlayActiveSlots,

@@ -21,7 +21,10 @@ import {
   createMemoryChildOverlaySource,
   type MemoryOverlaySourceEntry,
 } from "../child-overlay.js";
-import { PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC } from "../child-overlay-keys.js";
+import {
+  PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+  PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
+} from "../child-overlay-keys.js";
 import { SCROLL_KEYS } from "../child-overlay-types.js";
 import { PiChildInspectionRegistry, ROOT_NODE_ID } from "../child-tree.js";
 import type { PiExtensionApi, PiTerminalInputHandler } from "../types.js";
@@ -408,6 +411,7 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     readonly runtime: ReturnType<typeof createChildInspectionRuntime>;
     readonly overlayCell: ReturnType<typeof createChildOverlayCell>;
     readonly overlayKeysCell: ReturnType<typeof createChildOverlayKeysCell>;
+    readonly delegationCell: ReturnType<typeof createDelegationControllerCell>;
     readonly treeSelectionCell: ReturnType<typeof createChildTreeSelectionCell>;
     readonly focused: string[];
     readonly selects: string[];
@@ -427,6 +431,7 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     const notices: string[] = [];
     const registryCell = createChildInspectionRegistryCell();
     registryCell.registry = registry;
+    const delegationCell = createDelegationControllerCell();
     // Pi hands the extension runner one `ExtensionUIContext` per session bind
     // and exposes it by reference (`get ui() { return runner.uiContext; }`),
     // so the context object is stable for as long as a bind lasts and is
@@ -456,7 +461,7 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
       inspectionRegistryCell: registryCell,
       treeSelectionCell,
       threadSourcesCell: createThreadSourcesCell(),
-      delegationControllerCell: createDelegationControllerCell(),
+      delegationControllerCell: delegationCell,
       latestSessionCtx: () => liveCtx,
       activeGenerationId: () => "gen-1",
       parentSessionState: () => ({ persistence: "unknown", sessionId: "" }),
@@ -468,6 +473,7 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
       runtime,
       overlayCell,
       overlayKeysCell,
+      delegationCell,
       treeSelectionCell,
       focused,
       selects,
@@ -644,6 +650,106 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     overlayCell.open = true;
     return controller;
   }
+
+  test("one Escape closes the overlay, restores the parent, and never cancels", async () => {
+    const { pi } = recordingPi();
+    const input = terminalInputHost();
+    const {
+      runtime,
+      overlayCell,
+      overlayKeysCell,
+      delegationCell,
+      notices,
+      selects,
+    } = runtimeUnderForeignEditor(await registryWithChildren("child-1"), input);
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+
+    const cancelled: string[] = [];
+    delegationCell.controller = {
+      cancelSubtree: (nodeId: string) => {
+        cancelled.push(nodeId);
+        return okAsync(undefined);
+      },
+    } as never;
+
+    const controller = await mountRealOverlay(overlayCell, "gen-1");
+    // The settle handle is what hands focus back to the parent session, so
+    // running it exactly once is the observable "parent regains focus".
+    let parentResumed = 0;
+    overlayCell.settle = () => {
+      parentResumed += 1;
+    };
+    runtime.bindOverlayKeyInterceptor("gen-1");
+    const intercept = overlayKeysCell.interceptor;
+    expect(intercept).toBeDefined();
+
+    // A single Escape, not two, and no confirmation in between.
+    expect(intercept?.("\u001b")).toBe(true);
+
+    expect(overlayCell.open).toBe(false);
+    expect(controller.isOpen()).toBe(false);
+    expect(parentResumed).toBe(1);
+    // The child keeps running: no cancel prompt and no cancel call.
+    expect(selects).toEqual([]);
+    expect(cancelled).toEqual([]);
+    // No Escape hint is ever armed or surfaced.
+    expect(
+      notices.filter((notice) => notice.toLowerCase().includes("escape")),
+    ).toEqual([]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cancelled).toEqual([]);
+  });
+
+  test("search Escape exits search only and leaves the overlay open", async () => {
+    const { pi } = recordingPi();
+    const input = terminalInputHost();
+    const { runtime, overlayCell, overlayKeysCell, delegationCell } =
+      runtimeUnderForeignEditor(await registryWithChildren("child-1"), input);
+    runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
+    const cancelled: string[] = [];
+    delegationCell.controller = {
+      cancelSubtree: (nodeId: string) => {
+        cancelled.push(nodeId);
+        return okAsync(undefined);
+      },
+    } as never;
+    const controller = await mountRealOverlay(overlayCell, "gen-1");
+    let parentResumed = 0;
+    overlayCell.settle = () => {
+      parentResumed += 1;
+    };
+    runtime.bindOverlayKeyInterceptor("gen-1");
+    // The real mount wires the Task 13 interceptor as a constructor argument,
+    // so the component under test is built the same way.
+    const mounted = createChildOverlayCustomComponent(
+      { requestRender: () => undefined } as never,
+      {} as never,
+      getKeybindings() as never,
+      controller,
+      () => undefined,
+      () => undefined,
+      { cwd: "/workspace" },
+      (data: string) => overlayKeysCell.interceptor?.(data) ?? false,
+    );
+    overlayCell.component = mounted;
+
+    // Ctrl+F opens the in-overlay search prompt.
+    mounted.handleInput(PI_CHILD_OVERLAY_SEARCH_TRIGGER);
+    // Escape while searching exits search and nothing else.
+    mounted.handleInput("\u001b");
+
+    expect(overlayCell.open).toBe(true);
+    expect(controller.isOpen()).toBe(true);
+    expect(parentResumed).toBe(0);
+    expect(cancelled).toEqual([]);
+
+    // The next Escape, with search off, closes the overlay.
+    mounted.handleInput("\u001b");
+    expect(overlayCell.open).toBe(false);
+    expect(parentResumed).toBe(1);
+    expect(cancelled).toEqual([]);
+  });
 
   test("the raw scroll frames drive the mounted overlay exactly once each", async () => {
     // Pi 0.83 claims PageUp/PageDown for its own paging route before a mounted

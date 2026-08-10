@@ -8213,7 +8213,7 @@ describe("createPiExtension: Task 13 overlay keys and picker", () => {
     expect(shortcuts).not.toContain("alt+i");
   });
 
-  it("double-escape confirms cancel with Keep running first and cancels only on explicit choice", async () => {
+  it("one Escape closes the mounted overlay and never confirms a cancel", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.effectiveKeybindingConfig = {};
     const modalFactory = () => ({ handleInput: () => undefined });
@@ -8241,24 +8241,18 @@ describe("createPiExtension: Task 13 overlay keys and picker", () => {
 
     const doneBeforeEscape = host.customDoneCalls;
     const selectsBeforeEscape = host.selectCalls.length;
+    // One Escape leaves inspection: the overlay closes and the parent resumes.
     host.inputCustom("\u001b");
-    // Task 13 consumes the first Escape: overlay stays mounted and a hint is shown.
-    expect(host.customDoneCalls).toBe(doneBeforeEscape);
+    await flushBackgroundWork();
+    expect(host.customDoneCalls).toBeGreaterThan(doneBeforeEscape);
+    // No arming hint is ever shown.
     expect(
       host.notifyCalls.some((call) =>
         call.message.includes("Press Escape again"),
       ),
-    ).toBe(true);
-    const cancelConfirm = host.deferNextSelect();
-    host.inputCustom("\u001b");
-    await flushBackgroundWork();
-    expect(host.selectCalls.length).toBeGreaterThan(selectsBeforeEscape);
-    const confirmCall = host.selectCalls.at(-1);
-    expect(confirmCall?.options[0]).toBe("Keep running");
-    expect(confirmCall?.options[1]).toBe("Cancel subtree");
-    cancelConfirm.settle("Keep running");
-    await flushBackgroundWork();
-    expect(host.customDoneCalls).toBe(doneBeforeEscape);
+    ).toBe(false);
+    // No cancel confirmation is opened, so the child keeps running.
+    expect(host.selectCalls.length).toBe(selectsBeforeEscape);
   });
 
   it("binds the overlay input listener from the real before_agent_start wiring", async () => {

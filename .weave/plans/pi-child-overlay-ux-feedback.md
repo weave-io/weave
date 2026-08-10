@@ -92,7 +92,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - `bun test packages/adapters/pi` passes; no new unbounded state.
     - Commit: `fix(pi): deliver overlay scroll frames on the proven live route` (adjust summary to the actual root cause).
 
-- [ ] 3. Make Escape exit child inspection without cancelling
+- [x] 3. Make Escape exit child inspection without cancelling
   - **What**: Replace the double-Escape cancel arm/confirm flow: a single Escape closes the overlay and returns to the parent, leaving the child running. Search-mode Escape (cancel search) and any open confirm modal keep their local Escape meaning.
   - **Files**: `packages/adapters/pi/src/child-overlay-keys.ts` (key machine `handleEscape`, `CHILD_OVERLAY_ESCAPE_HINT`, outcomes), `child-inspection-runtime.ts` (interceptor deps), `child-overlay-component.ts` (no-interceptor Escape path already closes — verify unchanged), `__tests__/child-overlay-keys.test.ts`, `__tests__/child-inspection-runtime.test.ts`.
   - **Depends on**: None (but must merge before Task 4).
