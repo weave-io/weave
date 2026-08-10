@@ -1034,3 +1034,46 @@ export function resolveChildOverlaySearchRoute(
     diagnostics: Object.freeze([]),
   });
 }
+
+// ---------------------------------------------------------------------------
+// In-overlay compact view route (Task 7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Documented key that flips the mounted overlay between the full transcript
+ * and the compact one-line projection.
+ *
+ * `ctrl+o` is not printable, so it can never be mistaken for draft text, and
+ * it is offered to the same conflict port every other overlay key uses: when
+ * the host already owns it, the route is skipped and reported instead of
+ * stealing the key.
+ */
+export const PI_CHILD_OVERLAY_VIEW_MODE_KEY = "ctrl+o" as const;
+
+/** Raw terminal byte Pi delivers for {@link PI_CHILD_OVERLAY_VIEW_MODE_KEY}. */
+export const PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER = "\x0f" as const;
+
+export interface PiChildOverlayViewModeRoute {
+  /** Raw key data that toggles compact view, or undefined when skipped. */
+  readonly trigger: string | undefined;
+  /** Bounded diagnostic lines; one line when the host already owns the key. */
+  readonly diagnostics: readonly string[];
+}
+
+export function resolveChildOverlayViewModeRoute(
+  conflicts?: PiChildOverlayKeybindingConflictPort,
+): PiChildOverlayViewModeRoute {
+  const owner = conflicts?.ownerOf(PI_CHILD_OVERLAY_VIEW_MODE_KEY);
+  if (owner !== undefined) {
+    return Object.freeze({
+      trigger: undefined,
+      diagnostics: Object.freeze([
+        `weave overlay compact view skipped key ${PI_CHILD_OVERLAY_VIEW_MODE_KEY}: already bound to ${owner}`,
+      ]),
+    });
+  }
+  return Object.freeze({
+    trigger: PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
+    diagnostics: Object.freeze([]),
+  });
+}

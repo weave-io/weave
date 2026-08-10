@@ -8,7 +8,12 @@ import {
   type MemoryOverlaySourceChild,
   type MemoryOverlaySourceEntry,
 } from "../child-overlay.js";
-import { formatChildOverlayTelemetryLine } from "../child-overlay-component.js";
+import {
+  compactChildOverlayEntryLine,
+  compactChildOverlayLines,
+  formatChildOverlayTelemetryLine,
+} from "../child-overlay-component.js";
+import type { ChildOverlayEntry } from "../child-overlay-types.js";
 import { overlayFrameGeometry } from "../render-width.js";
 
 /** Pi native components read the process-wide theme. */
@@ -197,10 +202,7 @@ describe("child overlay render width (Task 20(f))", () => {
 });
 
 describe("child overlay telemetry header (Task 6)", () => {
-  const usageEvent = (
-    usage: unknown,
-    extra: Record<string, unknown> = {},
-  ) => ({
+  const usageEvent = (usage: unknown, extra: Record<string, unknown> = {}) => ({
     type: "usage",
     usage,
     ...extra,
@@ -270,9 +272,7 @@ describe("child overlay telemetry header (Task 6)", () => {
     const { component } = await mount("no-telemetry");
     const lines = component.render(80);
     assertLinesFit(lines, 80);
-    expect(contentLines(lines, 80)).toContain(
-      "— · — · ctx — · — in / — out",
-    );
+    expect(contentLines(lines, 80)).toContain("— · — · ctx — · — in / — out");
     expect(lines.join("\n")).not.toContain("ctx 0%");
   });
 
@@ -301,6 +301,90 @@ describe("child overlay telemetry header (Task 6)", () => {
       expect(visibleWidth(meta ?? "")).toBeLessThanOrEqual(
         overlayFrameGeometry(width).innerWidth,
       );
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Compact view mode summaries (Task 7)
+// ---------------------------------------------------------------------------
+
+function overlayEntry(
+  overrides: Partial<ChildOverlayEntry> &
+    Pick<ChildOverlayEntry, "id" | "kind">,
+): ChildOverlayEntry {
+  return {
+    sequence: 0,
+    text: "",
+    expanded: false,
+    ...overrides,
+  };
+}
+
+describe("child overlay compact summaries (Task 7)", () => {
+  it("collapses one entry into a single bounded line", () => {
+    const line = compactChildOverlayEntryLine(
+      overlayEntry({
+        id: "a1",
+        kind: "assistant",
+        text: "first line\nsecond line\t  third",
+      }),
+      80,
+    );
+    expect(line).not.toContain("\n");
+    expect(line).toContain("assistant");
+    expect(line).toContain("first line second line third");
+    expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+  });
+
+  it("keeps run dividers recognizable instead of collapsing them away", () => {
+    const line = compactChildOverlayEntryLine(
+      overlayEntry({ id: "r1", kind: "run-divider", text: "run 2 · retry" }),
+      80,
+    );
+    expect(line.startsWith("──")).toBe(true);
+    expect(line).toContain("run 2");
+  });
+
+  it("labels a run divider from its run number when it carries no text", () => {
+    const line = compactChildOverlayEntryLine(
+      overlayEntry({ id: "r2", kind: "run-divider", text: "", runNumber: 3 }),
+      80,
+    );
+    expect(line).toContain("run 3");
+  });
+
+  it("fits every summary inside narrow widths without wrapping", () => {
+    const entry = overlayEntry({
+      id: "long",
+      kind: "tool",
+      text: "x".repeat(5_000),
+    });
+    for (const width of [1, 2, 10, 20, 51, 80] as const) {
+      const line = compactChildOverlayEntryLine(entry, width);
+      expect(line).not.toContain("\n");
+      expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it("projects exactly one row per entry, in order", () => {
+    const projected = compactChildOverlayLines(
+      [
+        overlayEntry({ id: "e0", kind: "prompt", text: "task" }),
+        overlayEntry({ id: "e1", kind: "run-divider", text: "run 1" }),
+        overlayEntry({ id: "e2", kind: "tool", text: "read" }),
+        overlayEntry({ id: "e3", kind: "error", text: "boom" }),
+      ],
+      60,
+    );
+    expect(projected.length).toBe(4);
+    expect(projected[0]).toContain("prompt");
+    expect(projected[1]).toContain("run 1");
+    expect(projected[2]).toContain("tool");
+    expect(projected[3]).toContain("error");
+    for (const line of projected) {
+      expect(line).not.toContain("\n");
+      expect(visibleWidth(line)).toBeLessThanOrEqual(60);
     }
   });
 });

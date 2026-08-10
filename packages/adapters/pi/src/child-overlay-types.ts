@@ -131,6 +131,20 @@ export type ChildOverlayRunDivider = z.infer<
   typeof ChildOverlayRunDividerSchema
 >;
 
+/**
+ * How much of each transcript entry the overlay paints.
+ *
+ * `full` renders the native transcript exactly as before. `compact` is a
+ * render-time projection of the same bounded entries into one-line summaries;
+ * it never forks entry state, never drops entries, and never changes the
+ * parent-transcript `child-compact-render.ts` contract.
+ */
+export const ChildOverlayViewModeSchema = z.enum(["full", "compact"]);
+export type ChildOverlayViewMode = z.infer<typeof ChildOverlayViewModeSchema>;
+
+/** Default per-child view mode: the unabridged transcript. */
+export const DEFAULT_CHILD_OVERLAY_VIEW_MODE: ChildOverlayViewMode = "full";
+
 export const ChildOverlayStatusSchema = z.enum(["live", "settled", "orphan"]);
 export type ChildOverlayStatus = z.infer<typeof ChildOverlayStatusSchema>;
 
@@ -350,6 +364,8 @@ export interface ChildOverlayView {
   readonly width: number;
   readonly height: number;
   readonly anchor: ChildOverlayAnchor | undefined;
+  /** Per-child render mode; `full` unless the reader toggled this child. */
+  readonly viewMode: ChildOverlayViewMode;
   readonly compact: ChildCompactState;
   readonly transcript: PiChildTranscriptState;
   /**
@@ -407,6 +423,10 @@ export type ChildOverlayInputOutcome =
   | { readonly kind: "scroll"; readonly scrollOffset: number }
   | { readonly kind: "search"; readonly query: string }
   | { readonly kind: "expanded"; readonly globalExpanded: boolean }
+  | {
+      readonly kind: "view-mode";
+      readonly viewMode: ChildOverlayViewMode;
+    }
   | {
       readonly kind: "navigate-run";
       readonly activeRun: number | undefined;

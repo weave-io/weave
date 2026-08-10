@@ -160,7 +160,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - Width/height tests pass including a fully-unavailable telemetry case; transcript budget math tested at the shortest supported terminal.
     - Commit: `feat(pi): show provider, model, context, and token info in the child overlay`.
 
-- [ ] 7. Add a compact child-view mode with a clear toggle
+- [x] 7. Add a compact child-view mode with a clear toggle
   - **What**: A per-child compact mode that condenses transcript entries (collapsed tool calls/results, single-line previews) while keeping the header, telemetry, search, scroll model, and draft editor fully functional; toggled by a non-printable chord with an explicit header badge.
   - **Files**: `packages/adapters/pi/src/child-overlay-types.ts` (per-child `viewMode` in saved state + bounds), `child-overlay-controller.ts` (toggle handling + view field), `child-overlay-component.ts` (compact entry rendering + header badge + help line), optionally reuse reduction helpers from `child-compact-render.ts` without importing UI types into it; tests in `__tests__/child-overlay.test.ts`, `__tests__/child-overlay-render-width.test.ts`, `__tests__/child-overlay-keys.test.ts` if routed via the machine.
   - **Depends on**: Tasks 2 and 6.

@@ -35,10 +35,14 @@ import {
 } from "./child-native-components.js";
 import type { ChildOverlayController } from "./child-overlay-controller.js";
 import type { PiChildOverlayKeyInterceptor } from "./child-overlay-keys.js";
-import { PI_CHILD_OVERLAY_SEARCH_TRIGGER } from "./child-overlay-keys.js";
+import {
+  PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+  PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
+} from "./child-overlay-keys.js";
 import { boundText } from "./child-overlay-replay.js";
 import { normalizeChildOverlayScrollFrame } from "./child-overlay-terminal-input.js";
 import {
+  type ChildOverlayEntry,
   type ChildOverlayError,
   type ChildOverlayFallbackReason,
   type ChildOverlayFallbackRequired,
@@ -187,6 +191,78 @@ export function formatChildOverlayTelemetryLine(
   return `${provider} · ${model} · ctx ${ctx} · ${input} in / ${output} out`;
 }
 
+// ---------------------------------------------------------------------------
+// Compact view projection (Task 7)
+// ---------------------------------------------------------------------------
+
+/** Header marker shown while a child renders in compact mode. */
+export const CHILD_OVERLAY_COMPACT_BADGE = "COMPACT" as const;
+
+/** Help row documenting the compact toggle; shown only when the key is free. */
+export const CHILD_OVERLAY_COMPACT_HELP_LINE =
+  "Ctrl+O toggles compact view" as const;
+
+/** Characters kept from one entry's text before the width fit trims further. */
+const COMPACT_SUMMARY_MAX = 160;
+
+/** Stable one-character kind marks; never a path, id, or free-form label. */
+const COMPACT_KIND_MARKS: Readonly<Record<string, string>> = Object.freeze({
+  prompt: "›",
+  user: "›",
+  steering: "›",
+  "follow-up": "›",
+  assistant: "•",
+  thinking: "~",
+  tool: "⚙",
+  error: "!",
+  retry: "↻",
+  image: "▣",
+  status: "·",
+  unknown: "?",
+});
+
+/**
+ * Collapse one bounded overlay entry into a single summary line.
+ *
+ * Pure and render-time only: the entry itself is never rewritten, so toggling
+ * back to full view restores the untouched transcript. Run dividers keep their
+ * own shape so the run structure survives the condensation.
+ */
+export function compactChildOverlayEntryLine(
+  entry: ChildOverlayEntry,
+  width: number,
+): string {
+  const flattened = boundText(entry.text)
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, COMPACT_SUMMARY_MAX);
+  if (entry.kind === "run-divider") {
+    const numbered =
+      entry.runNumber !== undefined ? `run ${entry.runNumber}` : "run";
+    const label = flattened.length > 0 ? flattened : numbered;
+    return fitLineToWidth(`── ${label} ──`, width);
+  }
+  const mark = COMPACT_KIND_MARKS[entry.kind] ?? COMPACT_KIND_MARKS.unknown;
+  const run = entry.runNumber !== undefined ? `r${entry.runNumber} ` : "";
+  return fitLineToWidth(
+    `${mark} ${run}${entry.kind}${flattened.length > 0 ? `: ${flattened}` : ""}`,
+    width,
+  );
+}
+
+/**
+ * Project the loaded entry window into compact summary rows, in order.
+ *
+ * This is the compact counterpart of the native transcript render and reads
+ * the same bounded entries the controller already holds.
+ */
+export function compactChildOverlayLines(
+  entries: readonly ChildOverlayEntry[],
+  width: number,
+): readonly string[] {
+  return entries.map((entry) => compactChildOverlayEntryLine(entry, width));
+}
+
 /**
  * Return the same row limit Pi's overlay compositor applies after rendering.
  * Staying within this limit keeps Pi's top-only truncation from removing the
@@ -291,8 +367,17 @@ export function createChildOverlayCustomComponent(
   searchRoute: { readonly trigger: string | undefined } = {
     trigger: PI_CHILD_OVERLAY_SEARCH_TRIGGER,
   },
+  /**
+   * Resolved compact-view toggle route. Same contract as `searchRoute`: an
+   * undefined trigger means the host already owns the key, so the overlay
+   * leaves it alone and never advertises the toggle in the help rows.
+   */
+  viewModeRoute: { readonly trigger: string | undefined } = {
+    trigger: PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
+  },
 ): PiChildOverlayCustomComponent {
   const searchTrigger = searchRoute.trigger;
+  const viewModeTrigger = viewModeRoute.trigger;
   const draftEditor = createChildOverlayDraftEditor(tui, theme, keybindings);
   const transcriptRenderer = createPiChildTranscriptRenderer();
   let componentFactory: PiTranscriptComponentFactory | undefined;
@@ -377,6 +462,8 @@ export function createChildOverlayCustomComponent(
   const headerLines = (view: ChildOverlayView, width: number): string[] => {
     const title = boundText(view.child.title ?? view.child.childId);
     const status = view.child.status.toUpperCase();
+    const badge =
+      view.viewMode === "compact" ? ` · ${CHILD_OVERLAY_COMPACT_BADGE}` : "";
     const run =
       view.activeRun !== undefined ? `run ${view.activeRun}` : undefined;
     const branch =
@@ -387,7 +474,7 @@ export function createChildOverlayCustomComponent(
     // Reserve ` · STATUS` so a narrow terminal truncates the title, not the
     // live/settled marker the reader needs (Task 20(f) width-51 crash).
     const header = [
-      fitLineWithSuffix(`◆ ${title}`, ` · ${status}`, width),
+      fitLineWithSuffix(`◆ ${title}`, ` · ${status}${badge}`, width),
       ...(meta.length > 0 ? [boundText(meta)] : []),
       // Always one telemetry row: every absent field is `—`, never guessed.
       fitLineToWidth(
@@ -442,6 +529,9 @@ export function createChildOverlayCustomComponent(
       help.push("Enter steers · Alt+Enter queues a follow-up");
       help.push("q cancels this child (confirm required) · Esc exits");
     }
+    if (viewModeTrigger !== undefined) {
+      help.push(`${CHILD_OVERLAY_COMPACT_HELP_LINE} (now ${view.viewMode})`);
+    }
     return help.map((line) => fitLineToWidth(boundText(line), width));
   };
 
@@ -449,6 +539,11 @@ export function createChildOverlayCustomComponent(
     view: ChildOverlayView,
     width: number,
   ): Result<readonly string[], ChildOverlayFallbackRequired> => {
+    if (view.viewMode === "compact") {
+      // Render-time projection of the same bounded entries; the native
+      // transcript model is left untouched so toggling back is lossless.
+      return ok(compactChildOverlayLines(view.entries, width));
+    }
     return Result.fromThrowable(
       () => {
         const rendered = transcriptRenderer.render(view.transcript, width, {
@@ -640,6 +735,8 @@ export function createChildOverlayCustomComponent(
   ): boolean =>
     normalizedScroll !== undefined ||
     matchesKey(data, "ctrl+e") ||
+    (viewModeTrigger !== undefined &&
+      (data === viewModeTrigger || matchesKey(data, "ctrl+o"))) ||
     matchesKey(data, "alt+left") ||
     matchesKey(data, "alt+right") ||
     matchesKey(data, "alt+up") ||

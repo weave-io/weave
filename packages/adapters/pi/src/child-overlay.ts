@@ -387,6 +387,10 @@ export function createReadSessionEntryPageOverlaySource(deps: {
 // ---------------------------------------------------------------------------
 
 export {
+  CHILD_OVERLAY_COMPACT_BADGE,
+  CHILD_OVERLAY_COMPACT_HELP_LINE,
+  compactChildOverlayEntryLine,
+  compactChildOverlayLines,
   createChildOverlayCustomComponent,
   createChildOverlayDraftEditor,
   PI_CHILD_OVERLAY_CUSTOM_OPTIONS,

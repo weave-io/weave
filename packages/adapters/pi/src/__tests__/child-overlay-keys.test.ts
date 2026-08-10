@@ -18,12 +18,15 @@ import {
   PI_CHILD_OVERLAY_ACTION_IDS,
   PI_CHILD_OVERLAY_ACTIONS,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
+  PI_CHILD_OVERLAY_VIEW_MODE_KEY,
+  PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
   type PiChildOverlayHierarchyNode,
   type PiChildOverlayKeyContext,
   type PiChildOverlayKeyPlan,
   parseChildOverlayKeyOverrides,
   planChildOverlayKeyRegistrations,
   resolveChildOverlayCancelChoice,
+  resolveChildOverlayViewModeRoute,
 } from "../child-overlay-keys.js";
 
 function mustPlan(
@@ -514,5 +517,43 @@ describe("child-overlay-keys Backspace, Escape, and cancel", () => {
     }
     expect(outcomes[4]).toEqual({ kind: "overlay-input" });
     expect(outcomes[5]).toEqual({ kind: "overlay-input" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Compact view toggle route (Task 7)
+// ---------------------------------------------------------------------------
+
+describe("resolveChildOverlayViewModeRoute", () => {
+  it("uses a non-printable key so it can never be mistaken for draft text", () => {
+    expect(PI_CHILD_OVERLAY_VIEW_MODE_KEY).toBe("ctrl+o");
+    expect(PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER).toBe("\x0f");
+    expect(/^[\x20-\x7e]$/.test(PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER)).toBe(
+      false,
+    );
+  });
+
+  it("keeps the trigger when no host binding owns the key", () => {
+    const route = resolveChildOverlayViewModeRoute(
+      createChildOverlayConflictPort({ "app.something": "ctrl+g" }),
+    );
+    expect(route.trigger).toBe(PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    expect(route.diagnostics).toEqual([]);
+  });
+
+  it("participates in the shared conflict port and reports a taken key", () => {
+    const route = resolveChildOverlayViewModeRoute(
+      createChildOverlayConflictPort({ "app.openFile": "ctrl+o" }),
+    );
+    expect(route.trigger).toBeUndefined();
+    expect(route.diagnostics).toEqual([
+      "weave overlay compact view skipped key ctrl+o: already bound to app.openFile",
+    ]);
+  });
+
+  it("defaults to the documented trigger without a conflict port", () => {
+    expect(resolveChildOverlayViewModeRoute().trigger).toBe(
+      PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
+    );
   });
 });

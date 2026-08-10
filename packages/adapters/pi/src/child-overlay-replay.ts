@@ -64,10 +64,8 @@ const RunDividerDataSchema = z.looseObject({
 });
 
 /** C0 except TAB/LF/CR, DEL, and C1 U+0080–U+009F — String.raw for Biome. */
-const BOUND_TEXT_CONTROL_PATTERN = new RegExp(
-  String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0080-\u009f]`,
-  "gu",
-);
+const BOUND_TEXT_CONTROL_PATTERN =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0080-\u009f]/gu;
 
 export function boundText(value: string): string {
   const clean = value.replace(BOUND_TEXT_CONTROL_PATTERN, "");
@@ -999,4 +997,148 @@ export function degradedCapacityEntry(
     expanded: false,
     replay: [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Live event projection (moved out of the controller to keep it reviewable)
+// ---------------------------------------------------------------------------
+
+/**
+ * Project one parsed child session event into a bounded overlay entry.
+ *
+ * Pure: it reads only the event, the caller's sequence number, and the
+ * caller's expansion default, and returns undefined for events the overlay
+ * window does not display.
+ */
+export function projectLiveEntry(
+  event: PiChildSessionEvent,
+  sequence: number,
+  expanded: boolean,
+): ChildOverlayEntry | undefined {
+  const replay: readonly ChildOverlayReplayStep[] = [{ kind: "event", event }];
+  switch (event.type) {
+    case "message_start":
+    case "message_update":
+    case "message_end": {
+      let text = "";
+      if (event.type === "message_end") {
+        text = messageText(event.message).text;
+      } else if (event.type === "message_update") {
+        const deltaText = (event as { delta?: { text?: string } }).delta?.text;
+        if (typeof deltaText === "string") {
+          text = boundText(deltaText);
+        }
+      }
+      const id = liveAssistantEntryId(event, sequence);
+      if (event.type === "message_update" && text.length === 0)
+        return undefined;
+      return {
+        id,
+        sequence,
+        kind: "assistant",
+        text,
+        expanded,
+        // A streaming delta is transcript-neutral on rebuild: its terminal
+        // `message_end` carries the whole message, so replaying the delta too
+        // would append the same text twice.
+        replay: event.type === "message_update" ? [] : replay,
+      };
+    }
+    case "text":
+    case "markdown":
+      return {
+        id: `live-text-${sequence}`,
+        sequence,
+        kind: "assistant",
+        text: boundText(typeof event.text === "string" ? event.text : ""),
+        expanded,
+        replay,
+      };
+    case "thinking":
+      return {
+        id: `live-thinking-${sequence}`,
+        sequence,
+        kind: "thinking",
+        text: boundText(typeof event.text === "string" ? event.text : ""),
+        expanded,
+        replay,
+      };
+    case "tool_call":
+    case "tool_partial_result":
+    case "tool_result":
+    case "tool_error": {
+      const toolId =
+        typeof event.toolCallId === "string" && event.toolCallId.length > 0
+          ? safeEntryId(event.toolCallId, `live-tool-${sequence}`)
+          : `live-tool-${sequence}`;
+      return {
+        id: toolId,
+        sequence,
+        kind: event.type === "tool_error" ? "error" : "tool",
+        text: boundText(
+          typeof event.toolName === "string" ? event.toolName : event.type,
+        ),
+        expanded,
+        replay,
+      };
+    }
+    case "retry":
+      return {
+        id: `live-retry-${sequence}`,
+        sequence,
+        kind: "retry",
+        text: boundText(
+          `retry ${event.attempt ?? "?"} ${event.reason ?? ""}`.trim(),
+        ),
+        runNumber:
+          typeof event.attempt === "number" ? event.attempt : undefined,
+        expanded,
+        replay,
+      };
+    case "image":
+      return {
+        id: `live-image-${sequence}`,
+        sequence,
+        kind: "image",
+        text: "image",
+        expanded,
+        replay,
+      };
+    case "status":
+      return {
+        id: `live-status-${sequence}`,
+        sequence,
+        kind: "status",
+        text: boundText(
+          typeof event.status === "string" ? event.status : "status",
+        ),
+        expanded,
+        replay,
+      };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Resolves the assistant entry id from the message the event carries so a
+ * `message_start` and its `message_end` project one window entry instead of
+ * two, matching the single assistant entry the transcript reducer keeps.
+ */
+export function liveAssistantEntryId(
+  event: PiChildSessionEvent,
+  sequence: number,
+): string {
+  const record = event as unknown as Record<string, unknown>;
+  const message = recordOf(record.message);
+  const delta = recordOf(record.delta);
+  const assistantEvent = recordOf(record.assistantMessageEvent);
+  const id =
+    nonEmptyString(message?.id) ??
+    nonEmptyString(delta?.messageId) ??
+    nonEmptyString(delta?.id) ??
+    nonEmptyString(assistantEvent?.messageId);
+  return id === undefined
+    ? `live-assistant-${sequence}`
+    : safeEntryId(id, `live-assistant-${sequence}`);
 }

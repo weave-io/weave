@@ -29,9 +29,7 @@ import {
   degradedCapacityEntry,
   mergeReplaySteps,
   messageText,
-  nonEmptyString,
-  recordOf,
-  safeEntryId,
+  projectLiveEntry,
   transcriptFromOverlayEntries,
 } from "./child-overlay-replay.js";
 import {
@@ -71,8 +69,10 @@ import {
   type ChildOverlaySourceError,
   type ChildOverlaySourcePort,
   type ChildOverlayView,
+  type ChildOverlayViewMode,
   clampPageSize,
   clampWindowCap,
+  DEFAULT_CHILD_OVERLAY_VIEW_MODE,
   OverlayTextSchema,
 } from "./child-overlay-types.js";
 import {
@@ -110,6 +110,12 @@ interface SavedChildState extends OverlayScrollState {
   newerCursor: string | undefined;
   hasOlderFlag: boolean;
   hasNewerFlag: boolean;
+  /**
+   * Per-child render mode. Saved beside the rest of the child's view state so
+   * it survives focus switches within this controller, stays isolated per
+   * child, and is gone when the controller (and its LRU) is discarded.
+   */
+  viewMode: ChildOverlayViewMode;
   compact: ChildCompactState;
   /** Latest parsed usage report: replaces prior state, never summed. */
   usage: PiChildUsageReport | undefined;
@@ -136,6 +142,7 @@ function emptySaved(threadId: string, touched: number): SavedChildState {
     hasOlderFlag: false,
     hasNewerFlag: false,
     entries: [],
+    viewMode: DEFAULT_CHILD_OVERLAY_VIEW_MODE,
     compact: createChildCompactState(threadId),
     usage: undefined,
     transcript: createPiChildTranscriptState(),
@@ -526,6 +533,28 @@ export class ChildOverlayController {
     });
   }
 
+  /**
+   * Flips this child between the full transcript and the compact one-line
+   * projection.
+   *
+   * Entry state is untouched: compact is a render-time projection, so nothing
+   * is dropped or rewritten here. Row counts do change everywhere, so the
+   * measured extent is discarded to force a re-measure on the next render, any
+   * pending tail adjustment is dropped (its delta would no longer isolate tail
+   * growth), and the viewport anchor is restored against the same entries so a
+   * large row-count change cannot jump the viewport.
+   */
+  toggleViewMode(): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      const anchor = state.anchor ?? anchorFromScroll(state);
+      state.viewMode = state.viewMode === "compact" ? "full" : "compact";
+      clearTailGrowth(state);
+      state.scrollExtent = undefined;
+      restoreScrollAnchor(state, anchor);
+      return this.toView(child, state);
+    });
+  }
+
   navigateRun(delta: number): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
       const runs = child.runs;
@@ -634,6 +663,12 @@ export class ChildOverlayController {
         kind: "expanded",
         globalExpanded: toggled.value.globalExpanded,
       });
+    }
+
+    if (matchesKey(data, "ctrl+o") || data === "\x0f") {
+      const toggled = this.toggleViewMode();
+      if (toggled.isErr()) return errAsync(toggled.error);
+      return okAsync({ kind: "view-mode", viewMode: toggled.value.viewMode });
     }
 
     if (data === "\x1b[1;3D" || matchesKey(data, "alt+left")) {
@@ -957,6 +992,7 @@ export class ChildOverlayController {
       width: state.width,
       height: state.height,
       anchor: state.anchor,
+      viewMode: state.viewMode,
       compact: state.compact,
       transcript: state.transcript,
       telemetry: deriveChildOverlayTelemetry(state.usage, child),
@@ -1055,139 +1091,6 @@ function syncTranscriptFromEntries(state: SavedChildState): void {
       return expanded === entry.expanded ? entry : { ...entry, expanded };
     }),
   };
-}
-
-function projectLiveEntry(
-  event: PiChildSessionEvent,
-  sequence: number,
-  expanded: boolean,
-): ChildOverlayEntry | undefined {
-  const replay: readonly ChildOverlayReplayStep[] = [{ kind: "event", event }];
-  switch (event.type) {
-    case "message_start":
-    case "message_update":
-    case "message_end": {
-      let text = "";
-      if (event.type === "message_end") {
-        text = messageText(event.message).text;
-      } else if (event.type === "message_update") {
-        const deltaText = (event as { delta?: { text?: string } }).delta?.text;
-        if (typeof deltaText === "string") {
-          text = boundText(deltaText);
-        }
-      }
-      const id = liveAssistantEntryId(event, sequence);
-      if (event.type === "message_update" && text.length === 0)
-        return undefined;
-      return {
-        id,
-        sequence,
-        kind: "assistant",
-        text,
-        expanded,
-        // A streaming delta is transcript-neutral on rebuild: its terminal
-        // `message_end` carries the whole message, so replaying the delta too
-        // would append the same text twice.
-        replay: event.type === "message_update" ? [] : replay,
-      };
-    }
-    case "text":
-    case "markdown":
-      return {
-        id: `live-text-${sequence}`,
-        sequence,
-        kind: "assistant",
-        text: boundText(typeof event.text === "string" ? event.text : ""),
-        expanded,
-        replay,
-      };
-    case "thinking":
-      return {
-        id: `live-thinking-${sequence}`,
-        sequence,
-        kind: "thinking",
-        text: boundText(typeof event.text === "string" ? event.text : ""),
-        expanded,
-        replay,
-      };
-    case "tool_call":
-    case "tool_partial_result":
-    case "tool_result":
-    case "tool_error": {
-      const toolId =
-        typeof event.toolCallId === "string" && event.toolCallId.length > 0
-          ? safeEntryId(event.toolCallId, `live-tool-${sequence}`)
-          : `live-tool-${sequence}`;
-      return {
-        id: toolId,
-        sequence,
-        kind: event.type === "tool_error" ? "error" : "tool",
-        text: boundText(
-          typeof event.toolName === "string" ? event.toolName : event.type,
-        ),
-        expanded,
-        replay,
-      };
-    }
-    case "retry":
-      return {
-        id: `live-retry-${sequence}`,
-        sequence,
-        kind: "retry",
-        text: boundText(
-          `retry ${event.attempt ?? "?"} ${event.reason ?? ""}`.trim(),
-        ),
-        runNumber:
-          typeof event.attempt === "number" ? event.attempt : undefined,
-        expanded,
-        replay,
-      };
-    case "image":
-      return {
-        id: `live-image-${sequence}`,
-        sequence,
-        kind: "image",
-        text: "image",
-        expanded,
-        replay,
-      };
-    case "status":
-      return {
-        id: `live-status-${sequence}`,
-        sequence,
-        kind: "status",
-        text: boundText(
-          typeof event.status === "string" ? event.status : "status",
-        ),
-        expanded,
-        replay,
-      };
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Resolves the assistant entry id from the message the event carries so a
- * `message_start` and its `message_end` project one window entry instead of
- * two, matching the single assistant entry the transcript reducer keeps.
- */
-function liveAssistantEntryId(
-  event: PiChildSessionEvent,
-  sequence: number,
-): string {
-  const record = event as unknown as Record<string, unknown>;
-  const message = recordOf(record.message);
-  const delta = recordOf(record.delta);
-  const assistantEvent = recordOf(record.assistantMessageEvent);
-  const id =
-    nonEmptyString(message?.id) ??
-    nonEmptyString(delta?.messageId) ??
-    nonEmptyString(delta?.id) ??
-    nonEmptyString(assistantEvent?.messageId);
-  return id === undefined
-    ? `live-assistant-${sequence}`
-    : safeEntryId(id, `live-assistant-${sequence}`);
 }
 
 export function createChildOverlayController(
