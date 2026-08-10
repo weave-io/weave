@@ -1,7 +1,13 @@
 import { join } from "node:path";
 import * as PiPublicExports from "@earendil-works/pi-coding-agent";
-import { CustomEditor } from "@earendil-works/pi-coding-agent";
-import { getKeybindings as getHostKeybindings } from "@earendil-works/pi-tui";
+import {
+  CustomEditor,
+  type KeybindingsManager,
+} from "@earendil-works/pi-coding-agent";
+import {
+  getKeybindings as getHostKeybindings,
+  type TUI,
+} from "@earendil-works/pi-tui";
 import {
   DEFAULT_RUNTIME_SETTINGS,
   type ThinkingLevelDecl,
@@ -112,6 +118,7 @@ import {
   createChildOverlayCustomComponent,
   createReadSessionEntryPageOverlaySource,
   mapPiDelegationFailureToOverlaySourceError,
+  PI_CHILD_OVERLAY_CUSTOM_OPTIONS,
 } from "./child-overlay.js";
 import {
   formatPiChildOverlayFallbackDiagnostic,
@@ -2017,6 +2024,8 @@ interface PiCustomOverlayTui {
   requestRender(): void;
   readonly terminal?: { readonly rows?: number };
 }
+
+type PiChildOverlayTui = TUI & PiCustomOverlayTui;
 
 /** Reads the live terminal height, or `undefined` when the host has none. */
 function overlayTerminalRows(tui: unknown): number | undefined {
@@ -5329,12 +5338,14 @@ export function createPiExtension(
           let settleMounted: (() => void) | undefined;
           void ctx.ui
             .custom<void>((tui, theme, keybindings, done) => {
-              childOverlayCell.tui = tui as { requestRender(): void };
+              const overlayTui = tui as PiChildOverlayTui;
+              const overlayKeybindings = keybindings as KeybindingsManager;
+              childOverlayCell.tui = overlayTui;
               // Also capture keybindings here so pi-vim-yielded sessions still
               // register Task 13 shortcuts the first time the overlay mounts.
               childInspectionRuntime.maybeRegisterOverlayKeys(
                 pi,
-                keybindings,
+                overlayKeybindings,
                 generation.id,
               );
               childInspectionRuntime.bindOverlayKeyInterceptor(generation.id);
@@ -5347,9 +5358,9 @@ export function createPiExtension(
               settleMounted = settle;
               childOverlayCell.settle = settle;
               const mounted = createChildOverlayCustomComponent(
-                childOverlayCell.tui as never,
-                theme as never,
-                keybindings as never,
+                overlayTui,
+                theme,
+                overlayKeybindings,
                 overlay,
                 settle,
                 (fallback) => {
@@ -5366,11 +5377,12 @@ export function createPiExtension(
                 },
                 { cwd: ctx.cwd },
                 overlayKeysCell.interceptor,
-                searchRouteTrigger(keybindings),
+                searchRouteTrigger(overlayKeybindings),
               );
+              if (mounted.focused !== undefined) mounted.focused = true;
               childOverlayCell.component = mounted;
               return mounted;
-            })
+            }, PI_CHILD_OVERLAY_CUSTOM_OPTIONS)
             .finally(() => {
               finish();
             });
