@@ -558,6 +558,18 @@ export class ChildOverlayController {
     });
   }
 
+  submitSteer(
+    submittedText: string,
+  ): ResultAsync<ChildOverlayInputOutcome, ChildOverlayError> {
+    return this.submitDraftMutation("steer", submittedText);
+  }
+
+  submitFollowUp(
+    submittedText: string,
+  ): ResultAsync<ChildOverlayInputOutcome, ChildOverlayError> {
+    return this.submitDraftMutation("follow-up", submittedText);
+  }
+
   /**
    * Consumes every key while mounted. Never routes text or keys to a primary
    * editor. Settled/orphan children are read-only for mutation actions.
@@ -594,65 +606,11 @@ export class ChildOverlayController {
     }
 
     if (matchesKey(data, "enter")) {
-      if (isReadOnly(child) || !child.generationId) {
-        return okAsync({ kind: "consumed" });
-      }
-      const text = state.draft.trim();
-      if (text.length === 0) return okAsync({ kind: "consumed" });
-      state.draft = "";
-      const mutation = this.mutations;
-      if (mutation === undefined) {
-        return okAsync({
-          kind: "steer",
-          childId: child.childId,
-          text,
-        });
-      }
-      return mutation
-        .steer(child.childId, child.generationId, text)
-        .map(() => ({
-          kind: "steer" as const,
-          childId: child.childId,
-          text,
-        }))
-        .mapErr(
-          (): ChildOverlayError =>
-            this.fallbackFromError(child.childId, "render-failed", {
-              type: "SourceUnavailable",
-              operation: "steer",
-            }),
-        );
+      return this.submitSteer(state.draft);
     }
 
     if (matchesKey(data, "alt+enter")) {
-      if (isReadOnly(child) || !child.generationId) {
-        return okAsync({ kind: "consumed" });
-      }
-      const text = state.draft.trim();
-      if (text.length === 0) return okAsync({ kind: "consumed" });
-      state.draft = "";
-      const mutation = this.mutations;
-      if (mutation === undefined) {
-        return okAsync({
-          kind: "follow-up",
-          childId: child.childId,
-          text,
-        });
-      }
-      return mutation
-        .followUp(child.childId, child.generationId, text)
-        .map(() => ({
-          kind: "follow-up" as const,
-          childId: child.childId,
-          text,
-        }))
-        .mapErr(
-          (): ChildOverlayError =>
-            this.fallbackFromError(child.childId, "render-failed", {
-              type: "SourceUnavailable",
-              operation: "follow-up",
-            }),
-        );
+      return this.submitFollowUp(state.draft);
     }
 
     if (matchesKey(data, "ctrl+e") || data === "\x05") {
@@ -691,17 +649,11 @@ export class ChildOverlayController {
       });
     }
 
-    // All other input updates the overlay draft (or is swallowed). Never leak.
-    if (!isReadOnly(child) && data.length > 0 && !data.startsWith("\x1b")) {
-      if (data === "\x7f" || data === "\b") {
-        state.draft = state.draft.slice(0, -1);
-      } else if (!data.includes("\x00")) {
-        const next = boundText(state.draft + data);
-        state.draft = next;
-      }
-      return okAsync({ kind: "draft-updated", draft: state.draft });
-    }
-
+    // Everything else is consumed and changes nothing here. Draft text is
+    // owned by the overlay's editor component, which knows where the cursor
+    // is; it mirrors the resulting text back through `updateDraft`. Rebuilding
+    // the draft from raw bytes at this layer could only ever append at the end
+    // and delete from the end, which is not editing.
     return okAsync({ kind: "consumed" });
   }
 
@@ -732,6 +684,55 @@ export class ChildOverlayController {
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
+
+  private submitDraftMutation(
+    kind: "steer" | "follow-up",
+    submittedText: string,
+  ): ResultAsync<ChildOverlayInputOutcome, ChildOverlayError> {
+    const child = this.openChild;
+    if (child === undefined) return errAsync({ type: "OverlayNotOpen" });
+    const state = this.saved.get(child.childId);
+    if (state === undefined) return errAsync({ type: "OverlayNotOpen" });
+    if (isReadOnly(child) || !child.generationId) {
+      return okAsync({ kind: "consumed" });
+    }
+    const bounded = OverlayTextSchema.safeParse(submittedText.trim());
+    const text = bounded.success
+      ? bounded.data
+      : submittedText.trim().slice(0, CHILD_OVERLAY_BOUNDS.maxTextLength);
+    if (text.length === 0) return okAsync({ kind: "consumed" });
+
+    const draftAtSubmit = state.draft;
+    const clearSubmittedDraft = (): void => {
+      if (state.draft === draftAtSubmit) state.draft = "";
+    };
+    const outcome = (): ChildOverlayInputOutcome => ({
+      kind,
+      childId: child.childId,
+      text,
+    });
+    const mutation = this.mutations;
+    if (mutation === undefined) {
+      clearSubmittedDraft();
+      return okAsync(outcome());
+    }
+    const request =
+      kind === "steer"
+        ? mutation.steer(child.childId, child.generationId, text)
+        : mutation.followUp(child.childId, child.generationId, text);
+    return request
+      .map(() => {
+        clearSubmittedDraft();
+        return outcome();
+      })
+      .mapErr(
+        (): ChildOverlayError =>
+          this.fallbackFromError(child.childId, "render-failed", {
+            type: "SourceUnavailable",
+            operation: kind,
+          }),
+      );
+  }
 
   private withOpen(
     fn: (

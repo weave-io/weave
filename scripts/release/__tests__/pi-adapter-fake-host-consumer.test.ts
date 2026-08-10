@@ -52,6 +52,7 @@ export class CustomEditor {}
 export class ToolExecutionComponent {}
 export class UserMessageComponent {}
 export function getMarkdownTheme() { return {}; }
+export function getSelectListTheme() { return { selectedPrefix: (text) => text, selectedText: (text) => text, description: (text) => text, scrollInfo: (text) => text, noMatch: (text) => text }; }
 export function createBashToolDefinition() {}
 export function createEditToolDefinition() {}
 export function createFindToolDefinition() {}

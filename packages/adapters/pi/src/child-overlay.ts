@@ -388,6 +388,8 @@ export function createReadSessionEntryPageOverlaySource(deps: {
 
 export {
   createChildOverlayCustomComponent,
+  createChildOverlayDraftEditor,
+  PI_CHILD_OVERLAY_CUSTOM_OPTIONS,
   type PiChildOverlayCustomComponent,
 } from "./child-overlay-component.js";
 export {

@@ -116,6 +116,8 @@ export interface PiUiThemePort {
       | "error"
       | "success"
       | "dim"
+      | "border"
+      | "borderMuted"
       | "toolTitle"
       | "toolOutput",
     text: string,
@@ -146,6 +148,45 @@ export interface PiUiThemePort {
  */
 export interface PiUiDialogOptions {
   readonly timeout?: number;
+}
+
+/**
+ * Narrow mirror of Pi's `OverlayOptions` (`@earendil-works/pi-tui`,
+ * `dist/tui.d.ts`), limited to the fields this adapter sets.
+ *
+ * `maxHeight` is deliberately included even though the child overlay does not
+ * use it, because its semantics are the reason not to: Pi enforces it by
+ * keeping only the *first* `maxHeight` rows a component returns, so a
+ * component that draws a bottom border must budget its own height instead.
+ */
+export interface PiUiOverlayOptions {
+  readonly width?: number | `${number}%`;
+  readonly minWidth?: number;
+  readonly maxHeight?: number | `${number}%`;
+  readonly anchor?:
+    | "center"
+    | "top-left"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-right"
+    | "top-center"
+    | "bottom-center"
+    | "left-center"
+    | "right-center";
+  readonly margin?:
+    | number
+    | {
+        readonly top?: number;
+        readonly right?: number;
+        readonly bottom?: number;
+        readonly left?: number;
+      };
+}
+
+/** Narrow mirror of the options object Pi's `ctx.ui.custom` accepts. */
+export interface PiUiCustomOptions {
+  readonly overlay?: boolean;
+  readonly overlayOptions?: PiUiOverlayOptions;
 }
 
 /**
@@ -198,11 +239,17 @@ export interface PiUiPort {
   custom?<T>(
     factory: (
       tui: unknown,
-      theme: unknown,
+      /**
+       * Pi hands the factory its `Theme`, a colour palette. Components that
+       * need an `EditorTheme` (a record of styling functions) must build one
+       * from it; the two are not interchangeable, and passing a palette where
+       * a styling record belongs fails only at render time.
+       */
+      theme: PiUiThemePort,
       keybindings: unknown,
       done: (value: T) => void,
     ) => unknown,
-    options?: { readonly overlay?: boolean },
+    options?: PiUiCustomOptions,
   ): Promise<T>;
   /**
    * Interactive single-choice prompt (`ctx.ui.select`). Resolves to

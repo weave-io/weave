@@ -2858,7 +2858,7 @@ describe("createChildOverlayCustomComponent", () => {
     component.render(100);
     const after = controller.view()._unsafeUnwrap();
     expect(after.anchor?.entryId).toBe(before);
-    expect(after.width).toBe(100);
+    expect(after.width).toBe(98);
   });
 
   it("scrolls the viewport by rendered rows, not by entry count", async () => {
@@ -2938,6 +2938,33 @@ describe("createChildOverlayCustomComponent", () => {
     expect(followed.liveTail).toBe(true);
     expect(component.render(80).join("\n")).not.toContain(
       "newer line(s) below",
+    );
+  });
+
+  it("normalizes Kitty scroll presses and ignores release frames", async () => {
+    const { component, controller } = await mount({
+      status: "live",
+      entryCount: 80,
+    });
+    const initial = component.render(100).join("\n");
+    expect(initial).toContain("mouse wheel unavailable");
+
+    component.handleInput("\x1b[1;2:1A");
+    await flush();
+    component.render(100);
+    const afterPress = controller.view()._unsafeUnwrap().scrollOffset;
+    expect(afterPress).toBeGreaterThan(0);
+
+    component.handleInput("\x1b[1;2:3A");
+    await flush();
+    component.render(100);
+    expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(afterPress);
+
+    component.handleInput("\x1b[1;2:1B");
+    await flush();
+    component.render(100);
+    expect(controller.view()._unsafeUnwrap().scrollOffset).toBeLessThan(
+      afterPress,
     );
   });
 
@@ -3054,12 +3081,12 @@ describe("createChildOverlayCustomComponent", () => {
         },
       },
     });
-    controller.updateDraft("steer please")._unsafeUnwrap();
+    component.handleInput("steer please");
     component.handleInput(ENTER);
     await flush();
     expect(steers).toEqual(["steer please"]);
 
-    controller.updateDraft("follow later")._unsafeUnwrap();
+    component.handleInput("follow later");
     component.handleInput(ALT_ENTER);
     await flush();
     expect(followUps).toEqual(["follow later"]);
@@ -3090,6 +3117,18 @@ describe("createChildOverlayCustomComponent", () => {
       expect(steers).toEqual([]);
       expect(controller.view()._unsafeUnwrap().draft).toBe("");
     }
+  });
+
+  it("preserves native cursor, backspace, and multiline editing", async () => {
+    const { component, controller } = await mount({ status: "live" });
+    component.handleInput("abc");
+    component.handleInput("\x1b[D");
+    component.handleInput("\x7f");
+    expect(controller.view()._unsafeUnwrap().draft).toBe("ac");
+
+    component.handleInput("\x1b[13;2u");
+    component.handleInput("second");
+    expect(controller.view()._unsafeUnwrap().draft).toBe("a\nsecondc");
   });
 
   it("consumes input without primary-editor leakage and closes once on Escape", async () => {

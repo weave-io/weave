@@ -12,15 +12,15 @@ import {
   createChildOverlayConflictPort,
   createChildOverlayKeyMachine,
   isPiChildOverlayActionId,
-  parseChildOverlayKeyOverrides,
   PI_CHILD_OVERLAY_ACTION_IDS,
   PI_CHILD_OVERLAY_ACTIONS,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
-  planChildOverlayKeyRegistrations,
-  resolveChildOverlayCancelChoice,
   type PiChildOverlayHierarchyNode,
   type PiChildOverlayKeyContext,
   type PiChildOverlayKeyPlan,
+  parseChildOverlayKeyOverrides,
+  planChildOverlayKeyRegistrations,
+  resolveChildOverlayCancelChoice,
 } from "../child-overlay-keys.js";
 
 function mustPlan(
@@ -151,7 +151,13 @@ describe("child-overlay-keys actions and registration plans", () => {
     ).toBe(true);
     expect(
       parseChildOverlayKeyOverrides({
-        "weave.child.picker.open": ["alt+a", "alt+b", "alt+c", "alt+d", "alt+e"],
+        "weave.child.picker.open": [
+          "alt+a",
+          "alt+b",
+          "alt+c",
+          "alt+d",
+          "alt+e",
+        ],
       }).isErr(),
     ).toBe(true);
   });
@@ -173,9 +179,7 @@ describe("child-overlay-keys actions and registration plans", () => {
       ),
     ).toBe(false);
     expect(
-      plan.conflicts.some(
-        (c) => c.key === "alt+i" && c.owner === "app.open",
-      ),
+      plan.conflicts.some((c) => c.key === "alt+i" && c.owner === "app.open"),
     ).toBe(true);
     expect(
       plan.conflicts.some(
@@ -189,11 +193,14 @@ describe("child-overlay-keys actions and registration plans", () => {
     expect(plan.diagnostics[0]).toContain("already bound to");
 
     const extraCount = PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics + 8;
-    const floodedActions = Array.from({ length: extraCount }, (_unused, index) => ({
-      id: "weave.child.picker.open" as const,
-      defaultKeys: Object.freeze([`k${index}`]),
-      description: `flood ${index}`,
-    }));
+    const floodedActions = Array.from(
+      { length: extraCount },
+      (_unused, index) => ({
+        id: "weave.child.picker.open" as const,
+        defaultKeys: Object.freeze([`k${index}`]),
+        description: `flood ${index}`,
+      }),
+    );
     const flooded = mustPlan({
       // Synthetic table larger than the diagnostic ceiling.
       actions: floodedActions as unknown as typeof PI_CHILD_OVERLAY_ACTIONS,
@@ -312,7 +319,7 @@ describe("child-overlay-keys raw classification and hierarchy", () => {
 });
 
 describe("child-overlay-keys Backspace, Escape, and cancel", () => {
-  it("edits a nonempty draft and navigates/closes on empty Backspace", () => {
+  it("routes nonempty Backspace to the editor and navigates on empty", () => {
     const plan = mustPlan();
     const machine = createChildOverlayKeyMachine({ now: () => 0 });
     const hierarchy = nodes([
@@ -323,10 +330,7 @@ describe("child-overlay-keys Backspace, Escape, and cancel", () => {
     const edited = machine.handleBackspace(
       context(plan, hierarchy, "nested", "ab👍"),
     );
-    expect(edited._unsafeUnwrap()).toEqual({
-      kind: "draft-updated",
-      draft: "ab",
-    });
+    expect(edited._unsafeUnwrap()).toEqual({ kind: "overlay-input" });
 
     const toParent = machine.handleBackspace(
       context(plan, hierarchy, "nested", ""),

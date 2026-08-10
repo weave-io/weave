@@ -29,6 +29,98 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 const ELLIPSIS = "…";
 
 /**
+ * Columns the left and right rails of a bordered frame consume.
+ */
+const FRAME_SIDE_COLUMNS = 2;
+
+/**
+ * Rows the top and bottom edges of a bordered frame consume.
+ */
+export const FRAME_EDGE_ROWS = 2;
+
+/**
+ * Narrowest outer width at which a border is drawn.
+ *
+ * Two rail columns plus at least two content columns. Below this the frame is
+ * dropped entirely rather than squeezed: a border with no room for content is
+ * not a border, and forcing one is exactly how an over-wide line reaches Pi.
+ */
+const MIN_FRAME_WIDTH = FRAME_SIDE_COLUMNS + 2;
+
+/** Box-drawing pieces of the overlay frame. */
+const FRAME = {
+  topLeft: "┌",
+  topRight: "┐",
+  bottomLeft: "└",
+  bottomRight: "┘",
+  rail: "│",
+} as const;
+
+/** Geometry of the bordered frame for one outer width. */
+export interface OverlayFrameGeometry {
+  /** True when the outer width can carry a visible border. */
+  readonly bordered: boolean;
+  /** Columns available to the framed content. */
+  readonly innerWidth: number;
+  /** Rows the frame itself consumes. */
+  readonly reservedRows: number;
+}
+
+/**
+ * Reports how much room a bordered frame leaves at `outerWidth`.
+ *
+ * Callers lay their content out against {@link OverlayFrameGeometry.innerWidth}
+ * and subtract {@link OverlayFrameGeometry.reservedRows} from their row budget,
+ * so {@link frameLinesToWidth} never has to cut content it did not size.
+ */
+export function overlayFrameGeometry(outerWidth: number): OverlayFrameGeometry {
+  if (!Number.isFinite(outerWidth) || outerWidth < MIN_FRAME_WIDTH) {
+    return {
+      bordered: false,
+      innerWidth: Number.isFinite(outerWidth)
+        ? Math.max(0, Math.floor(outerWidth))
+        : 0,
+      reservedRows: 0,
+    };
+  }
+  return {
+    bordered: true,
+    innerWidth: Math.floor(outerWidth) - FRAME_SIDE_COLUMNS,
+    reservedRows: FRAME_EDGE_ROWS,
+  };
+}
+
+/**
+ * Draws a visible border around `lines` and fits every row to `outerWidth`.
+ *
+ * Every produced row, border rows included, goes through
+ * {@link fitLineToWidth}, so the frame can never be the line that aborts Pi.
+ * When the width is too narrow to carry a border the content is returned
+ * unframed and merely fitted. A border is a legibility affordance, never a
+ * reason to overflow.
+ */
+export function frameLinesToWidth(
+  lines: readonly string[],
+  outerWidth: number,
+): string[] {
+  const geometry = overlayFrameGeometry(outerWidth);
+  if (!geometry.bordered) return fitLinesToWidth(lines, outerWidth);
+
+  const max = Math.floor(outerWidth);
+  const edge = "─".repeat(geometry.innerWidth);
+  const framed = [
+    `${FRAME.topLeft}${edge}${FRAME.topRight}`,
+    ...lines.map((line) => {
+      const body = fitLineToWidth(line, geometry.innerWidth);
+      const padding = Math.max(0, geometry.innerWidth - visibleWidth(body));
+      return `${FRAME.rail}${body}${" ".repeat(padding)}${FRAME.rail}`;
+    }),
+    `${FRAME.bottomLeft}${edge}${FRAME.bottomRight}`,
+  ];
+  return framed.map((line) => fitLineToWidth(line, max));
+}
+
+/**
  * Narrowest width at which an ellipsis still leaves room for real content.
  * Below this the line is cut flush, because `…` alone carries no information.
  */

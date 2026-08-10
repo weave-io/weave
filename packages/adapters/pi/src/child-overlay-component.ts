@@ -9,8 +9,18 @@
  * overlay runtime imports this module except the `child-overlay.js` facade.
  */
 
-import { CustomEditor } from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
+import {
+  CustomEditor,
+  getSelectListTheme,
+  type KeybindingsManager,
+} from "@earendil-works/pi-coding-agent";
+import {
+  type EditorTheme,
+  isKeyRelease,
+  matchesKey,
+  type SelectListTheme,
+  type TUI,
+} from "@earendil-works/pi-tui";
 import {
   err,
   errAsync,
@@ -27,6 +37,7 @@ import type { ChildOverlayController } from "./child-overlay-controller.js";
 import type { PiChildOverlayKeyInterceptor } from "./child-overlay-keys.js";
 import { PI_CHILD_OVERLAY_SEARCH_TRIGGER } from "./child-overlay-keys.js";
 import { boundText } from "./child-overlay-replay.js";
+import { normalizeChildOverlayScrollFrame } from "./child-overlay-terminal-input.js";
 import {
   type ChildOverlayError,
   type ChildOverlayFallbackReason,
@@ -40,17 +51,17 @@ import {
   type PiTranscriptComponentFactory,
 } from "./child-transcript.js";
 import {
-  fitLinesToWidth,
+  fitLineToWidth,
   fitLineWithSuffix,
   fitRuleToWidth,
+  frameLinesToWidth,
+  overlayFrameGeometry,
 } from "./render-width.js";
+import type { PiUiThemePort } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Native custom component (Task 12 phase B1)
 // ---------------------------------------------------------------------------
-
-/** Rows Pi keeps for its own footer, status, and padding around the overlay. */
-const OVERLAY_RESERVED_HOST_ROWS = 6;
 
 /** Longest search query the prompt accepts before it stops taking input. */
 const OVERLAY_SEARCH_QUERY_MAX = 120;
@@ -74,9 +85,110 @@ const SEARCH_KEYS = {
 type OverlaySearchMode = "off" | "typing" | "navigate";
 
 export interface PiChildOverlayCustomComponent {
+  focused?: boolean;
   render(width: number): string[];
   handleInput(data: string): void;
   invalidate(): void;
+}
+
+/**
+ * Mount options for the child overlay's `ctx.ui.custom` call.
+ *
+ * `overlay: true` is the whole point: without it Pi *replaces* the editor with
+ * the component and clears the screen, so opening a child inspector would tear
+ * down the conversation view and the primary editor with it. As a floating
+ * surface the overlay draws on top of the existing screen, keeps the
+ * conversation visible behind it, and returns input to the editor on close.
+ *
+ * The sizing keeps the surface inside the terminal on every side, so the
+ * border this component draws is always visible rather than clipped:
+ *
+ * - `width` / `maxHeight` as percentages let the frame breathe on wide
+ *   terminals without ever exceeding the screen.
+ * - `margin` keeps one column and row of host content visible around the
+ *   frame, which is what makes it read as floating rather than full-screen.
+ * - No `minWidth` is set. A minimum wider than the terminal would force Pi to
+ *   hand the component a width it cannot honor, and an over-wide line aborts
+ *   Pi. Narrowness is handled by dropping the border, never by overflowing.
+ */
+export const PI_CHILD_OVERLAY_CUSTOM_OPTIONS = Object.freeze({
+  overlay: true,
+  overlayOptions: Object.freeze({
+    anchor: "center",
+    width: "90%",
+    maxHeight: "90%",
+    margin: 1,
+  }),
+} as const);
+
+const DEFAULT_TERMINAL_ROWS = 40;
+
+/**
+ * Return the same row limit Pi's overlay compositor applies after rendering.
+ * Staying within this limit keeps Pi's top-only truncation from removing the
+ * editor or bottom border.
+ */
+export function overlayUsableRows(tui: {
+  readonly terminal?: { readonly rows?: number };
+}): number {
+  const reportedRows = Result.fromThrowable(
+    () => tui.terminal?.rows,
+    () => undefined,
+  )().unwrapOr(undefined);
+  const terminalRows =
+    typeof reportedRows === "number" &&
+    Number.isFinite(reportedRows) &&
+    reportedRows > 0
+      ? Math.floor(reportedRows)
+      : DEFAULT_TERMINAL_ROWS;
+  const options = PI_CHILD_OVERLAY_CUSTOM_OPTIONS.overlayOptions;
+  const verticalMargin = Math.max(0, options.margin) * 2;
+  const available = Math.max(1, terminalRows - verticalMargin);
+  const maxHeight = options.maxHeight;
+  const requested =
+    typeof maxHeight === "number"
+      ? maxHeight
+      : Math.floor((terminalRows * Number.parseFloat(maxHeight)) / 100);
+  return Math.max(1, Math.min(Math.floor(requested), available));
+}
+
+/**
+ * Builds the overlay's steering / follow-up field.
+ *
+ * This is deliberately a {@link CustomEditor} and never a `pi-tui` `Input`.
+ * `Input` is a single-line field with no app keybindings: it cannot carry a
+ * multi-line follow-up, and it swallows the app shortcuts a user still expects
+ * while a child runs. `CustomEditor` is the same class Pi uses for its own
+ * prompt, so the overlay's field behaves like the primary editor.
+ *
+ * Factored out so the choice is directly assertable in a regression test.
+ */
+const FALLBACK_SELECT_LIST_THEME: SelectListTheme = Object.freeze({
+  selectedPrefix: (text: string) => text,
+  selectedText: (text: string) => text,
+  description: (text: string) => text,
+  scrollInfo: (text: string) => text,
+  noMatch: (text: string) => text,
+});
+
+/** Convert Pi's palette theme into the styling record its native editor needs. */
+export function toChildOverlayEditorTheme(theme: PiUiThemePort): EditorTheme {
+  const selectList = Result.fromThrowable(
+    () => getSelectListTheme(),
+    () => FALLBACK_SELECT_LIST_THEME,
+  )().unwrapOr(FALLBACK_SELECT_LIST_THEME);
+  return {
+    borderColor: (text: string) => theme.fg("border", text),
+    selectList,
+  };
+}
+
+export function createChildOverlayDraftEditor(
+  tui: TUI,
+  theme: PiUiThemePort,
+  keybindings: KeybindingsManager,
+): CustomEditor {
+  return new CustomEditor(tui, toChildOverlayEditorTheme(theme), keybindings);
 }
 
 function isOverlayFallbackRequired(
@@ -94,8 +206,8 @@ function isOverlayFallbackRequired(
  */
 export function createChildOverlayCustomComponent(
   tui: TUI & { readonly width?: number; requestRender(): void },
-  theme: EditorTheme,
-  keybindings: ConstructorParameters<typeof CustomEditor>[2],
+  theme: PiUiThemePort,
+  keybindings: KeybindingsManager,
   controller: ChildOverlayController,
   done: () => void,
   onFallback: (fallback: ChildOverlayFallbackRequired) => void,
@@ -117,18 +229,21 @@ export function createChildOverlayCustomComponent(
   },
 ): PiChildOverlayCustomComponent {
   const searchTrigger = searchRoute.trigger;
-  const draftEditor = new CustomEditor(tui, theme, keybindings);
+  const draftEditor = createChildOverlayDraftEditor(tui, theme, keybindings);
   const transcriptRenderer = createPiChildTranscriptRenderer();
   let componentFactory: PiTranscriptComponentFactory | undefined;
   let dirty = true;
   let lines: string[] = [];
   let lastWidth = -1;
+  let lastUsableRows = -1;
   let finished = false;
   let fallbackEmitted = false;
   let inputBusy = false;
   let searchMode: OverlaySearchMode = "off";
   let searchDraft = "";
   let searchMatchIndex = 0;
+  let lastDraftChildId: string | undefined;
+  let lastDraftReadOnly: boolean | undefined;
 
   const finish = (): void => {
     if (finished) return;
@@ -172,21 +287,16 @@ export function createChildOverlayCustomComponent(
     return componentFactory;
   };
 
-  const visibleHeight = (): number => {
-    const rows = Result.fromThrowable(
-      () => tui.terminal?.rows,
-      () => "terminal_rows_unavailable" as const,
-    )().unwrapOr(undefined);
-    const usable = typeof rows === "number" && rows > 0 ? rows : 40;
-    return Math.max(8, usable - OVERLAY_RESERVED_HOST_ROWS);
-  };
+  const usableRows = (): number => overlayUsableRows(tui);
 
-  const syncDraftEditor = (view: ChildOverlayView): void => {
-    if (view.readOnly) {
-      if (draftEditor.getText() !== "") draftEditor.setText("");
-      return;
-    }
-    if (draftEditor.getText() !== view.draft) draftEditor.setText(view.draft);
+  const syncDraftEditorTransition = (view: ChildOverlayView): void => {
+    const childChanged = lastDraftChildId !== view.child.childId;
+    const readOnlyChanged = lastDraftReadOnly !== view.readOnly;
+    if (!childChanged && !readOnlyChanged) return;
+    lastDraftChildId = view.child.childId;
+    lastDraftReadOnly = view.readOnly;
+    const nextText = view.readOnly ? "" : view.draft;
+    if (draftEditor.getText() !== nextText) draftEditor.setText(nextText);
   };
 
   const renderEditorLines = (width: number, readOnly: boolean): string[] => {
@@ -250,6 +360,21 @@ export function createChildOverlayCustomComponent(
     return header;
   };
 
+  /**
+   * Pi does not enable terminal mouse reporting, so wheel events cannot reach
+   * this component. Keep the keyboard controls visible until Pi adds a mouse
+   * input surface.
+   */
+  const helpLines = (view: ChildOverlayView, width: number): string[] => {
+    const help = [
+      "Scroll: PgUp/PgDn or Shift+↑/↓ · Home/End · mouse wheel unavailable",
+    ];
+    if (!view.readOnly) {
+      help.push("Enter steers · Alt+Enter queues a follow-up");
+    }
+    return help.map((line) => fitLineToWidth(boundText(line), width));
+  };
+
   const renderTranscriptLines = (
     view: ChildOverlayView,
     width: number,
@@ -303,8 +428,6 @@ export function createChildOverlayCustomComponent(
       emitFallback(outcome.value);
       return;
     }
-    const view = controller.view();
-    if (view.isOk()) syncDraftEditor(view.value);
     requestPaint();
   };
 
@@ -441,64 +564,172 @@ export function createChildOverlayCustomComponent(
     return okAsync(undefined);
   };
 
+  const isControllerInput = (
+    data: string,
+    normalizedScroll: string | undefined,
+  ): boolean =>
+    normalizedScroll !== undefined ||
+    matchesKey(data, "ctrl+e") ||
+    matchesKey(data, "alt+left") ||
+    matchesKey(data, "alt+right") ||
+    matchesKey(data, "alt+up") ||
+    matchesKey(data, "alt+down");
+
+  const handleControllerInput = (data: string): void => {
+    if (inputBusy) return;
+    inputBusy = true;
+    void handlePaginationEdge(data)
+      .andThen(() => controller.handleInput(data))
+      .match(
+        (value) => {
+          inputBusy = false;
+          afterControllerOutcome(ok(value));
+        },
+        (error) => {
+          inputBusy = false;
+          afterControllerOutcome(err(error));
+        },
+      );
+  };
+
+  const submitDraft = (kind: "steer" | "follow-up"): void => {
+    if (inputBusy) return;
+    const view = controller.view();
+    if (view.isErr() || view.value.readOnly) return;
+    const text = draftEditor.getExpandedText().trim();
+    if (text.length === 0) return;
+    const editorTextAtSubmit = draftEditor.getText();
+    inputBusy = true;
+    const submission =
+      kind === "steer"
+        ? controller.submitSteer(text)
+        : controller.submitFollowUp(text);
+    void submission.match(
+      (outcome) => {
+        inputBusy = false;
+        if (
+          outcome.kind === kind &&
+          draftEditor.getText() === editorTextAtSubmit
+        ) {
+          draftEditor.setText("");
+        }
+        controller.updateDraft(draftEditor.getText()).match(
+          () => afterControllerOutcome(ok(outcome)),
+          (error) => afterControllerOutcome(err(error)),
+        );
+      },
+      (error) => {
+        inputBusy = false;
+        afterControllerOutcome(err(error));
+      },
+    );
+  };
+
+  const handleDraftEditorInput = (data: string): void => {
+    const view = controller.view();
+    if (view.isErr() || view.value.readOnly) return;
+    draftEditor.handleInput(data);
+    controller.updateDraft(draftEditor.getText()).match(
+      () => requestPaint(),
+      (error) => afterControllerOutcome(err(error)),
+    );
+  };
+
   return {
-    render(width) {
+    get focused() {
+      return draftEditor.focused;
+    },
+    set focused(value: boolean) {
+      if (draftEditor.focused === value) return;
+      draftEditor.focused = value;
+      requestPaint();
+    },
+    render(outerWidth) {
+      const frame = overlayFrameGeometry(outerWidth);
+      const width = frame.innerWidth;
       const rendered = Result.fromThrowable(
         (): string[] => {
           if (finished) return lines;
-          const resized = controller.resize(width, visibleHeight());
-          if (resized.isErr()) {
-            if (isOverlayFallbackRequired(resized.error)) {
-              emitFallback(resized.error);
-            } else if (
-              !("type" in resized.error) ||
-              resized.error.type !== "OverlayNotOpen"
-            ) {
-              emitFallback("render-failed");
-            }
-            return lines;
-          }
-          const view = resized.value;
-          if (dirty || width !== lastWidth) {
-            syncDraftEditor(view);
+          const rowLimit = usableRows();
+          const innerRows = Math.max(0, rowLimit - frame.reservedRows);
+          const current = controller.view();
+          if (current.isErr()) return lines;
+          let view = current.value;
+          if (dirty || width !== lastWidth || rowLimit !== lastUsableRows) {
+            syncDraftEditorTransition(view);
             const header = headerLines(view, width);
-            const editorLines = renderEditorLines(width, view.readOnly);
-            const transcript = renderTranscriptLines(view, width);
+            const help = helpLines(view, width);
+            const editor = renderEditorLines(width, view.readOnly).slice(
+              -innerRows,
+            );
+            let leadingRows = Math.max(0, innerRows - editor.length);
+            const visibleHeader = header.slice(0, leadingRows);
+            leadingRows -= visibleHeader.length;
+            const visibleHelp = help.slice(0, leadingRows);
+            leadingRows -= visibleHelp.length;
+            const transcriptBudget = Math.max(0, leadingRows);
+            const viewport = controller.resize(
+              width,
+              Math.max(1, transcriptBudget),
+            );
+            if (viewport.isErr()) {
+              if (isOverlayFallbackRequired(viewport.error)) {
+                emitFallback(viewport.error);
+              } else if (
+                !("type" in viewport.error) ||
+                viewport.error.type !== "OverlayNotOpen"
+              ) {
+                emitFallback("render-failed");
+              }
+              return lines;
+            }
+            view = viewport.value;
+            const transcript =
+              transcriptBudget > 0
+                ? renderTranscriptLines(view, width)
+                : ok<readonly string[], ChildOverlayFallbackRequired>([]);
             if (transcript.isErr()) {
               emitFallback(transcript.error);
               return lines;
             }
-            const budget = Math.max(
-              1,
-              visibleHeight() - editorLines.length - header.length - 1,
+
+            const contentBudget =
+              view.scrollOffset > 0 && transcriptBudget > 0
+                ? transcriptBudget - 1
+                : transcriptBudget;
+            const scrollMax = Math.max(
+              0,
+              transcript.value.length - contentBudget,
             );
-            const scrollMax = Math.max(0, transcript.value.length - budget);
-            // Scroll is measured here, in rendered rows, and reported back so
-            // the controller clamps in the same unit the viewport paints.
-            // Paint the offset the controller returns, not the one captured
-            // before the measurement: growth at the tail is compensated inside
-            // `setScrollExtent`, and reusing the stale offset would slide this
-            // frame toward the tail before the next render corrected it.
-            const measuredOffset = controller.setScrollExtent(scrollMax).match(
+            let scrollOffset = controller.setScrollExtent(scrollMax).match(
               (measured) => measured.scrollOffset,
               () => view.scrollOffset,
             );
-            const scrollOffset = Math.min(measuredOffset, scrollMax);
+            scrollOffset = Math.min(scrollOffset, scrollMax);
             const end = transcript.value.length - scrollOffset;
+            const visibleTranscript = transcript.value.slice(
+              Math.max(0, end - contentBudget),
+              end,
+            );
             lines = [
-              ...header,
-              ...transcript.value.slice(Math.max(0, end - budget), end),
-              ...(scrollOffset > 0
+              ...visibleHeader,
+              ...visibleTranscript,
+              ...(scrollOffset > 0 && transcriptBudget > 0
                 ? [
-                    boundText(
-                      `${scrollOffset} newer line(s) below — End follows output`,
+                    fitLineToWidth(
+                      boundText(
+                        `${scrollOffset} newer line(s) below — End follows output`,
+                      ),
+                      width,
                     ),
                   ]
                 : []),
-              ...editorLines,
-            ];
+              ...visibleHelp,
+              ...editor,
+            ].slice(0, innerRows);
             dirty = false;
             lastWidth = width;
+            lastUsableRows = rowLimit;
           }
           return lines;
         },
@@ -507,46 +738,41 @@ export function createChildOverlayCustomComponent(
           return lines;
         },
       )().unwrapOr(lines);
-      // Pi aborts when any custom-component line exceeds the passed width.
-      // Fit every return path, including cached and fallback frames.
-      return fitLinesToWidth(rendered, width);
+      return frameLinesToWidth(rendered, outerWidth).slice(0, usableRows());
     },
     handleInput(data) {
-      if (finished || inputBusy) return;
+      if (finished || isKeyRelease(data)) return;
       Result.fromThrowable(
         () => {
-          // Search owns the keyboard whenever it is open, so no key can reach
-          // the interceptor, the draft editor, or Pi while the prompt is up.
           if (handleSearchInput(data)) return;
+          const normalizedScroll = normalizeChildOverlayScrollFrame(data);
+          const routedData = normalizedScroll ?? data;
           if (keyInterceptor !== undefined) {
             const consumed = Result.fromThrowable(
-              () => keyInterceptor(data),
+              () => keyInterceptor(routedData),
               () => "overlay_key_interceptor_failed" as const,
-              // A failing interceptor must not leak the key onward, so an
-              // exception is treated as "consumed" rather than "ignored".
             )().unwrapOr(true);
             if (consumed) return;
           } else if (
-            keybindings.matches(data, "tui.select.cancel") ||
-            data === "\x1b"
+            keybindings.matches(routedData, "tui.select.cancel") ||
+            routedData === "\x1b"
           ) {
-            // Without Task 13 mounted, Escape keeps its Task 12 meaning.
             finish();
             return;
           }
-          inputBusy = true;
-          void handlePaginationEdge(data)
-            .andThen(() => controller.handleInput(data))
-            .match(
-              (value) => {
-                inputBusy = false;
-                afterControllerOutcome(ok(value));
-              },
-              (error) => {
-                inputBusy = false;
-                afterControllerOutcome(err(error));
-              },
-            );
+          if (matchesKey(routedData, "alt+enter")) {
+            submitDraft("follow-up");
+            return;
+          }
+          if (matchesKey(routedData, "enter")) {
+            submitDraft("steer");
+            return;
+          }
+          if (isControllerInput(routedData, normalizedScroll)) {
+            handleControllerInput(routedData);
+            return;
+          }
+          handleDraftEditorInput(data);
         },
         () => "overlay_input_failed" as const,
       )().match(

@@ -775,17 +775,17 @@ export class PiChildOverlayKeyMachine {
   }
 
   /**
-   * Backspace. A nonempty draft is edited and never navigates. An empty draft
-   * opens the parent, or closes the overlay when the focused child is direct.
+   * Backspace. A nonempty draft belongs to the overlay's editor, which deletes
+   * at the cursor; this machine only claims Backspace when there is no draft,
+   * where it opens the parent or closes the overlay for a direct child.
    */
   handleBackspace(
     context: PiChildOverlayKeyContext,
   ): Result<PiChildOverlayKeyOutcome, PiChildOverlayKeyError> {
     if (context.draft.length > 0) {
-      return ok({
-        kind: "draft-updated",
-        draft: [...context.draft].slice(0, -1).join(""),
-      });
+      // Deleting the last character regardless of cursor position would make
+      // the field unusable the moment the cursor is not at the end.
+      return ok({ kind: "overlay-input" });
     }
     const focused = context.focusedChildId;
     if (focused === undefined) return ok({ kind: "close-overlay" });

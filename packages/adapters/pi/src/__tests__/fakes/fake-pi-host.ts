@@ -814,7 +814,10 @@ export class RecordingFakePiHost {
             },
             terminal: { rows: this.terminalRows },
           },
-          {},
+          {
+            fg: (_color, text) => text,
+            bold: (text) => text,
+          },
           this.buildKeybindingsPort(),
           (value) => {
             this.customDoneCalls += 1;

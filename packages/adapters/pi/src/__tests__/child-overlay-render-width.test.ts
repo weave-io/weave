@@ -8,6 +8,7 @@ import {
   type MemoryOverlaySourceChild,
   type MemoryOverlaySourceEntry,
 } from "../child-overlay.js";
+import { overlayFrameGeometry } from "../render-width.js";
 
 /** Pi native components read the process-wide theme. */
 initTheme("default");
@@ -106,6 +107,19 @@ function assertLinesFit(lines: readonly string[], width: number): void {
   }
 }
 
+/**
+ * Strips the overlay frame so content assertions read the component's own
+ * rows. The frame is an overlay affordance, not content, and every assertion
+ * below is about what the reader sees inside it.
+ */
+function contentLines(lines: readonly string[], outerWidth: number): string[] {
+  const geometry = overlayFrameGeometry(outerWidth);
+  if (!geometry.bordered) return [...lines];
+  return lines
+    .slice(1, -1)
+    .map((line) => line.slice(1, -1).replace(/ +$/u, ""));
+}
+
 describe("child overlay render width (Task 20(f))", () => {
   it("keeps · LIVE when the 115-column header is rendered at width 51", async () => {
     const title = crashTitle();
@@ -114,7 +128,7 @@ describe("child overlay render width (Task 20(f))", () => {
     const lines = component.render(CRASH_TERMINAL_WIDTH);
     expect(lines.length).toBeGreaterThan(0);
     assertLinesFit(lines, CRASH_TERMINAL_WIDTH);
-    const header = lines[0] ?? "";
+    const header = contentLines(lines, CRASH_TERMINAL_WIDTH)[0] ?? "";
     expect(header.endsWith(LIVE_SUFFIX)).toBe(true);
     expect(header.startsWith("◆")).toBe(true);
     expect(visibleWidth(header)).toBeLessThanOrEqual(CRASH_TERMINAL_WIDTH);
@@ -134,7 +148,7 @@ describe("child overlay render width (Task 20(f))", () => {
     assertLinesFit(component.render(20), 20);
     const grown = component.render(51);
     assertLinesFit(grown, 51);
-    expect((grown[0] ?? "").endsWith(LIVE_SUFFIX)).toBe(true);
+    expect((contentLines(grown, 51)[0] ?? "").endsWith(LIVE_SUFFIX)).toBe(true);
   });
 
   it("fits ANSI, emoji, CJK, and combining-mark titles", async () => {
@@ -143,7 +157,16 @@ describe("child overlay render width (Task 20(f))", () => {
     for (const width of [10, 20, 51] as const) {
       const lines = component.render(width);
       assertLinesFit(lines, width);
-      expect((lines[0] ?? "").endsWith(LIVE_SUFFIX)).toBe(true);
+    }
+    // The status suffix is reserved only while the framed inner width can
+    // still carry a title beside it. At width 10 the frame leaves 8 columns
+    // and ` · LIVE` alone costs 7, so a bare status is correctly dropped in
+    // favor of naming the child.
+    for (const width of [20, 51] as const) {
+      const lines = component.render(width);
+      expect((contentLines(lines, width)[0] ?? "").endsWith(LIVE_SUFFIX)).toBe(
+        true,
+      );
     }
   });
 
