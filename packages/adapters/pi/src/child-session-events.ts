@@ -69,7 +69,7 @@ const Image = event("image", {
 const Usage = event("usage", { usage: boundedJson.optional() });
 
 // ---------------------------------------------------------------------------
-// Usage telemetry (Pi 0.83 field mapping)
+// Usage telemetry (Pi 0.83 / 0.84 field mapping)
 // ---------------------------------------------------------------------------
 
 /**
@@ -97,8 +97,13 @@ const Usage = event("usage", { usage: boundedJson.optional() });
  *   token field names, which is why the flat token names are accepted at the
  *   top level of the `usage` payload as well as inside a nested `usage`.
  *
- * Everything is optional: the child `usage` event carries `boundedJson`, so a
- * report with no usable field is a legitimate "unavailable" state.
+ * Pi emits this accounting on the terminal assistant message
+ * (`message_end.message.usage`), which is the authoritative live source; the
+ * standalone `usage` event is retained as a backward-compatible source for
+ * hosts and recorded sessions that carry usage on its own event.
+ *
+ * Everything is optional: both carriers are `boundedJson`, so a report with no
+ * usable field is a legitimate "unavailable" state.
  */
 export const MAX_CHILD_USAGE_TOKENS = 1_000_000_000;
 
@@ -159,17 +164,36 @@ const firstDefined = <T>(
   ...values: readonly (T | undefined)[]
 ): T | undefined => values.find((value) => value !== undefined);
 
+/** Build one report from already-located token, context, and model sources. */
+function usageReportFrom(
+  tokens: Record<string, unknown>,
+  context: Record<string, unknown>,
+  model: string | undefined,
+): PiChildUsageReport {
+  return {
+    inputTokens: tokenCount(tokens["input"]),
+    outputTokens: tokenCount(tokens["output"]),
+    cacheReadTokens: tokenCount(tokens["cacheRead"]),
+    cacheWriteTokens: tokenCount(tokens["cacheWrite"]),
+    reasoningTokens: tokenCount(tokens["reasoning"]),
+    totalTokens: tokenCount(tokens["totalTokens"]),
+    contextTokens: firstDefined(
+      tokenCount(context["tokens"]),
+      tokenCount(context["contextTokens"]),
+    ),
+    contextWindow: tokenCount(context["contextWindow"]),
+    model,
+  };
+}
+
 /**
- * Narrow a parser-approved `usage` event into a bounded report.
- *
- * Never throws: expected failure is the typed {@link PiChildUsageError}, and
- * every individual field that is missing, malformed, or out of bounds is
- * simply absent from the returned report.
+ * Standalone `usage` event: the backward-compatible source kept for hosts and
+ * recorded sessions that emit usage on its own event rather than on the
+ * terminal assistant message.
  */
-export function parsePiChildUsageReport(
+function parseStandaloneUsageEvent(
   event: PiChildSessionEvent,
 ): Result<PiChildUsageReport, PiChildUsageError> {
-  if (event.type !== "usage") return err({ type: "UsageUnavailable" });
   const record = event as unknown as Record<string, unknown>;
   const payload = recordOrUndefined(record["usage"]);
   if (payload === undefined) return err({ type: "UsageUnavailable" });
@@ -182,25 +206,137 @@ export function parsePiChildUsageReport(
     recordOrUndefined(payload["contextUsage"]) ??
     payload;
 
-  const report: PiChildUsageReport = {
-    inputTokens: tokenCount(tokens["input"]),
-    outputTokens: tokenCount(tokens["output"]),
-    cacheReadTokens: tokenCount(tokens["cacheRead"]),
-    cacheWriteTokens: tokenCount(tokens["cacheWrite"]),
-    reasoningTokens: tokenCount(tokens["reasoning"]),
-    totalTokens: tokenCount(tokens["totalTokens"]),
-    contextTokens: firstDefined(
-      tokenCount(context["tokens"]),
-      tokenCount(context["contextTokens"]),
+  return ok(
+    usageReportFrom(
+      tokens,
+      context,
+      firstDefined(
+        modelLabel(record["model"]),
+        modelLabel(payload["model"]),
+        modelLabel(tokens["model"]),
+      ),
     ),
-    contextWindow: tokenCount(context["contextWindow"]),
-    model: firstDefined(
-      modelLabel(record["model"]),
-      modelLabel(payload["model"]),
-      modelLabel(tokens["model"]),
+  );
+}
+
+/**
+ * Terminal assistant message: the authoritative live source.
+ *
+ * Pi reports real token accounting on `message_end.message.usage`, where
+ * `message` is the pi-ai `AssistantMessage` (`{ role: "assistant"; model;
+ * responseModel?; usage: Usage; ... }`). A message that carries no usage
+ * object is not a report and leaves any retained report untouched.
+ */
+function parseAssistantMessageUsage(
+  event: PiChildSessionEvent,
+): Result<PiChildUsageReport, PiChildUsageError> {
+  const record = event as unknown as Record<string, unknown>;
+  const message = recordOrUndefined(record["message"]);
+  if (message === undefined) return err({ type: "UsageUnavailable" });
+  const role = message["role"];
+  // Only the assistant message carries model accounting; anything else that
+  // happens to have a `usage` key is not an authoritative report.
+  if (typeof role === "string" && role !== "assistant") {
+    return err({ type: "UsageUnavailable" });
+  }
+  const payload = recordOrUndefined(message["usage"]);
+  if (payload === undefined) return err({ type: "UsageUnavailable" });
+
+  const tokens = recordOrUndefined(payload["usage"]) ?? payload;
+  // `ContextUsage` is a separate host structure; it is read only where the
+  // host actually places it and is never inferred from the token totals.
+  const context =
+    recordOrUndefined(message["contextUsage"]) ??
+    recordOrUndefined(message["context"]) ??
+    recordOrUndefined(record["contextUsage"]) ??
+    recordOrUndefined(record["context"]) ??
+    {};
+
+  return ok(
+    usageReportFrom(
+      tokens,
+      context,
+      firstDefined(
+        modelLabel(message["model"]),
+        modelLabel(message["responseModel"]),
+        modelLabel(record["model"]),
+      ),
     ),
+  );
+}
+
+/**
+ * Narrow a parser-approved event into a bounded usage report.
+ *
+ * Two authoritative sources are accepted: the terminal `message_end` assistant
+ * message Pi actually emits, and the standalone `usage` event some hosts and
+ * recorded sessions still carry.
+ *
+ * Never throws: expected failure is the typed {@link PiChildUsageError}, and
+ * every individual field that is missing, malformed, or out of bounds is
+ * simply absent from the returned report.
+ */
+export function parsePiChildUsageReport(
+  event: PiChildSessionEvent,
+): Result<PiChildUsageReport, PiChildUsageError> {
+  if (event.type === "usage") return parseStandaloneUsageEvent(event);
+  if (event.type === "message_end") return parseAssistantMessageUsage(event);
+  return err({ type: "UsageUnavailable" });
+}
+
+/** Token fields projected out of a host `Usage` payload, in pi-ai order. */
+const USAGE_TOKEN_FIELDS = [
+  "input",
+  "output",
+  "cacheRead",
+  "cacheWrite",
+  "reasoning",
+  "totalTokens",
+] as const;
+
+/** Bounded usage facts recovered from one persisted assistant message. */
+export interface PiAssistantUsageFacts {
+  /** Bounded, non-negative integer token counts, keyed by pi-ai field name. */
+  readonly usage?: Readonly<Record<string, number>>;
+  readonly model?: string;
+}
+
+/**
+ * Project the usage facts of a persisted assistant message into a bounded,
+ * payload-free record.
+ *
+ * Historical telemetry comes from native session entries, which store the same
+ * pi-ai `AssistantMessage`. Only the known token fields and the model label are
+ * copied, so no raw host payload, cost figure, or path can travel with them.
+ * `undefined` means the message carried no usable usage fact.
+ */
+export function projectAssistantUsageFacts(
+  message: unknown,
+): PiAssistantUsageFacts | undefined {
+  const record = recordOrUndefined(message);
+  if (record === undefined) return undefined;
+  const payload = recordOrUndefined(record["usage"]);
+  const tokens =
+    payload === undefined
+      ? undefined
+      : (recordOrUndefined(payload["usage"]) ?? payload);
+
+  const usage: Record<string, number> = {};
+  if (tokens !== undefined) {
+    for (const field of USAGE_TOKEN_FIELDS) {
+      const count = tokenCount(tokens[field]);
+      if (count !== undefined) usage[field] = count;
+    }
+  }
+  const model = firstDefined(
+    modelLabel(record["model"]),
+    modelLabel(record["responseModel"]),
+  );
+  if (Object.keys(usage).length === 0 && model === undefined) return undefined;
+  return {
+    ...(Object.keys(usage).length > 0 ? { usage } : {}),
+    ...(model === undefined ? {} : { model }),
   };
-  return ok(report);
 }
 const QueueChange = event("queue_change", {
   size: z.number().int().min(0).max(MAX_CHILD_EVENT_ITEMS).optional(),

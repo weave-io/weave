@@ -24,8 +24,10 @@ import {
   RunActionSchema,
 } from "./child-overlay-types.js";
 import {
+  type PiAssistantUsageFacts,
   type PiChildSessionEvent,
   parsePiChildSessionEvent,
+  projectAssistantUsageFacts,
 } from "./child-session-events.js";
 import {
   createPiChildTranscriptState,
@@ -679,7 +681,14 @@ export function mapNativeSessionEntryToOverlay(
     const parts = nativeMessageParts(message.data.message);
     if (parts.isErr()) return err(parts.error);
     if (parts.value.role === "assistant")
-      return assistantEntryFromParts(id, sequence, parts.value);
+      return assistantEntryFromParts(
+        id,
+        sequence,
+        parts.value,
+        // Historical telemetry: the persisted assistant message carries the
+        // same pi-ai usage accounting the live `message_end` event does.
+        projectAssistantUsageFacts(message.data.message),
+      );
     if (parts.value.role === "user")
       return userEntryFromParts(id, sequence, parts.value);
     return ok({
@@ -807,6 +816,7 @@ function assistantEntryFromParts(
   id: string,
   sequence: number,
   parts: NativeMessageParts,
+  usageFacts?: PiAssistantUsageFacts,
 ): Result<ChildOverlayEntry, ChildOverlayMappingError> {
   const steps: ChildOverlayReplayStep[] = [];
   const start = pushReplayEvent(steps, {
@@ -829,7 +839,13 @@ function assistantEntryFromParts(
   }
   const end = pushReplayEvent(steps, {
     type: "message_end",
-    message: { id, role: "assistant", content: parts.text },
+    message: {
+      id,
+      role: "assistant",
+      content: parts.text,
+      ...(usageFacts?.usage === undefined ? {} : { usage: usageFacts.usage }),
+      ...(usageFacts?.model === undefined ? {} : { model: usageFacts.model }),
+    },
   });
   if (end.isErr()) return err(end.error);
   for (const mimeType of parts.images) {
