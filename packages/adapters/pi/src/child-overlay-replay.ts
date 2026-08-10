@@ -64,8 +64,10 @@ const RunDividerDataSchema = z.looseObject({
 });
 
 /** C0 except TAB/LF/CR, DEL, and C1 U+0080–U+009F — String.raw for Biome. */
-const BOUND_TEXT_CONTROL_PATTERN =
-  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0080-\u009f]/gu;
+const BOUND_TEXT_CONTROL_PATTERN = new RegExp(
+  String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0080-\u009f]`,
+  "gu",
+);
 
 export function boundText(value: string): string {
   const clean = value.replace(BOUND_TEXT_CONTROL_PATTERN, "");
