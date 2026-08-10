@@ -43,6 +43,7 @@ import {
   type ChildOverlayFallbackReason,
   type ChildOverlayFallbackRequired,
   type ChildOverlayInputOutcome,
+  type ChildOverlayTelemetry,
   type ChildOverlayView,
   SCROLL_KEYS,
 } from "./child-overlay-types.js";
@@ -122,6 +123,69 @@ export const PI_CHILD_OVERLAY_CUSTOM_OPTIONS = Object.freeze({
 } as const);
 
 const DEFAULT_TERMINAL_ROWS = 40;
+
+/**
+ * Honest placeholder for any telemetry field the host did not report.
+ *
+ * Pin this exact character in render tests. Never invent `0`, `0%`, or an
+ * empty segment for an unknown value.
+ */
+const TELEMETRY_UNAVAILABLE = "—";
+
+/**
+ * Compact a bounded token count for the overlay header.
+ *
+ * Keeps labels short enough for narrow terminals while staying exact for
+ * sub-thousand counts. Values already passed Zod ceilings in Task 5.
+ */
+function formatOverlayTokenCount(count: number): string {
+  if (!Number.isFinite(count) || count < 0) return TELEMETRY_UNAVAILABLE;
+  const n = Math.floor(count);
+  if (n < 1_000) return String(n);
+  if (n < 1_000_000) {
+    const k = Math.round((n / 1_000) * 10) / 10;
+    return Number.isInteger(k) ? `${k}k` : `${k.toFixed(1)}k`;
+  }
+  if (n < 1_000_000_000) {
+    const m = Math.round((n / 1_000_000) * 10) / 10;
+    return Number.isInteger(m) ? `${m}M` : `${m.toFixed(1)}M`;
+  }
+  const g = Math.round((n / 1_000_000_000) * 10) / 10;
+  return Number.isInteger(g) ? `${g}B` : `${g.toFixed(1)}B`;
+}
+
+/**
+ * One consistent header meta line for {@link ChildOverlayView.telemetry}.
+ *
+ * Absent fields always render {@link TELEMETRY_UNAVAILABLE}. Context percent
+ * is shown only when the view already derived it from both host operands;
+ * unknown context never becomes `0%`.
+ */
+export function formatChildOverlayTelemetryLine(
+  telemetry: ChildOverlayTelemetry | undefined,
+): string {
+  const provider =
+    telemetry?.provider !== undefined && telemetry.provider.length > 0
+      ? telemetry.provider
+      : TELEMETRY_UNAVAILABLE;
+  const model =
+    telemetry?.model !== undefined && telemetry.model.length > 0
+      ? telemetry.model
+      : TELEMETRY_UNAVAILABLE;
+  const ctx =
+    telemetry?.contextPercent !== undefined
+      ? `${telemetry.contextPercent}%`
+      : TELEMETRY_UNAVAILABLE;
+  const input =
+    telemetry?.inputTokens !== undefined
+      ? formatOverlayTokenCount(telemetry.inputTokens)
+      : TELEMETRY_UNAVAILABLE;
+  const output =
+    telemetry?.outputTokens !== undefined
+      ? formatOverlayTokenCount(telemetry.outputTokens)
+      : TELEMETRY_UNAVAILABLE;
+  return `${provider} · ${model} · ctx ${ctx} · ${input} in / ${output} out`;
+}
 
 /**
  * Return the same row limit Pi's overlay compositor applies after rendering.
@@ -325,6 +389,11 @@ export function createChildOverlayCustomComponent(
     const header = [
       fitLineWithSuffix(`◆ ${title}`, ` · ${status}`, width),
       ...(meta.length > 0 ? [boundText(meta)] : []),
+      // Always one telemetry row: every absent field is `—`, never guessed.
+      fitLineToWidth(
+        boundText(formatChildOverlayTelemetryLine(view.telemetry)),
+        width,
+      ),
     ];
     if (view.readOnly) {
       header.push(

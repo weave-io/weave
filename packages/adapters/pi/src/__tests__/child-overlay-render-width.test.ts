@@ -8,6 +8,7 @@ import {
   type MemoryOverlaySourceChild,
   type MemoryOverlaySourceEntry,
 } from "../child-overlay.js";
+import { formatChildOverlayTelemetryLine } from "../child-overlay-component.js";
 import { overlayFrameGeometry } from "../render-width.js";
 
 /** Pi native components read the process-wide theme. */
@@ -191,6 +192,115 @@ describe("child overlay render width (Task 20(f))", () => {
       for (const line of lines) {
         expect(line).toBe("");
       }
+    }
+  });
+});
+
+describe("child overlay telemetry header (Task 6)", () => {
+  const usageEvent = (
+    usage: unknown,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    type: "usage",
+    usage,
+    ...extra,
+  });
+
+  it("formats the full telemetry line with compact token counts", () => {
+    expect(
+      formatChildOverlayTelemetryLine({
+        provider: "openai",
+        model: "openai/gpt-5.6",
+        inputTokens: 12_300,
+        outputTokens: 4_100,
+        contextPercent: 42,
+      }),
+    ).toBe("openai · openai/gpt-5.6 · ctx 42% · 12.3k in / 4.1k out");
+  });
+
+  it("renders — for every absent field and never invents 0%", () => {
+    expect(formatChildOverlayTelemetryLine(undefined)).toBe(
+      "— · — · ctx — · — in / — out",
+    );
+    expect(
+      formatChildOverlayTelemetryLine({
+        contextTokens: 900,
+      }),
+    ).toBe("— · — · ctx — · — in / — out");
+    expect(formatChildOverlayTelemetryLine(undefined)).not.toContain("0%");
+  });
+
+  it("formats large bounded token counts without overflowing the label", () => {
+    const line = formatChildOverlayTelemetryLine({
+      provider: "cursor",
+      model: "cursor/grok-4.5",
+      inputTokens: 999_999_999,
+      outputTokens: 1_000_000_000,
+      contextPercent: 100,
+    });
+    expect(line).toBe(
+      "cursor · cursor/grok-4.5 · ctx 100% · 1000M in / 1B out",
+    );
+    expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+  });
+
+  it("renders full telemetry inside the overlay header", async () => {
+    const { component, controller } = await mount("telemetry-child");
+    const applied = controller.applyLiveEvent(
+      usageEvent(
+        {
+          input: 12_300,
+          output: 4_100,
+          context: { tokens: 4_200, contextWindow: 10_000 },
+        },
+        { model: "openai/gpt-5.6" },
+      ),
+    );
+    expect(applied.isOk()).toBe(true);
+    component.invalidate();
+    const lines = component.render(100);
+    assertLinesFit(lines, 100);
+    const content = contentLines(lines, 100);
+    expect(content).toContain(
+      "openai · openai/gpt-5.6 · ctx 42% · 12.3k in / 4.1k out",
+    );
+  });
+
+  it("renders the fully-unavailable telemetry line when the host reported nothing", async () => {
+    const { component } = await mount("no-telemetry");
+    const lines = component.render(80);
+    assertLinesFit(lines, 80);
+    expect(contentLines(lines, 80)).toContain(
+      "— · — · ctx — · — in / — out",
+    );
+    expect(lines.join("\n")).not.toContain("ctx 0%");
+  });
+
+  it("keeps the telemetry line truncation-safe at ~40 columns", async () => {
+    const { component, controller } = await mount("narrow-telemetry");
+    controller
+      .applyLiveEvent(
+        usageEvent(
+          {
+            input: 12_300,
+            output: 4_100,
+            context: { tokens: 4_200, contextWindow: 10_000 },
+          },
+          { model: "openai/gpt-5.6" },
+        ),
+      )
+      ._unsafeUnwrap();
+    component.invalidate();
+    for (const width of [40, 41, 42] as const) {
+      const lines = component.render(width);
+      assertLinesFit(lines, width);
+      const meta = contentLines(lines, width).find((line) =>
+        line.includes("ctx"),
+      );
+      expect(meta).toBeDefined();
+      expect(visibleWidth(meta ?? "")).toBeLessThanOrEqual(
+        overlayFrameGeometry(width).innerWidth,
+      );
     }
   });
 });

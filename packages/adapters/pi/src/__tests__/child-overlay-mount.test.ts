@@ -34,7 +34,10 @@ import {
   type MemoryOverlaySourceEntry,
   PI_CHILD_OVERLAY_CUSTOM_OPTIONS,
 } from "../child-overlay.js";
-import { overlayUsableRows } from "../child-overlay-component.js";
+import {
+  formatChildOverlayTelemetryLine,
+  overlayUsableRows,
+} from "../child-overlay-component.js";
 import {
   FRAME_EDGE_ROWS,
   frameLinesToWidth,
@@ -347,6 +350,40 @@ describe("child overlay steering field", () => {
     expect(lines).toHaveLength(6);
     expect(lines.join("\n")).toContain("short draft");
     expect(lines.at(-1)?.startsWith("└")).toBe(true);
+  });
+
+  it("keeps draft editor and bottom border at the shortest supported height with telemetry", async () => {
+    // rows=8 is the shortest height this suite treats as keeping draft text
+    // visible (usableRows 6 → 4 inner rows after the frame). The extra
+    // telemetry header row must not steal those editor/border rows.
+    const rows = 8;
+    const { component, controller } = await mount({}, rows);
+    controller
+      .applyLiveEvent({
+        type: "usage",
+        usage: {
+          input: 12_300,
+          output: 4_100,
+          context: { tokens: 4_200, contextWindow: 10_000 },
+        },
+        model: "openai/gpt-5.6",
+      })
+      ._unsafeUnwrap();
+    component.handleInput("shortest draft");
+    component.invalidate();
+    const lines = component.render(80);
+    expect(lines.length).toBeLessThanOrEqual(
+      overlayUsableRows({ terminal: { rows } }),
+    );
+    expect(lines.join("\n")).toContain("shortest draft");
+    expect(lines.at(-1)?.startsWith("└")).toBe(true);
+    expect(lines[0]?.startsWith("┌")).toBe(true);
+    // At this height the meta line is budgeted away; taller renders show it.
+    expect(
+      formatChildOverlayTelemetryLine(
+        controller.view()._unsafeUnwrap().telemetry,
+      ),
+    ).toBe("openai · openai/gpt-5.6 · ctx 42% · 12.3k in / 4.1k out");
   });
 
   it("never renders more rows than Pi keeps from rows 4 through 80", async () => {

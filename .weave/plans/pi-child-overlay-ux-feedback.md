@@ -144,7 +144,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - Tests cover: valid payload → populated fields; missing/oversized/malformed payload → absent fields, typed non-throwing path; latest-wins replacement; per-child isolation.
     - Commit: `feat(pi): project bounded child usage telemetry into the overlay view`.
 
-- [ ] 6. Render telemetry in the overlay header with honest unavailable states
+- [x] 6. Render telemetry in the overlay header with honest unavailable states
   - **What**: Add a header meta line showing provider, model, context %, and tokens, rendering `—` for any absent field, truncation-safe at all widths.
   - **Files**: `packages/adapters/pi/src/child-overlay-component.ts` (header layout), `__tests__/child-overlay-render-width.test.ts`, `__tests__/child-overlay-mount.test.ts`.
   - **Depends on**: Task 5.
