@@ -371,6 +371,7 @@ export function createChildOverlayCustomComponent(
     ];
     if (!view.readOnly) {
       help.push("Enter steers · Alt+Enter queues a follow-up");
+      help.push("q cancels this child (confirm required) · Esc exits");
     }
     return help.map((line) => fitLineToWidth(boundText(line), width));
   };

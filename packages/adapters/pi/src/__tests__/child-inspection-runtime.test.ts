@@ -1391,3 +1391,265 @@ describe("live child picker with degraded thread sources", () => {
     ]);
   });
 });
+
+/**
+ * Task 4: cancelling a child is reachable only through `q` on an empty draft
+ * plus an explicit confirmation. Every other resolution leaves it running.
+ */
+describe("child cancellation behind q with explicit confirmation", () => {
+  const CHILD_ID = "overlay-1";
+  const CHILD_TITLE = "Refactor the parser";
+
+  async function cancelHarness(
+    options: {
+      readonly childStatus?: "running" | "completed";
+      readonly overlayStatus?: "live" | "settled";
+      readonly select?: (
+        title: string,
+        labels: readonly string[],
+      ) => Promise<unknown>;
+    } = {},
+  ): Promise<{
+    readonly intercept: (data: string) => boolean;
+    readonly controller: ReturnType<typeof createChildOverlayController>;
+    readonly selects: {
+      readonly title: string;
+      readonly labels: readonly string[];
+    }[];
+    readonly cancelled: string[];
+    readonly notices: string[];
+    readonly setGeneration: (generationId: string) => void;
+  }> {
+    const status = options.childStatus ?? "running";
+    const registry = new PiChildInspectionRegistry();
+    await registry.register({
+      id: CHILD_ID,
+      parentId: ROOT_NODE_ID,
+      name: CHILD_ID,
+      kind: "ordinary",
+      snapshot: () => ({
+        id: CHILD_ID,
+        parentId: undefined,
+        name: CHILD_ID,
+        status,
+        currentTurn: 1,
+        currentTool: undefined,
+        startedAtMs: 1,
+        elapsedMs: 0,
+        usage: {} as never,
+        latestOutput: "",
+      }),
+    });
+
+    const overlayCell = createChildOverlayCell();
+    const overlayKeysCell = createChildOverlayKeysCell(() => 1);
+    const registryCell = createChildInspectionRegistryCell();
+    registryCell.registry = registry;
+    const delegationCell = createDelegationControllerCell();
+
+    const selects: {
+      readonly title: string;
+      readonly labels: readonly string[];
+    }[] = [];
+    const notices: string[] = [];
+    let generation = "gen-1";
+    const ctx = {
+      cwd: "/repo",
+      hasUI: true,
+      ui: {
+        notify: (message: string) => notices.push(message),
+        select: async (title: string, labels: readonly string[]) => {
+          selects.push({ title, labels });
+          if (options.select === undefined) return undefined;
+          return await options.select(title, labels);
+        },
+      },
+    } as never;
+
+    const runtime = createChildInspectionRuntime({
+      overlayCell,
+      overlayKeysCell,
+      inspectionEditorCell: createChildInspectionEditorCell(),
+      inspectionRegistryCell: registryCell,
+      treeSelectionCell: createChildTreeSelectionCell(),
+      threadSourcesCell: createThreadSourcesCell(),
+      delegationControllerCell: delegationCell,
+      latestSessionCtx: () => ctx,
+      activeGenerationId: () => generation,
+      parentSessionState: () => ({ persistence: "unknown", sessionId: "" }),
+      childInspectionSettings: () => undefined,
+      closeOverlay: () => closeChildOverlay(overlayCell, overlayKeysCell),
+      hostKeybindings: () => ({ getResolvedBindings: () => ({}) }),
+    });
+
+    const cancelled: string[] = [];
+    delegationCell.controller = {
+      cancelSubtree: (nodeId: string) => {
+        cancelled.push(nodeId);
+        return okAsync(undefined);
+      },
+    } as never;
+
+    const entries: MemoryOverlaySourceEntry[] = [
+      {
+        id: "e0",
+        payload: {
+          type: "message",
+          id: "e0",
+          parentId: null,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "assistant", content: "overlay line" },
+        },
+      },
+    ];
+    const source = createMemoryChildOverlaySource([
+      {
+        childId: CHILD_ID,
+        threadId: CHILD_ID,
+        status: options.overlayStatus ?? "live",
+        title: CHILD_TITLE,
+        generationId: "gen-1",
+        runs: [{ run: 1, action: "start" }],
+        branchIds: ["main"],
+        descendantChildIds: [],
+        entries,
+      },
+    ]);
+    const controller = createChildOverlayController(source, { pageSize: 40 });
+    const opened = await controller.open(CHILD_ID);
+    expect(opened.isOk()).toBe(true);
+    overlayCell.controller = controller;
+    overlayCell.generationId = "gen-1";
+    overlayCell.open = true;
+
+    runtime.maybeRegisterOverlayKeys(recordingPi().pi, undefined, "gen-1");
+    runtime.bindOverlayKeyInterceptor("gen-1");
+    const interceptor = overlayKeysCell.interceptor;
+    expect(interceptor).toBeDefined();
+
+    return {
+      intercept: (data: string) => interceptor?.(data) ?? false,
+      controller,
+      selects,
+      cancelled,
+      notices,
+      setGeneration: (generationId: string) => {
+        generation = generationId;
+      },
+    };
+  }
+
+  async function settle(): Promise<void> {
+    for (let tick = 0; tick < 8; tick += 1) await Promise.resolve();
+  }
+
+  test("q on an empty draft prompts with the child's bounded title and cancels once on explicit confirm", async () => {
+    const harness = await cancelHarness({
+      select: async () => "Cancel subtree",
+    });
+
+    expect(harness.intercept("q")).toBe(true);
+    await settle();
+
+    expect(harness.selects).toHaveLength(1);
+    expect(harness.selects[0]?.title).toBe(
+      `Cancel "${CHILD_TITLE}" and its subtree?`,
+    );
+    expect(harness.selects[0]?.labels).toEqual([
+      "Keep running",
+      "Cancel subtree",
+    ]);
+    expect(harness.cancelled).toEqual([CHILD_ID]);
+  });
+
+  test("Q behaves exactly like q", async () => {
+    const harness = await cancelHarness({ select: async () => 1 });
+    expect(harness.intercept("Q")).toBe(true);
+    await settle();
+    expect(harness.selects).toHaveLength(1);
+    expect(harness.cancelled).toEqual([CHILD_ID]);
+  });
+
+  test("q with a non-empty draft types into the editor instead of prompting", async () => {
+    const harness = await cancelHarness({
+      select: async () => "Cancel subtree",
+    });
+    expect(harness.controller.updateDraft("qu").isOk()).toBe(true);
+
+    // `false` means the byte was not consumed: the overlay editor receives it.
+    expect(harness.intercept("q")).toBe(false);
+    expect(harness.intercept("Q")).toBe(false);
+    await settle();
+
+    expect(harness.selects).toEqual([]);
+    expect(harness.cancelled).toEqual([]);
+  });
+
+  test("every non-confirm resolution leaves the child running", async () => {
+    const resolutions: readonly (() => Promise<unknown>)[] = [
+      // Dismissed modal / no choice at all.
+      async () => undefined,
+      // Explicit keep-running choice, by label and by index.
+      async () => "Keep running",
+      async () => 0,
+      // Unknown choice the host may invent.
+      async () => 99,
+      // Timeout / select failure surfaces as a throw from the host.
+      async () => {
+        throw new Error("select timed out");
+      },
+    ];
+
+    for (const select of resolutions) {
+      const harness = await cancelHarness({ select });
+      expect(harness.intercept("q")).toBe(true);
+      await settle();
+      expect(harness.selects).toHaveLength(1);
+      expect(harness.cancelled).toEqual([]);
+    }
+  });
+
+  test("a generation change while the modal is open cancels nothing", async () => {
+    let setGeneration: ((generationId: string) => void) | undefined;
+    const harness = await cancelHarness({
+      select: async () => {
+        setGeneration?.("gen-2");
+        return "Cancel subtree";
+      },
+    });
+    setGeneration = harness.setGeneration;
+
+    expect(harness.intercept("q")).toBe(true);
+    await settle();
+
+    expect(harness.selects).toHaveLength(1);
+    expect(harness.cancelled).toEqual([]);
+  });
+
+  test("a settled, read-only child never opens the confirmation", async () => {
+    const harness = await cancelHarness({
+      overlayStatus: "settled",
+      select: async () => "Cancel subtree",
+    });
+
+    // The key is still consumed, so it never reaches the primary editor.
+    expect(harness.intercept("q")).toBe(true);
+    await settle();
+
+    expect(harness.selects).toEqual([]);
+    expect(harness.cancelled).toEqual([]);
+  });
+
+  test("a completed child in the hierarchy never opens the confirmation", async () => {
+    const harness = await cancelHarness({
+      childStatus: "completed",
+      select: async () => "Cancel subtree",
+    });
+
+    expect(harness.intercept("q")).toBe(true);
+    await settle();
+
+    expect(harness.selects).toEqual([]);
+    expect(harness.cancelled).toEqual([]);
+  });
+});

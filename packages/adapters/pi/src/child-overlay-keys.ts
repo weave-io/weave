@@ -28,6 +28,7 @@
  */
 import { type KeyId, matchesKey } from "@earendil-works/pi-tui";
 import { err, ok, Result } from "neverthrow";
+import { boundText } from "./child-overlay-replay.js";
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -41,6 +42,8 @@ export const PI_CHILD_OVERLAY_KEY_BOUNDS = Object.freeze({
   maxKeyLength: 32,
   maxDiagnostics: 64,
   maxHierarchyNodes: 512,
+  /** Ceiling on the child label interpolated into the cancel prompt. */
+  maxCancelLabelLength: 48,
 });
 
 // ---------------------------------------------------------------------------
@@ -662,8 +665,42 @@ export function childOverlayParent(
 // Outcomes and the input state machine
 // ---------------------------------------------------------------------------
 
-/** Title of the Task 4 cancel confirmation. Escape never opens it. */
+/**
+ * Title of the Task 4 cancel confirmation. Only `q` on an empty draft opens
+ * it; Escape never does.
+ */
 export const CHILD_OVERLAY_CANCEL_PROMPT = "Cancel this child subtree?";
+
+/**
+ * Cancel prompt naming the focused child. The label goes through the existing
+ * overlay `boundText` helper and is then capped at
+ * `maxCancelLabelLength`, so no unbounded host text reaches the modal title.
+ */
+export function childOverlayCancelPrompt(label: string | undefined): string {
+  if (label === undefined) return CHILD_OVERLAY_CANCEL_PROMPT;
+  const clean = boundText(label).trim();
+  if (clean.length === 0) return CHILD_OVERLAY_CANCEL_PROMPT;
+  const bounded = [...clean]
+    .slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxCancelLabelLength)
+    .join("");
+  return `Cancel "${bounded}" and its subtree?`;
+}
+
+/**
+ * Keys that open the cancel confirmation while the overlay owns the keyboard.
+ * They are deliberately absent from {@link PI_CHILD_OVERLAY_ACTIONS}: `q` is
+ * never registered as a host shortcut, so typing `q` outside the overlay - and
+ * inside a non-empty overlay draft - keeps its ordinary meaning.
+ */
+export const CHILD_OVERLAY_CANCEL_KEYS = Object.freeze([
+  "q",
+  "shift+q",
+] as const satisfies readonly KeyId[]);
+
+/** True when raw input is `q` or `Q`, matched semantically, never by byte. */
+export function isChildOverlayCancelKey(data: string): boolean {
+  return CHILD_OVERLAY_CANCEL_KEYS.some((key) => matchesKey(data, key));
+}
 
 export const CHILD_OVERLAY_CANCEL_CHOICES = Object.freeze([
   "Keep running",
@@ -680,8 +717,9 @@ export type PiChildOverlayKeyOutcome =
   | { readonly kind: "no-target" }
   | { readonly kind: "draft-updated"; readonly draft: string }
   /**
-   * Reserved for the explicit Task 4 cancel route. Escape never produces it:
-   * one Escape closes the overlay and leaves the child running.
+   * The explicit Task 4 cancel route: `q`/`Q` on an empty draft over a live
+   * focused child. Escape never produces it: one Escape closes the overlay and
+   * leaves the child running.
    */
   | {
       readonly kind: "confirm-cancel-subtree";
@@ -789,6 +827,31 @@ export class PiChildOverlayKeyMachine {
     return ok({ kind: "close-overlay" });
   }
 
+  /**
+   * `q` / `Q`. Claimed only when the draft is empty, exactly like Backspace:
+   * a nonempty draft belongs to the overlay's editor, so the byte is typed
+   * instead of opening the modal. A settled or otherwise inactive child never
+   * opens the modal either - cancelling it would be a no-op, so the key is
+   * reported as having no target rather than prompting for nothing.
+   */
+  handleCancelKey(
+    context: PiChildOverlayKeyContext,
+  ): Result<PiChildOverlayKeyOutcome, PiChildOverlayKeyError> {
+    if (context.draft.length > 0) return ok({ kind: "overlay-input" });
+    const focused = context.focusedChildId;
+    if (focused === undefined) return ok({ kind: "no-target" });
+    const validated = validateHierarchy(context.nodes);
+    if (validated.isErr()) return err(validated.error);
+    const node = context.nodes.find((entry) => entry.childId === focused);
+    if (node === undefined || !node.active) return ok({ kind: "no-target" });
+    return ok({
+      kind: "confirm-cancel-subtree",
+      childId: focused,
+      choices: CHILD_OVERLAY_CANCEL_CHOICES,
+      defaultChoice: CHILD_OVERLAY_CANCEL_DEFAULT_CHOICE,
+    });
+  }
+
   /** Single entry point for overlay-mounted raw input. */
   handleInput(
     data: string,
@@ -798,6 +861,7 @@ export class PiChildOverlayKeyMachine {
     const action = classifyChildOverlayKey(context.plan, data);
     if (action !== undefined) return this.handleAction(action, context);
     if (matchesKey(data, "backspace")) return this.handleBackspace(context);
+    if (isChildOverlayCancelKey(data)) return this.handleCancelKey(context);
     return ok({ kind: "overlay-input" });
   }
 }
@@ -831,7 +895,7 @@ export interface PiChildOverlayKeyInterceptorDeps {
   readonly focusChild: (childId: string) => void;
   readonly closeOverlay: () => void;
   readonly updateDraft: (draft: string) => void;
-  /** Reserved for the explicit Task 4 cancel route; Escape never calls it. */
+  /** The explicit `q` cancel route; Escape never calls it. */
   readonly confirmCancelSubtree: (childId: string) => void;
   /** One bounded line per stale / no-target / invalid-hierarchy outcome. */
   readonly report: (detail: string) => void;
@@ -852,6 +916,7 @@ export function createChildOverlayKeyInterceptor(
       if (
         matchesKey(data, "escape") ||
         matchesKey(data, "backspace") ||
+        isChildOverlayCancelKey(data) ||
         classifyChildOverlayKey(EMPTY_PLAN, data) !== undefined
       ) {
         deps.report(

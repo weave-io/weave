@@ -3,13 +3,17 @@ import {
   applyChildOverlayKeyPlan,
   CHILD_OVERLAY_CANCEL_CHOICES,
   CHILD_OVERLAY_CANCEL_DEFAULT_CHOICE,
+  CHILD_OVERLAY_CANCEL_KEYS,
+  CHILD_OVERLAY_CANCEL_PROMPT,
   childOverlayActionFromId,
   childOverlayActiveSlots,
+  childOverlayCancelPrompt,
   childOverlaySibling,
   childOverlayTreeOrder,
   classifyChildOverlayKey,
   createChildOverlayConflictPort,
   createChildOverlayKeyMachine,
+  isChildOverlayCancelKey,
   isPiChildOverlayActionId,
   PI_CHILD_OVERLAY_ACTION_IDS,
   PI_CHILD_OVERLAY_ACTIONS,
@@ -402,6 +406,91 @@ describe("child-overlay-keys Backspace, Escape, and cancel", () => {
       kind: "cancel-subtree",
       childId: "c1",
     });
+  });
+
+  it("opens the cancel confirmation only for q on an empty draft over a live child", () => {
+    const plan = mustPlan();
+    const machine = createChildOverlayKeyMachine({ now: () => 0 });
+    const hierarchy = nodes([
+      { childId: "child", order: 1 },
+      { childId: "settled", order: 2, active: false },
+    ]);
+
+    // Empty draft: both q and Q open the confirmation for the focused child.
+    for (const key of ["q", "Q"]) {
+      expect(
+        machine
+          .handleInput(key, context(plan, hierarchy, "child", ""))
+          ._unsafeUnwrap(),
+      ).toEqual({
+        kind: "confirm-cancel-subtree",
+        childId: "child",
+        choices: CHILD_OVERLAY_CANCEL_CHOICES,
+        defaultChoice: CHILD_OVERLAY_CANCEL_DEFAULT_CHOICE,
+      });
+    }
+
+    // Nonempty draft: the byte belongs to the overlay editor, so it is typed.
+    for (const key of ["q", "Q"]) {
+      expect(
+        machine
+          .handleInput(key, context(plan, hierarchy, "child", "qu"))
+          ._unsafeUnwrap(),
+      ).toEqual({ kind: "overlay-input" });
+    }
+
+    // A settled (read-only) child cannot be cancelled: no modal is offered.
+    expect(
+      machine
+        .handleInput("q", context(plan, hierarchy, "settled", ""))
+        ._unsafeUnwrap(),
+    ).toEqual({ kind: "no-target" });
+
+    // Nothing focused: no destructive prompt without a target.
+    expect(
+      machine
+        .handleInput("q", context(plan, hierarchy, undefined, ""))
+        ._unsafeUnwrap(),
+    ).toEqual({ kind: "no-target" });
+
+    // A child that is not in the hierarchy at all is likewise no target.
+    expect(
+      machine
+        .handleInput("q", context(plan, hierarchy, "ghost", ""))
+        ._unsafeUnwrap(),
+    ).toEqual({ kind: "no-target" });
+  });
+
+  it("keeps q out of the registered shortcut plan and matches it semantically", () => {
+    const plan = mustPlan();
+    for (const registration of plan.registrations) {
+      expect(CHILD_OVERLAY_CANCEL_KEYS).not.toContain(registration.key);
+      expect(registration.key).not.toBe("q");
+      expect(registration.key).not.toBe("shift+q");
+    }
+    expect(classifyChildOverlayKey(plan, "q")).toBeUndefined();
+    expect(classifyChildOverlayKey(plan, "Q")).toBeUndefined();
+    expect(isChildOverlayCancelKey("q")).toBe(true);
+    expect(isChildOverlayCancelKey("Q")).toBe(true);
+    expect(isChildOverlayCancelKey("a")).toBe(false);
+    expect(isChildOverlayCancelKey("\x1b")).toBe(false);
+  });
+
+  it("names the focused child in bounded cancel-prompt copy", () => {
+    expect(childOverlayCancelPrompt(undefined)).toBe(
+      CHILD_OVERLAY_CANCEL_PROMPT,
+    );
+    expect(childOverlayCancelPrompt("   ")).toBe(CHILD_OVERLAY_CANCEL_PROMPT);
+    expect(childOverlayCancelPrompt("Refactor parser")).toBe(
+      'Cancel "Refactor parser" and its subtree?',
+    );
+    const long = childOverlayCancelPrompt("x".repeat(4000));
+    expect(long.length).toBeLessThanOrEqual(
+      PI_CHILD_OVERLAY_KEY_BOUNDS.maxCancelLabelLength + 32,
+    );
+    expect(childOverlayCancelPrompt("bad\u0007title")).toBe(
+      'Cancel "badtitle" and its subtree?',
+    );
   });
 
   it("never forwards overlay-mounted input to the primary editor", () => {

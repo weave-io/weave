@@ -109,7 +109,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - Unit tests prove: Escape closes overlay, parent regains focus, zero cancellation side effects; Escape in search mode only exits search.
     - Commit: `feat(pi): make escape exit child inspection without cancelling`.
 
-- [ ] 4. Gate child cancellation behind `q` with explicit confirmation
+- [x] 4. Gate child cancellation behind `q` with explicit confirmation
   - **What**: While inspecting a child, `q` with an empty draft opens a confirmation modal; only an explicit confirm cancels/kills the child subtree; cancel/dismiss/timeout/error leaves it running. With a non-empty draft, `q` types into the draft as today.
   - **Files**: `packages/adapters/pi/src/child-overlay-keys.ts` (key machine: `q` handling analogous to Backspace's empty-draft gating; rename hint constant), `child-inspection-runtime.ts` (`confirmCancelSubtree` wiring reused; prompt copy), `child-overlay-component.ts` (help line mentions `q`), `__tests__/child-overlay-keys.test.ts`, `__tests__/child-inspection-runtime.test.ts`.
   - **Depends on**: Task 3.

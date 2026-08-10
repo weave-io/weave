@@ -24,8 +24,8 @@ import type {
 import {
   applyChildOverlayKeyPlan,
   CHILD_OVERLAY_CANCEL_CHOICES,
-  CHILD_OVERLAY_CANCEL_PROMPT,
   captureChildOverlayKeybindings,
+  childOverlayCancelPrompt,
   childOverlayConflictPortFromHost,
   createChildOverlayKeyInterceptor,
   createChildOverlayKeyMachine,
@@ -770,12 +770,26 @@ export function createChildInspectionRuntime(
         if (ctx === undefined || deps.activeGenerationId() !== generationId) {
           return;
         }
+        // A settled / read-only child cannot be cancelled: prompting for it
+        // would offer a destructive choice that resolves to nothing.
+        const view = childOverlayCell.controller?.view().match(
+          (value) => value,
+          () => undefined,
+        );
+        if (view?.readOnly === true) {
+          reportOverlayKeyDiagnostic(
+            "weave overlay cancel ignored: child is read-only",
+          );
+          return;
+        }
+        const prompt = childOverlayCancelPrompt(
+          view?.child.childId === childId
+            ? (view?.child.title ?? childId)
+            : childId,
+        );
         void (async () => {
           const choice = await ResultAsync.fromThrowable(
-            () =>
-              ctx.ui.select(CHILD_OVERLAY_CANCEL_PROMPT, [
-                ...CHILD_OVERLAY_CANCEL_CHOICES,
-              ]),
+            () => ctx.ui.select(prompt, [...CHILD_OVERLAY_CANCEL_CHOICES]),
             () => "cancel confirm unavailable",
           )();
           if (deps.activeGenerationId() !== generationId) return;
