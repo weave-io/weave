@@ -74,7 +74,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - Proof doc exists, names one proven root cause with captured byte evidence, and states which file(s) Task 2 must change.
     - No production source files modified in this task's commit. Commit: `docs(pi): record child-overlay scroll root-cause diagnosis`.
 
-- [ ] 2. Fix overlay scrolling and add regression coverage
+- [x] 2. Fix overlay scrolling and add regression coverage
   - **What**: Implement the fix for the Task 1 root cause and lock it with Bun regression tests that fail on the pre-fix code.
   - **Files**: the file(s) named by Task 1 among `packages/adapters/pi/src/child-overlay-terminal-input.ts`, `child-inspection-runtime.ts`, `child-overlay-component.ts`, `child-overlay-scroll.ts`, `extension.ts`; tests in `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`, `__tests__/child-overlay-mount.test.ts`, and/or `__tests__/child-inspection-runtime.test.ts`.
   - **Depends on**: Task 1.

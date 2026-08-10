@@ -8,9 +8,9 @@
  * listener is the editor-ownership-independent route to the same dispatch.
  *
  * This module owns everything that route needs: reading it from a possibly
- * invalidated session context, comparing host identity, binding exactly one
- * listener, retrying a binding for an already-applied plan, and releasing it
- * on teardown. It depends only on the narrow
+ * invalidated session context, binding exactly one *proven live* listener,
+ * retrying a binding for an already-applied plan, and releasing it on
+ * teardown. It depends only on the narrow
  * {@link PiChildOverlayTerminalInputState} slice of the overlay-keys cell and
  * on the ports in {@link PiChildOverlayTerminalInputDeps}; it never reaches
  * into the inspection runtime, so generation ownership stays with the caller.
@@ -118,7 +118,13 @@ export interface PiChildOverlayTerminalInputState {
   plan: PiChildOverlayKeyPlan | undefined;
   /** Unsubscribe handle for the live listener, or none when unbound. */
   terminalInput: (() => void) | undefined;
-  /** The host UI object the live listener was installed on, or none. */
+  /**
+   * The host UI object the listener was last installed on, or none.
+   *
+   * Kept for teardown bookkeeping and diagnostics only. It is deliberately
+   * *not* evidence of liveness: Pi 0.83 clears extension listeners without
+   * replacing this object.
+   */
   terminalInputHost: unknown;
   diagnostics: readonly string[];
   generationId: string | undefined;
@@ -193,6 +199,13 @@ export function createChildOverlayTerminalInputBinder(
   deps: PiChildOverlayTerminalInputDeps,
 ): PiChildOverlayTerminalInputBinder {
   const state = deps.state;
+  /**
+   * Monotonic id of the listener this binder currently owns.
+   *
+   * Only the handler installed by the most recent successful `bind` acts; a
+   * closure from an earlier binding returns without touching any route.
+   */
+  let installedEpoch = 0;
 
   /**
    * Resolves the live raw-input route, or `undefined` when there is none.
@@ -204,9 +217,8 @@ export function createChildOverlayTerminalInputBinder(
    * throwing out of a lifecycle callback and degrades it to "no route", which
    * is exactly what an invalidated context is.
    *
-   * The returned `ui` is the host object itself, kept only so the caller can
-   * compare identity against
-   * {@link PiChildOverlayTerminalInputState.terminalInputHost}.
+   * The returned `ui` is the host object itself, recorded on the state only
+   * so teardown and diagnostics can name the host the listener went to.
    */
   const readTerminalInputRoute = ():
     | {
@@ -248,9 +260,9 @@ export function createChildOverlayTerminalInputBinder(
    *   consumed frame.
    *
    * Exactly one listener exists per live host UI, and generation teardown
-   * releases it through {@link releaseChildOverlayTerminalInput}. When Pi
-   * silently clears listeners on session invalidation or reload, the next
-   * lifecycle call sees a new UI context and rebinds exactly once.
+   * releases it through {@link releaseChildOverlayTerminalInput}. Liveness is
+   * proven by installation, never inferred: see the comment on the release
+   * inside {@link bind}.
    */
   const bind = (generationId: string, diagnostics: string[]): void => {
     const route = readTerminalInputRoute();
@@ -266,20 +278,33 @@ export function createChildOverlayTerminalInputBinder(
       }
       return;
     }
-    if (state.terminalInput !== undefined) {
-      // The live host already carries this generation's listener, so there is
-      // nothing to install and a second one must never be stacked.
-      if (state.terminalInputHost === route.ui) return;
-      // A different UI context is live, so Pi invalidated or reloaded the
-      // session since the handle was taken. `resetExtensionUI` already ran
-      // `clearExtensionTerminalInputListeners`, so the old listener is gone
-      // and the retained handle is inert; forgetting it here is what keeps
-      // the single-listener guard from skipping the rebind forever. Calling
-      // the stale handle is safe - Pi's per-listener unsubscribe is a
-      // remove-then-delete that no-ops once the listener is already gone.
-      releaseChildOverlayTerminalInput(state);
-    }
+    // Liveness is proven by installation, not inferred from the host object.
+    //
+    // Pi exposes no way to ask whether a listener is still installed:
+    // `ui.onTerminalInput` hands back an unsubscribe and nothing else. Pi
+    // 0.83's `resetExtensionUI()` - reached from session invalidation and
+    // from `/reload` - runs `clearExtensionTerminalInputListeners()` while
+    // leaving `runner.uiContext`, and therefore `ctx.ui`, the *same* object.
+    // Treating an unchanged host as proof that the retained handle is still
+    // live therefore pinned the route dead after any reset: the handle was an
+    // inert closure, both `bind` and `retry` returned early forever, and
+    // every overlay scroll frame fell through to Pi's own paging route.
+    //
+    // So each bind releases whatever handle it holds and subscribes once. The
+    // handle it keeps was returned by the subscribe call it just made, which
+    // is the only route-independent proof available. Releasing first is what
+    // keeps a second listener from stacking on a host that is still live;
+    // calling a stale handle is safe, because Pi's per-listener unsubscribe
+    // is a remove-then-delete that no-ops once the listener is already gone.
+    releaseChildOverlayTerminalInput(state);
+    installedEpoch += 1;
+    const epoch = installedEpoch;
     const handler: PiTerminalInputHandler = (data) => {
+      // Belt and braces for the single-listener invariant: if a host ever
+      // fails to remove a released listener, the superseded closure is inert
+      // rather than a second delivery path. One counter, so state stays
+      // bounded however many times the route is rebound.
+      if (epoch !== installedEpoch) return undefined;
       if (deps.isOverlayOpen()) {
         // The mounted overlay owns raw input through its own interceptor -
         // except for paging. Pi 0.83 claims PageUp/PageDown for its own
@@ -353,15 +378,10 @@ export function createChildOverlayTerminalInputBinder(
   const retry = (generationId: string): void => {
     if (state.status !== "applied") return;
     if (state.plan === undefined) return;
-    // A handle is only proof of a live listener while the host UI it was
-    // installed on is still the live one; after an invalidation or reload it
-    // is an inert closure and this generation still needs a listener.
-    if (
-      state.terminalInput !== undefined &&
-      state.terminalInputHost === readTerminalInputRoute()?.ui
-    ) {
-      return;
-    }
+    // No liveness guard here on purpose. A retained handle proves nothing
+    // once Pi can clear listeners behind an unchanged `ctx.ui`, so the retry
+    // delegates to `bind`, which releases and re-installs exactly one
+    // listener and therefore always leaves a provably live route behind.
     const previous = state.diagnostics;
     const diagnostics = [...previous];
     bind(generationId, diagnostics);

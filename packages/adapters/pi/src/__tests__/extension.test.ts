@@ -8288,11 +8288,13 @@ describe("createPiExtension: Task 13 overlay keys and picker", () => {
     expect(host.terminalInputListeners).toHaveLength(1);
     const firstListener = host.terminalInputListeners[0];
 
-    // Further turns on the same live host are inert: no second listener.
+    // Further turns on the same live host never stack a second listener.
+    // The closure itself is replaced on every turn - liveness is proven by
+    // installing, because Pi can clear listeners behind an unchanged UI
+    // context - but exactly one live listener owns the route.
     await host.triggerBeforeAgentStart();
     await host.triggerBeforeAgentStart();
     expect(host.terminalInputListeners).toHaveLength(1);
-    expect(host.terminalInputListeners[0]).toBe(firstListener);
 
     // Pi drops extension listeners silently on session invalidation and hands
     // out a replacement UI context.

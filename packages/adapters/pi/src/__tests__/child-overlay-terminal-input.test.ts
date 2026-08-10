@@ -4,12 +4,18 @@ import {
   planChildOverlayKeyRegistrations,
 } from "../child-overlay-keys.js";
 import {
+  maxScrollRows,
+  type OverlayScrollState,
+  scrollDelta,
+} from "../child-overlay-scroll.js";
+import {
   createChildOverlayTerminalInputBinder,
   isChildOverlayScrollFrame,
   normalizeChildOverlayScrollFrame,
   type PiChildOverlayTerminalInputState,
+  releaseChildOverlayTerminalInput,
 } from "../child-overlay-terminal-input.js";
-import { SCROLL_KEYS } from "../child-overlay-types.js";
+import { SCROLL_KEYS, SCROLL_PAGE } from "../child-overlay-types.js";
 import type { PiTerminalInputHandler } from "../types.js";
 
 /** The six frames the mounted overlay owns, in the order Task 20(b) proves. */
@@ -370,5 +376,247 @@ describe("raw scroll frames while the native overlay is mounted", () => {
 
     expect(scrolls).toEqual([]);
     expect(actions).toEqual([]);
+  });
+});
+
+/**
+ * Frames captured from a live Pi 0.83 PTY (Task 1 diagnosis, Herdr pane probe
+ * plus the isolated 0.83 pi-tui `matchesKey` / `isKeyRelease` table).
+ */
+const CAPTURED = {
+  /** `ESC [ 5 ~` - legacy CSI PageUp. */
+  legacyPageUp: "\x1b[5~",
+  /** `ESC [ 6 ~` - legacy CSI PageDown. */
+  legacyPageDown: "\x1b[6~",
+  /** `ESC [ 5;1:1 ~` - Kitty event-aware PageUp press. */
+  kittyPageUpPress: "\x1b[5;1:1~",
+  /** `ESC [ 5;1:3 ~` - Kitty event-aware PageUp release. */
+  kittyPageUpRelease: "\x1b[5;1:3~",
+  /** `ESC [ 6;1:1 ~` - Kitty event-aware PageDown press. */
+  kittyPageDownPress: "\x1b[6;1:1~",
+  /** `ESC [ 6;1:3 ~` - Kitty event-aware PageDown release. */
+  kittyPageDownRelease: "\x1b[6;1:3~",
+  /** `ESC O H` - SS3 Home. */
+  ss3Home: "\x1bOH",
+  /** `ESC O F` - SS3 End. */
+  ss3End: "\x1bOF",
+} as const;
+
+/**
+ * The full route under test, wired end to end: a Pi 0.83 shaped host, the real
+ * binder, and a controller that applies the real scroll model.
+ *
+ * `resetExtensionUI()` reproduces the exact Pi 0.83 behaviour Task 1 proved:
+ * `clearExtensionTerminalInputListeners()` drops every extension listener while
+ * `runner.uiContext` - and therefore `ctx.ui` - stays the *same object*. A
+ * binder that reads liveness from host identity is pinned dead from here on.
+ */
+function scrollRoute(): {
+  readonly host: ReturnType<typeof terminalInputHost>;
+  readonly state: PiChildOverlayTerminalInputState;
+  readonly binder: ReturnType<typeof createChildOverlayTerminalInputBinder>;
+  readonly controller: OverlayScrollState;
+  readonly dispatched: string[];
+  readonly resetExtensionUI: () => void;
+  readonly uiIdentity: () => unknown;
+} {
+  const host = terminalInputHost();
+  const plan = planChildOverlayKeyRegistrations({
+    conflicts: { ownerOf: () => undefined },
+  })._unsafeUnwrap();
+  const state: PiChildOverlayTerminalInputState = {
+    status: "applied",
+    plan,
+    terminalInput: undefined,
+    terminalInputHost: undefined,
+    diagnostics: Object.freeze([]),
+    generationId: undefined,
+  };
+  const ui = {
+    notify: () => undefined,
+    select: async () => undefined,
+    onTerminalInput: host.onTerminalInput,
+  };
+  const ctx = { cwd: "/repo", hasUI: true, ui } as never;
+  const controller: OverlayScrollState = {
+    scrollOffset: 0,
+    scrollExtent: 40,
+    liveTail: true,
+    pendingTailExtentAdjustment: false,
+    entries: [],
+    anchor: undefined,
+  };
+  const dispatched: string[] = [];
+  const binder = createChildOverlayTerminalInputBinder({
+    state,
+    latestSessionCtx: () => ctx,
+    isOverlayOpen: () => true,
+    activeGenerationId: () => "gen-1",
+    dispatchOverlayAction: () => undefined,
+    dispatchOverlayScroll: (data) => {
+      const delta = scrollDelta(data);
+      if (delta === undefined) return false;
+      dispatched.push(data);
+      const bound = maxScrollRows(controller);
+      if (delta === "oldest") controller.scrollOffset = bound;
+      else if (delta === "follow") controller.scrollOffset = 0;
+      else {
+        controller.scrollOffset = Math.min(
+          Math.max(controller.scrollOffset + delta, 0),
+          bound,
+        );
+      }
+      controller.liveTail = controller.scrollOffset === 0;
+      return true;
+    },
+  });
+  return {
+    host,
+    state,
+    binder,
+    controller,
+    dispatched,
+    resetExtensionUI: () => {
+      // Pi 0.83 `resetExtensionUI()`: listeners cleared, UI context retained.
+      for (const release of [...host.listeners]) void release;
+      host.listeners.splice(0, host.listeners.length);
+    },
+    uiIdentity: () => ui,
+  };
+}
+
+describe("listener liveness after Pi clears listeners behind the same UI context", () => {
+  test("retry rebinds and every captured encoding reaches controller state", () => {
+    // Pre-fix regression: `bind()` and `retry()` both read liveness from
+    // `state.terminalInputHost === ctx.ui`. Pi 0.83's `resetExtensionUI()`
+    // clears the listener without replacing that object, so both returned
+    // early forever, the listener count stayed at 0, and every scroll frame
+    // fell through to Pi's own editor paging route.
+    const route = scrollRoute();
+    route.binder.bind("gen-1", []);
+    expect(route.host.listeners.length).toBe(1);
+
+    // Legacy CSI PageUp, on the first binding.
+    expect(route.host.emit(CAPTURED.legacyPageUp)).toBe(true);
+    expect(route.controller.scrollOffset).toBe(SCROLL_PAGE);
+    expect(route.controller.liveTail).toBe(false);
+
+    const identityBefore = route.uiIdentity();
+    route.resetExtensionUI();
+    expect(route.host.listeners.length).toBe(0);
+    // The host object did not change; only the listener went away.
+    expect(route.uiIdentity()).toBe(identityBefore);
+    expect(route.state.terminalInputHost).toBe(identityBefore);
+    expect(route.state.terminalInput).not.toBeUndefined();
+    // Nothing reaches the overlay while the route is dead.
+    expect(route.host.emit(CAPTURED.legacyPageUp)).toBe(false);
+    expect(route.controller.scrollOffset).toBe(SCROLL_PAGE);
+
+    route.binder.retry("gen-1");
+
+    // Proven live: the handle held is the one this subscribe call returned.
+    expect(route.host.listeners.length).toBe(1);
+
+    // Legacy CSI, after the rebind.
+    expect(route.host.emit(CAPTURED.legacyPageUp)).toBe(true);
+    expect(route.controller.scrollOffset).toBe(2 * SCROLL_PAGE);
+    expect(route.host.emit(CAPTURED.legacyPageDown)).toBe(true);
+    expect(route.controller.scrollOffset).toBe(SCROLL_PAGE);
+
+    // Kitty event-aware press frames.
+    expect(route.host.emit(CAPTURED.kittyPageUpPress)).toBe(true);
+    expect(route.controller.scrollOffset).toBe(2 * SCROLL_PAGE);
+    expect(route.host.emit(CAPTURED.kittyPageDownPress)).toBe(true);
+    expect(route.controller.scrollOffset).toBe(SCROLL_PAGE);
+
+    // Kitty release frames stay suppressed: one physical press must not page
+    // twice under event reporting.
+    expect(route.host.emit(CAPTURED.kittyPageUpRelease)).toBe(false);
+    expect(route.host.emit(CAPTURED.kittyPageDownRelease)).toBe(false);
+    expect(route.controller.scrollOffset).toBe(SCROLL_PAGE);
+
+    // SS3 Home / End.
+    expect(route.host.emit(CAPTURED.ss3Home)).toBe(true);
+    expect(route.controller.scrollOffset).toBe(maxScrollRows(route.controller));
+    expect(route.host.emit(CAPTURED.ss3End)).toBe(true);
+    expect(route.controller.scrollOffset).toBe(0);
+    expect(route.controller.liveTail).toBe(true);
+
+    expect(route.dispatched).toEqual([
+      SCROLL_KEYS.pageUp,
+      SCROLL_KEYS.pageUp,
+      SCROLL_KEYS.pageDown,
+      SCROLL_KEYS.pageUp,
+      SCROLL_KEYS.pageDown,
+      SCROLL_KEYS.home,
+      SCROLL_KEYS.end,
+    ]);
+    expect(route.state.diagnostics).toEqual([]);
+  });
+
+  test("bind also rebinds after a reset that kept the UI context", () => {
+    const route = scrollRoute();
+    route.binder.bind("gen-1", []);
+    route.resetExtensionUI();
+
+    const diagnostics: string[] = [];
+    route.binder.bind("gen-1", diagnostics);
+
+    expect(route.host.listeners.length).toBe(1);
+    expect(diagnostics).toEqual([]);
+    expect(route.host.emit(CAPTURED.legacyPageUp)).toBe(true);
+    expect(route.controller.scrollOffset).toBe(SCROLL_PAGE);
+  });
+
+  test("repeated binds and retries keep exactly one listener and one delivery", () => {
+    const route = scrollRoute();
+    route.binder.bind("gen-1", []);
+    route.binder.bind("gen-1", []);
+    route.binder.retry("gen-1");
+    route.binder.retry("gen-1");
+    route.resetExtensionUI();
+    route.binder.retry("gen-1");
+    route.binder.retry("gen-1");
+
+    expect(route.host.listeners.length).toBe(1);
+
+    expect(route.host.emit(CAPTURED.legacyPageUp)).toBe(true);
+
+    // One press, one dispatch, one page of controller movement.
+    expect(route.dispatched).toEqual([SCROLL_KEYS.pageUp]);
+    expect(route.controller.scrollOffset).toBe(SCROLL_PAGE);
+  });
+
+  test("a superseded listener that the host fails to remove stays inert", () => {
+    // Belt and braces for the single-listener invariant: even a host whose
+    // unsubscribe does nothing must not gain a second delivery path.
+    const route = scrollRoute();
+    route.binder.bind("gen-1", []);
+    const stale = route.host.listeners[0];
+    expect(stale).not.toBeUndefined();
+    route.resetExtensionUI();
+    route.binder.retry("gen-1");
+    // Re-insert the superseded closure ahead of the live one.
+    route.host.listeners.unshift(stale as PiTerminalInputHandler);
+    expect(route.host.listeners.length).toBe(2);
+
+    expect(route.host.emit(CAPTURED.legacyPageUp)).toBe(true);
+
+    expect(route.dispatched).toEqual([SCROLL_KEYS.pageUp]);
+    expect(route.controller.scrollOffset).toBe(SCROLL_PAGE);
+  });
+
+  test("teardown releases the listener and stops delivery", () => {
+    const route = scrollRoute();
+    route.binder.bind("gen-1", []);
+
+    releaseChildOverlayTerminalInput(route.state);
+
+    expect(route.host.listeners.length).toBe(0);
+    expect(route.state.terminalInput).toBeUndefined();
+    expect(route.state.terminalInputHost).toBeUndefined();
+    expect(route.host.emit(CAPTURED.legacyPageUp)).toBe(false);
+    expect(route.dispatched).toEqual([]);
+    expect(route.controller.scrollOffset).toBe(0);
   });
 });

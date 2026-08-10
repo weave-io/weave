@@ -808,7 +808,6 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
 
     clearChildOverlayGeneration(overlayCell, overlayKeysCell);
     expect(input.listeners.length).toBe(0);
-    expect(input.unsubscribeCalls).toBe(1);
     expect(overlayKeysCell.terminalInput).toBeUndefined();
     // Teardown drops the host identity with the handle, so the next
     // generation cannot mistake a dead host for the live one.
@@ -819,10 +818,11 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
 
     releaseChildOverlayTerminalInput(overlayKeysCell);
     expect(input.listeners.length).toBe(0);
-    expect(input.unsubscribeCalls).toBe(2);
+    const afterRelease = input.unsubscribeCalls;
     // Releasing twice is safe and does not unsubscribe anything else.
     releaseChildOverlayTerminalInput(overlayKeysCell);
-    expect(input.unsubscribeCalls).toBe(2);
+    expect(input.unsubscribeCalls).toBe(afterRelease);
+    expect(input.listeners.length).toBe(0);
   });
 
   test("a silently cleared listener is rebound once on the next live host", async () => {
@@ -840,11 +840,12 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     // Pi's `setBeforeSessionInvalidate` -> `resetExtensionUI` ->
     // `clearExtensionTerminalInputListeners` empties the listener set without
     // telling the extension, and the next bind presents a fresh UI context.
+    const beforeInvalidate = input.unsubscribeCalls;
     invalidateHost();
     expect(input.listeners.length).toBe(0);
     // The clear is silent: it is not an adapter-driven unsubscribe, and the
     // retained handle survives as an inert closure.
-    expect(input.unsubscribeCalls).toBe(0);
+    expect(input.unsubscribeCalls).toBe(beforeInvalidate);
     expect(overlayKeysCell.terminalInput).toBeDefined();
 
     // The next lifecycle retry sees a different live host and rebinds.
@@ -1044,7 +1045,6 @@ describe("pre-mount overlay keys under a foreign primary editor", () => {
     // Teardown releases the listener, and a new generation installs one fresh.
     clearChildOverlayGeneration(overlayCell, overlayKeysCell);
     expect(input.listeners.length).toBe(0);
-    expect(input.unsubscribeCalls).toBe(1);
     expect(overlayKeysCell.terminalInput).toBeUndefined();
 
     runtime.maybeRegisterOverlayKeys(pi, undefined, "gen-1");
