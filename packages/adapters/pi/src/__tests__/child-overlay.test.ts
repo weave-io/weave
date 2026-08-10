@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { getKeybindings } from "@earendil-works/pi-tui";
-import { errAsync, ok, okAsync, type Result } from "neverthrow";
+import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 import {
   PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
   type PiNativeSessionEntryPage,
@@ -3383,6 +3383,80 @@ describe("createChildOverlayCustomComponent", () => {
     expect(component.render(80).join("\n")).not.toContain("Search:");
     component.handleInput("\x1b");
     expect(closed).toBe(1);
+  });
+
+  it("keeps the newly focused child's draft when a pending submission settles after a child switch", async () => {
+    // The draft editor is shared by every child. A steer that settles after the
+    // controller moved focus must not clear or mirror the previous child's text
+    // onto the child the reader is now looking at.
+    let releaseSteer: (() => void) | undefined;
+    const steerCalls: string[] = [];
+    const mutations: ChildOverlayMutationPort = {
+      steer: (childId, _generationId, text) => {
+        steerCalls.push(`${childId}:${text}`);
+        return ResultAsync.fromSafePromise(
+          new Promise<void>((resolve) => {
+            releaseSteer = () => resolve();
+          }),
+        );
+      },
+      followUp: () => okAsync(undefined),
+    };
+    const source = createMemoryChildOverlaySource([
+      child({
+        childId: "overlay-a",
+        status: "live",
+        generationId: "gen-a",
+        entries: entries(4),
+      }),
+      child({
+        childId: "overlay-b",
+        status: "live",
+        generationId: "gen-b",
+        entries: entries(4),
+      }),
+    ]);
+    const controller = createChildOverlayController(
+      source,
+      { pageSize: 10 },
+      mutations,
+    );
+    await mustOpen(controller, "overlay-a");
+    const component = createChildOverlayCustomComponent(
+      { requestRender: () => undefined } as never,
+      {} as never,
+      getKeybindings() as never,
+      controller,
+      () => undefined,
+      () => undefined,
+      { cwd: "/workspace" },
+    );
+    controller.updateDraft("alpha draft")._unsafeUnwrap();
+    // First render syncs the shared editor with the focused child's draft.
+    expect(component.render(80).join("\n")).toContain("alpha draft");
+
+    component.handleInput(ENTER);
+    await flush();
+    expect(steerCalls).toEqual(["overlay-a:alpha draft"]);
+    expect(releaseSteer).toBeDefined();
+
+    // Focus moves while the mutation is still in flight, and no render happens
+    // in between, so the shared editor still holds the submitted text.
+    await mustOpen(controller, "overlay-b");
+    controller.updateDraft("bravo draft")._unsafeUnwrap();
+
+    releaseSteer?.();
+    await flush();
+
+    // The newly focused child keeps its own draft, saved and rendered.
+    const settled = controller.view()._unsafeUnwrap();
+    expect(settled.child.childId).toBe("overlay-b");
+    expect(settled.draft).toBe("bravo draft");
+    const frame = component.render(80).join("\n");
+    expect(frame).toContain("bravo draft");
+    expect(frame).not.toContain("alpha draft");
+    // The submitted child's own draft was still cleared by the controller.
+    expect((await controller.open("overlay-a"))._unsafeUnwrap().draft).toBe("");
   });
 });
 

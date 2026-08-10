@@ -599,6 +599,10 @@ export function createChildOverlayCustomComponent(
     const text = draftEditor.getExpandedText().trim();
     if (text.length === 0) return;
     const editorTextAtSubmit = draftEditor.getText();
+    // The draft editor is shared across children. Remember which child owned
+    // the submitted text so a focus switch during the pending mutation can
+    // never clear or overwrite the newly focused child's draft.
+    const submittedChildId = view.value.child.childId;
     inputBusy = true;
     const submission =
       kind === "steer"
@@ -607,6 +611,18 @@ export function createChildOverlayCustomComponent(
     void submission.match(
       (outcome) => {
         inputBusy = false;
+        const settledView = controller.view();
+        if (
+          settledView.isErr() ||
+          settledView.value.child.childId !== submittedChildId
+        ) {
+          // Focus moved while the mutation was in flight: the editor now
+          // belongs to another child, so re-align it with that child's draft
+          // instead of clearing it or mirroring stale text back.
+          if (settledView.isOk()) syncDraftEditorTransition(settledView.value);
+          afterControllerOutcome(ok(outcome));
+          return;
+        }
         if (
           outcome.kind === kind &&
           draftEditor.getText() === editorTextAtSubmit

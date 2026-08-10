@@ -12,9 +12,9 @@ does not store prompts or child transcripts.
 Checklist version: `4`.
 
 The run gives current evidence for the overlay, input, short-terminal, and
-coexistence parts of S043, S044, S046, and S047. Those checklist rows remain
-Pending because this run did not inject a live renderer failure and did not
-record a distinct visible expansion-toggle state.
+coexistence parts of S043, S044, S046, and S047. S044 and S046 are Pass. S043
+and S047 remain Pending because this run did not inject a live renderer failure
+and did not record a distinct visible expansion-toggle state.
 
 ## Subject and artifact
 
