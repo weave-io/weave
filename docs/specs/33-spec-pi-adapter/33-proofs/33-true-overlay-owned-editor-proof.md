@@ -20,21 +20,24 @@ and did not record a distinct visible expansion-toggle state.
 
 | Field | Value |
 | --- | --- |
-| Subject commit | `ec8eab15cf1c251a2f53770ff6582ad31319e255` |
+| Subject commit | `56371756b4521ef0bbeaee28a2a0631f33934a5d` |
 | Working tree | Pre-existing unrelated dirty changes present; proof binds to the built hashes below |
 | Pi version | `0.83.0` |
 | Harness mode | Fresh interactive TUI |
 | Adapter source | `~/.pi/agent/extensions/weave-adapter-pi` symlink to this checkout |
 | Local development provenance override | `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE=1` |
-| Built extension SHA-256 | `1f7fd0b7592ab39a869dff9611375174a7de644ee88d95888a9c138cfc8276df` |
-| Built index SHA-256 | `f8c5fec190a711bb3ff8530203fddf60c8dbff539d7660817c29757af7486191` |
+| Built extension SHA-256 | `1cac858b516264afb978761907c6872231168ed7f3db25cc90a1182d02a88333` |
+| Built index SHA-256 | `c08378e06e8b65a5e5ade3600378f602b6315ccc38106a0a55d8d861eff7b520` |
 | Built CLI SHA-256 | `60bb26ced1b23a30965a25de5bc337190140ccdc79dd4665f74b91faaa03f845` |
-| Build timestamp | `2026-08-10T13:21:19Z` |
+| Build timestamp | `2026-08-10T13:48:43Z` |
 | Checklist version | `4` |
 
 The root `bun run build` completed before the live run. The symlink made the
-loaded entry point byte-identical to the built extension. This is local
-interactive development proof, not npm release-provenance proof.
+loaded entry point byte-identical to the built extension. After the Weft draft
+isolation fix, the final subject was rebuilt and a fresh Pi 0.83 process again
+reported ready, completed one real delegation, rendered its child in the true
+overlay, closed normally, and left no child process or active lease. This is
+local interactive development proof, not npm release-provenance proof.
 
 ## Readiness
 
