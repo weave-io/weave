@@ -740,11 +740,13 @@ export {
   isPiSessionManagerStatic,
 } from "./native-session-host.js";
 export type {
+  PiExecutableResolverPort,
   PiNativeSessionReadiness,
   PiNativeSessionReadinessProbe,
 } from "./native-session-readiness.js";
 export {
   createBlockedPiNativeSessionReadinessProbe,
+  createBunPiExecutableResolver,
   createPiNativeSessionReadinessProbe,
   createReadyPiNativeSessionReadinessProbe,
 } from "./native-session-readiness.js";

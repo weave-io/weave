@@ -169,9 +169,44 @@ export interface CreatePiNativeSessionReadinessProbeOptions {
   readonly trustedRoot?: PiTrustedDataRootPort;
   /**
    * Test seam: proves an absolute executable exists. Production reads the real
-   * filesystem. A bare command name is never resolved through `PATH` here.
+   * filesystem.
    */
   readonly executableExists?: (path: string) => Promise<boolean>;
+  /**
+   * Resolves a bare command name to an absolute executable. Production default:
+   * the real `PATH` lookup port.
+   */
+  readonly executableResolver?: PiExecutableResolverPort;
+}
+
+/**
+ * Resolves a bare child command name to the absolute executable a spawn would
+ * actually run, using the same `PATH` the spawner sees. Injected so readiness
+ * stays testable without touching the host `PATH`.
+ */
+export interface PiExecutableResolverPort {
+  /** The absolute executable path, or `undefined` when nothing usable resolves. */
+  resolve(command: string): string | undefined;
+}
+
+/**
+ * Production resolver: Bun's own `PATH` lookup, which honours the executable
+ * bit exactly as `Bun.spawn` does. Never throws for a missing command; it
+ * returns `null`, which is normalized to `undefined`.
+ */
+export function createBunPiExecutableResolver(
+  env?: Readonly<Record<string, string | undefined>>,
+): PiExecutableResolverPort {
+  return Object.freeze({
+    resolve(command: string): string | undefined {
+      const path = env === undefined ? Bun.env.PATH : env.PATH;
+      const resolved =
+        path === undefined
+          ? Bun.which(command)
+          : Bun.which(command, { PATH: path });
+      return resolved ?? undefined;
+    },
+  });
 }
 
 function defaultExecutableExists(path: string): Promise<boolean> {
@@ -223,11 +258,17 @@ export function createPiNativeSessionReadinessProbe(
         )
         .andThen(() =>
           // An absolute executable is exact host identity and must really
-          // exist; a bare name is never probed through `PATH`.
+          // exist. A bare name is what a spawn would hand to `PATH`, so
+          // readiness resolves it the same way and proves the result is a
+          // usable absolute executable before reporting ready.
           executable.startsWith("/")
             ? probeExecutable(executableExists, executable)
-            : okAsync<undefined, PiDelegationReadinessUnavailableReason>(
-                undefined,
+            : resolveBareExecutable(
+                options.executableResolver ??
+                  createBunPiExecutableResolver(options.env),
+                executable,
+              ).andThen((resolved) =>
+                probeExecutable(executableExists, resolved),
               ),
         );
 
@@ -259,6 +300,30 @@ function probeExecutable(
     present
       ? okAsync<undefined, PiDelegationReadinessUnavailableReason>(undefined)
       : errAsync<undefined, PiDelegationReadinessUnavailableReason>(
+          "pi-process-unavailable",
+        ),
+  );
+}
+
+/**
+ * Resolves a bare command name through the injected `PATH` port. A resolver
+ * that returns nothing, returns a non-absolute path (an unsafe or relative
+ * `PATH` entry), or throws yields exactly the closed process reason; the
+ * thrown value and the searched `PATH` are discarded, never reported.
+ */
+function resolveBareExecutable(
+  resolver: PiExecutableResolverPort,
+  command: string,
+): ResultAsync<string, PiDelegationReadinessUnavailableReason> {
+  return ResultAsync.fromPromise(
+    Promise.resolve().then(() => resolver.resolve(command)),
+    (): PiDelegationReadinessUnavailableReason => "pi-process-unavailable",
+  ).andThen((resolved) =>
+    resolved !== undefined &&
+    typeof resolved === "string" &&
+    resolved.startsWith("/")
+      ? okAsync<string, PiDelegationReadinessUnavailableReason>(resolved)
+      : errAsync<string, PiDelegationReadinessUnavailableReason>(
           "pi-process-unavailable",
         ),
   );

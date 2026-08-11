@@ -34,6 +34,7 @@ import {
   isProcessLaunchSurfaceUsable,
   mapRootOpenFailureToReadinessReason,
   mapSessionRootErrorToReadinessReason,
+  type PiExecutableResolverPort,
   type PiNativeSessionReadinessProbe,
 } from "../native-session-readiness.js";
 import { PiSafeInitializer } from "../safe-initializer.js";
@@ -81,6 +82,7 @@ function readinessProbeWith(overrides: {
   readonly childCommand?: readonly string[];
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly executableExists?: (path: string) => Promise<boolean>;
+  readonly executableResolver?: PiExecutableResolverPort;
   readonly trustedRoot?: PiTrustedDataRootPort;
 }): PiNativeSessionReadinessProbe {
   return createPiNativeSessionReadinessProbe({
@@ -103,6 +105,9 @@ function readinessProbeWith(overrides: {
     },
     executableExists:
       overrides.executableExists ?? (() => Promise.resolve(true)),
+    ...(overrides.executableResolver === undefined
+      ? {}
+      : { executableResolver: overrides.executableResolver }),
   });
 }
 
@@ -237,6 +242,106 @@ describe("Pi-native activation readiness: unavailable classes", () => {
       ready: false,
       reason: "pi-process-unavailable",
     });
+  });
+
+  it("reports pi-process-unavailable when a bare executable resolves to nothing", async () => {
+    const requested: string[] = [];
+    const readiness = await probeReadiness(
+      readinessProbeWith({
+        childCommand: ["pi", "--mode", "rpc"],
+        executableResolver: {
+          resolve: (command) => {
+            requested.push(command);
+            return undefined;
+          },
+        },
+      }),
+    );
+
+    expect(requested).toEqual(["pi"]);
+    expect(readiness).toEqual({
+      ready: false,
+      reason: "pi-process-unavailable",
+    });
+  });
+
+  it("proves readiness when a bare executable resolves through PATH", async () => {
+    const requested: string[] = [];
+    const probed: string[] = [];
+    const readiness = await probeReadiness(
+      readinessProbeWith({
+        childCommand: ["pi", "--mode", "rpc"],
+        executableResolver: {
+          resolve: (command) => {
+            requested.push(command);
+            return "/private/opt/bin/pi";
+          },
+        },
+        executableExists: (path) => {
+          probed.push(path);
+          return Promise.resolve(true);
+        },
+      }),
+    );
+
+    // The resolved absolute executable, not the bare name, is what must exist.
+    expect(requested).toEqual(["pi"]);
+    expect(probed).toEqual(["/private/opt/bin/pi"]);
+    expect(readiness).toEqual({ ready: true });
+  });
+
+  it("reports pi-process-unavailable when a resolved bare executable is absent", async () => {
+    const readiness = await probeReadiness(
+      readinessProbeWith({
+        childCommand: ["pi", "--mode", "rpc"],
+        executableResolver: { resolve: () => "/private/opt/bin/pi" },
+        executableExists: () => Promise.resolve(false),
+      }),
+    );
+
+    expect(readiness).toEqual({
+      ready: false,
+      reason: "pi-process-unavailable",
+    });
+  });
+
+  it.each([
+    ["an empty PATH result", ""],
+    ["a relative PATH entry", "bin/pi"],
+    ["a cwd-relative PATH entry", "./pi"],
+  ])("reports pi-process-unavailable for %s", async (_label, resolved: string) => {
+    const readiness = await probeReadiness(
+      readinessProbeWith({
+        childCommand: ["pi", "--mode", "rpc"],
+        executableResolver: { resolve: () => resolved },
+        executableExists: () => Promise.resolve(true),
+      }),
+    );
+
+    expect(readiness).toEqual({
+      ready: false,
+      reason: "pi-process-unavailable",
+    });
+  });
+
+  it("reports pi-process-unavailable when the executable resolver throws", async () => {
+    const readiness = await probeReadiness(
+      readinessProbeWith({
+        childCommand: ["pi", "--mode", "rpc"],
+        executableResolver: {
+          resolve: () => {
+            throw new Error("/private/home/example/.local/bin denied");
+          },
+        },
+      }),
+    );
+
+    // The thrown value carries a host path; only the closed reason survives.
+    expect(readiness).toEqual({
+      ready: false,
+      reason: "pi-process-unavailable",
+    });
+    expect(JSON.stringify(readiness)).not.toContain("/private");
   });
 
   it("proves readiness against a real root, session API, and launch surface", async () => {
