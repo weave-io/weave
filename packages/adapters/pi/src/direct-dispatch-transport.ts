@@ -22,6 +22,10 @@ import { toModelIdentityBody } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type { PiNativeSessionRecord } from "./child-native-sessions.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
+import type {
+  AppendChildRefLifecycleInput,
+  PiChildRefRecord,
+} from "./child-session-refs.js";
 import {
   PI_CHILD_TITLE_PROVENANCE,
   resolveDurableChildTitle,
@@ -38,6 +42,7 @@ import type {
   PiDirectDispatchInput,
 } from "./direct-dispatch.js";
 import {
+  makeChildAbortFailedFailure,
   makeChildRecordCorruptFailure,
   makeChildRecordQuarantinedFailure,
   makeChildRecordQuotaExceededFailure,
@@ -120,6 +125,18 @@ export interface PiDirectDispatchTransportDeps {
 interface ProvisionedDirectSession {
   readonly session: PiDirectRestoreSession;
   readonly record: PiNativeSessionRecord;
+  /**
+   * The durable running ref this step wrote before spawning. It is the record
+   * the terminal lifecycle append must extend, so the child never stays
+   * `running` in the parent session after it settles.
+   */
+  readonly refRecord: PiChildRefRecord;
+  /**
+   * The parent session the running ref was written under. Settlement appends
+   * only while the generation's live ref port still serves this same parent
+   * session, so a replaced generation never writes through a stale record.
+   */
+  readonly parentSession: string;
 }
 
 /** The only spawn session shape a production direct step may ever use. */
@@ -477,7 +494,7 @@ export function createDirectDispatchTransport(
                     "thread-ref-write-failed",
                   );
                 })
-                .andThen(() => {
+                .andThen((refRecord) => {
                   // The selector is validated here, before it can reach a
                   // spawn: an ephemeral or directory-only selection never
                   // becomes a launched child.
@@ -497,7 +514,12 @@ export function createDirectDispatchTransport(
                   return okAsync<
                     ProvisionedDirectSession | undefined,
                     PiAdapterFailure
-                  >({ session: validated.value, record });
+                  >({
+                    session: validated.value,
+                    record,
+                    refRecord,
+                    parentSession,
+                  });
                 }),
             ),
         );
@@ -513,6 +535,77 @@ export function createDirectDispatchTransport(
         stepName: input.stepName,
         snapshot: () => child.snapshot(),
       }) ?? okAsync(undefined);
+    let terminalLifecycleAppended = false;
+    /**
+     * The terminal ref status for one settled direct step. It follows the raw
+     * child outcome, not the workflow-facing projection: a cancelled child is
+     * recorded as `cancelled` even though the settlement the workflow layer
+     * receives is the closed failed shape, and a transport error is recorded
+     * as `failed`.
+     */
+    const terminalRefStatusFor = (
+      outcome: Result<PiChildSettlement, PiAdapterFailure>,
+    ): AppendChildRefLifecycleInput["status"] => {
+      if (outcome.isErr()) return "failed";
+      if (outcome.value.outcome === "cancelled") return "cancelled";
+      if (outcome.value.outcome === "completed") return "completed";
+      return "failed";
+    };
+
+    /**
+     * Appends exactly one terminal lifecycle record for a step that already
+     * has a durable running ref, so the parent session never keeps a settled
+     * direct child at `running`. Nothing is appended before that ref exists.
+     * The append goes only through the port that wrote the running ref, and
+     * only while it is still this generation's live port and still names this
+     * child; anything else is an unproven identity and fails closed.
+     */
+    const appendTerminalLifecycle = async (
+      provisioned: ProvisionedDirectSession | undefined,
+      status: AppendChildRefLifecycleInput["status"],
+    ): Promise<Result<undefined, PiAdapterFailure>> => {
+      if (provisioned === undefined) return ok(undefined);
+      // Exactly once per dispatch, even if this settlement path were ever
+      // re-entered.
+      if (terminalLifecycleAppended) return ok(undefined);
+      terminalLifecycleAppended = true;
+      const liveRefs = deps.threadRefs?.();
+      if (
+        liveRefs === undefined ||
+        liveRefs.liveParentSessionId() !== provisioned.parentSession ||
+        provisioned.refRecord.childId !== childId
+      ) {
+        deps.logger.error(
+          { childId, agentName: input.agentName, status },
+          "direct-step terminal lifecycle identity unproven",
+        );
+        return err(
+          makeChildAbortFailedFailure(
+            childId,
+            "direct-lifecycle-identity-unproven",
+          ),
+        );
+      }
+      const appended = await liveRefs.appendLifecycle(provisioned.refRecord, {
+        status,
+        settledAt: now(),
+      });
+      if (appended.isErr()) {
+        deps.logger.error(
+          { childId, agentName: input.agentName, status },
+          "direct-step terminal lifecycle write failed",
+        );
+        // Closed reason string: never the ref store's own error text.
+        return err(
+          makeChildAbortFailedFailure(
+            childId,
+            "direct-lifecycle-writeback-failed",
+          ),
+        );
+      }
+      return ok(undefined);
+    };
+
     const historyFailure = (failure: {
       readonly reason: "unavailable" | "corrupt" | "quota" | "invalid";
     }): PiAdapterFailure => {
@@ -559,6 +652,10 @@ export function createDirectDispatchTransport(
             // Cleanup is unconditional, including when history persistence fails.
             child.dispose();
             deps.registry?.setActive(undefined);
+            const lifecycle = await appendTerminalLifecycle(
+              provisioned,
+              terminalRefStatusFor(outcome),
+            );
             if (persisted.isErr()) return err(historyFailure(persisted.error));
             if (outcome.isErr()) {
               deps.logger.error(
@@ -572,6 +669,10 @@ export function createDirectDispatchTransport(
               );
               return err(outcome.error);
             }
+            // The primary transport/persistence facts above are reported
+            // first; a lost lifecycle append surfaces only after nothing more
+            // important remains to report.
+            if (lifecycle.isErr()) return err(lifecycle.error);
             // A direct-step child's cancellation is projected to the closed
             // failed shape expected by the workflow layer.
             if (outcome.value.outcome === "cancelled")

@@ -8,11 +8,26 @@ import {
 } from "../child-crypto.js";
 import { WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
+import type {
+  CreateNativeChildSessionInput,
+  PiNativeSessionRecord,
+  PiNativeThreadMetadataInput,
+} from "../child-native-sessions.js";
+import type {
+  AppendChildRefLifecycleInput,
+  AppendChildRefRunInput,
+  AppendNewChildRefInput,
+  PiChildRefRecord,
+} from "../child-session-refs.js";
 import {
   type PiChildInspectionRegistration,
   PiChildInspectionRegistry,
   ROOT_NODE_ID,
 } from "../child-tree.js";
+import type {
+  PiThreadRefPort,
+  PiThreadSessionPort,
+} from "../delegation-controller.js";
 import type { PiDirectDispatchInput } from "../direct-dispatch.js";
 import {
   createDirectDispatchTransport,
@@ -794,5 +809,389 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const settlement = await resultPromise;
     expect(settlement.isOk()).toBe(true);
     expect(registry.isActive()).toBe(false);
+  });
+});
+
+/**
+ * Task 11 review blocker: a direct workflow step wrote a durable `running`
+ * child ref before spawning but never appended a terminal lifecycle record, so
+ * every settled direct child stayed `running` in the parent session forever.
+ *
+ * These tests pin the replacement contract: once (and only once) a durable
+ * running ref exists, exactly one terminal lifecycle record is appended for
+ * each of the four settled outcomes, the recorded status follows the child's
+ * real outcome rather than the workflow-facing projection, and a failed
+ * lifecycle append never displaces the primary transport or persistence
+ * failure.
+ */
+
+const LIFECYCLE_SESSION_PATH =
+  "/data/weave/adapters/pi/sessions/child/session.jsonl";
+
+/** A ref port that records every lifecycle append it is asked to perform. */
+class LifecycleRefPort implements PiThreadRefPort {
+  readonly newChildren: AppendNewChildRefInput[] = [];
+  readonly lifecycles: AppendChildRefLifecycleInput[] = [];
+  failNewChild = false;
+  failLifecycle = false;
+
+  liveParentSessionId(): string {
+    return "parent-session-1";
+  }
+
+  readRefs() {
+    return okAsync({ refs: [], issues: [] } as never);
+  }
+
+  appendNewChild(input: AppendNewChildRefInput) {
+    if (this.failNewChild) {
+      return errAsync({ type: "RefWriteFailed", reason: "io" } as never);
+    }
+    this.newChildren.push(input);
+    return okAsync({
+      childId: input.childId,
+      threadId: input.threadId ?? input.childId,
+      nativeSessionId: input.nativeSessionId,
+      sessionRef: input.sessionRef,
+      title: input.title,
+      status: input.status ?? "running",
+    } as unknown as PiChildRefRecord);
+  }
+
+  appendRunDivider(record: PiChildRefRecord, _input: AppendChildRefRunInput) {
+    return okAsync(record);
+  }
+
+  appendLifecycle(
+    record: PiChildRefRecord,
+    input: AppendChildRefLifecycleInput,
+  ) {
+    if (this.failLifecycle) {
+      return errAsync({ type: "RefWriteFailed", reason: "io" } as never);
+    }
+    this.lifecycles.push(input);
+    return okAsync({ ...record, status: input.status } as PiChildRefRecord);
+  }
+}
+
+/** A session port that provisions an in-memory, validly shaped native session. */
+class LifecycleSessionPort implements PiThreadSessionPort {
+  createChildSession(input: CreateNativeChildSessionInput) {
+    return okAsync({
+      childId: input.childId,
+      sessionId: "native-lifecycle-1",
+      ref: "child/session.jsonl",
+      path: LIFECYCLE_SESSION_PATH,
+      parentSession: input.parentSession,
+      cwd: input.cwd,
+    } as never);
+  }
+
+  establishThreadLeaf(
+    _ref: string,
+    _metadata: PiNativeThreadMetadataInput,
+    _expectedParentSession?: string,
+  ) {
+    return okAsync({
+      record: {
+        childId: "child",
+        sessionId: "native-lifecycle-1",
+        ref: "child/session.jsonl",
+        path: LIFECYCLE_SESSION_PATH,
+        parentSession: "parent-session-1",
+        cwd: "/project",
+      },
+      leafId: "leaf-1",
+    } as never);
+  }
+
+  appendTombstone(record: PiNativeSessionRecord) {
+    return okAsync({
+      version: 1 as const,
+      ref: record.ref,
+      childId: record.childId,
+      parentSession: record.parentSession,
+      deletedAt: "2026-01-01T00:00:00.000Z",
+      reason: "explicit-user-deletion" as const,
+    } as never);
+  }
+
+  openSession(ref: string) {
+    return errAsync({ type: "SessionMissing" as const, ref } as never);
+  }
+
+  readSessionEntries(ref: string) {
+    return errAsync({ type: "SessionMissing" as const, ref } as never);
+  }
+
+  readSessionEntryPage(ref: string) {
+    return errAsync({ type: "SessionMissing" as const, ref } as never);
+  }
+
+  readThreadMetadata(ref: string) {
+    return errAsync({ type: "SessionMissing" as const, ref } as never);
+  }
+}
+
+function lifecycleTransport(options: {
+  readonly processPort: FakeChildProcessPort;
+  readonly refs: PiThreadRefPort;
+  readonly sessions?: PiThreadSessionPort;
+  readonly registry?: PiDirectStepChildRegistry;
+}) {
+  return createDirectDispatchTransport(
+    {
+      processPort: options.processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      idGenerator: new FakeIdGenerator(),
+      availableModels: AVAILABLE_MODELS,
+      threadSessions: () => options.sessions ?? new LifecycleSessionPort(),
+      threadRefs: () => options.refs,
+      requireNativeSession: () => true,
+      ...(options.registry === undefined ? {} : { registry: options.registry }),
+      now: () => 1_700_000_000_000,
+    },
+    "gen-1",
+  );
+}
+
+const LIFECYCLE_CHILD_ID = "direct-wf-1-verify-generation-1";
+
+/** Drives a direct step to the point where its task prompt has been applied. */
+async function driveToRunning(processPort: FakeChildProcessPort) {
+  const spawned = await awaitSpawnedChild(processPort);
+  const secretBytes = extractSecretFromSpawn(processPort);
+  const responder = new ScriptedChildResponder(
+    spawned,
+    LIFECYCLE_CHILD_ID,
+    "gen-1",
+  );
+  await responder.send("handshake", LIFECYCLE_CHILD_ID, {}, secretBytes);
+  const bootstrap = await waitForBootstrapEnvelope(spawned, LIFECYCLE_CHILD_ID);
+  await responder.send(
+    "bootstrap-ack",
+    LIFECYCLE_CHILD_ID,
+    { resolvedModel: bootstrap.body.resolvedModel } as JsonValue,
+    secretBytes,
+  );
+  // A restored native session is verified with a bounded `get_entries` page
+  // before the task prompt is written, so the scripted child must answer it.
+  await waitFor("the restore verification probe", () =>
+    spawned
+      .writtenLines()
+      .some(
+        (line) => (line as { readonly type?: unknown }).type === "get_entries",
+      ),
+  );
+  const probe = spawned
+    .writtenLines()
+    .find(
+      (line) => (line as { readonly type?: unknown }).type === "get_entries",
+    ) as { readonly id?: unknown };
+  spawned.emitLine({
+    id: probe.id,
+    type: "response",
+    command: "get_entries",
+    success: true,
+    data: { entries: [], leafId: "leaf-1" },
+  } as JsonValue);
+  await waitForTaskPrompt(spawned);
+  return { spawned, responder, secretBytes };
+}
+
+describe("direct workflow steps persist a terminal child lifecycle", () => {
+  it("appends exactly one completed lifecycle record after a completed outcome", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    const settlementPromise = lifecycleTransport({ processPort, refs })(
+      baseInput(),
+    );
+    const { spawned, responder, secretBytes } =
+      await driveToRunning(processPort);
+    spawned.emitLine(terminalAssistantMessage());
+    await responder.send(
+      "settled",
+      LIFECYCLE_CHILD_ID,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
+      },
+      secretBytes,
+    );
+    const settlement = await settlementPromise;
+
+    expect({
+      settled: settlement.isOk(),
+      outcome: settlement.isOk() ? settlement.value.outcome : "",
+      runningRefs: refs.newChildren.length,
+      lifecycleAppends: refs.lifecycles.length,
+      status: refs.lifecycles[0]?.status ?? "",
+      settledAt: refs.lifecycles[0]?.settledAt ?? 0,
+    }).toEqual({
+      settled: true,
+      outcome: "completed",
+      runningRefs: 1,
+      lifecycleAppends: 1,
+      status: "completed",
+      settledAt: 1_700_000_000_000,
+    });
+  });
+
+  it("appends exactly one failed lifecycle record after a failed outcome", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    const settlementPromise = lifecycleTransport({ processPort, refs })(
+      baseInput(),
+    );
+    const { responder, secretBytes } = await driveToRunning(processPort);
+    await responder.send(
+      "settled",
+      LIFECYCLE_CHILD_ID,
+      { outcome: "failed", reason: "child reported failure" },
+      secretBytes,
+    );
+    const settlement = await settlementPromise;
+
+    expect({
+      settled: settlement.isOk(),
+      outcome: settlement.isOk() ? settlement.value.outcome : "",
+      lifecycleAppends: refs.lifecycles.length,
+      status: refs.lifecycles[0]?.status ?? "",
+    }).toEqual({
+      settled: true,
+      outcome: "failed",
+      lifecycleAppends: 1,
+      status: "failed",
+    });
+  });
+
+  it("records a cancelled child as cancelled even though the workflow settlement is the closed failed shape", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    const registry = new PiDirectStepChildRegistry();
+    const settlementPromise = lifecycleTransport({
+      processPort,
+      refs,
+      registry,
+    })(baseInput());
+    const { responder, secretBytes } = await driveToRunning(processPort);
+    const cancelling = registry.cancel();
+    expect(cancelling).toBeDefined();
+    await responder.send("cancelled", LIFECYCLE_CHILD_ID, {}, secretBytes);
+    await cancelling;
+    const settlement = await settlementPromise;
+
+    expect({
+      settled: settlement.isOk(),
+      // The workflow layer still receives the closed failed projection.
+      projected: settlement.isOk()
+        ? `${settlement.value.outcome}:${settlement.value.outcome === "failed" ? settlement.value.reason : ""}`
+        : "",
+      lifecycleAppends: refs.lifecycles.length,
+      // The durable record preserves the real outcome.
+      status: refs.lifecycles[0]?.status ?? "",
+    }).toEqual({
+      settled: true,
+      projected: "failed:cancelled",
+      lifecycleAppends: 1,
+      status: "cancelled",
+    });
+  });
+
+  it("appends one failed lifecycle record and still reports the transport error", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    const settlementPromise = lifecycleTransport({ processPort, refs })(
+      baseInput(),
+    );
+    const spawned = await awaitSpawnedChild(processPort);
+    // The child dies before it ever handshakes: a transport error, not a
+    // settled outcome.
+    spawned.exit(1);
+    const settlement = await settlementPromise;
+
+    expect({
+      failed: settlement.isErr(),
+      // The primary transport failure is preserved verbatim.
+      primaryCode: settlement.isErr() ? settlement.error.code : "",
+      lifecycleAppends: refs.lifecycles.length,
+      status: refs.lifecycles[0]?.status ?? "",
+      leakedPath: JSON.stringify(
+        settlement.isErr() ? settlement.error : {},
+      ).includes(LIFECYCLE_SESSION_PATH),
+    }).toEqual({
+      failed: true,
+      primaryCode: "ChildExitedUnexpectedly",
+      lifecycleAppends: 1,
+      status: "failed",
+      leakedPath: false,
+    });
+  });
+
+  it("reports a typed path-free failure when the terminal lifecycle append fails", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    refs.failLifecycle = true;
+    const settlementPromise = lifecycleTransport({ processPort, refs })(
+      baseInput(),
+    );
+    const { spawned, responder, secretBytes } =
+      await driveToRunning(processPort);
+    spawned.emitLine(terminalAssistantMessage());
+    await responder.send(
+      "settled",
+      LIFECYCLE_CHILD_ID,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
+      },
+      secretBytes,
+    );
+    const settlement = await settlementPromise;
+    const rendered = JSON.stringify(settlement.isErr() ? settlement.error : {});
+
+    expect({
+      failed: settlement.isErr(),
+      code: settlement.isErr() ? settlement.error.code : "",
+      namesClosedReason: rendered.includes("direct-lifecycle-writeback-failed"),
+      // The ref store's own error text and every path stay out of the failure.
+      leakedStoreError: rendered.includes("RefWriteFailed"),
+      leakedPath: rendered.includes(LIFECYCLE_SESSION_PATH),
+    }).toEqual({
+      failed: true,
+      code: "ChildAbortFailed",
+      namesClosedReason: true,
+      leakedStoreError: false,
+      leakedPath: false,
+    });
+  });
+
+  it("appends no terminal lifecycle record when no durable running ref exists", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    refs.failNewChild = true;
+    const settlement = await lifecycleTransport({ processPort, refs })(
+      baseInput(),
+    );
+
+    expect({
+      failed: settlement.isErr(),
+      code: settlement.isErr() ? settlement.error.code : "",
+      runningRefs: refs.newChildren.length,
+      lifecycleAppends: refs.lifecycles.length,
+      spawns: processPort.spawnInputs.length,
+    }).toEqual({
+      failed: true,
+      code: "ChildSpawnFailed",
+      runningRefs: 0,
+      lifecycleAppends: 0,
+      spawns: 0,
+    });
   });
 });
