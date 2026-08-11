@@ -43,6 +43,7 @@ import {
   type PiHostSurfaceReport,
   readHostSurfaceReport,
 } from "../host-inventory.js";
+import { createReadyPiNativeSessionReadinessProbe } from "../native-session-readiness.js";
 import {
   collectRequiredCapabilityGaps,
   createBlockedSessionMutationGate,
@@ -170,6 +171,7 @@ function completeHostInput() {
 function controllerWith(hostSurface: PiHostSurfaceReport) {
   const controller = new PiExtensionController({
     safeInitializer: new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.83.0",
@@ -343,6 +345,7 @@ describe("delegated-specialist-execution: activation", () => {
     // old contract: mutating blocked, cleanup still allowed.
     const controller = new PiExtensionController({
       safeInitializer: new PiSafeInitializer({
+        nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
         hostPackageReader: FakeHostPackageReader.ok({
           name: HOST_PACKAGE_NAME,
           version: "0.83.0",

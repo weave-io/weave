@@ -18,6 +18,7 @@ import {
   PI_HOST_SURFACE_IDS,
 } from "../host-compatibility-matrix.js";
 import { readHostSurfaceReport } from "../host-inventory.js";
+import { createReadyPiNativeSessionReadinessProbe } from "../native-session-readiness.js";
 import { PiSafeInitializer } from "../safe-initializer.js";
 import type { PiCommandInfo } from "../types.js";
 import { FakeHostPackageReader } from "./fakes/fake-host-package-reader.js";
@@ -74,6 +75,7 @@ function readyHostSurfaceReport() {
 
 function initializerWith(prober: PiCapabilityProbeSource) {
   return new PiSafeInitializer({
+    nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
     hostPackageReader: FakeHostPackageReader.ok({
       name: HOST_PACKAGE_NAME,
       version: "0.81.1",
@@ -135,6 +137,7 @@ describe("PiSafeInitializer.preflight", () => {
 
   it("reaches a ready (non-health-only) state when every probe is ok, mode is tui, host is compatible", async () => {
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -156,6 +159,7 @@ describe("PiSafeInitializer.preflight", () => {
 
   it("uses defaults only after the explicit invalid-settings choice", async () => {
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -193,6 +197,7 @@ describe("PiSafeInitializer.preflight", () => {
 
   it("enters health-only mode after the explicit invalid-settings choice", async () => {
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -229,6 +234,7 @@ describe("PiSafeInitializer.preflight", () => {
       }
     }
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -255,6 +261,7 @@ describe("PiSafeInitializer.preflight", () => {
 
   it("enters health-only mode when the host identity is unknown", async () => {
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: "@mariozechner/pi-coding-agent",
         version: "0.81.1",
@@ -273,6 +280,7 @@ describe("PiSafeInitializer.preflight", () => {
 
   it("enters health-only mode when the host version is below the floor", async () => {
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.0",
@@ -289,6 +297,7 @@ describe("PiSafeInitializer.preflight", () => {
 
   it("enters health-only mode when the host package cannot be read at all", async () => {
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.failing(),
       capabilityProber: new FixedProber(allOkProbes()),
       configActivator: fakeConfigActivator(),
@@ -304,6 +313,7 @@ describe("PiSafeInitializer.preflight", () => {
   it("reports trust as withheld but forces health-only mode fail-closed, even when every probe (including project-path ones) reports ok", async () => {
     const okProbes = allOkProbes();
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -322,6 +332,7 @@ describe("PiSafeInitializer.preflight", () => {
 
   it("fail-closed proof: the real prober's narrow project-trust-withheld ok status can never promote an untrusted project to ready", async () => {
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -417,6 +428,7 @@ describe("PiSafeInitializer.preflight", () => {
   it("fail-closed proof: trust-withheld stays health-only even when an adversarial prober also reports command-entrypoints and token-usage-reporting ok", async () => {
     const allOk = allOkProbes();
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -571,6 +583,7 @@ describe("PiSafeInitializer.preflight", () => {
         : probe,
     );
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -592,6 +605,7 @@ describe("PiSafeInitializer.preflight", () => {
         : probe,
     );
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -613,6 +627,7 @@ describe("PiSafeInitializer.preflight", () => {
       }
     }
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -646,6 +661,7 @@ describe("PiSafeInitializer.preflight", () => {
       skills: [],
     };
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -697,6 +713,7 @@ describe("PiSafeInitializer.preflight", () => {
       skills: [],
     };
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -753,6 +770,7 @@ describe("PiSafeInitializer.preflight", () => {
       skills: [],
     };
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -801,6 +819,7 @@ describe("PiSafeInitializer.preflight", () => {
 
   it("fails closed with a typed PiAdapterFailure instead of an unhandled rejection when the injected configActivator port rejects", async () => {
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -842,6 +861,7 @@ describe("PiSafeInitializer.preflight", () => {
 
   it("fails closed instead of throwing when the injected configActivator port throws synchronously", async () => {
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -895,6 +915,7 @@ describe("PiSafeInitializer.preflight", () => {
       skills: [],
     };
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -944,6 +965,7 @@ describe("PiSafeInitializer.preflight", () => {
     }
 
     const initializer = new PiSafeInitializer({
+      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",

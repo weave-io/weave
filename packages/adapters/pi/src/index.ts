@@ -739,6 +739,15 @@ export {
   isPiSessionManagerStatic,
 } from "./native-session-host.js";
 export type {
+  PiNativeSessionReadiness,
+  PiNativeSessionReadinessProbe,
+} from "./native-session-readiness.js";
+export {
+  createBlockedPiNativeSessionReadinessProbe,
+  createPiNativeSessionReadinessProbe,
+  createReadyPiNativeSessionReadinessProbe,
+} from "./native-session-readiness.js";
+export type {
   PiActivePrimary,
   PiParentMutationOperation,
   PiParentSessionProbePort,

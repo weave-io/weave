@@ -237,6 +237,10 @@ import {
   type PiThinkingApplyPort,
 } from "./model-resolution.js";
 import {
+  createPiNativeSessionReadinessProbe,
+  type PiNativeSessionReadinessProbe,
+} from "./native-session-readiness.js";
+import {
   BunPathContainmentPort,
   type PathContainmentPort,
 } from "./path-containment.js";
@@ -621,6 +625,14 @@ export interface PiExtensionDeps {
    */
   readonly threadSourceFactory: PiThreadSourceFactory | undefined;
   /**
+   * Proves the real Pi session API, canonical private session root, and
+   * process launch surface before this generation may activate a primary,
+   * materialize descriptors, mutate a session, take an execution lease, build a
+   * child transport, or spawn a process. Omitting it fails closed to
+   * health-only; production always supplies the real probe.
+   */
+  readonly nativeSessionReadiness?: PiNativeSessionReadinessProbe;
+  /**
    * Optional post-settlement response-drain budget forwarded to
    * `PiDelegationController`. Absent keeps the production default.
    * Tests that exercise session-transition cancellation set a short value
@@ -690,6 +702,17 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     processPort: new BunPiChildProcessPort(),
     childCommand: buildDefaultPiChildCommand(envPort),
     childOutputPort: new StdoutChildOutputPort(),
+    // Delegation readiness is proved against the same process port and base
+    // command a child would actually be spawned with, never inferred from
+    // static command or usage surfaces.
+    nativeSessionReadiness: createPiNativeSessionReadinessProbe({
+      processPort: new BunPiChildProcessPort(),
+      childCommand: buildDefaultPiChildCommand(envPort),
+      env: {
+        XDG_DATA_HOME: envPort.read("XDG_DATA_HOME"),
+        HOME: envPort.read("HOME"),
+      },
+    }),
     runtimeStoreFactory: new SqliteRuntimeStoreFactory(),
     pathContainmentPort: new BunPathContainmentPort(),
     planCatalogPort: new BunPiPlanCatalogPort(),
@@ -2465,6 +2488,9 @@ export function createPiExtension(
       capabilityProber: deps.capabilityProber,
       configActivator: deps.configActivator,
       pathContainmentPort: deps.pathContainmentPort,
+      ...(deps.nativeSessionReadiness === undefined
+        ? {}
+        : { nativeSessionReadiness: deps.nativeSessionReadiness }),
       chooseInvalidChildInspectionSettings: (issues) => {
         const ui = childInspectionSettingsUi.ui;
         if (ui === undefined) return okAsync("health-only" as const);
@@ -4116,6 +4142,25 @@ export function createPiExtension(
         !generation.preflight.modeSupported ||
         !generation.preflight.hostSupported
       ) {
+        return;
+      }
+
+      // Unproved Pi-native session/process readiness blocks this generation
+      // exactly like an unsupported mode or host: preflight already withheld
+      // config activation, so nothing downstream may be built. Paint the
+      // health-only status and stop before any descriptor, transport, lease, or
+      // process can exist. The reason itself stays inside the closed readiness
+      // set carried by the health report.
+      const nativeReadiness = generation.preflight.nativeSessionReadiness;
+      if (nativeReadiness !== undefined && !nativeReadiness.ready) {
+        ctx.ui.setStatus(
+          "weave",
+          "health-only - run /weave:health for details",
+        );
+        deps.logger.warn(
+          { reason: nativeReadiness.reason },
+          "pi-native session readiness unproven; delegation unavailable this session",
+        );
         return;
       }
 
