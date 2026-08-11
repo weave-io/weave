@@ -40,7 +40,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
   - Typed `neverthrow` failures on every expected-failure path; no `console.*`; no throws.
   - All new state bounded with pinned constants; true-overlay geometry (`overlay:true` options) and `overlayUsableRows` short-terminal guarantees unchanged; settlement/generation guards (`activeGenerationId`, `childOverlayCell.generationId`, settle-once) unchanged.
   - Bun-only tests (`bun test`), mocks for the harness boundary, real-harness proof per `docs/testing/adapter-verification.md`.
-  - Warp review is mandatory for the path-session work and child-error sanitization because they change filesystem and untrusted-input boundaries. Reusing the existing confirm→`cancelSubtree` authority still adds no cancellation trust surface.
+  - Warp review is mandatory for the path-session work and child-error sanitization because they change filesystem and untrusted-input boundaries. Review must use the repository threat model: adapter/Pi code and processes running as the Weave user are trusted; malicious same-user races are residual risk and do not justify an API Pi does not provide. Reusing the existing confirm→`cancelSubtree` authority still adds no cancellation trust surface.
   - The dirty checkout contains pre-existing, unreviewed changes in the same session files plus concurrent work in `rpc-child.ts` and `child-session-events.ts`. Every new task must preserve unrelated bytes, identify ownership before staging, and use exact-hunk staging or an isolated clean worktree.
 
 ## Objectives
@@ -57,7 +57,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
 3. Task 5 (telemetry data model) precedes Task 6 (header rendering): rendering consumes the typed view fields Task 5 adds.
 4. Task 7 (compact mode) depends on Task 2 (scroll must be correct before adding a second layout that shares the scroll model) and on Task 6 (header/help lines it must coexist with).
 5. Task 8 (the original overlay docs/spec/smoke update) depends on Tasks 2–7.
-6. Task 9 audits the dirty path-session changes and pins the threat model before any production edit is adopted. Task 10 writes attack-focused RED tests from that design. Task 11 implements the path boundary and cannot merge until Warp approves it.
+6. Task 9 audits real Pi subagent implementations, reconciles the dirty path-session changes, and replaces the fictional descriptor requirement with a Pi-native path contract. Task 10 writes conformance and containment RED tests for the stated local-user trust model. Task 11 implements the Pi-native contract and cannot merge until Warp approves it against that model.
 7. Task 12 adds the sanitized error model and parser. It can begin after ownership of `child-session-events.ts` is handed off, but Task 13 rendering depends on it.
 8. Task 14 updates all affected docs and runs reviews, clean gates, real Pi 0.84.1 delegation/error/overlay proofs, and cleanup. It depends on Tasks 11 and 13 and completes the original live-proof objective.
 
@@ -203,47 +203,50 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - `bun run docs:check-links` passes; §7/§8/§17 consistent with implemented behavior; smoke checklist executable as written.
     - Commit: `docs(pi): update overlay spec, smoke checklist, and key docs for UX changes`.
 
-- [ ] 9. Audit the path-session boundary and reconcile the dirty checkout
-  - **What**: Establish the exact Pi 0.84.1 path API, the adapter-owned containment invariant, the threat model, and which existing dirty hunks are independently acceptable before adopting any production change.
-  - **Files**: `packages/adapters/pi/src/native-session-host.ts`, `child-native-sessions.ts`, `child-session-storage-authority.ts`, `extension.ts`, their focused tests (read/audit only); new `docs/specs/33-spec-pi-adapter/33-path-session-conformance-design.md`; `.weave/plans/pi-child-overlay-ux-feedback.md` checkbox.
+- [ ] 9. Audit real Pi subagent libraries and define the Pi-native session contract
+  - **What**: Replace the blocked descriptor design with the path-based contract Pi and real Pi subagent extensions use. Reconcile the dirty checkout without adopting unknown code blindly.
+  - **Files**: official Pi 0.84.1 `examples/extensions/subagent/`, `docs/session-format.md`, `docs/extensions.md`; reference snapshots `mjakl/pi-subagent@70248dcf`, `nicobailon/pi-subagents@c386b258`, `baochunli/pi-collaborating-agents@acd50d0`, `hazat/pi-interactive-subagents@c100577`; read/audit `packages/adapters/pi/src/native-session-host.ts`, `child-native-sessions.ts`, `child-session-storage-authority.ts`, `extension.ts`, related tests; rewrite `docs/specs/33-spec-pi-adapter/33-path-session-conformance-design.md`; plan checkbox.
   - **Depends on**: Task 8.
   - **Implementation outline**:
-    1. Diff the dirty files against exact reviewed subject `d59edf0`; identify ownership and separate the unknown gate-removal work from unrelated extension/session-runtime changes. Do not stage or rewrite production files.
-    2. Inspect Pi 0.84.1's public `SessionManager.create/open` implementation and pin when it reads/writes, how it chooses the session file, and what identity/header facts it returns.
-    3. Define the contained-path invariant: trusted XDG-derived root; bounded validated child component/ref/file; held no-follow 0700 directories; 0600 exclusive file creation; no arbitrary caller/model path; pre/post file identity checks; containment/header/parent/session-id revalidation; typed failure for traversal, absolute refs, symlinks, hard links or identity swaps, permissive modes, wrong kinds, collisions, and root escape.
-    4. State the unavoidable path reopen boundary. Pin the accepted threat model: Pi receives a path only after adapter validation, the parent directory is held and private, and any identity change before/after Pi access fails closed. Do not claim Pi provides descriptor-relative I/O.
-    5. Define a truthful replacement capability name and migration/supersession rule for `descriptor-relative-native-session-io`.
-    6. Obtain Warp review of the design. Resolve every BLOCK before marking this task complete.
+    1. Add a behavior-level parity matrix for spawn mode, `--session`/`--session-dir`/`--no-session`, SessionManager use, persistence/resume/fork, path ownership, cancellation, and error propagation. The official example is the normative ephemeral reference; third-party code is evidence, not authority.
+    2. Pin the Pi-native persistent-child design: the adapter creates/opens Pi v3 JSONL with Pi's public `SessionManager`; the child starts in RPC mode with `--session <adapter-generated-contained-path>`; assistant semantic terminal state is authoritative, stderr and exit status are secondary; Pi v3 JSONL remains the sole transcript.
+    3. Remove `descriptor-relative-native-session-io` and any replacement public contained-path capability from the design. External readiness remains `delegated-specialist-execution`; it is available when Pi's real session/process APIs and the adapter-owned session root initialize successfully.
+    4. Pin the existing repository threat model: model, prompt, project data, and other OS users are untrusted; Pi, adapter code, and processes running as the Weave user are trusted. Malicious same-user path races are residual risk and out of scope. Do not require descriptor-relative, lifetime-held descriptors, prefix-digest append proofs, or tombstone protocols that Pi itself does not provide.
+    5. Keep practical containment: trusted XDG-derived fixed root, adapter-generated bounded component/basename, canonical immediate-child equality (never prefix-only), private 0700 directories, regular 0600 files, no caller/model path, Pi-returned path/header/parent/cwd/session-id/persistence validation, typed host failures, and no path exposure to engine/model/log/lifecycle data.
+    6. Diff dirty files against `6035fe8`/`d59edf0`; identify unknown gate-removal hunks, concurrent owners, and which behavior must be reconstructed and tested independently.
+    7. Obtain Warp review against this explicit threat model. Warp may block actual containment or disclosure defects; it must not reintroduce an unavailable opaque-descriptor requirement for an out-of-scope same-user attacker.
   - **Acceptance**:
-    - The design names all invariants, attack cases, capability semantics, dirty-hunk ownership, and exact Task 10 RED tests. No production source change is committed.
-    - Warp approves the design. Commit: `docs(pi): define the contained path session boundary`.
+    - The design cites exact reference code, records adopt/reject/different-by-design decisions, removes the fictional host capability, defines exact Task 10 RED tests, and has Warp approval. No production/test source is committed.
+    - Commit: `docs(pi): define the Pi-native child session contract`.
 
-- [ ] 10. Add RED tests for Pi path-session conformance and attacks
-  - **What**: Write the smallest failing tests that define safe use of Pi's path API and the truthful capability result before changing production code.
-  - **Files**: `packages/adapters/pi/src/__tests__/native-session-host.test.ts`, `child-native-sessions.test.ts`, `child-session-storage-authority.test.ts`, `extension.test.ts`, plus focused authority/dispatch tests only when the design requires them.
+- [ ] 10. Add RED tests for the Pi-native session contract
+  - **What**: Write baseline-failing tests for the actual Pi path/session/process contract and the adapter's stated containment boundary.
+  - **Files**: `packages/adapters/pi/src/__tests__/native-session-host.test.ts`, `child-native-sessions.test.ts`, `child-session-storage-authority.test.ts`, `extension.test.ts`, RPC/direct-dispatch argument tests, and capability/probe tests that currently require the descriptor ID.
   - **Depends on**: Task 9.
   - **Implementation outline**:
-    1. Prove valid create/open calls reach Pi only with a path derived inside the trusted child root and that returned session path/header/parent/session identity are revalidated.
-    2. Add traversal, absolute ref, symlink, identity swap/TOCTOU, wrong-kind, permissive-mode, collision, root-escape, malformed header, wrong parent, wrong session-id, and host-throw cases. Assert zero Pi calls whenever validation can reject first.
-    3. Pin the new capability: supported only when the adapter containment probe succeeds; never report descriptor-relative host I/O.
-    4. Demonstrate the RED state against committed production code and record the failing assertions in the commit body.
+    1. Prove a valid adapter-generated immediate-child path reaches `SessionManager.create/open` and the spawned Pi child receives `--session <that path>` in RPC mode with `shell:false` and bounded stdio handling.
+    2. Prove callers/models cannot supply paths. Reject traversal, absolute refs, wrong root, symlinked returned paths, wrong kind/mode, root escape, malformed v3 header, wrong parent/cwd/session-id, non-persisted handles, and host throws. Assert zero Pi/process effects when validation can reject first.
+    3. Assert 0700 root/child directories and 0600 regular session files, exact immediate-child containment, and no path in Results, health/status/doctor/CLI output, logs, Runtime Store/lifecycle metadata, model/tool content, or proof fixtures.
+    4. Assert the obsolete descriptor capability and unconditional storage-authority rejection are absent. `delegated-specialist-execution` becomes ready only when the real Pi API/root/process probes pass and otherwise remains health-only before spawn.
+    5. Pin Pi-native semantic completion: assistant `stopReason`/`errorMessage` first, stderr second, exit/signal last; process-group abort and cleanup remain bounded.
+    6. Demonstrate the intended RED state against committed production code and record exact failures. Do not add tests for malicious same-user races that the threat model excludes.
   - **Acceptance**:
-    - New tests fail for the intended missing behavior and do not depend on unknown dirty source hunks. Commit: `test(pi): define safe path-based native session behavior`.
+    - Each test fails for one missing contract behavior without relying on unknown dirty source hunks. Commit: `test(pi): define the Pi-native child session contract`.
 
-- [ ] 11. Implement the contained Pi path-session adapter
-  - **What**: Make delegation use Pi 0.84.1's native path-based `SessionManager` while preserving the Task 9 containment and identity guarantees.
-  - **Files**: `packages/adapters/pi/src/native-session-host.ts`, `child-native-sessions.ts`, `child-session-storage-authority.ts`, `host-compatibility-matrix.ts`, `extension.ts`, direct/RPC delegation authority wiring as required, exports, and Task 10 tests.
+- [ ] 11. Implement Pi-native path sessions and remove the descriptor gate
+  - **What**: Conform delegation to Pi 0.84.1's real path/session/process APIs and delete the fictional descriptor requirement.
+  - **Files**: `packages/adapters/pi/src/native-session-host.ts`, `child-native-sessions.ts`, `child-session-storage-authority.ts` (remove or reduce to real API/root readiness), `host-compatibility-matrix.ts`, capability declarations/prober, `extension.ts`, RPC/direct-dispatch/session-ref wiring, exports, and Task 10 tests.
   - **Depends on**: Task 10.
   - **Implementation outline**:
-    1. Keep raw paths inside the Pi adapter. Expose validated opaque refs to the rest of the adapter and no path to engine APIs, lifecycle metadata, logs, or model-visible content.
-    2. Replace the unconditional `path-only-session-api` rejection with an adapter containment probe. Call `SessionManager.create/open` only after trusted-root/ref/directory checks; revalidate the returned path, persisted state, header identity, parent link, session id, and file identity before use.
-    3. Use existing neverthrow filesystem and held-directory ports. Add only narrow methods needed for pre/post identity proof; no broad filesystem escape hatch and no expected-path throw.
-    4. Rename/redefine the capability to the proven adapter invariant and update every runtime probe/health diagnostic atomically. Preserve a clear typed unavailable reason when containment cannot be established.
-    5. Reconcile or replace the unknown dirty gate-removal hunks from Task 9; stage only independently reviewed bytes.
-    6. Run focused tests, full Pi tests, typecheck, and lint. Obtain mandatory Warp review, then Weft review. Resolve every BLOCK/REJECT before completion.
+    1. Reconstruct the change from the committed baseline and approved design; do not wholesale-stage unknown dirty gate-removal hunks.
+    2. Adapt `SessionManager.create/open` through `Result`/`ResultAsync`, validate the adapter-generated immediate-child path and Pi-native identity/header facts, and pass the validated session file to child Pi with `--session` in the existing RPC launch.
+    3. Remove `requireDescriptorSafeSessionIo`, `descriptor-relative-native-session-io`, `path-only-session-api` as a blanket failure, and any public replacement capability. Keep a narrow internal readiness check for the real Pi methods, root creation/permissions, and process launch.
+    4. Preserve native Pi v3 JSONL, persistence/resume/reopen/thread lineage, generation/settlement guards, bounded process cleanup, and semantic error precedence. Do not add a parallel transcript, custom lock authority, or mux-specific behavior.
+    5. Ensure engine/model/operator-facing data is path-free. Keep all concrete path construction and validation in the Pi adapter.
+    6. Run focused tests, full Pi tests, typecheck, and lint. Obtain mandatory Warp review against the Task 9 threat model and Weft review. Resolve every real containment/disclosure or correctness blocker before completion.
   - **Acceptance**:
-    - All Task 10 tests are green; real Pi 0.84.1 reaches ready and can create/reopen a native child session without an unsafe flag; engine sees no path; Warp and Weft approve.
-    - Commit: `fix(pi): use contained paths for native child sessions` (security follow-ups remain separate focused commits).
+    - Task 10 is green; real Pi 0.84.1 reaches ready and creates, streams, settles, resumes, and reopens a native child session without unsafe flags or fictional capabilities; no path crosses the adapter boundary; Warp and Weft approve.
+    - Commit: `fix(pi): use Pi-native path sessions for child delegation`.
 
 - [ ] 12. Project bounded, sanitized child provider errors
   - **What**: Parse Pi 0.84.1 assistant terminal errors into a closed, bounded child-error model without retaining raw provider payloads.
@@ -276,7 +279,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
   - **Files**: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md`, `33-smoke-checklist.md`, `33-path-session-conformance-design.md`, `33-proofs/33-overlay-ux-live-proof.md`, historical fail-closed proofs/acceptance manifest as superseded references, `docs/adapters/pi.md`, capability/ADR docs, and both plan checkboxes.
   - **Depends on**: Tasks 11 and 13.
   - **Implementation outline**:
-    1. Document the contained-path capability, threat model, typed failures, Pi-native format, sanitized error schema/rendering, and supersession of the old descriptor-only health claim. Preserve historical proofs with banners; do not rewrite history.
+    1. Document the Pi-native path/session contract, reference parity matrix, threat model, typed failures, sanitized error schema/rendering, and removal of the old descriptor-only health claim. Preserve historical proofs with banners; do not rewrite history.
     2. From an exact clean subject run `bun test`, `bun run typecheck`, `bun run lint`, `bun run build`, and `bun run docs:check-links`.
     3. Build an exact artifact and launch isolated real Pi 0.84.1 with pi-vim. Verify ready state, native child create/reopen/settlement/history, no path exposure, all six overlay scroll keys, Escape child-still-running, q dismiss/confirm/non-empty draft, telemetry available/unavailable, compact live/historical round-trip, and cleanup.
     4. Trigger safe real/simulated provider failures through the real harness boundary and observe sanitized 429, 500/no-body, connection/timeout, and unavailable-detail rendering without forbidden data. Do not deliberately expose credentials or depend on an active provider outage.
@@ -297,6 +300,6 @@ bun run build
 bun run docs:check-links
 ```
 
-Then run an exact-subject real Pi 0.84.1 pass: the adapter reports the truthful contained-path capability as ready; a native child can create, stream, settle, reopen, and render history; all overlay controls and telemetry pass; full/compact/historical/fallback views show bounded sanitized provider errors instead of generic stop text; no forbidden data appears; Warp and Weft approve; no child process or Runtime Store lease remains.
+Then run an exact-subject real Pi 0.84.1 pass: `delegated-specialist-execution` is ready through Pi's native path/session contract with no descriptor capability; a native child can create, stream, settle, resume, reopen, and render history; all overlay controls and telemetry pass; full/compact/historical/fallback views show bounded sanitized provider errors instead of generic stop text; no forbidden data appears; Warp and Weft approve; no child process or Runtime Store lease remains.
 
 Commit guidance: one focused Conventional Commit per task (`test`, `fix`, `feat`, `docs`); preserve unrelated dirty work and reference the originating issue when known.
