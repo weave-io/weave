@@ -203,7 +203,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - `bun run docs:check-links` passes; §7/§8/§17 consistent with implemented behavior; smoke checklist executable as written.
     - Commit: `docs(pi): update overlay spec, smoke checklist, and key docs for UX changes`.
 
-- [ ] 9. Audit real Pi subagent libraries and define the Pi-native session contract
+- [x] 9. Audit real Pi subagent libraries and define the Pi-native session contract
   - **What**: Replace the blocked descriptor design with the path-based contract Pi and real Pi subagent extensions use. Reconcile the dirty checkout without adopting unknown code blindly.
   - **Files**: official Pi 0.84.1 `examples/extensions/subagent/`, `docs/session-format.md`, `docs/extensions.md`; reference snapshots `mjakl/pi-subagent@70248dcf`, `nicobailon/pi-subagents@c386b258`, `baochunli/pi-collaborating-agents@acd50d0`, `hazat/pi-interactive-subagents@c100577`; read/audit `packages/adapters/pi/src/native-session-host.ts`, `child-native-sessions.ts`, `child-session-storage-authority.ts`, `extension.ts`, related tests; rewrite `docs/specs/33-spec-pi-adapter/33-path-session-conformance-design.md`; plan checkbox.
   - **Depends on**: Task 8.
