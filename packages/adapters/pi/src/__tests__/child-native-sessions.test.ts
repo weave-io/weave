@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok } from "neverthrow";
 import {
   isDisjointFromDefaultSessionTree,
   nativeSessionDeletionToken,
@@ -9,7 +9,6 @@ import {
   type PiNativeSessionHeader,
   type PiNativeSessionHostPort,
   type PiNativeSessionRecord,
-  type PiNativeSessionStorageUnavailable,
   PiNativeSessionStore,
   resolvePiNativeSessionRoot,
   safeNativeSessionComponent,
@@ -88,15 +87,6 @@ function handleFor(
  * The store exclusive-creates the header when the generated path is absent.
  */
 class FakeHost implements PiNativeSessionHostPort {
-  requireDescriptorSafeSessionIo(): Result<
-    void,
-    PiNativeSessionStorageUnavailable
-  > {
-    // Test-only memory host: every byte goes through the injected in-memory
-    // no-follow filesystem, so descriptor-safe storage is provable here.
-    return ok(undefined);
-  }
-
   readonly created: {
     cwd: string;
     dir: string;
@@ -156,22 +146,10 @@ class FakeHost implements PiNativeSessionHostPort {
   }
 }
 
-/** A hostile host used to prove the storage-authority guard is the first seam. */
+/** Hostile host: bounded FS reads must not open or create through the host. */
 class DenyingHost implements PiNativeSessionHostPort {
-  preflightCalls = 0;
   createCalls = 0;
   openCalls = 0;
-
-  requireDescriptorSafeSessionIo(): Result<
-    void,
-    PiNativeSessionStorageUnavailable
-  > {
-    this.preflightCalls += 1;
-    return err({
-      type: "SessionStorageUnavailable",
-      reason: "path-only-session-api",
-    });
-  }
 
   create(
     ..._args: Parameters<PiNativeSessionHostPort["create"]>
@@ -186,17 +164,6 @@ class DenyingHost implements PiNativeSessionHostPort {
     this.openCalls += 1;
     throw new Error("SessionManager.open must not be called");
   }
-}
-
-function throwingFilesystem(calls: {
-  openDirectory: number;
-}): PiNativeSessionFsPort {
-  return {
-    openDirectory: () => {
-      calls.openDirectory += 1;
-      throw new Error("filesystem mutation must not be attempted");
-    },
-  } as unknown as PiNativeSessionFsPort;
 }
 
 /** Pre-occupies a session leaf so create can assert collision. */
@@ -453,66 +420,8 @@ describe("containment", () => {
   });
 });
 
-describe("descriptor-safe storage preflight", () => {
-  test("returns before host, filesystem, or clock work", async () => {
-    const host = new DenyingHost();
-    const filesystemCalls = { openDirectory: 0 };
-    let clockCalls = 0;
-    const store = new PiNativeSessionStore({
-      root: ROOT,
-      fs: throwingFilesystem(filesystemCalls),
-      host,
-      now: () => {
-        clockCalls += 1;
-        return new Date(TIMESTAMP);
-      },
-    });
-    const unavailable: PiNativeSessionStorageUnavailable = {
-      type: "SessionStorageUnavailable",
-      reason: "path-only-session-api",
-    };
-
-    const results = [
-      await store.createChildSession({
-        childId: "../escape",
-        parentSession: PARENT,
-        cwd: "/repo",
-      }),
-      await store.establishThreadLeaf(
-        "../escape/session.jsonl",
-        {
-          threadId: "thread-1",
-          agentName: "agent",
-          parentId: "parent-1",
-          parentAgentName: "parent-agent",
-          parentDepth: 0,
-          ownerParentSessionId: "owner-1",
-          cwd: "/repo",
-          createdAt: 0,
-        },
-        PARENT,
-      ),
-      await store.deleteSession(
-        { ...RECORD, ref: "../escape/session.jsonl" },
-        "wrong",
-      ),
-      await store.appendTombstone({
-        ...RECORD,
-        ref: "../escape/session.jsonl",
-      }),
-    ];
-
-    for (const result of results) {
-      expect(result._unsafeUnwrapErr()).toEqual(unavailable);
-    }
-    expect(host.preflightCalls).toBe(4);
-    expect(host.createCalls).toBe(0);
-    expect(host.openCalls).toBe(0);
-    expect(filesystemCalls.openDirectory).toBe(0);
-    expect(clockCalls).toBe(0);
-  });
-
-  test("keeps descriptor-only reads available when the host is unavailable", async () => {
+describe("native session host independence", () => {
+  test("keeps bounded reads available without opening the host", async () => {
     const fs = new MemoryPiNativeSessionFs();
     await seedSessionFile(
       fs,
@@ -534,7 +443,7 @@ describe("descriptor-safe storage preflight", () => {
 
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap().entries).toEqual([]);
-    expect(host.preflightCalls).toBe(0);
+    expect(host.createCalls).toBe(0);
     expect(host.openCalls).toBe(0);
   });
 });

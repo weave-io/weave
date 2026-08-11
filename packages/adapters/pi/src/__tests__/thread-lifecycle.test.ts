@@ -33,11 +33,6 @@ import type {
   PiChildRefRecord,
   PiChildRefScan,
 } from "../child-session-refs.js";
-import {
-  CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
-  createPiChildSessionStorageAuthority,
-  type PiChildSessionStorageAuthority,
-} from "../child-session-storage-authority.js";
 import { SystemTimerPort } from "../child-timer.js";
 import { isTrustedChildTitleProvenance } from "../child-title.js";
 import {
@@ -53,7 +48,6 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const GENERATION = "gen-1";
 const OWNER_SESSION = "parent-session-1";
@@ -111,24 +105,6 @@ class SequentialIdGenerator {
     this.calls += 1;
     return `child-${this.calls}`;
   }
-}
-
-function switchableSessionStorageAuthority(): PiChildSessionStorageAuthority & {
-  readonly deny: () => void;
-} {
-  let available = true;
-  return {
-    deny: () => {
-      available = false;
-    },
-    requireDescriptorSafeSessionIo: () =>
-      available
-        ? ok(undefined)
-        : err({
-            type: "SessionStorageUnavailable" as const,
-            reason: "path-only-session-api" as const,
-          }),
-  };
 }
 
 function flush(): Promise<void> {
@@ -602,7 +578,6 @@ function harness(
     readonly target?: DelegationTarget | undefined;
     readonly parentSessionId?: string | undefined;
     readonly idGenerator?: SequentialIdGenerator;
-    readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
     readonly maxChildren?: number;
   } = {},
 ): Harness {
@@ -619,9 +594,6 @@ function harness(
     idGenerator: overrides.idGenerator ?? new SequentialIdGenerator(),
     logger: noopLogger,
     processPort: port,
-    sessionStorageAuthority:
-      overrides.sessionStorageAuthority ??
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     randomPort: new WebCryptoRandomPort(),
     hmacPort: new WebCryptoHmacPort(),
     timerPort: new SystemTimerPort(),
@@ -1176,8 +1148,6 @@ describe("thread lifecycle: source integrity", () => {
       idGenerator: new SequentialIdGenerator(),
       logger: noopLogger,
       processPort: new FakeChildProcessPort(),
-      sessionStorageAuthority:
-        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       randomPort: new WebCryptoRandomPort(),
       hmacPort: new WebCryptoHmacPort(),
     });
@@ -1591,107 +1561,5 @@ describe("thread lifecycle: durable title privacy", () => {
     );
     expect(boundedFailure.isErr()).toBe(true);
     expectSecretAbsent(boundedFailure._unsafeUnwrapErr());
-  });
-});
-
-describe("thread lifecycle: storage authority guard", () => {
-  it("blocks start before request, id, native session, ref, cache, or process work", async () => {
-    const idGenerator = new SequentialIdGenerator();
-    const h = harness({
-      idGenerator,
-      sessionStorageAuthority: createPiChildSessionStorageAuthority(),
-    });
-    let requestReads = 0;
-    const hostileRequest = new Proxy(request({ cwd: "../../hostile/path" }), {
-      get() {
-        requestReads += 1;
-        throw new Error("delegation request interpreted");
-      },
-    });
-
-    const result = await h.controller.delegate(hostileRequest);
-
-    expect(result.isErr()).toBe(true);
-    if (result.isOk()) return;
-    expect(result.error.code).toBe("ChildSpawnFailed");
-    expect(result.error.safeMessage).toBe(
-      "Weave could not start the delegated child process.",
-    );
-    expect(result.error.correlation).toEqual({
-      reason: CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
-    });
-    expect(requestReads).toBe(0);
-    expect(idGenerator.calls).toBe(0);
-    expect(h.port.spawnInputs).toHaveLength(0);
-    expect(h.port.spawnedProcesses).toHaveLength(0);
-    expect(h.refs.newChildren).toHaveLength(0);
-    expect(h.refs.dividers).toHaveLength(0);
-    expect(h.refs.lifecycles).toHaveLength(0);
-    expect(h.sessions?.created).toHaveLength(0);
-    expect(h.sessions?.leaves).toHaveLength(0);
-    expect(h.cache.writes).toHaveLength(0);
-  });
-
-  it("blocks retry and continue before the next id, divider, cache, control, or spawn", async () => {
-    const cases = [
-      { action: "retry" as const, outcome: "failed" as const },
-      { action: "continue" as const, outcome: "completed" as const },
-    ];
-
-    for (const testCase of cases) {
-      const authority = switchableSessionStorageAuthority();
-      const idGenerator = new SequentialIdGenerator();
-      const h = harness({ idGenerator, sessionStorageAuthority: authority });
-      await startThread(h, testCase.outcome);
-      const process = h.port.spawnedProcesses[0];
-      const before = {
-        childIds: idGenerator.calls,
-        spawned: h.port.spawnedProcesses.length,
-        spawnInputs: h.port.spawnInputs.length,
-        writes: process?.writtenLines().length ?? 0,
-        newChildren: h.refs.newChildren.length,
-        dividers: h.refs.dividers.length,
-        lifecycles: h.refs.lifecycles.length,
-        sessions: h.sessions?.created.length ?? 0,
-        leaves: h.sessions?.leaves.length ?? 0,
-        cache: h.cache.writes.length,
-      };
-      authority.deny();
-      let requestReads = 0;
-      const resumeRequest = new Proxy(
-        resume({
-          action: testCase.action,
-          ...(testCase.action === "continue"
-            ? { instruction: "continue without interpretation" }
-            : {}),
-        }),
-        {
-          get() {
-            requestReads += 1;
-            throw new Error("resume request interpreted");
-          },
-        },
-      );
-
-      const result = await h.controller.resumeThread(resumeRequest);
-
-      expect(result.isErr()).toBe(true);
-      if (result.isOk()) continue;
-      expect(result.error.code).toBe("ChildSpawnFailed");
-      expect(result.error.correlation).toEqual({
-        reason: CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
-      });
-      expect(requestReads).toBe(0);
-      expect(idGenerator.calls).toBe(before.childIds);
-      expect(h.port.spawnedProcesses).toHaveLength(before.spawned);
-      expect(h.port.spawnInputs).toHaveLength(before.spawnInputs);
-      expect(process?.writtenLines()).toHaveLength(before.writes);
-      expect(h.refs.newChildren).toHaveLength(before.newChildren);
-      expect(h.refs.dividers).toHaveLength(before.dividers);
-      expect(h.refs.lifecycles).toHaveLength(before.lifecycles);
-      expect(h.sessions?.created).toHaveLength(before.sessions);
-      expect(h.sessions?.leaves).toHaveLength(before.leaves);
-      expect(h.cache.writes).toHaveLength(before.cache);
-    }
   });
 });

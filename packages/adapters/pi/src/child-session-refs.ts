@@ -37,11 +37,9 @@ import { z } from "zod";
 import {
   type PiNativeSessionError,
   type PiNativeSessionRecord,
-  type PiNativeSessionStorageUnavailable,
   type PiNativeSessionTombstone,
   verifyNativeSessionRef,
 } from "./child-native-sessions.js";
-import type { PiChildSessionStorageAuthority } from "./child-session-storage-authority.js";
 import {
   enforceDurableChildTitle,
   enforceDurableChildTitleProvenance,
@@ -228,18 +226,7 @@ export type PiChildRefError =
       readonly childId: string;
       readonly state: Exclude<PiChildRefSourceState, "available">;
     }
-  | { readonly type: "ChildRefParentUnavailable" }
-  | {
-      /**
-       * The host cannot prove descriptor-safe native session I/O, so this
-       * store may not append, update, or tombstone a durable ref (Task 21
-       * remediation B). Carries the same typed reason as the
-       * {@link PiNativeSessionStorageUnavailable} it maps from, so
-       * `path-only-session-api` survives to the operator surface.
-       */
-      readonly type: "ChildRefStorageUnavailable";
-      readonly reason: PiNativeSessionStorageUnavailable["reason"];
-    };
+  | { readonly type: "ChildRefParentUnavailable" };
 
 /** Informational, non-fatal observation produced by a read. Doctor-facing. */
 export type PiChildRefIssue =
@@ -466,16 +453,6 @@ export interface PiChildSessionRefStoreOptions {
   readonly append: PiChildRefAppendPort;
   readonly read: PiChildRefEntryReadPort;
   readonly authority: PiChildRefSourceAuthority;
-  /**
-   * Native-session mutation authority (Task 21 remediation B).
-   *
-   * Required, and deliberately independent of both the top-level
-   * required-capability gate and {@link PiChildRefSourceAuthority}: a caller
-   * that constructs this store directly, bypassing the extension and the
-   * delegation controller, still cannot append a ref on a host that addresses
-   * sessions only by caller-supplied filesystem path. Reads never consult it.
-   */
-  readonly storage: PiChildSessionStorageAuthority;
   readonly now?: () => number;
   /** Injected opaque origin-entry-id mint; defaults to `crypto.randomUUID`. */
   readonly newEntryId?: () => string;
@@ -526,7 +503,6 @@ export class PiChildSessionRefStore {
   private readonly append: PiChildRefAppendPort;
   private readonly read: PiChildRefEntryReadPort;
   private readonly authority: PiChildRefSourceAuthority;
-  private readonly storage: PiChildSessionStorageAuthority;
   private readonly now: () => number;
   private readonly newEntryId: () => string;
   /** Highest sequence observed or written per child, seeded by reads. */
@@ -537,7 +513,6 @@ export class PiChildSessionRefStore {
     this.append = options.append;
     this.read = options.read;
     this.authority = options.authority;
-    this.storage = options.storage;
     this.now = options.now ?? (() => Date.now());
     this.newEntryId = options.newEntryId ?? (() => crypto.randomUUID());
   }
@@ -559,8 +534,6 @@ export class PiChildSessionRefStore {
   appendNewChild(
     input: AppendNewChildRefInput,
   ): ResultAsync<PiChildRefRecord, PiChildRefError> {
-    const authorized = this.requireMutationAuthority();
-    if (authorized.isErr()) return errAsync(authorized.error);
     if (this.parentSessionId.length === 0) {
       return errAsync({ type: "ChildRefParentUnavailable" });
     }
@@ -599,8 +572,6 @@ export class PiChildSessionRefStore {
     record: PiChildRefRecord,
     input: AppendChildRefRunInput,
   ): ResultAsync<PiChildRefRecord, PiChildRefError> {
-    const authorized = this.requireMutationAuthority();
-    if (authorized.isErr()) return errAsync(authorized.error);
     return this.guardOrigin(record).asyncAndThen(() => {
       const at = this.now();
       const nextRun = record.runs.length + 1;
@@ -645,8 +616,6 @@ export class PiChildSessionRefStore {
     record: PiChildRefRecord,
     input: AppendChildRefLifecycleInput,
   ): ResultAsync<PiChildRefRecord, PiChildRefError> {
-    const authorized = this.requireMutationAuthority();
-    if (authorized.isErr()) return errAsync(authorized.error);
     return this.guardOrigin(record).asyncAndThen(() => {
       const at = this.now();
       const settledAt =
@@ -693,32 +662,6 @@ export class PiChildSessionRefStore {
     );
   }
 
-  /**
-   * The mutation-authority question, asked independently by every production
-   * mutation method and once more inside the private host-write boundary.
-   *
-   * Every check is its own call, so removing or bypassing any single call site
-   * still leaves the host write itself refused. A throwing authority is
-   * treated as unavailable: this boundary never converts a defect into a
-   * permitted write.
-   */
-  private requireMutationAuthority(): Result<void, PiChildRefError> {
-    const asked = Result.fromThrowable(
-      () => this.storage.requireDescriptorSafeSessionIo(),
-      (): PiChildRefError => ({
-        type: "ChildRefStorageUnavailable",
-        reason: "path-only-session-api",
-      }),
-    )();
-    if (asked.isErr()) return err(asked.error);
-    return asked.value.mapErr(
-      (failure): PiChildRefError => ({
-        type: "ChildRefStorageUnavailable",
-        reason: failure.reason,
-      }),
-    );
-  }
-
   private guardOrigin(
     record: PiChildRefRecord,
   ): Result<PiChildRefRecord, PiChildRefError> {
@@ -750,10 +693,6 @@ export class PiChildSessionRefStore {
     kind: PiChildRefEntryKind,
     record: PiChildRefRecord,
   ): ResultAsync<void, PiChildRefError> {
-    // Re-asked here so the host `appendEntry` boundary itself is authorized,
-    // independently of whichever public method routed here.
-    const authorized = this.requireMutationAuthority();
-    if (authorized.isErr()) return errAsync(authorized.error);
     return this.authority
       .checkSource(record.sessionRef, this.parentSessionId)
       .andThen((state) => {

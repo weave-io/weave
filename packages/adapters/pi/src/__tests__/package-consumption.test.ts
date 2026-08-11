@@ -21,7 +21,7 @@ describe("public package entry points", () => {
     expect(pkg.WEAVE_INSPECT_COMMAND_NAME).toBe("weave:inspect");
     expect(pkg.WEAVE_CLEAR_CHILDREN_COMMAND_NAME).toBe("weave:clear-children");
     expect(pkg.WEAVE_RECOVERY_COMMAND_NAME).toBe("weave:recover-children");
-    expect(pkg.PI_ADAPTER_CAPABILITY_CONTRACT.capabilities).toHaveLength(21);
+    expect(pkg.PI_ADAPTER_CAPABILITY_CONTRACT.capabilities).toHaveLength(20);
     expect(typeof pkg.createPiExtension).toBe("function");
   });
 

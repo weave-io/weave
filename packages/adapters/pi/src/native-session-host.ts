@@ -1,17 +1,18 @@
 /**
- * Concrete Pi 0.83 `SessionManager` adapter for Task 4's native session host
- * port. Production wires the public root export; tests inject a scripted host
- * and never construct this adapter.
+ * Concrete Pi `SessionManager` adapter for the native session host port.
+ * Production wires the public root export; tests inject a scripted host and
+ * never construct this adapter.
+ *
+ * Create/open call Pi's static constructors. Expected failures are captured at
+ * the store seam with `Result.fromThrowable` (this port's return type is fixed
+ * by {@link PiNativeSessionHostPort}).
  */
 
-import { err, type Result } from "neverthrow";
-
-import {
-  describePiNativeSessionStorageUnavailable,
-  type PiNativeSessionHandle,
-  type PiNativeSessionHeader,
-  type PiNativeSessionHostPort,
-  type PiNativeSessionStorageUnavailable,
+import { Result } from "neverthrow";
+import type {
+  PiNativeSessionHandle,
+  PiNativeSessionHeader,
+  PiNativeSessionHostPort,
 } from "./child-native-sessions.js";
 
 /** Narrow static constructors from Pi's public `SessionManager`. */
@@ -28,7 +29,7 @@ export interface PiSessionManagerStatic {
   ): PiSessionManagerInstance;
 }
 
-/** Narrow instance surface Task 4 reads and writes through. */
+/** Narrow instance surface the store reads and writes through. */
 export interface PiSessionManagerInstance {
   getSessionId(): string;
   getSessionFile(): string | undefined;
@@ -47,7 +48,7 @@ export interface PiSessionManagerInstance {
   appendCustomEntry(customType: string, data?: unknown): string;
 }
 
-/** True when a value exposes Pi 0.83's static `create` / `open` constructors. */
+/** True when a value exposes Pi's static `create` / `open` constructors. */
 export function isPiSessionManagerStatic(
   value: unknown,
 ): value is PiSessionManagerStatic {
@@ -64,7 +65,11 @@ export function isPiSessionManagerStatic(
   );
 }
 
-/** Adapts one live Pi `SessionManager` instance to the Task 4 handle port. */
+/**
+ * Adapts one live Pi `SessionManager` instance to the store handle port.
+ * Header fields keep Pi's v3 key order so exclusive persistence can
+ * `JSON.stringify` the exact generated identity line.
+ */
 export function adaptPiSessionManagerHandle(
   manager: PiSessionManagerInstance,
 ): PiNativeSessionHandle {
@@ -75,17 +80,16 @@ export function adaptPiSessionManagerHandle(
     getHeader: (): PiNativeSessionHeader | null => {
       const header = manager.getHeader();
       if (header === null) return null;
-      // Every Pi-generated header field is preserved verbatim. Task 20 needs
-      // `type`/`timestamp` to persist the host's own header bytes without
-      // inventing any of them.
+      // Pi v3 order: type, version, id, timestamp, cwd, parentSession.
+      // Preserve every host-generated field verbatim; never invent values.
       return {
-        id: header.id,
-        cwd: header.cwd,
         ...(header.type === undefined ? {} : { type: header.type }),
         ...(header.version === undefined ? {} : { version: header.version }),
+        id: header.id,
         ...(header.timestamp === undefined
           ? {}
           : { timestamp: header.timestamp }),
+        cwd: header.cwd,
         ...(header.parentSession === undefined
           ? {}
           : { parentSession: header.parentSession }),
@@ -99,47 +103,58 @@ export function adaptPiSessionManagerHandle(
   };
 }
 
+function callSessionManagerCreate(
+  SessionManager: PiSessionManagerStatic,
+  cwd: string,
+  sessionDir: string,
+  options: { readonly parentSession?: string; readonly id?: string },
+): Result<PiSessionManagerInstance, unknown> {
+  return Result.fromThrowable(
+    () => SessionManager.create(cwd, sessionDir, options),
+    (cause) => cause,
+  )();
+}
+
+function callSessionManagerOpen(
+  SessionManager: PiSessionManagerStatic,
+  path: string,
+  sessionDir: string,
+): Result<PiSessionManagerInstance, unknown> {
+  return Result.fromThrowable(
+    () => SessionManager.open(path, sessionDir),
+    (cause) => cause,
+  )();
+}
+
 /**
- * Builds the Task 4 host port over Pi's static session constructors.
- *
- * Pi 0.83 addresses sessions only by caller-supplied filesystem path
- * (`SessionManager.create(cwd, isolatedDir, options)` and
- * `SessionManager.open(path, sessionDir)`), so this host cannot prove that
- * the bytes it writes land in the descriptor-verified, Weave-owned session
- * tree. Its storage-authority preflight therefore always fails with
- * `path-only-session-api`, and `create` / `open` refuse before touching
- * `SessionManager` at all. There is no option, environment variable, or flag
- * that relaxes this.
+ * Builds the native session host over Pi's public session constructors.
+ * Does not refuse path-addressed hosts and does not throw for policy; the
+ * store wraps create/open and maps throws to `SessionCreateFailed`.
  */
 export function createPiNativeSessionHost(
   SessionManager: PiSessionManagerStatic,
 ): PiNativeSessionHostPort {
-  const unavailable: PiNativeSessionStorageUnavailable = {
-    type: "SessionStorageUnavailable",
-    reason: "path-only-session-api",
-  };
-  // Held, never invoked: the constructors stay unreachable behind the
-  // preflight so no path-addressed session is ever created or opened.
-  void SessionManager;
   return {
-    requireDescriptorSafeSessionIo(): Result<
-      void,
-      PiNativeSessionStorageUnavailable
-    > {
-      return err(unavailable);
-    },
-    create(): PiNativeSessionHandle {
-      // Defense in depth only. The store calls the preflight above first, so
-      // this is unreachable on every expected path; a caller that bypasses
-      // the preflight must not reach `SessionManager.create`.
-      throw new Error(
-        describePiNativeSessionStorageUnavailable(unavailable.reason),
+    create(cwd, sessionDir, options): PiNativeSessionHandle {
+      const created = callSessionManagerCreate(
+        SessionManager,
+        cwd,
+        sessionDir,
+        options,
       );
+      if (created.isErr()) {
+        // Port return type cannot be Result; rethrow for the store's
+        // Result.fromThrowable boundary (never a policy/unreachable throw).
+        throw created.error;
+      }
+      return adaptPiSessionManagerHandle(created.value);
     },
-    open(): PiNativeSessionHandle {
-      throw new Error(
-        describePiNativeSessionStorageUnavailable(unavailable.reason),
-      );
+    open(path, sessionDir): PiNativeSessionHandle {
+      const opened = callSessionManagerOpen(SessionManager, path, sessionDir);
+      if (opened.isErr()) {
+        throw opened.error;
+      }
+      return adaptPiSessionManagerHandle(opened.value);
     },
   };
 }

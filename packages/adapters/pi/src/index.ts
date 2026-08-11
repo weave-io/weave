@@ -39,7 +39,6 @@ export type {
 export {
   createProductionPiAdapterCommandRegistry,
   createProductionPorts,
-  evaluateProductionChildrenDeleteGate,
   openProductionPiAdapterCommandPorts,
   resolveProductionAdapterCliRegistry,
 } from "./adapter-cli-production.js";
@@ -531,12 +530,6 @@ export {
   parseChildRefRecord,
   serializeChildRefEnvelope,
 } from "./child-session-refs.js";
-export {
-  CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
-  createPiChildSessionStorageAuthority,
-  describeChildSessionStorageUnavailable,
-  type PiChildSessionStorageAuthority,
-} from "./child-session-storage-authority.js";
 export {
   DEFAULT_HANDSHAKE_TIMEOUT_MS,
   DEFAULT_REPLY_TIMEOUT_MS,

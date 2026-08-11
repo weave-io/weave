@@ -25,7 +25,6 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const randomPort = new WebCryptoRandomPort();
 const hmacPort = new WebCryptoHmacPort();
@@ -131,8 +130,6 @@ async function startRunningChild(): Promise<RunningChild> {
   const observed: PiChildSessionEvent[] = [];
   const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
     processPort,
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     randomPort,
     hmacPort,
     logger: noopLogger(),
@@ -478,8 +475,6 @@ describe("child result contract capacity release", () => {
       idGenerator: new SequentialIdGenerator(),
       logger: noopLogger(),
       processPort: port,
-      sessionStorageAuthority:
-        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       randomPort,
       hmacPort,
       timerPort: new SystemTimerPort(),

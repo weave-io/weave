@@ -11,7 +11,6 @@ import {
   FakeIdGenerator,
   RecordingFakePiHost,
 } from "./fakes/fake-pi-host.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PRIVATE = {
   healthCanary: "PRIVATE-HEALTH-COMMAND-CANARY",
@@ -120,8 +119,6 @@ test("real /weave:health output does not include private command args", async ()
   const factory = createPiExtension({
     idGenerator: new FakeIdGenerator(),
     clock: new FakeClock(),
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
   });
   factory(host.api);
 

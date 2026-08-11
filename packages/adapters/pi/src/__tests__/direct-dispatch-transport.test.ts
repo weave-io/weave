@@ -26,7 +26,6 @@ import {
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
 import { FakeIdGenerator } from "./fakes/fake-pi-host.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 /**
  * Regression coverage for the live exact-host direct-dispatch bootstrap
@@ -276,8 +275,6 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
-        sessionStorageAuthority:
-          TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -380,8 +377,6 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
-        sessionStorageAuthority:
-          TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -448,8 +443,6 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
-        sessionStorageAuthority:
-          TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -572,8 +565,6 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
-        sessionStorageAuthority:
-          TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -647,8 +638,6 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
-        sessionStorageAuthority:
-          TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -703,8 +692,6 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const failingTransport = createDirectDispatchTransport(
       {
         processPort: failingProcess,
-        sessionStorageAuthority:
-          TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -757,8 +744,6 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
-        sessionStorageAuthority:
-          TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),

@@ -22,41 +22,17 @@ import {
 import {
   type PiChildSessionObserver,
   type PiExtensionUiResponseInput,
-  type PiRpcChildDeps,
+  PiRpcChild,
   type PiRpcChildSpawnInput,
-  PiRpcChild as ProductionPiRpcChild,
 } from "../rpc-child.js";
 import type { JsonValue } from "../strict-json.js";
 import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const randomPort = new WebCryptoRandomPort();
 const hmacPort = new WebCryptoHmacPort();
-
-type TestPiRpcChildDeps = Omit<PiRpcChildDeps, "sessionStorageAuthority"> &
-  Partial<Pick<PiRpcChildDeps, "sessionStorageAuthority">>;
-
-/** Existing child tests opt into the descriptor-safe test seam explicitly. */
-class PiRpcChild extends ProductionPiRpcChild {
-  constructor(
-    childId: string,
-    parentId: string,
-    generationId: string,
-    agentName: string,
-    depth: number,
-    deps: TestPiRpcChildDeps,
-  ) {
-    super(childId, parentId, generationId, agentName, depth, {
-      ...deps,
-      sessionStorageAuthority:
-        deps.sessionStorageAuthority ??
-        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
-    });
-  }
-}
 
 function noopLogger() {
   return { debug() {}, info() {}, warn() {}, error() {} };

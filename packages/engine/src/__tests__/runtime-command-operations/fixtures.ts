@@ -446,7 +446,6 @@ export function makeContractWithCommandEntrypoints(
     "command-entrypoints",
     "event-logging",
     "token-usage-reporting",
-    "descriptor-relative-native-session-io",
   ];
 
   return {

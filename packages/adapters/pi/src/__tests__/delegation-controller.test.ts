@@ -21,7 +21,6 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 function config(source: string): WeaveConfig {
   const result = parseConfig(source);
@@ -283,8 +282,6 @@ function makeController(
     idGenerator: new SequentialIdGenerator(),
     logger: noopLogger,
     processPort: port,
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     randomPort: new WebCryptoRandomPort(),
     hmacPort: new WebCryptoHmacPort(),
     timerPort: new SystemTimerPort(),

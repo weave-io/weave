@@ -35,10 +35,6 @@ import {
   type PiChildRefEntryReadPort,
   PiChildSessionRefStore,
 } from "./child-session-refs.js";
-import {
-  createPiChildSessionStorageAuthority,
-  type PiChildSessionStorageAuthority,
-} from "./child-session-storage-authority.js";
 import type {
   PiThreadCachePort,
   PiThreadRefPort,
@@ -105,15 +101,9 @@ export interface PiThreadSourceFactoryInput {
   /** Override the Pi static constructors (production default: public root). */
   readonly SessionManager?: PiSessionManagerStatic;
   /**
-   * Test seam for the native-session mutation authority handed to the ref
-   * store. Production omits it and gets the always-refusing authority, so a
-   * path-only host can never append, update, or tombstone a durable ref.
-   */
-  readonly storageAuthority?: PiChildSessionStorageAuthority;
-  /**
    * When `true`, open the metadata cache with the non-creating read-only
-   * path. Health-only / path-only startup must set this so a pristine data
-   * root never gains directories, DB, WAL, or SHM from source construction.
+   * path. Health-only startup must set this so a pristine data root never
+   * gains directories, DB, WAL, or SHM from source construction.
    */
   readonly readOnly?: boolean;
 }
@@ -229,7 +219,6 @@ function openWithSessionRoot(
     append: input.append,
     read: input.read,
     authority,
-    storage: input.storageAuthority ?? createPiChildSessionStorageAuthority(),
     ...(now === undefined ? {} : { now }),
   });
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ok, type Result, type ResultAsync } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import {
   decodePiNativeSessionEntryCursor,
   encodePiNativeSessionEntryCursor,
@@ -13,7 +13,6 @@ import {
   type PiNativeSessionHandle,
   type PiNativeSessionHostPort,
   type PiNativeSessionPagedEntry,
-  type PiNativeSessionStorageUnavailable,
   PiNativeSessionStore,
   setPiNativeSessionMaxRangeLengthForTests,
 } from "../child-native-sessions.js";
@@ -69,15 +68,6 @@ function buildSession(entryCount: number): string {
 
 /** Host that throws if getEntries/open are used — paging must stay FS-only. */
 class ForbiddenHost implements PiNativeSessionHostPort {
-  requireDescriptorSafeSessionIo(): Result<
-    void,
-    PiNativeSessionStorageUnavailable
-  > {
-    // Test-only memory host: every byte goes through the injected in-memory
-    // no-follow filesystem, so descriptor-safe storage is provable here.
-    return ok(undefined);
-  }
-
   create(): PiNativeSessionHandle {
     throw new Error("host.create must not be called by paging");
   }

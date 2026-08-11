@@ -23,7 +23,6 @@ export const PI_HOST_SURFACE_IDS = [
   "rpc-append-entry",
   "rpc-session-tree-read",
   "custom-session-directory",
-  "descriptor-relative-native-session-io",
   "child-overlay-lifecycle",
 ] as const;
 export type PiHostSurfaceId = (typeof PI_HOST_SURFACE_IDS)[number];
@@ -151,11 +150,6 @@ export const PI_HOST_COMPATIBILITY_MATRIX: PiHostCompatibilityMatrix = {
       "custom-session-directory",
       "Spec 33 §16 custom session directory support",
       "Upgrade the Pi host to one that accepts a custom session directory, or disable Weave delegation.",
-    ),
-    requiredNative(
-      "descriptor-relative-native-session-io",
-      "Spec 33 §16 descriptor-relative native session I/O",
-      "Upgrade the Pi host to one whose native session reads and writes are addressed by an opaque host-owned session descriptor instead of a caller-supplied filesystem path, or disable Weave delegation.",
     ),
     overlayOnly(
       "child-overlay-lifecycle",

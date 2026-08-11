@@ -55,7 +55,6 @@ import {
   PI_CHILD_TITLE_PROVENANCE_VALUES,
   resolveDurableChildTitle,
 } from "../child-title.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 // ---------------------------------------------------------------------------
 // The legacy row
@@ -335,7 +334,6 @@ describe("ref boundary suppresses unproven legacy titles", () => {
     const session = new FakeParentSession();
     session.seedRaw(JSON.parse(legacyEntryJson()));
     const store = new PiChildSessionRefStore({
-      storage: TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       parentSessionId: PARENT,
       append: session,
       read: session,
@@ -356,7 +354,6 @@ describe("ref boundary suppresses unproven legacy titles", () => {
   it("cannot re-persist a legacy title through a lifecycle update", async () => {
     const session = new FakeParentSession();
     const store = new PiChildSessionRefStore({
-      storage: TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       parentSessionId: PARENT,
       append: session,
       read: session,

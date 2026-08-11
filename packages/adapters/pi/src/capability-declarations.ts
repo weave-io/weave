@@ -75,17 +75,6 @@ export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       readiness: "emulated",
     },
     {
-      id: "descriptor-relative-native-session-io",
-      description:
-        "Host-owned native session reads and writes addressed by an opaque session descriptor rather than a caller-supplied filesystem path",
-      readiness: "native",
-      notes:
-        "Owned by the Pi host, not by the adapter. The adapter never declares this capability from static knowledge alone: the host surface probe `descriptor-relative-native-session-io` is authoritative and can only lower it. The exact tested host (0.83.0) reports `path-only-session-api`, so the capability is unavailable and the adapter enters health-only mode.",
-      supplier: "host",
-      remediationHint:
-        "Upgrade the Pi host to one whose native session API is descriptor-relative, or run Weave in health-only mode.",
-    },
-    {
       id: "prompt-composition",
       description:
         "Appending composed descriptor prompts to Pi's system prompt",

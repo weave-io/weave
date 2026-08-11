@@ -8,13 +8,10 @@ import { join } from "node:path";
 import { dispatchAdapterCommand } from "@weaveio/weave-engine";
 import {
   createProductionPiAdapterCommandRegistry,
-  createProductionPorts,
-  evaluateProductionChildrenDeleteGate,
   openProductionPiAdapterCommandPorts,
   PI_ADAPTER_COMMAND_NAMES,
   PI_ADAPTER_NAME,
   resolveProductionAdapterCliRegistry,
-  SESSION_MUTATION_REQUIRED_CAPABILITY,
 } from "../index.js";
 import type { PiSessionManagerStatic } from "../native-session-host.js";
 
@@ -143,22 +140,10 @@ describe("health-only CLI production dispatch — non-creating reads", () => {
     await Promise.all(dirs.splice(0).map((dir) => removeScratchFiles(dir)));
   });
 
-  it("gates children.delete before createProductionPorts with path-only-session-api", async () => {
+  it("resolves children.delete without a descriptor capability gate", async () => {
     const xdg = await tempXdg();
     dirs.push(xdg);
-    const before = await listRelativePaths(xdg);
-    expect(before).toEqual([]);
-
-    const gated = evaluateProductionChildrenDeleteGate({
-      SessionManager: fakeSessionManager(),
-    });
-    expect(gated.isErr()).toBe(true);
-    if (gated.isOk()) return;
-    expect(gated.error.code).toBe("RequiredCapabilityUnavailable");
-    expect(gated.error.correlation?.capabilityId).toBe(
-      SESSION_MUTATION_REQUIRED_CAPABILITY,
-    );
-    expect(gated.error.correlation?.reason).toBe("path-only-session-api");
+    expect(await listRelativePaths(xdg)).toEqual([]);
 
     const opened = await resolveProductionAdapterCliRegistry({
       action: "children.delete",
@@ -166,18 +151,8 @@ describe("health-only CLI production dispatch — non-creating reads", () => {
       env: { XDG_DATA_HOME: xdg, HOME: xdg },
       SessionManager: fakeSessionManager(),
     });
-    expect(opened.isErr()).toBe(true);
-    if (opened.isOk()) return;
-    expect(opened.error).toEqual({
-      type: "RequiredCapabilityUnavailable",
-      capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
-      reason: "path-only-session-api",
-    });
-
-    const after = await listRelativePaths(xdg);
-    expect(after).toEqual([]);
-    // createProductionPorts is the CLI factory name; delete must not reach it.
-    expect(typeof createProductionPorts).toBe("function");
+    expect(opened.isOk()).toBe(true);
+    expect(await listRelativePaths(xdg)).toEqual([]);
   });
 
   it("list/show/doctor on a pristine root leave the root absent", async () => {

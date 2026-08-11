@@ -167,10 +167,6 @@ import {
   renderReconstructedStatusLines,
 } from "./child-session-reconstruction.js";
 import {
-  createPiChildSessionStorageAuthority,
-  type PiChildSessionStorageAuthority,
-} from "./child-session-storage-authority.js";
-import {
   applyTreeControlKey,
   EMPTY_USAGE_AGGREGATE,
   extractAssistantStopReason,
@@ -275,12 +271,7 @@ import {
   isPointerEligibleForExplicitResume,
   type PiRecoveryPointerStore,
 } from "./recovery-pointer.js";
-import {
-  createOpenSessionMutationGate,
-  createSessionMutationGate,
-  findSessionMutationGap,
-  SESSION_MUTATION_REQUIRED_CAPABILITY,
-} from "./required-capability-gate.js";
+import { findSessionMutationGap } from "./required-capability-gate.js";
 import {
   type PiRuntimeStoreFactory,
   SqliteRuntimeStoreFactory,
@@ -547,11 +538,6 @@ export interface PiExtensionDeps {
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly processPort: PiChildProcessPort;
-  /**
-   * Test-only descriptor-safe host authority. Production omits this and the
-   * controller keeps its fail-closed path-only-session default.
-   */
-  readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
   /**
    * The private RPC child's default spawn command (Pi adapter contract finding
    * 1): the exact executable that launched this host process, never a bare
@@ -1313,7 +1299,6 @@ async function applyChildBootstrap(
             // itself. Its parent already passed the gate before this child
             // existed, and the parent authorizes every relayed delegation
             // request, so the relay does not re-gate here.
-            sessionMutationGate: createOpenSessionMutationGate(),
             getRuntime: () => state.runtime,
             onCompactRenderFailure: (code) => {
               deps.logger.warn(
@@ -2288,29 +2273,12 @@ export function createPiExtension(
     },
     healthOnly: () => doctorHealthOnlyCell.value,
   });
-  /**
-   * The one required-capability gate every mutating route consults before it
-   * reaches a delegation controller, session service, filesystem, metadata
-   * cache, execution lease, or child process. It reads the live controller
-   * generation, so it always reflects the current activation, and it fails
-   * closed when no generation is active.
-   */
-  const sessionMutationGate = createSessionMutationGate(
-    () =>
-      controller.getCurrentGeneration()?.preflight.requiredCapabilityGaps ?? [
-        {
-          capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
-          reason: "no-active-generation",
-        },
-      ],
-  );
   const adapterCommandHandlersCell: {
     handlers: Readonly<Record<string, AdapterCommandHandler>>;
   } = {
     handlers: createPiAdapterCommandHandlers({
       children: unavailableChildrenPort,
       doctor: doctorPort,
-      sessionMutationGate,
     }),
   };
   const refreshAdapterCommandHandlers = (
@@ -2319,7 +2287,6 @@ export function createPiExtension(
     adapterCommandHandlersCell.handlers = createPiAdapterCommandHandlers({
       children,
       doctor: doctorPort,
-      sessionMutationGate,
     });
   };
   const workflowControllerCell: {
@@ -2534,7 +2501,6 @@ export function createPiExtension(
         return [
           buildDelegationToolRegistration({
             targets,
-            sessionMutationGate,
             getInvocationContext: () =>
               resolveDelegationInvocationContext(
                 activeSession === undefined
@@ -4356,26 +4322,10 @@ export function createPiExtension(
         };
         let allowDelegationController = !effectiveHealthOnly(generation);
         const parentForSources = session.primarySession.getParentSession();
-        // Task 21 remediation E: descriptor-safe session I/O authority is
-        // checked before mutation-capable thread sources, cache create/open,
-        // reconstruction, recovery prompting, or upsert. Pi 0.83 refuses with
-        // `path-only-session-api` (`descriptor-relative-native-session-io`);
-        // health-only / path-only generations open non-creating read-only
-        // sources only and skip every write path.
-        const sessionStorage =
-          deps.sessionStorageAuthority ??
-          createPiChildSessionStorageAuthority();
-        const sessionStorageDecision = Result.fromThrowable(
-          () => sessionStorage.requireDescriptorSafeSessionIo(),
-          () => ({
-            type: "SessionStorageUnavailable" as const,
-            reason: "path-only-session-api" as const,
-          }),
-        )();
-        const descriptorSafeSessionIo =
-          sessionStorageDecision.isOk() && sessionStorageDecision.value.isOk();
-        const useReadOnlyThreadSources =
-          !descriptorSafeSessionIo || effectiveHealthOnly(generation);
+        // Health-only generations open non-creating read-only sources and skip
+        // every write path. Session/root/process readiness stays at the
+        // capability and initializer boundary.
+        const useReadOnlyThreadSources = effectiveHealthOnly(generation);
         if (
           deps.threadSourceFactory !== undefined &&
           parentForSources.persistence === "persistent"
@@ -4406,7 +4356,6 @@ export function createPiExtension(
               XDG_DATA_HOME: deps.envPort.read("XDG_DATA_HOME"),
               HOME: deps.envPort.read("HOME"),
             },
-            storageAuthority: sessionStorage,
             ...(useReadOnlyThreadSources ? { readOnly: true as const } : {}),
           });
           if (!startupOwnsGeneration()) {
@@ -4562,7 +4511,6 @@ export function createPiExtension(
             idGenerator: deps.idGenerator,
             logger: deps.logger,
             processPort: deps.processPort,
-            sessionStorageAuthority: deps.sessionStorageAuthority,
             randomPort: deps.randomPort,
             hmacPort: deps.hmacPort,
             ...(deps.childResponseDrainMs === undefined
@@ -4789,19 +4737,10 @@ export function createPiExtension(
 
         // Child recovery is generation-scoped. Construct it only after the
         // child-ref ledger is open, then prompt exactly once for this stable
-        // parent session.
-        //
-        // Task 21 remediation B/E: recovery mutates the child-ref ledger and
-        // spawns a restored child, so it requires the same descriptor-safe
-        // session I/O authority already checked before source construction.
-        // Path-only / health-only generations skip without prompting. Lower
-        // ref-mutation checks stay independent, and ref reads stay ungated.
+        // parent session. Health-only generations skip without prompting.
+        // Ref reads stay ungated.
         const recoveryRefs = threadSourcesCell.refs;
-        if (
-          recoveryRefs !== undefined &&
-          !useReadOnlyThreadSources &&
-          descriptorSafeSessionIo
-        ) {
+        if (recoveryRefs !== undefined && !useReadOnlyThreadSources) {
           const historyPort = {
             list: () => recoveryRefs.readRefs().map((scan) => scan.refs),
             updateStatus: (
@@ -4960,7 +4899,6 @@ export function createPiExtension(
               createDirectDispatchTransport(
                 {
                   processPort: deps.processPort,
-                  sessionStorageAuthority: deps.sessionStorageAuthority,
                   randomPort: deps.randomPort,
                   hmacPort: deps.hmacPort,
                   logger: deps.logger,

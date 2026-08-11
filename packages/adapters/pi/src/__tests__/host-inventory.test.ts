@@ -106,7 +106,7 @@ describe("host surface inventory", () => {
     expect(Object.isFrozen(report.probes)).toBe(true);
   });
 
-  it("returns a native row for every declared surface the host can prove when the public namespace is complete", async () => {
+  it("returns a native row for every declared surface when the public namespace is complete", async () => {
     const reader = new DefaultPiHostSurfaceReader();
     const result = await reader.read({
       api: { appendEntry: () => undefined } as never,
@@ -125,29 +125,13 @@ describe("host surface inventory", () => {
     });
     const report = readHostSurfaceReport(result._unsafeUnwrap());
     expect(report.probes).toHaveLength(PI_HOST_SURFACE_IDS.length);
-    // Every surface is native except the one the production probe port can
-    // never prove: Pi's session API is path-only, so no combination of
-    // restore, custom session directory, or RPC method presence promotes it.
-    expect(
-      report.probes
-        .filter((probe) => probe.status !== "native")
-        .map((probe) => probe.surfaceId),
-    ).toEqual(["descriptor-relative-native-session-io"]);
-    expect(
-      report.probes.find(
-        (probe) => probe.surfaceId === "descriptor-relative-native-session-io",
-      ),
-    ).toEqual({
-      surfaceId: "descriptor-relative-native-session-io",
-      status: "unavailable",
-      details: "path-only-session-api",
-    });
+    expect(report.probes.every((probe) => probe.status === "native")).toBe(
+      true,
+    );
     expect(report.probes.map((probe) => probe.surfaceId)).toEqual([
       ...PI_HOST_SURFACE_IDS,
     ]);
-    expect(report.requiredGaps).toEqual([
-      "descriptor-relative-native-session-io",
-    ]);
+    expect(report.requiredGaps).toEqual([]);
     expect(report.overlayFallbackGaps).toEqual([]);
   });
 
@@ -166,11 +150,7 @@ describe("host surface inventory", () => {
       report.probes.slice(0, 6).every((probe) => probe.status === "fallback"),
     ).toBe(true);
     expect(report.probes[6]?.status).toBe("native");
-    // The path-only session API is the one required gap the production reader
-    // always reports, independent of rendering exports.
-    expect(report.requiredGaps).toEqual([
-      "descriptor-relative-native-session-io",
-    ]);
+    expect(report.requiredGaps).toEqual([]);
   });
 
   it("makes each required surface unavailable when it is missing", () => {
@@ -237,11 +217,7 @@ describe("host surface inventory", () => {
       },
     });
     const report = readHostSurfaceReport(result._unsafeUnwrap());
-    // The only required gap is the path-only session API, which no amount of
-    // public namespace completeness can clear.
-    expect(report.requiredGaps).toEqual([
-      "descriptor-relative-native-session-io",
-    ]);
+    expect(report.requiredGaps).toEqual([]);
     expect(
       report.probes.find((probe) => probe.surfaceId === "assistant-rendering")
         ?.status,

@@ -13,7 +13,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { ok, type Result, type ResultAsync } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import {
   PI_NATIVE_SESSION_MAX_FILE_BYTES,
   PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
@@ -23,7 +23,6 @@ import {
   type PiNativeSessionFsPort,
   type PiNativeSessionHandle,
   type PiNativeSessionHostPort,
-  type PiNativeSessionStorageUnavailable,
   PiNativeSessionStore,
   setPiNativeSessionMaxRangeLengthForTests,
 } from "../child-native-sessions.js";
@@ -86,13 +85,6 @@ async function seedJsonl(
 
 /** Host that throws if create/open are used — these reads must stay FS-only. */
 class ForbiddenHost implements PiNativeSessionHostPort {
-  requireDescriptorSafeSessionIo(): Result<
-    void,
-    PiNativeSessionStorageUnavailable
-  > {
-    return ok(undefined);
-  }
-
   create(): PiNativeSessionHandle {
     throw new Error("host.create must not be called by a descriptor read");
   }

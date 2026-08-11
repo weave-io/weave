@@ -28,7 +28,7 @@
  * no code path that rewrites or truncates them.
  */
 
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import { isLexicallyContained } from "./path-containment.js";
@@ -172,26 +172,16 @@ export type PiNativeSessionError =
  * Why native session storage is unavailable. Bounded and path-free: a
  * diagnostic never carries a filesystem path, a prompt, or transcript bytes.
  */
-export type PiNativeSessionStorageUnavailableReason =
-  /**
-   * The host only addresses sessions by caller-supplied filesystem path, so
-   * no call can prove the bytes it writes land in host-owned storage. Every
-   * mutating and host-backed path fails closed on this reason.
-   */
-  | "path-only-session-api"
-  /** The verified storage tree itself could not be reached or canonicalized. */
-  | "filesystem-unavailable";
+export type PiNativeSessionStorageUnavailableReason = "filesystem-unavailable";
 
 /** Human-readable, path-free description of a storage-unavailable reason. */
 export function describePiNativeSessionStorageUnavailable(
-  reason: PiNativeSessionStorageUnavailableReason,
+  _reason: PiNativeSessionStorageUnavailableReason,
 ): string {
-  return reason === "path-only-session-api"
-    ? "the host exposes only a path-addressed session API, so session storage cannot be proven host-owned"
-    : "native session storage is unavailable";
+  return "native session storage is unavailable";
 }
 
-/** The single storage-unavailable variant, as returned by the host preflight. */
+/** Storage-unavailable failure retained for typed filesystem boundaries. */
 export type PiNativeSessionStorageUnavailable = Extract<
   PiNativeSessionError,
   { readonly type: "SessionStorageUnavailable" }
@@ -598,21 +588,6 @@ export interface PiNativeSessionHandle {
  * `SessionManager.open(path, sessionDir)`; tests script it.
  */
 export interface PiNativeSessionHostPort {
-  /**
-   * Storage-authority preflight, and the first externally observable action
-   * of every mutating or host-backed store operation.
-   *
-   * `ok` means this host can prove that the session bytes it reads and writes
-   * live in the descriptor-verified, Weave-owned session tree. Pi 0.83
-   * addresses sessions only by caller-supplied filesystem path, so its
-   * production host always fails with `path-only-session-api`. No environment
-   * variable, constructor option, or flag can turn a production host into
-   * `ok`; only the explicitly test-only memory hosts return `ok`.
-   */
-  requireDescriptorSafeSessionIo(): Result<
-    void,
-    PiNativeSessionStorageUnavailable
-  >;
   create(
     cwd: string,
     sessionDir: string,
@@ -1437,6 +1412,7 @@ function persistableHostHeader(
     header.id.length === 0 ||
     typeof header.cwd !== "string" ||
     header.cwd.length === 0 ||
+    header.cwd !== input.cwd ||
     typeof header.timestamp !== "string" ||
     !isHostIsoTimestamp(header.timestamp) ||
     header.parentSession !== input.parentSession
@@ -1444,6 +1420,167 @@ function persistableHostHeader(
     return err("header-unusable");
   }
   return ok(header);
+}
+
+/**
+ * Reads every create-time identity getter through neverthrow and proves the
+ * generated file is an immediate child of the adapter-owned session directory.
+ */
+function readGeneratedSessionIdentity(
+  handle: PiNativeSessionHandle,
+  input: CreateNativeChildSessionInput,
+  childDir: string,
+): Result<
+  {
+    readonly file: string;
+    readonly fileName: string;
+    readonly hostHeader: PiNativeSessionHeader;
+  },
+  PiNativeSessionError
+> {
+  const fileResult = Result.fromThrowable(
+    () => handle.getSessionFile(),
+    (): PiNativeSessionError => ({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    }),
+  )();
+  if (fileResult.isErr()) return err(fileResult.error);
+  const dirResult = Result.fromThrowable(
+    () => handle.getSessionDir(),
+    (): PiNativeSessionError => ({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    }),
+  )();
+  if (dirResult.isErr()) return err(dirResult.error);
+  const idResult = Result.fromThrowable(
+    () => handle.getSessionId(),
+    (): PiNativeSessionError => ({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    }),
+  )();
+  if (idResult.isErr()) return err(idResult.error);
+  const headerResult = Result.fromThrowable(
+    () => handle.getHeader(),
+    (): PiNativeSessionError => ({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    }),
+  )();
+  if (headerResult.isErr()) return err(headerResult.error);
+  const persistedResult = Result.fromThrowable(
+    () => handle.isPersisted(),
+    (): PiNativeSessionError => ({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    }),
+  )();
+  if (persistedResult.isErr()) return err(persistedResult.error);
+
+  const file = fileResult.value;
+  if (
+    !persistedResult.value ||
+    file === undefined ||
+    file.length === 0 ||
+    typeof idResult.value !== "string" ||
+    idResult.value.length === 0
+  ) {
+    return err({ type: "SessionCreateFailed", reason: "not-persisted" });
+  }
+  // Canonical immediate-child equality — not a path prefix check.
+  if (dirname(file) !== childDir || dirResult.value !== childDir) {
+    return err({ type: "SessionRootViolation", reason: "path-escape" });
+  }
+  const generated = persistableHostHeader(headerResult.value, input);
+  if (generated.isErr()) {
+    return err({ type: "SessionCreateFailed", reason: "header-unusable" });
+  }
+  if (idResult.value !== generated.value.id) {
+    return err({ type: "SessionCreateFailed", reason: "header-unusable" });
+  }
+  const fileName = file.slice(file.lastIndexOf("/") + 1);
+  if (fileName.length === 0) {
+    return err({ type: "SessionRootViolation", reason: "path-escape" });
+  }
+  return ok({ file, fileName, hostHeader: generated.value });
+}
+
+/**
+ * Re-reads every reopen identity getter and proves the persisted leaf still
+ * matches the create-time Pi-generated header before spawn handoff.
+ */
+function readReopenedSessionIdentity(
+  handle: PiNativeSessionHandle,
+  input: CreateNativeChildSessionInput,
+  childDir: string,
+  expectedPath: string,
+  hostHeader: PiNativeSessionHeader,
+): Result<PiNativeSessionHeader, PiNativeSessionError> {
+  const fileResult = Result.fromThrowable(
+    () => handle.getSessionFile(),
+    (): PiNativeSessionError => ({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    }),
+  )();
+  if (fileResult.isErr()) return err(fileResult.error);
+  const dirResult = Result.fromThrowable(
+    () => handle.getSessionDir(),
+    (): PiNativeSessionError => ({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    }),
+  )();
+  if (dirResult.isErr()) return err(dirResult.error);
+  const idResult = Result.fromThrowable(
+    () => handle.getSessionId(),
+    (): PiNativeSessionError => ({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    }),
+  )();
+  if (idResult.isErr()) return err(idResult.error);
+  const headerResult = Result.fromThrowable(
+    () => handle.getHeader(),
+    (): PiNativeSessionError => ({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    }),
+  )();
+  if (headerResult.isErr()) return err(headerResult.error);
+  const persistedResult = Result.fromThrowable(
+    () => handle.isPersisted(),
+    (): PiNativeSessionError => ({
+      type: "SessionCreateFailed",
+      reason: "host-threw",
+    }),
+  )();
+  if (persistedResult.isErr()) return err(persistedResult.error);
+
+  if (!persistedResult.value) {
+    return err({ type: "SessionCreateFailed", reason: "not-persisted" });
+  }
+  const file = fileResult.value;
+  if (
+    file === undefined ||
+    file.length === 0 ||
+    file !== expectedPath ||
+    dirname(file) !== childDir ||
+    dirResult.value !== childDir
+  ) {
+    return err({ type: "SessionRootViolation", reason: "path-escape" });
+  }
+  const reopened = persistableHostHeader(headerResult.value, input);
+  if (
+    reopened.isErr() ||
+    !headersMatchIdentity(hostHeader, reopened.value) ||
+    idResult.value !== reopened.value.id
+  ) {
+    return err({ type: "SessionCreateFailed", reason: "header-unusable" });
+  }
+  return ok(reopened.value);
 }
 
 function headersMatchIdentity(
@@ -1734,23 +1871,6 @@ export class PiNativeSessionStore {
   }
 
   /**
-   * Host storage-authority preflight. Every mutating and host-backed method
-   * calls this before any directory open, read, write, append, ref, or cache
-   * work, so a host that cannot prove descriptor-safe storage produces zero
-   * filesystem and zero `SessionManager` side effects. A host that throws
-   * here is treated as unavailable rather than trusted.
-   */
-  private requireDescriptorSafeIo(): Result<void, PiNativeSessionError> {
-    return Result.fromThrowable(
-      () => this.host.requireDescriptorSafeSessionIo(),
-      (): PiNativeSessionStorageUnavailable => ({
-        type: "SessionStorageUnavailable",
-        reason: "filesystem-unavailable",
-      }),
-    )().andThen((outcome) => outcome);
-  }
-
-  /**
    * Creates and persists a child session *before* the child runs. The child
    * directory is created 0700 inside the verified root, the session is created
    * through the host's own `SessionManager.create(cwd, isolatedDir, options)`
@@ -1764,8 +1884,6 @@ export class PiNativeSessionStore {
   createChildSession(
     input: CreateNativeChildSessionInput,
   ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError> {
-    const preflight = this.requireDescriptorSafeIo();
-    if (preflight.isErr()) return errAsync(preflight.error);
     if (input.parentSession.length === 0) {
       return errAsync({
         type: "SessionCreateFailed",
@@ -1801,28 +1919,9 @@ export class PiNativeSessionStore {
         reason: "host-threw",
       }),
     )().asyncAndThen((handle) => {
-      const file = handle.getSessionFile();
-      if (!handle.isPersisted() || file === undefined || file.length === 0) {
-        return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
-          type: "SessionCreateFailed",
-          reason: "not-persisted",
-        });
-      }
-      if (!file.startsWith(`${childDir}/`)) {
-        return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
-          type: "SessionRootViolation",
-          reason: "path-escape",
-        });
-      }
-      const generated = persistableHostHeader(handle.getHeader(), input);
-      if (generated.isErr()) {
-        return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
-          type: "SessionCreateFailed",
-          reason: "header-unusable",
-        });
-      }
-      const hostHeader = generated.value;
-      const fileName = file.slice(file.lastIndexOf("/") + 1);
+      const identity = readGeneratedSessionIdentity(handle, input, childDir);
+      if (identity.isErr()) return errAsync(identity.error);
+      const { file, fileName, hostHeader } = identity.value;
       const refResult = verifyNativeSessionRef(`${component}/${fileName}`);
       if (refResult.isErr()) return errAsync(refResult.error);
       const ref = refResult.value;
@@ -1911,8 +2010,6 @@ export class PiNativeSessionStore {
     input: CreateNativeChildSessionInput,
     hostHeader: PiNativeSessionHeader,
   ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError> {
-    const preflight = this.requireDescriptorSafeIo();
-    if (preflight.isErr()) return errAsync(preflight.error);
     return Result.fromThrowable(
       () => this.host.open(path, childDir),
       (): PiNativeSessionError => ({
@@ -1920,22 +2017,14 @@ export class PiNativeSessionStore {
         reason: "host-threw",
       }),
     )().asyncAndThen((handle) => {
-      if (!handle.isPersisted()) {
-        return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
-          type: "SessionCreateFailed",
-          reason: "not-persisted",
-        });
-      }
-      const reopened = persistableHostHeader(handle.getHeader(), input);
-      if (
-        reopened.isErr() ||
-        !headersMatchIdentity(hostHeader, reopened.value)
-      ) {
-        return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
-          type: "SessionCreateFailed",
-          reason: "header-unusable",
-        });
-      }
+      const reopened = readReopenedSessionIdentity(
+        handle,
+        input,
+        childDir,
+        path,
+        hostHeader,
+      );
+      if (reopened.isErr()) return errAsync(reopened.error);
       return okAsync<PiNativeSessionRecord, PiNativeSessionError>({
         childId: input.childId,
         sessionId: reopened.value.id,
@@ -2476,8 +2565,6 @@ export class PiNativeSessionStore {
     { readonly record: PiNativeSessionRecord; readonly leafId: string },
     PiNativeSessionError
   > {
-    const preflight = this.requireDescriptorSafeIo();
-    if (preflight.isErr()) return errAsync(preflight.error);
     const parsed = PiNativeThreadMetadataSchema.safeParse({
       ...metadata,
       schemaVersion: PI_NATIVE_THREAD_SCHEMA_VERSION,
@@ -2643,8 +2730,6 @@ export class PiNativeSessionStore {
     },
     PiNativeSessionError
   > {
-    const preflight = this.requireDescriptorSafeIo();
-    if (preflight.isErr()) return errAsync(preflight.error);
     const located = this.locate(ref);
     if (located.isErr()) return errAsync(located.error);
     const { component, fileName, childDir, path, verified } = located.value;
@@ -2684,8 +2769,6 @@ export class PiNativeSessionStore {
     },
     PiNativeSessionError
   > {
-    const preflight = this.requireDescriptorSafeIo();
-    if (preflight.isErr()) return errAsync(preflight.error);
     return Result.fromThrowable(
       () => this.host.open(path, childDir),
       (): PiNativeSessionError => ({
@@ -2778,8 +2861,6 @@ export class PiNativeSessionStore {
     record: PiNativeSessionRecord,
     confirmationToken: string,
   ): ResultAsync<PiNativeSessionTombstone, PiNativeSessionError> {
-    const preflight = this.requireDescriptorSafeIo();
-    if (preflight.isErr()) return errAsync(preflight.error);
     if (confirmationToken !== nativeSessionDeletionToken(record.ref)) {
       return errAsync({
         type: "SessionConfirmationRequired",
@@ -2811,8 +2892,6 @@ export class PiNativeSessionStore {
   appendTombstone(
     record: PiNativeSessionRecord,
   ): ResultAsync<PiNativeSessionTombstone, PiNativeSessionError> {
-    const preflight = this.requireDescriptorSafeIo();
-    if (preflight.isErr()) return errAsync(preflight.error);
     const tombstone: PiNativeSessionTombstone = {
       version: 1,
       ref: record.ref,

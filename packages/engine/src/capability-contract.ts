@@ -48,15 +48,14 @@ export const CapabilityReadinessSchema = z.enum([
 // ---------------------------------------------------------------------------
 
 /**
- * Stable identifiers for all 21 capabilities defined in the Core Readiness
- * Profile (13 required + 8 optional).
+ * Stable identifiers for all 20 capabilities defined in the Core Readiness
+ * Profile (12 required + 8 optional).
  *
- * Required capabilities (13):
+ * Required capabilities (12):
  *   config-materialization, agent-materialization, primary-agent-selection,
  *   delegated-specialist-execution, prompt-composition, tool-policy-mapping,
  *   workflow-persistence, workflow-step-dispatch, plan-file-compatibility,
- *   command-entrypoints, event-logging, token-usage-reporting,
- *   descriptor-relative-native-session-io
+ *   command-entrypoints, event-logging, token-usage-reporting
  *
  * Optional capabilities (8):
  *   idle-continuation, compaction-recovery, context-window-monitor,
@@ -102,7 +101,6 @@ export type CapabilityId =
   | "command-entrypoints"
   | "event-logging"
   | "token-usage-reporting"
-  | "descriptor-relative-native-session-io"
   // Optional
   | "idle-continuation"
   | "compaction-recovery"
@@ -127,7 +125,6 @@ export const CapabilityIdSchema = z.enum([
   "command-entrypoints",
   "event-logging",
   "token-usage-reporting",
-  "descriptor-relative-native-session-io",
   // Optional
   "idle-continuation",
   "compaction-recovery",
@@ -221,19 +218,12 @@ export const AdapterCapabilityContractSchema = z.object({
 // ---------------------------------------------------------------------------
 
 /**
- * The 13 required capability IDs for the Core Readiness Profile.
+ * The 12 required capability IDs for the Core Readiness Profile.
  *
  * `token-usage-reporting` is conditionally required: it is treated as required
  * only when the adapter declares that the harness exposes usage data. When the
  * adapter explicitly marks it `unsupported` with a documented reason, the
  * evaluator downgrades it to a warning. See `evaluateCoreReadinessProfile`.
- *
- * `descriptor-relative-native-session-io` is unconditionally required. It
- * models the harness contract that every native session read and write is
- * addressed by an opaque, harness-owned session descriptor rather than by a
- * caller-supplied filesystem path. Adapters that cannot prove this contract
- * must declare it `unsupported`, which forces health-only mode: no adapter
- * route may perform a persistent session mutation without it.
  */
 export const REQUIRED_CAPABILITIES: readonly CapabilityId[] = [
   "config-materialization",
@@ -248,7 +238,6 @@ export const REQUIRED_CAPABILITIES: readonly CapabilityId[] = [
   "command-entrypoints",
   "event-logging",
   "token-usage-reporting",
-  "descriptor-relative-native-session-io",
 ] as const;
 
 /**
@@ -266,7 +255,7 @@ export const OPTIONAL_CAPABILITIES: readonly CapabilityId[] = [
   "model-thinking-activation",
 ] as const;
 
-/** All 21 capability IDs in profile order (required then optional). */
+/** All 20 capability IDs in profile order (required then optional). */
 export const ALL_CAPABILITY_IDS: readonly CapabilityId[] = [
   ...REQUIRED_CAPABILITIES,
   ...OPTIONAL_CAPABILITIES,

@@ -41,7 +41,6 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const encoder = new TextEncoder();
 const randomPort = new WebCryptoRandomPort();
@@ -206,8 +205,6 @@ async function runningRpc() {
   const processPort = new FakeChildProcessPort();
   const child = new PiRpcChild("child-1", ROOT_NODE_ID, "gen-1", "shuttle", 1, {
     processPort,
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     randomPort,
     hmacPort,
     logger: noopLogger,
@@ -321,8 +318,6 @@ test("real ordinary, nested, and workflow execution retain only bounded topology
     idGenerator: new Ids(),
     logger: noopLogger,
     processPort: port,
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     randomPort,
     hmacPort,
     timerPort: new SystemTimerPort(),
@@ -358,8 +353,6 @@ test("real ordinary, nested, and workflow execution retain only bounded topology
   const workflow = createDirectDispatchTransport(
     {
       processPort: workflowPort,
-      sessionStorageAuthority:
-        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       randomPort,
       hmacPort,
       logger: noopLogger,
@@ -468,8 +461,6 @@ test("real RPC lifecycle supports steer, queued follow-up, UI response, interrup
     idGenerator: new Ids(),
     logger: noopLogger,
     processPort: restorePort,
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     randomPort,
     hmacPort,
     timerPort: new SystemTimerPort(),
@@ -522,8 +513,6 @@ test("real ordinary recovery resumes through the controller and preserves bounde
     idGenerator: new Ids(),
     logger: noopLogger,
     processPort: port,
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     randomPort,
     hmacPort,
     timerPort: new SystemTimerPort(),

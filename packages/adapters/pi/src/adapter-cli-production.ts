@@ -5,12 +5,9 @@
  * scope and wires children/doctor ports. The CLI imports this package surface
  * only; engine dispatch stays opaque.
  *
- * Health-only / read CLI routes use {@link createProductionPorts} in
- * `accessMode: "read"`, which never creates cache directories, databases,
- * schema rows, refs, or lock artifacts. The one mutating route
- * (`children.delete`) is gated by
- * {@link evaluateProductionChildrenDeleteGate} **before** any call to
- * {@link createProductionPorts}.
+ * Read CLI routes use {@link createProductionPorts} in `accessMode: "read"`,
+ * which never creates cache directories, databases, schema rows, refs, or
+ * lock artifacts.
  */
 
 import * as PiPublicExports from "@earendil-works/pi-coding-agent";
@@ -46,20 +43,12 @@ import {
   resolvePiNativeSessionRoot,
 } from "./child-native-sessions.js";
 import { createNativeChildRefSourceAuthority } from "./child-session-refs.js";
-import {
-  makeRequiredCapabilityUnavailableFailure,
-  type PiAdapterFailure,
-} from "./errors.js";
 import { createBunPiNativeSessionFs } from "./native-session-fs.js";
 import {
   createPiNativeSessionHost,
   isPiSessionManagerStatic,
   type PiSessionManagerStatic,
 } from "./native-session-host.js";
-import {
-  createBlockedSessionMutationGate,
-  SESSION_MUTATION_REQUIRED_CAPABILITY,
-} from "./required-capability-gate.js";
 
 /** Why production CLI port construction refused to open. */
 export type PiProductionAdapterCommandError =
@@ -151,42 +140,6 @@ function resolveHost(
     });
   }
   return ok(createPiNativeSessionHost(candidate));
-}
-
-/**
- * Capability gate for health-only `children delete`.
- *
- * Runs against the production path-only host preflight and returns
- * `RequiredCapabilityUnavailable` with
- * `descriptor-relative-native-session-io` / `path-only-session-api` on Pi
- * 0.83. Callers must invoke this **before** {@link createProductionPorts}
- * so delete never opens a cache, ref store, or session root.
- */
-export function evaluateProductionChildrenDeleteGate(
-  options: Pick<
-    CreateProductionPiAdapterCommandPortsOptions,
-    "SessionManager"
-  > = {},
-): Result<void, PiAdapterFailure> {
-  const host = resolveHost(options);
-  if (host.isErr()) {
-    return err(
-      makeRequiredCapabilityUnavailableFailure(
-        SESSION_MUTATION_REQUIRED_CAPABILITY,
-        host.error.reason,
-      ),
-    );
-  }
-  const preflight = host.value.requireDescriptorSafeSessionIo();
-  if (preflight.isErr()) {
-    return err(
-      makeRequiredCapabilityUnavailableFailure(
-        SESSION_MUTATION_REQUIRED_CAPABILITY,
-        preflight.error.reason,
-      ),
-    );
-  }
-  return ok(undefined);
 }
 
 /**
@@ -358,32 +311,16 @@ function openWithSessionRoot(
 export function createProductionPiAdapterCommandRegistry(
   options: CreateProductionPiAdapterCommandPortsOptions,
 ): ResultAsync<AdapterCommandRegistry, PiProductionAdapterCommandError> {
-  const accessMode = options.accessMode ?? "read";
-  // Delete is gated before this factory on the CLI path. When a registry is
-  // still built (tests, hypothetical write mode), wire a blocked gate so the
-  // mutating handler cannot reach the children port without an explicit open
-  // gate from a descriptor-safe host.
-  const sessionMutationGate =
-    accessMode === "read"
-      ? createBlockedSessionMutationGate("path-only-session-api")
-      : undefined;
   return createProductionPorts(options).map((ports) =>
     createPiAdapterCommandRegistry({
       children: ports.children,
       doctor: ports.doctor,
-      ...(sessionMutationGate === undefined ? {} : { sessionMutationGate }),
     }),
   );
 }
 
 /** Why the CLI refused to open production ports for an adapter action. */
-export type PiProductionAdapterCliOpenError =
-  | PiProductionAdapterCommandError
-  | {
-      readonly type: "RequiredCapabilityUnavailable";
-      readonly capabilityId: string;
-      readonly reason: string;
-    };
+export type PiProductionAdapterCliOpenError = PiProductionAdapterCommandError;
 
 export interface ResolveProductionAdapterCliRegistryInput
   extends CreateProductionPiAdapterCommandPortsOptions {
@@ -391,32 +328,10 @@ export interface ResolveProductionAdapterCliRegistryInput
   readonly action: string;
 }
 
-/**
- * CLI dispatch seam: gate mutating delete **before** {@link createProductionPorts},
- * then open read-only ports for list/show/doctor.
- */
+/** CLI dispatch seam for production adapter commands. */
 export function resolveProductionAdapterCliRegistry(
   input: ResolveProductionAdapterCliRegistryInput,
 ): ResultAsync<AdapterCommandRegistry, PiProductionAdapterCliOpenError> {
-  if (input.action === "children.delete") {
-    const gated = evaluateProductionChildrenDeleteGate({
-      ...(input.SessionManager === undefined
-        ? {}
-        : { SessionManager: input.SessionManager }),
-    });
-    if (gated.isErr()) {
-      const correlation = gated.error.correlation;
-      const reason =
-        correlation !== undefined && typeof correlation.reason === "string"
-          ? correlation.reason
-          : "capability-unavailable";
-      return errAsync({
-        type: "RequiredCapabilityUnavailable",
-        capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
-        reason,
-      });
-    }
-  }
   const { action: _action, ...portOptions } = input;
   return createProductionPiAdapterCommandRegistry({
     ...portOptions,

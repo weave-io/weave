@@ -90,7 +90,7 @@ describe("PI_ADAPTER_CAPABILITY_CONTRACT", () => {
 describe("buildBlockedProbeSet", () => {
   it("returns exactly one unavailable probe for all 20 capability IDs", () => {
     const probes = buildBlockedProbeSet("interactive-tui-required");
-    expect(probes).toHaveLength(21);
+    expect(probes).toHaveLength(20);
     expect(probes).toHaveLength(ALL_CAPABILITY_IDS.length);
     for (const probe of probes) {
       expect(probe.probeStatus).toBe("unavailable");
@@ -110,9 +110,9 @@ describe("DefaultPiCapabilityProber", () => {
       trust: "trusted",
       commands: ALL_OWNED_COMMANDS,
     });
-    expect(probes).toHaveLength(21);
+    expect(probes).toHaveLength(20);
     const ids = probes.map((probe) => probe.capabilityId);
-    expect(new Set(ids).size).toBe(21);
+    expect(new Set(ids).size).toBe(20);
     expect([...ids].sort()).toEqual([...ALL_CAPABILITY_IDS].sort());
   });
 
@@ -338,10 +338,11 @@ describe("DefaultPiCapabilityProber", () => {
     const blocked = prober
       .probe({ ...base, hostSurface: gap })
       .find((probe) => probe.capabilityId === "delegated-specialist-execution");
+    expect(required?.id).toBe("editor-composition");
     expect(blocked).toEqual({
       capabilityId: "delegated-specialist-execution",
       probeStatus: "unavailable",
-      details: `host-surface-gap:${required?.id}`,
+      details: "pi-process-unavailable",
     });
     const renderingFallback = readHostSurfaceReport(
       PI_HOST_SURFACE_IDS.map((surfaceId, index) => ({
@@ -537,21 +538,7 @@ describe("native session capability probes", () => {
     expect(result.isOk()).toBe(true);
     expect(calls).toEqual([]);
     const report = readHostSurfaceReport(result._unsafeUnwrap());
-    // The production probe port can never prove descriptor-relative session
-    // I/O, so a host that supplies every other surface - restore, custom
-    // session directory, and every RPC method - still reports this one gap.
-    expect(report.requiredGaps).toEqual([
-      "descriptor-relative-native-session-io",
-    ]);
-    expect(
-      report.probes.find(
-        (probe) => probe.surfaceId === "descriptor-relative-native-session-io",
-      ),
-    ).toEqual({
-      surfaceId: "descriptor-relative-native-session-io",
-      status: "unavailable",
-      details: "path-only-session-api",
-    });
+    expect(report.requiredGaps).toEqual([]);
     expect(report.overlayFallbackGaps).toEqual([]);
   });
 
@@ -587,7 +574,7 @@ describe("native session capability probes", () => {
       expect(probe).toEqual({
         capabilityId: "delegated-specialist-execution",
         probeStatus: "unavailable",
-        details: `host-surface-gap:${surfaceId}`,
+        details: "pi-session-api-unavailable",
       });
 
       const [diagnostic, ...rest] = buildHostSurfaceGapDiagnostics(
@@ -652,7 +639,7 @@ describe("sanitizeCapabilityProbeResults", () => {
 
   it("passes a fully well-formed probe set through unchanged, one row per ID", () => {
     const sanitized = sanitizeCapabilityProbeResults(fullValidSet());
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(20);
     expect([...sanitized.map((probe) => probe.capabilityId)].sort()).toEqual(
       [...ALL_CAPABILITY_IDS].sort(),
     );
@@ -666,7 +653,7 @@ describe("sanitizeCapabilityProbeResults", () => {
       (probe) => probe.capabilityId !== "workflow-persistence",
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(20);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "workflow-persistence",
     );
@@ -676,7 +663,7 @@ describe("sanitizeCapabilityProbeResults", () => {
   it("normalizes a duplicated capability ID (same status) to a single unavailable row", () => {
     const raw = [...fullValidSet(), okProbe("workflow-persistence")];
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(20);
     const entries = sanitized.filter(
       (probe) => probe.capabilityId === "workflow-persistence",
     );
@@ -692,7 +679,7 @@ describe("sanitizeCapabilityProbeResults", () => {
     );
     raw.push(okProbe("tool-policy-mapping"));
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(20);
     const entries = sanitized.filter(
       (probe) => probe.capabilityId === "tool-policy-mapping",
     );
@@ -707,7 +694,7 @@ describe("sanitizeCapabilityProbeResults", () => {
         : probe,
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(20);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "event-logging",
     );
@@ -720,7 +707,7 @@ describe("sanitizeCapabilityProbeResults", () => {
       { capabilityId: "not-a-real-capability", probeStatus: "ok" },
     ];
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(20);
     expect(
       sanitized.some(
         (probe) => (probe.capabilityId as string) === "not-a-real-capability",
@@ -735,7 +722,7 @@ describe("sanitizeCapabilityProbeResults", () => {
         : probe,
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(20);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "agent-materialization",
     );
@@ -749,7 +736,7 @@ describe("sanitizeCapabilityProbeResults", () => {
         : probe,
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(20);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "primary-agent-selection",
     );
@@ -792,7 +779,7 @@ describe("sanitizeCapabilityProbeResults", () => {
       },
     ];
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(20);
     expect([...sanitized.map((probe) => probe.capabilityId)].sort()).toEqual(
       [...ALL_CAPABILITY_IDS].sort(),
     );

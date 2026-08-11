@@ -36,7 +36,6 @@ import {
 } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import type { PiChildRefRecord } from "../child-session-refs.js";
-import { createPiChildSessionStorageAuthority } from "../child-session-storage-authority.js";
 import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
@@ -96,7 +95,6 @@ import {
   removeRealTempRoot,
   reserveRealTempPath,
 } from "./fakes/real-temp-root.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const EMPTY_CONFIG = {
   agents: {},
@@ -670,14 +668,9 @@ function installExtension(
     // shortcut registration can be modelled independently of editor
     // ownership. Absent unless a test sets `effectiveKeybindingConfig`.
     hostKeybindings: () => host.hostKeybindingsForTest(),
-    // Model a descriptor-safe host by default. The production reader can never
-    // report `descriptor-relative-native-session-io` as native, so without an
-    // explicit reader every test would collapse into health-only mode and
-    // lose its deep-module coverage. Tests that assert real host-surface
-    // behaviour override this.
+    // Model an all-native host by default so tests stay ready under the fake
+    // host. Production host probing is out of scope for these fixtures.
     hostSurfaceReader: hostSurfaceReader(),
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
     ...overrides,
   });
   factory(host.api);
@@ -783,8 +776,6 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
         version: "0.81.1",
       }),
       capabilityProber: allOkCapabilityProber(),
-      sessionStorageAuthority:
-        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
       idGenerator: new FakeIdGenerator(),
       clock: new FakeClock(),
       logger: new RecordingLogger(),
@@ -804,9 +795,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
         new Map(),
         ok("/fake/project"),
       ),
-      // Model a descriptor-safe host: the production reader always reports
-      // `descriptor-relative-native-session-io` unavailable, which is a
-      // required capability and would force health-only mode.
+      // Model an all-native host so this fixture reaches ready under fakes.
       hostSurfaceReader: hostSurfaceReader(),
     });
     factory(host.api);
@@ -3208,194 +3197,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
     ]);
   });
 
-  it("skips startup recovery for an interrupted ref when session storage is path-only", async () => {
-    const interrupted = eligibleOrdinaryRecoveryRecord({
-      childId: "legacy-interrupted",
-      threadId: "legacy-interrupted",
-      nativeSessionId: "native-legacy-interrupted",
-      sessionRef: "children/legacy-interrupted/session.jsonl",
-      originEntryId: "entry-legacy-interrupted",
-      title: "loom",
-      status: "running",
-    });
-    const history = mutableChildRefSource(interrupted);
-    const refBytesBefore = JSON.stringify(history.records);
-    let restores = 0;
-    let refAppends = 0;
-    let cacheCalls = 0;
-    let sessionMutations = 0;
-    const refs = history.sources.refs as {
-      appendNewChild: typeof history.sources.refs.appendNewChild;
-      appendLifecycle: typeof history.sources.refs.appendLifecycle;
-    };
-    const originalAppendNew = refs.appendNewChild.bind(history.sources.refs);
-    const originalLifecycle = refs.appendLifecycle.bind(history.sources.refs);
-    refs.appendNewChild = ((input) => {
-      refAppends += 1;
-      return originalAppendNew(input);
-    }) as typeof refs.appendNewChild;
-    refs.appendLifecycle = ((record, patch) => {
-      refAppends += 1;
-      return originalLifecycle(record, patch);
-    }) as typeof refs.appendLifecycle;
-    const cache = history.sources.cache as {
-      upsertRef: PiThreadCachePort["upsertRef"];
-    };
-    const originalUpsert = cache.upsertRef.bind(history.sources.cache);
-    cache.upsertRef = ((ref, workspaceKey) => {
-      cacheCalls += 1;
-      return originalUpsert(ref, workspaceKey);
-    }) as typeof cache.upsertRef;
-    const sessions = history.sources.sessions as {
-      createChildSession: PiThreadSessionPort["createChildSession"];
-      establishThreadLeaf: PiThreadSessionPort["establishThreadLeaf"];
-      appendTombstone: PiThreadSessionPort["appendTombstone"];
-    };
-    const originalCreate = sessions.createChildSession.bind(
-      history.sources.sessions,
-    );
-    const originalLeaf = sessions.establishThreadLeaf.bind(
-      history.sources.sessions,
-    );
-    const originalTombstone = sessions.appendTombstone.bind(
-      history.sources.sessions,
-    );
-    sessions.createChildSession = ((input) => {
-      sessionMutations += 1;
-      return originalCreate(input);
-    }) as typeof sessions.createChildSession;
-    sessions.establishThreadLeaf = ((ref, metadata, expectedParent) => {
-      sessionMutations += 1;
-      return originalLeaf(ref, metadata, expectedParent);
-    }) as typeof sessions.establishThreadLeaf;
-    sessions.appendTombstone = ((record) => {
-      sessionMutations += 1;
-      return originalTombstone(record);
-    }) as typeof sessions.appendTombstone;
-    const storage = createPiChildSessionStorageAuthority();
-    expect(storage.requireDescriptorSafeSessionIo()._unsafeUnwrapErr()).toEqual(
-      {
-        type: "SessionStorageUnavailable",
-        reason: "path-only-session-api",
-      },
-    );
-    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
-    host.scriptSelect("Recover now");
-    installRecoveryExtension(
-      host,
-      history,
-      () => {
-        restores += 1;
-        return okAsync({
-          finalOutput: "must-not-restore",
-          interventionCount: 0,
-        });
-      },
-      { recovery_countdown_seconds: 0 },
-      { sessionStorageAuthority: storage },
-    );
-    await host.triggerSessionStart();
-    await flushBackgroundWork();
-    expect(host.selectCalls).toHaveLength(0);
-    expect(refAppends).toBe(0);
-    expect(history.updates).toHaveLength(0);
-    expect(restores).toBe(0);
-    expect(sessionMutations).toBe(0);
-    expect(cacheCalls).toBe(0);
-    expect(host.sendMessageCalls).toHaveLength(0);
-    expect(
-      host.notifyCalls.some((call) =>
-        call.message.includes("Interrupted Weave children"),
-      ),
-    ).toBe(false);
-    expect(
-      host.notifyCalls.filter(
-        (call) =>
-          call.message === "Child recovery is unavailable in this session.",
-      ),
-    ).toHaveLength(0);
-    expect(JSON.stringify(history.records)).toBe(refBytesBefore);
-    await flushBackgroundWork();
-    expect(cacheCalls).toBe(0);
-    expect(refAppends).toBe(0);
-    expect(sessionMutations).toBe(0);
-    expect(restores).toBe(0);
-  });
-
-  it("checks path-only session storage before factory open and skips reconstruct/upsert/recovery", async () => {
-    const order: string[] = [];
-    const interrupted = eligibleOrdinaryRecoveryRecord({
-      childId: "path-only-gated",
-      threadId: "path-only-gated",
-      nativeSessionId: "native-path-only-gated",
-      sessionRef: "children/path-only-gated/session.jsonl",
-      originEntryId: "entry-path-only-gated",
-      title: "loom",
-      status: "running",
-    });
-    const history = mutableChildRefSource(interrupted);
-    let upsertCalls = 0;
-    let restores = 0;
-    const cache = history.sources.cache as {
-      upsertRef: PiThreadCachePort["upsertRef"];
-    };
-    const originalUpsert = cache.upsertRef.bind(history.sources.cache);
-    cache.upsertRef = ((ref, workspaceKey) => {
-      upsertCalls += 1;
-      order.push("upsert");
-      return originalUpsert(ref, workspaceKey);
-    }) as typeof cache.upsertRef;
-    const storage = {
-      requireDescriptorSafeSessionIo: () => {
-        order.push("authority");
-        return err({
-          type: "SessionStorageUnavailable" as const,
-          reason: "path-only-session-api" as const,
-        });
-      },
-    };
-    const factory: PiThreadSourceFactory = (input) => {
-      order.push(
-        input.readOnly === true ? "factory-readonly" : "factory-mutating",
-      );
-      return history.factory(input);
-    };
-    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
-    host.scriptSelect("Recover now");
-    installRecoveryExtension(
-      host,
-      history,
-      () => {
-        restores += 1;
-        order.push("spawn");
-        return okAsync({
-          finalOutput: "must-not-restore",
-          interventionCount: 0,
-        });
-      },
-      { recovery_countdown_seconds: 0 },
-      {
-        sessionStorageAuthority: storage,
-        threadSourceFactory: factory,
-      },
-    );
-    await host.triggerSessionStart();
-    await flushBackgroundWork();
-
-    expect(order[0]).toBe("authority");
-    expect(order).toContain("factory-readonly");
-    expect(order.indexOf("authority")).toBeLessThan(
-      order.indexOf("factory-readonly"),
-    );
-    expect(order).not.toContain("factory-mutating");
-    expect(order).not.toContain("upsert");
-    expect(order).not.toContain("spawn");
-    expect(upsertCalls).toBe(0);
-    expect(restores).toBe(0);
-    expect(host.selectCalls).toHaveLength(0);
-  });
-
-  it("retains reconstruction and recovery on a descriptor-safe ready host", async () => {
+  it("retains reconstruction and recovery on a ready host", async () => {
     const order: string[] = [];
     const interrupted = eligibleOrdinaryRecoveryRecord({
       childId: "ready-reconstruct",
@@ -3418,12 +3220,6 @@ describe("createPiExtension: config activation, materialization consumption, pri
       order.push("upsert");
       return originalUpsert(ref, workspaceKey);
     }) as typeof cache.upsertRef;
-    const storage = {
-      requireDescriptorSafeSessionIo: () => {
-        order.push("authority");
-        return ok(undefined);
-      },
-    };
     const factory: PiThreadSourceFactory = (input) => {
       order.push(
         input.readOnly === true ? "factory-readonly" : "factory-mutating",
@@ -3448,20 +3244,15 @@ describe("createPiExtension: config activation, materialization consumption, pri
       },
       { recovery_countdown_seconds: 0 },
       {
-        sessionStorageAuthority: storage,
         threadSourceFactory: factory,
       },
     );
     await host.triggerSessionStart();
     await flushBackgroundWork();
 
-    expect(order[0]).toBe("authority");
     expect(order).toContain("factory-mutating");
     expect(order).toContain("upsert");
     expect(order).toContain("spawn");
-    expect(order.indexOf("authority")).toBeLessThan(
-      order.indexOf("factory-mutating"),
-    );
     expect(order.indexOf("factory-mutating")).toBeLessThan(
       order.indexOf("upsert"),
     );
@@ -3480,15 +3271,6 @@ describe("createPiExtension: config activation, materialization consumption, pri
       deleteValue: () => undefined,
     };
     const order: string[] = [];
-    const storage = {
-      requireDescriptorSafeSessionIo: () => {
-        order.push("authority");
-        return err({
-          type: "SessionStorageUnavailable" as const,
-          reason: "path-only-session-api" as const,
-        });
-      },
-    };
     let openDatabaseCalls = 0;
     const production = createProductionPiThreadSourceFactory();
     const factory: PiThreadSourceFactory = (
@@ -3508,12 +3290,9 @@ describe("createPiExtension: config activation, materialization consumption, pri
     };
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host, "0.81.1", {
-      // Pi 0.83 health-only: required descriptor-relative session I/O is absent.
-      hostSurfaceReader: hostSurfaceReader([
-        "descriptor-relative-native-session-io",
-      ]),
+      // Health-only: a required Pi session capability is absent.
+      hostSurfaceReader: hostSurfaceReader(["custom-session-directory"]),
       envPort,
-      sessionStorageAuthority: storage,
       threadSourceFactory: factory,
       runtimeStoreFactory: {
         open: () => okAsync(createInMemoryRuntimeStore()),
@@ -3540,7 +3319,6 @@ describe("createPiExtension: config activation, materialization consumption, pri
     await host.invokeCommand("weave:doctor");
     await flushBackgroundWork();
 
-    expect(order[0]).toBe("authority");
     expect(order).toContain("factory-readonly");
     expect(order).not.toContain("factory-mutating");
     expect(order).not.toContain("openDatabase");

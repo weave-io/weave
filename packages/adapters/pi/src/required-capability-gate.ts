@@ -1,24 +1,16 @@
 /**
- * Required-capability gate (Spec 33 §16, Task 21 phase A).
+ * Required-capability gate for persistent session mutation routes.
  *
- * One required capability — `descriptor-relative-native-session-io` — models
- * the harness contract that every native session read and write is addressed
- * by an opaque, host-owned session descriptor rather than by a caller-supplied
- * filesystem path. Without that contract the adapter cannot prove that a
- * persistent session mutation lands inside the host's own storage, so every
- * mutating adapter route must fail **before** it reaches a delegation
- * controller, session service, filesystem, cache, execution lease, or child
- * process.
+ * Session mutation readiness follows the Pi-native path/session contract:
+ * `delegated-specialist-execution` is available only when real Pi session API,
+ * session root, and process surfaces are ready. Without that readiness the
+ * adapter stays health-only before spawn, so mutating routes fail before they
+ * reach a delegation controller, session service, filesystem, cache, execution
+ * lease, or child process.
  *
- * This module owns only the top-level boundary decision. It answers one
- * question — "may this generation perform a persistent session mutation?" —
- * from the generation's own health report. It performs no I/O, reads no
- * environment variable, and has no override: a capability gap can only be
- * cleared by a host that proves the contract through the host surface
- * inventory.
- *
- * Lower-level host, store, and RPC guards are phase B and deliberately not
- * implemented here.
+ * This module owns only the top-level boundary decision from the generation's
+ * health report. It performs no I/O, reads no environment variable, and has no
+ * override.
  */
 import {
   type AdapterHealthReport,
@@ -34,11 +26,10 @@ import {
 /**
  * The required capability every persistent session mutation depends on.
  *
- * Owned by the host, never by the adapter: the adapter can only observe it
- * through the `descriptor-relative-native-session-io` host surface probe.
+ * Observed through effective readiness for delegated specialist execution.
  */
 export const SESSION_MUTATION_REQUIRED_CAPABILITY: CapabilityId =
-  "descriptor-relative-native-session-io";
+  "delegated-specialist-execution";
 
 /** Operator-facing reason used when the health report carries no detail. */
 export const UNKNOWN_CAPABILITY_GAP_REASON = "capability-unavailable";

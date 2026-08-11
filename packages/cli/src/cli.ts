@@ -170,8 +170,6 @@ export async function run(
         };
       }
       const workspaceKey = process.cwd();
-      // Delete is gated inside resolveProductionAdapterCliRegistry before
-      // createProductionPorts / any cache or ref open.
       const productionRegistry = await resolveProductionAdapterCliRegistry({
         action: resolved.action,
         workspaceKey,
@@ -179,10 +177,7 @@ export async function run(
       });
       if (productionRegistry.isErr()) {
         const error = productionRegistry.error;
-        const message =
-          error.type === "RequiredCapabilityUnavailable"
-            ? `RequiredCapabilityUnavailable: ${error.capabilityId} (${error.reason})`
-            : `Pi adapter command ports unavailable: ${error.type} (${error.reason})`;
+        const message = `Pi adapter command ports unavailable: ${error.type} (${error.reason})`;
         terminal.stderr(
           formatCliError({
             type: "InvalidArgs",
