@@ -219,7 +219,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - The design cites exact reference code, records adopt/reject/different-by-design decisions, removes the fictional host capability, defines exact Task 10 RED tests, and has Warp approval. No production/test source is committed.
     - Commit: `docs(pi): define the Pi-native child session contract`.
 
-- [ ] 10. Add RED tests for the Pi-native session contract
+- [x] 10. Add RED tests for the Pi-native session contract
   - **What**: Write baseline-failing tests for the actual Pi path/session/process contract and the adapter's stated containment boundary.
   - **Files**: `packages/adapters/pi/src/__tests__/native-session-host.test.ts`, `child-native-sessions.test.ts`, `child-session-storage-authority.test.ts`, `extension.test.ts`, RPC/direct-dispatch argument tests, and capability/probe tests that currently require the descriptor ID.
   - **Depends on**: Task 9.
