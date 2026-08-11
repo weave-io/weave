@@ -103,6 +103,31 @@ export type PiAdapterChildEntrySummary = z.infer<
   typeof ChildEntrySummarySchema
 >;
 
+/**
+ * Path-free diagnostic facts for one child session. Deliberately carries no
+ * filesystem path and no root-relative session ref: the session ref is a
+ * storage locator, and Task 11's review found that exposing either leaked
+ * Weave-private layout through `children.show --diagnostic`. What remains is
+ * identity (the native session id), lineage (the immutable origin-parent link),
+ * header verification, and session health.
+ */
+const ChildShowDiagnosticsSchema = z
+  .object({
+    /** Native Pi session id from the verified session header. */
+    nativeSessionId: idSchema.optional(),
+    /** Immutable origin-parent session link. */
+    originParentSessionId: idSchema,
+    /** Whether the session header was read and verified for this request. */
+    sessionHeader: z.enum(["verified", "unread"]),
+    /** Health of the persisted session behind this child. */
+    sessionHealth: z.enum(["available", "tombstoned"]),
+  })
+  .strict();
+
+export type PiAdapterChildShowDiagnostics = z.infer<
+  typeof ChildShowDiagnosticsSchema
+>;
+
 export const PiChildrenListResultSchema = z
   .object({
     kind: z.literal("children.list"),
@@ -124,9 +149,8 @@ export const PiChildrenShowResultSchema = z
       .array(ChildEntrySummarySchema)
       .max(PI_ADAPTER_COMMAND_BOUNDS.showEntryPageSize),
     nextCursor: z.string().max(512).optional(),
-    /** Absolute or root-relative path — present only when diagnostic is on. */
-    sessionPath: z.string().max(2_048).optional(),
-    sessionRef: z.string().max(1_024).optional(),
+    /** Path-free session diagnostics — present only when diagnostic is on. */
+    diagnostics: ChildShowDiagnosticsSchema.optional(),
   })
   .strict();
 
@@ -220,8 +244,7 @@ export interface PiAdapterChildrenPort {
       readonly child: PiAdapterChildListItem;
       readonly entries: readonly PiAdapterChildEntrySummary[];
       readonly nextCursor?: string;
-      readonly sessionPath?: string;
-      readonly sessionRef?: string;
+      readonly diagnostics?: PiAdapterChildShowDiagnostics;
     },
     PiAdapterCommandPortError
   >;
@@ -576,8 +599,7 @@ export function createPiChildrenCommandPort(
           readonly child: PiAdapterChildListItem;
           readonly entries: readonly PiAdapterChildEntrySummary[];
           readonly nextCursor?: string;
-          readonly sessionPath?: string;
-          readonly sessionRef?: string;
+          readonly diagnostics?: PiAdapterChildShowDiagnostics;
         },
         PiAdapterCommandPortError
       > {
@@ -585,7 +607,17 @@ export function createPiChildrenCommandPort(
           return okAsync({
             child: toListItem(record),
             entries: [],
-            ...(diagnostic ? { sessionRef: record.sessionRef } : {}),
+            ...(diagnostic
+              ? {
+                  diagnostics: {
+                    originParentSessionId: record.originParentSessionId,
+                    // A tombstoned child's session is never opened, so no
+                    // header is read for it.
+                    sessionHeader: "unread" as const,
+                    sessionHealth: "tombstoned" as const,
+                  },
+                }
+              : {}),
           });
         }
         return options.sessions
@@ -624,8 +656,12 @@ export function createPiChildrenCommandPort(
               )
               .map((session) => ({
                 ...base,
-                sessionPath: session.path,
-                sessionRef: record.sessionRef,
+                diagnostics: {
+                  nativeSessionId: session.sessionId,
+                  originParentSessionId: record.originParentSessionId,
+                  sessionHeader: "verified" as const,
+                  sessionHealth: "available" as const,
+                },
               }));
           });
       }
@@ -795,7 +831,6 @@ export function createPiAdapterCommandHandlers(
   const childrenShow: AdapterCommandHandler = (payloadJson) => {
     const payload = parsePayload(ShowPayloadSchema, payloadJson);
     if (payload.isErr()) return errAsync(payload.error);
-    const diagnostic = payload.value.diagnostic === true;
     return handlerFromPortResult(
       options.children.show(payload.value).map((page) => ({
         kind: "children.show" as const,
@@ -807,14 +842,13 @@ export function createPiAdapterCommandHandlers(
         ...(page.nextCursor === undefined
           ? {}
           : { nextCursor: page.nextCursor }),
-        ...(diagnostic && page.sessionPath !== undefined
-          ? { sessionPath: page.sessionPath }
-          : {}),
-        ...(diagnostic && page.sessionRef !== undefined
-          ? { sessionRef: page.sessionRef }
-          : {}),
+        ...(page.diagnostics === undefined
+          ? {}
+          : { diagnostics: page.diagnostics }),
       })),
-      diagnostic,
+      // `children.show` has no path-bearing field in any mode, so path
+      // sanitization stays on even under `--diagnostic`.
+      false,
     );
   };
 

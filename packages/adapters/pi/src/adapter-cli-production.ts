@@ -154,6 +154,14 @@ function mutationGateFor(
 }
 
 /**
+ * Whether a built gate would admit a mutation. Read without a capability
+ * catalog, so the answer depends only on the gate's own closed reasons.
+ */
+function isMutationGateOpen(gate: PiSessionMutationGate): boolean {
+  return gate.evaluate().isOk();
+}
+
+/**
  * Runs the readiness probe only for the mutating access mode, so a read route
  * never initializes a root. A probe that throws despite its `never` error type
  * fails closed; the thrown value is discarded.
@@ -333,6 +341,30 @@ function openWithSessionRoot(
 
   return readReadinessFor(accessMode, options).andThen((readiness) => {
     const sessionMutationGate = mutationGateFor(accessMode, readiness);
+    // A write route whose native readiness is unproven must produce *zero*
+    // writable effects: the metadata cache is opened (and would be
+    // created/migrated) only after the gate proves the route may mutate. The
+    // read route keeps its own read-only open below.
+    if (!readOnly && !isMutationGateOpen(sessionMutationGate)) {
+      return okAsync<
+        PiProductionAdapterCommandPorts,
+        PiProductionAdapterCommandError
+      >({
+        children: unavailableChildrenPort(
+          `child mutation unavailable: ${readiness?.ready === false ? readiness.reason : "readiness-unproven"}`,
+        ),
+        doctor: createPiDoctorPort({
+          ports: createStoreBackedDoctorCheckPorts({
+            permissions: () =>
+              okAsync(passedDoctorCheck("session root resolved")),
+            cacheMode: "degraded",
+            listMetadata: () => okAsync([]),
+          }),
+        }),
+        cacheMode: "degraded" as const,
+        sessionMutationGate,
+      });
+    }
     return openPiChildMetadataCache({
       root: cacheRoot,
       fs: new BunPiChildMetadataCacheFs(),

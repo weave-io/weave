@@ -42,7 +42,6 @@ const child = (
 function fakeChildren(options: {
   readonly list?: PiAdapterChildListItem[];
   readonly entries?: readonly { id: string; type: string }[];
-  readonly sessionPath?: string;
 }): PiAdapterChildrenPort {
   const rows = [...(options.list ?? [child()])];
   const entries = options.entries ?? [
@@ -82,10 +81,12 @@ function fakeChildren(options: {
           : {}),
         ...(input.diagnostic === true
           ? {
-              sessionPath:
-                options.sessionPath ??
-                "/tmp/weave/adapters/pi/sessions/x.jsonl",
-              sessionRef: `${found.childId}/session.jsonl`,
+              diagnostics: {
+                nativeSessionId: `native-${found.childId}`,
+                originParentSessionId: found.originParentSessionId,
+                sessionHeader: "verified" as const,
+                sessionHealth: "available" as const,
+              },
             }
           : {}),
       });
@@ -170,17 +171,16 @@ describe("Pi adapter-cli-commands", () => {
     const body = JSON.parse(result._unsafeUnwrap().resultJson) as {
       entries: unknown[];
       nextCursor?: string;
-      sessionPath?: string;
+      diagnostics?: unknown;
     };
     expect(body.entries).toHaveLength(100);
     expect(body.nextCursor).toBe("entry-cursor");
-    expect(body.sessionPath).toBeUndefined();
+    expect(body.diagnostics).toBeUndefined();
   });
 
-  it("omits filesystem paths by default and includes them with diagnostic", async () => {
-    const path = "/Users/jose/.local/share/weave/adapters/pi/sessions/a.jsonl";
+  it("keeps children.show path-free in both default and diagnostic modes", async () => {
     const registry = createPiAdapterCommandRegistry({
-      children: fakeChildren({ sessionPath: path }),
+      children: fakeChildren({}),
     });
 
     const defaultShow = await dispatchAdapterCommand(registry, {
@@ -192,8 +192,8 @@ describe("Pi adapter-cli-commands", () => {
       }),
     });
     const defaultBody = defaultShow._unsafeUnwrap().resultJson;
-    expect(defaultBody).not.toContain(path);
-    expect(defaultBody).not.toContain("/Users/");
+    expect(defaultBody).not.toContain("/");
+    expect(JSON.parse(defaultBody).diagnostics).toBeUndefined();
 
     const diagnosticShow = await dispatchAdapterCommand(registry, {
       adapter: "pi",
@@ -204,7 +204,18 @@ describe("Pi adapter-cli-commands", () => {
         diagnostic: true,
       }),
     });
-    expect(diagnosticShow._unsafeUnwrap().resultJson).toContain(path);
+    const diagnosticBody = diagnosticShow._unsafeUnwrap().resultJson;
+    // Path-free even under --diagnostic: no absolute path, no root-relative
+    // session ref, and no `sessionPath`/`sessionRef` key at all.
+    expect(diagnosticBody).not.toContain("/");
+    expect(diagnosticBody).not.toContain("sessionPath");
+    expect(diagnosticBody).not.toContain("sessionRef");
+    expect(JSON.parse(diagnosticBody).diagnostics).toEqual({
+      nativeSessionId: "native-child-1",
+      originParentSessionId: "parent-1",
+      sessionHeader: "verified",
+      sessionHealth: "available",
+    });
   });
 
   it("resolves a child older than the newest list page without paths", async () => {
@@ -243,12 +254,12 @@ describe("Pi adapter-cli-commands", () => {
     const body = JSON.parse(resolved._unsafeUnwrap().resultJson) as {
       kind: string;
       matches: PiAdapterChildListItem[];
-      sessionPath?: string;
+      diagnostics?: unknown;
     };
     expect(body.kind).toBe("children.resolve");
     expect(body.matches).toHaveLength(1);
     expect(body.matches[0]?.originParentSessionId).toBe("parent-54");
-    expect(body.sessionPath).toBeUndefined();
+    expect(body.diagnostics).toBeUndefined();
     expect(resolved._unsafeUnwrap().resultJson).not.toContain("/tmp/");
   });
 
@@ -499,7 +510,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
       `entry-${entryCount - 1}`,
     );
     expect(newest.nextCursor).toBeDefined();
-    expect(newest.sessionPath).toBeUndefined();
+    expect(newest.diagnostics).toBeUndefined();
 
     const decoded = decodePiNativeSessionEntryCursor(
       newest.nextCursor ?? "",
@@ -551,7 +562,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     );
   });
 
-  it("exposes diagnostic sessionPath only via openSession, never full entry materialization", async () => {
+  it("reads path-free session diagnostics only via openSession, never full entry materialization", async () => {
     const store = await seed(20);
     let entryPageCalls = 0;
     let openCalls = 0;
@@ -588,7 +599,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
       childId: "child-1",
       parentSessionId: PARENT,
     });
-    expect(normal._unsafeUnwrap().sessionPath).toBeUndefined();
+    expect(normal._unsafeUnwrap().diagnostics).toBeUndefined();
     expect(entryPageCalls).toBe(1);
     expect(openCalls).toBe(0);
 
@@ -602,7 +613,15 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     )._unsafeUnwrap();
     expect(entryPageCalls).toBe(2);
     expect(openCalls).toBe(1);
-    expect(diagnostic.sessionPath).toBe(`${ROOT}/${REF}`);
-    expect(diagnostic.sessionRef).toBe(REF);
+    // Identity, lineage, header proof, and health survive; the absolute path
+    // and the root-relative ref never leave the port.
+    expect(diagnostic.diagnostics).toEqual({
+      nativeSessionId: "native-session-1",
+      originParentSessionId: PARENT,
+      sessionHeader: "verified",
+      sessionHealth: "available",
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain(ROOT);
+    expect(JSON.stringify(diagnostic)).not.toContain(REF);
   });
 });

@@ -101,7 +101,12 @@ interface AdapterChildrenShowResult {
     readonly type: string;
   }[];
   readonly nextCursor?: string;
-  readonly sessionPath?: string;
+  readonly diagnostics?: {
+    readonly nativeSessionId?: string;
+    readonly originParentSessionId: string;
+    readonly sessionHeader: string;
+    readonly sessionHealth: string;
+  };
 }
 
 interface AdapterChildrenDeleteResult {
@@ -137,7 +142,7 @@ export function renderAdapterHelp(theme: ThemeColors): string {
     "  Delete resolves the child's immutable origin parent via children.resolve;",
     "  pass --parent-session when the same child id exists under two parents.",
     "  Delete requires interactive confirmation or --yes and appends a tombstone.",
-    "  Paths appear only when --diagnostic is set.",
+    "  Show --diagnostic adds path-free session identity, lineage, and health.",
   ].join("\n");
 }
 
@@ -283,9 +288,7 @@ export async function resolveDeleteParentScope(
   }
 
   if (matches.length > 1) {
-    const parents = matches
-      .map((row) => row.originParentSessionId)
-      .join(", ");
+    const parents = matches.map((row) => row.originParentSessionId).join(", ");
     return err(
       `child id ${target.childId} exists under multiple parents (${parents}); pass --parent-session <id>`,
     );
@@ -323,8 +326,8 @@ function parseResolveMatches(
       typeof row !== "object" ||
       row === null ||
       typeof (row as { childId?: unknown }).childId !== "string" ||
-      typeof (row as { originParentSessionId?: unknown }).originParentSessionId !==
-        "string"
+      typeof (row as { originParentSessionId?: unknown })
+        .originParentSessionId !== "string"
     ) {
       return undefined;
     }
@@ -431,8 +434,23 @@ function renderHuman(
       if (body.nextCursor !== undefined) {
         entryLines.push(theme.dim(`next cursor: ${body.nextCursor}`));
       }
-      if (body.sessionPath !== undefined) {
-        entryLines.push(theme.dim(`session path: ${body.sessionPath}`));
+      if (body.diagnostics !== undefined) {
+        const diagnostics = body.diagnostics;
+        entryLines.push(
+          theme.dim(
+            `session health: ${diagnostics.sessionHealth}  header: ${diagnostics.sessionHeader}`,
+          ),
+        );
+        entryLines.push(
+          theme.dim(
+            `origin parent session: ${diagnostics.originParentSessionId}`,
+          ),
+        );
+        if (diagnostics.nativeSessionId !== undefined) {
+          entryLines.push(
+            theme.dim(`native session id: ${diagnostics.nativeSessionId}`),
+          );
+        }
       }
       return [...header, ...entryLines].join("\n");
     }

@@ -42,7 +42,6 @@ const child = (
 function makeChildrenPort(options: {
   readonly rows?: PiAdapterChildListItem[];
   readonly entryCount?: number;
-  readonly sessionPath?: string;
 }): PiAdapterChildrenPort {
   const rows = [...(options.rows ?? [child()])];
   const entryCount = options.entryCount ?? 3;
@@ -87,10 +86,12 @@ function makeChildrenPort(options: {
           : {}),
         ...(input.diagnostic === true
           ? {
-              sessionPath:
-                options.sessionPath ??
-                "/Users/jose/.local/share/weave/adapters/pi/sessions/x.jsonl",
-              sessionRef: `${found.childId}/session.jsonl`,
+              diagnostics: {
+                nativeSessionId: `native-${found.childId}`,
+                originParentSessionId: found.originParentSessionId,
+                sessionHeader: "verified" as const,
+                sessionHealth: "available" as const,
+              },
             }
           : {}),
       });
@@ -364,8 +365,6 @@ describe("runAdapter", () => {
   });
 
   it("bounds show to 100 entries plus cursor and keeps default path-free", async () => {
-    const path =
-      "/Users/jose/.local/share/weave/adapters/pi/sessions/child-1/session.jsonl";
     const { terminal, ctx } = makeCtx({
       target: {
         adapter: "pi",
@@ -374,14 +373,13 @@ describe("runAdapter", () => {
       },
       json: true,
       registry: createPiAdapterCommandRegistry({
-        children: makeChildrenPort({ entryCount: 130, sessionPath: path }),
+        children: makeChildrenPort({ entryCount: 130 }),
         sessionMutationGate: createOpenSessionMutationGate(),
       }),
     });
     const code = await runAdapter(ctx);
     expect(code._unsafeUnwrap()).toBe(0);
     const out = terminal.out.join("\n");
-    expect(out).not.toContain(path);
     expect(out).not.toContain("/Users/");
     const body = JSON.parse(out);
     expect(body.entries).toHaveLength(100);
@@ -389,9 +387,7 @@ describe("runAdapter", () => {
     expect(body).toMatchSnapshot("adapter-pi-children-show-json");
   });
 
-  it("includes diagnostic path only when --diagnostic is set", async () => {
-    const path =
-      "/Users/jose/.local/share/weave/adapters/pi/sessions/child-1/session.jsonl";
+  it("includes path-free session diagnostics only when --diagnostic is set", async () => {
     const { terminal, ctx } = makeCtx({
       target: {
         adapter: "pi",
@@ -401,12 +397,45 @@ describe("runAdapter", () => {
       json: true,
       diagnostic: true,
       registry: createPiAdapterCommandRegistry({
-        children: makeChildrenPort({ sessionPath: path }),
+        children: makeChildrenPort({}),
         sessionMutationGate: createOpenSessionMutationGate(),
       }),
     });
     await runAdapter(ctx);
-    expect(terminal.out.join("\n")).toContain(path);
+    const out = terminal.out.join("\n");
+    const body = JSON.parse(out) as {
+      diagnostics?: Record<string, unknown>;
+    };
+    expect(body.diagnostics).toEqual({
+      nativeSessionId: "native-child-1",
+      originParentSessionId: "parent-1",
+      sessionHeader: "verified",
+      sessionHealth: "available",
+    });
+    // No absolute or root-relative path survives, even under --diagnostic.
+    expect(out).not.toContain("/");
+  });
+
+  it("renders path-free session diagnostics in text mode", async () => {
+    const { terminal, ctx } = makeCtx({
+      target: {
+        adapter: "pi",
+        action: "children.show",
+        childId: "child-1",
+      },
+      diagnostic: true,
+      registry: createPiAdapterCommandRegistry({
+        children: makeChildrenPort({}),
+        sessionMutationGate: createOpenSessionMutationGate(),
+      }),
+    });
+    await runAdapter(ctx);
+    const out = terminal.out.join("\n");
+    expect(out).toContain("session health: available");
+    expect(out).toContain("native session id: native-child-1");
+    expect(out).toContain("origin parent session: parent-1");
+    expect(out).not.toContain("session path");
+    expect(out).not.toContain("/");
   });
 
   it("requires confirmation for delete unless --yes, then tombstones", async () => {

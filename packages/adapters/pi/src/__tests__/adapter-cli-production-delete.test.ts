@@ -14,6 +14,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { dispatchAdapterCommand } from "@weaveio/weave-engine";
@@ -31,6 +32,7 @@ import {
 import {
   BunPiChildMetadataCacheFs,
   openPiChildMetadataCache,
+  PI_CHILD_METADATA_CACHE_LAYOUT,
   resolvePiChildMetadataCacheRoot,
 } from "../child-metadata-cache.js";
 import {
@@ -222,6 +224,56 @@ describe("production children.delete is readiness-gated and really dispatches", 
       refused: true,
       namesCapability: true,
       leakedXdgPath: false,
+    });
+  });
+
+  it("opens no writable cache database when readiness is unproven", async () => {
+    const xdg = await tempXdg();
+    const cacheRoot = (
+      await resolvePiChildMetadataCacheRoot({
+        env: { XDG_DATA_HOME: xdg, HOME: xdg },
+        homeDir: xdg,
+      })
+    )._unsafeUnwrap();
+    const databasePath = join(
+      cacheRoot,
+      PI_CHILD_METADATA_CACHE_LAYOUT.databaseFile,
+    );
+
+    const ports = (
+      await createProductionPorts({
+        workspaceKey: WORKSPACE,
+        env: { XDG_DATA_HOME: xdg, HOME: xdg },
+        homeDir: xdg,
+        SessionManager,
+        accessMode: "write" as const,
+        readinessProbe: createBlockedPiNativeSessionReadinessProbe(
+          "pi-process-unavailable",
+        ),
+      })
+    )._unsafeUnwrap();
+
+    // The gate is consulted before any writable cache/database effect, so a
+    // denied write route leaves the cache root and database absent.
+    expect({
+      gateRefused: ports.sessionMutationGate.evaluate().isErr(),
+      cacheMode: ports.cacheMode,
+      databaseCreated: await Bun.file(databasePath).exists(),
+      cacheRootCreated: existsSync(cacheRoot),
+      deleteRefused: (
+        await ports.children.delete({
+          workspaceKey: WORKSPACE,
+          childId: "child-1",
+          parentSessionId: PARENT_SESSION,
+          confirmed: true,
+        })
+      ).isErr(),
+    }).toEqual({
+      gateRefused: true,
+      cacheMode: "degraded",
+      databaseCreated: false,
+      cacheRootCreated: false,
+      deleteRefused: true,
     });
   });
 
