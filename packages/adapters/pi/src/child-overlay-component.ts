@@ -278,6 +278,12 @@ export interface OverlayRenderedTranscript {
  * the span of an entry is the total lines of its consecutive rows. Rows arrive
  * in transcript order, so accumulating while the entry id repeats preserves
  * that order without sorting.
+ *
+ * Rows replayed from the overlay window carry the overlay entry's own id, and
+ * one overlay entry can fan out into several transcript entries (an assistant
+ * message plus its tool calls). Grouping on that id keeps full-layout spans in
+ * the same identity space compact spans use, so a viewport anchor survives a
+ * layout toggle. Live rows without it fall back to the transcript entry id.
  */
 export function spansFromRows(
   rows: readonly PiChildTranscriptRenderedRow[],
@@ -286,11 +292,12 @@ export function spansFromRows(
   let currentId: string | undefined;
   let currentRows = 0;
   for (const row of rows) {
-    if (row.entryId !== currentId) {
+    const rowId = row.overlayEntryId ?? row.entryId;
+    if (rowId !== currentId) {
       if (currentId !== undefined) {
         spans.push({ entryId: currentId, rows: currentRows });
       }
-      currentId = row.entryId;
+      currentId = rowId;
       currentRows = 0;
     }
     currentRows += row.lines.length;

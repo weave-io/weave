@@ -949,12 +949,15 @@ export function transcriptFromOverlayEntries(
   for (const entry of entries) {
     const steps = entry.replay ?? legacyReplaySteps(entry);
     for (const step of steps) {
+      // Carry the overlay entry's stable id into the transcript so full-layout
+      // rows regroup under the same identity the compact layout uses.
       const action: PiChildTranscriptAction =
         step.kind === "event"
-          ? { kind: "event", event: step.event }
+          ? { kind: "event", event: step.event, overlayEntryId: entry.id }
           : {
               kind: step.input,
               text: step.text.slice(0, MAX_TRANSCRIPT_INPUT_BYTES),
+              overlayEntryId: entry.id,
             };
       const next = reducePiChildTranscript(state, action);
       if (next.isOk()) state = next.value;

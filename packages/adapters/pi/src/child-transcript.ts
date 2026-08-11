@@ -66,6 +66,15 @@ export interface PiChildTranscriptBaseEntry
   readonly sequence: number;
   readonly branchId: string;
   readonly eventTypes: readonly PiChildSessionEvent["type"][];
+  /**
+   * Stable identity of the overlay entry that produced this transcript entry,
+   * when the caller replayed one. One overlay entry can fan out into several
+   * transcript entries (an assistant message plus its tool calls), so this is
+   * the only id that means the same thing in both the compact and the full
+   * layout. Absent for live transcripts that were never replayed from overlay
+   * entries.
+   */
+  readonly overlayEntryId?: string;
 }
 
 export interface PiChildTranscriptInputEntry
@@ -213,10 +222,26 @@ export interface PiChildTranscriptState {
 }
 
 export type PiChildTranscriptAction =
-  | { readonly kind: "event"; readonly event: PiChildSessionEvent }
-  | { readonly kind: "task"; readonly text: string }
-  | { readonly kind: "steering"; readonly text: string }
-  | { readonly kind: "follow_up"; readonly text: string }
+  | {
+      readonly kind: "event";
+      readonly event: PiChildSessionEvent;
+      readonly overlayEntryId?: string;
+    }
+  | {
+      readonly kind: "task";
+      readonly text: string;
+      readonly overlayEntryId?: string;
+    }
+  | {
+      readonly kind: "steering";
+      readonly text: string;
+      readonly overlayEntryId?: string;
+    }
+  | {
+      readonly kind: "follow_up";
+      readonly text: string;
+      readonly overlayEntryId?: string;
+    }
   | { readonly kind: "toggle_expanded"; readonly entryId: string }
   | {
       readonly kind: "set_thinking_visible";
@@ -882,6 +907,55 @@ function applyEvent(
   }));
 }
 
+/**
+ * Bounded, non-mangling validation of a caller-supplied overlay entry
+ * identity. Mirrors the overlay's own `OpaqueIdSchema` so a replayed id keeps
+ * the exact bytes the overlay window holds; anything that is not an opaque id
+ * (paths, whitespace, oversized values) is dropped instead of rewritten.
+ */
+const MAX_OVERLAY_ENTRY_ID_LENGTH = 256;
+const OVERLAY_ENTRY_ID_PATTERN = /^[A-Za-z0-9._:-]+$/u;
+
+function actionOverlayEntryId(
+  action: PiChildTranscriptAction,
+): string | undefined {
+  if (
+    action.kind !== "event" &&
+    action.kind !== "task" &&
+    action.kind !== "steering" &&
+    action.kind !== "follow_up"
+  )
+    return undefined;
+  const raw = action.overlayEntryId;
+  if (raw === undefined) return undefined;
+  if (raw.length === 0 || raw.length > MAX_OVERLAY_ENTRY_ID_LENGTH)
+    return undefined;
+  return OVERLAY_ENTRY_ID_PATTERN.test(raw) ? raw : undefined;
+}
+
+/**
+ * Stamps the replayed overlay identity onto entries this action created.
+ *
+ * Entries that already existed keep the identity of the overlay entry that
+ * created them, so a later `message_end` merged into an assistant entry never
+ * re-labels it. Transcript entry ids, sequences and ordering are untouched.
+ */
+function stampOverlayEntryIdentity(
+  previous: PiChildTranscriptState,
+  next: PiChildTranscriptState,
+  action: PiChildTranscriptAction,
+): PiChildTranscriptState {
+  const overlayEntryId = actionOverlayEntryId(action);
+  if (overlayEntryId === undefined) return next;
+  if (next.entries.length <= previous.entries.length) return next;
+  const entries = next.entries.map((entry, index) =>
+    index < previous.entries.length || entry.overlayEntryId !== undefined
+      ? entry
+      : ({ ...entry, overlayEntryId } as PiChildTranscriptEntry),
+  );
+  return { ...next, entries };
+}
+
 function applyAction(
   state: PiChildTranscriptState,
   action: PiChildTranscriptAction,
@@ -936,7 +1010,9 @@ export function reducePiChildTranscript(
   state: PiChildTranscriptState,
   action: PiChildTranscriptAction,
 ): Result<PiChildTranscriptState, PiChildTranscriptError> {
-  return applyAction(state, action);
+  return applyAction(state, action).map((next) =>
+    stampOverlayEntryIdentity(state, next, action),
+  );
 }
 
 export function createPiChildTranscriptState(): PiChildTranscriptState {
@@ -1040,6 +1116,12 @@ export const MAX_PI_TRANSCRIPT_RENDER_STRING = 16_384;
 export interface PiChildTranscriptRenderedRow {
   readonly id: string;
   readonly entryId: string;
+  /**
+   * Identity of the overlay entry this row belongs to, propagated from the
+   * transcript entry. Consumers that must group rows the way the compact
+   * layout groups entries key on this and fall back to {@link entryId}.
+   */
+  readonly overlayEntryId?: string;
   readonly factId: string;
   readonly sequence: number;
   readonly kind: PiChildTranscriptEntry["kind"];
@@ -1710,8 +1792,18 @@ function renderPiChildTranscriptFallback(
   const rows: PiChildTranscriptRenderedRow[] = [];
   for (const entry of state.entries) {
     if (largeEvents.has(entry.sequence)) renderedSequences.add(entry.sequence);
+    const entryRows = renderEntry(
+      entry,
+      actualWidth,
+      largeEvents.has(entry.sequence),
+    );
+    const overlayEntryId = entry.overlayEntryId;
+    // Row identity stays renderer-owned; the overlay identity rides along so
+    // consumers can regroup full-layout rows the way compact groups entries.
     rows.push(
-      ...renderEntry(entry, actualWidth, largeEvents.has(entry.sequence)),
+      ...(overlayEntryId === undefined
+        ? entryRows
+        : entryRows.map((item) => ({ ...item, overlayEntryId }))),
     );
   }
   for (const [sequence, byteLength] of largeEvents) {
