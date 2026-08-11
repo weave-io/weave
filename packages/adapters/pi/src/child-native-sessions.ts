@@ -2589,27 +2589,67 @@ export class PiNativeSessionStore {
             reason: "host-threw",
           }),
         )().andThen((appended) => {
-          const leafId =
-            typeof appended === "string" && appended.length > 0
-              ? appended
-              : (handle.getLeafId?.() ?? undefined);
-          if (typeof leafId !== "string" || leafId.length === 0) {
-            return err<
+          if (typeof appended === "string" && appended.length > 0) {
+            return ok<
               {
                 readonly record: PiNativeSessionRecord;
                 readonly leafId: string;
               },
               PiNativeSessionError
-            >({
-              type: "SessionCorrupt",
-              ref: record.ref,
-              reason: "unreadable",
-            });
+            >({ record, leafId: appended });
           }
-          return ok<
-            { readonly record: PiNativeSessionRecord; readonly leafId: string },
+          // The append gave no usable id, so fall back to the host's optional
+          // leaf getter. That getter is host code and may throw, so it is
+          // wrapped here rather than called bare: a throw becomes the same
+          // typed, path-free session error as any other unreadable leaf, and
+          // the caller's cleanup still runs.
+          const readLeafId = handle.getLeafId?.bind(handle);
+          const fallback: Result<
+            string | null | undefined,
             PiNativeSessionError
-          >({ record, leafId });
+          > =
+            readLeafId === undefined
+              ? ok(undefined)
+              : Result.fromThrowable(
+                  readLeafId,
+                  (): PiNativeSessionError => ({
+                    type: "SessionCorrupt",
+                    ref: record.ref,
+                    reason: "unreadable",
+                  }),
+                )();
+          return fallback.andThen(
+            (
+              leafId: string | null | undefined,
+            ): Result<
+              {
+                readonly record: PiNativeSessionRecord;
+                readonly leafId: string;
+              },
+              PiNativeSessionError
+            > => {
+              if (typeof leafId !== "string" || leafId.length === 0) {
+                return err<
+                  {
+                    readonly record: PiNativeSessionRecord;
+                    readonly leafId: string;
+                  },
+                  PiNativeSessionError
+                >({
+                  type: "SessionCorrupt",
+                  ref: record.ref,
+                  reason: "unreadable",
+                });
+              }
+              return ok<
+                {
+                  readonly record: PiNativeSessionRecord;
+                  readonly leafId: string;
+                },
+                PiNativeSessionError
+              >({ record, leafId });
+            },
+          );
         });
       },
     );
