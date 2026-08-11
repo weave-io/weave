@@ -39,7 +39,6 @@ import { buildDelegationToolRegistration } from "../delegation-tool.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_SURFACE_IDS } from "../host-compatibility-matrix.js";
 import {
-  DefaultPiHostSurfaceReader,
   type PiHostSurfaceReport,
   readHostSurfaceReport,
 } from "../host-inventory.js";
@@ -126,46 +125,6 @@ function sessionApiGapReport(): PiHostSurfaceReport {
         : { surfaceId, status: "native" as const, details: "test-controlled" },
     ),
   );
-}
-
-/** A fully capable host namespace: restore, custom session dir, every RPC. */
-function completeHostInput() {
-  const sessionManager = function SessionManager() {} as unknown as {
-    create: () => void;
-    open: () => void;
-    prototype: Record<string, unknown>;
-  };
-  sessionManager.create = () => undefined;
-  sessionManager.open = () => undefined;
-  sessionManager.prototype = {
-    getEntries: () => undefined,
-    getTree: () => undefined,
-    getSessionDir: () => undefined,
-    usesDefaultSessionDir: () => undefined,
-  };
-  return {
-    api: {
-      appendEntry: () => undefined,
-      sendUserMessage: () => undefined,
-    } as never,
-    ui: {
-      custom: () => undefined,
-      setEditorComponent: () => undefined,
-      getEditorComponent: () => undefined,
-      setStatus: () => undefined,
-    } as never,
-    rootExports: {
-      VERSION: "0.83.0",
-      AssistantMessageComponent: () => undefined,
-      ToolExecutionComponent: () => undefined,
-      Markdown: () => undefined,
-      Image: () => undefined,
-      FooterComponent: () => undefined,
-      BorderedLoader: () => undefined,
-      CustomEditor: () => undefined,
-      SessionManager: sessionManager,
-    },
-  };
 }
 
 function controllerWith(hostSurface: PiHostSurfaceReport) {
