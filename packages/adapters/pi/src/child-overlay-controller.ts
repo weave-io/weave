@@ -25,8 +25,10 @@ import {
   reduceChildCompactSafe,
 } from "./child-compact-render.js";
 import {
+  allocateLiveAssistantEntryId,
   boundText,
   degradedCapacityEntry,
+  liveAssistantLifecyclePhase,
   mergeReplaySteps,
   messageText,
   projectLiveEntry,
@@ -122,6 +124,23 @@ interface SavedChildState extends OverlayScrollState {
   /** Latest parsed usage report: replaces prior state, never summed. */
   usage: PiChildUsageReport | undefined;
   transcript: PiChildTranscriptState;
+  /**
+   * Overlay entry id of the assistant message lifecycle currently in flight,
+   * or undefined when no `message_start` is open.
+   *
+   * Pi 0.84 `AssistantMessage` carries no `id`, and `message_start` /
+   * `message_end` carry the message directly, so the only place a lifecycle
+   * identity can live is here, beside the child it belongs to. It is one
+   * optional string, so it stays bounded, isolated per child, and is discarded
+   * with the child's LRU slot on controller teardown.
+   */
+  liveAssistantEntryId: string | undefined;
+  /**
+   * Bounded monotonic allocator for {@link SavedChildState.liveAssistantEntryId}.
+   * Advances once per lifecycle and wraps at
+   * {@link MAX_LIVE_ASSISTANT_LIFECYCLES}.
+   */
+  liveAssistantCounter: number;
   width: number;
   height: number;
   lastTouched: number;
@@ -151,6 +170,8 @@ function emptySaved(threadId: string, touched: number): SavedChildState {
     compact: createChildCompactState(threadId),
     usage: undefined,
     transcript: createPiChildTranscriptState(),
+    liveAssistantEntryId: undefined,
+    liveAssistantCounter: 0,
     anchor: undefined,
     width: 80,
     height: 24,
@@ -441,10 +462,31 @@ export class ChildOverlayController {
     // ids (`live-thinking-0`), and a live full<->compact toggle would lose the
     // viewport anchor. Projection is pure, so ordering it earlier changes
     // nothing else.
+    // Real Pi 0.84 assistant lifecycle identity. `AssistantMessage` has no
+    // `id`, and `state.entries.length` changes between `message_start` and
+    // `message_end`, so one stable overlay id is allocated at start and reused
+    // for every update/end of that lifecycle even when thinking and tool
+    // entries interleave. A lifecycle that arrives without its start
+    // (historical, truncated, or unusual host sequence) allocates on first
+    // sight, so update/end still share one entry instead of fanning out.
+    const phase = liveAssistantLifecyclePhase(sessionEvent);
+    let assistantEntryId: string | undefined;
+    if (phase !== undefined) {
+      if (phase === "start" || state.liveAssistantEntryId === undefined) {
+        const allocated = allocateLiveAssistantEntryId(
+          state.liveAssistantCounter,
+        );
+        state.liveAssistantEntryId = allocated.entryId;
+        state.liveAssistantCounter = allocated.nextCounter;
+      }
+      assistantEntryId = state.liveAssistantEntryId;
+    }
+
     const projected = projectLiveEntry(
       sessionEvent,
       state.entries.length,
       state.globalExpanded,
+      assistantEntryId,
     );
     // A merge into an existing window entry reuses that entry's id, and the
     // transcript only stamps entries this action created, so an update never
@@ -465,6 +507,9 @@ export class ChildOverlayController {
       markTailGrowth(state);
     }
     if (state.liveTail) state.scrollOffset = 0;
+    // Cleared only now: both the transcript reduce and the overlay projection
+    // above needed the lifecycle identity.
+    if (phase === "end") state.liveAssistantEntryId = undefined;
     return ok(this.toView(child, state));
   }
 

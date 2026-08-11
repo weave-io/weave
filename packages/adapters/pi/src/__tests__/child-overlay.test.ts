@@ -758,10 +758,12 @@ describe("ChildOverlayController", () => {
     });
     await mustOpen(overlay, "live-merge-bound");
 
+    // Real Pi 0.84 emits the pi-ai `AssistantMessage` directly, and that type
+    // has no `id`. Lifecycle identity is the controller-allocated overlay id.
     overlay
       .applyLiveEvent({
         type: "message_start",
-        message: { id: "msg-bound", role: "assistant" },
+        message: { role: "assistant", model: "test-model", content: [] },
       })
       ._unsafeUnwrap();
 
@@ -789,17 +791,21 @@ describe("ChildOverlayController", () => {
       .applyLiveEvent({
         type: "message_end",
         message: {
-          id: "msg-bound",
           role: "assistant",
-          content: "live final",
+          model: "test-model",
+          content: [{ type: "text", text: "live final" }],
         },
       })
       ._unsafeUnwrap();
 
-    const assistantEntry = view.entries.find(
-      (entry) => entry.id === "msg-bound",
+    // One assistant window entry for the whole lifecycle, under the id the
+    // controller allocated at `message_start`.
+    const assistantEntries = view.entries.filter(
+      (entry) => entry.kind === "assistant",
     );
-    expect(assistantEntry).toBeDefined();
+    expect(assistantEntries.length).toBe(1);
+    const assistantEntry = assistantEntries[0];
+    expect(assistantEntry?.id).toBe("live-assistant-0");
     const replay = assistantEntry?.replay ?? [];
     expect(replay.length).toBeLessThanOrEqual(
       CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps,
@@ -816,8 +822,9 @@ describe("ChildOverlayController", () => {
     ).toBe(true);
 
     const asst = view.transcript.entries.find(
-      (entry) => entry.kind === "assistant" && entry.messageId === "msg-bound",
+      (entry) => entry.kind === "assistant",
     );
+    expect(asst?.overlayEntryId).toBe("live-assistant-0");
     expect(asst && "streaming" in asst ? asst.streaming : undefined).toBe(
       false,
     );
@@ -839,7 +846,7 @@ describe("ChildOverlayController", () => {
     // Rebuild from the window must keep the terminal (no false streaming).
     const rebuilt = transcriptFromOverlayEntries(view.entries);
     const rebuiltAsst = rebuilt.entries.find(
-      (entry) => entry.kind === "assistant" && entry.messageId === "msg-bound",
+      (entry) => entry.kind === "assistant",
     );
     expect(
       rebuiltAsst && "streaming" in rebuiltAsst
@@ -866,13 +873,12 @@ describe("ChildOverlayController", () => {
     });
     await mustOpen(overlay, "live-merge-overflow");
 
-    const messageId = "msg-overflow";
     const toolCallId = "merge-tool";
     const toolArgs = { path: "src/index.ts", mode: "full" };
     overlay
       .applyLiveEvent({
         type: "message_start",
-        message: { id: messageId, role: "assistant" },
+        message: { role: "assistant", model: "test-model", content: [] },
       })
       ._unsafeUnwrap();
     overlay
@@ -906,7 +912,11 @@ describe("ChildOverlayController", () => {
     const view = overlay
       .applyLiveEvent({
         type: "message_end",
-        message: { id: messageId, role: "assistant", content: "overflow ok" },
+        message: {
+          role: "assistant",
+          model: "test-model",
+          content: [{ type: "text", text: "overflow ok" }],
+        },
       })
       ._unsafeUnwrap();
 
@@ -937,7 +947,12 @@ describe("ChildOverlayController", () => {
       ).length,
     ).toBeLessThanOrEqual(1);
 
-    const assistantEntry = view.entries.find((entry) => entry.id === messageId);
+    const assistantEntries = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistantEntries.length).toBe(1);
+    const assistantEntry = assistantEntries[0];
+    expect(assistantEntry?.id).toBe("live-assistant-0");
     expect(
       (assistantEntry?.replay ?? []).some(
         (step) => step.kind === "event" && step.event.type === "message_end",
@@ -945,8 +960,9 @@ describe("ChildOverlayController", () => {
     ).toBe(true);
 
     const asst = view.transcript.entries.find(
-      (entry) => entry.kind === "assistant" && entry.messageId === messageId,
+      (entry) => entry.kind === "assistant",
     );
+    expect(asst?.overlayEntryId).toBe("live-assistant-0");
     expect(asst && "streaming" in asst ? asst.streaming : undefined).toBe(
       false,
     );
@@ -971,7 +987,7 @@ describe("ChildOverlayController", () => {
     ).toContain("done");
 
     const rebuiltAsst = rebuilt.entries.find(
-      (entry) => entry.kind === "assistant" && entry.messageId === messageId,
+      (entry) => entry.kind === "assistant",
     );
     expect(
       rebuiltAsst && "streaming" in rebuiltAsst
@@ -1052,9 +1068,12 @@ describe("ChildOverlayController", () => {
     });
     await mustOpen(overlay, "live-asst-tools");
 
-    const messageId = "msg-tools";
     const events: readonly unknown[] = [
-      { type: "message_start", message: { id: messageId, role: "assistant" } },
+      // Real Pi 0.84 lifecycle framing: no message id on either terminal.
+      {
+        type: "message_start",
+        message: { role: "assistant", model: "test-model", content: [] },
+      },
       {
         type: "tool_call",
         toolCallId: "call-a",
@@ -1075,7 +1094,11 @@ describe("ChildOverlayController", () => {
       { type: "tool_error", toolCallId: "call-b", error: "denied" },
       {
         type: "message_end",
-        message: { id: messageId, role: "assistant", content: "wrapped up" },
+        message: {
+          role: "assistant",
+          model: "test-model",
+          content: [{ type: "text", text: "wrapped up" }],
+        },
       },
     ];
     let view = overlay.view()._unsafeUnwrap();
@@ -1090,9 +1113,7 @@ describe("ChildOverlayController", () => {
     const toolB = rebuilt.entries.find(
       (entry) => entry.kind === "tool" && entry.toolCallId === "call-b",
     );
-    const asst = rebuilt.entries.find(
-      (entry) => entry.kind === "assistant" && entry.messageId === messageId,
-    );
+    const asst = rebuilt.entries.find((entry) => entry.kind === "assistant");
     expect(toolA && "state" in toolA ? toolA.state : undefined).toBe("result");
     expect(toolA && "arguments" in toolA ? toolA.arguments : undefined).toEqual(
       { path: "a.ts" },
@@ -1106,7 +1127,12 @@ describe("ChildOverlayController", () => {
     );
     expect(asst && "text" in asst ? asst.text : undefined).toBe("wrapped up");
 
-    const assistantEntry = view.entries.find((entry) => entry.id === messageId);
+    const assistantEntries = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistantEntries.length).toBe(1);
+    const assistantEntry = assistantEntries[0];
+    expect(assistantEntry?.id).toBe("live-assistant-0");
     expect(
       (assistantEntry?.replay ?? []).some(
         (step) => step.kind === "event" && step.event.type === "message_start",

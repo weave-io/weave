@@ -307,14 +307,40 @@ function toolIdFrom(value: unknown): string | undefined {
   return stringValue(record.toolCallId) ?? stringValue(record.id);
 }
 
+/**
+ * Concatenates the text of a pi-ai content-block array.
+ *
+ * Real Pi 0.84 `AssistantMessage.content` is a block array, not a string, so a
+ * terminal `message_end` carries its final text here. The array is already
+ * bounded by the session-event parser, so this walk is bounded too.
+ */
+function contentBlocksText(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  let text = "";
+  for (const block of value) {
+    if (typeof block === "string") {
+      text += block;
+      continue;
+    }
+    const record = recordValue(block);
+    if (record === undefined) continue;
+    const blockText = stringValue(record.text);
+    if (blockText !== undefined) text += blockText;
+  }
+  return text.length > 0 ? text : undefined;
+}
+
 function messageText(value: unknown): string | undefined {
   if (typeof value === "string") return value;
+  const blocks = contentBlocksText(value);
+  if (blocks !== undefined) return blocks;
   const record = recordValue(value);
   if (record === undefined) return undefined;
   return (
     stringValue(record.text) ??
     stringValue(record.delta) ??
-    stringValue(record.content)
+    stringValue(record.content) ??
+    contentBlocksText(record.content)
   );
 }
 

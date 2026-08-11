@@ -66,15 +66,20 @@ function markedText(index: number, repeats: number): string {
 }
 
 /**
- * One live turn: multi-line reasoning, a tool call, the tool's result merged
- * into that same call entry, and a streamed assistant message.
+ * One live turn in the exact shape real Pi 0.84 emits: multi-line reasoning, a
+ * tool call, the tool's result merged into that same call entry, and a streamed
+ * assistant message whose framing carries **no message id**.
+ *
+ * Pi 0.84 `message_start` / `message_end` carry the pi-ai `AssistantMessage`
+ * directly (`{ role, model, content: Block[], usage? }`), and that type has no
+ * `id`. Lifecycle identity therefore comes only from the controller-allocated
+ * overlay entry id.
  *
  * `tool_result` carries the same `toolCallId` as its `tool_call`, so the
  * overlay merges it into the existing entry instead of appending a new one.
  * It repeats `toolName` so the merged entry still names its turn.
  */
 function liveTurnEvents(index: number): readonly unknown[] {
-  const messageId = `msg-${index}`;
   const toolCallId = `call-${index}`;
   return [
     { type: "thinking", text: markedText(index, 8) },
@@ -92,14 +97,15 @@ function liveTurnEvents(index: number): readonly unknown[] {
     },
     {
       type: "message_start",
-      message: { id: messageId, role: "assistant" },
+      message: { role: "assistant", model: "test-model", content: [] },
     },
     {
       type: "message_end",
       message: {
-        id: messageId,
         role: "assistant",
-        content: markedText(index, 12),
+        model: "test-model",
+        content: [{ type: "text", text: markedText(index, 12) }],
+        usage: { input: 10, output: 20 },
       },
     },
   ];
@@ -208,10 +214,22 @@ describe("mounted live-child overlay identity across view modes", () => {
       expect(windowIds.has(entry.overlayEntryId as string)).toBe(true);
     }
 
-    // Spot-check the derived ids for the paths the regression named.
+    // Spot-check the derived ids for the paths the regression named. Assistant
+    // identity is the controller-allocated lifecycle id: Pi 0.84 sends no
+    // message id at all, and the first turn's lifecycle is slot 0.
     expect(windowIds.has("live-thinking-0")).toBe(true);
     expect(windowIds.has("call-0")).toBe(true);
-    expect(windowIds.has("msg-0")).toBe(true);
+    expect(windowIds.has("live-assistant-0")).toBe(true);
+
+    // One overlay entry per assistant lifecycle, and one lifecycle per turn.
+    const assistantIds = view.entries
+      .filter((entry) => entry.kind === "assistant")
+      .map((entry) => entry.id);
+    expect(assistantIds.length).toBe(TURN_COUNT);
+    expect(new Set(assistantIds).size).toBe(TURN_COUNT);
+    expect(assistantIds).toEqual(
+      Array.from({ length: TURN_COUNT }, (_, i) => `live-assistant-${i}`),
+    );
   });
 
   it("keeps a merged tool result under the entry identity its call created", async () => {
@@ -261,23 +279,36 @@ describe("mounted live-child overlay identity across view modes", () => {
       expect(entry.overlayEntryId).toBe("call-merge");
     }
 
-    // A streamed assistant message keeps one identity across start and end.
+    // A streamed assistant message keeps one identity across start and end,
+    // with the real Pi 0.84 framing that carries no message id.
     controller.applyLiveEvent({
       type: "message_start",
-      message: { id: "msg-merge", role: "assistant" },
+      message: { role: "assistant", model: "test-model", content: [] },
     });
     controller.applyLiveEvent({
       type: "message_end",
-      message: { id: "msg-merge", role: "assistant", content: "done" },
+      message: {
+        role: "assistant",
+        model: "test-model",
+        content: [{ type: "text", text: "done" }],
+      },
     });
     const afterMessage = controller.view()._unsafeUnwrap();
     expect(
-      afterMessage.entries.filter((entry) => entry.id === "msg-merge").length,
+      afterMessage.entries.filter((entry) => entry.kind === "assistant").length,
+    ).toBe(1);
+    expect(
+      afterMessage.entries.filter((entry) => entry.id === "live-assistant-0")
+        .length,
     ).toBe(1);
     const assistantTranscript = afterMessage.transcript.entries.filter(
-      (entry) => entry.overlayEntryId === "msg-merge",
+      (entry) => entry.overlayEntryId === "live-assistant-0",
     );
     expect(assistantTranscript.length).toBeGreaterThan(0);
+    // Both lifecycle terminals reduced under one overlay identity.
+    expect(
+      new Set(assistantTranscript.map((entry) => entry.overlayEntryId)).size,
+    ).toBe(1);
   });
 
   it("keeps the same bottom turn through full → compact → full while live", async () => {
@@ -344,5 +375,263 @@ describe("mounted live-child overlay identity across view modes", () => {
     expect(back.viewMode).toBe("full");
     expect(back.scrollOffset).toBe(0);
     expect(back.bottomTurn).toBe(TURN_COUNT - 1);
+  });
+});
+
+/**
+ * Real Pi 0.84 assistant lifecycle identity, with the exact event shapes the
+ * host emits: `message_start` / `message_end` carry the pi-ai
+ * `AssistantMessage` (`{ role, model, content: Block[] }`) and nothing carries a
+ * message id. Identity is the overlay id the controller allocates at
+ * `message_start` and reuses until the lifecycle ends.
+ */
+describe("real Pi 0.84 assistant lifecycle identity", () => {
+  const startEvent = {
+    type: "message_start",
+    message: { role: "assistant", model: "test-model", content: [] },
+  } as const;
+
+  const endEvent = (text: string) =>
+    ({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        model: "test-model",
+        content: [{ type: "text", text }],
+        usage: { input: 12, output: 34 },
+      },
+    }) as const;
+
+  async function openLive(childId = CHILD_ID) {
+    const source = createMemoryChildOverlaySource([
+      { ...liveChild(), childId, threadId: childId },
+    ]);
+    const controller = createChildOverlayController(source, { pageSize: 64 });
+    expect((await controller.open(childId)).isOk()).toBe(true);
+    return controller;
+  }
+
+  it("keeps one assistant entry when tool and thinking entries interleave", async () => {
+    const controller = await openLive();
+    const events: readonly unknown[] = [
+      startEvent,
+      { type: "thinking", text: "weighing options" },
+      { type: "tool_call", toolCallId: "call-x", toolName: "read" },
+      {
+        type: "tool_result",
+        toolCallId: "call-x",
+        toolName: "read",
+        result: { content: [{ type: "text", text: "file body" }] },
+      },
+      endEvent("final answer"),
+    ];
+    for (const event of events) {
+      expect(controller.applyLiveEvent(event).isOk()).toBe(true);
+    }
+
+    const view = controller.view()._unsafeUnwrap();
+    const assistant = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    // Exactly one assistant entry, though start and end were separated by two
+    // appended entries: the length-derived id would have differed by two.
+    expect(assistant.length).toBe(1);
+    expect(assistant[0]?.id).toBe("live-assistant-0");
+    expect(assistant[0]?.text).toBe("final answer");
+    // Ordering is preserved: thinking and the tool sit between nothing; the
+    // assistant entry was created at `message_start`, so it precedes neither.
+    expect(view.entries.map((entry) => entry.id)).toEqual([
+      "live-assistant-0",
+      "live-thinking-1",
+      "call-x",
+    ]);
+    // Both lifecycle terminals reduced under the one overlay identity.
+    const assistantRows = view.transcript.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistantRows.length).toBeGreaterThan(0);
+    for (const row of assistantRows) {
+      expect(row.overlayEntryId).toBe("live-assistant-0");
+    }
+    // Real usage from the terminal message reaches telemetry.
+    expect(view.telemetry?.inputTokens).toBe(12);
+    expect(view.telemetry?.outputTokens).toBe(34);
+  });
+
+  it("allocates a fresh identity per lifecycle and never reuses a closed one", async () => {
+    const controller = await openLive();
+    for (const event of [startEvent, endEvent("first")]) {
+      expect(controller.applyLiveEvent(event).isOk()).toBe(true);
+    }
+    for (const event of [startEvent, endEvent("second")]) {
+      expect(controller.applyLiveEvent(event).isOk()).toBe(true);
+    }
+    const view = controller.view()._unsafeUnwrap();
+    const assistant = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistant.map((entry) => entry.id)).toEqual([
+      "live-assistant-0",
+      "live-assistant-1",
+    ]);
+    expect(assistant.map((entry) => entry.text)).toEqual(["first", "second"]);
+  });
+
+  it("handles an update/end lifecycle whose start never arrived", async () => {
+    const controller = await openLive();
+    // Truncated or historical stream: the first event seen is an update.
+    expect(
+      controller
+        .applyLiveEvent({
+          type: "message_update",
+          delta: { text: "partial " },
+        })
+        .isOk(),
+    ).toBe(true);
+    expect(
+      controller
+        .applyLiveEvent({
+          type: "message_update",
+          delta: { text: "more" },
+        })
+        .isOk(),
+    ).toBe(true);
+    expect(controller.applyLiveEvent(endEvent("recovered")).isOk()).toBe(true);
+
+    const view = controller.view()._unsafeUnwrap();
+    const assistant = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    // One entry allocated on first sight, reused by the later update and end.
+    expect(assistant.length).toBe(1);
+    expect(assistant[0]?.id).toBe("live-assistant-0");
+    expect(assistant[0]?.text).toBe("recovered");
+
+    // The lifecycle closed, so the next start allocates the next slot.
+    expect(controller.applyLiveEvent(startEvent).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(endEvent("next")).isOk()).toBe(true);
+    const after = controller.view()._unsafeUnwrap();
+    expect(
+      after.entries
+        .filter((entry) => entry.kind === "assistant")
+        .map((entry) => entry.id),
+    ).toEqual(["live-assistant-0", "live-assistant-1"]);
+  });
+
+  it("does not grow without bound when ends arrive with no starts at all", async () => {
+    const controller = await openLive();
+    for (let index = 0; index < 40; index += 1) {
+      expect(controller.applyLiveEvent(endEvent(`end-${index}`)).isOk()).toBe(
+        true,
+      );
+    }
+    const view = controller.view()._unsafeUnwrap();
+    const assistant = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    // Each bare end is its own closed lifecycle: one entry each, ids in order,
+    // and nothing accumulates outside the bounded window.
+    expect(assistant.length).toBe(40);
+    expect(assistant[0]?.id).toBe("live-assistant-0");
+    expect(assistant[39]?.id).toBe("live-assistant-39");
+    expect(new Set(assistant.map((entry) => entry.id)).size).toBe(40);
+  });
+
+  it("isolates in-flight lifecycles between two interleaved children", async () => {
+    const source = createMemoryChildOverlaySource([
+      { ...liveChild(), childId: "live-a", threadId: "live-a" },
+      { ...liveChild(), childId: "live-b", threadId: "live-b" },
+    ]);
+    const controller = createChildOverlayController(source, { pageSize: 64 });
+
+    expect((await controller.open("live-a")).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(startEvent).isOk()).toBe(true);
+
+    // Focus moves to B while A's lifecycle is still open.
+    expect((await controller.open("live-b")).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(startEvent).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(endEvent("b done")).isOk()).toBe(true);
+    const viewB = controller.view()._unsafeUnwrap();
+    const assistantB = viewB.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistantB.length).toBe(1);
+    expect(assistantB[0]?.id).toBe("live-assistant-0");
+    expect(assistantB[0]?.text).toBe("b done");
+
+    // Back to A: its own open lifecycle is still the one the end belongs to.
+    expect((await controller.open("live-a")).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(endEvent("a done")).isOk()).toBe(true);
+    const viewA = controller.view()._unsafeUnwrap();
+    const assistantA = viewA.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistantA.length).toBe(1);
+    expect(assistantA[0]?.id).toBe("live-assistant-0");
+    expect(assistantA[0]?.text).toBe("a done");
+  });
+
+  it("resets lifecycle state on controller teardown", async () => {
+    const first = await openLive();
+    expect(first.applyLiveEvent(startEvent).isOk()).toBe(true);
+    expect(first.applyLiveEvent(endEvent("first")).isOk()).toBe(true);
+    expect(first.applyLiveEvent(startEvent).isOk()).toBe(true);
+
+    // A new controller is the teardown boundary: nothing survives it.
+    const second = await openLive();
+    expect(second.applyLiveEvent(startEvent).isOk()).toBe(true);
+    expect(second.applyLiveEvent(endEvent("fresh")).isOk()).toBe(true);
+    const view = second.view()._unsafeUnwrap();
+    const assistant = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistant.length).toBe(1);
+    expect(assistant[0]?.id).toBe("live-assistant-0");
+  });
+});
+
+/**
+ * The mounted full <-> compact proof for a real Pi 0.84 lifecycle: one compact
+ * assistant row, the same span identity in both layouts, and a viewport that
+ * does not move across a round trip.
+ */
+describe("mounted real Pi 0.84 lifecycle across view modes", () => {
+  it("shares span identity and holds the viewport through full → compact → full", async () => {
+    const mounted = await mount();
+
+    await press(mounted, SCROLL_KEYS.pageUp);
+    await press(mounted, SCROLL_KEYS.pageUp);
+
+    const full = observe(mounted);
+    expect(full.viewMode).toBe("full");
+    expect(full.scrollOffset).toBeGreaterThan(0);
+    expect(full.anchorEntryId).toBeDefined();
+
+    // The full-layout anchor is an id the compact layout also holds: compact
+    // spans come from the same overlay entries.
+    const view = mounted.controller.view()._unsafeUnwrap();
+    const overlayIds = new Set(view.entries.map((entry) => entry.id));
+    expect(overlayIds.has(full.anchorEntryId as string)).toBe(true);
+
+    // One compact row per assistant lifecycle, under the allocated id.
+    const assistantIds = view.entries
+      .filter((entry) => entry.kind === "assistant")
+      .map((entry) => entry.id);
+    expect(assistantIds).toEqual(
+      Array.from({ length: TURN_COUNT }, (_, i) => `live-assistant-${i}`),
+    );
+
+    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    const compact = observe(mounted);
+    expect(compact.viewMode).toBe("compact");
+    expect(compact.bottomTurn).toBe(full.bottomTurn);
+    expect(compact.anchorEntryId).toBeDefined();
+    expect(overlayIds.has(compact.anchorEntryId as string)).toBe(true);
+
+    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    const back = observe(mounted);
+    expect(back.viewMode).toBe("full");
+    expect(back.bottomTurn).toBe(full.bottomTurn);
+    expect(back.scrollOffset).toBeGreaterThan(0);
   });
 });

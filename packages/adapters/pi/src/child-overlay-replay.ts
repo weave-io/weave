@@ -1035,6 +1035,7 @@ export function projectLiveEntry(
   event: PiChildSessionEvent,
   sequence: number,
   expanded: boolean,
+  assistantEntryId?: string,
 ): ChildOverlayEntry | undefined {
   const replay: readonly ChildOverlayReplayStep[] = [{ kind: "event", event }];
   switch (event.type) {
@@ -1050,7 +1051,11 @@ export function projectLiveEntry(
           text = boundText(deltaText);
         }
       }
-      const id = liveAssistantEntryId(event, sequence);
+      // Real Pi 0.84 `AssistantMessage` carries no id, and `state.entries`
+      // grows between `message_start` and `message_end`, so neither the
+      // message nor the sequence can name one lifecycle. The caller owns the
+      // lifecycle id; the sequence fallback only covers direct pure calls.
+      const id = assistantEntryId ?? `live-assistant-${sequence}`;
       if (event.type === "message_update" && text.length === 0)
         return undefined;
       return {
@@ -1141,25 +1146,49 @@ export function projectLiveEntry(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Live assistant lifecycle identity
+// ---------------------------------------------------------------------------
+
 /**
- * Resolves the assistant entry id from the message the event carries so a
- * `message_start` and its `message_end` project one window entry instead of
- * two, matching the single assistant entry the transcript reducer keeps.
+ * Wrap point of the per-child assistant lifecycle allocator. The counter is one
+ * number per child, not a growing map, and its wrap distance is far larger than
+ * any retained window, so a reused slot cannot collide with a live entry.
  */
-export function liveAssistantEntryId(
+export const MAX_LIVE_ASSISTANT_LIFECYCLES = 1_000_000;
+
+/** Which part of an assistant message lifecycle an event belongs to. */
+export type LiveAssistantLifecyclePhase = "start" | "continue" | "end";
+
+/** Classifies an event as part of an assistant lifecycle, else undefined. */
+export function liveAssistantLifecyclePhase(
   event: PiChildSessionEvent,
-  sequence: number,
-): string {
-  const record = event as unknown as Record<string, unknown>;
-  const message = recordOf(record.message);
-  const delta = recordOf(record.delta);
-  const assistantEvent = recordOf(record.assistantMessageEvent);
-  const id =
-    nonEmptyString(message?.id) ??
-    nonEmptyString(delta?.messageId) ??
-    nonEmptyString(delta?.id) ??
-    nonEmptyString(assistantEvent?.messageId);
-  return id === undefined
-    ? `live-assistant-${sequence}`
-    : safeEntryId(id, `live-assistant-${sequence}`);
+): LiveAssistantLifecyclePhase | undefined {
+  if (event.type === "message_start") return "start";
+  if (event.type === "message_update") return "continue";
+  if (event.type === "message_end") return "end";
+  return undefined;
+}
+
+/**
+ * Allocates the next assistant lifecycle overlay entry id from a bounded
+ * monotonic counter.
+ *
+ * Pi 0.84 `message_start` / `message_end` carry the pi-ai `AssistantMessage`
+ * directly, and that type has no `id`, so lifecycle identity cannot be read off
+ * the event. It cannot be derived from the window length either, because start
+ * inserts an entry and end would then compute a different id.
+ */
+export function allocateLiveAssistantEntryId(counter: number): {
+  readonly entryId: string;
+  readonly nextCounter: number;
+} {
+  const slot =
+    Number.isSafeInteger(counter) && counter >= 0
+      ? counter % MAX_LIVE_ASSISTANT_LIFECYCLES
+      : 0;
+  return {
+    entryId: `live-assistant-${slot}`,
+    nextCounter: (slot + 1) % MAX_LIVE_ASSISTANT_LIFECYCLES,
+  };
 }
