@@ -11,6 +11,7 @@
 import type { ResultAsync } from "neverthrow";
 import { z } from "zod";
 import type { ChildCompactState } from "./child-compact-render.js";
+import type { PiChildProviderError } from "./child-provider-error.js";
 import {
   MAX_CHILD_USAGE_MODEL_LENGTH,
   MAX_CHILD_USAGE_TOKENS,
@@ -374,6 +375,14 @@ export interface ChildOverlayView {
    * estimated: absent means unavailable.
    */
   readonly telemetry: ChildOverlayTelemetry | undefined;
+  /**
+   * Latest terminal provider error for this child, sanitized and bounded by
+   * `child-provider-error.ts`. Absent when the child's newest terminal
+   * assistant message did not fail, or when nothing authoritative was
+   * observed. Only the projection is retained: no raw `errorMessage` and no
+   * provider payload reaches this state.
+   */
+  readonly terminalError?: PiChildProviderError;
 }
 
 /**

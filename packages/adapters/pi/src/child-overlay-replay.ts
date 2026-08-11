@@ -23,11 +23,10 @@ import {
   OpaqueIdSchema,
   RunActionSchema,
 } from "./child-overlay-types.js";
+import { historicalAssistantMessageFields } from "./child-provider-error.js";
 import {
-  type PiAssistantUsageFacts,
   type PiChildSessionEvent,
   parsePiChildSessionEvent,
-  projectAssistantUsageFacts,
 } from "./child-session-events.js";
 import {
   createPiChildTranscriptState,
@@ -687,9 +686,9 @@ export function mapNativeSessionEntryToOverlay(
         id,
         sequence,
         parts.value,
-        // Historical telemetry: the persisted assistant message carries the
-        // same pi-ai usage accounting the live `message_end` event does.
-        projectAssistantUsageFacts(message.data.message),
+        // Historical facts the persisted assistant message contributes: pi-ai
+        // usage accounting and the terminal outcome, sanitized.
+        historicalAssistantMessageFields(message.data.message),
       );
     if (parts.value.role === "user")
       return userEntryFromParts(id, sequence, parts.value);
@@ -818,7 +817,7 @@ function assistantEntryFromParts(
   id: string,
   sequence: number,
   parts: NativeMessageParts,
-  usageFacts?: PiAssistantUsageFacts,
+  historicalFields: Record<string, unknown> = {},
 ): Result<ChildOverlayEntry, ChildOverlayMappingError> {
   const steps: ChildOverlayReplayStep[] = [];
   const start = pushReplayEvent(steps, {
@@ -845,8 +844,7 @@ function assistantEntryFromParts(
       id,
       role: "assistant",
       content: parts.text,
-      ...(usageFacts?.usage === undefined ? {} : { usage: usageFacts.usage }),
-      ...(usageFacts?.model === undefined ? {} : { model: usageFacts.model }),
+      ...historicalFields,
     },
   });
   if (end.isErr()) return err(end.error);

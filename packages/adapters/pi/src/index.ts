@@ -463,6 +463,24 @@ export {
   type PiChildSpawnInput,
   type PiSpawnedChildProcess,
 } from "./child-process-port.js";
+export type {
+  PiChildErrorClass,
+  PiChildProviderError,
+  PiChildProviderErrorAbsence,
+  PiChildSafeErrorCode,
+} from "./child-provider-error.js";
+export {
+  CHILD_PROVIDER_ERROR_BOUNDS,
+  CHILD_PROVIDER_ERROR_REPLAY_FIELD,
+  historicalAssistantMessageFields,
+  historicalProviderErrorFacts,
+  MAX_CHILD_ERROR_MESSAGE_LENGTH,
+  PI_CHILD_ERROR_CLASSES,
+  PI_CHILD_SAFE_ERROR_CODES,
+  PiChildProviderErrorSchema,
+  parsePiChildProviderError,
+  projectAssistantProviderError,
+} from "./child-provider-error.js";
 export {
   authorizeChildAccess,
   classifyChildAccess,
