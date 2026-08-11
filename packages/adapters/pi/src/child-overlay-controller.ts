@@ -435,17 +435,29 @@ export class ChildOverlayController {
     const usage = parsePiChildUsageReport(sessionEvent);
     if (usage.isOk()) state.usage = usage.value;
 
-    const transcriptNext = reducePiChildTranscript(state.transcript, {
-      kind: "event",
-      event: sessionEvent,
-    });
-    if (transcriptNext.isOk()) state.transcript = transcriptNext.value;
-
+    // Project first so the transcript reduce can be told which overlay entry
+    // this event belongs to. Reducing first would label full-layout rows with
+    // reducer-local ids (`thinking-0`) while the compact layout uses overlay
+    // ids (`live-thinking-0`), and a live full<->compact toggle would lose the
+    // viewport anchor. Projection is pure, so ordering it earlier changes
+    // nothing else.
     const projected = projectLiveEntry(
       sessionEvent,
       state.entries.length,
       state.globalExpanded,
     );
+    // A merge into an existing window entry reuses that entry's id, and the
+    // transcript only stamps entries this action created, so an update never
+    // re-labels the entry it merges into.
+    const overlayEntryId = projected?.id;
+
+    const transcriptNext = reducePiChildTranscript(state.transcript, {
+      kind: "event",
+      event: sessionEvent,
+      ...(overlayEntryId === undefined ? {} : { overlayEntryId }),
+    });
+    if (transcriptNext.isOk()) state.transcript = transcriptNext.value;
+
     if (projected !== undefined) {
       this.mergeEntry(state, projected);
       // The new rows land below a manually scrolled viewport; hold position
