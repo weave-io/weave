@@ -1,7 +1,7 @@
-# Pi Child Overlay UX Feedback: Scroll Fix, Escape/Cancel Semantics, Telemetry Header, Compact Mode
+# Pi Child Overlay UX Feedback: Overlay Controls, Pi Path Sessions, and Error Visibility
 
 ## TL;DR
-Fix live overlay scrolling with a root-cause diagnosis and regression proof, change Escape to exit inspection without cancelling, move child cancellation behind an explicit `q` confirmation, add an authoritative provider/model/context/token header with honest unavailable states, and add a compact child-view toggle — all inside the existing true-overlay, bounded, neverthrow, pi-vim-safe architecture.
+Fix live overlay scrolling with a root-cause diagnosis and regression proof, change Escape to exit inspection without cancelling, move child cancellation behind an explicit `q` confirmation, add authoritative usage telemetry and a compact child-view toggle, conform child persistence to Pi 0.84.1's real path-based `SessionManager` API with adapter-owned containment guarantees, and replace generic child failures with bounded, sanitized provider error details.
 
 ## Context
 The Pi adapter's child overlay lives in `packages/adapters/pi/src`:
@@ -26,30 +26,40 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
   - Overlay header telemetry: provider, model, context percentage, token counts, from authoritative bounded data with honest `—` / "unavailable" states.
   - Compact child-view mode with a clear toggle, preserved input/scroll behavior, and per-child bounded state.
   - Spec §7/§8/§14 updates, smoke-checklist and `docs/adapters/pi.md` updates, superseding the double-escape proof, new live proofs, full gates, Weft review.
+  - Pi 0.84.1 path-based native child sessions behind an adapter-owned contained-path boundary; Pi remains the session-format authority and the engine never receives a path.
+  - Bounded, sanitized child provider/transport errors in full, compact, historical, and fallback rendering.
 - Out of scope:
   - Mouse-wheel scrolling (Pi does not enable mouse reporting; explicitly out of contract per §7).
   - Custom-editor fallback inspection parity for the new features beyond not regressing it.
   - Engine/core changes; any new delegation authority. Cancellation reuses the existing `delegationController.cancelSubtree` path.
   - Estimating tokens or context size when the host does not report them — no guessing.
+  - Provider model changes, retry policy changes, or hiding rate limits by switching models. The observed Anthropic 429 failures are separate from the Pi session capability blocker.
+  - An unsafe capability override, caller-supplied arbitrary paths, or a second transcript format.
 - Constraints / assumptions:
   - Preserve pi-vim and primary-editor ownership: never touch `setEditorComponent`; `ui.custom` owns input while mounted; the terminal-input route stays conflict-checked and never steals host/user keys.
   - Typed `neverthrow` failures on every expected-failure path; no `console.*`; no throws.
   - All new state bounded with pinned constants; true-overlay geometry (`overlay:true` options) and `overlayUsableRows` short-terminal guarantees unchanged; settlement/generation guards (`activeGenerationId`, `childOverlayCell.generationId`, settle-once) unchanged.
   - Bun-only tests (`bun test`), mocks for the harness boundary, real-harness proof per `docs/testing/adapter-verification.md`.
-  - Warp review is required only if Task 4 changes who may authorize cancellation or adds a new trust boundary; reusing the existing confirm→`cancelSubtree` authority does not require Warp.
+  - Warp review is mandatory for the path-session work and child-error sanitization because they change filesystem and untrusted-input boundaries. Reusing the existing confirm→`cancelSubtree` authority still adds no cancellation trust surface.
+  - The dirty checkout contains pre-existing, unreviewed changes in the same session files plus concurrent work in `rpc-child.ts` and `child-session-events.ts`. Every new task must preserve unrelated bytes, identify ownership before staging, and use exact-hunk staging or an isolated clean worktree.
 
 ## Objectives
 - Scrolling works in the real mounted overlay under Pi 0.83 on a real PTY, with a written diagnosis, a regression test that fails on the old code, and a live proof.
 - Escape = exit inspection, never cancel. `q` + explicit confirmation = cancel. No hidden destructive path remains.
 - The overlay header shows provider, model, context %, and tokens when authoritative data exists, and honest placeholders when it does not.
 - A compact view mode toggles clearly, preserves scroll/draft behavior, and stays within bounds.
+- Delegation reaches ready on real Pi 0.84.1 by proving an adapter-owned contained-path invariant around Pi's native path API, without claiming Pi exposes descriptor-relative I/O.
+- Child failures identify useful bounded facts such as provider source, failure class, HTTP status, safe code, and a short sanitized message instead of only `assistant stop reason: error`.
 
 ## Dependencies and Order
 1. Task 1 (diagnosis) must land first: the scroll fix (Task 2) must implement the proven root cause, not a guess.
 2. Task 3 (Escape exit) precedes Task 4 (`q` cancel): Task 4 reuses the confirm machinery that Task 3 detaches from Escape, so sequencing avoids an intermediate state with no cancel path.
 3. Task 5 (telemetry data model) precedes Task 6 (header rendering): rendering consumes the typed view fields Task 5 adds.
 4. Task 7 (compact mode) depends on Task 2 (scroll must be correct before adding a second layout that shares the scroll model) and on Task 6 (header/help lines it must coexist with).
-5. Task 8 (docs/spec/smoke) depends on all behavior tasks. Task 9 (gates, live proofs, reviews) is last.
+5. Task 8 (the original overlay docs/spec/smoke update) depends on Tasks 2–7.
+6. Task 9 audits the dirty path-session changes and pins the threat model before any production edit is adopted. Task 10 writes attack-focused RED tests from that design. Task 11 implements the path boundary and cannot merge until Warp approves it.
+7. Task 12 adds the sanitized error model and parser. It can begin after ownership of `child-session-events.ts` is handed off, but Task 13 rendering depends on it.
+8. Task 14 updates all affected docs and runs reviews, clean gates, real Pi 0.84.1 delegation/error/overlay proofs, and cleanup. It depends on Tasks 11 and 13 and completes the original live-proof objective.
 
 ## Tasks
 
@@ -193,33 +203,100 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - `bun run docs:check-links` passes; §7/§8/§17 consistent with implemented behavior; smoke checklist executable as written.
     - Commit: `docs(pi): update overlay spec, smoke checklist, and key docs for UX changes`.
 
-- [ ] 9. Full gates, real Pi 0.83 live proofs, and reviews
-  - **What**: Run all repo gates, execute the smoke checklist against real Pi 0.83 through the local symlinked adapter, write proof docs, and obtain Weft review (Warp only if Task 4 tripped the trust-boundary condition).
-  - **Depends on**: Tasks 1–8.
+- [ ] 9. Audit the path-session boundary and reconcile the dirty checkout
+  - **What**: Establish the exact Pi 0.84.1 path API, the adapter-owned containment invariant, the threat model, and which existing dirty hunks are independently acceptable before adopting any production change.
+  - **Files**: `packages/adapters/pi/src/native-session-host.ts`, `child-native-sessions.ts`, `child-session-storage-authority.ts`, `extension.ts`, their focused tests (read/audit only); new `docs/specs/33-spec-pi-adapter/33-path-session-conformance-design.md`; `.weave/plans/pi-child-overlay-ux-feedback.md` checkbox.
+  - **Depends on**: Task 8.
   - **Implementation outline**:
-    1. Gates: `bun test`, `bun run typecheck`, `bun run lint`, `bun run build`, `bun run docs:check-links` — all green.
-    2. Rebuild the local adapter (global symlink `~/.pi/agent/extensions/weave-adapter-pi`), restart Pi sessions, and run the updated smoke checklist in a fresh Pi 0.83 TUI on a real PTY: scroll all six keys live (and in the pi-vim coexistence scenario), Escape exit leaves child running (`weave runtime status` shows the lease intact until settlement), `q` confirm cancels and `q` dismiss does not, telemetry populated on a live child and honestly unavailable on a child with no usage events, compact toggle round-trip on live and historical children.
-    3. Record proofs under `docs/specs/33-spec-pi-adapter/33-proofs/` (one doc, e.g. `33-overlay-ux-live-proof.md`, referencing the Task 1 diagnosis doc), per `docs/testing/adapter-verification.md`.
-    4. Request Weft review of the full change set. Evaluate the Warp trigger: required only if cancellation authority or a trust boundary changed in Task 4; record the decision either way in the proof doc.
-    5. Confirm no leaked child process and no active Runtime Store lease after the session.
-  - **Pitfalls / non-goals**:
-    - Existing Pi sessions must restart to load the rebuilt adapter — verify the loaded `dist/extension.js` hash before trusting the proof.
-    - Health-only fail-closed behavior on Pi 0.83 (`descriptor-relative-native-session-io`) is expected in some configurations; the harness setup doc covers the environment that reaches ready.
+    1. Diff the dirty files against exact reviewed subject `d59edf0`; identify ownership and separate the unknown gate-removal work from unrelated extension/session-runtime changes. Do not stage or rewrite production files.
+    2. Inspect Pi 0.84.1's public `SessionManager.create/open` implementation and pin when it reads/writes, how it chooses the session file, and what identity/header facts it returns.
+    3. Define the contained-path invariant: trusted XDG-derived root; bounded validated child component/ref/file; held no-follow 0700 directories; 0600 exclusive file creation; no arbitrary caller/model path; pre/post file identity checks; containment/header/parent/session-id revalidation; typed failure for traversal, absolute refs, symlinks, hard links or identity swaps, permissive modes, wrong kinds, collisions, and root escape.
+    4. State the unavoidable path reopen boundary. Pin the accepted threat model: Pi receives a path only after adapter validation, the parent directory is held and private, and any identity change before/after Pi access fails closed. Do not claim Pi provides descriptor-relative I/O.
+    5. Define a truthful replacement capability name and migration/supersession rule for `descriptor-relative-native-session-io`.
+    6. Obtain Warp review of the design. Resolve every BLOCK before marking this task complete.
   - **Acceptance**:
-    - All gates green; live proof doc records every smoke item with observed evidence; Weft approval recorded; Warp decision recorded.
-    - Commit: `docs(pi): record child-overlay ux live verification proof` (plus any `chore`/`fix` follow-ups Weft requires, each as its own conventional commit).
+    - The design names all invariants, attack cases, capability semantics, dirty-hunk ownership, and exact Task 10 RED tests. No production source change is committed.
+    - Warp approves the design. Commit: `docs(pi): define the contained path session boundary`.
+
+- [ ] 10. Add RED tests for Pi path-session conformance and attacks
+  - **What**: Write the smallest failing tests that define safe use of Pi's path API and the truthful capability result before changing production code.
+  - **Files**: `packages/adapters/pi/src/__tests__/native-session-host.test.ts`, `child-native-sessions.test.ts`, `child-session-storage-authority.test.ts`, `extension.test.ts`, plus focused authority/dispatch tests only when the design requires them.
+  - **Depends on**: Task 9.
+  - **Implementation outline**:
+    1. Prove valid create/open calls reach Pi only with a path derived inside the trusted child root and that returned session path/header/parent/session identity are revalidated.
+    2. Add traversal, absolute ref, symlink, identity swap/TOCTOU, wrong-kind, permissive-mode, collision, root-escape, malformed header, wrong parent, wrong session-id, and host-throw cases. Assert zero Pi calls whenever validation can reject first.
+    3. Pin the new capability: supported only when the adapter containment probe succeeds; never report descriptor-relative host I/O.
+    4. Demonstrate the RED state against committed production code and record the failing assertions in the commit body.
+  - **Acceptance**:
+    - New tests fail for the intended missing behavior and do not depend on unknown dirty source hunks. Commit: `test(pi): define safe path-based native session behavior`.
+
+- [ ] 11. Implement the contained Pi path-session adapter
+  - **What**: Make delegation use Pi 0.84.1's native path-based `SessionManager` while preserving the Task 9 containment and identity guarantees.
+  - **Files**: `packages/adapters/pi/src/native-session-host.ts`, `child-native-sessions.ts`, `child-session-storage-authority.ts`, `host-compatibility-matrix.ts`, `extension.ts`, direct/RPC delegation authority wiring as required, exports, and Task 10 tests.
+  - **Depends on**: Task 10.
+  - **Implementation outline**:
+    1. Keep raw paths inside the Pi adapter. Expose validated opaque refs to the rest of the adapter and no path to engine APIs, lifecycle metadata, logs, or model-visible content.
+    2. Replace the unconditional `path-only-session-api` rejection with an adapter containment probe. Call `SessionManager.create/open` only after trusted-root/ref/directory checks; revalidate the returned path, persisted state, header identity, parent link, session id, and file identity before use.
+    3. Use existing neverthrow filesystem and held-directory ports. Add only narrow methods needed for pre/post identity proof; no broad filesystem escape hatch and no expected-path throw.
+    4. Rename/redefine the capability to the proven adapter invariant and update every runtime probe/health diagnostic atomically. Preserve a clear typed unavailable reason when containment cannot be established.
+    5. Reconcile or replace the unknown dirty gate-removal hunks from Task 9; stage only independently reviewed bytes.
+    6. Run focused tests, full Pi tests, typecheck, and lint. Obtain mandatory Warp review, then Weft review. Resolve every BLOCK/REJECT before completion.
+  - **Acceptance**:
+    - All Task 10 tests are green; real Pi 0.84.1 reaches ready and can create/reopen a native child session without an unsafe flag; engine sees no path; Warp and Weft approve.
+    - Commit: `fix(pi): use contained paths for native child sessions` (security follow-ups remain separate focused commits).
+
+- [ ] 12. Project bounded, sanitized child provider errors
+  - **What**: Parse Pi 0.84.1 assistant terminal errors into a closed, bounded child-error model without retaining raw provider payloads.
+  - **Files**: coordinate handoff before touching `packages/adapters/pi/src/child-session-events.ts`; prefer a new `child-provider-error.ts`; update `child-overlay-types.ts`, replay/controller wiring, exports, and new `__tests__/child-provider-error.test.ts` plus parser/replay tests.
+  - **Depends on**: Task 8; may run after Task 9 once the concurrent parser owner hands off.
+  - **Implementation outline**:
+    1. Define Zod-bounded optional fields: source, class (`rate-limit`, `auth`, `timeout`, `overload`, `connection`, `cancelled`, `malformed-response`, `provider-error`, `unknown`), HTTP status, allowlisted safe code, and short sanitized message.
+    2. Parse only Pi's actual `stopReason:"error"` and bounded `errorMessage`. Derive class/status/code only from unambiguous evidence; never invent a provider fact.
+    3. Strip request IDs, URLs, headers, tokens/secrets, filesystem paths, prompt/completion text, nested JSON, control characters, and oversized content. Convert unsafe or malformed input to honest generic copy.
+    4. Retain at most the latest terminal error for the run/entry; isolate children; replay historical Pi events through the same sanitizer. Raw payloads must not enter Runtime Store, engine APIs, Weave logs, or lifecycle metadata. Pi's own native session remains Pi-owned input.
+    5. Tests: sanitized 429, 500/no body, auth, timeout, overload, connection, cancellation, malformed response, malicious secret/path/URL/request-id payloads, oversized/malformed values, latest-wins, replay, and child isolation.
+  - **Acceptance**:
+    - Tests prove useful safe fields survive and prohibited data never does; all expected failures use `Result`/`ResultAsync`. Commit: `feat(pi): project sanitized child provider errors`.
+
+- [ ] 13. Render useful child errors in every inspection surface
+  - **What**: Replace generic `assistant stop reason: error` output with the sanitized projection in full, compact, historical, and fallback child views.
+  - **Files**: `packages/adapters/pi/src/child-transcript.ts`, `child-overlay-replay.ts`, `child-overlay-component.ts`, compact/fallback renderer(s) that emit the generic string, focused render-width/mount/history tests, and parent-summary tests where applicable.
+  - **Depends on**: Task 12.
+  - **Implementation outline**:
+    1. Render a consistent bounded line such as `assistant error · rate limit · HTTP 429 · provider rate limit exceeded`; omit unavailable segments and use `assistant error · details unavailable` rather than raw input.
+    2. Preserve the same sanitized facts through live updates, settlement, compact toggles, historical replay, and custom-editor fallback. Never leak one child's error into another child or the parent transcript outside its bounded child summary.
+    3. Keep lines width-safe on narrow terminals and preserve overlay row budgeting, scroll anchors, search, draft, and live-tail semantics.
+    4. Tests must assert useful rendering and explicit non-presence of request IDs, URLs, paths, bearer/token-like strings, arbitrary JSON, control characters, and oversized tails.
+  - **Acceptance**:
+    - Full/compact/historical/fallback tests show actionable safe details for 429/500/connection/timeout and honest generic copy otherwise; full Pi tests and typecheck pass.
+    - Commit: `feat(pi): show sanitized provider errors in child views`.
+
+- [ ] 14. Update contracts, run gates, and prove real Pi behavior
+  - **What**: Update all affected contracts, run clean gates, prove native delegation plus overlay/error UX on real Pi 0.84.1, and complete the original live-proof objective.
+  - **Files**: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md`, `33-smoke-checklist.md`, `33-path-session-conformance-design.md`, `33-proofs/33-overlay-ux-live-proof.md`, historical fail-closed proofs/acceptance manifest as superseded references, `docs/adapters/pi.md`, capability/ADR docs, and both plan checkboxes.
+  - **Depends on**: Tasks 11 and 13.
+  - **Implementation outline**:
+    1. Document the contained-path capability, threat model, typed failures, Pi-native format, sanitized error schema/rendering, and supersession of the old descriptor-only health claim. Preserve historical proofs with banners; do not rewrite history.
+    2. From an exact clean subject run `bun test`, `bun run typecheck`, `bun run lint`, `bun run build`, and `bun run docs:check-links`.
+    3. Build an exact artifact and launch isolated real Pi 0.84.1 with pi-vim. Verify ready state, native child create/reopen/settlement/history, no path exposure, all six overlay scroll keys, Escape child-still-running, q dismiss/confirm/non-empty draft, telemetry available/unavailable, compact live/historical round-trip, and cleanup.
+    4. Trigger safe real/simulated provider failures through the real harness boundary and observe sanitized 429, 500/no-body, connection/timeout, and unavailable-detail rendering without forbidden data. Do not deliberately expose credentials or depend on an active provider outage.
+    5. Record exact subject, artifact/dist hashes, commands, observed evidence, owner-approved Pi 0.84.1 target, cleanup, Weft approval, and mandatory Warp approval in `33-overlay-ux-live-proof.md`.
+    6. Confirm no leaked child process and no active Runtime Store lease; close only the created pane. Mark Task 14 and the original live-proof objective complete only after every item is observed.
+  - **Acceptance**:
+    - All gates green; Pi 0.84.1 delegation is ready without unsafe flags; proof records every overlay and error-visibility item; Warp and Weft approve; cleanup is empty.
+    - Commit: `docs(pi): record path-session and child-error live proof`.
 
 ## Verification
 Final confirmation, in order:
 
 ```bash
-bun test                      # all packages green, incl. new overlay regression + telemetry + compact suites
-bun run typecheck             # tsc --noEmit clean
-bun run lint                  # biome + declaration validation clean
-bun run build                 # public packages + docs site build
-bun run docs:check-links      # docs links clean
+bun test
+bun run typecheck
+bun run lint
+bun run build
+bun run docs:check-links
 ```
 
-Then the live pass: fresh Pi 0.83 TUI via the local symlinked adapter on a real PTY — all six scroll keys move the mounted overlay viewport (legacy and Kitty encodings, pi-vim scenario included); Escape returns to the parent with the child still running; `q` → confirm cancels the child, `q` → keep-running leaves it alive; header shows provider/model/ctx%/tokens on a reporting child and `—` states otherwise; compact toggle preserves draft, search, and scroll anchor. Proof docs committed under `33-proofs/`, Weft approved, Warp decision recorded, no residual child process or Runtime Store lease.
+Then run an exact-subject real Pi 0.84.1 pass: the adapter reports the truthful contained-path capability as ready; a native child can create, stream, settle, reopen, and render history; all overlay controls and telemetry pass; full/compact/historical/fallback views show bounded sanitized provider errors instead of generic stop text; no forbidden data appears; Warp and Weft approve; no child process or Runtime Store lease remains.
 
-Commit guidance: one focused conventional commit per task as listed (`fix(pi)`, `feat(pi)`, `docs(pi)`); reference the originating issue in each commit footer and in the PR.
+Commit guidance: one focused Conventional Commit per task (`test`, `fix`, `feat`, `docs`); preserve unrelated dirty work and reference the originating issue when known.
