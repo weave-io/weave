@@ -27,6 +27,10 @@ import {
   type MemoryOverlaySourceChild,
 } from "../child-overlay.js";
 import { PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER } from "../child-overlay-keys.js";
+import {
+  allocateLiveAssistantEntryId,
+  MAX_LIVE_ASSISTANT_LIFECYCLES,
+} from "../child-overlay-replay.js";
 import { SCROLL_KEYS } from "../child-overlay-types.js";
 import type { PiUiThemePort } from "../types.js";
 
@@ -633,5 +637,344 @@ describe("mounted real Pi 0.84 lifecycle across view modes", () => {
     expect(back.viewMode).toBe("full");
     expect(back.bottomTurn).toBe(full.bottomTurn);
     expect(back.scrollOffset).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Lifecycle identity must survive an update the bounded window projects
+ * *nothing* for.
+ *
+ * Real Pi 0.84 streams assistant text as
+ * `message_update { assistantMessageEvent: { type: "text_delta", delta } }`
+ * and reasoning as `thinking_delta` on the same event type. The compact
+ * projection previously recognised only the legacy `delta.text`, so a real
+ * missing-start update projected `undefined`, the controller read the overlay
+ * id off the projection, and the transcript action carried none. The already
+ * allocated lifecycle id was dropped, the placeholder transcript entry kept
+ * `overlayEntryId: undefined` for good, and `message_end` could not stamp it
+ * later because a reduce only labels the entries its own action creates.
+ *
+ * No synthetic ids anywhere below: the host sends no message id, so identity
+ * can only be the controller-allocated overlay id.
+ */
+describe("real Pi 0.84 assistantMessageEvent lifecycle identity", () => {
+  const textDelta = (delta: string) => ({
+    type: "message_update",
+    assistantMessageEvent: { type: "text_delta", delta },
+  });
+  const thinkingDelta = (delta: string) => ({
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_delta", delta },
+  });
+  const realEnd = (text: string) => ({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      model: "test-model",
+      content: [{ type: "text", text }],
+    },
+  });
+
+  async function openLiveChild(childId: string) {
+    const source = createMemoryChildOverlaySource([
+      { ...liveChild(), childId, threadId: childId },
+    ]);
+    const controller = createChildOverlayController(source, { pageSize: 64 });
+    expect((await controller.open(childId)).isOk()).toBe(true);
+    return controller;
+  }
+
+  it("allocates one identity for a missing-start real update and reuses it", async () => {
+    const controller = await openLiveChild("real-missing-start");
+    // The first event ever seen is an update in the real Pi shape.
+    expect(controller.applyLiveEvent(textDelta("partial ")).isOk()).toBe(true);
+
+    const afterFirst = controller.view()._unsafeUnwrap();
+    const assistantAfterFirst = afterFirst.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistantAfterFirst.length).toBe(1);
+    expect(assistantAfterFirst[0]?.id).toBe("live-assistant-0");
+    // Every transcript entry the update created names that same entry.
+    expect(afterFirst.transcript.entries.length).toBeGreaterThan(0);
+    for (const entry of afterFirst.transcript.entries) {
+      expect(entry.overlayEntryId).toBe("live-assistant-0");
+    }
+
+    expect(controller.applyLiveEvent(textDelta("more")).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(realEnd("recovered")).isOk()).toBe(true);
+
+    const view = controller.view()._unsafeUnwrap();
+    const assistant = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    // One allocation, reused by the later update and by the end.
+    expect(assistant.length).toBe(1);
+    expect(assistant[0]?.id).toBe("live-assistant-0");
+    expect(assistant[0]?.text).toBe("recovered");
+    for (const entry of view.transcript.entries) {
+      expect(entry.overlayEntryId).toBe("live-assistant-0");
+    }
+    // No transcript entry is left in the reducer's own identity space.
+    const windowIds = new Set(view.entries.map((entry) => entry.id));
+    for (const entry of view.transcript.entries) {
+      expect(windowIds.has(entry.overlayEntryId as string)).toBe(true);
+    }
+  });
+
+  it("keeps identity for a missing-start update that projects nothing at all", async () => {
+    const controller = await openLiveChild("real-thinking-first");
+    // A reasoning-first stream: the lifecycle opens on a `thinking_delta`,
+    // which is deliberately never folded into the assistant message body, so
+    // the projection returns undefined and the window stays empty.
+    expect(controller.applyLiveEvent(thinkingDelta("weighing")).isOk()).toBe(
+      true,
+    );
+    const afterThinking = controller.view()._unsafeUnwrap();
+    expect(
+      afterThinking.entries.filter((entry) => entry.kind === "assistant")
+        .length,
+    ).toBe(0);
+    // The lifecycle id was still allocated and still reached the transcript.
+    for (const entry of afterThinking.transcript.entries) {
+      expect(entry.overlayEntryId).toBe("live-assistant-0");
+    }
+
+    // The visible text of the same lifecycle lands on that one identity.
+    expect(controller.applyLiveEvent(textDelta("answer")).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(realEnd("answer done")).isOk()).toBe(true);
+    const view = controller.view()._unsafeUnwrap();
+    const assistant = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistant.length).toBe(1);
+    expect(assistant[0]?.id).toBe("live-assistant-0");
+    expect(assistant[0]?.text).toBe("answer done");
+    for (const entry of view.transcript.entries) {
+      expect(entry.overlayEntryId).toBe("live-assistant-0");
+    }
+  });
+
+  it("does not fold reasoning text into the assistant message body", async () => {
+    const controller = await openLiveChild("real-thinking-body");
+    expect(controller.applyLiveEvent(textDelta("visible")).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(thinkingDelta("secret")).isOk()).toBe(
+      true,
+    );
+    const view = controller.view()._unsafeUnwrap();
+    const assistant = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistant.length).toBe(1);
+    expect(assistant[0]?.text).toBe("visible");
+    expect(assistant[0]?.text).not.toContain("secret");
+  });
+
+  it("keeps the lifecycle isolated per child and closed on end", async () => {
+    const source = createMemoryChildOverlaySource([
+      { ...liveChild(), childId: "real-a", threadId: "real-a" },
+      { ...liveChild(), childId: "real-b", threadId: "real-b" },
+    ]);
+    const controller = createChildOverlayController(source, { pageSize: 64 });
+
+    expect((await controller.open("real-a")).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(textDelta("a partial")).isOk()).toBe(true);
+
+    expect((await controller.open("real-b")).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(textDelta("b partial")).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(realEnd("b done")).isOk()).toBe(true);
+    const viewB = controller.view()._unsafeUnwrap();
+    const assistantB = viewB.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistantB.length).toBe(1);
+    expect(assistantB[0]?.id).toBe("live-assistant-0");
+    expect(assistantB[0]?.text).toBe("b done");
+
+    expect((await controller.open("real-a")).isOk()).toBe(true);
+    expect(controller.applyLiveEvent(realEnd("a done")).isOk()).toBe(true);
+    const viewA = controller.view()._unsafeUnwrap();
+    const assistantA = viewA.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistantA.length).toBe(1);
+    expect(assistantA[0]?.id).toBe("live-assistant-0");
+    expect(assistantA[0]?.text).toBe("a done");
+
+    // A's lifecycle closed with that end, so the next stream is a new slot.
+    expect(controller.applyLiveEvent(textDelta("next")).isOk()).toBe(true);
+    const after = controller.view()._unsafeUnwrap();
+    expect(
+      after.entries
+        .filter((entry) => entry.kind === "assistant")
+        .map((entry) => entry.id),
+    ).toEqual(["live-assistant-0", "live-assistant-1"]);
+  });
+});
+
+/**
+ * Boundary behaviour of the bounded lifecycle allocator, exercised directly
+ * because a controller cannot be driven a million lifecycles in a test.
+ * `allocateLiveAssistantEntryId` is a pure exported helper, so these are the
+ * cheapest possible proofs of the wrap contract.
+ */
+describe("live assistant lifecycle allocator boundaries", () => {
+  it("allocates the last slot below the wrap point", () => {
+    const last = MAX_LIVE_ASSISTANT_LIFECYCLES - 1;
+    const allocated = allocateLiveAssistantEntryId(last);
+    expect(allocated.entryId).toBe(`live-assistant-${last}`);
+    // The next counter is the wrap itself.
+    expect(allocated.nextCounter).toBe(0);
+  });
+
+  it("wraps to zero and keeps allocating from the bottom", () => {
+    const wrapped = allocateLiveAssistantEntryId(MAX_LIVE_ASSISTANT_LIFECYCLES);
+    expect(wrapped.entryId).toBe("live-assistant-0");
+    expect(wrapped.nextCounter).toBe(1);
+
+    const afterWrap = allocateLiveAssistantEntryId(wrapped.nextCounter);
+    expect(afterWrap.entryId).toBe("live-assistant-1");
+    expect(afterWrap.nextCounter).toBe(2);
+
+    // One past the wrap folds back onto slot 1, not onto a huge id.
+    const past = allocateLiveAssistantEntryId(
+      MAX_LIVE_ASSISTANT_LIFECYCLES + 1,
+    );
+    expect(past.entryId).toBe("live-assistant-1");
+    expect(past.nextCounter).toBe(2);
+  });
+
+  it("recovers to slot zero for invalid or non-safe counters", () => {
+    const invalid: readonly number[] = [
+      -1,
+      -MAX_LIVE_ASSISTANT_LIFECYCLES,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+      Number.MIN_SAFE_INTEGER - 1,
+    ];
+    for (const counter of invalid) {
+      const allocated = allocateLiveAssistantEntryId(counter);
+      expect(allocated.entryId).toBe("live-assistant-0");
+      expect(allocated.nextCounter).toBe(1);
+    }
+  });
+
+  it("stays inside the bound for every allocated slot", () => {
+    for (const counter of [
+      0,
+      1,
+      MAX_LIVE_ASSISTANT_LIFECYCLES - 2,
+      MAX_LIVE_ASSISTANT_LIFECYCLES - 1,
+      MAX_LIVE_ASSISTANT_LIFECYCLES,
+      MAX_LIVE_ASSISTANT_LIFECYCLES * 3,
+    ]) {
+      const allocated = allocateLiveAssistantEntryId(counter);
+      expect(allocated.nextCounter).toBeGreaterThanOrEqual(0);
+      expect(allocated.nextCounter).toBeLessThan(MAX_LIVE_ASSISTANT_LIFECYCLES);
+      expect(allocated.entryId.startsWith("live-assistant-")).toBe(true);
+    }
+  });
+});
+
+/**
+ * The same missing-start regression through the *mounted* component: real
+ * render, real controller, real `assistantMessageEvent` shapes, and no message
+ * id anywhere in the stream.
+ */
+describe("mounted real assistantMessageEvent missing-start regression", () => {
+  it("renders one identified assistant entry from an update-first stream", async () => {
+    const source = createMemoryChildOverlaySource([
+      {
+        ...liveChild(),
+        childId: "mounted-missing-start",
+        threadId: "mounted-missing-start",
+      },
+    ]);
+    const controller = createChildOverlayController(source, { pageSize: 64 });
+    expect((await controller.open("mounted-missing-start")).isOk()).toBe(true);
+    const component = createChildOverlayCustomComponent(
+      testTui(),
+      TEST_THEME,
+      testKeybindings(),
+      controller,
+      () => {},
+      () => {},
+      { cwd: "/workspace" },
+    );
+
+    // Update-first, in the exact shapes Pi 0.84 emits. Nothing carries an id.
+    const stream: readonly unknown[] = [
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", delta: "weighing" },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "#E0# partial " },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "#E0# more" },
+      },
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          model: "test-model",
+          content: [{ type: "text", text: markedText(0, 6) }],
+        },
+      },
+    ];
+    for (const event of stream) {
+      expect(controller.applyLiveEvent(event).isOk()).toBe(true);
+    }
+    const full = component.render(WIDTH);
+    expect(full.join("\n")).toContain("#E0#");
+
+    const view = controller.view()._unsafeUnwrap();
+    const assistant = view.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistant.length).toBe(1);
+    expect(assistant[0]?.id).toBe("live-assistant-0");
+    // The regression: this entry used to keep `overlayEntryId: undefined`
+    // forever, because the id was read off a projection the real update shape
+    // could not produce.
+    const windowIds = new Set(view.entries.map((entry) => entry.id));
+    expect(view.transcript.entries.length).toBeGreaterThan(0);
+    for (const entry of view.transcript.entries) {
+      expect(entry.overlayEntryId).toBeDefined();
+      expect(windowIds.has(entry.overlayEntryId as string)).toBe(true);
+    }
+
+    // Compact and full agree on that identity, and a round trip holds it.
+    component.handleInput(PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const compactLines = component.render(WIDTH);
+    expect(compactLines.join("\n")).toContain("#E0#");
+    const compactView = controller.view()._unsafeUnwrap();
+    expect(compactView.viewMode).toBe("compact");
+    expect(
+      compactView.entries
+        .filter((entry) => entry.kind === "assistant")
+        .map((entry) => entry.id),
+    ).toEqual(["live-assistant-0"]);
+
+    component.handleInput(PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    component.render(WIDTH);
+    const backView = controller.view()._unsafeUnwrap();
+    expect(backView.viewMode).toBe("full");
+    expect(
+      backView.entries
+        .filter((entry) => entry.kind === "assistant")
+        .map((entry) => entry.id),
+    ).toEqual(["live-assistant-0"]);
+    for (const entry of backView.transcript.entries) {
+      expect(entry.overlayEntryId).toBe("live-assistant-0");
+    }
   });
 });

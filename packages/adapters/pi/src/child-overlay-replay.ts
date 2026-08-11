@@ -36,6 +36,8 @@ import {
   type PiChildTranscriptState,
   reducePiChildTranscript,
 } from "./child-transcript.js";
+import { extractAssistantTextDeltaPreview } from "./child-tree.js";
+import type { JsonValue } from "./strict-json.js";
 
 // ---------------------------------------------------------------------------
 // Native entry mapping (Task 4 adapt / child-transcript projection)
@@ -1023,13 +1025,13 @@ export function degradedCapacityEntry(
 // ---------------------------------------------------------------------------
 // Live event projection (moved out of the controller to keep it reviewable)
 // ---------------------------------------------------------------------------
-
 /**
  * Project one parsed child session event into a bounded overlay entry.
  *
  * Pure: it reads only the event, the caller's sequence number, and the
  * caller's expansion default, and returns undefined for events the overlay
- * window does not display.
+ * window does not display. Assistant lifecycle identity is the caller's: an
+ * update projecting nothing here still belongs to that lifecycle.
  */
 export function projectLiveEntry(
   event: PiChildSessionEvent,
@@ -1046,15 +1048,17 @@ export function projectLiveEntry(
       if (event.type === "message_end") {
         text = messageText(event.message).text;
       } else if (event.type === "message_update") {
-        const deltaText = (event as { delta?: { text?: string } }).delta?.text;
-        if (typeof deltaText === "string") {
-          text = boundText(deltaText);
-        }
+        // Legacy `delta: { text }` and real 0.84 `assistantMessageEvent:
+        // { type: "text_delta", delta }`, via the parent tree's reader.
+        // A `thinking_delta` is not body text and projects nothing.
+        const delta = extractAssistantTextDeltaPreview(
+          event as unknown as Record<string, JsonValue>,
+        );
+        if (delta !== undefined) text = boundText(delta);
       }
       // Real Pi 0.84 `AssistantMessage` carries no id, and `state.entries`
-      // grows between `message_start` and `message_end`, so neither the
-      // message nor the sequence can name one lifecycle. The caller owns the
-      // lifecycle id; the sequence fallback only covers direct pure calls.
+      // grows between start and end, so neither the message nor the sequence
+      // names a lifecycle. The sequence fallback covers direct pure calls.
       const id = assistantEntryId ?? `live-assistant-${sequence}`;
       if (event.type === "message_update" && text.length === 0)
         return undefined;

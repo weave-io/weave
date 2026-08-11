@@ -488,10 +488,18 @@ export class ChildOverlayController {
       state.globalExpanded,
       assistantEntryId,
     );
-    // A merge into an existing window entry reuses that entry's id, and the
-    // transcript only stamps entries this action created, so an update never
-    // re-labels the entry it merges into.
-    const overlayEntryId = projected?.id;
+    // Identity is owned by the lifecycle, not by the projection. A real Pi
+    // 0.84 update can legitimately project nothing (a `thinking_delta`, or a
+    // text delta that is empty once bounded), and an earlier version read the
+    // id off `projected` alone: the lifecycle id was allocated, the transcript
+    // action carried none, and the placeholder transcript entry stayed
+    // unlabelled forever - `message_end` can only stamp entries the action it
+    // accompanies created, so nothing repaired it later. Whenever the event
+    // belongs to an assistant lifecycle, the transcript is told which entry it
+    // belongs to. A merge into an existing window entry reuses that entry's
+    // id, and the transcript only stamps entries this action created, so an
+    // update never re-labels the entry it merges into.
+    const overlayEntryId = assistantEntryId ?? projected?.id;
 
     const transcriptNext = reducePiChildTranscript(state.transcript, {
       kind: "event",
