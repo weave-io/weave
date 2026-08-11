@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dispatchAdapterCommand } from "@weaveio/weave-engine";
 import {
+  accessModeForAdapterAction,
   createProductionPiAdapterCommandRegistry,
   openProductionPiAdapterCommandPorts,
   PI_ADAPTER_COMMAND_NAMES,
@@ -14,6 +15,13 @@ import {
   resolveProductionAdapterCliRegistry,
 } from "../index.js";
 import type { PiSessionManagerStatic } from "../native-session-host.js";
+import type { PiNativeSessionReadinessProbe } from "../native-session-readiness.js";
+import { createReadyPiNativeSessionReadinessProbe } from "../native-session-readiness.js";
+
+/** A probe that reports proved readiness, so only the gate wiring is tested. */
+function readyProbe(): PiNativeSessionReadinessProbe {
+  return createReadyPiNativeSessionReadinessProbe();
+}
 
 function fakeSessionManager(): PiSessionManagerStatic {
   return {
@@ -140,7 +148,7 @@ describe("health-only CLI production dispatch — non-creating reads", () => {
     await Promise.all(dirs.splice(0).map((dir) => removeScratchFiles(dir)));
   });
 
-  it("resolves children.delete without a descriptor capability gate", async () => {
+  it("selects write access with a readiness-backed gate only for children.delete", async () => {
     const xdg = await tempXdg();
     dirs.push(xdg);
     expect(await listRelativePaths(xdg)).toEqual([]);
@@ -150,9 +158,23 @@ describe("health-only CLI production dispatch — non-creating reads", () => {
       workspaceKey: "/tmp/weave-workspace",
       env: { XDG_DATA_HOME: xdg, HOME: xdg },
       SessionManager: fakeSessionManager(),
+      readinessProbe: readyProbe(),
     });
+    // Deleting a child tombstones a native session, so the mutating route
+    // legitimately opens the writable cache the read routes must never create.
     expect(opened.isOk()).toBe(true);
-    expect(await listRelativePaths(xdg)).toEqual([]);
+    expect(
+      opened.isOk() &&
+        opened.value
+          .get(PI_ADAPTER_NAME)
+          ?.get(PI_ADAPTER_COMMAND_NAMES.childrenDelete) !== undefined,
+    ).toBe(true);
+    expect(accessModeForAdapterAction("children.delete")).toBe("write");
+    expect(
+      ["children.list", "children.show", "children.resolve", "doctor"].map(
+        accessModeForAdapterAction,
+      ),
+    ).toEqual(["read", "read", "read", "read"]);
   });
 
   it("list/show/doctor on a pristine root leave the root absent", async () => {

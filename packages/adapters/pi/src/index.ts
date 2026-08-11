@@ -37,6 +37,7 @@ export type {
   ResolveProductionAdapterCliRegistryInput,
 } from "./adapter-cli-production.js";
 export {
+  accessModeForAdapterAction,
   createProductionPiAdapterCommandRegistry,
   createProductionPorts,
   openProductionPiAdapterCommandPorts,

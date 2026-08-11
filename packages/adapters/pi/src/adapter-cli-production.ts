@@ -18,7 +18,7 @@ import {
   ok,
   okAsync,
   type Result,
-  type ResultAsync,
+  ResultAsync,
 } from "neverthrow";
 import {
   createPiAdapterCommandRegistry,
@@ -32,6 +32,7 @@ import {
   failedDoctorCheck,
   passedDoctorCheck,
 } from "./child-doctor.js";
+import { BunEnvPort, buildDefaultPiChildCommand } from "./child-env.js";
 import {
   BunPiChildMetadataCacheFs,
   openPiChildMetadataCache,
@@ -42,6 +43,7 @@ import {
   PiNativeSessionStore,
   resolvePiNativeSessionRoot,
 } from "./child-native-sessions.js";
+import { BunPiChildProcessPort } from "./child-process-port.js";
 import { createNativeChildRefSourceAuthority } from "./child-session-refs.js";
 import { createBunPiNativeSessionFs } from "./native-session-fs.js";
 import {
@@ -49,6 +51,16 @@ import {
   isPiSessionManagerStatic,
   type PiSessionManagerStatic,
 } from "./native-session-host.js";
+import {
+  createPiNativeSessionReadinessProbe,
+  type PiNativeSessionReadiness,
+  type PiNativeSessionReadinessProbe,
+} from "./native-session-readiness.js";
+import {
+  createSessionMutationGate,
+  type PiSessionMutationGate,
+  SESSION_MUTATION_REQUIRED_CAPABILITY,
+} from "./required-capability-gate.js";
 
 /** Why production CLI port construction refused to open. */
 export type PiProductionAdapterCommandError =
@@ -74,6 +86,12 @@ export interface PiProductionAdapterCommandPorts {
   readonly children: PiAdapterChildrenPort;
   readonly doctor: PiAdapterDoctorPort;
   readonly cacheMode: "active" | "degraded";
+  /**
+   * Required-capability gate for the one mutating CLI route
+   * (`children.delete`), backed by the same proved Pi-native session/root/
+   * process readiness activation uses. Read routes never consult it.
+   */
+  readonly sessionMutationGate: PiSessionMutationGate;
 }
 
 /**
@@ -96,6 +114,83 @@ export interface CreateProductionPiAdapterCommandPortsOptions {
    * root stays absent. Defaults to `"read"`.
    */
   readonly accessMode?: PiProductionAdapterAccessMode;
+  /**
+   * Proves Pi-native session/root/process readiness for the mutating route.
+   * Production defaults to the real probe; tests inject a controlled one.
+   */
+  readonly readinessProbe?: PiNativeSessionReadinessProbe;
+}
+
+/**
+ * Builds the mutation gate for a set of production ports.
+ *
+ * A read-only port set can never satisfy the gate: it opened no writable
+ * cache, so `children.delete` is refused before it can touch a session. A
+ * write-mode port set is gated on the proved readiness outcome, and an
+ * unproved outcome reports its own closed, path-free reason.
+ */
+function mutationGateFor(
+  accessMode: PiProductionAdapterAccessMode,
+  readiness: PiNativeSessionReadiness | undefined,
+): PiSessionMutationGate {
+  if (accessMode === "read") {
+    return createSessionMutationGate(() => [
+      {
+        capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
+        reason: "read-only-cli-access",
+      },
+    ]);
+  }
+  if (readiness === undefined || !readiness.ready) {
+    return createSessionMutationGate(() => [
+      {
+        capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
+        reason:
+          readiness?.ready === false ? readiness.reason : "readiness-unproven",
+      },
+    ]);
+  }
+  return createSessionMutationGate(() => []);
+}
+
+/**
+ * Runs the readiness probe only for the mutating access mode, so a read route
+ * never initializes a root. A probe that throws despite its `never` error type
+ * fails closed; the thrown value is discarded.
+ */
+function readReadinessFor(
+  accessMode: PiProductionAdapterAccessMode,
+  options: CreateProductionPiAdapterCommandPortsOptions,
+): ResultAsync<PiNativeSessionReadiness | undefined, never> {
+  if (accessMode === "read") return okAsync(undefined);
+  const probe =
+    options.readinessProbe ??
+    createPiNativeSessionReadinessProbe({
+      processPort: new BunPiChildProcessPort(),
+      childCommand: buildDefaultPiChildCommand(new BunEnvPort()),
+      ...(options.SessionManager === undefined
+        ? {}
+        : { SessionManager: options.SessionManager }),
+      ...(options.env === undefined ? {} : { env: options.env }),
+      ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
+    });
+  return ResultAsync.fromSafePromise(
+    Promise.resolve()
+      .then(() => probe.probe())
+      .then((result) =>
+        result.match(
+          (readiness): PiNativeSessionReadiness | undefined => readiness,
+          (): PiNativeSessionReadiness | undefined => ({
+            ready: false,
+            reason: "pi-session-api-unavailable",
+          }),
+        ),
+      )
+      .catch((): PiNativeSessionReadiness | undefined => ({
+        ready: false,
+        reason: "pi-session-api-unavailable",
+      })),
+  );
 }
 
 const CLI_SOURCE_PARENT = "weave-cli";
@@ -236,74 +331,90 @@ function openWithSessionRoot(
   const accessMode = options.accessMode ?? "read";
   const readOnly = accessMode === "read";
 
-  return openPiChildMetadataCache({
-    root: cacheRoot,
-    fs: new BunPiChildMetadataCacheFs(),
-    authority,
-    source: {
-      workspaceKey: options.workspaceKey,
-      parentSessionId: CLI_SOURCE_PARENT,
-      readRefs: () => okAsync([]),
-    },
-    ...(readOnly ? { readOnly: true as const } : {}),
-  }).map((outcome) => {
-    if (outcome.mode === "active") {
-      const discoveryCache = outcome.cache;
-      const children = createPiChildrenCommandPort({
-        cache: discoveryCache,
-        sessions,
-      });
+  return readReadinessFor(accessMode, options).andThen((readiness) => {
+    const sessionMutationGate = mutationGateFor(accessMode, readiness);
+    return openPiChildMetadataCache({
+      root: cacheRoot,
+      fs: new BunPiChildMetadataCacheFs(),
+      authority,
+      source: {
+        workspaceKey: options.workspaceKey,
+        parentSessionId: CLI_SOURCE_PARENT,
+        readRefs: () => okAsync([]),
+      },
+      ...(readOnly ? { readOnly: true as const } : {}),
+    }).map((outcome) => {
+      if (outcome.mode === "active") {
+        const discoveryCache = outcome.cache;
+        const children = createPiChildrenCommandPort({
+          cache: discoveryCache,
+          sessions,
+        });
+        const doctor = createPiDoctorPort({
+          ports: createStoreBackedDoctorCheckPorts({
+            permissions: () => {
+              const root = sessions.sessionRoot();
+              if (root.length === 0) {
+                return okAsync(
+                  failedDoctorCheck(
+                    "session root unavailable",
+                    "ChildSessionRootViolation",
+                  ),
+                );
+              }
+              return okAsync(passedDoctorCheck("session root resolved"));
+            },
+            cacheMode: "active",
+            listMetadata: () => {
+              const listed = discoveryCache.list({
+                workspaceKey: options.workspaceKey,
+                limit: 50,
+                includeTombstoned: true,
+              });
+              if (listed.isErr()) return errAsync(listed.error);
+              return okAsync(
+                listed.value.records.map((row) => ({
+                  childId: row.childId,
+                  originParentSessionId: row.originParentSessionId,
+                  stale: row.stale,
+                  tombstoned: row.tombstoned,
+                })),
+              );
+            },
+            listSessionsByRef: (refs) =>
+              sessions
+                .listByRef(refs, { limit: 50 })
+                .map((states) =>
+                  states.map((state) => ({ state: state.state })),
+                ),
+          }),
+        });
+        return {
+          children,
+          doctor,
+          cacheMode: "active" as const,
+          sessionMutationGate,
+        };
+      }
+
+      const children = unavailableChildrenPort(
+        `child metadata cache degraded: ${outcome.error.type}`,
+      );
       const doctor = createPiDoctorPort({
         ports: createStoreBackedDoctorCheckPorts({
-          permissions: () => {
-            const root = sessions.sessionRoot();
-            if (root.length === 0) {
-              return okAsync(
-                failedDoctorCheck(
-                  "session root unavailable",
-                  "ChildSessionRootViolation",
-                ),
-              );
-            }
-            return okAsync(passedDoctorCheck("session root resolved"));
-          },
-          cacheMode: "active",
-          listMetadata: () => {
-            const listed = discoveryCache.list({
-              workspaceKey: options.workspaceKey,
-              limit: 50,
-              includeTombstoned: true,
-            });
-            if (listed.isErr()) return errAsync(listed.error);
-            return okAsync(
-              listed.value.records.map((row) => ({
-                childId: row.childId,
-                originParentSessionId: row.originParentSessionId,
-                stale: row.stale,
-                tombstoned: row.tombstoned,
-              })),
-            );
-          },
-          listSessionsByRef: (refs) =>
-            sessions
-              .listByRef(refs, { limit: 50 })
-              .map((states) => states.map((state) => ({ state: state.state }))),
+          permissions: () =>
+            okAsync(passedDoctorCheck("session root resolved")),
+          cacheMode: "degraded",
+          listMetadata: () => okAsync([]),
         }),
       });
-      return { children, doctor, cacheMode: "active" as const };
-    }
-
-    const children = unavailableChildrenPort(
-      `child metadata cache degraded: ${outcome.error.type}`,
-    );
-    const doctor = createPiDoctorPort({
-      ports: createStoreBackedDoctorCheckPorts({
-        permissions: () => okAsync(passedDoctorCheck("session root resolved")),
-        cacheMode: "degraded",
-        listMetadata: () => okAsync([]),
-      }),
+      return {
+        children,
+        doctor,
+        cacheMode: "degraded" as const,
+        sessionMutationGate,
+      };
     });
-    return { children, doctor, cacheMode: "degraded" as const };
   });
 }
 
@@ -315,8 +426,29 @@ export function createProductionPiAdapterCommandRegistry(
     createPiAdapterCommandRegistry({
       children: ports.children,
       doctor: ports.doctor,
+      // The one mutating route is gated on proved native readiness. Without
+      // this the `children.delete` handler fails closed as unwired, which is
+      // why production deletion never dispatched.
+      sessionMutationGate: ports.sessionMutationGate,
     }),
   );
+}
+
+/** Adapter CLI actions that mutate a persistent native session. */
+const MUTATING_ADAPTER_ACTIONS: ReadonlySet<string> = new Set([
+  "children.delete",
+]);
+
+/**
+ * The access mode an adapter action may use. Only the mutating route earns
+ * write access; every other route stays read-only so a pristine data root gains
+ * no directories, database, schema rows, refs, or lock artifacts. The action
+ * decides this, never the caller.
+ */
+export function accessModeForAdapterAction(
+  action: string,
+): PiProductionAdapterAccessMode {
+  return MUTATING_ADAPTER_ACTIONS.has(action) ? "write" : "read";
 }
 
 /** Why the CLI refused to open production ports for an adapter action. */
@@ -332,9 +464,11 @@ export interface ResolveProductionAdapterCliRegistryInput
 export function resolveProductionAdapterCliRegistry(
   input: ResolveProductionAdapterCliRegistryInput,
 ): ResultAsync<AdapterCommandRegistry, PiProductionAdapterCliOpenError> {
-  const { action: _action, ...portOptions } = input;
+  const { action, accessMode: _requested, ...portOptions } = input;
+  // The action alone decides access. A caller cannot widen a read route, and
+  // cannot narrow `children.delete` into a mode that could never complete it.
   return createProductionPiAdapterCommandRegistry({
     ...portOptions,
-    accessMode: "read",
+    accessMode: accessModeForAdapterAction(action),
   });
 }
