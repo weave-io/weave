@@ -4955,6 +4955,19 @@ export function createPiExtension(
                   baseEnv: buildPiChildBaseEnv(),
                   registry: directStepChildRegistry,
                   inspectionRegistry,
+                  // A direct workflow step is a real Pi-native child session,
+                  // provisioned through the same approved store/ref authority
+                  // ordinary delegation uses. Production requires it, so an
+                  // absent store, an ephemeral session, or a directory-only
+                  // session refuses before any spawn.
+                  threadSessions: () => threadSourcesCell.sessions,
+                  threadRefs: () => threadSourcesCell.refs,
+                  // Production always configures a thread source factory, so a
+                  // production direct step always requires a validated native
+                  // session - including when this generation's sources failed
+                  // to open, where refusing beats an ephemeral fallback.
+                  requireNativeSession: () =>
+                    deps.threadSourceFactory !== undefined,
                   availableModels: safelyListAvailableModels(
                     ctx.modelRegistry,
                   ).unwrapOr([]),
