@@ -137,7 +137,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - Run Weft after the slice.
     - Run Warp because strict input validation and exported schemas changed; resolve all blocking findings before Task 4.
 
-- [ ] 4. Update config merge, builtins, starter data, and legacy conversion
+- [x] 4. Update config merge, builtins, starter data, and legacy conversion
   - **What**: Apply the new fields through config layering and provide the agreed breaking migration behavior.
   - **Files**: `packages/config/src/merge.ts`, `packages/config/src/builtins.ts`, `packages/config/src/__tests__/merge.test.ts`, `packages/config/src/__tests__/builtins.test.ts`, `packages/config/src/__tests__/builtin-compose-smoke.test.ts`, `packages/config/src/__tests__/builtin-prompts.test.ts`, `packages/cli/src/migration/legacy-jsonc-converter.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/config/starter-config.ts`, `packages/cli/src/prompts/self-modify.md`, `packages/cli/src/__fixtures__/valid.weave`, `config/` pattern-bearing fixtures discovered during execution
   - **Depends on**: Task 3
