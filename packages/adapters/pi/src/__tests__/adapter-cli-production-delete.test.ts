@@ -13,6 +13,7 @@
  * actually removes the session file and tombstones the record.
  */
 
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -72,9 +73,18 @@ async function tempXdg(): Promise<string> {
  * production ports will resolve, then registers it in the production cache so
  * `children.delete` has a real record and a real session file to remove.
  */
+type SeededChildStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "tombstoned";
+
 async function seedChild(
   xdg: string,
   childId: string,
+  status: SeededChildStatus = "completed",
 ): Promise<{ readonly sessionPath: string; readonly sessionRef: string }> {
   const root = (
     await resolvePiNativeSessionRoot({
@@ -144,7 +154,7 @@ async function seedChild(
         originEntryId: `entry-${childId}`,
         title: "shuttle-mini",
         titleProvenance: PI_CHILD_TITLE_PROVENANCE,
-        status: "completed",
+        status,
         createdAt: 1_700_000_000_000,
         updatedAt: 1_700_000_000_000,
         runs: [],
@@ -468,6 +478,300 @@ describe("production children.delete is readiness-gated and really dispatches", 
       firstDispatched: true,
       secondRefused: true,
       sessionStillAbsent: true,
+      leakedXdgPath: false,
+    });
+  });
+
+  it("refuses queued and running children with zero writable effects", async () => {
+    const xdg = await tempXdg();
+    const queued = await seedChild(xdg, "child-queued", "queued");
+    const running = await seedChild(xdg, "child-running", "running");
+    const other = await seedChild(xdg, "child-other", "completed");
+    const cacheRoot = (
+      await resolvePiChildMetadataCacheRoot({
+        env: { XDG_DATA_HOME: xdg, HOME: xdg },
+        homeDir: xdg,
+      })
+    )._unsafeUnwrap();
+    const databasePath = join(
+      cacheRoot,
+      PI_CHILD_METADATA_CACHE_LAYOUT.databaseFile,
+    );
+    const cacheBytesBefore = await Bun.file(databasePath).arrayBuffer();
+    const tombstoneFile = join(
+      queued.sessionPath.slice(0, queued.sessionPath.lastIndexOf("/child")),
+      "tombstones.jsonl",
+    );
+    const tombstoneBefore = (await Bun.file(tombstoneFile).exists())
+      ? await Bun.file(tombstoneFile).text()
+      : "";
+
+    const registry = (
+      await resolveProductionAdapterCliRegistry({
+        action: "children.delete",
+        workspaceKey: WORKSPACE,
+        env: { XDG_DATA_HOME: xdg, HOME: xdg },
+        homeDir: xdg,
+        SessionManager,
+        readinessProbe: createReadyPiNativeSessionReadinessProbe(),
+      })
+    )._unsafeUnwrap();
+
+    const queuedAttempt = await dispatchAdapterCommand(registry, {
+      adapter: PI_ADAPTER_NAME,
+      command: PI_ADAPTER_COMMAND_NAMES.childrenDelete,
+      payloadJson: JSON.stringify({
+        workspaceKey: WORKSPACE,
+        childId: "child-queued",
+        parentSessionId: PARENT_SESSION,
+        confirmed: true,
+      }),
+    });
+    const runningAttempt = await dispatchAdapterCommand(registry, {
+      adapter: PI_ADAPTER_NAME,
+      command: PI_ADAPTER_COMMAND_NAMES.childrenDelete,
+      payloadJson: JSON.stringify({
+        workspaceKey: WORKSPACE,
+        childId: "child-running",
+        parentSessionId: PARENT_SESSION,
+        confirmed: true,
+      }),
+    });
+    const queuedRendered = queuedAttempt.isErr()
+      ? JSON.stringify(queuedAttempt.error)
+      : "unexpected-success";
+    const runningRendered = runningAttempt.isErr()
+      ? JSON.stringify(runningAttempt.error)
+      : "unexpected-success";
+    const cacheBytesAfter = await Bun.file(databasePath).arrayBuffer();
+    const tombstoneAfter = (await Bun.file(tombstoneFile).exists())
+      ? await Bun.file(tombstoneFile).text()
+      : "";
+
+    expect({
+      queuedRefused: queuedAttempt.isErr(),
+      queuedConflict: queuedRendered.includes("child-not-terminal:queued"),
+      runningRefused: runningAttempt.isErr(),
+      runningConflict: runningRendered.includes("child-not-terminal:running"),
+      queuedSessionIntact: await Bun.file(queued.sessionPath).exists(),
+      runningSessionIntact: await Bun.file(running.sessionPath).exists(),
+      otherSessionIntact: await Bun.file(other.sessionPath).exists(),
+      cacheUnchanged: Buffer.from(cacheBytesBefore).equals(
+        Buffer.from(cacheBytesAfter),
+      ),
+      tombstoneUnchanged: tombstoneAfter === tombstoneBefore,
+      leakedXdgPath:
+        queuedRendered.includes(xdg) || runningRendered.includes(xdg),
+    }).toEqual({
+      queuedRefused: true,
+      queuedConflict: true,
+      runningRefused: true,
+      runningConflict: true,
+      queuedSessionIntact: true,
+      runningSessionIntact: true,
+      otherSessionIntact: true,
+      cacheUnchanged: true,
+      tombstoneUnchanged: true,
+      leakedXdgPath: false,
+    });
+  });
+
+  it("still deletes completed, failed, and cancelled children", async () => {
+    const xdg = await tempXdg();
+    const completed = await seedChild(xdg, "child-completed", "completed");
+    const failed = await seedChild(xdg, "child-failed", "failed");
+    const cancelled = await seedChild(xdg, "child-cancelled", "cancelled");
+
+    const registry = (
+      await resolveProductionAdapterCliRegistry({
+        action: "children.delete",
+        workspaceKey: WORKSPACE,
+        env: { XDG_DATA_HOME: xdg, HOME: xdg },
+        homeDir: xdg,
+        SessionManager,
+        readinessProbe: createReadyPiNativeSessionReadinessProbe(),
+      })
+    )._unsafeUnwrap();
+
+    const results = await Promise.all(
+      ["child-completed", "child-failed", "child-cancelled"].map((childId) =>
+        dispatchAdapterCommand(registry, {
+          adapter: PI_ADAPTER_NAME,
+          command: PI_ADAPTER_COMMAND_NAMES.childrenDelete,
+          payloadJson: JSON.stringify({
+            workspaceKey: WORKSPACE,
+            childId,
+            parentSessionId: PARENT_SESSION,
+            confirmed: true,
+          }),
+        }),
+      ),
+    );
+    const bodies = results.map((result) =>
+      result.isOk()
+        ? (JSON.parse(result.value.resultJson) as {
+            kind?: string;
+            childId?: string;
+            tombstoned?: boolean;
+          })
+        : undefined,
+    );
+    const rendered = results
+      .map((result) => (result.isOk() ? result.value.resultJson : ""))
+      .join("");
+
+    expect({
+      completed: {
+        dispatched: results[0]?.isOk() === true,
+        kind: bodies[0]?.kind,
+        childId: bodies[0]?.childId,
+        tombstoned: bodies[0]?.tombstoned,
+        sessionRemoved: !(await Bun.file(completed.sessionPath).exists()),
+      },
+      failed: {
+        dispatched: results[1]?.isOk() === true,
+        kind: bodies[1]?.kind,
+        childId: bodies[1]?.childId,
+        tombstoned: bodies[1]?.tombstoned,
+        sessionRemoved: !(await Bun.file(failed.sessionPath).exists()),
+      },
+      cancelled: {
+        dispatched: results[2]?.isOk() === true,
+        kind: bodies[2]?.kind,
+        childId: bodies[2]?.childId,
+        tombstoned: bodies[2]?.tombstoned,
+        sessionRemoved: !(await Bun.file(cancelled.sessionPath).exists()),
+      },
+      leakedXdgPath: rendered.includes(xdg),
+    }).toEqual({
+      completed: {
+        dispatched: true,
+        kind: "children.delete",
+        childId: "child-completed",
+        tombstoned: true,
+        sessionRemoved: true,
+      },
+      failed: {
+        dispatched: true,
+        kind: "children.delete",
+        childId: "child-failed",
+        tombstoned: true,
+        sessionRemoved: true,
+      },
+      cancelled: {
+        dispatched: true,
+        kind: "children.delete",
+        childId: "child-cancelled",
+        tombstoned: true,
+        sessionRemoved: true,
+      },
+      leakedXdgPath: false,
+    });
+  });
+
+  it("refuses malformed and already-tombstoned children without mutating them", async () => {
+    const xdg = await tempXdg();
+    const tombstoned = await seedChild(xdg, "child-tombstoned", "tombstoned");
+    const malformed = await seedChild(xdg, "child-malformed", "completed");
+    const cacheRoot = (
+      await resolvePiChildMetadataCacheRoot({
+        env: { XDG_DATA_HOME: xdg, HOME: xdg },
+        homeDir: xdg,
+      })
+    )._unsafeUnwrap();
+    const database = new Database(
+      join(cacheRoot, PI_CHILD_METADATA_CACHE_LAYOUT.databaseFile),
+    );
+    database
+      .query(
+        "UPDATE children SET status = ? WHERE workspace_key = ? AND child_id = ?",
+      )
+      .run("not-a-status", WORKSPACE, "child-malformed");
+    database.close();
+    const databasePath = join(
+      cacheRoot,
+      PI_CHILD_METADATA_CACHE_LAYOUT.databaseFile,
+    );
+    const cacheBytesBefore = await Bun.file(databasePath).arrayBuffer();
+    const tombstoneFile = join(
+      malformed.sessionPath.slice(
+        0,
+        malformed.sessionPath.lastIndexOf("/child"),
+      ),
+      "tombstones.jsonl",
+    );
+    const tombstoneBefore = (await Bun.file(tombstoneFile).exists())
+      ? await Bun.file(tombstoneFile).text()
+      : "";
+
+    const registry = (
+      await resolveProductionAdapterCliRegistry({
+        action: "children.delete",
+        workspaceKey: WORKSPACE,
+        env: { XDG_DATA_HOME: xdg, HOME: xdg },
+        homeDir: xdg,
+        SessionManager,
+        readinessProbe: createReadyPiNativeSessionReadinessProbe(),
+      })
+    )._unsafeUnwrap();
+
+    const tombstonedAttempt = await dispatchAdapterCommand(registry, {
+      adapter: PI_ADAPTER_NAME,
+      command: PI_ADAPTER_COMMAND_NAMES.childrenDelete,
+      payloadJson: JSON.stringify({
+        workspaceKey: WORKSPACE,
+        childId: "child-tombstoned",
+        parentSessionId: PARENT_SESSION,
+        confirmed: true,
+      }),
+    });
+    const malformedAttempt = await dispatchAdapterCommand(registry, {
+      adapter: PI_ADAPTER_NAME,
+      command: PI_ADAPTER_COMMAND_NAMES.childrenDelete,
+      payloadJson: JSON.stringify({
+        workspaceKey: WORKSPACE,
+        childId: "child-malformed",
+        parentSessionId: PARENT_SESSION,
+        confirmed: true,
+      }),
+    });
+    const tombstonedRendered = tombstonedAttempt.isErr()
+      ? JSON.stringify(tombstonedAttempt.error)
+      : "unexpected-success";
+    const malformedRendered = malformedAttempt.isErr()
+      ? JSON.stringify(malformedAttempt.error)
+      : "unexpected-success";
+    const cacheBytesAfter = await Bun.file(databasePath).arrayBuffer();
+    const tombstoneAfter = (await Bun.file(tombstoneFile).exists())
+      ? await Bun.file(tombstoneFile).text()
+      : "";
+
+    expect({
+      tombstonedRefused: tombstonedAttempt.isErr(),
+      tombstonedConflict: tombstonedRendered.includes(
+        "child-already-tombstoned",
+      ),
+      malformedRefused: malformedAttempt.isErr(),
+      malformedConflict: malformedRendered.includes(
+        "Unavailable: CacheRecordInvalid",
+      ),
+      tombstonedSessionIntact: await Bun.file(tombstoned.sessionPath).exists(),
+      malformedSessionIntact: await Bun.file(malformed.sessionPath).exists(),
+      cacheUnchanged: Buffer.from(cacheBytesBefore).equals(
+        Buffer.from(cacheBytesAfter),
+      ),
+      tombstoneUnchanged: tombstoneAfter === tombstoneBefore,
+      leakedXdgPath:
+        tombstonedRendered.includes(xdg) || malformedRendered.includes(xdg),
+    }).toEqual({
+      tombstonedRefused: true,
+      tombstonedConflict: true,
+      malformedRefused: true,
+      malformedConflict: true,
+      tombstonedSessionIntact: true,
+      malformedSessionIntact: true,
+      cacheUnchanged: true,
+      tombstoneUnchanged: true,
       leakedXdgPath: false,
     });
   });

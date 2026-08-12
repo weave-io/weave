@@ -625,3 +625,188 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     expect(JSON.stringify(diagnostic)).not.toContain(REF);
   });
 });
+
+describe("createPiChildrenCommandPort children.delete status gate", () => {
+  const REF = "child-1/session.jsonl";
+  const PARENT = "parent-session-1";
+
+  function metadataRecord(
+    overrides: Partial<PiChildMetadataRecord> = {},
+  ): PiChildMetadataRecord {
+    return {
+      childId: "child-1",
+      threadId: "thread-1",
+      nativeSessionId: "native-session-1",
+      sessionRef: REF,
+      originParentSessionId: PARENT,
+      originEntryId: "origin-entry-1",
+      workspaceKey: "ws",
+      title: "Title",
+      status: "completed",
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      runCount: 1,
+      stale: false,
+      tombstoned: false,
+      cachedAt: 2_000,
+      ...overrides,
+    };
+  }
+
+  function trackingSessions() {
+    let openCalls = 0;
+    let deleteCalls = 0;
+    return {
+      openCalls: () => openCalls,
+      deleteCalls: () => deleteCalls,
+      openSession: () => {
+        openCalls += 1;
+        return errAsync({
+          type: "SessionMissing" as const,
+          ref: REF,
+        });
+      },
+      readSessionEntryPage: () =>
+        errAsync({
+          type: "SessionMissing" as const,
+          ref: REF,
+        }),
+      deleteSession: () => {
+        deleteCalls += 1;
+        return errAsync({
+          type: "SessionConfirmationRequired" as const,
+          ref: REF,
+        });
+      },
+    };
+  }
+
+  it("rejects queued, running, tombstoned, unknown, and missing status before confirmation or mutation", async () => {
+    const cases = [
+      {
+        name: "queued",
+        record: metadataRecord({ status: "queued" }),
+        expected: {
+          type: "Conflict",
+          message: "child-not-terminal:queued",
+        },
+      },
+      {
+        name: "running",
+        record: metadataRecord({ status: "running" }),
+        expected: {
+          type: "Conflict",
+          message: "child-not-terminal:running",
+        },
+      },
+      {
+        name: "tombstoned",
+        record: metadataRecord({ status: "tombstoned", tombstoned: true }),
+        expected: {
+          type: "Conflict",
+          message: "child-already-tombstoned",
+        },
+      },
+      {
+        name: "unknown",
+        record: {
+          ...metadataRecord(),
+          status: "settled",
+        } as unknown as PiChildMetadataRecord,
+        expected: {
+          type: "Conflict",
+          message: "child-status-unknown",
+        },
+      },
+      {
+        name: "missing",
+        record: {
+          ...metadataRecord(),
+          status: "",
+        } as unknown as PiChildMetadataRecord,
+        expected: {
+          type: "Conflict",
+          message: "child-status-missing",
+        },
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const sessions = trackingSessions();
+      let tombstoneCalls = 0;
+      const port = createPiChildrenCommandPort({
+        cache: {
+          list: () => ok({ records: [testCase.record], nextCursor: undefined }),
+          get: () => okAsync(testCase.record),
+          findByChildId: () => ok([testCase.record]),
+          tombstone: () => {
+            tombstoneCalls += 1;
+            return ok(undefined);
+          },
+        },
+        sessions,
+      });
+      const refused = await port.delete({
+        workspaceKey: "ws",
+        childId: "child-1",
+        parentSessionId: PARENT,
+        confirmed: true,
+      });
+      expect({
+        name: testCase.name,
+        error: refused.isErr() ? refused.error : "unexpected-success",
+        openCalls: sessions.openCalls(),
+        deleteCalls: sessions.deleteCalls(),
+        tombstoneCalls,
+      }).toEqual({
+        name: testCase.name,
+        error: testCase.expected,
+        openCalls: 0,
+        deleteCalls: 0,
+        tombstoneCalls: 0,
+      });
+    }
+  });
+
+  it("rejects a malformed cache row before confirmation or mutation", async () => {
+    const sessions = trackingSessions();
+    let tombstoneCalls = 0;
+    const port = createPiChildrenCommandPort({
+      cache: {
+        list: () => ok({ records: [], nextCursor: undefined }),
+        get: () =>
+          errAsync({
+            type: "CacheRecordInvalid" as const,
+            issues: ["status"],
+          }),
+        findByChildId: () =>
+          err({
+            type: "CacheRecordInvalid" as const,
+            issues: ["status"],
+          }),
+        tombstone: () => {
+          tombstoneCalls += 1;
+          return ok(undefined);
+        },
+      },
+      sessions,
+    });
+    const refused = await port.delete({
+      workspaceKey: "ws",
+      childId: "child-1",
+      parentSessionId: PARENT,
+      confirmed: true,
+    });
+    expect({
+      error: refused.isErr() ? refused.error : "unexpected-success",
+      openCalls: sessions.openCalls(),
+      deleteCalls: sessions.deleteCalls(),
+      tombstoneCalls,
+    }).toEqual({
+      error: { type: "Unavailable", message: "CacheRecordInvalid" },
+      openCalls: 0,
+      deleteCalls: 0,
+      tombstoneCalls: 0,
+    });
+  });
+});

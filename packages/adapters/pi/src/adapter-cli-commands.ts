@@ -220,6 +220,58 @@ export type PiAdapterCommandPortError = {
   readonly message: string;
 };
 
+/** Lifecycle statuses that may be explicitly deleted. */
+const DELETABLE_CHILD_STATUSES = Object.freeze([
+  "completed",
+  "failed",
+  "cancelled",
+] as const);
+
+type DeletableChildStatus = (typeof DELETABLE_CHILD_STATUSES)[number];
+
+function isDeletableChildStatus(
+  status: string,
+): status is DeletableChildStatus {
+  return (DELETABLE_CHILD_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Closed, path-free reasons for refusing `children.delete` before any
+ * cache/session mutation. Known non-terminal and already-tombstoned
+ * statuses keep their literal; anything else stays a closed class so a
+ * malformed or attacker-controlled status string cannot leak.
+ */
+function childDeletionStatusError(record: {
+  readonly status?: unknown;
+  readonly tombstoned?: unknown;
+}): PiAdapterCommandPortError | undefined {
+  if (record.tombstoned === true || record.status === "tombstoned") {
+    return {
+      type: "Conflict",
+      message: "child-already-tombstoned",
+    };
+  }
+  if (typeof record.status !== "string" || record.status.length === 0) {
+    return {
+      type: "Conflict",
+      message: "child-status-missing",
+    };
+  }
+  if (record.status === "queued" || record.status === "running") {
+    return {
+      type: "Conflict",
+      message: `child-not-terminal:${record.status}`,
+    };
+  }
+  if (!isDeletableChildStatus(record.status)) {
+    return {
+      type: "Conflict",
+      message: "child-status-unknown",
+    };
+  }
+  return undefined;
+}
+
 export interface PiAdapterChildrenPort {
   list(input: {
     readonly workspaceKey: string;
@@ -686,72 +738,81 @@ export function createPiChildrenCommandPort(
     },
 
     delete(input) {
+      // Lookup and status validation run before confirmation and before any
+      // writable cache/session effect. `get` can mark a row stale or
+      // tombstoned when the source is unusable, so delete uses the read-only
+      // index lookup instead.
+      const found = options.cache.findByChildId({
+        workspaceKey: input.workspaceKey,
+        parentSessionId: input.parentSessionId,
+        childId: input.childId,
+        includeTombstoned: true,
+        limit: 1,
+      });
+      if (found.isErr()) {
+        return errAsync({
+          type: "Unavailable" as const,
+          message: found.error.type,
+        });
+      }
+      const record = found.value[0];
+      if (record === undefined) {
+        return errAsync({
+          type: "NotFound" as const,
+          message: `child not found: ${input.childId}`,
+        });
+      }
+      const statusError = childDeletionStatusError(record);
+      if (statusError !== undefined) {
+        return errAsync(statusError);
+      }
       if (!input.confirmed) {
         return errAsync({
           type: "ConfirmationRequired" as const,
           message: "delete requires confirmation or --yes",
         });
       }
-      return options.cache
-        .get(
-          {
-            workspaceKey: input.workspaceKey,
-            parentSessionId: input.parentSessionId,
-          },
-          input.childId,
-        )
+      return options.sessions
+        .openSession(record.sessionRef, record.originParentSessionId)
         .mapErr(
-          (error): PiAdapterCommandPortError =>
-            error.type === "CacheEntryMissing"
-              ? {
-                  type: "NotFound",
-                  message: `child not found: ${input.childId}`,
-                }
-              : { type: "Unavailable", message: error.type },
+          (error): PiAdapterCommandPortError => ({
+            type: "Unavailable",
+            message: error.type,
+          }),
         )
-        .andThen((record) =>
+        .andThen((session) =>
           options.sessions
-            .openSession(record.sessionRef, record.originParentSessionId)
+            .deleteSession(session, nativeSessionDeletionToken(session.ref))
             .mapErr(
-              (error): PiAdapterCommandPortError => ({
-                type: "Unavailable",
-                message: error.type,
-              }),
-            )
-            .andThen((session) =>
-              options.sessions
-                .deleteSession(session, nativeSessionDeletionToken(session.ref))
-                .mapErr(
-                  (error): PiAdapterCommandPortError =>
-                    error.type === "SessionConfirmationRequired"
-                      ? {
-                          type: "ConfirmationRequired",
-                          message: "delete confirmation token mismatch",
-                        }
-                      : { type: "Unavailable", message: error.type },
-                ),
-            )
-            .andThen((tombstone) => {
-              const marked = options.cache.tombstone(
-                {
-                  workspaceKey: input.workspaceKey,
-                  parentSessionId: input.parentSessionId,
-                },
-                input.childId,
-              );
-              if (marked.isErr()) {
-                return errAsync({
-                  type: "Unavailable" as const,
-                  message: marked.error.type,
-                });
-              }
-              return okAsync({
-                childId: input.childId,
-                tombstoned: true as const,
-                deletedAt: tombstone.deletedAt ?? now().toISOString(),
-              });
-            }),
-        );
+              (error): PiAdapterCommandPortError =>
+                error.type === "SessionConfirmationRequired"
+                  ? {
+                      type: "ConfirmationRequired",
+                      message: "delete confirmation token mismatch",
+                    }
+                  : { type: "Unavailable", message: error.type },
+            ),
+        )
+        .andThen((tombstone) => {
+          const marked = options.cache.tombstone(
+            {
+              workspaceKey: input.workspaceKey,
+              parentSessionId: input.parentSessionId,
+            },
+            input.childId,
+          );
+          if (marked.isErr()) {
+            return errAsync({
+              type: "Unavailable" as const,
+              message: marked.error.type,
+            });
+          }
+          return okAsync({
+            childId: input.childId,
+            tombstoned: true as const,
+            deletedAt: tombstone.deletedAt ?? now().toISOString(),
+          });
+        });
     },
   };
 }
