@@ -96,6 +96,7 @@ function copyGraph(
   value: unknown,
   active: WeakSet<object>,
 ): Result<unknown, SafeGraphCopyError> {
+  if (typeof value === "function") return err(unsafeGraphError());
   if (value === null || typeof value !== "object") return ok(value);
   if (active.has(value)) return err(unsafeGraphError());
 

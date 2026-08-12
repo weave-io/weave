@@ -1096,6 +1096,24 @@ describe("exported schema input boundaries", () => {
     expect(getterExecutions).toBe(0);
   });
 
+  it("rejects callable values without executing getters", () => {
+    let getterExecutions = 0;
+    const callable = () => undefined;
+    Object.defineProperty(callable, "type", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return "unsafe";
+      },
+    });
+
+    expect(AgentConfigSchema.safeParse({ models: [callable] }).success).toBe(
+      false,
+    );
+    expect(getterExecutions).toBe(0);
+  });
+
   it("rejects unexpected prototypes and unsafe data descriptors", () => {
     class AgentInput {}
     const classInput = new AgentInput();

@@ -335,6 +335,31 @@ describe("validate — fail-closed AST structure", () => {
     expect(getterExecutions).toBe(0);
   });
 
+  it("rejects callable direct AST nodes without executing getters", () => {
+    let getterExecutions = 0;
+    const callable = () => undefined;
+    Object.defineProperty(callable, "type", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return "category";
+      },
+    });
+
+    const result = validate([callable] as unknown as AstNode[]);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual([
+      expect.objectContaining({
+        type: "ValidationError",
+        path: "",
+        message: expect.stringContaining("own, enumerable, writable"),
+      }),
+    ]);
+    expect(getterExecutions).toBe(0);
+  });
+
   it("returns bounded errors for malformed safe direct AST shapes", () => {
     const malformedGraphs: unknown[] = [
       null,
