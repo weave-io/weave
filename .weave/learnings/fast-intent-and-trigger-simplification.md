@@ -41,4 +41,4 @@
 
 - Engine descriptors now carry only `fast?: true` and `DelegationTarget.triggers: string[]`. Category metadata no longer has `patterns`. `generateCategoryShuttles()` copies category triggers, never base Shuttle triggers, and sets `fast true` when the category or the base Shuttle declares it. There is no `false` value.
 - Descriptor outputs must copy trigger, model, and skill arrays. Sharing `targetConfig.triggers` or `category.triggers` leaks caller mutation into the normalized shape.
-- Changing `DelegationTarget.triggers` to `string[]` immediately breaks any adapter schema that still validates object triggers. The Pi bootstrap body is such a compile consumer and had to accept bounded strings in this slice. Task 6 still owns prompt-context projection and capability behavior.
+- Changing `DelegationTarget.triggers` to `string[]` immediately breaks later-task consumers that still validate object triggers, including the Pi bootstrap schema (Task 8) and template trigger projection (Task 6). This slice keeps a compile-only template-context bridge and does not migrate those owners.

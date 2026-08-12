@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 280 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~29,700 tokens. Without it, AI exploration would cost ~91,500 tokens. **Saves ~61,700 tokens per conversation.**
-> **Last scanned:** 2026-08-12 22:00 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 272 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~28,900 tokens. Without it, AI exploration would cost ~89,400 tokens. **Saves ~60,500 tokens per conversation.**
+> **Last scanned:** 2026-08-08 01:24 — re-run after significant changes
 
 ---
 
@@ -251,14 +251,7 @@
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
   - _...42 more_
-- `packages/adapters/pi/src/child-overlay-component.ts`
-  - function formatChildOverlayTelemetryLine: (telemetry) => string
-  - function compactChildOverlayEntryLine: (entry, width) => string
-  - function compactChildOverlayLines: (entries, width) => readonly string[]
-  - function spansFromRows: (rows) => readonly OverlayLayoutSpan[]
-  - function overlayUsableRows: (tui) => number
-  - function toChildOverlayEditorTheme: (theme) => EditorTheme
-  - _...7 more_
+- `packages/adapters/pi/src/child-overlay-component.ts` — function createChildOverlayCustomComponent: (tui) => void },, interface PiChildOverlayCustomComponent
 - `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
@@ -275,7 +268,7 @@
   - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
-  - _...52 more_
+  - _...45 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
@@ -283,20 +276,19 @@
   - function nonEmptyString: (value) => string | undefined
   - function boundLabel: (value) => string
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
-  - _...11 more_
+  - _...6 more_
 - `packages/adapters/pi/src/child-overlay-scroll.ts`
-  - function setLayoutSpans: (state, spans) => void
-  - function captureViewportAnchor: (state) => ChildOverlayAnchor | undefined
-  - function captureViewportForLayoutChange: (state) => void
-  - function applyViewportAnchor: (state, anchor) => void
   - function markTailGrowth: (state) => void
   - function clearTailGrowth: (state) => void
-  - _...9 more_
+  - function applyMeasuredExtent: (state, extent) => void
+  - function maxScrollRows: (state) => number
+  - function anchorFromScroll: (state) => ChildOverlayAnchor | undefined
+  - function restoreScrollAnchor: (state, anchor) => void
+  - _...2 more_
 - `packages/adapters/pi/src/child-overlay-search.ts`
   - function stripPathLike: (value) => string
   - function matchingEntryIds: (entries, needle) => string[]
   - function mergeMatchIds: (older, newer) => string[]
-- `packages/adapters/pi/src/child-overlay-telemetry.ts` — function latestUsageInWindow: (entries) => PiChildUsageReport | undefined, function deriveChildOverlayTelemetry: (usage, child) => ChildOverlayTelemetry | undefined
 - `packages/adapters/pi/src/child-overlay-terminal-input.ts`
   - function normalizeChildOverlayScrollFrame: (data) => string | undefined
   - function isChildOverlayScrollFrame: (data) => boolean
@@ -312,7 +304,7 @@
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
   - interface ChildOverlayConfig
-  - _...31 more_
+  - _...26 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
@@ -362,13 +354,13 @@
   - type PiChildSessionCheckpoint
   - _...4 more_
 - `packages/adapters/pi/src/child-session-events.ts`
-  - function parsePiChildUsageReport: (event) => Result<PiChildUsageReport, PiChildUsageError>
-  - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
   - function parsePiChildSessionEvent
-  - interface PiChildUsageReport
-  - interface PiAssistantUsageFacts
-  - _...11 more_
+  - type PiChildSessionEvent
+  - type PiChildEventType
+  - type PiExtensionUiResponse
+  - const MAX_CHILD_EVENT_STRING
+  - _...4 more_
 - `packages/adapters/pi/src/child-session-reconstruction.ts`
   - function describeChildReconstructionError: (error) => string
   - function reconstructParentLocalChildren: (input) => ResultAsync<PiChildReconstructionSummary, PiChildReconstructionError>
@@ -612,13 +604,10 @@
   - class InMemoryRecoveryPointerStore
   - _...9 more_
 - `packages/adapters/pi/src/render-width.ts`
-  - function overlayFrameGeometry: (outerWidth) => OverlayFrameGeometry
-  - function frameLinesToWidth: (lines, outerWidth) => string[]
   - function fitLineToWidth: (line, width) => string
   - function fitLineWithSuffix: (head, suffix, width) => string
   - function fitLinesToWidth: (lines, width) => string[]
   - function fitRuleToWidth: (rule, width, cap) => string
-  - _...2 more_
 - `packages/adapters/pi/src/repeated-settlement-validator.ts`
   - function validateRepeatedSettlements: (options) => ResultAsync<
   - interface PiSettlementValidationRun
@@ -1017,32 +1006,7 @@
   - class BufferTerminal
   - interface TerminalIO
 - `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
-- `packages/cli/src/migration/legacy-conversion-diagnostics.ts`
-  - function primitiveCategory: (value) => PrimitiveTypeCategory
-  - function reasonWithType: (reason, value) => string
-  - function joinPath: (parts) => string
-  - function boundWarning: (warning) => ConversionWarning
-  - function pushWarning: (warnings, field, reason) => void
-  - function absorbWarnings: (warnings, extra) => void
-  - _...12 more_
-- `packages/cli/src/migration/legacy-dsl-identifiers.ts`
-  - function isDangerousDslName: (name) => boolean
-  - function isDslIdentifierShape: (name) => boolean
-  - function classifyDslName: (name) => DslNameClassification
-  - function isEmittableDslName: (name) => boolean
-  - type DslNameClassification
-  - const DANGEROUS_DSL_NAMES
-  - _...1 more_
-- `packages/cli/src/migration/legacy-graph-copy.ts`
-  - function copyLegacyGraph: (value) => Result<unknown, LegacyGraphCopyError>
-  - type LegacyGraphCopyError
-  - const UNSAFE_LEGACY_GRAPH_MESSAGE
-  - const LEGACY_GRAPH_TOO_LARGE_MESSAGE
-  - const MAX_LEGACY_GRAPH_NODES
-  - const MAX_LEGACY_GRAPH_DEPTH
-  - _...4 more_
-- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function convertLegacyValue: (value) => ConversionResult, function convertLegacyJsonc: (source) => ConversionResult
-- `packages/cli/src/migration/legacy-jsonc-inspect.ts` — function inspectLegacyJsonc: (source) => Result<void, LegacyJsoncInspectError>, type LegacyJsoncInspectError
+- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function convertLegacyJsonc: (source) => ConversionResult
 - `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
@@ -1096,14 +1060,6 @@
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
 - `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
-- `packages/core/src/config-error-policy.ts`
-  - function boundConfigErrors: (errors, truncationMarker) => void
-  - const MAX_CONFIG_ERROR_ISSUES
-  - const MAX_CONFIG_ERROR_PATH_LENGTH
-  - const MAX_CONFIG_ERROR_FIELD_LENGTH
-  - const MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE
-  - const CONFIG_ERRORS_TRUNCATED
-  - _...1 more_
 - `packages/core/src/errors.ts`
   - function formatError: (error) => string
   - type LexError
@@ -1123,18 +1079,7 @@
   - function refinePromptAppendExclusive: () => [
   - function refinePromptExclusive: () => [
   - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
-- `packages/core/src/safe-graph-copy.ts`
-  - function copySafeGraph: (value) => Result<unknown, SafeGraphCopyError>
-  - type SafeGraphCopyError
-  - const UNSAFE_GRAPH_MESSAGE
-- `packages/core/src/safe-schema-input.ts` — function safeSchemaInput: (schema) => z.ZodType<z.output<T>, z.input<T>>
-- `packages/core/src/validate.ts`
-  - function validate: (ast) => Result<WeaveConfig, ValidationError[]>
-  - const MAX_VALIDATION_ISSUES
-  - const MAX_VALIDATION_PATH_LENGTH
-  - const MAX_VALIDATION_MESSAGE_LENGTH
-  - const MAX_VALIDATION_DIAGNOSTIC_SIZE
-  - const VALIDATION_DIAGNOSTICS_TRUNCATED
+- `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
 - `packages/engine/src/adapter-command.ts`
   - function createAdapterCommandRegistry: (adapters, Readonly<Record<string, AdapterCommandHandler>>>
@@ -1686,37 +1631,37 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/adapters/pi/src/types.ts` — imported by **45** files
+- `packages/adapters/pi/src/types.ts` — imported by **41** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
-- `packages/adapters/pi/src/strict-json.ts` — imported by **26** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **25** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **19** files
 - `packages/adapters/pi/src/errors.ts` — imported by **19** files
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `scripts/release/stable-train.ts` — imported by **16** files
-- `packages/adapters/pi/src/child-tree.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **14** files
+- `packages/adapters/pi/src/child-tree.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
-- `packages/adapters/pi/src/native-session-fs.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
+- `scripts/release/filesystem.ts` — imported by **13** files
 
 ## Import Map (who imports what)
 
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +40 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +36 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
-- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts` +21 more
+- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts` +20 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +15 more
-- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` ← `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts`, `packages/adapters/pi/src/__tests__/child-isolation.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +14 more
 - `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts` +14 more
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` ← `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts`, `packages/adapters/pi/src/__tests__/child-isolation.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 
@@ -1739,7 +1684,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 302 test files found
+> 292 test files found
 
 ---
 

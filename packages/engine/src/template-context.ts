@@ -229,28 +229,17 @@ export interface TemplateContextInput {
 /**
  * Project a `DelegationTarget` into a `DelegationTargetContextEntry`.
  *
- * Projects string triggers into the current template-context object shape.
- * Task 6 owns the prompt-context rewrite; this only preserves trigger order.
+ * Task 6 owns string-trigger prompt projection. This compile bridge keeps the
+ * existing context types valid against `DelegationTarget.triggers: string[]`
+ * and does not invent structured trigger objects or domain strings.
  */
 function projectDelegationTarget(
   target: DelegationTarget,
 ): DelegationTargetContextEntry {
-  // String triggers have no domain or routing_hint. Task 6 owns the prompt
-  // context shape; this projection only keeps the existing object fields
-  // populated enough for current templates and TypeScript to compile.
-  const triggers: Array<{
-    domain: string;
-    trigger: string;
-    routing_hint?: string;
-  }> = target.triggers.map((trigger) => ({
-    domain: "",
-    trigger,
-  }));
-
   const entry: DelegationTargetContextEntry = {
     name: target.name,
     domains: [],
-    triggers,
+    triggers: [],
     isCategory: target.isCategory,
   };
 

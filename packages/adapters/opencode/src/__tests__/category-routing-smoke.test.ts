@@ -53,6 +53,7 @@ const descriptor: AgentDescriptor = {
   category: {
     name: "client-frontend",
     description: "Client-facing UI, components, and styling",
+    patterns: ["src/client/**", "**/*.tsx", "**/*.css"],
   },
   composedPrompt: COMPOSED_PROMPT,
   models: ["claude-sonnet-4-5"],
@@ -207,10 +208,7 @@ describe("category-routing smoke — fixture sanity (always runs)", () => {
 
   it("descriptor category metadata is correct", () => {
     expect(descriptor.category?.name).toBe("client-frontend");
-    expect(descriptor.category?.description).toBe(
-      "Client-facing UI, components, and styling",
-    );
-    expect("patterns" in (descriptor.category ?? {})).toBe(false);
+    expect(descriptor.category?.patterns).toContain("src/client/**");
   });
 
   it("translateAgent is importable and is a function", () => {

@@ -8,7 +8,7 @@
  * - No raw config/model/temperature/path exposure
  * - Optional category behavior (present for category shuttles, absent otherwise)
  * - Allowed-path metadata completeness
- * - Domain deduplication across triggers
+ * - Compile-only trigger bridge until Task 6 owns projection
  */
 
 import { describe, expect, it } from "bun:test";
@@ -333,15 +333,13 @@ describe("buildTemplateContext — delegation with targets", () => {
     expect(ctx.delegation.targets[0]?.description).toBeUndefined();
   });
 
-  it("projects trigger details", () => {
+  it("does not invent structured trigger objects from string triggers", () => {
     const ctx = build({
       delegationTargets: [
         makeTarget("shuttle-backend", undefined, ["REST endpoint changes"]),
       ],
     });
-    expect(ctx.delegation.targets[0]?.triggers).toEqual([
-      { domain: "", trigger: "REST endpoint changes" },
-    ]);
+    expect(ctx.delegation.targets[0]?.triggers).toEqual([]);
   });
 
   it("does not invent domains from string triggers", () => {
@@ -355,23 +353,6 @@ describe("buildTemplateContext — delegation with targets", () => {
       ],
     });
     expect(ctx.delegation.targets[0]?.domains).toEqual([]);
-  });
-
-  it("preserves string trigger order", () => {
-    const ctx = build({
-      delegationTargets: [
-        makeTarget("shuttle-backend", undefined, [
-          "Schema changes",
-          "REST changes",
-          "Migration",
-        ]),
-      ],
-    });
-    expect(ctx.delegation.targets[0]?.triggers.map((t) => t.trigger)).toEqual([
-      "Schema changes",
-      "REST changes",
-      "Migration",
-    ]);
   });
 
   it("empty domains array when target has no triggers", () => {

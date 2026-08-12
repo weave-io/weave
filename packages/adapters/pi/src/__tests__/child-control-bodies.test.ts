@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import {
-  MAX_NAME_LENGTH,
   MAX_SETTLEMENT_OUTPUT_BYTES,
   parseControlBody,
   toModelIdentityBody,
@@ -132,7 +131,7 @@ describe("BootstrapBodySchema composedPrompt bound", () => {
 });
 
 describe("BootstrapBodySchema delegation trigger metadata", () => {
-  it("accepts the engine's bounded string triggers on a delegation target", () => {
+  it("accepts the engine's optional routing_hint on a delegation target trigger", () => {
     const result = parseControlBody("bootstrap", {
       agentName: "tapestry",
       composedPrompt: "Delegate every implementation task.",
@@ -141,7 +140,13 @@ describe("BootstrapBodySchema delegation trigger metadata", () => {
         {
           name: "shuttle",
           description: "Shuttle (Domain Specialist)",
-          triggers: ["Bounded coding tasks"],
+          triggers: [
+            {
+              domain: "Implementation",
+              trigger: "Bounded coding tasks",
+              routing_hint: "Use for clearly scoped implementation tasks",
+            },
+          ],
           isCategory: false,
         },
       ],
@@ -150,7 +155,7 @@ describe("BootstrapBodySchema delegation trigger metadata", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("rejects a trigger string over the private-control bound", () => {
+  it("rejects a routing_hint over the private-control bound", () => {
     const result = parseControlBody("bootstrap", {
       agentName: "tapestry",
       composedPrompt: "Delegate every implementation task.",
@@ -158,7 +163,13 @@ describe("BootstrapBodySchema delegation trigger metadata", () => {
       delegationTargets: [
         {
           name: "shuttle",
-          triggers: ["x".repeat(MAX_NAME_LENGTH + 1)],
+          triggers: [
+            {
+              domain: "Implementation",
+              trigger: "Bounded coding tasks",
+              routing_hint: "x".repeat(1_025),
+            },
+          ],
           isCategory: false,
         },
       ],
