@@ -36,6 +36,8 @@ import {
   projectAssistantProviderError,
   redactProviderErrorFromEvent,
   SAFE_ASSISTANT_MESSAGE_FIELDS,
+  TOOL_ERROR_DETAILS_UNAVAILABLE,
+  TOOL_RESULT_DETAILS_UNAVAILABLE,
 } from "../child-provider-error.js";
 import { parsePiChildSessionEvent } from "../child-session-events.js";
 import { PiChildTranscriptReducer } from "../child-transcript.js";
@@ -929,6 +931,105 @@ describe("child provider error hostile boundary", () => {
 });
 
 describe("child provider error safe message copy", () => {
+  const replay = (value: unknown): PiChildSessionEvent => {
+    const parsed = parsePiChildSessionEvent(value);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("unreachable");
+    return redactProviderErrorFromEvent(parsed.data);
+  };
+
+  it("canonicalizes unsafe tool values and preserves safe summaries", () => {
+    const hostileValues = [
+      "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+      "github_pat_0123456789abcdefghijklmnopqrstuvwxyz",
+      "xoxb-1234567890-secret",
+      "xoxp-1234567890-secret",
+      "sk-1234567890secret",
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature123",
+      "0123456789abcdef0123456789abcdef",
+      "AbCdEfGhIjKlMnOpQrStUvWx12345678",
+      "Authorization: Bearer opaque",
+      "Cookie: session=opaque",
+      "https://example.test/private",
+      "/Users/alice/private.txt",
+      '{"token":"xoxb-nested-secret"}',
+    ];
+    const toolResult = replay({
+      type: "tool_result",
+      toolCallId: "call-1",
+      toolName: "inspect",
+      result: {
+        summary: "Checked three files",
+        values: hostileValues,
+        nested: { note: "Review complete", secret: hostileValues[0] },
+      },
+    });
+    const serialized = JSON.stringify(toolResult);
+    for (const value of hostileValues) expect(serialized).not.toContain(value);
+    expect(serialized).toContain(TOOL_RESULT_DETAILS_UNAVAILABLE);
+    expect(serialized).toContain("Checked three files");
+    expect(serialized).toContain("Review complete");
+
+    const toolError = replay({
+      type: "tool_error",
+      toolCallId: "call-1",
+      toolName: "inspect",
+      error: hostileValues[0],
+    });
+    expect(toolError).toEqual({
+      type: "tool_error",
+      toolCallId: "call-1",
+      toolName: "inspect",
+      error: TOOL_ERROR_DETAILS_UNAVAILABLE,
+    });
+
+    const reducer = new PiChildTranscriptReducer();
+    reducer.applyEvent(toolResult);
+    reducer.applyEvent(toolError);
+    const toolEntry = reducer
+      .getState()
+      .entries.find((entry) => entry.kind === "tool");
+    expect(toolEntry?.kind).toBe("tool");
+    if (toolEntry?.kind !== "tool") throw new Error("unreachable");
+    expect(toolEntry.result).toBeDefined();
+    expect(toolEntry.error).toBe(TOOL_ERROR_DETAILS_UNAVAILABLE);
+  });
+
+  it("does not invoke hostile tool descriptors or proxies", () => {
+    let getterCalls = 0;
+    const hostileRecord = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(hostileRecord, "summary", {
+      enumerable: true,
+      get: () => {
+        getterCalls += 1;
+        return "ghp_getter_secret";
+      },
+    });
+    const hostileProxy = new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          throw new Error("ghp_proxy_secret");
+        },
+      },
+    );
+    const parsed = parsePiChildSessionEvent({
+      type: "tool_result",
+      toolCallId: "call-hostile",
+      result: [hostileRecord, hostileProxy],
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("unreachable");
+    const projected = redactProviderErrorFromEvent(parsed.data);
+    const callsAfterParse = getterCalls;
+    expect(callsAfterParse).toBeGreaterThanOrEqual(0);
+    expect(getterCalls).toBe(callsAfterParse);
+    expect(JSON.stringify(projected)).not.toContain("ghp_");
+    expect(JSON.stringify(projected)).toContain(
+      TOOL_RESULT_DETAILS_UNAVAILABLE,
+    );
+  });
+
   const hostileMessage = {
     id: "msg_01HQ",
     role: "assistant",
@@ -1176,7 +1277,7 @@ describe("child provider error safe message copy", () => {
     }
     expect(serializedState).toContain("start streamed");
     expect(serializedState).toContain("reasoning");
-    expect(serializedState).toContain("src/index.ts");
+    expect(serializedState).not.toContain("src/index.ts");
     expect(serializedState).toContain("partial");
     expect(serializedState).toContain("complete");
     expect(serializedState).toContain("exit 1");

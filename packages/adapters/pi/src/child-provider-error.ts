@@ -88,6 +88,7 @@ import {
   MAX_CHILD_EVENT_ITEMS,
   MAX_CHILD_EVENT_STRING,
   type PiChildSessionEvent,
+  PiChildSessionEventSchema,
   projectAssistantUsageFacts,
 } from "./child-session-events.js";
 
@@ -695,6 +696,35 @@ const boundedString = (
     ? value.slice(0, maxLength)
     : undefined;
 
+export const TOOL_RESULT_DETAILS_UNAVAILABLE =
+  "Tool result details unavailable.";
+export const TOOL_ERROR_DETAILS_UNAVAILABLE = "Tool error details unavailable.";
+
+const MAX_SAFE_TOOL_TEXT_LENGTH = 512;
+const MAX_SAFE_TOOL_VALUE_DEPTH = 4;
+const MAX_SAFE_TOOL_VALUE_MEMBERS = 32;
+const SAFE_TOOL_TEXT_CHARACTERS =
+  /^[A-Za-z0-9#][A-Za-z0-9 .,!?'"():;_+=%&#-]*$/u;
+const UNSAFE_TOOL_TEXT_MARKER =
+  /(?:\b(?:authorization|bearer|cookie|api[-_ ]?key|secret|token|header|path|url|uri|json|payload|blob)\b|(?:ghp_|github_pat_|xox[bp]-|sk-)|https?:\/\/|file:\/\/|(?:^|\s)\/(?:[^\s/]+\/)*[^\s/]+|\b[A-Za-z]:\\|[{}[\]<>`]|\\)/iu;
+const JWT_LIKE_TEXT =
+  /\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/u;
+const HIGH_ENTROPY_HEX = /\b[0-9a-f]{24,}\b/iu;
+const HIGH_ENTROPY_BASE64 =
+  /\b(?=[A-Za-z0-9+/_-]{24,}={0,2}\b)(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z0-9+/_-]+={0,2}\b/u;
+
+const safeToolText = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  if (value.length === 0 || value.length > MAX_SAFE_TOOL_TEXT_LENGTH)
+    return undefined;
+  if (!SAFE_TOOL_TEXT_CHARACTERS.test(value)) return undefined;
+  if (UNSAFE_TOOL_TEXT_MARKER.test(value)) return undefined;
+  if (JWT_LIKE_TEXT.test(value)) return undefined;
+  if (HIGH_ENTROPY_HEX.test(value)) return undefined;
+  if (HIGH_ENTROPY_BASE64.test(value)) return undefined;
+  return value;
+};
+
 const boundedNumber = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
@@ -726,42 +756,73 @@ const copyBoolean = (
   if (typeof value === "boolean") target[key] = value;
 };
 
-const safeValueKey = (key: string): boolean =>
-  !/(?:auth|cookie|header|secret|token|key|url|uri|request|response|diagnostic|errorMessage|payload|provider)/iu.test(
-    key,
-  );
+const SAFE_TOOL_VALUE_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
+const UNSAFE_TOOL_VALUE_KEY =
+  /(?:auth|cookie|header|secret|token|key|url|uri|request|response|diagnostic|error|message|payload|provider|file|body|raw)/iu;
 
-/** Closed JSON projection for reducer-visible tool values. */
-const projectReducerValue = (value: unknown, depth = 0): unknown => {
+const safeValueKey = (key: string): boolean =>
+  SAFE_TOOL_VALUE_KEY.test(key) && !UNSAFE_TOOL_VALUE_KEY.test(key);
+
+const hasPlainPrototype = (value: object, array: boolean): boolean => {
+  const prototype = guardValue(() => Object.getPrototypeOf(value), undefined);
+  return array
+    ? prototype === Array.prototype
+    : prototype === Object.prototype || prototype === null;
+};
+
+/** Closed JSON projection for reducer-visible tool and extension UI values. */
+const projectReducerValue = (
+  value: unknown,
+  placeholder = TOOL_RESULT_DETAILS_UNAVAILABLE,
+  depth = 0,
+): unknown => {
   if (value === null || typeof value === "boolean") return value;
-  if (typeof value === "string") return boundedString(value);
+  if (typeof value === "string") return safeToolText(value) ?? placeholder;
   if (typeof value === "number")
-    return Number.isFinite(value) ? value : undefined;
-  if (depth >= 4) return undefined;
+    return Number.isFinite(value) ? value : placeholder;
+  if (depth >= MAX_SAFE_TOOL_VALUE_DEPTH) return placeholder;
   if (Array.isArray(value)) {
+    if (!hasPlainPrototype(value, true)) return placeholder;
+    const length = guardValue(() => value.length, -1);
+    if (
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      length > MAX_SAFE_TOOL_VALUE_MEMBERS
+    )
+      return placeholder;
     const result: unknown[] = [];
     const source = value as unknown as Record<string, unknown>;
-    for (
-      let index = 0;
-      index < Math.min(value.length, MAX_CHILD_EVENT_ITEMS);
-      index += 1
-    ) {
-      const item = projectReducerValue(
-        ownDataField(source, String(index)),
-        depth + 1,
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = guardValue(
+        () => Object.getOwnPropertyDescriptor(source, String(index)),
+        undefined,
       );
-      if (item !== undefined) result.push(item);
+      if (descriptor === undefined || !("value" in descriptor)) {
+        result.push(placeholder);
+        continue;
+      }
+      result.push(
+        projectReducerValue(descriptor.value, placeholder, depth + 1),
+      );
     }
     return result;
   }
   const record = asRecord(value);
-  if (record === undefined) return undefined;
+  if (record === undefined || !hasPlainPrototype(record, false))
+    return placeholder;
   const keys = guardValue(() => Object.keys(record), [] as string[]);
+  if (keys.length > MAX_SAFE_TOOL_VALUE_MEMBERS) return placeholder;
   const result: Record<string, unknown> = {};
-  for (const key of keys.slice(0, MAX_CHILD_EVENT_ITEMS)) {
+  for (const key of keys) {
     if (!safeValueKey(key)) continue;
-    const item = projectReducerValue(ownDataField(record, key), depth + 1);
-    if (item !== undefined) result[key] = item;
+    const descriptor = guardValue(
+      () => Object.getOwnPropertyDescriptor(record, key),
+      undefined,
+    );
+    result[key] =
+      descriptor !== undefined && "value" in descriptor
+        ? projectReducerValue(descriptor.value, placeholder, depth + 1)
+        : placeholder;
   }
   return result;
 };
@@ -779,9 +840,17 @@ const projectContentBlock = (value: unknown): unknown => {
     copyString(block, source, key, 128);
   copyBoolean(block, source, "isError");
   copyBoolean(block, source, "is_error");
-  for (const key of ["arguments", "input", "args"] as const) {
-    const projected = projectReducerValue(ownDataField(source, key));
-    if (projected !== undefined) block[key] = projected;
+  const blockType = ownDataField(source, "type");
+  if (
+    blockType === "tool_call" ||
+    blockType === "tool_use" ||
+    blockType === "toolCall"
+  ) {
+    for (const key of ["arguments", "input", "args"] as const) {
+      const raw = ownDataField(source, key);
+      if (raw === undefined) continue;
+      block[key] = projectReducerValue(raw);
+    }
   }
   return Object.keys(block).length > 0 ? block : undefined;
 };
@@ -866,97 +935,107 @@ const projectUsageEvent = (
   return event;
 };
 
+const invalidReplayEvent = (): PiChildSessionEvent =>
+  PiChildSessionEventSchema.parse({
+    type: "unknown",
+    originalType: "redacted-invalid-event",
+  });
+
+const parseRebuiltEvent = (value: unknown): PiChildSessionEvent => {
+  const parsed = PiChildSessionEventSchema.safeParse(value);
+  return parsed.success ? parsed.data : invalidReplayEvent();
+};
+
 /** Rebuild one parser-approved event through a closed reducer allowlist. */
 export function redactProviderErrorFromEvent(
   event: PiChildSessionEvent,
 ): PiChildSessionEvent {
-  return guardValue(
-    () => {
-      const source = asRecord(event);
-      if (source === undefined)
-        return { type: "unknown" } as PiChildSessionEvent;
-      const type = boundedString(ownDataField(source, "type"), 64) ?? "unknown";
-      const rebuilt: Record<string, unknown> = { type };
-      switch (type) {
-        case "message_start": {
-          const message = projectMessage(ownDataField(source, "message"));
-          if (message !== undefined) rebuilt.message = message;
-          copyString(rebuilt, source, "branchId", 256);
-          break;
-        }
-        case "message_update": {
-          const delta = projectDelta(ownDataField(source, "delta"));
-          if (delta !== undefined) rebuilt.delta = delta;
-          const assistant = projectDelta(
-            ownDataField(source, "assistantMessageEvent"),
-          );
-          if (assistant !== undefined)
-            rebuilt.assistantMessageEvent = assistant;
-          copyString(rebuilt, source, "messageId", 256);
-          break;
-        }
-        case "message_end": {
-          const message = projectMessage(ownDataField(source, "message"));
-          if (message !== undefined) rebuilt.message = message;
-          break;
-        }
-        case "text":
-        case "thinking":
-        case "markdown":
-          copyString(rebuilt, source, "text");
-          copyString(rebuilt, source, "messageId", 256);
-          break;
-        case "tool_call":
-        case "tool_partial_result":
-        case "tool_result":
-        case "tool_error":
-          copyString(rebuilt, source, "toolCallId", 256);
-          copyString(rebuilt, source, "toolName", 128);
-          copyString(rebuilt, source, "name", 128);
-          for (const key of [
-            "arguments",
-            "partialResult",
-            "result",
-            "content",
-          ] as const) {
-            const value = projectReducerValue(ownDataField(source, key));
-            if (value !== undefined) rebuilt[key] = value;
-          }
-          if (type === "tool_error") {
-            copyString(rebuilt, source, "error");
-            copyString(rebuilt, source, "message");
-          }
-          break;
-        case "image":
-          copyString(rebuilt, source, "mimeType", 128);
-          break;
-        case "usage":
-          return projectUsageEvent(source) as PiChildSessionEvent;
-        case "queue_change":
-          copyNumber(rebuilt, source, "size");
-          break;
-        case "status":
-          copyString(rebuilt, source, "status", 128);
-          copyString(rebuilt, source, "message");
-          break;
-        case "retry":
-          copyNumber(rebuilt, source, "attempt");
-          copyString(rebuilt, source, "reason");
-          break;
-        case "extension_ui_request":
-          copyString(rebuilt, source, "requestType", 128);
-          copyString(rebuilt, source, "message");
-          break;
-        case "extension_ui_response":
-        case "unknown":
-          break;
-        default:
-          return { type: "unknown" } as PiChildSessionEvent;
+  return guardValue(() => {
+    const source = asRecord(event);
+    if (source === undefined) return invalidReplayEvent();
+    const type = boundedString(ownDataField(source, "type"), 64) ?? "unknown";
+    const rebuilt: Record<string, unknown> = { type };
+    switch (type) {
+      case "message_start": {
+        const message = projectMessage(ownDataField(source, "message"));
+        if (message !== undefined) rebuilt.message = message;
+        copyString(rebuilt, source, "branchId", 256);
+        break;
       }
-      return rebuilt as PiChildSessionEvent;
-    },
-    { type: "unknown" } as PiChildSessionEvent,
-  );
+      case "message_update": {
+        const delta = projectDelta(ownDataField(source, "delta"));
+        if (delta !== undefined) rebuilt.delta = delta;
+        const assistant = projectDelta(
+          ownDataField(source, "assistantMessageEvent"),
+        );
+        if (assistant !== undefined) rebuilt.assistantMessageEvent = assistant;
+        copyString(rebuilt, source, "messageId", 256);
+        break;
+      }
+      case "message_end": {
+        const message = projectMessage(ownDataField(source, "message"));
+        if (message !== undefined) rebuilt.message = message;
+        break;
+      }
+      case "text":
+      case "thinking":
+      case "markdown":
+        copyString(rebuilt, source, "text");
+        copyString(rebuilt, source, "messageId", 256);
+        break;
+      case "tool_call":
+      case "tool_partial_result":
+      case "tool_result":
+      case "tool_error":
+        copyString(rebuilt, source, "toolCallId", 256);
+        copyString(rebuilt, source, "toolName", 128);
+        copyString(rebuilt, source, "name", 128);
+        for (const key of [
+          "arguments",
+          "partialResult",
+          "result",
+          "content",
+        ] as const) {
+          const raw = ownDataField(source, key);
+          if (raw === undefined) continue;
+          rebuilt[key] = projectReducerValue(raw);
+        }
+        if (type === "tool_error") {
+          for (const key of ["error", "message"] as const) {
+            const raw = ownDataField(source, key);
+            if (typeof raw === "string")
+              rebuilt[key] =
+                safeToolText(raw) ?? TOOL_ERROR_DETAILS_UNAVAILABLE;
+          }
+        }
+        break;
+      case "image":
+        copyString(rebuilt, source, "mimeType", 128);
+        break;
+      case "usage":
+        return parseRebuiltEvent(projectUsageEvent(source));
+      case "queue_change":
+        copyNumber(rebuilt, source, "size");
+        break;
+      case "status":
+        copyString(rebuilt, source, "status", 128);
+        copyString(rebuilt, source, "message");
+        break;
+      case "retry":
+        copyNumber(rebuilt, source, "attempt");
+        copyString(rebuilt, source, "reason");
+        break;
+      case "extension_ui_request":
+      case "extension_ui_response":
+        return invalidReplayEvent();
+      case "unknown":
+        copyString(rebuilt, source, "originalType", 256);
+        break;
+      default:
+        return invalidReplayEvent();
+    }
+    return parseRebuiltEvent(rebuilt);
+  }, invalidReplayEvent());
 }
 
 // ---------------------------------------------------------------------------

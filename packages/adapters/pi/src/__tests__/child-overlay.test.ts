@@ -34,6 +34,7 @@ import {
   transcriptFromOverlayEntries,
 } from "../child-overlay.js";
 import { boundText } from "../child-overlay-replay.js";
+import { TOOL_RESULT_DETAILS_UNAVAILABLE } from "../child-provider-error.js";
 import { parsePiChildSessionEvent } from "../child-session-events.js";
 import {
   makeThreadAuthorityDeniedFailure,
@@ -442,7 +443,7 @@ describe("mapNativeSessionEntryToOverlay", () => {
     expect(entry?.kind).toBe("tool");
     const serialized = JSON.stringify(entry);
     expect(serialized).not.toContain("A".repeat(64));
-    expect(serialized).toContain("image/png");
+    expect(serialized).toContain(TOOL_RESULT_DETAILS_UNAVAILABLE);
     const transcript = transcriptFromOverlayEntries(
       entry === undefined ? [] : [entry],
     );
@@ -873,7 +874,7 @@ describe("ChildOverlayController", () => {
     await mustOpen(overlay, "live-merge-overflow");
 
     const toolCallId = "merge-tool";
-    const toolArgs = { path: "src/index.ts", mode: "full" };
+    const toolArgs = { target: "module", mode: "full" };
     overlay
       .applyLiveEvent({
         type: "message_start",
@@ -1077,7 +1078,7 @@ describe("ChildOverlayController", () => {
         type: "tool_call",
         toolCallId: "call-a",
         toolName: "read",
-        arguments: { path: "a.ts" },
+        arguments: { target: "module-a" },
       },
       {
         type: "tool_result",
@@ -1115,7 +1116,7 @@ describe("ChildOverlayController", () => {
     const asst = rebuilt.entries.find((entry) => entry.kind === "assistant");
     expect(toolA && "state" in toolA ? toolA.state : undefined).toBe("result");
     expect(toolA && "arguments" in toolA ? toolA.arguments : undefined).toEqual(
-      { path: "a.ts" },
+      { target: "module-a" },
     );
     expect(toolB && "state" in toolB ? toolB.state : undefined).toBe("error");
     expect(toolB && "arguments" in toolB ? toolB.arguments : undefined).toEqual(
