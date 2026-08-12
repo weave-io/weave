@@ -54,13 +54,7 @@ const MAX_COMPOSED_PROMPT_LENGTH = MAX_CONTROL_BODY_BYTES / 2;
 const NameSchema = z.string().min(1).max(MAX_NAME_LENGTH);
 const EmptyBodySchema = z.object({}).strict();
 
-const DelegationTriggerSchema = z
-  .object({
-    domain: z.string().max(MAX_NAME_LENGTH),
-    trigger: z.string().max(MAX_NAME_LENGTH),
-    routing_hint: z.string().max(1_024).optional(),
-  })
-  .strict();
+const DelegationTriggerSchema = z.string().min(1).max(MAX_NAME_LENGTH);
 
 const DelegationTargetBodySchema = z
   .object({

@@ -36,3 +36,9 @@
 - Gate findings: `key in` on a prototype-bearing lookup table treated `toString`/`constructor` as members and threw on own `__proto__`; unvalidated custom names and scalars could emit invalid DSL; `jsonc-parser.parse()` collapsed duplicate keys; warnings interpolated discarded values, paths, names, and modes.
 - Resolution: inspect the JSONC CST before parse for duplicate and dangerous keys, bound raw source length, and copy through the existing descriptor-safe graph. Lookup tables are Maps/Sets with own-property checks. Custom agent/category names must match the current identifier contract; temperatures must be finite and in `0..2`; models must pass current model-intent parsing. Generated blocks and the final document are validated with `parseConfig()` and omitted when invalid.
 - Warnings report a bounded path (vocabulary keys, indices, or `<entry>`), a fixed reason, and a primitive type category. They never interpolate discarded values, prompt paths, invalid names, modes, or malformed scalars. Warning count, path/reason length, and aggregate bytes stay capped with a deterministic truncation marker.
+
+## Task 5 descriptor boundary
+
+- Engine descriptors now carry only `fast?: true` and `DelegationTarget.triggers: string[]`. Category metadata no longer has `patterns`. `generateCategoryShuttles()` copies category triggers, never base Shuttle triggers, and sets `fast true` when the category or the base Shuttle declares it. There is no `false` value.
+- Descriptor outputs must copy trigger, model, and skill arrays. Sharing `targetConfig.triggers` or `category.triggers` leaks caller mutation into the normalized shape.
+- Changing `DelegationTarget.triggers` to `string[]` immediately breaks any adapter schema that still validates object triggers. The Pi bootstrap body is such a compile consumer and had to accept bounded strings in this slice. Task 6 still owns prompt-context projection and capability behavior.

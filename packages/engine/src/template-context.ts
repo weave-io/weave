@@ -16,7 +16,6 @@
  * Only `AgentPromptTemplateContext` and `TemplateContextError` are exported.
  */
 
-import type { DelegationTrigger } from "@weaveio/weave-core";
 import { ok, type Result } from "neverthrow";
 
 import type { DelegationTarget } from "./compose.js";
@@ -230,40 +229,27 @@ export interface TemplateContextInput {
 /**
  * Project a `DelegationTarget` into a `DelegationTargetContextEntry`.
  *
- * Deduplicates domain strings across all triggers for the target.
- * Preserves trigger order for deterministic output.
+ * Projects string triggers into the current template-context object shape.
+ * Task 6 owns the prompt-context rewrite; this only preserves trigger order.
  */
 function projectDelegationTarget(
   target: DelegationTarget,
 ): DelegationTargetContextEntry {
-  const seenDomains = new Set<string>();
-  const domains: string[] = [];
-
-  for (const trigger of target.triggers) {
-    if (!seenDomains.has(trigger.domain)) {
-      seenDomains.add(trigger.domain);
-      domains.push(trigger.domain);
-    }
-  }
-
+  // String triggers have no domain or routing_hint. Task 6 owns the prompt
+  // context shape; this projection only keeps the existing object fields
+  // populated enough for current templates and TypeScript to compile.
   const triggers: Array<{
     domain: string;
     trigger: string;
     routing_hint?: string;
-  }> = target.triggers.map((t: DelegationTrigger) => {
-    const entry: { domain: string; trigger: string; routing_hint?: string } = {
-      domain: t.domain,
-      trigger: t.trigger,
-    };
-    if (t.routing_hint !== undefined) {
-      entry.routing_hint = t.routing_hint;
-    }
-    return entry;
-  });
+  }> = target.triggers.map((trigger) => ({
+    domain: "",
+    trigger,
+  }));
 
   const entry: DelegationTargetContextEntry = {
     name: target.name,
-    domains,
+    domains: [],
     triggers,
     isCategory: target.isCategory,
   };

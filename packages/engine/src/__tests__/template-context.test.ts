@@ -59,7 +59,7 @@ function build(
 function makeTarget(
   name: string,
   description?: string,
-  triggers: Array<{ domain: string; trigger: string }> = [],
+  triggers: string[] = [],
   isCategory = false,
 ): DelegationTarget {
   return { name, description, triggers, isCategory };
@@ -336,40 +336,42 @@ describe("buildTemplateContext — delegation with targets", () => {
   it("projects trigger details", () => {
     const ctx = build({
       delegationTargets: [
-        makeTarget("shuttle-backend", undefined, [
-          { domain: "API", trigger: "REST endpoint changes" },
-        ]),
+        makeTarget("shuttle-backend", undefined, ["REST endpoint changes"]),
       ],
     });
     expect(ctx.delegation.targets[0]?.triggers).toEqual([
-      { domain: "API", trigger: "REST endpoint changes" },
+      { domain: "", trigger: "REST endpoint changes" },
     ]);
   });
 
-  it("deduplicates domains across triggers", () => {
+  it("does not invent domains from string triggers", () => {
     const ctx = build({
       delegationTargets: [
         makeTarget("shuttle-backend", undefined, [
-          { domain: "API", trigger: "REST endpoint changes" },
-          { domain: "API", trigger: "GraphQL changes" },
-          { domain: "DB", trigger: "Schema migrations" },
+          "REST endpoint changes",
+          "GraphQL changes",
+          "Schema migrations",
         ]),
       ],
     });
-    expect(ctx.delegation.targets[0]?.domains).toEqual(["API", "DB"]);
+    expect(ctx.delegation.targets[0]?.domains).toEqual([]);
   });
 
-  it("preserves domain order (first occurrence wins)", () => {
+  it("preserves string trigger order", () => {
     const ctx = build({
       delegationTargets: [
         makeTarget("shuttle-backend", undefined, [
-          { domain: "DB", trigger: "Schema changes" },
-          { domain: "API", trigger: "REST changes" },
-          { domain: "DB", trigger: "Migration" },
+          "Schema changes",
+          "REST changes",
+          "Migration",
         ]),
       ],
     });
-    expect(ctx.delegation.targets[0]?.domains).toEqual(["DB", "API"]);
+    expect(ctx.delegation.targets[0]?.triggers.map((t) => t.trigger)).toEqual([
+      "Schema changes",
+      "REST changes",
+      "Migration",
+    ]);
   });
 
   it("empty domains array when target has no triggers", () => {

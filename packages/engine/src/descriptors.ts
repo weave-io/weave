@@ -61,7 +61,7 @@ export function generateCategoryShuttles(
       // requires a non-blank category description, so there is no fallback.
       description: category.description,
     };
-    if (category.models !== undefined) overrides.models = category.models;
+    if (category.models !== undefined) overrides.models = [...category.models];
     if (category.temperature !== undefined) {
       overrides.temperature = category.temperature;
     }
@@ -77,29 +77,30 @@ export function generateCategoryShuttles(
     if (category.tool_policy !== undefined) {
       overrides.tool_policy = { ...base.tool_policy, ...category.tool_policy };
     }
+    if (category.triggers !== undefined) {
+      overrides.triggers = [...category.triggers];
+    }
+    if (category.fast === true || base.fast === true) {
+      overrides.fast = true;
+    }
 
     result[shuttleName] = {
       config: {
         ...base,
         name: shuttleName,
         mode: "subagent",
-        // Delegation triggers are never inherited. The base shuttle's triggers
-        // describe the generic fallback worker; a generated category shuttle is
-        // routed by its category description and patterns only. An explicit
-        // empty array (rather than deleting the key) is the correct
-        // representation: `triggers` is optional in AgentConfigSchema and
-        // `composeDelegationTargets` reads `triggers ?? []`, so both are
-        // equivalent downstream, while `[]` records the intent at the point of
-        // generation and cannot be silently reintroduced by a later spread.
-        // Config-layer array union-merge does not apply here — generation runs
-        // after `mergeConfigs`.
+        // Category shuttles never inherit the generic Shuttle trigger list.
+        // They are routed by category description, policies, and any category
+        // string triggers. An explicit empty array records that omission at
+        // generation time so a later spread cannot silently reintroduce the
+        // base Shuttle fallback triggers. Config-layer array union-merge does
+        // not apply here — generation runs after `mergeConfigs`.
         triggers: [],
         ...overrides,
       },
       categoryMeta: {
         name: categoryName,
         description: category.description,
-        patterns: [...(category.patterns ?? [])],
         isCategory: true,
       },
     };

@@ -66,127 +66,102 @@ function approxTokens(text: string): number {
 const REALISTIC_CATEGORIES = [
   {
     name: "frontend",
-    patterns: ["src/frontend/**", "src/components/**", "**/*.tsx"],
     description: "Frontend UI components and pages",
   },
   {
     name: "backend-api",
-    patterns: ["src/api/**", "src/server/**"],
     description: "Backend API routes and controllers",
   },
   {
     name: "database",
-    patterns: ["src/db/**", "src/migrations/**", "**/*.sql"],
     description: "Database models, migrations, and queries",
   },
   {
     name: "auth",
-    patterns: ["src/auth/**", "src/middleware/auth*"],
     description: "Authentication and authorisation logic",
   },
   {
     name: "testing",
-    patterns: ["**/*.test.ts", "**/*.spec.ts", "tests/**"],
     description: "Unit, integration, and e2e test files",
   },
   {
     name: "ci-cd",
-    patterns: [".github/**", "scripts/deploy/**", "Dockerfile*"],
     description: "CI/CD pipelines and deployment scripts",
   },
   {
     name: "docs",
-    patterns: ["docs/**", "**/*.md", "README*"],
     description: "Documentation and developer guides",
   },
   {
     name: "config",
-    patterns: ["config/**", "**/*.config.ts", "**/.env*"],
     description: "Application and environment configuration",
   },
   {
     name: "mobile",
-    patterns: ["src/mobile/**", "**/*.native.ts"],
     description: "Mobile-specific components and logic",
   },
   {
     name: "payments",
-    patterns: ["src/payments/**", "src/billing/**"],
     description: "Payment processing and billing integration",
   },
   {
     name: "notifications",
-    patterns: ["src/notifications/**", "src/email/**"],
     description: "Email, push, and in-app notifications",
   },
   {
     name: "search",
-    patterns: ["src/search/**", "src/indexing/**"],
     description: "Search engine integration and indexing",
   },
   {
     name: "analytics",
-    patterns: ["src/analytics/**", "src/tracking/**"],
     description: "Analytics events and tracking",
   },
   {
     name: "cdn",
-    patterns: ["src/cdn/**", "src/assets/**", "public/**"],
     description: "Static assets and CDN configuration",
   },
   {
     name: "caching",
-    patterns: ["src/cache/**", "src/redis/**"],
     description: "Caching strategies and Redis integration",
   },
   {
     name: "logging",
-    patterns: ["src/logging/**", "src/observability/**"],
     description: "Structured logging and observability",
   },
   {
     name: "feature-flags",
-    patterns: ["src/flags/**", "src/experiments/**"],
     description: "Feature flags and A/B experiment logic",
   },
   {
     name: "i18n",
-    patterns: ["src/i18n/**", "**/*.locale.ts", "locales/**"],
     description: "Internationalisation and localisation",
   },
   {
     name: "security",
-    patterns: ["src/security/**", "src/crypto/**"],
     description: "Security utilities, encryption, and key management",
   },
   {
     name: "reporting",
-    patterns: ["src/reports/**", "src/export/**"],
     description: "Report generation and data export",
   },
   {
     name: "websockets",
-    patterns: ["src/ws/**", "src/realtime/**"],
     description: "WebSocket and real-time event handling",
   },
   {
     name: "admin",
-    patterns: ["src/admin/**", "src/dashboard/**"],
     description: "Admin panel and internal dashboard",
   },
   {
     name: "graphql",
-    patterns: ["src/graphql/**", "**/*.graphql", "**/*.gql"],
     description: "GraphQL schema, resolvers, and subscriptions",
   },
   {
     name: "infra",
-    patterns: ["infra/**", "terraform/**", "k8s/**"],
     description: "Infrastructure-as-code and Kubernetes manifests",
   },
   {
     name: "sdk",
-    patterns: ["sdk/**", "packages/sdk/**"],
     description: "Public SDK and client library",
   },
 ];
@@ -196,8 +171,8 @@ function buildDslFixture(count: number): string {
 
   const categoryBlocks = categories
     .map(
-      ({ name, patterns, description }) =>
-        `category ${name} {\n  description "${description}"\n  patterns [${patterns.map((p) => `"${p}"`).join(", ")}]\n}`,
+      ({ name, description }) =>
+        `category ${name} {\n  description "${description}"\n}`,
     )
     .join("\n\n");
 
