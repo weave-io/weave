@@ -17,13 +17,14 @@ import {
   type ChildOverlayEntry,
   type ChildOverlayEntryKind,
   type ChildOverlayMappingError,
-  type ChildOverlayPage,
   type ChildOverlayReplayStep,
-  ChildOverlayRunDividerSchema,
   OpaqueIdSchema,
   RunActionSchema,
 } from "./child-overlay-types.js";
-import { historicalAssistantMessageFields } from "./child-provider-error.js";
+import {
+  historicalAssistantMessageFields,
+  redactProviderErrorFromEvent,
+} from "./child-provider-error.js";
 import {
   type PiChildSessionEvent,
   parsePiChildSessionEvent,
@@ -332,7 +333,7 @@ function nativeMessageParts(
 function replayEvent(candidate: unknown): ChildOverlayReplayStep | undefined {
   const parsed = parsePiChildSessionEvent(candidate);
   if (!parsed.success) return undefined;
-  return { kind: "event", event: parsed.data };
+  return { kind: "event", event: redactProviderErrorFromEvent(parsed.data) };
 }
 
 export function pushReplayEvent(

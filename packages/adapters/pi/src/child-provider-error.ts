@@ -85,6 +85,8 @@
 import { err, ok, Result } from "neverthrow";
 import { z } from "zod";
 import {
+  MAX_CHILD_EVENT_ITEMS,
+  MAX_CHILD_EVENT_STRING,
   type PiChildSessionEvent,
   projectAssistantUsageFacts,
 } from "./child-session-events.js";
@@ -359,23 +361,6 @@ const stringField = (
 ): string | undefined => {
   const value = field(record, key);
   return typeof value === "string" ? value : undefined;
-};
-
-/**
- * Own-property presence without trusting descriptors or Proxy traps. A throw
- * from `Object.hasOwn`, a hostile `getOwnPropertyDescriptor` trap, or a
- * throwing `has` trap is reported as absence so inherited and accessor noise
- * cannot widen the allowlisted copy.
- */
-const recordHasOwnKey = (
-  record: Record<string, unknown>,
-  key: string,
-): boolean => {
-  const result = Result.fromThrowable(
-    () => Object.hasOwn(record, key),
-    () => false,
-  )();
-  return result.isOk() ? result.value : false;
 };
 
 const trustedLabel = (value: unknown): string | undefined => {
@@ -672,30 +657,10 @@ export function parsePiChildProviderError(
 }
 
 // ---------------------------------------------------------------------------
-// Safe assistant-message copy
+// Closed replay-event projection
 // ---------------------------------------------------------------------------
 
-/**
- * The only assistant-message fields an overlay reducer needs, and therefore
- * the only fields a retained or rebuilt event may carry.
- *
- * Copying is allowlist-only. The excluded set is not a filter of known-bad
- * names; it is everything not named here, which covers today's hazards —
- * `errorMessage`, `rawStopReason`, `responseId`, `diagnostics`, `api`,
- * `provider`, `deferred` — and every extension field a future Pi or a hostile
- * host might add.
- *
- * Each entry earns its place:
- *
- * - `id`, `messageId`: entry identity (`messageIdFromUnknown`, `messageIdFrom`).
- * - `role`: authoritative assistant discrimination in every reducer.
- * - `stopReason`: terminal outcome, read verbatim by the transcript reducer.
- * - `text`, `content`: terminal assistant text (`extractAssistantEndText`).
- * - `timestamp`: ordering fact the replay mapper preserves.
- *
- * Usage fields are deliberately not in this raw-copy allowlist. They are
- * rebuilt below from the closed, bounded `PiAssistantUsageFacts` projection.
- */
+/** Assistant fields whose values are reconstructed by the closed projector. */
 export const SAFE_ASSISTANT_MESSAGE_FIELDS = [
   "id",
   "messageId",
@@ -706,74 +671,292 @@ export const SAFE_ASSISTANT_MESSAGE_FIELDS = [
   "timestamp",
 ] as const;
 
-/**
- * Copy only the allowlisted fields of an assistant message.
- *
- * Reads walk the closed allowlist with guarded own-property checks: inherited
- * names, symbols, and unknown keys are never considered, and a Proxy whose
- * `ownKeys` / descriptor / getter traps throw contributes typed absence for
- * that field rather than an unbounded host object or an exception.
- */
-function copySafeAssistantFields(
-  message: Record<string, unknown>,
-): Record<string, unknown> {
-  return guardValue(() => {
-    const next: Record<string, unknown> = {};
-    for (const key of SAFE_ASSISTANT_MESSAGE_FIELDS) {
-      if (!recordHasOwnKey(message, key)) continue;
-      const value = field(message, key);
-      if (value === undefined) continue;
-      next[key] = value;
-    }
-    return next;
-  }, {});
-}
+const ownDataField = (
+  record: Record<string, unknown> | undefined,
+  key: string,
+): unknown => {
+  if (record === undefined) return undefined;
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(record, key),
+    () => undefined,
+  )();
+  if (descriptor.isErr() || descriptor.value === undefined) return undefined;
+  return "value" in descriptor.value ? descriptor.value.value : undefined;
+};
 
-/**
- * Rebuild a terminal event with an allowlisted message copy and the canonical
- * error projection in place of the raw provider text.
- *
- * The controller stores parsed events in overlay entries and the transcript, so
- * an unredacted event would put `errorMessage` — and any credential, request
- * id, path, or payload inside it — straight into saved state, along with
- * `responseId`, `diagnostics`, and every other provider field. Redaction runs
- * before any downstream reduce, which makes the canonical projection the only
- * error fact the overlay can ever hold.
- *
- * Broader parser catchall on `PiChildSessionEvent` is outside this sanitizer's
- * `message_end` projection: a parser-approved event may still carry unknown
- * top-level keys, so this function never spreads `message_end`. It returns a
- * fresh object with only `type: "message_end"` and an allowlist-built
- * `message`. Non-`message_end` variants are returned unchanged in this
- * minimal task.
- */
+const SENSITIVE_REPLAY_TEXT =
+  /(?:SENTINEL|https?:\/\/|\bBearer\s|\bCookie\s*:|\b(?:api[-_ ]?key|secret|token)\s*[:=]|(?:^|\s)\/(?:Users|home|private|tmp)\/|\b[A-Za-z]:\\)/iu;
+
+const boundedString = (
+  value: unknown,
+  maxLength = MAX_CHILD_EVENT_STRING,
+): string | undefined =>
+  typeof value === "string" && !SENSITIVE_REPLAY_TEXT.test(value)
+    ? value.slice(0, maxLength)
+    : undefined;
+
+const boundedNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const copyString = (
+  target: Record<string, unknown>,
+  source: Record<string, unknown> | undefined,
+  key: string,
+  maxLength = MAX_CHILD_EVENT_STRING,
+): void => {
+  const value = boundedString(ownDataField(source, key), maxLength);
+  if (value !== undefined) target[key] = value;
+};
+
+const copyNumber = (
+  target: Record<string, unknown>,
+  source: Record<string, unknown> | undefined,
+  key: string,
+): void => {
+  const value = boundedNumber(ownDataField(source, key));
+  if (value !== undefined) target[key] = value;
+};
+
+const copyBoolean = (
+  target: Record<string, unknown>,
+  source: Record<string, unknown> | undefined,
+  key: string,
+): void => {
+  const value = ownDataField(source, key);
+  if (typeof value === "boolean") target[key] = value;
+};
+
+const safeValueKey = (key: string): boolean =>
+  !/(?:auth|cookie|header|secret|token|key|url|uri|request|response|diagnostic|errorMessage|payload|provider)/iu.test(
+    key,
+  );
+
+/** Closed JSON projection for reducer-visible tool values. */
+const projectReducerValue = (value: unknown, depth = 0): unknown => {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "string") return boundedString(value);
+  if (typeof value === "number")
+    return Number.isFinite(value) ? value : undefined;
+  if (depth >= 4) return undefined;
+  if (Array.isArray(value)) {
+    const result: unknown[] = [];
+    const source = value as unknown as Record<string, unknown>;
+    for (
+      let index = 0;
+      index < Math.min(value.length, MAX_CHILD_EVENT_ITEMS);
+      index += 1
+    ) {
+      const item = projectReducerValue(
+        ownDataField(source, String(index)),
+        depth + 1,
+      );
+      if (item !== undefined) result.push(item);
+    }
+    return result;
+  }
+  const record = asRecord(value);
+  if (record === undefined) return undefined;
+  const keys = guardValue(() => Object.keys(record), [] as string[]);
+  const result: Record<string, unknown> = {};
+  for (const key of keys.slice(0, MAX_CHILD_EVENT_ITEMS)) {
+    if (!safeValueKey(key)) continue;
+    const item = projectReducerValue(ownDataField(record, key), depth + 1);
+    if (item !== undefined) result[key] = item;
+  }
+  return result;
+};
+
+const projectContentBlock = (value: unknown): unknown => {
+  if (typeof value === "string") return boundedString(value);
+  const source = asRecord(value);
+  if (source === undefined) return undefined;
+  const block: Record<string, unknown> = {};
+  for (const key of ["type", "text", "thinking", "mimeType"] as const)
+    copyString(block, source, key);
+  for (const key of ["id", "toolCallId", "toolUseId", "tool_use_id"] as const)
+    copyString(block, source, key, 256);
+  for (const key of ["name", "toolName"] as const)
+    copyString(block, source, key, 128);
+  copyBoolean(block, source, "isError");
+  copyBoolean(block, source, "is_error");
+  for (const key of ["arguments", "input", "args"] as const) {
+    const projected = projectReducerValue(ownDataField(source, key));
+    if (projected !== undefined) block[key] = projected;
+  }
+  return Object.keys(block).length > 0 ? block : undefined;
+};
+
+const projectContent = (value: unknown): unknown => {
+  if (typeof value === "string") return boundedString(value);
+  if (!Array.isArray(value)) return undefined;
+  const blocks: unknown[] = [];
+  const source = value as unknown as Record<string, unknown>;
+  for (
+    let index = 0;
+    index < Math.min(value.length, MAX_CHILD_EVENT_ITEMS);
+    index += 1
+  ) {
+    const block = projectContentBlock(ownDataField(source, String(index)));
+    if (block !== undefined) blocks.push(block);
+  }
+  return blocks;
+};
+
+const projectMessage = (
+  value: unknown,
+): Record<string, unknown> | undefined => {
+  const source = asRecord(value);
+  if (source === undefined) return undefined;
+  const message: Record<string, unknown> = {};
+  for (const key of ["id", "messageId"] as const)
+    copyString(message, source, key, 256);
+  copyString(message, source, "role", 32);
+  copyString(message, source, "stopReason", 32);
+  copyString(message, source, "text");
+  copyNumber(message, source, "timestamp");
+  const content = projectContent(ownDataField(source, "content"));
+  if (content !== undefined) message.content = content;
+  const usageFacts = projectAssistantUsageFacts(source);
+  if (usageFacts?.usage !== undefined) message.usage = usageFacts.usage;
+  if (usageFacts?.contextUsage !== undefined)
+    message.contextUsage = usageFacts.contextUsage;
+  if (usageFacts?.model !== undefined) message.model = usageFacts.model;
+  const projected = projectAssistantProviderError(source);
+  if (projected.isOk())
+    message[CHILD_PROVIDER_ERROR_REPLAY_FIELD] = projected.value;
+  return message;
+};
+
+const projectDelta = (value: unknown): Record<string, unknown> | undefined => {
+  const source = asRecord(value);
+  if (source === undefined) return undefined;
+  const delta: Record<string, unknown> = {};
+  for (const key of ["id", "messageId", "type"] as const)
+    copyString(delta, source, key, 256);
+  for (const key of [
+    "text",
+    "delta",
+    "thinking",
+    "thinkingDelta",
+    "markdown",
+    "markdownDelta",
+  ] as const)
+    copyString(delta, source, key);
+  return Object.keys(delta).length > 0 ? delta : undefined;
+};
+
+const projectUsageEvent = (
+  source: Record<string, unknown>,
+): Record<string, unknown> => {
+  const rawUsage = asRecord(ownDataField(source, "usage"));
+  const facts = projectAssistantUsageFacts({
+    usage: rawUsage,
+    contextUsage:
+      ownDataField(rawUsage, "context") ??
+      ownDataField(rawUsage, "contextUsage"),
+    model: ownDataField(source, "model") ?? ownDataField(rawUsage, "model"),
+  });
+  const event: Record<string, unknown> = { type: "usage" };
+  if (facts?.usage !== undefined) event.usage = facts.usage;
+  if (facts?.contextUsage !== undefined) {
+    const usage = asRecord(event.usage) ?? {};
+    event.usage = { ...usage, context: facts.contextUsage };
+  }
+  if (facts?.model !== undefined) event.model = facts.model;
+  return event;
+};
+
+/** Rebuild one parser-approved event through a closed reducer allowlist. */
 export function redactProviderErrorFromEvent(
   event: PiChildSessionEvent,
 ): PiChildSessionEvent {
-  if (event.type !== "message_end") return event;
-  const emptyEnd = { type: "message_end" } as PiChildSessionEvent;
-  return guardValue(() => {
-    const record = event as unknown as Record<string, unknown>;
-    const message = asRecord(field(record, "message"));
-    if (message === undefined) return emptyEnd;
-    const projected = projectAssistantProviderError(message);
-    const usage = projectAssistantUsageFacts(message);
-    const safeMessage: Record<string, unknown> = {
-      ...copySafeAssistantFields(message),
-      ...(usage?.usage === undefined ? {} : { usage: usage.usage }),
-      ...(usage?.contextUsage === undefined
-        ? {}
-        : { contextUsage: usage.contextUsage }),
-      ...(usage?.model === undefined ? {} : { model: usage.model }),
-      ...(projected.isOk()
-        ? { [CHILD_PROVIDER_ERROR_REPLAY_FIELD]: projected.value }
-        : {}),
-    };
-    return {
-      type: "message_end",
-      message: safeMessage,
-    } as PiChildSessionEvent;
-  }, emptyEnd);
+  return guardValue(
+    () => {
+      const source = asRecord(event);
+      if (source === undefined)
+        return { type: "unknown" } as PiChildSessionEvent;
+      const type = boundedString(ownDataField(source, "type"), 64) ?? "unknown";
+      const rebuilt: Record<string, unknown> = { type };
+      switch (type) {
+        case "message_start": {
+          const message = projectMessage(ownDataField(source, "message"));
+          if (message !== undefined) rebuilt.message = message;
+          copyString(rebuilt, source, "branchId", 256);
+          break;
+        }
+        case "message_update": {
+          const delta = projectDelta(ownDataField(source, "delta"));
+          if (delta !== undefined) rebuilt.delta = delta;
+          const assistant = projectDelta(
+            ownDataField(source, "assistantMessageEvent"),
+          );
+          if (assistant !== undefined)
+            rebuilt.assistantMessageEvent = assistant;
+          copyString(rebuilt, source, "messageId", 256);
+          break;
+        }
+        case "message_end": {
+          const message = projectMessage(ownDataField(source, "message"));
+          if (message !== undefined) rebuilt.message = message;
+          break;
+        }
+        case "text":
+        case "thinking":
+        case "markdown":
+          copyString(rebuilt, source, "text");
+          copyString(rebuilt, source, "messageId", 256);
+          break;
+        case "tool_call":
+        case "tool_partial_result":
+        case "tool_result":
+        case "tool_error":
+          copyString(rebuilt, source, "toolCallId", 256);
+          copyString(rebuilt, source, "toolName", 128);
+          copyString(rebuilt, source, "name", 128);
+          for (const key of [
+            "arguments",
+            "partialResult",
+            "result",
+            "content",
+          ] as const) {
+            const value = projectReducerValue(ownDataField(source, key));
+            if (value !== undefined) rebuilt[key] = value;
+          }
+          if (type === "tool_error") {
+            copyString(rebuilt, source, "error");
+            copyString(rebuilt, source, "message");
+          }
+          break;
+        case "image":
+          copyString(rebuilt, source, "mimeType", 128);
+          break;
+        case "usage":
+          return projectUsageEvent(source) as PiChildSessionEvent;
+        case "queue_change":
+          copyNumber(rebuilt, source, "size");
+          break;
+        case "status":
+          copyString(rebuilt, source, "status", 128);
+          copyString(rebuilt, source, "message");
+          break;
+        case "retry":
+          copyNumber(rebuilt, source, "attempt");
+          copyString(rebuilt, source, "reason");
+          break;
+        case "extension_ui_request":
+          copyString(rebuilt, source, "requestType", 128);
+          copyString(rebuilt, source, "message");
+          break;
+        case "extension_ui_response":
+        case "unknown":
+          break;
+        default:
+          return { type: "unknown" } as PiChildSessionEvent;
+      }
+      return rebuilt as PiChildSessionEvent;
+    },
+    { type: "unknown" } as PiChildSessionEvent,
+  );
 }
 
 // ---------------------------------------------------------------------------

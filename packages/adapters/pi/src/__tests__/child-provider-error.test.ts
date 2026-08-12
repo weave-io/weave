@@ -38,6 +38,7 @@ import {
   SAFE_ASSISTANT_MESSAGE_FIELDS,
 } from "../child-provider-error.js";
 import { parsePiChildSessionEvent } from "../child-session-events.js";
+import { PiChildTranscriptReducer } from "../child-transcript.js";
 
 /**
  * Bounded, canonical child provider error projection (plan Task 12).
@@ -1034,9 +1035,16 @@ describe("child provider error safe message copy", () => {
     });
   });
 
-  it("returns non-terminal events unchanged and drops catchall on empty message_end", () => {
-    const text = { type: "text", text: "hello" } as const;
-    expect(redactProviderErrorFromEvent(text as never)).toBe(text as never);
+  it("rebuilds non-terminal events without catchall and drops catchall on empty message_end", () => {
+    const text = {
+      type: "text",
+      text: "hello",
+      extensionField: SENTINELS.secret,
+    } as const;
+    const rebuilt = redactProviderErrorFromEvent(text as never);
+    expect(rebuilt).not.toBe(text as never);
+    expect(rebuilt).toEqual({ type: "text", text: "hello" });
+    expect(JSON.stringify(rebuilt)).not.toContain(SENTINELS.secret);
     const empty = {
       type: "message_end",
       secret: SENTINELS.secret,
@@ -1045,6 +1053,140 @@ describe("child provider error safe message copy", () => {
     const redacted = redactProviderErrorFromEvent(empty as never);
     expect(redacted).toEqual({ type: "message_end" });
     expect(JSON.stringify(redacted)).not.toContain("SENTINEL");
+  });
+
+  it("allowlists every retained replay event and preserves reducer behavior", () => {
+    const events = [
+      {
+        type: "message_start",
+        message: {
+          id: "message-1",
+          role: "assistant",
+          content: [{ type: "text", text: "start" }],
+          secret: SENTINELS.secret,
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          delta: " streamed",
+          diagnostics: SENTINELS.diagnostic,
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          delta: "reasoning",
+          authorization: SENTINELS.authorization,
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "toolcall_delta",
+          delta: "tool delta",
+          responseId: SENTINELS.responseId,
+        },
+      },
+      {
+        type: "tool_call",
+        toolCallId: "tool-1",
+        toolName: "read",
+        arguments: {
+          path: "src/index.ts",
+          token: SENTINELS.token,
+          nested: { authorization: SENTINELS.authorization },
+        },
+      },
+      {
+        type: "tool_partial_result",
+        toolCallId: "tool-1",
+        partialResult: {
+          text: "partial",
+          diagnostics: SENTINELS.diagnostic,
+        },
+      },
+      {
+        type: "tool_result",
+        toolCallId: "tool-1",
+        result: { text: "complete", secret: SENTINELS.secret },
+      },
+      {
+        type: "tool_call",
+        toolCallId: "tool-2",
+        toolName: "shell",
+        arguments: { command: "false", apiKey: SENTINELS.apiKey },
+      },
+      {
+        type: "tool_error",
+        toolCallId: "tool-2",
+        error: "exit 1",
+        diagnostics: SENTINELS.diagnostic,
+      },
+      {
+        type: "usage",
+        usage: {
+          input: 3,
+          output: 4,
+          context: { tokens: 7, contextWindow: 70, secret: SENTINELS.secret },
+          token: SENTINELS.token,
+        },
+        model: "openai/gpt-5.6",
+        responseId: SENTINELS.responseId,
+      },
+      {
+        type: "custom_provider_event",
+        payload: { secret: SENTINELS.secret },
+        url: SENTINELS.url,
+      },
+      {
+        type: "message_end",
+        message: {
+          id: "message-1",
+          role: "assistant",
+          stopReason: "stop",
+          content: [{ type: "text", text: "start streamed" }],
+          diagnostics: SENTINELS.diagnostic,
+        },
+      },
+    ] as const;
+    const reducer = new PiChildTranscriptReducer();
+    for (const candidate of events) {
+      const parsed = parsePiChildSessionEvent({
+        ...candidate,
+        headers: { authorization: SENTINELS.authorization },
+        extensionField: SENTINELS.secret,
+      });
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) throw new Error("unreachable");
+      const rebuilt = redactProviderErrorFromEvent(parsed.data);
+      expect(rebuilt).not.toBe(parsed.data);
+      expect(reducer.applyEvent(rebuilt).isOk()).toBe(true);
+      const serializedEvent = JSON.stringify(rebuilt);
+      for (const sentinel of Object.values(SENTINELS)) {
+        expect(serializedEvent).not.toContain(sentinel);
+      }
+    }
+    const state = reducer.getState();
+    const serializedState = JSON.stringify(state);
+    for (const sentinel of Object.values(SENTINELS)) {
+      expect(serializedState).not.toContain(sentinel);
+    }
+    expect(serializedState).toContain("start streamed");
+    expect(serializedState).toContain("reasoning");
+    expect(serializedState).toContain("src/index.ts");
+    expect(serializedState).toContain("partial");
+    expect(serializedState).toContain("complete");
+    expect(serializedState).toContain("exit 1");
+    expect(state.usage).toEqual(
+      expect.objectContaining({
+        input: 3,
+        output: 4,
+        context: { tokens: 7, contextWindow: 70 },
+      }),
+    );
   });
 
   it("never spreads parser catchall top-level fields on message_end", () => {
@@ -1258,7 +1400,8 @@ describe("terminal error evidence semantics", () => {
     if (!parsed.success) throw new Error("unreachable");
     const applied = applyProviderErrorEvent(errorEvidence, parsed.data);
     expect(applied.evidence).toEqual(errorEvidence);
-    expect(applied.event).toBe(parsed.data);
+    expect(applied.event).not.toBe(parsed.data);
+    expect(applied.event).toEqual(parsed.data);
   });
 
   it("finds no evidence in an empty window", () => {
