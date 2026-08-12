@@ -175,7 +175,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - [proposed] Category fast precedence is explicit and covered for base false-by-absence, base true, category absence, and category true. This prevents accidental loss or leakage during generation.
   - **Review gate**: Run Weft after the slice and resolve blocking findings.
 
-- [ ] 6. Simplify prompt context and define the fast capability contract
+- [x] 6. Simplify prompt context and define the fast capability contract
   - **What**: Render trigger strings directly and add an honest cross-adapter capability entry for provider fast activation/evidence.
   - **Files**: `packages/engine/src/template-context.ts`, `packages/engine/src/capability-contract.ts`, `packages/engine/src/index.ts`, `packages/config/prompts/loom.md`, `packages/engine/src/__tests__/template-context.test.ts`, `packages/engine/src/__tests__/template-renderer.test.ts`, `packages/engine/src/__tests__/capability-contract.test.ts`, `packages/engine/src/__tests__/capability-readiness.test.ts`, `packages/engine/src/__tests__/capability-effective.test.ts`, `packages/engine/src/__tests__/capability-reporting.test.ts`, `packages/config/src/__tests__/builtin-prompts.test.ts`, `packages/adapters/pi/src/capability-declarations.ts`, `packages/adapters/opencode/src/capability-declarations.ts`, `packages/adapters/claude-code/src/capability-declarations.ts`, each adapter's `src/__tests__/capability-declarations.test.ts`
   - **Depends on**: Task 5 and Task 1 support findings
