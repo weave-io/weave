@@ -53,9 +53,12 @@ import {
 } from "./child-overlay-search.js";
 import {
   applyProviderErrorEvent,
+  type ChildTerminalErrorEvidence,
   deriveChildOverlayTelemetry,
   latestUsageInWindow,
-  latestWindowError,
+  NO_TERMINAL_ERROR_EVIDENCE,
+  pageEvidence,
+  terminalErrorView,
 } from "./child-overlay-telemetry.js";
 import {
   CHILD_OVERLAY_BOUNDS,
@@ -81,7 +84,6 @@ import {
   DEFAULT_CHILD_OVERLAY_VIEW_MODE,
   OverlayTextSchema,
 } from "./child-overlay-types.js";
-import type { PiChildProviderError } from "./child-provider-error.js";
 import {
   type PiChildSessionEvent,
   type PiChildUsageReport,
@@ -126,7 +128,7 @@ interface SavedChildState extends OverlayScrollState {
   compact: ChildCompactState;
   /** Latest parsed usage report: replaces prior state, never summed. */
   usage: PiChildUsageReport | undefined;
-  providerError: PiChildProviderError | undefined;
+  evidence: ChildTerminalErrorEvidence;
   transcript: PiChildTranscriptState;
   /**
    * Overlay entry id of the assistant message lifecycle currently in flight,
@@ -173,7 +175,7 @@ function emptySaved(threadId: string, touched: number): SavedChildState {
     viewMode: DEFAULT_CHILD_OVERLAY_VIEW_MODE,
     compact: createChildCompactState(threadId),
     usage: undefined,
-    providerError: undefined,
+    evidence: NO_TERMINAL_ERROR_EVIDENCE,
     transcript: createPiChildTranscriptState(),
     liveAssistantEntryId: undefined,
     liveAssistantCounter: 0,
@@ -449,9 +451,9 @@ export class ChildOverlayController {
 
     const parsed = parsePiChildSessionEvent(event);
     if (!parsed.success) return ok(this.toView(child, state));
-    const applied = applyProviderErrorEvent(state.providerError, parsed.data);
+    const applied = applyProviderErrorEvent(state.evidence, parsed.data);
     const sessionEvent = applied.event;
-    state.providerError = applied.providerError;
+    state.evidence = applied.evidence;
 
     const mapped = mapPiChildSessionEventToCompactInput(sessionEvent);
     if (mapped.isOk() && mapped.value !== undefined) {
@@ -951,8 +953,7 @@ export class ChildOverlayController {
       // Historical telemetry may come only from a usage event replayed in the
       // loaded window; a window without one leaves a live report untouched.
       state.usage = latestUsageInWindow(state.entries) ?? state.usage;
-      state.providerError =
-        latestWindowError(state.entries) ?? state.providerError;
+      state.evidence = pageEvidence(state.evidence, state.entries, "newer");
       return;
     }
 
@@ -986,7 +987,7 @@ export class ChildOverlayController {
       syncTranscriptFromEntries(state);
       // Older pages never carry a newer report; only fill an empty slot.
       state.usage ??= latestUsageInWindow(incoming);
-      state.providerError ??= latestWindowError(incoming);
+      state.evidence = pageEvidence(state.evidence, incoming, "older");
       return;
     }
 
@@ -1015,7 +1016,7 @@ export class ChildOverlayController {
     syncTranscriptFromEntries(state);
     // Appended entries are newer, so a report they replay supersedes.
     state.usage = latestUsageInWindow(uniqueNewer) ?? state.usage;
-    state.providerError = latestWindowError(uniqueNewer) ?? state.providerError;
+    state.evidence = pageEvidence(state.evidence, uniqueNewer, "newer");
   }
 
   private mergeEntry(state: SavedChildState, entry: ChildOverlayEntry): void {
@@ -1091,7 +1092,7 @@ export class ChildOverlayController {
       compact: state.compact,
       transcript: state.transcript,
       telemetry: deriveChildOverlayTelemetry(state.usage, child),
-      terminalError: state.providerError,
+      ...terminalErrorView(state.evidence),
     };
   }
 

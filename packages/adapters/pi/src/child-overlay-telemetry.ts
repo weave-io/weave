@@ -52,57 +52,197 @@ export function latestUsageInWindow(
   return undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Terminal error evidence (tri-state)
+// ---------------------------------------------------------------------------
+
 /**
- * Newest terminal provider error inside the loaded entry window.
+ * What the newest authoritative terminal assistant message says about failure.
  *
- * Historical errors exist only where the loaded window replays them, and the
- * newest terminal message in that window wins: a later successful terminal
- * message (`ProviderErrorCleared`) stops the scan with no error, exactly as
- * the live path replaces a stale error. Nothing outside the window is read.
+ * The distinction between `cleared` and `no-evidence` is the whole point.
+ * "Absent error" is two different facts:
+ *
+ * - `cleared`: a terminal message was observed and it succeeded. The child is
+ *   known not to be in a failed state, and an *older* error discovered later —
+ *   by paging backwards through history — must not resurrect it.
+ * - `no-evidence`: no authoritative terminal message has been observed at all.
+ *   An older error discovered later is the newest thing known, so it applies.
+ *
+ * Collapsing both to `undefined` is what let a prepended older page put a
+ * stale error back on a child whose latest turn had already succeeded.
  */
-export function latestWindowError(
+export type ChildTerminalErrorEvidence =
+  | { readonly kind: "error"; readonly error: PiChildProviderError }
+  | { readonly kind: "cleared" }
+  | { readonly kind: "no-evidence" };
+
+/** No authoritative terminal message has been observed. */
+export const NO_TERMINAL_ERROR_EVIDENCE: ChildTerminalErrorEvidence = {
+  kind: "no-evidence",
+};
+
+/** The newest terminal message succeeded. */
+export const CLEARED_TERMINAL_ERROR_EVIDENCE: ChildTerminalErrorEvidence = {
+  kind: "cleared",
+};
+
+/**
+ * The error a view may expose, or `undefined`. Callers see one optional error
+ * and never the tri-state itself, so `cleared` and `no-evidence` stay internal
+ * bookkeeping rather than surface API.
+ */
+export const terminalErrorOf = (
+  evidence: ChildTerminalErrorEvidence,
+): PiChildProviderError | undefined =>
+  evidence.kind === "error" ? evidence.error : undefined;
+
+/**
+ * Terminal evidence carried by one already-parsed event.
+ *
+ * `undefined` means the event is not an authoritative terminal assistant
+ * message — a non-terminal event, a non-assistant message, or a malformed or
+ * hostile one. Unauthoritative input never becomes evidence, so it can neither
+ * set nor clear a retained error.
+ */
+function eventEvidence(
+  event: PiChildSessionEvent,
+): ChildTerminalErrorEvidence | undefined {
+  const parsed = parsePiChildProviderError(event);
+  if (parsed.isOk()) return { kind: "error", error: parsed.value };
+  return parsed.error.type === "ProviderErrorCleared"
+    ? CLEARED_TERMINAL_ERROR_EVIDENCE
+    : undefined;
+}
+
+/**
+ * Newest terminal evidence inside a bounded entry window.
+ *
+ * The scan walks entries newest-first and stops at the first authoritative
+ * terminal message, which is by construction the newest one in the window. A
+ * window whose newest terminal message succeeded yields `cleared`, not
+ * `no-evidence`: the window proves a success happened, and that proof is what
+ * stops an older error from being adopted later.
+ *
+ * Malformed, hostile, and non-terminal steps are skipped rather than treated
+ * as evidence, so they cannot restore stale data. Nothing outside the window is
+ * read.
+ */
+export function latestWindowErrorEvidence(
   entries: readonly ChildOverlayEntry[],
-): PiChildProviderError | undefined {
+): ChildTerminalErrorEvidence {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const steps = entries[index]?.replay;
     if (steps === undefined) continue;
     for (let step = steps.length - 1; step >= 0; step -= 1) {
       const candidate = steps[step];
       if (candidate === undefined || candidate.kind !== "event") continue;
-      const parsed = parsePiChildProviderError(candidate.event);
-      if (parsed.isOk()) return parsed.value;
-      if (parsed.error.type === "ProviderErrorCleared") return undefined;
+      const evidence = eventEvidence(candidate.event);
+      if (evidence !== undefined) return evidence;
     }
   }
-  return undefined;
+  return NO_TERMINAL_ERROR_EVIDENCE;
 }
 
 /**
- * Latest terminal provider error after one live event, and the event with the
- * raw provider text removed.
+ * Newest terminal provider error inside the loaded entry window, or
+ * `undefined` when the window carries no error.
+ *
+ * Retained as the narrow read-only view over
+ * {@link latestWindowErrorEvidence} for callers that only need the error and
+ * cannot act on the `cleared` / `no-evidence` distinction.
+ */
+export function latestWindowError(
+  entries: readonly ChildOverlayEntry[],
+): PiChildProviderError | undefined {
+  return terminalErrorOf(latestWindowErrorEvidence(entries));
+}
+
+/**
+ * Adopt newer terminal evidence over older retained evidence.
+ *
+ * Newer authoritative evidence always wins, in both directions: a newer error
+ * replaces an older error or a `cleared`, and a newer success clears a retained
+ * error. `no-evidence` from the newer side proves nothing and therefore changes
+ * nothing.
+ */
+export const adoptNewerEvidence = (
+  previous: ChildTerminalErrorEvidence,
+  newer: ChildTerminalErrorEvidence,
+): ChildTerminalErrorEvidence =>
+  newer.kind === "no-evidence" ? previous : newer;
+
+/**
+ * Adopt older terminal evidence only where nothing newer is known.
+ *
+ * This is the prepend rule. Once *any* authoritative terminal message has been
+ * observed — an error or a success — an older page cannot speak for the child's
+ * latest state, so its evidence is discarded. That is what stops a backwards
+ * page from resurrecting an error the child has already recovered from.
+ */
+export const adoptOlderEvidence = (
+  previous: ChildTerminalErrorEvidence,
+  older: ChildTerminalErrorEvidence,
+): ChildTerminalErrorEvidence =>
+  previous.kind === "no-evidence" ? older : previous;
+
+/**
+ * Terminal evidence a page of entries contributes, adopted in the direction
+ * the page travels.
+ *
+ * `"newer"` is for a replacement or forward page: it is the authoritative
+ * newest view, so its evidence supersedes, and a page with no terminal turn
+ * proves nothing and changes nothing. `"older"` is for a backward page: it can
+ * only fill an unknown state, so paging backwards past a success can never
+ * resurrect the error that preceded it.
+ */
+export function pageEvidence(
+  previous: ChildTerminalErrorEvidence,
+  window: readonly ChildOverlayEntry[],
+  direction: "older" | "newer",
+): ChildTerminalErrorEvidence {
+  const found = latestWindowErrorEvidence(window);
+  return direction === "older"
+    ? adoptOlderEvidence(previous, found)
+    : adoptNewerEvidence(previous, found);
+}
+
+/**
+ * The optional `terminalError` fragment a view spreads.
+ *
+ * Views expose one optional error and never the tri-state, so `cleared` and
+ * `no-evidence` both contribute no property at all.
+ */
+export const terminalErrorView = (
+  evidence: ChildTerminalErrorEvidence,
+): { readonly terminalError?: PiChildProviderError } => {
+  const terminalError = terminalErrorOf(evidence);
+  return terminalError === undefined ? {} : { terminalError };
+};
+
+/**
+ * Latest terminal evidence after one live event, and the event with the raw
+ * provider payload removed.
  *
  * Two rules travel together because they must not diverge: the overlay stores
  * parsed events, so the redacted event is the only one that may reach a reduce,
- * and the retained error is whatever that same event authoritatively says.
- * Latest wins and replaces; an authoritative terminal success clears a stale
- * error; anything unauthoritative leaves the previous value untouched.
+ * and the retained evidence is whatever that same event authoritatively says.
+ * A live event is always the newest fact, so it follows
+ * {@link adoptNewerEvidence}.
  */
 export function applyProviderErrorEvent(
-  previous: PiChildProviderError | undefined,
+  previous: ChildTerminalErrorEvidence,
   event: PiChildSessionEvent,
 ): {
   readonly event: PiChildSessionEvent;
-  readonly providerError: PiChildProviderError | undefined;
+  readonly evidence: ChildTerminalErrorEvidence;
 } {
   const redacted = redactProviderErrorFromEvent(event);
-  const parsed = parsePiChildProviderError(redacted);
-  if (parsed.isOk()) {
-    return { event: redacted, providerError: parsed.value };
-  }
   return {
     event: redacted,
-    providerError:
-      parsed.error.type === "ProviderErrorCleared" ? undefined : previous,
+    evidence: adoptNewerEvidence(
+      previous,
+      eventEvidence(redacted) ?? NO_TERMINAL_ERROR_EVIDENCE,
+    ),
   };
 }
 
