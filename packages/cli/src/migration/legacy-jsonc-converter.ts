@@ -3,17 +3,32 @@
  *
  * Converts a legacy weave-opencode.jsonc source string into current `.weave` DSL.
  * This is a best-effort partial conversion: supported fields are converted,
- * unsupported fields are skipped with explicit warnings.
+ * unsupported fields are skipped with explicit sanitized warnings.
  */
 
+import { parseConfig, parseModelIntentEntry } from "@weaveio/weave-core";
 import { type ParseError, parse as parseJsonc } from "jsonc-parser";
-
+import { Result } from "neverthrow";
+import {
+  boundWarning,
+  CONVERSION_REASON,
+  joinPath,
+  PATH_DSL,
+  PATH_SOURCE,
+  pushWarning,
+  reasonWithType,
+} from "./legacy-conversion-diagnostics.js";
+import {
+  classifyDslName,
+  isDangerousDslName,
+} from "./legacy-dsl-identifiers.js";
 import {
   copyLegacyGraph,
   LEGACY_GRAPH_TOO_LARGE_MESSAGE,
   type LegacyGraphCopyError,
   UNSAFE_LEGACY_GRAPH_MESSAGE,
 } from "./legacy-graph-copy.js";
+import { inspectLegacyJsonc } from "./legacy-jsonc-inspect.js";
 import type { ConversionResult, ConversionWarning } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -22,18 +37,26 @@ import type { ConversionResult, ConversionWarning } from "./types.js";
 
 /**
  * Legacy top-level fields that are explicitly unsupported in migration v1.
- * Each entry maps the field name to the human-readable skip reason.
+ * Lookups use Map so untrusted keys cannot hit Object.prototype.
  */
-const UNSUPPORTED_LEGACY_FIELDS: Record<string, string> = {
-  workflows:
+const UNSUPPORTED_LEGACY_FIELDS = new Map<string, string>([
+  [
+    "workflows",
     "legacy workflow definitions are not supported in migration v1; define workflows using the current DSL workflow syntax",
-  continuation:
+  ],
+  [
+    "continuation",
     "legacy continuation settings are not supported in migration v1; use the current DSL continuation block if needed",
-  analytics:
+  ],
+  [
+    "analytics",
     "legacy analytics settings are not supported in migration v1; use the current DSL analytics block if needed",
-  background:
+  ],
+  [
+    "background",
     "legacy background settings are not supported in migration v1; no equivalent exists in the current DSL",
-};
+  ],
+]);
 
 /**
  * The set of builtin agent names in the current unified agent namespace.
@@ -50,36 +73,26 @@ const BUILTIN_AGENT_NAMES = new Set([
   "warp",
 ]);
 
+type ToolCapability = "read" | "write" | "execute" | "delegate" | "network";
+type ToolPermission = "allow" | "deny";
+
 /**
  * Mapping from clearly known legacy OpenCode tool names to current abstract
  * `tool_policy` capability buckets.
- *
- * Only tool names with a clear, unambiguous mapping are included here.
- * Ambiguous or harness-specific tool names are warned and skipped.
- *
- * Capability buckets: read | write | execute | delegate | network
  */
-const LEGACY_TOOL_TO_CAPABILITY: Record<
-  string,
-  "read" | "write" | "execute" | "delegate" | "network"
-> = {
-  // Read-only tools
-  read: "read",
-  // Write tools
-  write: "write",
-  edit: "write",
-  // Execute tools
-  bash: "execute",
-  // Delegate tools
-  task: "delegate",
-  // Network tools
-  web_search: "network",
-  web_fetch: "network",
-};
+const LEGACY_TOOL_TO_CAPABILITY = new Map<string, ToolCapability>([
+  ["read", "read"],
+  ["write", "write"],
+  ["edit", "write"],
+  ["bash", "execute"],
+  ["task", "delegate"],
+  ["web_search", "network"],
+  ["web_fetch", "network"],
+]);
 
 /**
  * Legacy tool names that are ambiguous or harness-specific and cannot be
- * mapped to a current abstract capability bucket. These are warned and skipped.
+ * mapped to a current abstract capability bucket.
  */
 const AMBIGUOUS_LEGACY_TOOLS = new Set([
   "call_weave_agent",
@@ -101,6 +114,11 @@ const VALID_LOG_LEVELS = new Set([
   "FATAL",
 ]);
 
+const VALID_MODES = new Set(["primary", "subagent", "all"]);
+
+const MIN_TEMPERATURE = 0;
+const MAX_TEMPERATURE = 2;
+
 /**
  * Legacy names that must never become `fast true`. The converter never infers
  * acceleration intent from a legacy or provider-specific field.
@@ -113,41 +131,39 @@ const REJECTED_FAST_ALIASES = [
   "priority",
 ] as const;
 
-const MAX_CONVERSION_WARNINGS = 32;
-const MAX_WARNING_FIELD_LENGTH = 256;
-const MAX_WARNING_REASON_LENGTH = 512;
-const MAX_WARNING_DIAGNOSTIC_SIZE = 8 * 1024;
-const WARNING_TRUNCATION_SUFFIX = "... [truncated]";
-const WARNINGS_TRUNCATED_REASON =
-  "additional conversion diagnostics were truncated";
+type PathParts = Array<string | number>;
 
 // ---------------------------------------------------------------------------
 // JSONC parsing
 // ---------------------------------------------------------------------------
 
+const parseJsoncSource = Result.fromThrowable(
+  (source: string): unknown => {
+    const errors: ParseError[] = [];
+    const result = parseJsonc(source, errors, {
+      allowTrailingComma: true,
+      disallowComments: false,
+      allowEmptyContent: false,
+    });
+    if (errors.length > 0) return undefined;
+    return result;
+  },
+  (): undefined => undefined,
+);
+
 /**
- * Parse legacy JSONC with comments and trailing commas. The old
- * comment-stripping pass left trailing commas for `JSON.parse` to reject,
- * which made migration fall back to the starter config.
- *
+ * Parse legacy JSONC with comments and trailing commas.
  * Returns `undefined` when parsing fails.
  */
 function parseLegacyJsonc(source: string): unknown {
-  const errors: ParseError[] = [];
-  const result = parseJsonc(source, errors, {
-    allowTrailingComma: true,
-    disallowComments: false,
-    allowEmptyContent: false,
-  });
-  if (errors.length > 0) return undefined;
-  return result;
+  const parsed = parseJsoncSource(source);
+  if (parsed.isErr()) return undefined;
+  return parsed.value;
 }
 
 /**
  * Escapes a string value for safe embedding in a `.weave` DSL double-quoted
- * string literal. Handles backslashes, double-quotes, newlines, carriage
- * returns, tabs, and other ASCII control characters (U+0000–U+001F except
- * \n, \r, \t, and U+007F) so that any legacy prompt value produces valid DSL.
+ * string literal.
  */
 // Regex for ASCII control characters not covered by named escape sequences
 // (\n, \r, \t). Covers U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+007F.
@@ -167,71 +183,20 @@ function escapeForDsl(str: string): string {
     });
 }
 
-function truncateWarningText(value: string, limit: number): string {
-  if (value.length <= limit) return value;
-  return `${value.slice(0, limit - WARNING_TRUNCATION_SUFFIX.length)}${WARNING_TRUNCATION_SUFFIX}`;
-}
-
-function warningSize(warning: ConversionWarning): number {
-  return warning.field.length + warning.reason.length;
-}
-
-function boundWarning(warning: ConversionWarning): ConversionWarning {
-  return {
-    field: truncateWarningText(warning.field, MAX_WARNING_FIELD_LENGTH),
-    reason: truncateWarningText(warning.reason, MAX_WARNING_REASON_LENGTH),
-  };
-}
-
-function pushWarning(
-  warnings: ConversionWarning[],
-  field: string,
-  reason: string,
-): void {
-  const next = boundWarning({ field, reason });
-  let aggregate = 0;
-  for (const warning of warnings) {
-    aggregate += warningSize(warning);
-  }
-  const wouldExceedCount = warnings.length >= MAX_CONVERSION_WARNINGS;
-  const wouldExceedSize =
-    aggregate + warningSize(next) > MAX_WARNING_DIAGNOSTIC_SIZE;
-  if (wouldExceedCount || wouldExceedSize) {
-    const marker = boundWarning({
-      field: "<diagnostics>",
-      reason: WARNINGS_TRUNCATED_REASON,
-    });
-    const last = warnings[warnings.length - 1];
-    if (last?.field === marker.field && last.reason === marker.reason) {
-      return;
-    }
-    if (warnings.length >= MAX_CONVERSION_WARNINGS) {
-      warnings[warnings.length - 1] = marker;
-      return;
-    }
-    warnings.push(marker);
-    return;
-  }
-  warnings.push(next);
-}
-
-function absorbWarnings(
-  warnings: ConversionWarning[],
-  extra: ConversionWarning[],
-): void {
-  for (const warning of extra) {
-    pushWarning(warnings, warning.field, warning.reason);
-  }
-}
-
 function graphCopyWarning(error: LegacyGraphCopyError): ConversionWarning {
   return boundWarning({
-    field: "<source>",
+    field: PATH_SOURCE,
     reason:
       error.type === "GraphTooLarge"
         ? LEGACY_GRAPH_TOO_LARGE_MESSAGE
         : UNSAFE_LEGACY_GRAPH_MESSAGE,
   });
+}
+
+function parseFailedResult(): ConversionResult {
+  const warnings: ConversionWarning[] = [];
+  pushWarning(warnings, PATH_SOURCE, CONVERSION_REASON.parseFailed);
+  return { dsl: "", warnings };
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -242,24 +207,96 @@ function isNonBlankString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.hasOwn(record, key);
+}
+
+function isValidTemperature(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= MIN_TEMPERATURE &&
+    value <= MAX_TEMPERATURE
+  );
+}
+
 function formatTriggerList(triggers: string[]): string {
   return `  triggers [${triggers.map((trigger) => JSON.stringify(trigger)).join(", ")}]`;
 }
 
 function warnRejectedFastAliases(
   entry: Record<string, unknown>,
-  contextLabel: string,
+  context: PathParts,
   warnings: ConversionWarning[],
 ): void {
   for (const alias of REJECTED_FAST_ALIASES) {
-    if (entry[alias] !== undefined) {
+    if (hasOwn(entry, alias)) {
       pushWarning(
         warnings,
-        `${contextLabel}.${alias}`,
-        `"${alias}" is not converted to fast intent; skipped`,
+        joinPath([...context, alias]),
+        CONVERSION_REASON.fastAlias,
       );
     }
   }
+}
+
+function warnUnusableKey(
+  key: string,
+  parentPath: PathParts,
+  warnings: ConversionWarning[],
+): boolean {
+  if (!isDangerousDslName(key)) return false;
+  pushWarning(
+    warnings,
+    joinPath([...parentPath, key]),
+    CONVERSION_REASON.dangerousKey,
+  );
+  return true;
+}
+
+function warnUnusableName(
+  name: string,
+  parentPath: PathParts,
+  warnings: ConversionWarning[],
+): boolean {
+  const classification = classifyDslName(name);
+  if (classification === "ok") return false;
+  pushWarning(
+    warnings,
+    joinPath([...parentPath, name]),
+    classification === "dangerous"
+      ? CONVERSION_REASON.dangerousName
+      : CONVERSION_REASON.invalidIdentifier,
+  );
+  return true;
+}
+
+function appendValidatedBlock(
+  dslLines: string[],
+  blockLines: string[],
+  warnings: ConversionWarning[],
+  path: string,
+): void {
+  if (blockLines.length === 0) return;
+  const block = blockLines.join("\n");
+  const validated = parseConfig(block);
+  if (validated.isErr()) {
+    pushWarning(warnings, path, CONVERSION_REASON.omittedInvalid);
+    return;
+  }
+  dslLines.push(block);
+}
+
+function finalizeConversion(
+  dslLines: string[],
+  warnings: ConversionWarning[],
+): ConversionResult {
+  const dsl = dslLines.join("\n");
+  if (dsl.trim().length === 0) return { dsl: "", warnings };
+  const validated = parseConfig(dsl);
+  if (validated.isOk()) return { dsl, warnings };
+  pushWarning(warnings, PATH_DSL, CONVERSION_REASON.omittedInvalid);
+  return { dsl: "", warnings };
 }
 
 /**
@@ -271,15 +308,15 @@ function warnRejectedFastAliases(
  */
 function convertLegacyTriggers(
   value: unknown,
-  fieldPath: string,
+  fieldPath: PathParts,
   warnings: ConversionWarning[],
 ): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
     pushWarning(
       warnings,
-      fieldPath,
-      "expected an array of trigger strings or legacy trigger objects; skipped",
+      joinPath(fieldPath),
+      reasonWithType(CONVERSION_REASON.expectedTriggerArray, value),
     );
     return undefined;
   }
@@ -288,12 +325,16 @@ function convertLegacyTriggers(
   const seen = new Set<string>();
 
   for (let index = 0; index < value.length; index += 1) {
-    const entryPath = `${fieldPath}.${index}`;
+    const entryPath: PathParts = [...fieldPath, index];
     const entry = value[index];
 
     if (typeof entry === "string") {
       if (entry.trim().length === 0) {
-        pushWarning(warnings, entryPath, "empty trigger string discarded");
+        pushWarning(
+          warnings,
+          joinPath(entryPath),
+          CONVERSION_REASON.emptyTrigger,
+        );
         continue;
       }
       if (!seen.has(entry)) {
@@ -304,12 +345,18 @@ function convertLegacyTriggers(
     }
 
     if (!isPlainRecord(entry)) {
-      pushWarning(warnings, entryPath, "malformed trigger entry discarded");
+      pushWarning(
+        warnings,
+        joinPath(entryPath),
+        reasonWithType(CONVERSION_REASON.malformedTrigger, entry),
+      );
       continue;
     }
 
-    const routingHint = entry.routing_hint;
-    const trigger = entry.trigger;
+    const routingHint = hasOwn(entry, "routing_hint")
+      ? entry.routing_hint
+      : undefined;
+    const trigger = hasOwn(entry, "trigger") ? entry.trigger : undefined;
     let chosen: string | undefined;
     let chosenKey: "routing_hint" | "trigger" | undefined;
     if (isNonBlankString(routingHint)) {
@@ -322,29 +369,19 @@ function convertLegacyTriggers(
 
     for (const key of Object.keys(entry)) {
       if (key === chosenKey) continue;
-      const discarded = entry[key];
-      let preview: string;
-      if (typeof discarded === "string") {
-        preview = discarded;
-      } else if (discarded === null) {
-        preview = "null";
-      } else if (Array.isArray(discarded)) {
-        preview = "array";
-      } else {
-        preview = typeof discarded;
-      }
+      if (warnUnusableKey(key, entryPath, warnings)) continue;
       pushWarning(
         warnings,
-        `${entryPath}.${key}`,
-        `legacy trigger field "${key}" (${preview}) cannot be represented as a trigger string; discarded`,
+        joinPath([...entryPath, key]),
+        reasonWithType(CONVERSION_REASON.discardedStructuredField, entry[key]),
       );
     }
 
     if (chosen === undefined) {
       pushWarning(
         warnings,
-        entryPath,
-        "malformed or empty trigger entry discarded",
+        joinPath(entryPath),
+        CONVERSION_REASON.malformedTrigger,
       );
       continue;
     }
@@ -360,15 +397,15 @@ function convertLegacyTriggers(
 
 function convertLegacyPatternField(
   value: unknown,
-  fieldPath: string,
+  fieldPath: PathParts,
   warnings: ConversionWarning[],
 ): void {
   if (value === undefined) return;
   if (!Array.isArray(value)) {
     pushWarning(
       warnings,
-      fieldPath,
-      "malformed category patterns discarded; categories no longer use file patterns",
+      joinPath(fieldPath),
+      reasonWithType(CONVERSION_REASON.patternsMalformed, value),
     );
     return;
   }
@@ -382,23 +419,19 @@ function convertLegacyPatternField(
     }
     pushWarning(
       warnings,
-      `${fieldPath}.${index}`,
-      "malformed category pattern discarded",
+      joinPath([...fieldPath, index]),
+      reasonWithType(CONVERSION_REASON.patternMalformed, pattern),
     );
   }
 
   if (validCount > 0) {
     pushWarning(
       warnings,
-      fieldPath,
-      "category file patterns are not supported; dropped valid patterns and did not emit a replacement",
+      joinPath(fieldPath),
+      CONVERSION_REASON.patternsDropped,
     );
   } else if (value.length === 0) {
-    pushWarning(
-      warnings,
-      fieldPath,
-      "empty category patterns discarded; categories no longer use file patterns",
-    );
+    pushWarning(warnings, joinPath(fieldPath), CONVERSION_REASON.patternsEmpty);
   }
 }
 
@@ -409,8 +442,6 @@ function convertLegacyPatternField(
 /**
  * Filename-only pattern: a safe prompt_file reference is a bare filename
  * (no directory separators) that can be placed directly in `.weave/prompts/`.
- * Paths with directory components (e.g. `../prompts/foo.md`, `/abs/path.md`,
- * `subdir/foo.md`) cannot be safely translated and are warned and skipped.
  */
 function isPromptFileSafe(promptFile: string): boolean {
   if (promptFile.length === 0) return false;
@@ -419,358 +450,390 @@ function isPromptFileSafe(promptFile: string): boolean {
   return true;
 }
 
+function convertTemperature(
+  entry: Record<string, unknown>,
+  context: PathParts,
+  warnings: ConversionWarning[],
+  lines: string[],
+): void {
+  if (!hasOwn(entry, "temperature")) return;
+  const value = entry.temperature;
+  if (isValidTemperature(value)) {
+    lines.push(`  temperature ${value}`);
+    return;
+  }
+  pushWarning(
+    warnings,
+    joinPath([...context, "temperature"]),
+    reasonWithType(CONVERSION_REASON.invalidTemperature, value),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Field conversion helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Convert a legacy `tools` record (Record<string, boolean>) into a
- * `tool_policy { ... }` DSL block.
- *
- * Only clearly known legacy tool names are mapped to abstract capability
- * buckets. Ambiguous or unmappable tool names are warned and skipped.
- *
- * Returns the DSL lines for the tool_policy block and any warnings.
+ * Convert a legacy `tools` record into a `tool_policy { ... }` DSL block.
  */
 function convertLegacyTools(
-  tools: Record<string, boolean>,
-  contextLabel: string,
-): { lines: string[]; warnings: ConversionWarning[] } {
-  const warnings: ConversionWarning[] = [];
-  const capabilities: Record<
-    "read" | "write" | "execute" | "delegate" | "network",
-    "allow" | "deny"
-  > = {} as Record<
-    "read" | "write" | "execute" | "delegate" | "network",
-    "allow" | "deny"
+  tools: Record<string, unknown>,
+  context: PathParts,
+  warnings: ConversionWarning[],
+): string[] {
+  const capabilities = Object.create(null) as Record<
+    ToolCapability,
+    ToolPermission
   >;
 
-  for (const [toolName, allowed] of Object.entries(tools)) {
+  for (const toolName of Object.keys(tools)) {
+    const toolPath = joinPath([...context, "tools", toolName]);
+    if (warnUnusableKey(toolName, [...context, "tools"], warnings)) {
+      continue;
+    }
     if (AMBIGUOUS_LEGACY_TOOLS.has(toolName)) {
-      warnings.push({
-        field: `${contextLabel}.tools.${toolName}`,
-        reason: `"${toolName}" is a harness-specific tool name that cannot be mapped to an abstract tool_policy capability; skipped`,
-      });
+      pushWarning(warnings, toolPath, CONVERSION_REASON.toolAmbiguous);
       continue;
     }
+    const allowed = tools[toolName];
     if (typeof allowed !== "boolean") {
-      warnings.push({
-        field: `${contextLabel}.tools.${toolName}`,
-        reason: "tool permission must be a boolean; skipped",
-      });
+      pushWarning(
+        warnings,
+        toolPath,
+        reasonWithType(CONVERSION_REASON.toolNotBoolean, allowed),
+      );
       continue;
     }
-    const capability = LEGACY_TOOL_TO_CAPABILITY[toolName];
+    const capability = LEGACY_TOOL_TO_CAPABILITY.get(toolName);
     if (capability === undefined) {
-      warnings.push({
-        field: `${contextLabel}.tools.${toolName}`,
-        reason: `"${toolName}" is an unknown legacy tool name that cannot be mapped to an abstract tool_policy capability; skipped`,
-      });
+      pushWarning(warnings, toolPath, CONVERSION_REASON.toolUnknown);
       continue;
     }
     capabilities[capability] = allowed ? "allow" : "deny";
   }
 
-  const capEntries = Object.entries(capabilities);
-  if (capEntries.length === 0) return { lines: [], warnings };
+  const capEntries = Object.entries(capabilities) as Array<
+    [ToolCapability, ToolPermission]
+  >;
+  if (capEntries.length === 0) return [];
 
   const lines = ["  tool_policy {"];
   for (const [cap, perm] of capEntries) {
     lines.push(`    ${cap} ${perm}`);
   }
   lines.push("  }");
-  return { lines, warnings };
+  return lines;
 }
 
 /**
  * Convert legacy `model` + optional `fallback_models` into an ordered
  * `models [...]` array with the primary model first.
- *
- * Returns DSL lines (indented for block context) and any warnings.
  */
 function convertLegacyModels(
   entry: Record<string, unknown>,
-  contextLabel: string,
-): { lines: string[]; warnings: ConversionWarning[] } {
-  const warnings: ConversionWarning[] = [];
+  context: PathParts,
+  warnings: ConversionWarning[],
+): string[] {
   const models: string[] = [];
 
-  if (entry["model"] !== undefined) {
-    if (typeof entry["model"] !== "string") {
-      warnings.push({
-        field: `${contextLabel}.model`,
-        reason: "expected a string model name; skipped",
-      });
+  if (hasOwn(entry, "model")) {
+    const model = entry.model;
+    if (typeof model !== "string") {
+      pushWarning(
+        warnings,
+        joinPath([...context, "model"]),
+        reasonWithType(CONVERSION_REASON.expectedStringModel, model),
+      );
     } else {
-      models.push(entry["model"]);
-    }
-  }
-
-  if (entry["fallback_models"] !== undefined) {
-    if (!Array.isArray(entry["fallback_models"])) {
-      warnings.push({
-        field: `${contextLabel}.fallback_models`,
-        reason: "expected an array of model names; skipped",
-      });
-    } else {
-      for (const m of entry["fallback_models"]) {
-        if (typeof m === "string") models.push(m);
+      const intent = parseModelIntentEntry(model);
+      if (intent.isErr()) {
+        pushWarning(
+          warnings,
+          joinPath([...context, "model"]),
+          CONVERSION_REASON.invalidModel,
+        );
+      } else {
+        models.push(model);
       }
     }
   }
 
-  if (models.length === 0) return { lines: [], warnings };
+  if (hasOwn(entry, "fallback_models")) {
+    const fallback = entry.fallback_models;
+    if (!Array.isArray(fallback)) {
+      pushWarning(
+        warnings,
+        joinPath([...context, "fallback_models"]),
+        reasonWithType(CONVERSION_REASON.expectedArrayModels, fallback),
+      );
+    } else {
+      for (let index = 0; index < fallback.length; index += 1) {
+        const item = fallback[index];
+        const itemPath = joinPath([...context, "fallback_models", index]);
+        if (typeof item !== "string") {
+          pushWarning(
+            warnings,
+            itemPath,
+            reasonWithType(CONVERSION_REASON.expectedStringModel, item),
+          );
+          continue;
+        }
+        const intent = parseModelIntentEntry(item);
+        if (intent.isErr()) {
+          pushWarning(warnings, itemPath, CONVERSION_REASON.invalidModel);
+          continue;
+        }
+        models.push(item);
+      }
+    }
+  }
 
-  const items = models.map((m) => JSON.stringify(m)).join(", ");
-  return { lines: [`  models [${items}]`], warnings };
+  if (models.length === 0) return [];
+
+  const items = models.map((model) => JSON.stringify(model)).join(", ");
+  return [`  models [${items}]`];
 }
 
 /**
  * Convert a legacy `prompt_file` value into a DSL `prompt_file "..."` line.
- *
- * Safe: bare filename (no directory separators) → `  prompt_file "filename.md"`
- * Unsafe: paths with directory components → warn and skip.
  */
 function convertLegacyPromptFile(
   value: unknown,
-  contextLabel: string,
-): { line: string | undefined; warnings: ConversionWarning[] } {
-  const warnings: ConversionWarning[] = [];
-
+  context: PathParts,
+  warnings: ConversionWarning[],
+): string | undefined {
   if (typeof value !== "string") {
-    warnings.push({
-      field: `${contextLabel}.prompt_file`,
-      reason: "expected a string path; skipped",
-    });
-    return { line: undefined, warnings };
+    pushWarning(
+      warnings,
+      joinPath([...context, "prompt_file"]),
+      reasonWithType(CONVERSION_REASON.expectedStringPath, value),
+    );
+    return undefined;
   }
 
   if (!isPromptFileSafe(value)) {
-    warnings.push({
-      field: `${contextLabel}.prompt_file`,
-      reason: `"${value}" contains directory components and cannot be safely translated to the current .weave/prompts/ convention; skipped`,
-    });
-    return { line: undefined, warnings };
+    pushWarning(
+      warnings,
+      joinPath([...context, "prompt_file"]),
+      CONVERSION_REASON.promptFileUnsafe,
+    );
+    return undefined;
   }
 
-  return { line: `  prompt_file "${escapeForDsl(value)}"`, warnings };
+  return `  prompt_file "${escapeForDsl(value)}"`;
+}
+
+function convertUnsupportedFields(
+  entry: Record<string, unknown>,
+  context: PathParts,
+  fields: readonly string[],
+  warnings: ConversionWarning[],
+): void {
+  const kind =
+    context[0] === "custom_agents" ? "custom agent" : "agent override";
+  for (const field of fields) {
+    if (hasOwn(entry, field)) {
+      pushWarning(
+        warnings,
+        joinPath([...context, field]),
+        `"${field}" is not supported in ${kind} migration v1; skipped`,
+      );
+    }
+  }
 }
 
 /**
- * Convert a legacy agent override entry (from `agents` top-level key) into
- * DSL lines for an `agent <name> { ... }` block.
- *
- * Only fields with clear current-DSL equivalents are converted:
- * - `model` + `fallback_models` → `models [...]`
- * - `temperature` → `temperature <value>`
- * - `prompt_append` → `prompt_append "..."`
- * - `tools` → `tool_policy { ... }`
- * - `prompt_file` → `prompt_file "..."` (safe paths only)
- *
- * Fields without current-DSL equivalents (`display_name`, `skills`, etc.)
- * are warned and skipped.
+ * Convert a legacy agent override entry into DSL lines for an `agent <name>` block.
  */
 function convertLegacyAgentEntry(
   name: string,
   entry: Record<string, unknown>,
   warnings: ConversionWarning[],
 ): string[] {
+  const context: PathParts = ["agents", name];
   const lines: string[] = [`agent ${name} {`];
 
-  const modelsResult = convertLegacyModels(entry, `agents.${name}`);
-  absorbWarnings(warnings, modelsResult.warnings);
-  if (modelsResult.lines.length > 0) lines.push(...modelsResult.lines);
+  const modelLines = convertLegacyModels(entry, context, warnings);
+  if (modelLines.length > 0) lines.push(...modelLines);
 
-  if (typeof entry["temperature"] === "number") {
-    lines.push(`  temperature ${entry["temperature"]}`);
-  }
+  convertTemperature(entry, context, warnings, lines);
 
-  if (typeof entry["prompt_append"] === "string") {
-    const escaped = escapeForDsl(entry["prompt_append"]);
-    lines.push(`  prompt_append "${escaped}"`);
-  }
-
-  if (entry["prompt_file"] !== undefined) {
-    const promptFileResult = convertLegacyPromptFile(
-      entry["prompt_file"],
-      `agents.${name}`,
+  if (
+    hasOwn(entry, "prompt_append") &&
+    typeof entry.prompt_append === "string"
+  ) {
+    lines.push(`  prompt_append "${escapeForDsl(entry.prompt_append)}"`);
+  } else if (hasOwn(entry, "prompt_append")) {
+    pushWarning(
+      warnings,
+      joinPath([...context, "prompt_append"]),
+      reasonWithType(CONVERSION_REASON.expectedString, entry.prompt_append),
     );
-    absorbWarnings(warnings, promptFileResult.warnings);
-    if (promptFileResult.line !== undefined) lines.push(promptFileResult.line);
   }
 
-  if (isPlainRecord(entry["tools"])) {
-    const toolResult = convertLegacyTools(
-      entry["tools"] as Record<string, boolean>,
-      `agents.${name}`,
+  if (hasOwn(entry, "prompt_file")) {
+    const promptFileLine = convertLegacyPromptFile(
+      entry.prompt_file,
+      context,
+      warnings,
     );
-    for (const warning of toolResult.warnings) {
-      pushWarning(warnings, warning.field, warning.reason);
+    if (promptFileLine !== undefined) lines.push(promptFileLine);
+  }
+
+  if (hasOwn(entry, "tools")) {
+    if (isPlainRecord(entry.tools)) {
+      const toolLines = convertLegacyTools(entry.tools, context, warnings);
+      if (toolLines.length > 0) lines.push(...toolLines);
+    } else {
+      pushWarning(
+        warnings,
+        joinPath([...context, "tools"]),
+        reasonWithType(CONVERSION_REASON.expectedObject, entry.tools),
+      );
     }
-    if (toolResult.lines.length > 0) lines.push(...toolResult.lines);
   }
 
   const triggers = convertLegacyTriggers(
-    entry["triggers"],
-    `agents.${name}.triggers`,
+    hasOwn(entry, "triggers") ? entry.triggers : undefined,
+    [...context, "triggers"],
     warnings,
   );
   if (triggers !== undefined) lines.push(formatTriggerList(triggers));
 
-  warnRejectedFastAliases(entry, `agents.${name}`, warnings);
-
-  const unsupportedAgentFields = ["display_name", "skills", "mode"];
-  for (const field of unsupportedAgentFields) {
-    if (entry[field] !== undefined) {
-      pushWarning(
-        warnings,
-        `agents.${name}.${field}`,
-        `"${field}" is not supported in agent override migration v1; skipped`,
-      );
-    }
-  }
+  warnRejectedFastAliases(entry, context, warnings);
+  convertUnsupportedFields(
+    entry,
+    context,
+    ["display_name", "skills", "mode"],
+    warnings,
+  );
 
   lines.push("}");
   return lines;
 }
 
 /**
- * Convert a legacy custom agent entry into a new `agent <name> { ... }` block.
- *
- * Supported fields:
- * - `prompt` (inline) → `prompt "..."`
- * - `prompt_file` → `prompt_file "..."` (safe paths only)
- * - `model` + `fallback_models` → `models [...]`
- * - `temperature` → `temperature <value>`
- * - `mode` → `mode <value>` (if valid)
- * - `prompt_append` → `prompt_append "..."`
- * - `tools` → `tool_policy { ... }`
- *
- * Unsupported fields are warned and skipped.
+ * Convert a legacy custom agent entry into a new `agent <name>` block.
  */
 function convertLegacyCustomAgent(
   name: string,
   entry: Record<string, unknown>,
   warnings: ConversionWarning[],
 ): string[] {
+  const context: PathParts = ["custom_agents", name];
   const lines: string[] = [`agent ${name} {`];
 
-  if (typeof entry["prompt"] === "string") {
-    const escaped = escapeForDsl(entry["prompt"]);
-    lines.push(`  prompt "${escaped}"`);
-  }
-
-  if (entry["prompt_file"] !== undefined && entry["prompt"] === undefined) {
-    const promptFileResult = convertLegacyPromptFile(
-      entry["prompt_file"],
-      `custom_agents.${name}`,
-    );
-    absorbWarnings(warnings, promptFileResult.warnings);
-    if (promptFileResult.line !== undefined) lines.push(promptFileResult.line);
-  } else if (
-    entry["prompt_file"] !== undefined &&
-    entry["prompt"] !== undefined
-  ) {
+  if (hasOwn(entry, "prompt") && typeof entry.prompt === "string") {
+    lines.push(`  prompt "${escapeForDsl(entry.prompt)}"`);
+  } else if (hasOwn(entry, "prompt")) {
     pushWarning(
       warnings,
-      `custom_agents.${name}.prompt_file`,
-      "both prompt and prompt_file are set; prompt_file skipped (prompt takes precedence)",
+      joinPath([...context, "prompt"]),
+      reasonWithType(CONVERSION_REASON.expectedString, entry.prompt),
     );
   }
 
-  const modelsResult = convertLegacyModels(entry, `custom_agents.${name}`);
-  absorbWarnings(warnings, modelsResult.warnings);
-  if (modelsResult.lines.length > 0) lines.push(...modelsResult.lines);
-
-  if (typeof entry["temperature"] === "number") {
-    lines.push(`  temperature ${entry["temperature"]}`);
+  if (hasOwn(entry, "prompt_file") && !hasOwn(entry, "prompt")) {
+    const promptFileLine = convertLegacyPromptFile(
+      entry.prompt_file,
+      context,
+      warnings,
+    );
+    if (promptFileLine !== undefined) lines.push(promptFileLine);
+  } else if (hasOwn(entry, "prompt_file") && hasOwn(entry, "prompt")) {
+    pushWarning(
+      warnings,
+      joinPath([...context, "prompt_file"]),
+      CONVERSION_REASON.promptFileSkipped,
+    );
   }
 
-  if (entry["mode"] !== undefined) {
-    const validModes = new Set(["primary", "subagent", "all"]);
-    if (typeof entry["mode"] === "string" && validModes.has(entry["mode"])) {
-      lines.push(`  mode ${entry["mode"]}`);
+  const modelLines = convertLegacyModels(entry, context, warnings);
+  if (modelLines.length > 0) lines.push(...modelLines);
+
+  convertTemperature(entry, context, warnings, lines);
+
+  if (hasOwn(entry, "mode")) {
+    const mode = entry.mode;
+    if (typeof mode === "string" && VALID_MODES.has(mode)) {
+      lines.push(`  mode ${mode}`);
     } else {
       pushWarning(
         warnings,
-        `custom_agents.${name}.mode`,
-        `"${String(entry["mode"])}" is not a valid mode (expected primary, subagent, or all); skipped`,
+        joinPath([...context, "mode"]),
+        reasonWithType(CONVERSION_REASON.invalidMode, mode),
       );
     }
   }
 
-  if (typeof entry["prompt_append"] === "string") {
-    const escaped = escapeForDsl(entry["prompt_append"]);
-    lines.push(`  prompt_append "${escaped}"`);
+  if (
+    hasOwn(entry, "prompt_append") &&
+    typeof entry.prompt_append === "string"
+  ) {
+    lines.push(`  prompt_append "${escapeForDsl(entry.prompt_append)}"`);
+  } else if (hasOwn(entry, "prompt_append")) {
+    pushWarning(
+      warnings,
+      joinPath([...context, "prompt_append"]),
+      reasonWithType(CONVERSION_REASON.expectedString, entry.prompt_append),
+    );
   }
 
-  if (isPlainRecord(entry["tools"])) {
-    const toolResult = convertLegacyTools(
-      entry["tools"] as Record<string, boolean>,
-      `custom_agents.${name}`,
-    );
-    for (const warning of toolResult.warnings) {
-      pushWarning(warnings, warning.field, warning.reason);
+  if (hasOwn(entry, "tools")) {
+    if (isPlainRecord(entry.tools)) {
+      const toolLines = convertLegacyTools(entry.tools, context, warnings);
+      if (toolLines.length > 0) lines.push(...toolLines);
+    } else {
+      pushWarning(
+        warnings,
+        joinPath([...context, "tools"]),
+        reasonWithType(CONVERSION_REASON.expectedObject, entry.tools),
+      );
     }
-    if (toolResult.lines.length > 0) lines.push(...toolResult.lines);
   }
 
   const triggers = convertLegacyTriggers(
-    entry["triggers"],
-    `custom_agents.${name}.triggers`,
+    hasOwn(entry, "triggers") ? entry.triggers : undefined,
+    [...context, "triggers"],
     warnings,
   );
   if (triggers !== undefined) lines.push(formatTriggerList(triggers));
 
-  warnRejectedFastAliases(entry, `custom_agents.${name}`, warnings);
-
-  const unsupportedCustomAgentFields = ["skills", "display_name"];
-  for (const field of unsupportedCustomAgentFields) {
-    if (entry[field] !== undefined) {
-      pushWarning(
-        warnings,
-        `custom_agents.${name}.${field}`,
-        `"${field}" is not supported in custom agent migration v1; skipped`,
-      );
-    }
-  }
+  warnRejectedFastAliases(entry, context, warnings);
+  convertUnsupportedFields(
+    entry,
+    context,
+    ["skills", "display_name"],
+    warnings,
+  );
 
   lines.push("}");
   return lines;
 }
 
 /**
- * Convert a legacy category entry into a `category <name> { ... }` block.
- *
- * Supported fields:
- * - `description` → `description "..."`
- * - `triggers` → `triggers [...]` (string or legacy object conversion)
- * - `model` + `fallback_models` → `models [...]`
- * - `temperature` → `temperature <value>`
- * - `prompt_append` → `prompt_append "..."`
- * - `tools` → `tool_policy { ... }`
- *
- * Valid and malformed `patterns` are dropped with warnings. A category with a
- * nonblank description still converts. The converter never emits `patterns` or
- * infers `fast`.
+ * Convert a legacy category entry into a `category <name>` block.
  */
 function convertLegacyCategory(
   name: string,
   entry: Record<string, unknown>,
   warnings: ConversionWarning[],
 ): string[] {
+  const context: PathParts = ["categories", name];
   convertLegacyPatternField(
-    entry["patterns"],
-    `categories.${name}.patterns`,
+    hasOwn(entry, "patterns") ? entry.patterns : undefined,
+    [...context, "patterns"],
     warnings,
   );
 
-  const description = entry["description"];
+  const description = hasOwn(entry, "description")
+    ? entry.description
+    : undefined;
   if (!isNonBlankString(description)) {
     pushWarning(
       warnings,
-      `categories.${name}.description`,
-      "a non-empty string is required; category skipped",
+      joinPath([...context, "description"]),
+      CONVERSION_REASON.descriptionRequired,
     );
     return [];
   }
@@ -778,90 +841,273 @@ function convertLegacyCategory(
   const lines: string[] = [`category ${name} {`];
   lines.push(`  description "${escapeForDsl(description)}"`);
 
-  const modelsResult = convertLegacyModels(entry, `categories.${name}`);
-  for (const warning of modelsResult.warnings) {
-    pushWarning(warnings, warning.field, warning.reason);
-  }
-  if (modelsResult.lines.length > 0) lines.push(...modelsResult.lines);
+  const modelLines = convertLegacyModels(entry, context, warnings);
+  if (modelLines.length > 0) lines.push(...modelLines);
 
-  if (typeof entry["temperature"] === "number") {
-    lines.push(`  temperature ${entry["temperature"]}`);
-  }
+  convertTemperature(entry, context, warnings, lines);
 
-  if (typeof entry["prompt_append"] === "string") {
-    lines.push(`  prompt_append "${escapeForDsl(entry["prompt_append"])}"`);
-  }
-
-  if (isPlainRecord(entry["tools"])) {
-    const toolResult = convertLegacyTools(
-      entry["tools"] as Record<string, boolean>,
-      `categories.${name}`,
+  if (
+    hasOwn(entry, "prompt_append") &&
+    typeof entry.prompt_append === "string"
+  ) {
+    lines.push(`  prompt_append "${escapeForDsl(entry.prompt_append)}"`);
+  } else if (hasOwn(entry, "prompt_append")) {
+    pushWarning(
+      warnings,
+      joinPath([...context, "prompt_append"]),
+      reasonWithType(CONVERSION_REASON.expectedString, entry.prompt_append),
     );
-    for (const warning of toolResult.warnings) {
-      pushWarning(warnings, warning.field, warning.reason);
+  }
+
+  if (hasOwn(entry, "tools")) {
+    if (isPlainRecord(entry.tools)) {
+      const toolLines = convertLegacyTools(entry.tools, context, warnings);
+      if (toolLines.length > 0) lines.push(...toolLines);
+    } else {
+      pushWarning(
+        warnings,
+        joinPath([...context, "tools"]),
+        reasonWithType(CONVERSION_REASON.expectedObject, entry.tools),
+      );
     }
-    if (toolResult.lines.length > 0) lines.push(...toolResult.lines);
   }
 
   const triggers = convertLegacyTriggers(
-    entry["triggers"],
-    `categories.${name}.triggers`,
+    hasOwn(entry, "triggers") ? entry.triggers : undefined,
+    [...context, "triggers"],
     warnings,
   );
   if (triggers !== undefined) lines.push(formatTriggerList(triggers));
 
-  warnRejectedFastAliases(entry, `categories.${name}`, warnings);
+  warnRejectedFastAliases(entry, context, warnings);
 
   lines.push("}");
   return lines;
 }
 
-// ---------------------------------------------------------------------------
-// Main conversion entry point
-// ---------------------------------------------------------------------------
-
-/**
- * Convert a legacy weave-opencode.jsonc source string into current `.weave` DSL.
- *
- * This is a best-effort partial conversion:
- * - Supported fields are converted and included in the output DSL.
- * - Unsupported fields are skipped with explicit warnings.
- * - Unknown fields are also skipped with a warning.
- * - The function always returns a result (never throws); parse failures
- *   produce a single warning and an empty DSL body.
- *
- * Supported mappings:
- * - `disabled_agents`  → `disable agents [...]`
- * - `disabled_hooks`   → `disable hooks [...]`
- * - `disabled_skills`  → `disable skills [...]`
- * - `log_level`        → `settings { log_level <VALUE> }`
- * - `agents`           → builtin agent override blocks
- * - `custom_agents`    → new agent blocks (with collision detection)
- * - `categories`       → category blocks
- *
- * Explicitly unsupported (warn + skip):
- * - `workflows`, `continuation`, `analytics`, `background`
- */
-export function convertLegacyJsonc(source: string): ConversionResult {
-  const parseResult = parseLegacyJsonc(source);
-  if (
-    parseResult === undefined ||
-    parseResult === null ||
-    typeof parseResult !== "object" ||
-    Array.isArray(parseResult)
-  ) {
-    return {
-      dsl: "",
-      warnings: [
-        boundWarning({
-          field: "<source>",
-          reason:
-            "failed to parse legacy JSONC source; no fields could be converted",
-        }),
-      ],
-    };
+function convertDisableList(
+  value: unknown,
+  key: string,
+  keyword: "agents" | "hooks" | "skills",
+  expectedReason: string,
+  warnings: ConversionWarning[],
+  dslLines: string[],
+): void {
+  if (!Array.isArray(value)) {
+    pushWarning(warnings, key, reasonWithType(expectedReason, value));
+    return;
   }
-  return convertLegacyValue(parseResult);
+  const items: string[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const item = value[index];
+    if (typeof item !== "string") {
+      pushWarning(
+        warnings,
+        joinPath([key, index]),
+        reasonWithType(CONVERSION_REASON.expectedString, item),
+      );
+      continue;
+    }
+    items.push(JSON.stringify(item));
+  }
+  appendValidatedBlock(
+    dslLines,
+    [`disable ${keyword} [${items.join(", ")}]`],
+    warnings,
+    key,
+  );
+}
+
+function convertCopiedRoot(parsed: Record<string, unknown>): ConversionResult {
+  const warnings: ConversionWarning[] = [];
+  const dslLines: string[] = [];
+
+  for (const key of Object.keys(parsed)) {
+    if (warnUnusableKey(key, [], warnings)) continue;
+    const value = parsed[key];
+
+    const unsupportedReason = UNSUPPORTED_LEGACY_FIELDS.get(key);
+    if (unsupportedReason !== undefined) {
+      pushWarning(warnings, key, unsupportedReason);
+      continue;
+    }
+
+    if (key === "disabled_agents") {
+      convertDisableList(
+        value,
+        key,
+        "agents",
+        CONVERSION_REASON.expectedArrayAgentNames,
+        warnings,
+        dslLines,
+      );
+      continue;
+    }
+
+    if (key === "disabled_hooks") {
+      convertDisableList(
+        value,
+        key,
+        "hooks",
+        CONVERSION_REASON.expectedArrayHookNames,
+        warnings,
+        dslLines,
+      );
+      continue;
+    }
+
+    if (key === "disabled_skills") {
+      convertDisableList(
+        value,
+        key,
+        "skills",
+        CONVERSION_REASON.expectedArraySkillNames,
+        warnings,
+        dslLines,
+      );
+      continue;
+    }
+
+    if (key === "log_level") {
+      if (typeof value !== "string") {
+        pushWarning(
+          warnings,
+          key,
+          reasonWithType(CONVERSION_REASON.expectedStringLogLevel, value),
+        );
+        continue;
+      }
+      const normalized = value.toUpperCase();
+      if (!VALID_LOG_LEVELS.has(normalized)) {
+        pushWarning(
+          warnings,
+          key,
+          reasonWithType(CONVERSION_REASON.invalidLogLevel, value),
+        );
+        continue;
+      }
+      appendValidatedBlock(
+        dslLines,
+        ["settings {", `  log_level ${normalized}`, "}"],
+        warnings,
+        key,
+      );
+      continue;
+    }
+
+    if (key === "agents") {
+      if (!isPlainRecord(value)) {
+        pushWarning(
+          warnings,
+          key,
+          reasonWithType(CONVERSION_REASON.expectedAgentObject, value),
+        );
+        continue;
+      }
+      for (const agentName of Object.keys(value)) {
+        if (warnUnusableKey(agentName, ["agents"], warnings)) continue;
+        if (warnUnusableName(agentName, ["agents"], warnings)) continue;
+        const agentEntry = value[agentName];
+        if (!BUILTIN_AGENT_NAMES.has(agentName)) {
+          pushWarning(
+            warnings,
+            joinPath(["agents", agentName]),
+            CONVERSION_REASON.notBuiltin,
+          );
+          continue;
+        }
+        if (!isPlainRecord(agentEntry)) {
+          pushWarning(
+            warnings,
+            joinPath(["agents", agentName]),
+            reasonWithType(CONVERSION_REASON.expectedObjectEntry, agentEntry),
+          );
+          continue;
+        }
+        appendValidatedBlock(
+          dslLines,
+          convertLegacyAgentEntry(agentName, agentEntry, warnings),
+          warnings,
+          joinPath(["agents", agentName]),
+        );
+      }
+      continue;
+    }
+
+    if (key === "custom_agents") {
+      if (!isPlainRecord(value)) {
+        pushWarning(
+          warnings,
+          key,
+          reasonWithType(CONVERSION_REASON.expectedCustomAgentObject, value),
+        );
+        continue;
+      }
+      for (const agentName of Object.keys(value)) {
+        if (warnUnusableKey(agentName, ["custom_agents"], warnings)) continue;
+        if (warnUnusableName(agentName, ["custom_agents"], warnings)) continue;
+        const agentEntry = value[agentName];
+        if (BUILTIN_AGENT_NAMES.has(agentName)) {
+          pushWarning(
+            warnings,
+            joinPath(["custom_agents", agentName]),
+            CONVERSION_REASON.builtinCollision,
+          );
+          continue;
+        }
+        if (!isPlainRecord(agentEntry)) {
+          pushWarning(
+            warnings,
+            joinPath(["custom_agents", agentName]),
+            reasonWithType(CONVERSION_REASON.expectedObjectEntry, agentEntry),
+          );
+          continue;
+        }
+        appendValidatedBlock(
+          dslLines,
+          convertLegacyCustomAgent(agentName, agentEntry, warnings),
+          warnings,
+          joinPath(["custom_agents", agentName]),
+        );
+      }
+      continue;
+    }
+
+    if (key === "categories") {
+      if (!isPlainRecord(value)) {
+        pushWarning(
+          warnings,
+          key,
+          reasonWithType(CONVERSION_REASON.expectedCategoryObject, value),
+        );
+        continue;
+      }
+      for (const catName of Object.keys(value)) {
+        if (warnUnusableKey(catName, ["categories"], warnings)) continue;
+        if (warnUnusableName(catName, ["categories"], warnings)) continue;
+        const catEntry = value[catName];
+        if (!isPlainRecord(catEntry)) {
+          pushWarning(
+            warnings,
+            joinPath(["categories", catName]),
+            reasonWithType(CONVERSION_REASON.expectedObjectEntry, catEntry),
+          );
+          continue;
+        }
+        appendValidatedBlock(
+          dslLines,
+          convertLegacyCategory(catName, catEntry, warnings),
+          warnings,
+          joinPath(["categories", catName]),
+        );
+      }
+      continue;
+    }
+
+    pushWarning(warnings, joinPath([key]), CONVERSION_REASON.unknownField);
+  }
+
+  return finalizeConversion(dslLines, warnings);
 }
 
 /**
@@ -881,188 +1127,35 @@ export function convertLegacyValue(value: unknown): ConversionResult {
     typeof copiedValue !== "object" ||
     Array.isArray(copiedValue)
   ) {
-    return {
-      dsl: "",
-      warnings: [
-        boundWarning({
-          field: "<source>",
-          reason:
-            "failed to parse legacy JSONC source; no fields could be converted",
-        }),
-      ],
-    };
+    return parseFailedResult();
   }
   return convertCopiedRoot(copiedValue as Record<string, unknown>);
 }
 
-function convertCopiedRoot(parsed: Record<string, unknown>): ConversionResult {
-  const warnings: ConversionWarning[] = [];
-  const dslLines: string[] = [];
-
-  for (const [key, value] of Object.entries(parsed)) {
-    if (key in UNSUPPORTED_LEGACY_FIELDS) {
-      pushWarning(warnings, key, UNSUPPORTED_LEGACY_FIELDS[key]!);
-      continue;
-    }
-
-    if (key === "disabled_agents") {
-      if (!Array.isArray(value)) {
-        pushWarning(warnings, key, "expected an array of agent names; skipped");
-        continue;
-      }
-      const items = value
-        .filter((v): v is string => typeof v === "string")
-        .map((v) => JSON.stringify(v))
-        .join(", ");
-      dslLines.push(`disable agents [${items}]`);
-      continue;
-    }
-
-    if (key === "disabled_hooks") {
-      if (!Array.isArray(value)) {
-        pushWarning(warnings, key, "expected an array of hook names; skipped");
-        continue;
-      }
-      const items = value
-        .filter((v): v is string => typeof v === "string")
-        .map((v) => JSON.stringify(v))
-        .join(", ");
-      dslLines.push(`disable hooks [${items}]`);
-      continue;
-    }
-
-    if (key === "disabled_skills") {
-      if (!Array.isArray(value)) {
-        pushWarning(warnings, key, "expected an array of skill names; skipped");
-        continue;
-      }
-      const items = value
-        .filter((v): v is string => typeof v === "string")
-        .map((v) => JSON.stringify(v))
-        .join(", ");
-      dslLines.push(`disable skills [${items}]`);
-      continue;
-    }
-
-    if (key === "log_level") {
-      if (typeof value !== "string") {
-        pushWarning(
-          warnings,
-          key,
-          "expected a string log level value; skipped",
-        );
-        continue;
-      }
-      const normalized = value.toUpperCase();
-      if (!VALID_LOG_LEVELS.has(normalized)) {
-        pushWarning(
-          warnings,
-          key,
-          `"${value}" is not a valid log level (expected one of TRACE, DEBUG, INFO, WARN, ERROR, FATAL); skipped`,
-        );
-        continue;
-      }
-      dslLines.push(`settings {`);
-      dslLines.push(`  log_level ${normalized}`);
-      dslLines.push(`}`);
-      continue;
-    }
-
-    if (key === "agents") {
-      if (!isPlainRecord(value)) {
-        pushWarning(
-          warnings,
-          key,
-          "expected an object of agent override entries; skipped",
-        );
-        continue;
-      }
-      for (const [agentName, agentEntry] of Object.entries(value)) {
-        if (!BUILTIN_AGENT_NAMES.has(agentName)) {
-          pushWarning(
-            warnings,
-            `agents.${agentName}`,
-            `"${agentName}" is not a builtin agent name; entries under "agents" are overrides of existing builtins only — use "custom_agents" to create new agents`,
-          );
-          continue;
-        }
-        if (!isPlainRecord(agentEntry)) {
-          pushWarning(
-            warnings,
-            `agents.${agentName}`,
-            "expected an object; skipped",
-          );
-          continue;
-        }
-        dslLines.push(
-          ...convertLegacyAgentEntry(agentName, agentEntry, warnings),
-        );
-      }
-      continue;
-    }
-
-    if (key === "custom_agents") {
-      if (!isPlainRecord(value)) {
-        pushWarning(
-          warnings,
-          key,
-          "expected an object of custom agent entries; skipped",
-        );
-        continue;
-      }
-      for (const [agentName, agentEntry] of Object.entries(value)) {
-        if (BUILTIN_AGENT_NAMES.has(agentName)) {
-          pushWarning(
-            warnings,
-            `custom_agents.${agentName}`,
-            `"${agentName}" collides with a builtin agent name; skipped to avoid silently overriding the builtin`,
-          );
-          continue;
-        }
-        if (!isPlainRecord(agentEntry)) {
-          pushWarning(
-            warnings,
-            `custom_agents.${agentName}`,
-            "expected an object; skipped",
-          );
-          continue;
-        }
-        dslLines.push(
-          ...convertLegacyCustomAgent(agentName, agentEntry, warnings),
-        );
-      }
-      continue;
-    }
-
-    if (key === "categories") {
-      if (!isPlainRecord(value)) {
-        pushWarning(
-          warnings,
-          key,
-          "expected an object of category entries; skipped",
-        );
-        continue;
-      }
-      for (const [catName, catEntry] of Object.entries(value)) {
-        if (!isPlainRecord(catEntry)) {
-          pushWarning(
-            warnings,
-            `categories.${catName}`,
-            "expected an object; skipped",
-          );
-          continue;
-        }
-        dslLines.push(...convertLegacyCategory(catName, catEntry, warnings));
-      }
-      continue;
-    }
-
-    pushWarning(
-      warnings,
-      key,
-      "unknown legacy field; not supported in migration v1",
-    );
+/**
+ * Convert a legacy weave-opencode.jsonc source string into current `.weave` DSL.
+ *
+ * This is a best-effort partial conversion:
+ * - Supported fields are converted and included in the output DSL.
+ * - Unsupported fields are skipped with explicit warnings.
+ * - Unknown fields are also skipped with a warning.
+ * - The function always returns a result (never throws); parse failures
+ *   produce a single warning and an empty DSL body.
+ * - Successful DSL always validates with `parseConfig()` before return.
+ */
+export function convertLegacyJsonc(source: string): ConversionResult {
+  const inspected = inspectLegacyJsonc(source);
+  if (inspected.isErr()) {
+    return { dsl: "", warnings: inspected.error.warnings };
   }
-
-  return { dsl: dslLines.join("\n"), warnings };
+  const parseResult = parseLegacyJsonc(source);
+  if (
+    parseResult === undefined ||
+    parseResult === null ||
+    typeof parseResult !== "object" ||
+    Array.isArray(parseResult)
+  ) {
+    return parseFailedResult();
+  }
+  return convertLegacyValue(parseResult);
 }

@@ -21,6 +21,8 @@ export const MAX_LEGACY_GRAPH_DEPTH = 32;
 export const MAX_LEGACY_STRING_LENGTH = 16 * 1024;
 export const MAX_LEGACY_ARRAY_LENGTH = 512;
 export const MAX_LEGACY_OBJECT_KEYS = 512;
+/** Raw JSONC source length bound applied before parse/visit. */
+export const MAX_LEGACY_SOURCE_LENGTH = 256 * 1024;
 
 export type LegacyGraphCopyError =
   | {
@@ -124,6 +126,9 @@ function copyRecord(
   const copy = Object.create(null) as Record<string, unknown>;
   for (const key of ownKeys) {
     if (typeof key === "symbol") return err(unsafeGraphError());
+    if (key.length > MAX_LEGACY_STRING_LENGTH) {
+      return err(graphTooLargeError());
+    }
     const descriptor = Object.getOwnPropertyDescriptor(source, key);
     if (
       descriptor === undefined ||

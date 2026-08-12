@@ -23,7 +23,7 @@
   },
   "scripts": {
     "build": "bun ../../scripts/build-public-packages.ts",
-    "test": "bun test ./src/__tests__ ./src/commands/__tests__ ./src/prompt/__tests__ ./src/detect/__tests__ ./src/installers/__tests__ ./src/evals/__tests__",
+    "test": "bun test ./src/__tests__ ./src/commands/__tests__ ./src/prompt/__tests__ ./src/detect/__tests__ ./src/installers/__tests__ ./src/evals/__tests__ ./src/migration/__tests__",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist"
   },

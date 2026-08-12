@@ -27,8 +27,18 @@ import { parseConfig } from "@weaveio/weave-core";
 import { MemoryFileSystem } from "../../fs/file-system.js";
 import { BufferTerminal } from "../../io/terminal.js";
 import {
+  CONVERSION_REASON,
+  MAX_CONVERSION_WARNINGS,
+  PATH_DIAGNOSTICS,
+  PATH_ENTRY,
+  PATH_SOURCE,
+  WARNINGS_TRUNCATED_REASON,
+} from "../../migration/legacy-conversion-diagnostics.js";
+import {
   LEGACY_GRAPH_TOO_LARGE_MESSAGE,
   MAX_LEGACY_ARRAY_LENGTH,
+  MAX_LEGACY_SOURCE_LENGTH,
+  MAX_LEGACY_STRING_LENGTH,
   UNSAFE_LEGACY_GRAPH_MESSAGE,
 } from "../../migration/legacy-graph-copy.js";
 import { StaticPromptAdapter } from "../../prompt/index.js";
@@ -2403,6 +2413,361 @@ describe("convertLegacyValue — descriptor-safe conversion", () => {
         warning.field.includes("agents.loom.triggers.0.domain"),
       ),
     ).toBe(true);
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+});
+
+function defineOwn(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function warningBlob(result: ConversionResult): string {
+  return `${result.dsl}\n${JSON.stringify(result.warnings)}`;
+}
+
+describe("convertLegacyJsonc — prototype-safe membership checks", () => {
+  it("warns on top-level toString, constructor, and __proto__ without throwing", () => {
+    const root = Object.create(null) as Record<string, unknown>;
+    defineOwn(root, "toString", "secret-toString");
+    defineOwn(root, "constructor", "secret-constructor");
+    defineOwn(root, "__proto__", "secret-proto");
+
+    const result = convertLegacyValue(root);
+    expect(result.dsl).toBe("");
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(
+      result.warnings.every((warning) => typeof warning.reason === "string"),
+    ).toBe(true);
+    const blob = warningBlob(result);
+    expect(blob).not.toContain("[native code]");
+    expect(blob).not.toContain("function ");
+    expect(blob).not.toContain("secret-toString");
+    expect(blob).not.toContain("secret-constructor");
+    expect(blob).not.toContain("secret-proto");
+  });
+
+  it("warns on nested map toString, constructor, and __proto__ without throwing", () => {
+    const root = Object.create(null) as Record<string, unknown>;
+    const agents = Object.create(null) as Record<string, unknown>;
+    const inner = Object.create(null) as Record<string, unknown>;
+    defineOwn(inner, "temperature", 0.1);
+    defineOwn(agents, "toString", inner);
+    defineOwn(agents, "constructor", inner);
+    defineOwn(agents, "__proto__", inner);
+    defineOwn(root, "agents", agents);
+
+    const result = convertLegacyValue(root);
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(warningBlob(result)).not.toContain("[native code]");
+    expect(warningBlob(result)).not.toContain("function ");
+    if (result.dsl.length > 0) {
+      expect(parseConfig(result.dsl).isOk()).toBe(true);
+    }
+  });
+
+  it("does not emit prototype methods as tool_policy capabilities", () => {
+    const root = Object.create(null) as Record<string, unknown>;
+    const agents = Object.create(null) as Record<string, unknown>;
+    const loom = Object.create(null) as Record<string, unknown>;
+    const tools = Object.create(null) as Record<string, unknown>;
+    defineOwn(tools, "toString", true);
+    defineOwn(tools, "constructor", false);
+    defineOwn(tools, "__proto__", true);
+    defineOwn(loom, "tools", tools);
+    defineOwn(agents, "loom", loom);
+    defineOwn(root, "agents", agents);
+
+    const result = convertLegacyValue(root);
+    expect(result.dsl).not.toContain("[native code]");
+    expect(result.dsl).not.toContain("function ");
+    expect(result.dsl).not.toContain("tool_policy");
+    expect(warningBlob(result)).not.toContain("[native code]");
+    if (result.dsl.length > 0) {
+      expect(parseConfig(result.dsl).isOk()).toBe(true);
+    }
+  });
+});
+
+describe("convertLegacyJsonc — identifier validation before emission", () => {
+  it("rejects injection-shaped custom agent names and keeps sibling valid agents", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: {
+          'helper} agent evil { prompt "injected"': { prompt: "ok" },
+          "ok-agent": { prompt: "safe" },
+        },
+      }),
+    );
+    expect(result.dsl).toContain("agent ok-agent {");
+    expect(result.dsl).toContain('prompt "safe"');
+    expect(result.dsl).not.toContain("injected");
+    expect(result.dsl).not.toContain("agent evil");
+    expect(result.dsl).not.toContain("helper}");
+    expect(
+      result.warnings.some(
+        (warning) => warning.reason === CONVERSION_REASON.invalidIdentifier,
+      ),
+    ).toBe(true);
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+
+  it("rejects category names with braces, newlines, and control characters", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          'backend}\nagent evil { prompt "pwn"': { description: "Backend" },
+          "has\nnewline": { description: "Docs" },
+          "ok-cat": { description: "Keep me" },
+        },
+      }),
+    );
+    expect(result.dsl).toContain("category ok-cat {");
+    expect(result.dsl).not.toContain("agent evil");
+    expect(result.dsl).not.toContain("pwn");
+    expect(
+      result.warnings.filter(
+        (warning) => warning.reason === CONVERSION_REASON.invalidIdentifier,
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+
+  it("rejects dangerous custom agent names", () => {
+    const result = convertLegacyJsonc(
+      '{"custom_agents":{"constructor":{"prompt":"x"},"prototype":{"prompt":"x"},"__proto__":{"prompt":"x"}}}',
+    );
+    expect(result.dsl).not.toContain("agent constructor");
+    expect(result.dsl).not.toContain("agent prototype");
+    expect(result.dsl).not.toContain("agent __proto__");
+    expect(
+      result.warnings.some((warning) => warning.reason.includes("dangerous")),
+    ).toBe(true);
+  });
+
+  it("rejects long names with a bounded warning path", () => {
+    const longName = `a${"b".repeat(300)}`;
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { [longName]: { prompt: "x" } },
+      }),
+    );
+    expect(result.dsl).not.toContain(longName);
+    expect(
+      result.warnings.some(
+        (warning) =>
+          warning.field.includes(PATH_ENTRY) &&
+          warning.reason === CONVERSION_REASON.invalidIdentifier,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(result.warnings)).not.toContain(longName);
+  });
+});
+
+describe("convertLegacyJsonc — emitted scalar validation", () => {
+  it("omits NaN temperature from the direct value seam", () => {
+    const root = Object.create(null) as Record<string, unknown>;
+    const agents = Object.create(null) as Record<string, unknown>;
+    const loom = Object.create(null) as Record<string, unknown>;
+    defineOwn(loom, "temperature", Number.NaN);
+    defineOwn(agents, "loom", loom);
+    defineOwn(root, "agents", agents);
+
+    const result = convertLegacyValue(root);
+    expect(result.dsl).not.toContain("NaN");
+    expect(
+      result.warnings.some(
+        (warning) =>
+          warning.field === "agents.loom.temperature" &&
+          warning.reason.includes("temperature"),
+      ),
+    ).toBe(true);
+    if (result.dsl.length > 0) {
+      expect(parseConfig(result.dsl).isOk()).toBe(true);
+    }
+  });
+
+  it("omits Infinity temperature from the direct value seam", () => {
+    const root = Object.create(null) as Record<string, unknown>;
+    const agents = Object.create(null) as Record<string, unknown>;
+    const loom = Object.create(null) as Record<string, unknown>;
+    defineOwn(loom, "temperature", Number.POSITIVE_INFINITY);
+    defineOwn(agents, "loom", loom);
+    defineOwn(root, "agents", agents);
+
+    const result = convertLegacyValue(root);
+    expect(result.dsl).not.toContain("Infinity");
+    expect(
+      result.warnings.some((warning) =>
+        warning.reason.includes("non_finite_number"),
+      ),
+    ).toBe(true);
+    if (result.dsl.length > 0) {
+      expect(parseConfig(result.dsl).isOk()).toBe(true);
+    }
+  });
+
+  it("omits out-of-range temperature instead of returning invalid DSL", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({ agents: { loom: { temperature: 9.9 } } }),
+    );
+    expect(result.dsl).not.toContain("9.9");
+    expect(
+      result.warnings.some(
+        (warning) => warning.field === "agents.loom.temperature",
+      ),
+    ).toBe(true);
+    if (result.dsl.length > 0) {
+      expect(parseConfig(result.dsl).isOk()).toBe(true);
+    }
+  });
+
+  it("omits invalid model thinking suffixes instead of emitting them", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: { loom: { model: "gpt-4o#not-a-level" } },
+      }),
+    );
+    expect(result.dsl).not.toContain("not-a-level");
+    expect(
+      result.warnings.some(
+        (warning) => warning.reason === CONVERSION_REASON.invalidModel,
+      ),
+    ).toBe(true);
+    if (result.dsl.length > 0) {
+      expect(parseConfig(result.dsl).isOk()).toBe(true);
+    }
+  });
+});
+
+describe("convertLegacyJsonc — duplicate JSONC keys", () => {
+  it("detects duplicate top-level fields and agent names before collapse", () => {
+    const result = convertLegacyJsonc(
+      `{ "log_level": "INFO", "log_level": "DEBUG", "agents": { "loom": { "temperature": 0.1 }, "loom": { "temperature": 0.9 } } }`,
+    );
+    expect(result.dsl).toBe("");
+    expect(
+      result.warnings.some(
+        (warning) =>
+          warning.field === "log_level" &&
+          warning.reason === CONVERSION_REASON.duplicateKey,
+      ),
+    ).toBe(true);
+    expect(
+      result.warnings.some(
+        (warning) =>
+          warning.field === "agents.loom" &&
+          warning.reason === CONVERSION_REASON.duplicateKey,
+      ),
+    ).toBe(true);
+    expect(result.dsl).not.toContain("DEBUG");
+    expect(result.dsl).not.toContain("0.9");
+  });
+
+  it("detects duplicate category names before collapse", () => {
+    const result = convertLegacyJsonc(
+      `{ "categories": { "backend": { "description": "A" }, "backend": { "description": "B" } } }`,
+    );
+    expect(result.dsl).toBe("");
+    expect(
+      result.warnings.some(
+        (warning) =>
+          warning.field === "categories.backend" &&
+          warning.reason === CONVERSION_REASON.duplicateKey,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("convertLegacyJsonc — sanitized warnings and bounds", () => {
+  it("does not echo secret-shaped strings from discarded fields, paths, names, modes, or invalid values", () => {
+    const secret = "sk-live-SUPERSECRETVALUE-12345";
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: {
+          loom: {
+            triggers: [
+              {
+                routing_hint: "Use for review",
+                domain: secret,
+                trigger: "x",
+                api_key: secret,
+              },
+            ],
+            prompt_file: `../secrets/${secret}.md`,
+            display_name: secret,
+          },
+        },
+        custom_agents: {
+          [`helper} ${secret}`]: { prompt: "x", mode: secret },
+        },
+      }),
+    );
+    const blob = warningBlob(result);
+    expect(blob).not.toContain(secret);
+    expect(result.dsl).toContain('triggers ["Use for review"]');
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+
+  it("bounds huge source text with a deterministic warning", () => {
+    const result = convertLegacyJsonc("{".repeat(MAX_LEGACY_SOURCE_LENGTH + 1));
+    expect(result.dsl).toBe("");
+    expect(result.warnings[0]?.field).toBe(PATH_SOURCE);
+    expect(result.warnings[0]?.reason).toBe(CONVERSION_REASON.sourceTooLarge);
+    expect(result.warnings[0]?.reason.length).toBeLessThanOrEqual(512);
+  });
+
+  it("bounds huge warning sets with a truncation marker", () => {
+    const fields: Record<string, string> = {};
+    for (let index = 0; index < MAX_CONVERSION_WARNINGS + 8; index += 1) {
+      fields[`unknown_field_${index}`] = "x";
+    }
+    const result = convertLegacyJsonc(JSON.stringify(fields));
+    expect(result.warnings.length).toBeLessThanOrEqual(MAX_CONVERSION_WARNINGS);
+    expect(
+      result.warnings.some(
+        (warning) =>
+          warning.field === PATH_DIAGNOSTICS &&
+          warning.reason === WARNINGS_TRUNCATED_REASON,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(result.warnings).length).toBeLessThanOrEqual(
+      8 * 1024 + 256,
+    );
+  });
+
+  it("bounds huge keys without echoing them", () => {
+    const hugeKey = "k".repeat(MAX_LEGACY_STRING_LENGTH + 8);
+    const root = Object.create(null) as Record<string, unknown>;
+    defineOwn(root, hugeKey, "value");
+    const result = convertLegacyValue(root);
+    expect(result.dsl).toBe("");
+    expect(result.warnings[0]?.reason).toBe(LEGACY_GRAPH_TOO_LARGE_MESSAGE);
+    expect(JSON.stringify(result.warnings)).not.toContain(hugeKey.slice(0, 64));
+  });
+
+  it("returns parseConfig-valid DSL or omits the invalid block", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: { loom: { temperature: 0.2 } },
+        custom_agents: {
+          "bad} name": { prompt: "nope" },
+          helper: { prompt: "ok", temperature: 9.9 },
+        },
+      }),
+    );
+    expect(result.dsl).toContain("agent loom {");
+    expect(result.dsl).toContain("agent helper {");
+    expect(result.dsl).not.toContain("bad} name");
+    expect(result.dsl).not.toContain("9.9");
     expect(parseConfig(result.dsl).isOk()).toBe(true);
   });
 });

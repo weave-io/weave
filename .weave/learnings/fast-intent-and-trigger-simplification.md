@@ -30,3 +30,9 @@
 - Trigger conversion selects nonblank `routing_hint`, else nonblank `trigger`, preserves source order, and drops only exact duplicate strings. Every discarded structured field and every malformed or empty entry gets a warning.
 - Valid category patterns are dropped with a warning; malformed patterns also warn. A category with a nonblank description still converts. Generated DSL must not emit `patterns`, trigger objects, or inferred `fast`.
 - Task 5 owns engine descriptor, category-shuttle inheritance, and normalized pattern removal. This slice does not change engine production files.
+
+## Task 4 review remediation
+
+- Gate findings: `key in` on a prototype-bearing lookup table treated `toString`/`constructor` as members and threw on own `__proto__`; unvalidated custom names and scalars could emit invalid DSL; `jsonc-parser.parse()` collapsed duplicate keys; warnings interpolated discarded values, paths, names, and modes.
+- Resolution: inspect the JSONC CST before parse for duplicate and dangerous keys, bound raw source length, and copy through the existing descriptor-safe graph. Lookup tables are Maps/Sets with own-property checks. Custom agent/category names must match the current identifier contract; temperatures must be finite and in `0..2`; models must pass current model-intent parsing. Generated blocks and the final document are validated with `parseConfig()` and omitted when invalid.
+- Warnings report a bounded path (vocabulary keys, indices, or `<entry>`), a fixed reason, and a primitive type category. They never interpolate discarded values, prompt paths, invalid names, modes, or malformed scalars. Warning count, path/reason length, and aggregate bytes stay capped with a deterministic truncation marker.
