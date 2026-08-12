@@ -5,26 +5,43 @@ import {
   createMemoryChildOverlaySource,
   type MemoryOverlaySourceChild,
 } from "../child-overlay.js";
-import { latestWindowError } from "../child-overlay-telemetry.js";
 import {
+  adoptNewerEvidence,
+  adoptOlderEvidence,
+  applyProviderErrorEvent,
+  CLEARED_TERMINAL_ERROR_EVIDENCE,
+  latestWindowError,
+  latestWindowErrorEvidence,
+  NO_TERMINAL_ERROR_EVIDENCE,
+  pageEvidence,
+  terminalErrorOf,
+  terminalErrorView,
+} from "../child-overlay-telemetry.js";
+import {
+  CHILD_ERROR_CANONICAL_MESSAGE,
   CHILD_PROVIDER_ERROR_BOUNDS,
   CHILD_PROVIDER_ERROR_REPLAY_FIELD,
+  historicalAssistantMessageFields,
   historicalProviderErrorFacts,
   MAX_CHILD_ERROR_MESSAGE_LENGTH,
   PI_CHILD_ERROR_CLASSES,
+  PI_CHILD_ERROR_MESSAGES,
+  type PiChildErrorClass,
   type PiChildProviderError,
   PiChildProviderErrorSchema,
   parsePiChildProviderError,
   projectAssistantProviderError,
+  redactProviderErrorFromEvent,
+  SAFE_ASSISTANT_MESSAGE_FIELDS,
 } from "../child-provider-error.js";
 import { parsePiChildSessionEvent } from "../child-session-events.js";
 
 /**
- * Bounded, sanitized child provider error projection (plan Task 12).
+ * Bounded, canonical child provider error projection (plan Task 12).
  *
  * The parsed shape is the pi-ai 0.84.1 `AssistantMessage` Pi emits on
  * `message_end`: `{ role: "assistant", api, provider, model, responseModel?,
- * stopReason, errorMessage?, rawStopReason? }` with
+ * stopReason, errorMessage?, rawStopReason?, responseId?, diagnostics? }` with
  * `StopReason = "pending" | "stop" | "length" | "toolUse" | "error" |
  * "aborted" | "deferred"`.
  *
@@ -72,9 +89,12 @@ const errorEnd = (errorMessage: string | undefined) =>
     ...(errorMessage === undefined ? {} : { errorMessage }),
   });
 
+const CANON = CHILD_ERROR_CANONICAL_MESSAGE;
+
 /** Sentinels that must never reach the projection or its serialization. */
 const SENTINELS = {
   requestId: "req_011SENTINELREQUESTIDVALUE",
+  responseId: "resp_011SENTINELRESPONSEIDVALUE",
   url: "https://api.example-provider.invalid/v1/messages?trace=SENTINELURL",
   authorization: "Authorization: Bearer SENTINELBEARERTOKENVALUE0001",
   apiKey: "x-api-key: sk-SENTINELAPIKEYVALUE000000002",
@@ -87,6 +107,7 @@ const SENTINELS = {
   prompt: "SENTINELPROMPTCONTENT",
   completion: "SENTINELCOMPLETIONCONTENT",
   email: "person@example.invalid",
+  diagnostic: "SENTINELDIAGNOSTICDETAIL",
 } as const;
 
 describe("child provider error model bounds", () => {
@@ -105,20 +126,46 @@ describe("child provider error model bounds", () => {
     expect(MAX_CHILD_ERROR_MESSAGE_LENGTH).toBe(160);
     expect(CHILD_PROVIDER_ERROR_BOUNDS.minHttpStatus).toBe(100);
     expect(CHILD_PROVIDER_ERROR_BOUNDS.maxHttpStatus).toBe(599);
+    expect(CHILD_PROVIDER_ERROR_BOUNDS.minEvidenceStatus).toBe(400);
+    expect(CHILD_PROVIDER_ERROR_BOUNDS.maxEvidenceStatus).toBe(599);
+  });
+
+  it("pins one canonical message per class, all inside the bound", () => {
+    const messages = PI_CHILD_ERROR_CLASSES.map((cls) => CANON[cls]);
+    expect(messages).toEqual([...PI_CHILD_ERROR_MESSAGES]);
+    expect(new Set(messages).size).toBe(PI_CHILD_ERROR_CLASSES.length);
+    for (const message of messages) {
+      expect(message.length).toBeLessThanOrEqual(
+        MAX_CHILD_ERROR_MESSAGE_LENGTH,
+      );
+    }
+    expect(CANON["rate-limit"]).toBe(
+      "Provider rate limit exceeded. Retry later.",
+    );
+    expect(CANON.auth).toBe("Provider rejected the credentials.");
+    expect(CANON.timeout).toBe("Provider request timed out.");
+    expect(CANON.overload).toBe("Provider is overloaded. Retry later.");
+    expect(CANON.connection).toBe("Connection to the provider failed.");
+    expect(CANON.cancelled).toBe("Request was cancelled.");
+    expect(CANON["malformed-response"]).toBe(
+      "Provider returned a malformed response.",
+    );
+    expect(CANON["provider-error"]).toBe("Provider request failed.");
+    expect(CANON.unknown).toBe("Provider failure details unavailable.");
   });
 
   it("rejects out-of-model values: unknown class, bad status, raw code, extra keys", () => {
     expect(
       PiChildProviderErrorSchema.safeParse({
         class: "billing",
-        message: "nope",
+        message: CANON.unknown,
       }).success,
     ).toBe(false);
     for (const httpStatus of [0, 99, 600, 4290, 429.5]) {
       expect(
         PiChildProviderErrorSchema.safeParse({
           class: "rate-limit",
-          message: "rate limited",
+          message: CANON["rate-limit"],
           httpStatus,
         }).success,
       ).toBe(false);
@@ -126,23 +173,34 @@ describe("child provider error model bounds", () => {
     expect(
       PiChildProviderErrorSchema.safeParse({
         class: "provider-error",
-        message: "failed",
+        message: CANON["provider-error"],
         code: "acct_9911_SENTINEL",
       }).success,
     ).toBe(false);
     expect(
       PiChildProviderErrorSchema.safeParse({
         class: "provider-error",
-        message: "failed",
+        message: CANON["provider-error"],
         errorMessage: "raw provider text",
       }).success,
     ).toBe(false);
-    expect(
-      PiChildProviderErrorSchema.safeParse({
-        class: "provider-error",
-        message: "x".repeat(MAX_CHILD_ERROR_MESSAGE_LENGTH + 1),
-      }).success,
-    ).toBe(false);
+  });
+
+  it("rejects any message that is not one of the canonical strings", () => {
+    for (const message of [
+      "Rate limit reached for requests, please slow down.",
+      "provider rate limit exceeded",
+      `${CANON["rate-limit"]} req_0001`,
+      "",
+      "x".repeat(MAX_CHILD_ERROR_MESSAGE_LENGTH + 1),
+    ]) {
+      expect(
+        PiChildProviderErrorSchema.safeParse({
+          class: "rate-limit",
+          message,
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("validates every projection it produces against the schema", () => {
@@ -153,23 +211,37 @@ describe("child provider error model bounds", () => {
   });
 });
 
-describe("child provider error classification", () => {
-  it("keeps a safe useful message from an Anthropic-style HTTP 429", () => {
+describe("child provider error canonicalization", () => {
+  it("replaces useful-looking provider prose with the canonical class message", () => {
     const projected = projectOk(
       errorEnd(
         '429 {"type":"error","error":{"type":"rate_limit_error","message":"Number of request tokens has exceeded your per-minute rate limit"}}',
       ),
     );
     expect(projected).toEqual({
-      source: "anthropic-messages",
-      provider: "anthropic",
-      model: "claude-sonnet-5",
       class: "rate-limit",
       httpStatus: 429,
       code: "rate_limit_error",
-      message:
-        "Number of request tokens has exceeded your per-minute rate limit",
+      message: CANON["rate-limit"],
     });
+  });
+
+  it("canonicalizes arbitrary short safe-looking prose instead of preserving it", () => {
+    for (const prose of [
+      "429 Rate limit reached for requests, please slow down.",
+      "Rate limit reached for requests, please slow down.",
+      "the model is currently overloaded, try again",
+      "request timed out after 60s",
+      "connection reset by peer",
+      "The operation was aborted",
+      "unexpected end of JSON input",
+      "plain english sentence with nothing dangerous in it",
+    ]) {
+      const projected = projectOk(errorEnd(prose));
+      expect([...PI_CHILD_ERROR_MESSAGES]).toContain(projected.message);
+      expect(projected.message).toBe(CANON[projected.class]);
+      expect(prose).not.toContain(projected.message);
+    }
   });
 
   it("classifies an HTTP 500 with no body as a provider error with honest copy", () => {
@@ -177,43 +249,7 @@ describe("child provider error classification", () => {
     expect(projected.class).toBe("provider-error");
     expect(projected.httpStatus).toBe(500);
     expect(projected.code).toBeUndefined();
-    expect(projected.message).toBe("provider request failed");
-  });
-
-  it("classifies auth failures from 401, 403, and clear text", () => {
-    expect(projectOk(errorEnd("401 unauthorized")).class).toBe("auth");
-    expect(projectOk(errorEnd("403 forbidden")).class).toBe("auth");
-    const text = projectOk(
-      errorEnd('{"type":"error","error":{"type":"authentication_error"}}'),
-    );
-    expect(text.class).toBe("auth");
-    expect(text.code).toBe("authentication_error");
-    expect(text.message).toBe("provider rejected the credentials");
-  });
-
-  it("classifies timeout, overload, connection, cancellation, and malformed", () => {
-    expect(projectOk(errorEnd("request timed out after 60s")).class).toBe(
-      "timeout",
-    );
-    expect(projectOk(errorEnd("504 gateway_timeout")).class).toBe("timeout");
-    expect(projectOk(errorEnd("529 overloaded_error")).class).toBe("overload");
-    expect(projectOk(errorEnd("503 service unavailable")).class).toBe(
-      "overload",
-    );
-    expect(projectOk(errorEnd("connection reset by peer")).class).toBe(
-      "connection",
-    );
-    expect(projectOk(errorEnd("ECONNREFUSED")).class).toBe("connection");
-    const cancelled = projectOk(errorEnd("The operation was aborted"));
-    expect(cancelled.class).toBe("cancelled");
-    expect(cancelled.message).toBe("The operation was aborted");
-    // With nothing safe to preserve, the canonical copy stands in.
-    expect(projectOk(errorEnd('{"error":{"type":"abort_err"}}')).message).toBe(
-      "request was cancelled",
-    );
-    expect(projectOk(errorEnd("unexpected end of JSON input")).class).toBe(
-      "malformed-response",
-    );
+    expect(projected.message).toBe(CANON["provider-error"]);
   });
 
   it("reports unknown when the failure carries no evidence at all", () => {
@@ -221,29 +257,262 @@ describe("child provider error classification", () => {
     expect(projected.class).toBe("unknown");
     expect(projected.httpStatus).toBeUndefined();
     expect(projected.code).toBeUndefined();
-    expect(projected.message).toBe("details unavailable");
+    expect(projected.message).toBe(CANON.unknown);
+    expect(projectOk(errorEnd("   ")).class).toBe("unknown");
   });
+});
 
-  it("pins precedence: rate limit outranks the other classes it co-occurs with", () => {
-    const projected = projectOk(
-      errorEnd("429 rate limit reached; connection reset; timed out"),
-    );
-    expect(projected.class).toBe("rate-limit");
-  });
-
-  it("drops an ambiguous status rather than guessing one", () => {
-    const projected = projectOk(errorEnd("500 upstream returned status 503"));
-    expect(projected.httpStatus).toBeUndefined();
-    // With no unambiguous status and no class-specific text, nothing more
-    // specific than a provider failure is claimed.
-    expect(projected.class).toBe("provider-error");
-  });
-
-  it("never invents a status from an out-of-range or unmarked number", () => {
-    expect(projectOk(errorEnd("999 weird")).httpStatus).toBeUndefined();
+describe("child provider error anchored evidence", () => {
+  it("reads an HTTP status only from offset zero", () => {
+    expect(projectOk(errorEnd("429 rate limit reached")).httpStatus).toBe(429);
+    expect(projectOk(errorEnd('503 {"error":{}}')).httpStatus).toBe(503);
+    // Unanchored numbers, marked or not, are prose and contribute nothing.
+    expect(
+      projectOk(errorEnd("upstream returned status 503")).httpStatus,
+    ).toBeUndefined();
+    expect(projectOk(errorEnd("HTTP 429 too many")).httpStatus).toBeUndefined();
     expect(
       projectOk(errorEnd("retry after 42 seconds")).httpStatus,
     ).toBeUndefined();
+    // Only the anchored status is read; a second number later is ignored.
+    const mixed = projectOk(errorEnd("500 upstream returned status 503"));
+    expect(mixed.httpStatus).toBe(500);
+    expect(mixed.class).toBe("provider-error");
+  });
+
+  it("keeps only 4xx and 5xx statuses as failure evidence", () => {
+    expect(projectOk(errorEnd("999 weird")).httpStatus).toBeUndefined();
+    expect(projectOk(errorEnd("200 ok body")).httpStatus).toBeUndefined();
+    expect(projectOk(errorEnd("399 odd")).httpStatus).toBeUndefined();
+    expect(projectOk(errorEnd("400 bad")).httpStatus).toBe(400);
+    expect(projectOk(errorEnd("599 bad")).httpStatus).toBe(599);
+    // A number that is not a standalone anchored token is not a status.
+    expect(projectOk(errorEnd("4290 tokens")).httpStatus).toBeUndefined();
+  });
+
+  it("maps unambiguous statuses to classes and everything else to provider-error", () => {
+    const cases: readonly [string, PiChildErrorClass][] = [
+      ["429 x", "rate-limit"],
+      ["401 x", "auth"],
+      ["403 x", "auth"],
+      ["407 x", "auth"],
+      ["408 x", "timeout"],
+      ["504 x", "timeout"],
+      ["524 x", "timeout"],
+      ["503 x", "overload"],
+      ["529 x", "overload"],
+      ["400 x", "provider-error"],
+      ["404 x", "provider-error"],
+      ["500 x", "provider-error"],
+      ["502 x", "provider-error"],
+    ];
+    for (const [raw, cls] of cases) {
+      expect(projectOk(errorEnd(raw)).class).toBe(cls);
+    }
+  });
+
+  it("reads an allowlisted code from an anchored error envelope", () => {
+    const anthropic = projectOk(
+      errorEnd('{"type":"error","error":{"type":"authentication_error"}}'),
+    );
+    expect(anthropic.code).toBe("authentication_error");
+    expect(anthropic.class).toBe("auth");
+    expect(anthropic.message).toBe(CANON.auth);
+
+    const bare = projectOk(errorEnd('{"error":{"type":"abort_err"}}'));
+    expect(bare.code).toBe("abort_err");
+    expect(bare.class).toBe("cancelled");
+
+    // A code that follows a message member inside the anchored envelope is
+    // still anchored evidence.
+    const later = projectOk(
+      errorEnd(
+        '400 {"error":{"message":"bad request","type":"invalid_request_error"}}',
+      ),
+    );
+    expect(later.code).toBe("invalid_request_error");
+    expect(later.class).toBe("provider-error");
+  });
+
+  it("reads an allowlisted code when the whole body is one errno token", () => {
+    expect(projectOk(errorEnd("ECONNREFUSED")).code).toBe("econnrefused");
+    expect(projectOk(errorEnd("ECONNRESET")).class).toBe("connection");
+    expect(projectOk(errorEnd("504 gateway_timeout")).code).toBe(
+      "gateway_timeout",
+    );
+    expect(projectOk(errorEnd("529 overloaded_error")).code).toBe(
+      "overloaded_error",
+    );
+    expect(projectOk(errorEnd("etimedout.")).class).toBe("timeout");
+  });
+
+  it("never accepts a code that is not allowlisted", () => {
+    for (const raw of [
+      "acct_9911_sentinel",
+      '{"error":{"type":"acct_9911_sentinel"}}',
+      `{"error":{"type":"${SENTINELS.requestId}"}}`,
+      "500 weird_provider_specific_thing",
+    ]) {
+      expect(projectOk(errorEnd(raw)).code).toBeUndefined();
+    }
+  });
+
+  it("does not mine an unanchored or non-envelope structure for a code", () => {
+    // No `"error": {` at offset zero, so nothing inside is evidence.
+    for (const raw of [
+      '{"data":{"error":{"type":"rate_limit_error"}}}',
+      '{"raw":{"nested":{"type":"rate_limit_error"}}}',
+      'prefix {"error":{"type":"rate_limit_error"}}',
+    ]) {
+      const projected = projectOk(errorEnd(raw));
+      expect(projected.code).toBeUndefined();
+      expect(projected.class).toBe("unknown");
+    }
+  });
+
+  it("ignores an allowlisted code beyond the bounded envelope window", () => {
+    const padding = `"note":"${"p".repeat(
+      CHILD_PROVIDER_ERROR_BOUNDS.maxEnvelopeWindow + 40,
+    )}",`;
+    const projected = projectOk(
+      errorEnd(`{"error":{${padding}"type":"rate_limit_error"}}`),
+    );
+    expect(projected.code).toBeUndefined();
+    expect(projected.class).toBe("unknown");
+  });
+
+  it("pins precedence when status and code disagree", () => {
+    // Status says server error, code says rate limit: rate-limit outranks.
+    const projected = projectOk(
+      errorEnd('500 {"error":{"type":"rate_limit_error"}}'),
+    );
+    expect(projected.class).toBe("rate-limit");
+    expect(projected.httpStatus).toBe(500);
+    // Status says rate limit, code says connection: rate-limit outranks.
+    expect(
+      projectOk(errorEnd('429 {"error":{"type":"econnreset"}}')).class,
+    ).toBe("rate-limit");
+    // Auth outranks timeout, timeout outranks overload.
+    expect(
+      projectOk(errorEnd('504 {"error":{"type":"authentication_error"}}'))
+        .class,
+    ).toBe("auth");
+    expect(
+      projectOk(errorEnd('503 {"error":{"type":"gateway_timeout"}}')).class,
+    ).toBe("timeout");
+  });
+
+  it("does not let prompt or completion content influence the class", () => {
+    for (const raw of [
+      `{"messages":[{"role":"user","content":"HTTP 429 rate_limit_error ${SENTINELS.prompt}"}]}`,
+      `{"completion":"429 {\\"error\\":{\\"type\\":\\"rate_limit_error\\"}} ${SENTINELS.completion}"}`,
+      `{"choices":[{"text":"401 unauthorized invalid_api_key"}]}`,
+      `{"prompt":"ECONNRESET"}`,
+    ]) {
+      const projected = projectOk(errorEnd(raw));
+      expect(projected.class).toBe("unknown");
+      expect(projected.httpStatus).toBeUndefined();
+      expect(projected.code).toBeUndefined();
+      expect(projected.message).toBe(CANON.unknown);
+    }
+  });
+
+  it("still classifies an anchored known envelope beside content keys", () => {
+    // The anchored evidence is at offset zero, so trailing content is ignored
+    // rather than allowed to suppress a real fact.
+    const projected = projectOk(
+      errorEnd(
+        `429 {"type":"error","error":{"type":"rate_limit_error"}} messages ${SENTINELS.prompt}`,
+      ),
+    );
+    expect(projected.class).toBe("rate-limit");
+    expect(projected.httpStatus).toBe(429);
+    expect(projected.code).toBe("rate_limit_error");
+  });
+});
+
+describe("child provider error identity labels", () => {
+  it("never takes source, provider, or model from the event", () => {
+    const projected = projectOk(
+      errorEnd('429 {"error":{"type":"rate_limit_error"}}'),
+    );
+    expect(projected.source).toBeUndefined();
+    expect(projected.provider).toBeUndefined();
+    expect(projected.model).toBeUndefined();
+    expect(Object.keys(projected).sort()).toEqual([
+      "class",
+      "code",
+      "httpStatus",
+      "message",
+    ]);
+  });
+
+  it("omits secret-shaped labels supplied through the event", () => {
+    for (const label of [
+      "sk-live-SENTINELKEY0001",
+      "sk-SENTINELAPIKEYVALUE0002",
+      "bearer-SENTINELTOKEN0003",
+      "api_key",
+      "session",
+    ]) {
+      const projected = projectAssistantProviderError({
+        role: "assistant",
+        stopReason: "error",
+        api: label,
+        provider: label,
+        model: label,
+        responseModel: label,
+        errorMessage: "429 x",
+      })._unsafeUnwrap();
+      expect(projected.source).toBeUndefined();
+      expect(projected.provider).toBeUndefined();
+      expect(projected.model).toBeUndefined();
+      expect(JSON.stringify(projected)).not.toContain("sk-");
+      expect(JSON.stringify(projected)).not.toContain("SENTINEL");
+    }
+  });
+
+  it("omits an arbitrary short ASCII label supplied through the event", () => {
+    const projected = projectAssistantProviderError({
+      role: "assistant",
+      stopReason: "error",
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+      errorMessage: "429 x",
+    })._unsafeUnwrap();
+    expect(projected.source).toBeUndefined();
+    expect(projected.provider).toBeUndefined();
+    expect(projected.model).toBeUndefined();
+  });
+
+  it("accepts labels only through the trusted controller descriptor seam", () => {
+    const projected = projectAssistantProviderError(
+      { role: "assistant", stopReason: "error", errorMessage: "429 x" },
+      {
+        source: "anthropic-messages",
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+      },
+    )._unsafeUnwrap();
+    expect(projected.source).toBe("anthropic-messages");
+    expect(projected.provider).toBe("anthropic");
+    expect(projected.model).toBe("claude-sonnet-5");
+  });
+
+  it("rejects secret-shaped and oversized labels even from the trusted seam", () => {
+    const projected = projectAssistantProviderError(
+      { role: "assistant", stopReason: "error", errorMessage: "429 x" },
+      {
+        source: "sk-live-SENTINELKEY0001",
+        provider: "anthropic evil\u0007 name",
+        model: "m".repeat(CHILD_PROVIDER_ERROR_BOUNDS.maxLabelLength + 1),
+      },
+    )._unsafeUnwrap();
+    expect(projected.source).toBeUndefined();
+    expect(projected.provider).toBeUndefined();
+    expect(projected.model).toBeUndefined();
+    expect(projected.class).toBe("rate-limit");
   });
 });
 
@@ -260,20 +529,23 @@ describe("child provider error absence", () => {
   });
 
   it("clears a stale error on an authoritative terminal success", () => {
-    const cleared = project(messageEnd({ stopReason: "stop" }));
-    expect(cleared?._unsafeUnwrapErr()).toEqual({
-      type: "ProviderErrorCleared",
-    });
-    // `aborted` is Pi's own interruption path, not a provider failure.
-    expect(
-      project(messageEnd({ stopReason: "aborted" }))?._unsafeUnwrapErr(),
-    ).toEqual({ type: "ProviderErrorCleared" });
+    for (const stopReason of [
+      "stop",
+      "length",
+      "toolUse",
+      "aborted",
+      "pending",
+      "deferred",
+    ]) {
+      expect(project(messageEnd({ stopReason }))?._unsafeUnwrapErr()).toEqual({
+        type: "ProviderErrorCleared",
+      });
+    }
   });
 
   it("is unavailable for malformed, missing, and non-object messages", () => {
     for (const message of [undefined, null, 42, "boom", [], { role: 7 }]) {
-      const result = projectAssistantProviderError(message);
-      expect(result.isErr()).toBe(true);
+      expect(projectAssistantProviderError(message).isErr()).toBe(true);
     }
     expect(
       projectAssistantProviderError({
@@ -283,6 +555,30 @@ describe("child provider error absence", () => {
     ).toEqual({ type: "ProviderErrorUnavailable" });
   });
 
+  it("rejects a tampered pre-projected historical payload", () => {
+    for (const carried of [
+      {
+        class: "rate-limit",
+        message: CANON["rate-limit"],
+        errorMessage: SENTINELS.requestId,
+      },
+      { class: "rate-limit", message: `rate limited ${SENTINELS.requestId}` },
+      { class: "rate-limit", message: CANON["rate-limit"], code: "sentinel" },
+      { class: "sentinel", message: CANON.unknown },
+      "not an object",
+    ]) {
+      expect(
+        projectAssistantProviderError({
+          role: "assistant",
+          stopReason: "error",
+          [CHILD_PROVIDER_ERROR_REPLAY_FIELD]: carried,
+        })._unsafeUnwrapErr(),
+      ).toEqual({ type: "ProviderErrorUnavailable" });
+    }
+  });
+});
+
+describe("child provider error hostile boundary", () => {
   it("treats a throwing descriptor as absent instead of throwing", () => {
     const hostile = {
       role: "assistant",
@@ -292,78 +588,209 @@ describe("child provider error absence", () => {
     };
     expect(projectAssistantProviderError(hostile).isErr()).toBe(true);
 
-    const hostileMessage = {
+    const partiallyHostile = {
       role: "assistant",
       stopReason: "error",
       get errorMessage(): string {
         throw new Error("hostile getter");
       },
-      get api(): string {
-        throw new Error("hostile getter");
-      },
     };
-    const projected = projectAssistantProviderError(hostileMessage);
+    const projected = projectAssistantProviderError(partiallyHostile);
     expect(projected.isOk()).toBe(true);
-    const value = projected._unsafeUnwrap();
-    expect(value.class).toBe("unknown");
-    expect(value.source).toBeUndefined();
-    expect(value.message).toBe("details unavailable");
+    expect(projected._unsafeUnwrap().class).toBe("unknown");
+    expect(projected._unsafeUnwrap().message).toBe(CANON.unknown);
   });
 
-  it("does not retain an oversized or unsafe identity label", () => {
-    const projected = projectAssistantProviderError({
-      role: "assistant",
-      stopReason: "error",
-      api: "a".repeat(CHILD_PROVIDER_ERROR_BOUNDS.maxLabelLength + 1),
-      provider: "anthropic evil\u0007 name",
-      model: "m".repeat(CHILD_PROVIDER_ERROR_BOUNDS.maxLabelLength + 1),
-      errorMessage: "429 rate limit",
-    })._unsafeUnwrap();
-    expect(projected.source).toBeUndefined();
-    expect(projected.provider).toBeUndefined();
-    expect(projected.model).toBeUndefined();
-    expect(projected.class).toBe("rate-limit");
-  });
-
-  it("replaces an oversized provider message with canonical copy", () => {
-    const projected = projectAssistantProviderError({
-      role: "assistant",
-      stopReason: "error",
-      errorMessage: `429 rate limit exceeded. ${"padding text ".repeat(600)}`,
-    })._unsafeUnwrap();
-    expect(projected.class).toBe("rate-limit");
-    expect(projected.message).toBe("provider rate limit exceeded");
-    expect(projected.message.length).toBeLessThanOrEqual(
-      MAX_CHILD_ERROR_MESSAGE_LENGTH,
-    );
-  });
-
-  it("rejects a tampered pre-projected historical payload", () => {
-    const tampered = projectAssistantProviderError({
-      role: "assistant",
-      stopReason: "error",
-      [CHILD_PROVIDER_ERROR_REPLAY_FIELD]: {
-        class: "rate-limit",
-        message: "rate limited",
-        errorMessage: SENTINELS.requestId,
+  it("returns unavailable for a Proxy whose get trap throws", () => {
+    const proxy = new Proxy(
+      { role: "assistant", stopReason: "error" },
+      {
+        get(): never {
+          throw new Error("hostile get trap");
+        },
       },
-    });
-    expect(tampered._unsafeUnwrapErr()).toEqual({
+    );
+    const projected = projectAssistantProviderError(proxy);
+    expect(projected.isErr()).toBe(true);
+    expect(projected._unsafeUnwrapErr()).toEqual({
       type: "ProviderErrorUnavailable",
     });
   });
+
+  it("returns unavailable for a Proxy whose ownKeys trap throws", () => {
+    const proxy = new Proxy(
+      { role: "assistant", stopReason: "error", errorMessage: "429 x" },
+      {
+        ownKeys(): never {
+          throw new Error("hostile ownKeys trap");
+        },
+      },
+    );
+    // Projection itself only needs `get`, so it still succeeds...
+    expect(projectAssistantProviderError(proxy).isOk()).toBe(true);
+    // ...and the copy path degrades to the minimum instead of throwing.
+    const redacted = redactProviderErrorFromEvent({
+      type: "message_end",
+      message: proxy,
+    } as never) as unknown as { message: Record<string, unknown> };
+    expect(redacted.message.role).toBe("assistant");
+    expect(redacted.message.errorMessage).toBeUndefined();
+  });
+
+  it("returns unavailable when a pre-projected payload throws during validation", () => {
+    const carried = {
+      get class(): string {
+        throw new Error("hostile getter");
+      },
+    };
+    const hostile = {
+      role: "assistant",
+      stopReason: "error",
+      [CHILD_PROVIDER_ERROR_REPLAY_FIELD]: carried,
+    };
+    expect(projectAssistantProviderError(hostile)._unsafeUnwrapErr()).toEqual({
+      type: "ProviderErrorUnavailable",
+    });
+  });
+
+  it("never throws on a hostile symbol or accessor descriptor", () => {
+    const hostile: Record<string | symbol, unknown> = {};
+    Object.defineProperty(hostile, "role", { value: "assistant" });
+    Object.defineProperty(hostile, "stopReason", {
+      get(): never {
+        throw new Error("hostile accessor");
+      },
+      enumerable: true,
+    });
+    Object.defineProperty(hostile, Symbol.toPrimitive, {
+      get(): never {
+        throw new Error("hostile symbol");
+      },
+    });
+    expect(() => projectAssistantProviderError(hostile)).not.toThrow();
+    expect(projectAssistantProviderError(hostile).isErr()).toBe(true);
+    expect(() => historicalProviderErrorFacts(hostile)).not.toThrow();
+    expect(historicalProviderErrorFacts(hostile)).toBeUndefined();
+    expect(() => historicalAssistantMessageFields(hostile)).not.toThrow();
+  });
 });
 
-describe("child provider error sanitization", () => {
-  const projectMessage = (errorMessage: string): PiChildProviderError =>
-    projectOk(errorEnd(errorMessage));
+describe("child provider error safe message copy", () => {
+  const hostileMessage = {
+    id: "msg_01HQ",
+    role: "assistant",
+    stopReason: "error",
+    text: "final text",
+    content: [{ type: "text", text: "final text" }],
+    usage: { input: 3, output: 4 },
+    model: "claude-sonnet-5",
+    responseModel: "claude-sonnet-5-20260101",
+    timestamp: 7,
+    errorMessage: `500 ${SENTINELS.authorization} ${SENTINELS.path}`,
+    rawStopReason: `raw ${SENTINELS.requestId}`,
+    responseId: SENTINELS.responseId,
+    diagnostics: { detail: SENTINELS.diagnostic, url: SENTINELS.url },
+    api: "anthropic-messages",
+    provider: "anthropic",
+    deferred: { token: SENTINELS.token },
+    weaveFutureExtension: { nested: { deep: SENTINELS.secret } },
+  } as const;
 
+  const redactedMessage = (): Record<string, unknown> => {
+    const parsed = parsePiChildSessionEvent({
+      type: "message_end",
+      message: hostileMessage,
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("unreachable");
+    const redacted = redactProviderErrorFromEvent(parsed.data) as unknown as {
+      message: Record<string, unknown>;
+    };
+    return redacted.message;
+  };
+
+  it("keeps only the allowlisted reducer-required fields", () => {
+    const message = redactedMessage();
+    const kept = Object.keys(message).filter(
+      (key) => key !== CHILD_PROVIDER_ERROR_REPLAY_FIELD,
+    );
+    const allowlist: readonly string[] = SAFE_ASSISTANT_MESSAGE_FIELDS;
+    for (const key of kept) {
+      expect(allowlist).toContain(key);
+    }
+    // The facts every reducer needs survive.
+    expect(message.id).toBe("msg_01HQ");
+    expect(message.role).toBe("assistant");
+    expect(message.stopReason).toBe("error");
+    expect(message.text).toBe("final text");
+    expect(message.content).toEqual([{ type: "text", text: "final text" }]);
+    expect(message.usage).toEqual({ input: 3, output: 4 });
+    expect(message.model).toBe("claude-sonnet-5");
+    expect(message.timestamp).toBe(7);
+  });
+
+  it("excludes responseId, diagnostics, raw error text, and extension fields", () => {
+    const message = redactedMessage();
+    for (const key of [
+      "errorMessage",
+      "rawStopReason",
+      "responseId",
+      "diagnostics",
+      "api",
+      "provider",
+      "deferred",
+      "weaveFutureExtension",
+    ]) {
+      expect(message).not.toHaveProperty(key);
+    }
+  });
+
+  it("leaves no sentinel anywhere in the serialized redacted event", () => {
+    const serialized = JSON.stringify(redactedMessage());
+    for (const sentinel of Object.values(SENTINELS)) {
+      expect(serialized).not.toContain(sentinel);
+    }
+    for (const fragment of [
+      "SENTINEL",
+      "Bearer",
+      "bearer",
+      "sk-",
+      "uthorization",
+      "Cookie",
+      "://",
+      "/Users/",
+      "C:\\",
+      "errorMessage",
+      "responseId",
+      "diagnostics",
+    ]) {
+      expect(serialized).not.toContain(fragment);
+    }
+  });
+
+  it("attaches the canonical projection in place of the raw text", () => {
+    const message = redactedMessage();
+    expect(message[CHILD_PROVIDER_ERROR_REPLAY_FIELD]).toEqual({
+      class: "provider-error",
+      httpStatus: 500,
+      message: CANON["provider-error"],
+    });
+  });
+
+  it("returns non-terminal and message-less events unchanged", () => {
+    const text = { type: "text", text: "hello" } as const;
+    expect(redactProviderErrorFromEvent(text as never)).toBe(text as never);
+    const empty = { type: "message_end" } as const;
+    expect(redactProviderErrorFromEvent(empty as never)).toBe(empty as never);
+  });
+});
+
+describe("child provider error sanitization sentinels", () => {
   const assertClean = (projected: PiChildProviderError): void => {
     const serialized = JSON.stringify(projected);
     for (const sentinel of Object.values(SENTINELS)) {
       expect(serialized).not.toContain(sentinel);
     }
-    // Structural leaks anywhere in the projection.
     for (const fragment of [
       "SENTINEL",
       "Bearer",
@@ -382,10 +809,10 @@ describe("child provider error sanitization", () => {
     ]) {
       expect(serialized).not.toContain(fragment);
     }
-    // The free-text field additionally carries no protocol or brace residue.
     for (const fragment of ["http", "{", "}", "[", "]", "<", ">", "\\", "/"]) {
       expect(projected.message).not.toContain(fragment);
     }
+    expect([...PI_CHILD_ERROR_MESSAGES]).toContain(projected.message);
     expect(projected.message.length).toBeLessThanOrEqual(
       MAX_CHILD_ERROR_MESSAGE_LENGTH,
     );
@@ -408,9 +835,9 @@ describe("child provider error sanitization", () => {
       `{"prompt":"${SENTINELS.prompt}","completion":"${SENTINELS.completion}"}`,
       "trailing\u0007\u202econtrol\u200btext",
     ].join(" ");
-    const projected = projectMessage(hostile);
+    const projected = projectOk(errorEnd(hostile));
     expect(projected.class).toBe("rate-limit");
-    expect(projected.message).toBe("provider rate limit exceeded");
+    expect(projected.message).toBe(CANON["rate-limit"]);
     assertClean(projected);
   });
 
@@ -427,39 +854,109 @@ describe("child provider error sanitization", () => {
       `500 failed writing ${SENTINELS.windowsPath}`,
       `500 correlation ${SENTINELS.uuid}`,
       `500 contact ${SENTINELS.email}`,
-      `500 \u0007\u202e\u200b\u2066garbled\u2069`,
+      "500 \u0007\u202e\u200b\u2066garbled\u2069",
+      `500 {"raw":{"nested":{"deeper":["a","b"]}},"note":"opaque"}`,
+      `400 {"error":{"type":"invalid_request_error","message":"bad"},"messages":[{"role":"user","content":"${SENTINELS.prompt}"}]}`,
     ];
     for (const vector of vectors) {
-      assertClean(projectMessage(vector));
+      assertClean(projectOk(errorEnd(vector)));
     }
   });
 
-  it("does not mine prompt or completion content for display copy", () => {
-    const projected = projectMessage(
-      `400 {"error":{"type":"invalid_request_error","message":"bad"},"messages":[{"role":"user","content":"${SENTINELS.prompt}"}],"completion":"${SENTINELS.completion}"}`,
-    );
-    expect(projected.class).toBe("provider-error");
-    expect(projected.code).toBe("invalid_request_error");
-    expect(projected.message).toBe("provider request failed");
-    assertClean(projected);
-  });
-
-  it("never keeps nested provider JSON as free text", () => {
-    const projected = projectMessage(
-      '500 {"raw":{"nested":{"deeper":["a","b"]}},"note":"opaque"}',
-    );
-    expect(projected.message).toBe("provider request failed");
-    expect(JSON.stringify(projected)).not.toContain("nested");
-  });
-
-  it("keeps a plain safe provider sentence verbatim", () => {
-    const projected = projectMessage(
-      "429 Rate limit reached for requests, please slow down.",
+  it("keeps an oversized payload out entirely", () => {
+    const projected = projectOk(
+      errorEnd(`429 rate limit exceeded. ${"padding text ".repeat(600)}`),
     );
     expect(projected.class).toBe("rate-limit");
-    expect(projected.message).toBe(
-      "429 Rate limit reached for requests, please slow down",
+    expect(projected.message).toBe(CANON["rate-limit"]);
+    assertClean(projected);
+  });
+});
+
+describe("terminal error evidence semantics", () => {
+  const anError = projectOk(errorEnd("429 x"));
+
+  const errorEvidence = { kind: "error", error: anError } as const;
+
+  it("exposes only the error to callers, never the tri-state", () => {
+    expect(terminalErrorOf(errorEvidence)).toEqual(anError);
+    expect(terminalErrorOf(CLEARED_TERMINAL_ERROR_EVIDENCE)).toBeUndefined();
+    expect(terminalErrorOf(NO_TERMINAL_ERROR_EVIDENCE)).toBeUndefined();
+  });
+
+  it("lets newer evidence win in both directions", () => {
+    expect(
+      adoptNewerEvidence(NO_TERMINAL_ERROR_EVIDENCE, errorEvidence),
+    ).toEqual(errorEvidence);
+    expect(
+      adoptNewerEvidence(errorEvidence, CLEARED_TERMINAL_ERROR_EVIDENCE),
+    ).toEqual(CLEARED_TERMINAL_ERROR_EVIDENCE);
+    expect(
+      adoptNewerEvidence(CLEARED_TERMINAL_ERROR_EVIDENCE, errorEvidence),
+    ).toEqual(errorEvidence);
+    // Newer side proves nothing: nothing changes.
+    expect(
+      adoptNewerEvidence(errorEvidence, NO_TERMINAL_ERROR_EVIDENCE),
+    ).toEqual(errorEvidence);
+    expect(
+      adoptNewerEvidence(
+        CLEARED_TERMINAL_ERROR_EVIDENCE,
+        NO_TERMINAL_ERROR_EVIDENCE,
+      ),
+    ).toEqual(CLEARED_TERMINAL_ERROR_EVIDENCE);
+  });
+
+  it("lets older evidence fill only an unknown state", () => {
+    expect(
+      adoptOlderEvidence(NO_TERMINAL_ERROR_EVIDENCE, errorEvidence),
+    ).toEqual(errorEvidence);
+    // A newer success is never overwritten by an older error: the bug fix.
+    expect(
+      adoptOlderEvidence(CLEARED_TERMINAL_ERROR_EVIDENCE, errorEvidence),
+    ).toEqual(CLEARED_TERMINAL_ERROR_EVIDENCE);
+    expect(
+      adoptOlderEvidence(errorEvidence, CLEARED_TERMINAL_ERROR_EVIDENCE),
+    ).toEqual(errorEvidence);
+  });
+
+  it("treats an unauthoritative live event as no evidence", () => {
+    const parsed = parsePiChildSessionEvent({ type: "text", text: "hi" });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("unreachable");
+    const applied = applyProviderErrorEvent(errorEvidence, parsed.data);
+    expect(applied.evidence).toEqual(errorEvidence);
+    expect(applied.event).toBe(parsed.data);
+  });
+
+  it("finds no evidence in an empty window", () => {
+    expect(latestWindowErrorEvidence([])).toEqual(NO_TERMINAL_ERROR_EVIDENCE);
+    expect(latestWindowError([])).toBeUndefined();
+  });
+
+  it("adopts page evidence in the direction the page travels", () => {
+    // A forward or replacement page is the authoritative newest view.
+    expect(pageEvidence(errorEvidence, [], "newer")).toEqual(errorEvidence);
+    expect(pageEvidence(errorEvidence, [], "older")).toEqual(errorEvidence);
+    expect(pageEvidence(CLEARED_TERMINAL_ERROR_EVIDENCE, [], "older")).toEqual(
+      CLEARED_TERMINAL_ERROR_EVIDENCE,
     );
+    expect(pageEvidence(NO_TERMINAL_ERROR_EVIDENCE, [], "newer")).toEqual(
+      NO_TERMINAL_ERROR_EVIDENCE,
+    );
+  });
+
+  it("exposes an optional terminalError fragment and nothing else", () => {
+    expect(terminalErrorView(errorEvidence)).toEqual({
+      terminalError: anError,
+    });
+    expect(terminalErrorView(CLEARED_TERMINAL_ERROR_EVIDENCE)).toEqual({});
+    expect(terminalErrorView(NO_TERMINAL_ERROR_EVIDENCE)).toEqual({});
+    expect(
+      Object.hasOwn(
+        terminalErrorView(CLEARED_TERMINAL_ERROR_EVIDENCE),
+        "terminalError",
+      ),
+    ).toBe(false);
   });
 });
 
@@ -506,15 +1003,34 @@ describe("child provider error retention in the overlay", () => {
     },
   });
 
+  const nativeUser = (
+    id: string,
+  ): { readonly id: string; readonly payload: unknown } => ({
+    id,
+    payload: {
+      type: "message",
+      id,
+      message: { role: "user", content: [{ type: "text", text: "ask" }] },
+    },
+  });
+
+  const historicalError = (id: string, errorMessage: string) =>
+    nativeAssistant(id, { stopReason: "error", errorMessage });
+
+  const historicalSuccess = (id: string) =>
+    nativeAssistant(id, { stopReason: "stop" });
+
   async function open(
     children: readonly MemoryOverlaySourceChild[],
     childId: string,
+    config?: { readonly pageSize?: number; readonly windowCap?: number },
   ): Promise<{
     controller: ReturnType<typeof createChildOverlayController>;
     view: ChildOverlayView;
   }> {
     const controller = createChildOverlayController(
       createMemoryChildOverlaySource(children),
+      config,
     );
     const opened = await controller.open(childId);
     expect(opened.isOk()).toBe(true);
@@ -530,9 +1046,26 @@ describe("child provider error retention in the overlay", () => {
     return applied._unsafeUnwrap();
   };
 
+  const older = async (
+    controller: ReturnType<typeof createChildOverlayController>,
+  ): Promise<ChildOverlayView> => {
+    const loaded = await controller.loadOlder();
+    expect(loaded.isOk()).toBe(true);
+    return loaded._unsafeUnwrap();
+  };
+
+  const newer = async (
+    controller: ReturnType<typeof createChildOverlayController>,
+  ): Promise<ChildOverlayView> => {
+    const loaded = await controller.loadNewer();
+    expect(loaded.isOk()).toBe(true);
+    return loaded._unsafeUnwrap();
+  };
+
   it("exposes no terminal error before one is observed", async () => {
     const { view } = await open([liveChild("child-a")], "child-a");
     expect(view.terminalError).toBeUndefined();
+    expect(Object.hasOwn(view, "terminalError")).toBe(false);
   });
 
   it("retains only the latest terminal error, replacing the prior one", async () => {
@@ -544,16 +1077,35 @@ describe("child provider error retention in the overlay", () => {
     expect(second.terminalError?.httpStatus).toBe(503);
   });
 
-  it("clears the retained error when a later turn succeeds", async () => {
+  it("clears the retained error when a later live turn succeeds", async () => {
     const { controller } = await open([liveChild("child-a")], "child-a");
     expect(
       apply(controller, errorEnd("429 rate limit reached")).terminalError,
     ).toBeDefined();
     const success = apply(controller, messageEnd({ stopReason: "stop" }));
     expect(success.terminalError).toBeUndefined();
+    // A later error after the success sets it again.
+    expect(apply(controller, errorEnd("ECONNRESET")).terminalError?.class).toBe(
+      "connection",
+    );
   });
 
-  it("isolates the error per child", async () => {
+  it("leaves the retained error untouched for unauthoritative live events", async () => {
+    const { controller } = await open([liveChild("child-a")], "child-a");
+    apply(controller, errorEnd("429 rate limit reached"));
+    expect(
+      apply(controller, { type: "text", text: "still talking" }).terminalError
+        ?.class,
+    ).toBe("rate-limit");
+    expect(
+      apply(controller, {
+        type: "message_end",
+        message: { role: "user", content: "hi", stopReason: "error" },
+      }).terminalError?.class,
+    ).toBe("rate-limit");
+  });
+
+  it("isolates the evidence per child", async () => {
     const { controller } = await open(
       [liveChild("child-a"), liveChild("child-b")],
       "child-a",
@@ -562,6 +1114,9 @@ describe("child provider error retention in the overlay", () => {
     const other = await controller.open("child-b");
     expect(other.isOk()).toBe(true);
     expect(other._unsafeUnwrap().terminalError).toBeUndefined();
+    // child-b clearing its own state must not clear child-a's.
+    const controllerB = controller;
+    apply(controllerB, messageEnd({ stopReason: "stop" }));
     const back = await controller.open("child-a");
     expect(back._unsafeUnwrap().terminalError?.class).toBe("rate-limit");
   });
@@ -570,10 +1125,10 @@ describe("child provider error retention in the overlay", () => {
     const { view } = await open(
       [
         settledChild("child-h", [
-          nativeAssistant("entry-1", {
-            stopReason: "error",
-            errorMessage: `429 {"type":"error","error":{"type":"rate_limit_error","message":"Number of request tokens has exceeded your per-minute rate limit"}} ${SENTINELS.requestId}`,
-          }),
+          historicalError(
+            "entry-1",
+            `429 {"type":"error","error":{"type":"rate_limit_error","message":"exceeded"}} ${SENTINELS.requestId}`,
+          ),
         ]),
       ],
       "child-h",
@@ -581,21 +1136,16 @@ describe("child provider error retention in the overlay", () => {
     expect(view.terminalError?.class).toBe("rate-limit");
     expect(view.terminalError?.httpStatus).toBe(429);
     expect(view.terminalError?.code).toBe("rate_limit_error");
+    expect(view.terminalError?.message).toBe(CANON["rate-limit"]);
     expect(JSON.stringify(view)).not.toContain(SENTINELS.requestId);
   });
 
-  it("takes the newest historical error inside the loaded window", async () => {
+  it("takes the newest historical evidence inside the replacement window", async () => {
     const { view } = await open(
       [
         settledChild("child-h", [
-          nativeAssistant("entry-1", {
-            stopReason: "error",
-            errorMessage: "429 rate limit reached",
-          }),
-          nativeAssistant("entry-2", {
-            stopReason: "error",
-            errorMessage: "503 overloaded_error",
-          }),
+          historicalError("entry-1", "429 rate limit reached"),
+          historicalError("entry-2", "503 overloaded_error"),
         ]),
       ],
       "child-h",
@@ -607,11 +1157,8 @@ describe("child provider error retention in the overlay", () => {
     const { view } = await open(
       [
         settledChild("child-h", [
-          nativeAssistant("entry-1", {
-            stopReason: "error",
-            errorMessage: "429 rate limit reached",
-          }),
-          nativeAssistant("entry-2", { stopReason: "stop" }),
+          historicalError("entry-1", "429 rate limit reached"),
+          historicalSuccess("entry-2"),
         ]),
       ],
       "child-h",
@@ -621,19 +1168,147 @@ describe("child provider error retention in the overlay", () => {
 
   it("lets a live error replace a historical one", async () => {
     const { controller, view } = await open(
-      [
-        liveChild("child-m", [
-          nativeAssistant("entry-1", {
-            stopReason: "error",
-            errorMessage: "429 rate limit reached",
-          }),
-        ]),
-      ],
+      [liveChild("child-m", [historicalError("entry-1", "429 rate limit")])],
       "child-m",
     );
     expect(view.terminalError?.class).toBe("rate-limit");
-    const live = apply(controller, errorEnd("ECONNRESET"));
-    expect(live.terminalError?.class).toBe("connection");
+    expect(apply(controller, errorEnd("ECONNRESET")).terminalError?.class).toBe(
+      "connection",
+    );
+  });
+
+  it("lets a live success clear a historical error", async () => {
+    const { controller, view } = await open(
+      [liveChild("child-m", [historicalError("entry-1", "429 rate limit")])],
+      "child-m",
+    );
+    expect(view.terminalError?.class).toBe("rate-limit");
+    expect(
+      apply(controller, messageEnd({ stopReason: "stop" })).terminalError,
+    ).toBeUndefined();
+  });
+
+  it("does not resurrect an older error when paging backwards past a success", async () => {
+    const { controller, view } = await open(
+      [
+        settledChild("child-p", [
+          historicalError("entry-1", "429 rate limit reached"),
+          historicalSuccess("entry-2"),
+        ]),
+      ],
+      "child-p",
+      { pageSize: 1, windowCap: 1 },
+    );
+    // Newest page carries the success, so evidence is `cleared`.
+    expect(view.terminalError).toBeUndefined();
+    // Prepending the older failed turn must not put the error back.
+    const prepended = await older(controller);
+    expect(prepended.terminalError).toBeUndefined();
+  });
+
+  it("does not resurrect an older error when paging backwards past a live success", async () => {
+    const { controller } = await open(
+      [
+        liveChild("child-p", [
+          historicalError("entry-1", "429 rate limit reached"),
+          nativeUser("entry-2"),
+        ]),
+      ],
+      "child-p",
+      { pageSize: 1, windowCap: 1 },
+    );
+    // A live success clears before any backwards page is loaded.
+    expect(
+      apply(controller, messageEnd({ stopReason: "stop" })).terminalError,
+    ).toBeUndefined();
+    expect((await older(controller)).terminalError).toBeUndefined();
+  });
+
+  it("adopts an older error when nothing newer is known", async () => {
+    const { controller, view } = await open(
+      [
+        settledChild("child-p", [
+          historicalError("entry-1", "429 rate limit reached"),
+          nativeUser("entry-2"),
+        ]),
+      ],
+      "child-p",
+      { pageSize: 1, windowCap: 1 },
+    );
+    // The newest page holds a user turn: no terminal evidence at all.
+    expect(view.terminalError).toBeUndefined();
+    const prepended = await older(controller);
+    expect(prepended.terminalError?.class).toBe("rate-limit");
+  });
+
+  it("does not let a prepend override a newer retained error", async () => {
+    const { controller, view } = await open(
+      [
+        settledChild("child-p", [
+          historicalError("entry-1", "503 overloaded_error"),
+          historicalError("entry-2", "429 rate limit reached"),
+        ]),
+      ],
+      "child-p",
+      { pageSize: 1, windowCap: 1 },
+    );
+    expect(view.terminalError?.class).toBe("rate-limit");
+    const prepended = await older(controller);
+    // The prepended page's only terminal turn is the older overload error.
+    expect(prepended.terminalError?.class).toBe("rate-limit");
+  });
+
+  it("adopts newer evidence when appending forwards", async () => {
+    const { controller, view } = await open(
+      [
+        settledChild("child-q", [
+          historicalError("entry-1", "429 rate limit reached"),
+          historicalError("entry-2", "503 overloaded_error"),
+        ]),
+      ],
+      "child-q",
+      { pageSize: 1, windowCap: 1 },
+    );
+    expect(view.terminalError?.class).toBe("overload");
+    // Page backwards, then forwards again: the newest page wins each time.
+    expect((await older(controller)).terminalError?.class).toBe("overload");
+    expect((await newer(controller)).terminalError?.class).toBe("overload");
+  });
+
+  it("clears when the appended newer page carries a success", async () => {
+    const { controller, view } = await open(
+      [
+        liveChild("child-q", [
+          historicalError("entry-1", "429 rate limit reached"),
+          historicalSuccess("entry-2"),
+        ]),
+      ],
+      "child-q",
+      { pageSize: 1, windowCap: 1 },
+    );
+    expect(view.terminalError).toBeUndefined();
+    // Force the retained state to an error, then append the successful page.
+    expect(apply(controller, errorEnd("500 boom")).terminalError?.class).toBe(
+      "provider-error",
+    );
+    await older(controller);
+    expect((await newer(controller)).terminalError).toBeUndefined();
+  });
+
+  it("keeps an appended page that carries no terminal turn from changing state", async () => {
+    const { controller, view } = await open(
+      [
+        settledChild("child-q", [
+          historicalError("entry-1", "429 rate limit reached"),
+          nativeUser("entry-2"),
+        ]),
+      ],
+      "child-q",
+      { pageSize: 1, windowCap: 1 },
+    );
+    expect(view.terminalError).toBeUndefined();
+    await older(controller);
+    expect((await newer(controller)).terminalError?.class).toBe("rate-limit");
   });
 
   it("never stores a raw errorMessage in the view or its serialization", async () => {
@@ -643,6 +1318,8 @@ describe("child provider error retention in the overlay", () => {
           nativeAssistant("entry-1", {
             stopReason: "error",
             errorMessage: `500 ${SENTINELS.authorization} ${SENTINELS.path}`,
+            responseId: SENTINELS.responseId,
+            diagnostics: { detail: SENTINELS.diagnostic },
           }),
         ]),
       ],
@@ -650,20 +1327,35 @@ describe("child provider error retention in the overlay", () => {
     );
     const live = apply(
       controller,
-      errorEnd(`500 ${SENTINELS.apiKey} ${SENTINELS.url}`),
+      messageEnd({
+        stopReason: "error",
+        errorMessage: `500 ${SENTINELS.apiKey} ${SENTINELS.url}`,
+        responseId: SENTINELS.responseId,
+        diagnostics: {
+          detail: SENTINELS.diagnostic,
+          nested: { u: SENTINELS.url },
+        },
+      }),
     );
     for (const state of [view, live]) {
       const serialized = JSON.stringify(state);
-      expect(serialized).not.toContain("errorMessage");
-      expect(serialized).not.toContain("SENTINEL");
-      expect(serialized).not.toContain("Bearer");
-      expect(serialized).not.toContain("://");
+      for (const fragment of [
+        "errorMessage",
+        "responseId",
+        "diagnostics",
+        "SENTINEL",
+        "Bearer",
+        "://",
+        "rawStopReason",
+      ]) {
+        expect(serialized).not.toContain(fragment);
+      }
     }
   });
 });
 
 describe("historical replay projection helpers", () => {
-  it("carries the authoritative stop reason and the sanitized projection", () => {
+  it("carries the authoritative stop reason and the canonical projection", () => {
     const facts = historicalProviderErrorFacts({
       role: "assistant",
       stopReason: "error",
@@ -671,6 +1363,7 @@ describe("historical replay projection helpers", () => {
     });
     expect(facts?.stopReason).toBe("error");
     expect(facts?.providerError?.class).toBe("rate-limit");
+    expect(facts?.providerError?.message).toBe(CANON["rate-limit"]);
     expect(JSON.stringify(facts)).not.toContain(SENTINELS.requestId);
   });
 
@@ -687,7 +1380,32 @@ describe("historical replay projection helpers", () => {
     ).toBeUndefined();
   });
 
-  it("finds nothing in an empty window", () => {
-    expect(latestWindowError([])).toBeUndefined();
+  it("carries usage, model, stop reason, and the projection but no raw text", () => {
+    const fields = historicalAssistantMessageFields({
+      role: "assistant",
+      stopReason: "error",
+      model: "claude-sonnet-5",
+      usage: { input: 5, output: 6 },
+      errorMessage: `429 rate limit ${SENTINELS.requestId}`,
+      responseId: SENTINELS.responseId,
+      diagnostics: { detail: SENTINELS.diagnostic },
+    });
+    expect(fields.stopReason).toBe("error");
+    expect(fields.model).toBe("claude-sonnet-5");
+    expect(fields.usage).toEqual({ input: 5, output: 6 });
+    expect(fields[CHILD_PROVIDER_ERROR_REPLAY_FIELD]).toEqual({
+      class: "rate-limit",
+      httpStatus: 429,
+      message: CANON["rate-limit"],
+    });
+    const serialized = JSON.stringify(fields);
+    expect(serialized).not.toContain("SENTINEL");
+    expect(serialized).not.toContain("errorMessage");
+    expect(serialized).not.toContain("responseId");
+    expect(serialized).not.toContain("diagnostics");
+  });
+
+  it("is an empty record for a non-object message", () => {
+    expect(historicalAssistantMessageFields(42)).toEqual({});
   });
 });
