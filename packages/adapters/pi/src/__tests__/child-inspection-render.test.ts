@@ -102,18 +102,56 @@ function allLinesFitWidth(lines: readonly string[], width: number): boolean {
 
 describe("Pi child inspection render", () => {
   // -- AC1: Typed input/model --
+  const rateLimitError = {
+    class: "rate-limit" as const,
+    message: "Provider rate limit exceeded. Retry later." as const,
+    httpStatus: 429,
+    code: "rate_limit_error" as const,
+    source: "anthropic-messages",
+    provider: "anthropic",
+    model: "claude-safe",
+  };
+
+  function transcriptWithToolError(): ReturnType<
+    PiChildTranscriptReducer["getState"]
+  > {
+    const reducer = new PiChildTranscriptReducer();
+    reducer.applyEvent({
+      type: "tool_call",
+      toolCallId: "call-boom",
+      toolName: "bash",
+    } as unknown as PiChildSessionEvent);
+    reducer.applyEvent({
+      type: "tool_error",
+      toolCallId: "call-boom",
+      error: "boom",
+    } as unknown as PiChildSessionEvent);
+    return reducer.getState();
+  }
+
+  function transcriptWithAssistantProviderError(): ReturnType<
+    PiChildTranscriptReducer["getState"]
+  > {
+    const reducer = new PiChildTranscriptReducer();
+    reducer.applyEvent({
+      type: "message_start",
+      message: { id: "provider-error" },
+    } as unknown as PiChildSessionEvent);
+    reducer.applyEvent({
+      type: "message_end",
+      message: {
+        id: "provider-error",
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "429 rate limit reached",
+      },
+    } as unknown as PiChildSessionEvent);
+    return reducer.getState();
+  }
+
   it("renders a bounded sanitized fallback error for only the selected child", () => {
-    const error = {
-      class: "rate-limit" as const,
-      message: "Provider rate limit exceeded. Retry later." as const,
-      httpStatus: 429,
-      code: "rate_limit_error" as const,
-      source: "anthropic-messages",
-      provider: "anthropic",
-      model: "claude-safe",
-    };
     const rendered = renderChildInspection(
-      baseInput({ terminalError: error }),
+      baseInput({ terminalError: rateLimitError }),
       40,
     )._unsafeUnwrap();
     expect(
@@ -123,6 +161,43 @@ describe("Pi child inspection render", () => {
 
     const sibling = renderChildInspection(baseInput(), 80)._unsafeUnwrap();
     expect(sibling.lines.join("\n")).not.toContain("assistant error");
+  });
+
+  it("keeps a tool error and a separately supplied terminalError both visible", () => {
+    const rendered = renderChildInspection(
+      baseInput({
+        transcriptState: transcriptWithToolError(),
+        terminalError: rateLimitError,
+      }),
+      120,
+    )._unsafeUnwrap();
+    const joined = rendered.lines.join("\n");
+    expect(joined).toContain("tool error: boom");
+    expect(joined).toContain("assistant error");
+  });
+
+  it("does not duplicate the canonical assistant provider-error row", () => {
+    const rendered = renderChildInspection(
+      baseInput({
+        transcriptState: transcriptWithAssistantProviderError(),
+        terminalError: rateLimitError,
+      }),
+      120,
+    )._unsafeUnwrap();
+    const assistantErrorLines = rendered.lines.filter((line) =>
+      line.includes("assistant error"),
+    );
+    expect(assistantErrorLines).toHaveLength(1);
+  });
+
+  it("does not fabricate a provider error from a tool error alone", () => {
+    const rendered = renderChildInspection(
+      baseInput({ transcriptState: transcriptWithToolError() }),
+      120,
+    )._unsafeUnwrap();
+    const joined = rendered.lines.join("\n");
+    expect(joined).toContain("tool error: boom");
+    expect(joined).not.toContain("assistant error");
   });
 
   describe("typed input model", () => {

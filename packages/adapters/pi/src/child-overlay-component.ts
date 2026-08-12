@@ -55,6 +55,7 @@ import {
 import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import {
   createPiChildTranscriptRenderer,
+  isAssistantTerminalProviderErrorRow,
   type PiChildTranscriptRenderedRow,
   type PiTranscriptComponentFactory,
 } from "./child-transcript.js";
@@ -617,12 +618,13 @@ export function createChildOverlayCustomComponent(
           componentFactory: factory(),
         });
         if (rendered.lines.length > 0) {
-          const hasErrorRow = rendered.rows.some((row) =>
-            row.factId.endsWith(":error"),
+          const hasAssistantTerminalProviderError = rendered.rows.some(
+            isAssistantTerminalProviderErrorRow,
           );
           return {
             lines:
-              terminalErrorLine === undefined || hasErrorRow
+              terminalErrorLine === undefined ||
+              hasAssistantTerminalProviderError
                 ? rendered.lines
                 : [...rendered.lines, terminalErrorLine],
             spans: spansFromRows(rendered.rows),

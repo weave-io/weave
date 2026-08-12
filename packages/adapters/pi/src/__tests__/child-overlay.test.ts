@@ -2896,6 +2896,127 @@ describe("createChildOverlayCustomComponent", () => {
     }
   });
 
+  it("keeps a tool error and the canonical terminalError both visible in full view", async () => {
+    const { component, controller } = await mount({
+      status: "live",
+      entryCount: 0,
+    });
+    controller.applyLiveEvent({
+      type: "tool_call",
+      toolCallId: "call-boom",
+      toolName: "bash",
+    });
+    controller.applyLiveEvent({
+      type: "tool_error",
+      toolCallId: "call-boom",
+      error: "boom",
+    });
+    controller.applyLiveEvent({
+      type: "message_start",
+      message: { id: "provider-error" },
+    });
+    controller.applyLiveEvent({
+      type: "message_end",
+      message: {
+        id: "provider-error",
+        role: "assistant",
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "claude-safe",
+        content: [],
+        stopReason: "error",
+        errorMessage: "429 rate limit reached",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0,
+          },
+        },
+        timestamp: 1,
+      },
+    });
+
+    const full = component.render(120).join("\n");
+    expect(full.toLowerCase()).toContain("boom");
+    expect(full).toContain("assistant error");
+    expect(controller.view()._unsafeUnwrap().terminalError).toBeDefined();
+  });
+
+  it("renders the canonical assistant provider-error row only once in full view", async () => {
+    const { component, controller } = await mount({
+      status: "live",
+      entryCount: 0,
+    });
+    controller.applyLiveEvent({
+      type: "message_start",
+      message: { id: "provider-error" },
+    });
+    controller.applyLiveEvent({
+      type: "message_end",
+      message: {
+        id: "provider-error",
+        role: "assistant",
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "claude-safe",
+        content: [],
+        stopReason: "error",
+        errorMessage: "429 rate limit reached",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0,
+          },
+        },
+        timestamp: 1,
+      },
+    });
+
+    expect(controller.view()._unsafeUnwrap().terminalError).toBeDefined();
+    const assistantErrorLines = component
+      .render(120)
+      .filter((line) => line.includes("assistant error"));
+    expect(assistantErrorLines).toHaveLength(1);
+  });
+
+  it("does not fabricate a provider error from a tool error alone in full view", async () => {
+    const { component, controller } = await mount({
+      status: "live",
+      entryCount: 0,
+    });
+    controller.applyLiveEvent({
+      type: "tool_call",
+      toolCallId: "call-boom",
+      toolName: "bash",
+    });
+    controller.applyLiveEvent({
+      type: "tool_error",
+      toolCallId: "call-boom",
+      error: "boom",
+    });
+
+    expect(controller.view()._unsafeUnwrap().terminalError).toBeUndefined();
+    const full = component.render(120).join("\n");
+    expect(full.toLowerCase()).toContain("boom");
+    expect(full).not.toContain("assistant error");
+  });
+
   it("renders native entry kinds with a bounded header for a live child", async () => {
     const { component, controller } = await mount({ status: "live" });
     controller.applyLiveEvent({

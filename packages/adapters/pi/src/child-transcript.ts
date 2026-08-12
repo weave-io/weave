@@ -1184,6 +1184,17 @@ export interface PiChildTranscriptRenderedRow {
   readonly provenance: "fallback" | "native";
 }
 
+/**
+ * True when the row is the assistant stopReason=error fact that carries the
+ * canonical provider-error projection. Tool call/result/error facts also end
+ * in `:error` and must not match.
+ */
+export function isAssistantTerminalProviderErrorRow(
+  row: Pick<PiChildTranscriptRenderedRow, "kind" | "factId">,
+): boolean {
+  return row.kind === "assistant" && row.factId.endsWith(":error");
+}
+
 export interface PiChildTranscriptRender {
   readonly rows: readonly PiChildTranscriptRenderedRow[];
   readonly lines: readonly string[];

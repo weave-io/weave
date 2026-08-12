@@ -19,6 +19,7 @@ import type {
   PiTranscriptRenderOptions,
 } from "./child-transcript.js";
 import {
+  isAssistantTerminalProviderErrorRow,
   PiChildTranscriptRenderer,
   renderPiChildTranscript,
 } from "./child-transcript.js";
@@ -570,7 +571,7 @@ function withTerminalErrorLine(
 ): readonly string[] {
   if (
     terminalError === undefined ||
-    transcript.rows.some((row) => row.factId.endsWith(":error"))
+    transcript.rows.some(isAssistantTerminalProviderErrorRow)
   ) {
     return transcript.lines;
   }
