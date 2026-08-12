@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 import { z } from "zod";
 
 /** Bounds applied to observed private Pi protocol data. */
@@ -533,7 +533,7 @@ const normalizeNativeToolEvent = (value: unknown): unknown => {
 };
 
 /** Validate known events; preserve only genuinely unknown event kinds. */
-export const parsePiChildSessionEvent = (value: unknown) => {
+const parseChildSessionEvent = (value: unknown) => {
   const normalized = normalizeNativeToolEvent(value);
   const parsed = PiChildSessionEventSchema.safeParse(normalized);
   if (parsed.success) return parsed;
@@ -548,4 +548,50 @@ export const parsePiChildSessionEvent = (value: unknown) => {
     return { success: true as const, data: preserveUnknownChildEvent(value) };
   }
   return parsed;
+};
+
+/**
+ * The typed parser failure reported for an input that cannot be inspected.
+ *
+ * It is the schema's own failure for `undefined`, so callers keep the exact
+ * `safeParse` failure shape they already handle, and the reported `ZodError`
+ * carries only schema text. A hostile trap's message and cause are dropped
+ * deliberately: they are attacker-chosen prose, and no caller needs them to
+ * decide that the event is unusable.
+ */
+const unreadableChildEvent = () =>
+  PiChildSessionEventSchema.safeParse(undefined);
+
+/**
+ * Validate known events; preserve only genuinely unknown event kinds.
+ *
+ * ## Why the whole boundary is wrapped
+ *
+ * The value comes from a child process over RPC, from a recorded session file,
+ * or from a host that hands the adapter an object it built itself. Any of those
+ * can be an exotic object rather than plain data: a `Proxy` whose `get`,
+ * `has`, `ownKeys`, or `getOwnPropertyDescriptor` trap throws, an accessor that
+ * throws on the second read, a `toJSON` or `Symbol.toPrimitive` that throws
+ * inside validation, or a getter on a nested `message` that throws only once
+ * the schema reaches it.
+ *
+ * Those throws are reachable from every step of this parser, not just one:
+ * normalization reads `type` and enumerates tool payloads, schema validation
+ * reads every member the shapes name, the fallback path reads `type` again, and
+ * unknown-event preservation enumerates the whole record. Guarding one step
+ * would leave the others open, so the complete unit of work is wrapped and a
+ * hostile input becomes the ordinary typed parser failure every caller already
+ * handles — the overlay controller ignores the event, the replay mapper skips
+ * the entry, and the RPC reader rejects the frame.
+ *
+ * Bounded, descriptor-safe semantics are unchanged: a parser-approved real Pi
+ * event still parses exactly as before, since the guard only intercepts the
+ * throw that would otherwise cross the boundary.
+ */
+export const parsePiChildSessionEvent = (value: unknown) => {
+  const guarded = Result.fromThrowable(
+    () => parseChildSessionEvent(value),
+    () => undefined,
+  )();
+  return guarded.isOk() ? guarded.value : unreadableChildEvent();
 };

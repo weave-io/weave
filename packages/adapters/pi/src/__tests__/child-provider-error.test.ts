@@ -1261,6 +1261,71 @@ describe("child provider error retention in the overlay", () => {
     expect(Object.hasOwn(view, "terminalError")).toBe(false);
   });
 
+  it("consumes a hostile live event without throwing or corrupting state", async () => {
+    const { controller } = await open([liveChild("child-a")], "child-a");
+    const established = apply(controller, errorEnd("429 rate limit reached"));
+    expect(established.terminalError?.class).toBe("rate-limit");
+
+    const hostile: readonly unknown[] = [
+      {
+        get type(): string {
+          throw new Error("hostile type getter");
+        },
+      },
+      new Proxy(
+        { type: "message_end", message: { role: "assistant" } },
+        {
+          get(): never {
+            throw new Error("hostile get trap");
+          },
+        },
+      ),
+      new Proxy(
+        { type: "definitely_unknown_kind", payload: { a: 1 } },
+        {
+          ownKeys(): never {
+            throw new Error("hostile ownKeys trap");
+          },
+        },
+      ),
+      {
+        type: "message_end",
+        get message(): unknown {
+          throw new Error("hostile nested getter");
+        },
+      },
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          stopReason: "stop",
+          get usage(): unknown {
+            throw new Error("hostile usage getter");
+          },
+        },
+      },
+    ];
+
+    for (const event of hostile) {
+      expect(() => controller.applyLiveEvent(event)).not.toThrow();
+      const view = apply(controller, event);
+      // The event is ignored outright: the retained error is neither replaced
+      // nor cleared, and no entry is admitted from an unreadable event.
+      expect(view.terminalError).toEqual(established.terminalError);
+      expect(view.entries).toEqual(established.entries);
+      expect(JSON.stringify(view)).not.toContain("hostile");
+    }
+
+    // The controller is still live: a real later event is applied normally.
+    const cleared = apply(
+      controller,
+      messageEnd({ stopReason: "stop", text: "recovered" }),
+    );
+    expect(cleared.terminalError).toBeUndefined();
+    const replaced = apply(controller, errorEnd("401 invalid_api_key"));
+    expect(replaced.terminalError?.class).toBe("auth");
+  });
+
   it("retains only the latest terminal error, replacing the prior one", async () => {
     const { controller } = await open([liveChild("child-a")], "child-a");
     const first = apply(controller, errorEnd("429 rate limit reached"));
