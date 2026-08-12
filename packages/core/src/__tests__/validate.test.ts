@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { AstNode } from "../ast.js";
 import { tokenize } from "../lexer.js";
 import { parse } from "../parser.js";
 import {
@@ -157,6 +158,243 @@ describe("validate — fail-closed AST structure", () => {
         message: expect.stringContaining(`'${destination}'`),
       }),
     );
+  });
+
+  it("rejects direct workflow extends destination collisions", () => {
+    const pos = { line: 1, column: 1 };
+    const result = validate([
+      {
+        type: "workflow",
+        name: "pipeline",
+        properties: [
+          {
+            key: "extends",
+            value: { kind: "string", value: "generic", pos },
+            pos,
+          },
+        ],
+        steps: [],
+        extends: "dedicated",
+        pos,
+      },
+    ]);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path: "workflows.pipeline.extends",
+        message: "property 'extends' collides with generated 'extends'",
+      }),
+    );
+  });
+
+  it("rejects direct step insertion destination collisions", () => {
+    const pos = { line: 1, column: 1 };
+    const result = validate([
+      {
+        type: "workflow",
+        name: "pipeline",
+        properties: [
+          { key: "version", value: { kind: "number", value: 1, pos }, pos },
+        ],
+        steps: [
+          {
+            name: "implement",
+            properties: [
+              {
+                key: "insert_before",
+                value: { kind: "string", value: "generic-before", pos },
+                pos,
+              },
+              {
+                key: "insert_after",
+                value: { kind: "string", value: "generic-after", pos },
+                pos,
+              },
+            ],
+            insert_before: "dedicated-before",
+            insert_after: "dedicated-after",
+            pos,
+          },
+        ],
+        pos,
+      },
+    ]);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "workflows.pipeline.steps.implement.insert_before",
+          message:
+            "property 'insert_before' collides with generated 'insert_before'",
+        }),
+        expect.objectContaining({
+          path: "workflows.pipeline.steps.implement.insert_after",
+          message:
+            "property 'insert_after' collides with generated 'insert_after'",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects unsafe direct AST graphs without executing getters", () => {
+    const pos = { line: 1, column: 1 };
+    let getterExecutions = 0;
+    const inheritedProperty = Object.create({ key: "description" }) as object;
+    Object.defineProperty(inheritedProperty, "value", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return { kind: "string", value: "unsafe", pos };
+      },
+    });
+    Object.defineProperty(inheritedProperty, "pos", {
+      value: pos,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+
+    const unsafeGraphs: unknown[] = [
+      [
+        {
+          type: "category",
+          name: "helper",
+          properties: [inheritedProperty],
+          pos,
+        },
+      ],
+      Object.assign(
+        [
+          {
+            type: "category",
+            name: "helper",
+            properties: [],
+            pos,
+          },
+        ],
+        { extra: true },
+      ),
+    ];
+    const symbolGraph = [
+      { type: "category", name: "helper", properties: [], pos },
+    ];
+    Object.defineProperty(symbolGraph[0], Symbol("unsafe"), {
+      value: true,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    unsafeGraphs.push(symbolGraph);
+
+    const readonlyGraph = [
+      { type: "category", name: "helper", properties: [], pos },
+    ];
+    Object.defineProperty(readonlyGraph[0], "name", {
+      value: "helper",
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    });
+    unsafeGraphs.push(readonlyGraph);
+
+    const cyclicNode: Record<string, unknown> = {
+      type: "category",
+      name: "helper",
+      properties: [],
+      pos,
+    };
+    cyclicNode.self = cyclicNode;
+    unsafeGraphs.push([cyclicNode]);
+
+    const sparseGraph = new Array<unknown>(1);
+    unsafeGraphs.push(sparseGraph);
+
+    class AstContainer extends Array<unknown> {}
+    unsafeGraphs.push(
+      new AstContainer({
+        type: "category",
+        name: "helper",
+        properties: [],
+        pos,
+      }),
+    );
+
+    for (const graph of unsafeGraphs) {
+      const result = validate(graph as AstNode[]);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toEqual([
+        expect.objectContaining({
+          type: "ValidationError",
+          message: expect.stringContaining("own, enumerable, writable"),
+        }),
+      ]);
+    }
+    expect(getterExecutions).toBe(0);
+  });
+
+  it("returns bounded errors for malformed safe direct AST shapes", () => {
+    const malformedGraphs: unknown[] = [
+      null,
+      {},
+      [null],
+      [{ type: "category" }],
+    ];
+
+    for (const graph of malformedGraphs) {
+      const result = validate(graph as AstNode[]);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toEqual([
+        expect.objectContaining({
+          type: "ValidationError",
+          path: "",
+          message: expect.stringContaining("AST input"),
+        }),
+      ]);
+    }
+  });
+
+  it("accepts safe direct and null-prototype AST graphs", () => {
+    const pos = { line: 1, column: 1 };
+    const directResult = validate([
+      {
+        type: "category",
+        name: "plain",
+        properties: [
+          {
+            key: "description",
+            value: { kind: "string", value: "Plain category", pos },
+            pos,
+          },
+        ],
+        pos,
+      },
+    ]);
+    expect(directResult.isOk()).toBe(true);
+
+    const stringValue = Object.create(null) as Record<string, unknown>;
+    stringValue.kind = "string";
+    stringValue.value = "Null category";
+    stringValue.pos = pos;
+    const property = Object.create(null) as Record<string, unknown>;
+    property.key = "description";
+    property.value = stringValue;
+    property.pos = pos;
+    const node = Object.create(null) as Record<string, unknown>;
+    node.type = "category";
+    node.name = "null-prototype";
+    node.properties = [property];
+    node.pos = pos;
+
+    const nullPrototypeResult = validate([node] as AstNode[]);
+    expect(nullPrototypeResult.isOk()).toBe(true);
+    if (nullPrototypeResult.isOk()) {
+      expect(nullPrototypeResult.value.categories["null-prototype"]).toEqual({
+        description: "Null category",
+      });
+    }
   });
 
   it("rejects dangerous declaration, property, nested block, and step names", () => {

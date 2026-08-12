@@ -1038,6 +1038,25 @@ describe("AgentConfigSchema — prompt_append_file", () => {
 // ---------------------------------------------------------------------------
 
 describe("exported schema input boundaries", () => {
+  it("copies input before Zod can read Object.prototype fields", () => {
+    let getterExecutions = 0;
+    try {
+      Object.defineProperty(Object.prototype, "description", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          getterExecutions += 1;
+          return "inherited description";
+        },
+      });
+
+      expect(CategoryConfigSchema.safeParse({}).success).toBe(false);
+      expect(getterExecutions).toBe(0);
+    } finally {
+      delete (Object.prototype as { description?: unknown }).description;
+    }
+  });
+
   it.each([
     ["root agents", WeaveConfigSchema, "agents", {}],
     ["agent fast", AgentConfigSchema, "fast", true],
@@ -1116,7 +1135,18 @@ describe("exported schema input boundaries", () => {
       configurable: true,
       writable: true,
     });
-    expect(CategoryConfigSchema.safeParse(category).success).toBe(true);
+    Object.defineProperty(category, "triggers", {
+      value: ["safe trigger"],
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    const parsed = CategoryConfigSchema.safeParse(category);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.description).toBe("Safe category");
+      expect(parsed.data.triggers).toEqual(["safe trigger"]);
+    }
   });
 });
 

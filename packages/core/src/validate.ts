@@ -3,7 +3,7 @@
  * returning a fully-typed `WeaveConfig` or an array of `ValidationError`s.
  */
 
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 import type { ZodError } from "zod";
 import type {
   AstNode,
@@ -21,6 +21,7 @@ import {
   MAX_CONFIG_ERROR_PATH_LENGTH,
 } from "./config-error-policy.js";
 import type { ValidationError } from "./errors.js";
+import { copySafeGraph } from "./safe-graph-copy.js";
 import { type WeaveConfig, WeaveConfigSchema } from "./schema.js";
 
 // ---------------------------------------------------------------------------
@@ -249,7 +250,7 @@ function validateAstStructure(nodes: AstNode[]): ValidationError[] {
           node.properties,
           path,
           errors,
-          new Set(["steps"]),
+          new Set(["extends", "steps"]),
         );
         const stepNames = new Set<string>();
         for (const step of node.steps) {
@@ -280,7 +281,7 @@ function validateAstStructure(nodes: AstNode[]): ValidationError[] {
             step.properties,
             stepPath,
             errors,
-            new Set(["name"]),
+            new Set(["insert_after", "insert_before", "name"]),
             (property) =>
               property.key === "name" ? "display_name" : property.key,
           );
@@ -698,17 +699,27 @@ function validateOpaqueAdapterSettings(ast: AstNode[]): ValidationError[] {
  * Top-level `log_level` is rejected with a `ValidationError` — it must be
  * placed inside a `settings { log_level INFO }` block.
  */
-export function validate(
-  ast: AstNode[],
+function invalidAstError(message: string): ValidationError[] {
+  return boundValidationErrors([
+    {
+      type: "ValidationError",
+      path: "",
+      message,
+    },
+  ]);
+}
+
+function validateCopiedAst(
+  safeAst: AstNode[],
 ): Result<WeaveConfig, ValidationError[]> {
-  const structuralErrors = validateAstStructure(ast);
-  const adapterErrors = validateOpaqueAdapterSettings(ast);
+  const structuralErrors = validateAstStructure(safeAst);
+  const adapterErrors = validateOpaqueAdapterSettings(safeAst);
   if (structuralErrors.length > 0) {
     return err(boundValidationErrors([...structuralErrors, ...adapterErrors]));
   }
 
   const { plain, topLevelLogLevel, invalidSettingsShape } =
-    astToPlainObject(ast);
+    astToPlainObject(safeAst);
 
   if (invalidSettingsShape) {
     return err(
@@ -746,4 +757,21 @@ export function validate(
   }
 
   return ok(parsed.data);
+}
+
+const safelyValidateCopiedAst = Result.fromThrowable(validateCopiedAst, () =>
+  invalidAstError("AST input has an invalid shape"),
+);
+
+export function validate(
+  ast: AstNode[],
+): Result<WeaveConfig, ValidationError[]> {
+  const copied = copySafeGraph(ast);
+  if (copied.isErr()) return err(invalidAstError(copied.error.message));
+  if (!Array.isArray(copied.value)) {
+    return err(invalidAstError("AST input must be an array"));
+  }
+  return safelyValidateCopiedAst(copied.value as AstNode[]).andThen(
+    (result) => result,
+  );
 }
