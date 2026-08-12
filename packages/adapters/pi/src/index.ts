@@ -465,21 +465,22 @@ export {
 } from "./child-process-port.js";
 export type {
   PiChildErrorClass,
+  PiChildErrorMessage,
   PiChildProviderError,
   PiChildProviderErrorAbsence,
+  PiChildProviderErrorDescriptor,
   PiChildSafeErrorCode,
 } from "./child-provider-error.js";
+// Narrow public surface: the read-only model Task 13 renders. Ingestion of
+// unknown input, event parsing, and replay-field plumbing stay internal to the
+// adapter, so no external caller can feed arbitrary values into the projection.
 export {
+  CHILD_ERROR_CANONICAL_MESSAGE,
   CHILD_PROVIDER_ERROR_BOUNDS,
-  CHILD_PROVIDER_ERROR_REPLAY_FIELD,
-  historicalAssistantMessageFields,
-  historicalProviderErrorFacts,
   MAX_CHILD_ERROR_MESSAGE_LENGTH,
   PI_CHILD_ERROR_CLASSES,
-  PI_CHILD_SAFE_ERROR_CODES,
+  PI_CHILD_ERROR_MESSAGES,
   PiChildProviderErrorSchema,
-  parsePiChildProviderError,
-  projectAssistantProviderError,
 } from "./child-provider-error.js";
 export {
   authorizeChildAccess,
