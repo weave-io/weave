@@ -1,5 +1,152 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig } from "../parse-config.js";
+import {
+  MAX_VALIDATION_DIAGNOSTIC_SIZE,
+  MAX_VALIDATION_ISSUES,
+  MAX_VALIDATION_MESSAGE_LENGTH,
+  MAX_VALIDATION_PATH_LENGTH,
+  VALIDATION_DIAGNOSTICS_TRUNCATED,
+} from "../validate.js";
+
+describe("parseConfig — fail-closed DSL structure", () => {
+  it.each([
+    [
+      "agent",
+      `agent helper { triggers [bareword] }`,
+      "agents.helper.triggers.0",
+    ],
+    [
+      "category",
+      `category helper { description "Helper" triggers [bareword] }`,
+      "categories.helper.triggers.0",
+    ],
+  ])("rejects bare identifiers in %s triggers", (_kind, source, path) => {
+    const result = parseConfig(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path,
+        message: "trigger entries must be quoted strings",
+      }),
+    );
+  });
+
+  it.each([
+    ["agent", `agent helper { fast }`, "agents.helper.fast"],
+    [
+      "category",
+      `category helper { description "Helper" fast }`,
+      "categories.helper.fast",
+    ],
+  ])("rejects bare fast in %s declarations", (_kind, source, path) => {
+    const result = parseConfig(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path,
+        message: expect.stringContaining("fast true"),
+      }),
+    );
+  });
+
+  it("preserves supported bare extension-point flags", () => {
+    const result = parseConfig(`workflow flow {
+      version 1
+      extension_points { before-plan }
+      step plan {
+        agent helper
+        role planning
+        type autonomous
+        prompt "Plan."
+        completion plan_created { plan_name "plan" }
+      }
+    }`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().workflows.flow?.extension_points).toEqual({
+      before_plan: true,
+    });
+  });
+
+  it.each([
+    "agent",
+    "category",
+  ])("rejects duplicate %s properties and declarations", (kind) => {
+    const description = kind === "category" ? `description "Helper"` : "";
+    for (const source of [
+      `${kind} helper { ${description} fast true fast true }`,
+      `${kind} helper { ${description} triggers ["one"] triggers ["two"] }`,
+      `${kind} helper { ${description} } ${kind} helper { ${description} }`,
+    ]) {
+      const result = parseConfig(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("duplicate"),
+        }),
+      );
+    }
+  });
+
+  it("rejects duplicate nested properties and workflow declarations", () => {
+    for (const source of [
+      `agent helper { tool_policy { read allow read deny } }`,
+      `workflow flow { version 1 } workflow flow { version 1 }`,
+      `workflow flow { version 1 step run { agent helper } step run { agent helper } }`,
+    ]) {
+      const result = parseConfig(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("duplicate"),
+        }),
+      );
+    }
+  });
+
+  it("rejects dangerous declaration and property names", () => {
+    for (const source of [
+      `agent __proto__ { fast true }`,
+      `category constructor { description "Helper" }`,
+      `agent helper { prototype true }`,
+      `agent helper { extension_points { __proto__ true } }`,
+    ]) {
+      const result = parseConfig(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("dangerous"),
+        }),
+      );
+    }
+  });
+
+  it("bounds adversarial aggregate diagnostics end to end", () => {
+    const longKey = "x".repeat(MAX_VALIDATION_PATH_LENGTH * 4);
+    const unknowns = Array.from(
+      { length: MAX_VALIDATION_ISSUES * 4 },
+      (_, index) => `${longKey}${index} true`,
+    ).join("\n");
+    const result = parseConfig(`agent helper { ${unknowns} }`);
+    expect(result.isErr()).toBe(true);
+    const errors = result
+      ._unsafeUnwrapErr()
+      .filter((error) => error.type === "ValidationError");
+    const aggregate = errors.reduce(
+      (size, error) => size + error.path.length + error.message.length,
+      0,
+    );
+
+    expect(errors.length).toBeLessThanOrEqual(MAX_VALIDATION_ISSUES);
+    expect(
+      Math.max(...errors.map((error) => error.path.length)),
+    ).toBeLessThanOrEqual(MAX_VALIDATION_PATH_LENGTH);
+    expect(
+      Math.max(...errors.map((error) => error.message.length)),
+    ).toBeLessThanOrEqual(MAX_VALIDATION_MESSAGE_LENGTH);
+    expect(aggregate).toBeLessThanOrEqual(MAX_VALIDATION_DIAGNOSTIC_SIZE);
+    expect(errors.at(-1)?.message).toBe(VALIDATION_DIAGNOSTICS_TRUNCATED);
+  });
+});
 
 describe("parseConfig — opaque adapter settings", () => {
   it("round-trips null and nested JSON values", () => {

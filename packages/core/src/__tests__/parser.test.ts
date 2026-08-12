@@ -20,6 +20,52 @@ function parseSource(src: string) {
   return parse(lexResult.value);
 }
 
+describe("Parser — structural preservation", () => {
+  it("marks bare flags without changing explicit true literals", () => {
+    const bare = parseSource(
+      `agent helper { fast }`,
+    )._unsafeUnwrap()[0] as AgentBlock;
+    const explicit = parseSource(
+      `agent helper { fast true }`,
+    )._unsafeUnwrap()[0] as AgentBlock;
+
+    expect(bare.properties[0]).toMatchObject({ key: "fast", bare: true });
+    expect(explicit.properties[0]).toMatchObject({ key: "fast" });
+    expect(explicit.properties[0]?.bare).toBeUndefined();
+  });
+
+  it("preserves bare trigger identifiers for fail-closed validation", () => {
+    for (const source of [
+      `agent helper { triggers [bareword] }`,
+      `category helper { description "Helper" triggers [bareword] }`,
+    ]) {
+      const node = parseSource(source)._unsafeUnwrap()[0] as
+        | AgentBlock
+        | CategoryBlock;
+      const triggers = node.properties.find(
+        (property) => property.key === "triggers",
+      )?.value as ArrayValue;
+      expect(triggers.elements[0]?.kind).toBe("identifier");
+    }
+  });
+
+  it("rejects duplicate extracted workflow and step properties", () => {
+    for (const source of [
+      `workflow flow { extends "one" extends "two" }`,
+      `workflow flow { step run { insert_before "one" insert_before "two" } }`,
+    ]) {
+      const result = parseSource(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          type: "UnexpectedToken",
+          expected: expect.stringContaining("unique"),
+        }),
+      );
+    }
+  });
+});
+
 describe("Parser — model strings", () => {
   it("keeps plain, suffixed, and escaped hashes opaque inside string values", () => {
     const result = parseSource(`agent shuttle {

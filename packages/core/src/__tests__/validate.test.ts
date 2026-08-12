@@ -1,7 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { tokenize } from "../lexer.js";
 import { parse } from "../parser.js";
-import { validate } from "../validate.js";
+import {
+  MAX_VALIDATION_DIAGNOSTIC_SIZE,
+  MAX_VALIDATION_ISSUES,
+  MAX_VALIDATION_MESSAGE_LENGTH,
+  MAX_VALIDATION_PATH_LENGTH,
+  VALIDATION_DIAGNOSTICS_TRUNCATED,
+  validate,
+} from "../validate.js";
 
 /** Helper: lex + parse + validate a source string */
 function validateSource(src: string) {
@@ -13,6 +20,220 @@ function validateSource(src: string) {
     throw new Error(`Parse errors: ${JSON.stringify(parseResult.error)}`);
   return validate(parseResult.value);
 }
+
+describe("validate — fail-closed AST structure", () => {
+  it.each([
+    [
+      "agent",
+      `agent helper { triggers [bareword] }`,
+      "agents.helper.triggers.0",
+    ],
+    [
+      "category",
+      `category helper { description "Helper" triggers [bareword] }`,
+      "categories.helper.triggers.0",
+    ],
+  ])("rejects bare identifiers in %s triggers", (_kind, source, path) => {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path,
+        message: "trigger entries must be quoted strings",
+      }),
+    );
+  });
+
+  it.each([
+    ["agent", `agent helper { fast }`, "agents.helper.fast"],
+    [
+      "category",
+      `category helper { description "Helper" fast }`,
+      "categories.helper.fast",
+    ],
+  ])("rejects bare fast in %s declarations", (_kind, source, path) => {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path,
+        message: expect.stringContaining("fast true"),
+      }),
+    );
+  });
+
+  it("keeps intentionally supported bare extension-point flags", () => {
+    const result = validateSource(`workflow flow {
+      version 1
+      extension_points { before-plan }
+      step plan {
+        agent helper
+        role planning
+        type autonomous
+        prompt "Plan."
+        completion plan_created { plan_name "plan" }
+      }
+    }`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().workflows.flow?.extension_points).toEqual({
+      before_plan: true,
+    });
+  });
+
+  it.each([
+    "agent",
+    "category",
+  ])("rejects duplicate %s fast and trigger properties", (kind) => {
+    const description = kind === "category" ? `description "Helper"` : "";
+    for (const duplicate of [
+      `fast true fast true`,
+      `triggers ["one"] triggers ["two"]`,
+    ]) {
+      const result = validateSource(
+        `${kind} helper { ${description} ${duplicate} }`,
+      );
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("duplicate property"),
+        }),
+      );
+    }
+  });
+
+  it.each([
+    "agent",
+    "category",
+  ])("rejects duplicate %s declarations", (kind) => {
+    const body = kind === "category" ? `description "Helper"` : `fast true`;
+    const result = validateSource(
+      `${kind} helper { ${body} } ${kind} helper { ${body} }`,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining(`duplicate ${kind} declaration`),
+      }),
+    );
+  });
+
+  it("rejects duplicate nested properties and workflow declarations", () => {
+    for (const source of [
+      `agent helper { tool_policy { read allow read deny } }`,
+      `workflow flow { version 1 } workflow flow { version 1 }`,
+      `workflow flow { version 1 step run { agent helper } step run { agent helper } }`,
+    ]) {
+      const result = validateSource(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("duplicate"),
+        }),
+      );
+    }
+  });
+
+  it("rejects dangerous declaration, property, nested block, and step names", () => {
+    for (const source of [
+      `agent __proto__ { fast true }`,
+      `category constructor { description "Helper" }`,
+      `agent helper { prototype true }`,
+      `agent helper { extension_points { __proto__ true } }`,
+      `workflow flow { step prototype { agent helper } }`,
+    ]) {
+      const result = validateSource(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("dangerous"),
+        }),
+      );
+    }
+  });
+
+  it("does not admit inherited fast, triggers, or description values", () => {
+    const inherited = Object.create({
+      fast: true,
+      triggers: ["inherited"],
+      description: "inherited",
+    }) as Record<string, unknown>;
+    inherited.models = ["model"];
+    const result = validate([
+      {
+        type: "agent",
+        name: "helper",
+        properties: Object.entries(inherited).map(([key, value]) => ({
+          key,
+          value: {
+            kind: "array" as const,
+            elements: (value as string[]).map((entry) => ({
+              kind: "string" as const,
+              value: entry,
+              pos: { line: 1, column: 1 },
+            })),
+            pos: { line: 1, column: 1 },
+          },
+          pos: { line: 1, column: 1 },
+        })),
+        pos: { line: 1, column: 1 },
+      },
+    ]);
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.helper).toEqual({ models: ["model"] });
+
+    const inheritedCategory = Object.create({
+      description: "inherited",
+      fast: true,
+      triggers: ["inherited"],
+    }) as Record<string, unknown>;
+    const categoryResult = validate([
+      {
+        type: "category",
+        name: "helper",
+        properties: Object.entries(inheritedCategory).map(([key, value]) => ({
+          key,
+          value: {
+            kind: "string" as const,
+            value: String(value),
+            pos: { line: 1, column: 1 },
+          },
+          pos: { line: 1, column: 1 },
+        })),
+        pos: { line: 1, column: 1 },
+      },
+    ]);
+    expect(categoryResult.isErr()).toBe(true);
+    expect(categoryResult._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({ path: "categories.helper.description" }),
+    );
+  });
+
+  it("bounds issue count, path, message, and aggregate diagnostic size", () => {
+    const longKey = "x".repeat(MAX_VALIDATION_PATH_LENGTH * 4);
+    const unknowns = Array.from(
+      { length: MAX_VALIDATION_ISSUES * 4 },
+      (_, index) => `${longKey}${index} true`,
+    ).join("\n");
+    const result = validateSource(`agent helper { ${unknowns} }`);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const aggregate = errors.reduce(
+      (size, error) => size + error.path.length + error.message.length,
+      0,
+    );
+
+    expect(errors.length).toBeLessThanOrEqual(MAX_VALIDATION_ISSUES);
+    expect(
+      Math.max(...errors.map((error) => error.path.length)),
+    ).toBeLessThanOrEqual(MAX_VALIDATION_PATH_LENGTH);
+    expect(
+      Math.max(...errors.map((error) => error.message.length)),
+    ).toBeLessThanOrEqual(MAX_VALIDATION_MESSAGE_LENGTH);
+    expect(aggregate).toBeLessThanOrEqual(MAX_VALIDATION_DIAGNOSTIC_SIZE);
+    expect(errors.at(-1)?.message).toBe(VALIDATION_DIAGNOSTICS_TRUNCATED);
+  });
+});
 
 describe("validate — model thinking suffix", () => {
   it("preserves plain, suffixed, and escaped raw model entries", () => {

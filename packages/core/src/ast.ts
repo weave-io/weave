@@ -49,6 +49,8 @@ export type Property = {
   key: string;
   value: AstValue;
   pos: SourcePos;
+  /** True only when the source omitted a value and used the bare-flag form. */
+  bare?: true;
 };
 
 // ---------------------------------------------------------------------------
