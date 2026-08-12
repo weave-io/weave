@@ -18,6 +18,34 @@ export interface GeneratedCategoryShuttle {
   categoryMeta: CategoryMetadata;
 }
 
+function copyStringList(
+  values: readonly string[] | undefined,
+): string[] | undefined {
+  return values === undefined ? undefined : [...values];
+}
+
+function copyToolPolicy(
+  policy: AgentConfig["tool_policy"],
+): AgentConfig["tool_policy"] {
+  return policy === undefined ? undefined : { ...policy };
+}
+
+function copyDelegation(
+  delegation: AgentConfig["delegation"],
+): AgentConfig["delegation"] {
+  return delegation === undefined ? undefined : { ...delegation };
+}
+
+function copyRouting(routing: AgentConfig["routing"]): AgentConfig["routing"] {
+  if (routing === undefined) return undefined;
+  return {
+    ...routing,
+    ...(routing.delegation_exclude === undefined
+      ? {}
+      : { delegation_exclude: [...routing.delegation_exclude] }),
+  };
+}
+
 /**
  * Generate category shuttle agent descriptors from the merged WeaveConfig.
  *
@@ -61,7 +89,15 @@ export function generateCategoryShuttles(
       // requires a non-blank category description, so there is no fallback.
       description: category.description,
     };
-    if (category.models !== undefined) overrides.models = [...category.models];
+    // Always copy inherited and override arrays/objects. Spreading `base`
+    // would otherwise alias models, skills, review_models, tool_policy,
+    // delegation, and routing onto every generated sibling.
+    const models = copyStringList(category.models ?? base.models);
+    if (models !== undefined) overrides.models = models;
+    const skills = copyStringList(base.skills);
+    if (skills !== undefined) overrides.skills = skills;
+    const reviewModels = copyStringList(base.review_models);
+    if (reviewModels !== undefined) overrides.review_models = reviewModels;
     if (category.temperature !== undefined) {
       overrides.temperature = category.temperature;
     }
@@ -76,10 +112,17 @@ export function generateCategoryShuttles(
     }
     if (category.tool_policy !== undefined) {
       overrides.tool_policy = { ...base.tool_policy, ...category.tool_policy };
+    } else {
+      const toolPolicy = copyToolPolicy(base.tool_policy);
+      if (toolPolicy !== undefined) overrides.tool_policy = toolPolicy;
     }
     if (category.triggers !== undefined) {
       overrides.triggers = [...category.triggers];
     }
+    const delegation = copyDelegation(base.delegation);
+    if (delegation !== undefined) overrides.delegation = delegation;
+    const routing = copyRouting(base.routing);
+    if (routing !== undefined) overrides.routing = routing;
     if (category.fast === true || base.fast === true) {
       overrides.fast = true;
     }

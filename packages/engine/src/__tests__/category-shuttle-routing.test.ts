@@ -1001,4 +1001,89 @@ describe("generated category shuttles do not inherit base shuttle triggers", () 
     ]);
     expect(generic?.triggers).toEqual(["generic fallback"]);
   });
+
+  it("(f) mutating a generated shuttle models/skills/triggers does not mutate composed delegation targets", async () => {
+    const source = `
+      agent loom {
+        prompt "I am loom."
+        models ["claude-sonnet-4-5"]
+        mode primary
+        tool_policy { delegate allow }
+      }
+      agent shuttle {
+        description "Shuttle (Domain Specialist)"
+        prompt "Base."
+        models ["claude-sonnet-4-5"]
+        skills ["review", "summarize"]
+        triggers ["generic fallback"]
+      }
+      category mini {
+        description "Small, surgical edits in a single file"
+        models ["gpt-5"]
+        triggers ["tiny localized change"]
+      }
+      category tests {
+        description "Test authoring and coverage work"
+      }
+    `;
+    const config = cfg(source);
+    const generated = generateCategoryShuttles(config);
+    if (generated.isErr()) throw new Error(generated.error.message);
+    const generatedMini = generated.value["shuttle-mini"]?.config;
+    const generatedTests = generated.value["shuttle-tests"]?.config;
+    if (generatedMini === undefined || generatedTests === undefined) {
+      throw new Error("expected generated category shuttles");
+    }
+
+    const desc = await descriptor("loom", source);
+    const mini = desc.delegationTargets.find((t) => t.name === "shuttle-mini");
+    const tests = desc.delegationTargets.find(
+      (t) => t.name === "shuttle-tests",
+    );
+    const generic = desc.delegationTargets.find((t) => t.name === "shuttle");
+
+    generatedMini.models?.push("mutated-mini-model");
+    generatedMini.skills?.push("mutated-mini-skill");
+    generatedMini.triggers?.push("mutated-mini-trigger");
+    generatedTests.models?.push("mutated-tests-model");
+    generatedTests.skills?.push("mutated-tests-skill");
+    generatedTests.triggers?.push("mutated-tests-trigger");
+    config.agents.shuttle?.models?.push("mutated-base-model");
+    config.agents.shuttle?.skills?.push("mutated-base-skill");
+    config.agents.shuttle?.triggers?.push("mutated-base-trigger");
+    config.categories.mini?.models?.push("mutated-category-model");
+    config.categories.mini?.triggers?.push("mutated-category-trigger");
+
+    expect(mini?.triggers).toEqual(["tiny localized change"]);
+    expect(tests?.triggers).toEqual([]);
+    expect(generic?.triggers).toEqual(["generic fallback"]);
+    expect(config.agents.shuttle?.models).toEqual([
+      "claude-sonnet-4-5",
+      "mutated-base-model",
+    ]);
+    expect(config.agents.shuttle?.skills).toEqual([
+      "review",
+      "summarize",
+      "mutated-base-skill",
+    ]);
+    expect(generatedMini.models).toEqual(["gpt-5", "mutated-mini-model"]);
+    expect(generatedMini.skills).toEqual([
+      "review",
+      "summarize",
+      "mutated-mini-skill",
+    ]);
+    expect(generatedTests.models).toEqual([
+      "claude-sonnet-4-5",
+      "mutated-tests-model",
+    ]);
+    expect(generatedTests.skills).toEqual([
+      "review",
+      "summarize",
+      "mutated-tests-skill",
+    ]);
+    expect(config.categories.mini?.models).toEqual([
+      "gpt-5",
+      "mutated-category-model",
+    ]);
+  });
 });

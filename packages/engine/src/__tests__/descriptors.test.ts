@@ -483,4 +483,128 @@ describe("generateCategoryShuttles", () => {
       expect(result["shuttle-frontend"]?.config.fast).toBe(true);
     });
   });
+
+  describe("generated array isolation", () => {
+    it("mutating one generated shuttle models/skills/triggers does not mutate base, siblings, or category sources", () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt "Base."
+          models ["claude-sonnet-4-5", "gpt-4o"]
+          skills ["review", "summarize"]
+          review_models ["openai/gpt-5"]
+          triggers ["generic fallback"]
+          tool_policy { read allow write ask }
+          delegation { max_children 4 }
+          routing { delegation_exclude ["warp"] }
+        }
+        category frontend {
+          description "Frontend implementation work"
+          models ["gpt-5"]
+          triggers ["UI work", "styling"]
+        }
+        category backend {
+          description "Backend implementation work"
+        }
+      `);
+
+      const result = generateCategoryShuttles(config);
+      if (result.isErr()) throw new Error(result.error.message);
+
+      const frontend = result.value["shuttle-frontend"]?.config;
+      const backend = result.value["shuttle-backend"]?.config;
+      const base = config.agents.shuttle;
+      if (
+        frontend === undefined ||
+        backend === undefined ||
+        base === undefined
+      ) {
+        throw new Error("expected generated shuttles and base shuttle");
+      }
+
+      expect(frontend.models).toEqual(["gpt-5"]);
+      expect(backend.models).toEqual(["claude-sonnet-4-5", "gpt-4o"]);
+      expect(frontend.skills).toEqual(["review", "summarize"]);
+      expect(backend.skills).toEqual(["review", "summarize"]);
+      expect(frontend.triggers).toEqual(["UI work", "styling"]);
+      expect(backend.triggers).toEqual([]);
+
+      expect(frontend.models).not.toBe(config.categories.frontend?.models);
+      expect(backend.models).not.toBe(base.models);
+      expect(frontend.skills).not.toBe(base.skills);
+      expect(backend.skills).not.toBe(base.skills);
+      expect(frontend.skills).not.toBe(backend.skills);
+      expect(frontend.triggers).not.toBe(config.categories.frontend?.triggers);
+      expect(frontend.review_models).not.toBe(base.review_models);
+      expect(backend.review_models).not.toBe(base.review_models);
+      expect(frontend.tool_policy).not.toBe(base.tool_policy);
+      expect(backend.tool_policy).not.toBe(base.tool_policy);
+      expect(frontend.delegation).not.toBe(base.delegation);
+      expect(frontend.routing).not.toBe(base.routing);
+      expect(frontend.routing?.delegation_exclude).not.toBe(
+        base.routing?.delegation_exclude,
+      );
+
+      frontend.models?.push("mutated-frontend-model");
+      frontend.skills?.push("mutated-frontend-skill");
+      frontend.triggers?.push("mutated-frontend-trigger");
+      frontend.review_models?.push("mutated-frontend-review");
+      if (frontend.tool_policy !== undefined) {
+        frontend.tool_policy.write = "allow";
+      }
+      if (frontend.delegation !== undefined) {
+        frontend.delegation.max_children = 1;
+      }
+      frontend.routing?.delegation_exclude?.push("mutated-exclude");
+
+      expect(base.models).toEqual(["claude-sonnet-4-5", "gpt-4o"]);
+      expect(base.skills).toEqual(["review", "summarize"]);
+      expect(base.triggers).toEqual(["generic fallback"]);
+      expect(base.review_models).toEqual(["openai/gpt-5"]);
+      expect(base.tool_policy).toEqual({ read: "allow", write: "ask" });
+      expect(base.delegation).toEqual({ max_children: 4 });
+      expect(base.routing?.delegation_exclude).toEqual(["warp"]);
+
+      expect(backend.models).toEqual(["claude-sonnet-4-5", "gpt-4o"]);
+      expect(backend.skills).toEqual(["review", "summarize"]);
+      expect(backend.triggers).toEqual([]);
+      expect(backend.review_models).toEqual(["openai/gpt-5"]);
+      expect(backend.tool_policy).toEqual({ read: "allow", write: "ask" });
+      expect(backend.delegation).toEqual({ max_children: 4 });
+      expect(backend.routing?.delegation_exclude).toEqual(["warp"]);
+
+      expect(config.categories.frontend?.models).toEqual(["gpt-5"]);
+      expect(config.categories.frontend?.triggers).toEqual([
+        "UI work",
+        "styling",
+      ]);
+    });
+
+    it("mutating a sibling generated shuttle does not leak inherited models or skills", () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt "Base."
+          models ["claude-sonnet-4-5"]
+          skills ["review"]
+        }
+        category frontend { description "Frontend implementation work" }
+        category backend { description "Backend implementation work" }
+      `);
+      const result = generateCategoryShuttles(config);
+      if (result.isErr()) throw new Error(result.error.message);
+
+      const frontend = result.value["shuttle-frontend"]?.config;
+      const backend = result.value["shuttle-backend"]?.config;
+      if (frontend === undefined || backend === undefined) {
+        throw new Error("expected sibling generated shuttles");
+      }
+
+      backend.models?.push("mutated-backend-model");
+      backend.skills?.push("mutated-backend-skill");
+
+      expect(frontend.models).toEqual(["claude-sonnet-4-5"]);
+      expect(frontend.skills).toEqual(["review"]);
+      expect(config.agents.shuttle?.models).toEqual(["claude-sonnet-4-5"]);
+      expect(config.agents.shuttle?.skills).toEqual(["review"]);
+    });
+  });
 });
