@@ -777,13 +777,91 @@ describe("child provider error hostile boundary", () => {
     );
     // Projection itself only needs `get`, so it still succeeds...
     expect(projectAssistantProviderError(proxy).isOk()).toBe(true);
-    // ...and the copy path degrades to the minimum instead of throwing.
+    // ...and the allowlist copy never enumerates keys, so ownKeys is unused.
     const redacted = redactProviderErrorFromEvent({
       type: "message_end",
       message: proxy,
-    } as never) as unknown as { message: Record<string, unknown> };
+    } as never) as unknown as {
+      type: string;
+      message: Record<string, unknown>;
+      secret?: unknown;
+    };
+    expect(redacted.type).toBe("message_end");
+    expect(Object.keys(redacted).sort()).toEqual(["message", "type"]);
     expect(redacted.message.role).toBe("assistant");
+    expect(redacted.message.stopReason).toBe("error");
     expect(redacted.message.errorMessage).toBeUndefined();
+    expect(redacted.secret).toBeUndefined();
+  });
+
+  it("never throws on hostile top-level or nested getter/proxy message_end inputs", () => {
+    const nestedThrowing = new Proxy(
+      {
+        role: "assistant",
+        stopReason: "error",
+        text: "kept",
+        errorMessage: "429 x",
+      },
+      {
+        get(target, key): unknown {
+          if (key === "diagnostics") throw new Error("nested get");
+          return Reflect.get(target, key);
+        },
+        getOwnPropertyDescriptor(target, key): PropertyDescriptor | undefined {
+          if (key === "secret") throw new Error("nested descriptor");
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      },
+    );
+    const topLevelHostile = new Proxy(
+      {
+        type: "message_end",
+        secret: SENTINELS.secret,
+        diagnostics: { detail: SENTINELS.diagnostic },
+        path: SENTINELS.path,
+        responseId: SENTINELS.responseId,
+        message: nestedThrowing,
+      },
+      {
+        get(target, key): unknown {
+          if (key === "headers") throw new Error("top-level get");
+          return Reflect.get(target, key);
+        },
+        ownKeys(): never {
+          throw new Error("top-level ownKeys");
+        },
+      },
+    );
+    expect(() =>
+      redactProviderErrorFromEvent(topLevelHostile as never),
+    ).not.toThrow();
+    const redacted = redactProviderErrorFromEvent(
+      topLevelHostile as never,
+    ) as unknown as Record<string, unknown>;
+    expect(redacted).toEqual({
+      type: "message_end",
+      message: expect.objectContaining({
+        role: "assistant",
+        stopReason: "error",
+        text: "kept",
+        [CHILD_PROVIDER_ERROR_REPLAY_FIELD]: {
+          class: "rate-limit",
+          httpStatus: 429,
+          message: CANON["rate-limit"],
+        },
+      }),
+    });
+    expect(Object.keys(redacted).sort()).toEqual(["message", "type"]);
+    const serialized = JSON.stringify(redacted);
+    for (const sentinel of [
+      SENTINELS.secret,
+      SENTINELS.diagnostic,
+      SENTINELS.path,
+      SENTINELS.responseId,
+      "SENTINEL",
+    ]) {
+      expect(serialized).not.toContain(sentinel);
+    }
   });
 
   it("returns unavailable when a pre-projected payload throws during validation", () => {
@@ -926,11 +1004,91 @@ describe("child provider error safe message copy", () => {
     });
   });
 
-  it("returns non-terminal and message-less events unchanged", () => {
+  it("returns non-terminal events unchanged and drops catchall on empty message_end", () => {
     const text = { type: "text", text: "hello" } as const;
     expect(redactProviderErrorFromEvent(text as never)).toBe(text as never);
-    const empty = { type: "message_end" } as const;
-    expect(redactProviderErrorFromEvent(empty as never)).toBe(empty as never);
+    const empty = {
+      type: "message_end",
+      secret: SENTINELS.secret,
+      path: SENTINELS.path,
+    } as const;
+    const redacted = redactProviderErrorFromEvent(empty as never);
+    expect(redacted).toEqual({ type: "message_end" });
+    expect(JSON.stringify(redacted)).not.toContain("SENTINEL");
+  });
+
+  it("never spreads parser catchall top-level fields on message_end", () => {
+    const parsed = parsePiChildSessionEvent({
+      type: "message_end",
+      secret: SENTINELS.secret,
+      diagnostics: { detail: SENTINELS.diagnostic },
+      path: SENTINELS.path,
+      responseId: SENTINELS.responseId,
+      headers: { authorization: SENTINELS.authorization },
+      weaveFutureExtension: { nested: SENTINELS.token },
+      message: {
+        ...hostileMessage,
+        contextUsage: { tokens: 11, contextWindow: 100, percent: 11 },
+        context: { tokens: 11, contextWindow: 100 },
+      },
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("unreachable");
+    // Parser catchall may retain unknowns; this sanitizer must not.
+    expect(
+      Object.keys(parsed.data as unknown as Record<string, unknown>),
+    ).toEqual(
+      expect.arrayContaining([
+        "type",
+        "message",
+        "secret",
+        "diagnostics",
+        "path",
+        "responseId",
+      ]),
+    );
+    const redacted = redactProviderErrorFromEvent(parsed.data) as unknown as {
+      type: string;
+      message: Record<string, unknown>;
+    };
+    expect(Object.keys(redacted).sort()).toEqual(["message", "type"]);
+    expect(redacted.type).toBe("message_end");
+    expect(redacted.message.text).toBe("final text");
+    expect(redacted.message.content).toEqual([
+      { type: "text", text: "final text" },
+    ]);
+    expect(redacted.message.stopReason).toBe("error");
+    expect(redacted.message.usage).toEqual({ input: 3, output: 4 });
+    expect(redacted.message.model).toBe("claude-sonnet-5");
+    expect(redacted.message.contextUsage).toEqual({
+      tokens: 11,
+      contextWindow: 100,
+      percent: 11,
+    });
+    expect(redacted.message.context).toEqual({
+      tokens: 11,
+      contextWindow: 100,
+    });
+    expect(redacted.message[CHILD_PROVIDER_ERROR_REPLAY_FIELD]).toEqual({
+      class: "provider-error",
+      httpStatus: 500,
+      message: CANON["provider-error"],
+    });
+    const serialized = JSON.stringify(redacted);
+    for (const sentinel of Object.values(SENTINELS)) {
+      expect(serialized).not.toContain(sentinel);
+    }
+    for (const key of [
+      "secret",
+      "diagnostics",
+      "path",
+      "responseId",
+      "headers",
+      "errorMessage",
+      "weaveFutureExtension",
+    ]) {
+      expect(serialized).not.toContain(`"${key}"`);
+    }
   });
 });
 
@@ -1565,6 +1723,173 @@ describe("child provider error retention in the overlay", () => {
         expect(serialized).not.toContain(fragment);
       }
     }
+  });
+
+  const assertReplayAndViewClean = (state: ChildOverlayView): void => {
+    const full = JSON.stringify(state);
+    const replayOnly = JSON.stringify(
+      state.entries.map((entry) => entry.replay ?? []),
+    );
+    for (const serialized of [full, replayOnly]) {
+      for (const sentinel of Object.values(SENTINELS)) {
+        expect(serialized).not.toContain(sentinel);
+      }
+      for (const fragment of [
+        "SENTINEL",
+        "errorMessage",
+        "rawStopReason",
+        '"secret"',
+        '"diagnostics"',
+        '"responseId"',
+        '"headers"',
+        "Bearer",
+        "://",
+      ]) {
+        expect(serialized).not.toContain(fragment);
+      }
+    }
+  };
+
+  it("drops live message_end top-level and nested catchall from replay and view", async () => {
+    const { controller } = await open([liveChild("child-live-catch")], "child-live-catch");
+    const live = apply(controller, {
+      type: "message_end",
+      secret: SENTINELS.secret,
+      diagnostics: { detail: SENTINELS.diagnostic },
+      path: SENTINELS.path,
+      responseId: SENTINELS.responseId,
+      headers: { authorization: SENTINELS.authorization },
+      message: {
+        id: "msg_live_catch",
+        role: "assistant",
+        stopReason: "error",
+        text: "live terminal text",
+        content: [{ type: "text", text: "live terminal text" }],
+        usage: { input: 8, output: 2 },
+        model: "claude-sonnet-5",
+        responseModel: "claude-sonnet-5-20260101",
+        contextUsage: { tokens: 20, contextWindow: 200, percent: 10 },
+        context: { tokens: 20, contextWindow: 200 },
+        timestamp: 9,
+        errorMessage: `429 ${SENTINELS.apiKey} ${SENTINELS.url}`,
+        rawStopReason: `raw ${SENTINELS.requestId}`,
+        responseId: SENTINELS.responseId,
+        diagnostics: { detail: SENTINELS.diagnostic },
+        path: SENTINELS.path,
+        secret: SENTINELS.secret,
+        api: "anthropic-messages",
+        provider: "anthropic",
+      },
+    });
+    expect(live.terminalError).toEqual({
+      class: "rate-limit",
+      httpStatus: 429,
+      message: CANON["rate-limit"],
+    });
+    const assistant = live.entries.find((entry) => entry.kind === "assistant");
+    expect(assistant?.text).toContain("live terminal text");
+    const endStep = (assistant?.replay ?? []).find(
+      (step) => step.kind === "event" && step.event.type === "message_end",
+    );
+    expect(endStep).toBeDefined();
+    if (endStep === undefined || endStep.kind !== "event") {
+      throw new Error("unreachable");
+    }
+    expect(Object.keys(endStep.event).sort()).toEqual(["message", "type"]);
+    const endMessage = (
+      endStep.event as {
+        message: Record<string, unknown>;
+      }
+    ).message;
+    expect(endMessage.text).toBe("live terminal text");
+    expect(endMessage.content).toEqual([
+      { type: "text", text: "live terminal text" },
+    ]);
+    expect(endMessage.stopReason).toBe("error");
+    expect(endMessage.usage).toEqual({ input: 8, output: 2 });
+    expect(endMessage.model).toBe("claude-sonnet-5");
+    expect(endMessage.contextUsage).toEqual({
+      tokens: 20,
+      contextWindow: 200,
+      percent: 10,
+    });
+    expect(endMessage.context).toEqual({ tokens: 20, contextWindow: 200 });
+    expect(endMessage[CHILD_PROVIDER_ERROR_REPLAY_FIELD]).toEqual({
+      class: "rate-limit",
+      httpStatus: 429,
+      message: CANON["rate-limit"],
+    });
+    assertReplayAndViewClean(live);
+
+    const cleared = apply(
+      controller,
+      messageEnd({
+        stopReason: "stop",
+        text: "recovered after error",
+        content: [{ type: "text", text: "recovered after error" }],
+        usage: { input: 1, output: 1 },
+        model: "claude-sonnet-5",
+        secret: SENTINELS.secret,
+        diagnostics: { detail: SENTINELS.diagnostic },
+      }),
+    );
+    expect(cleared.terminalError).toBeUndefined();
+    expect(Object.hasOwn(cleared, "terminalError")).toBe(false);
+    assertReplayAndViewClean(cleared);
+  });
+
+  it("drops historical message_end nested catchall from replay and view", async () => {
+    const { view } = await open(
+      [
+        settledChild("child-hist-catch", [
+          nativeAssistant("entry-hist-1", {
+            stopReason: "error",
+            text: "historical terminal text",
+            content: [{ type: "text", text: "historical terminal text" }],
+            usage: { input: 5, output: 6 },
+            model: "claude-sonnet-5",
+            contextUsage: { tokens: 15, contextWindow: 150, percent: 10 },
+            context: { tokens: 15, contextWindow: 150 },
+            errorMessage: `503 ${SENTINELS.secret} ${SENTINELS.path}`,
+            responseId: SENTINELS.responseId,
+            diagnostics: { detail: SENTINELS.diagnostic },
+            path: SENTINELS.path,
+            secret: SENTINELS.secret,
+            headers: { authorization: SENTINELS.authorization },
+          }),
+        ]),
+      ],
+      "child-hist-catch",
+    );
+    expect(view.terminalError).toEqual({
+      class: "overload",
+      httpStatus: 503,
+      message: CANON.overload,
+    });
+    const assistant = view.entries.find((entry) => entry.kind === "assistant");
+    expect(assistant?.text).toContain("historical terminal text");
+    const endStep = (assistant?.replay ?? []).find(
+      (step) => step.kind === "event" && step.event.type === "message_end",
+    );
+    expect(endStep).toBeDefined();
+    if (endStep === undefined || endStep.kind !== "event") {
+      throw new Error("unreachable");
+    }
+    expect(Object.keys(endStep.event).sort()).toEqual(["message", "type"]);
+    const endMessage = (
+      endStep.event as {
+        message: Record<string, unknown>;
+      }
+    ).message;
+    expect(endMessage.stopReason).toBe("error");
+    expect(endMessage.usage).toEqual({ input: 5, output: 6 });
+    expect(endMessage.model).toBe("claude-sonnet-5");
+    expect(endMessage[CHILD_PROVIDER_ERROR_REPLAY_FIELD]).toEqual({
+      class: "overload",
+      httpStatus: 503,
+      message: CANON.overload,
+    });
+    assertReplayAndViewClean(view);
   });
 });
 

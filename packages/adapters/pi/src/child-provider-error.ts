@@ -361,10 +361,22 @@ const stringField = (
   return typeof value === "string" ? value : undefined;
 };
 
-const ownKeys = Result.fromThrowable(
-  (record: Record<string, unknown>): readonly string[] => Object.keys(record),
-  () => UNAVAILABLE,
-);
+/**
+ * Own-property presence without trusting descriptors or Proxy traps. A throw
+ * from `Object.hasOwn`, a hostile `getOwnPropertyDescriptor` trap, or a
+ * throwing `has` trap is reported as absence so inherited and accessor noise
+ * cannot widen the allowlisted copy.
+ */
+const hasOwnProperty = (
+  record: Record<string, unknown>,
+  key: string,
+): boolean => {
+  const result = Result.fromThrowable(
+    () => Object.hasOwn(record, key),
+    () => false,
+  )();
+  return result.isOk() ? result.value : false;
+};
 
 const trustedLabel = (value: unknown): string | undefined => {
   if (typeof value !== "string") return undefined;
@@ -698,32 +710,27 @@ export const SAFE_ASSISTANT_MESSAGE_FIELDS = [
   "timestamp",
 ] as const;
 
-const SAFE_FIELD_SET: ReadonlySet<string> = new Set(
-  SAFE_ASSISTANT_MESSAGE_FIELDS,
-);
-
 /**
  * Copy only the allowlisted fields of an assistant message.
  *
- * Enumeration itself is guarded: a Proxy `ownKeys` trap may throw, and a
- * message that cannot be enumerated contributes the minimum a reducer needs
- * rather than an unbounded host object.
+ * Reads walk the closed allowlist with guarded own-property checks: inherited
+ * names, symbols, and unknown keys are never considered, and a Proxy whose
+ * `ownKeys` / descriptor / getter traps throw contributes typed absence for
+ * that field rather than an unbounded host object or an exception.
  */
 function copySafeAssistantFields(
   message: Record<string, unknown>,
 ): Record<string, unknown> {
-  const keys = ownKeys(message);
-  if (keys.isErr()) {
-    return { role: "assistant", stopReason: field(message, "stopReason") };
-  }
-  const next: Record<string, unknown> = {};
-  for (const key of keys.value) {
-    if (!SAFE_FIELD_SET.has(key)) continue;
-    const value = field(message, key);
-    if (value === undefined) continue;
-    next[key] = value;
-  }
-  return next;
+  return guardValue(() => {
+    const next: Record<string, unknown> = {};
+    for (const key of SAFE_ASSISTANT_MESSAGE_FIELDS) {
+      if (!hasOwnProperty(message, key)) continue;
+      const value = field(message, key);
+      if (value === undefined) continue;
+      next[key] = value;
+    }
+    return next;
+  }, {});
 }
 
 /**
@@ -737,28 +744,34 @@ function copySafeAssistantFields(
  * before any downstream reduce, which makes the canonical projection the only
  * error fact the overlay can ever hold.
  *
- * Non-terminal events, and terminal events with no usable message, are
- * returned unchanged.
+ * Broader parser catchall on `PiChildSessionEvent` is outside this sanitizer's
+ * `message_end` projection: a parser-approved event may still carry unknown
+ * top-level keys, so this function never spreads `message_end`. It returns a
+ * fresh object with only `type: "message_end"` and an allowlist-built
+ * `message`. Non-`message_end` variants are returned unchanged in this
+ * minimal task.
  */
 export function redactProviderErrorFromEvent(
   event: PiChildSessionEvent,
 ): PiChildSessionEvent {
   if (event.type !== "message_end") return event;
+  const emptyEnd = { type: "message_end" } as PiChildSessionEvent;
   return guardValue(() => {
     const record = event as unknown as Record<string, unknown>;
     const message = asRecord(field(record, "message"));
-    if (message === undefined) return event;
+    if (message === undefined) return emptyEnd;
     const projected = projectAssistantProviderError(message);
+    const safeMessage: Record<string, unknown> = {
+      ...copySafeAssistantFields(message),
+      ...(projected.isOk()
+        ? { [CHILD_PROVIDER_ERROR_REPLAY_FIELD]: projected.value }
+        : {}),
+    };
     return {
-      ...event,
-      message: {
-        ...copySafeAssistantFields(message),
-        ...(projected.isOk()
-          ? { [CHILD_PROVIDER_ERROR_REPLAY_FIELD]: projected.value }
-          : {}),
-      },
+      type: "message_end",
+      message: safeMessage,
     } as PiChildSessionEvent;
-  }, event);
+  }, emptyEnd);
 }
 
 // ---------------------------------------------------------------------------
