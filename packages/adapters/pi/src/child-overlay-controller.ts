@@ -821,13 +821,10 @@ export class ChildOverlayController {
         reason,
         readOnly: child === undefined ? true : isReadOnly(child),
       },
+      ...(state === undefined ? {} : terminalErrorView(state.evidence)),
       transcript: state?.transcript ?? createPiChildTranscriptState(),
     };
   }
-
-  // -------------------------------------------------------------------------
-  // Internals
-  // -------------------------------------------------------------------------
 
   private submitDraftMutation(
     kind: "steer" | "follow-up",
@@ -1116,6 +1113,7 @@ export class ChildOverlayController {
     return {
       kind: "fallback-required",
       metadata,
+      ...(state === undefined ? {} : terminalErrorView(state.evidence)),
       transcript: state?.transcript ?? createPiChildTranscriptState(),
     };
   }

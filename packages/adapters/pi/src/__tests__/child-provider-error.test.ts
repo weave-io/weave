@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { errAsync } from "neverthrow";
 import {
+  type ChildOverlayFallbackRequired,
+  type ChildOverlaySourcePort,
   type ChildOverlayView,
   createChildOverlayController,
   createMemoryChildOverlaySource,
@@ -1457,6 +1460,10 @@ describe("child provider error retention in the overlay", () => {
     ).toBeDefined();
     const success = apply(controller, messageEnd({ stopReason: "stop" }));
     expect(success.terminalError).toBeUndefined();
+    expect(controller.requireFallback().terminalError).toBeUndefined();
+    expect(Object.hasOwn(controller.requireFallback(), "terminalError")).toBe(
+      false,
+    );
     // A later error after the success sets it again.
     expect(apply(controller, errorEnd("ECONNRESET")).terminalError?.class).toBe(
       "connection",
@@ -1484,18 +1491,25 @@ describe("child provider error retention in the overlay", () => {
       "child-a",
     );
     apply(controller, errorEnd("429 rate limit reached"));
+    expect(controller.requireFallback().terminalError?.class).toBe(
+      "rate-limit",
+    );
     const other = await controller.open("child-b");
     expect(other.isOk()).toBe(true);
     expect(other._unsafeUnwrap().terminalError).toBeUndefined();
+    expect(controller.requireFallback().terminalError).toBeUndefined();
     // child-b clearing its own state must not clear child-a's.
     const controllerB = controller;
     apply(controllerB, messageEnd({ stopReason: "stop" }));
     const back = await controller.open("child-a");
     expect(back._unsafeUnwrap().terminalError?.class).toBe("rate-limit");
+    expect(controller.requireFallback().terminalError?.class).toBe(
+      "rate-limit",
+    );
   });
 
-  it("keeps the error on a settled view rebuilt from history", async () => {
-    const { view } = await open(
+  it("keeps the error on a settled view and fallback rebuilt from history", async () => {
+    const { controller, view } = await open(
       [
         settledChild("child-h", [
           historicalError(
@@ -1510,7 +1524,31 @@ describe("child provider error retention in the overlay", () => {
     expect(view.terminalError?.httpStatus).toBe(429);
     expect(view.terminalError?.code).toBeUndefined();
     expect(view.terminalError?.message).toBe(CANON["rate-limit"]);
-    expect(JSON.stringify(view)).not.toContain(SENTINELS.requestId);
+    const fallback = controller.requireFallback();
+    expect(fallback.terminalError).toEqual(view.terminalError);
+    const serialized = JSON.stringify(fallback);
+    expect(serialized).not.toContain(SENTINELS.requestId);
+    for (const sentinel of Object.values(SENTINELS)) {
+      expect(serialized).not.toContain(sentinel);
+    }
+  });
+
+  it("omits unavailable evidence from source-error fallback", async () => {
+    const source: ChildOverlaySourcePort = {
+      describe: () => errAsync({ type: "ChildNotFound", childId: "missing" }),
+      loadNewest: () =>
+        errAsync({ type: "SourceUnavailable", operation: "loadNewest" }),
+      loadOlder: () =>
+        errAsync({ type: "SourceUnavailable", operation: "loadOlder" }),
+      loadNewer: () =>
+        errAsync({ type: "SourceUnavailable", operation: "loadNewer" }),
+    };
+    const controller = createChildOverlayController(source);
+    const opened = await controller.open("missing");
+    expect(opened.isErr()).toBe(true);
+    const fallback = opened._unsafeUnwrapErr() as ChildOverlayFallbackRequired;
+    expect(fallback.terminalError).toBeUndefined();
+    expect(Object.hasOwn(fallback, "terminalError")).toBe(false);
   });
 
   it("takes the newest historical evidence inside the replacement window", async () => {

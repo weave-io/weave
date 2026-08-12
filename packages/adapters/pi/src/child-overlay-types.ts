@@ -323,6 +323,8 @@ export interface ChildOverlayFallbackMetadata {
 export interface ChildOverlayFallbackRequired {
   readonly kind: "fallback-required";
   readonly metadata: ChildOverlayFallbackMetadata;
+  /** Latest bounded sanitized provider error, when authoritative evidence exists. */
+  readonly terminalError?: PiChildProviderError;
   readonly transcript: PiChildTranscriptState;
 }
 
