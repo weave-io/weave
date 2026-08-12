@@ -537,7 +537,7 @@ describe("child overlay telemetry projection", () => {
     expect(view.telemetry?.totalTokens).toBe(45);
   });
 
-  it("leaves a retained report untouched for an unusable message_end", async () => {
+  it("leaves a retained report untouched when sanitized replay omits unusable usage", async () => {
     const { controller } = await openController(
       [liveChild({ childId: "c1" })],
       "c1",
@@ -557,8 +557,8 @@ describe("child overlay telemetry projection", () => {
         usage: { input: {}, output: [], totalTokens: "lots" },
       }),
     );
-    expect(malformed.telemetry?.totalTokens).toBeUndefined();
-    expect(malformed.telemetry?.inputTokens).toBeUndefined();
+    expect(malformed.telemetry?.totalTokens).toBe(800);
+    expect(malformed.telemetry?.inputTokens).toBe(700);
   });
 
   it("isolates live message_end telemetry per child", async () => {

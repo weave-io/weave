@@ -149,6 +149,17 @@ const recordOrUndefined = (
     ? (value as Record<string, unknown>)
     : undefined;
 
+/** Read only an own data property. Accessors and inherited values are absent. */
+const ownDataProperty = (
+  record: Record<string, unknown>,
+  key: string,
+): unknown => {
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  return descriptor !== undefined && "value" in descriptor
+    ? descriptor.value
+    : undefined;
+};
+
 /** Per-field parse: malformed, negative, fractional, or oversized → absent. */
 const tokenCount = (value: unknown): number | undefined => {
   const parsed = UsageTokenCountSchema.safeParse(value);
@@ -298,6 +309,11 @@ const USAGE_TOKEN_FIELDS = [
 export interface PiAssistantUsageFacts {
   /** Bounded, non-negative integer token counts, keyed by pi-ai field name. */
   readonly usage?: Readonly<Record<string, number>>;
+  /** Bounded context facts, keyed by Pi's ContextUsage field names. */
+  readonly contextUsage?: Readonly<{
+    readonly tokens?: number;
+    readonly contextWindow?: number;
+  }>;
   readonly model?: string;
 }
 
@@ -313,30 +329,62 @@ export interface PiAssistantUsageFacts {
 export function projectAssistantUsageFacts(
   message: unknown,
 ): PiAssistantUsageFacts | undefined {
-  const record = recordOrUndefined(message);
-  if (record === undefined) return undefined;
-  const payload = recordOrUndefined(record["usage"]);
-  const tokens =
-    payload === undefined
-      ? undefined
-      : (recordOrUndefined(payload["usage"]) ?? payload);
+  const projected = Result.fromThrowable(
+    (): PiAssistantUsageFacts | undefined => {
+      const record = recordOrUndefined(message);
+      if (record === undefined) return undefined;
+      const payload = recordOrUndefined(ownDataProperty(record, "usage"));
+      const tokens =
+        payload === undefined
+          ? undefined
+          : (recordOrUndefined(ownDataProperty(payload, "usage")) ?? payload);
 
-  const usage: Record<string, number> = {};
-  if (tokens !== undefined) {
-    for (const field of USAGE_TOKEN_FIELDS) {
-      const count = tokenCount(tokens[field]);
-      if (count !== undefined) usage[field] = count;
-    }
-  }
-  const model = firstDefined(
-    modelLabel(record["model"]),
-    modelLabel(record["responseModel"]),
-  );
-  if (Object.keys(usage).length === 0 && model === undefined) return undefined;
-  return {
-    ...(Object.keys(usage).length > 0 ? { usage } : {}),
-    ...(model === undefined ? {} : { model }),
-  };
+      const usage: Record<string, number> = {};
+      if (tokens !== undefined) {
+        for (const field of USAGE_TOKEN_FIELDS) {
+          const count = tokenCount(ownDataProperty(tokens, field));
+          if (count !== undefined) usage[field] = count;
+        }
+      }
+
+      const rawContext =
+        recordOrUndefined(ownDataProperty(record, "contextUsage")) ??
+        recordOrUndefined(ownDataProperty(record, "context"));
+      const contextTokens =
+        rawContext === undefined
+          ? undefined
+          : tokenCount(ownDataProperty(rawContext, "tokens"));
+      const contextWindow =
+        rawContext === undefined
+          ? undefined
+          : tokenCount(ownDataProperty(rawContext, "contextWindow"));
+      const contextUsage =
+        contextTokens === undefined && contextWindow === undefined
+          ? undefined
+          : {
+              ...(contextTokens === undefined ? {} : { tokens: contextTokens }),
+              ...(contextWindow === undefined ? {} : { contextWindow }),
+            };
+      const model = firstDefined(
+        modelLabel(ownDataProperty(record, "model")),
+        modelLabel(ownDataProperty(record, "responseModel")),
+      );
+      if (
+        Object.keys(usage).length === 0 &&
+        contextUsage === undefined &&
+        model === undefined
+      ) {
+        return undefined;
+      }
+      return {
+        ...(payload === undefined ? {} : { usage }),
+        ...(contextUsage === undefined ? {} : { contextUsage }),
+        ...(model === undefined ? {} : { model }),
+      };
+    },
+    () => undefined,
+  )();
+  return projected.isOk() ? projected.value : undefined;
 }
 const QueueChange = event("queue_change", {
   size: z.number().int().min(0).max(MAX_CHILD_EVENT_ITEMS).optional(),

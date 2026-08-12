@@ -691,9 +691,10 @@ export function parsePiChildProviderError(
  * - `role`: authoritative assistant discrimination in every reducer.
  * - `stopReason`: terminal outcome, read verbatim by the transcript reducer.
  * - `text`, `content`: terminal assistant text (`extractAssistantEndText`).
- * - `usage`, `model`, `responseModel`, `contextUsage`, `context`: pi-ai usage
- *   accounting, already bounded by `parsePiChildUsageReport`.
  * - `timestamp`: ordering fact the replay mapper preserves.
+ *
+ * Usage fields are deliberately not in this raw-copy allowlist. They are
+ * rebuilt below from the closed, bounded `PiAssistantUsageFacts` projection.
  */
 export const SAFE_ASSISTANT_MESSAGE_FIELDS = [
   "id",
@@ -702,11 +703,6 @@ export const SAFE_ASSISTANT_MESSAGE_FIELDS = [
   "stopReason",
   "text",
   "content",
-  "usage",
-  "model",
-  "responseModel",
-  "contextUsage",
-  "context",
   "timestamp",
 ] as const;
 
@@ -761,8 +757,14 @@ export function redactProviderErrorFromEvent(
     const message = asRecord(field(record, "message"));
     if (message === undefined) return emptyEnd;
     const projected = projectAssistantProviderError(message);
+    const usage = projectAssistantUsageFacts(message);
     const safeMessage: Record<string, unknown> = {
       ...copySafeAssistantFields(message),
+      ...(usage?.usage === undefined ? {} : { usage: usage.usage }),
+      ...(usage?.contextUsage === undefined
+        ? {}
+        : { contextUsage: usage.contextUsage }),
+      ...(usage?.model === undefined ? {} : { model: usage.model }),
       ...(projected.isOk()
         ? { [CHILD_PROVIDER_ERROR_REPLAY_FIELD]: projected.value }
         : {}),
@@ -844,6 +846,9 @@ export function historicalAssistantMessageFields(
     const facts = historicalProviderErrorFacts(message);
     return {
       ...(usage?.usage === undefined ? {} : { usage: usage.usage }),
+      ...(usage?.contextUsage === undefined
+        ? {}
+        : { contextUsage: usage.contextUsage }),
       ...(usage?.model === undefined ? {} : { model: usage.model }),
       ...(facts === undefined ? {} : { stopReason: facts.stopReason }),
       ...(facts?.providerError === undefined

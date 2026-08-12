@@ -941,7 +941,12 @@ describe("child provider error safe message copy", () => {
     const kept = Object.keys(message).filter(
       (key) => key !== CHILD_PROVIDER_ERROR_REPLAY_FIELD,
     );
-    const allowlist: readonly string[] = SAFE_ASSISTANT_MESSAGE_FIELDS;
+    const allowlist: readonly string[] = [
+      ...SAFE_ASSISTANT_MESSAGE_FIELDS,
+      "usage",
+      "contextUsage",
+      "model",
+    ];
     for (const key of kept) {
       expect(allowlist).toContain(key);
     }
@@ -1063,12 +1068,8 @@ describe("child provider error safe message copy", () => {
     expect(redacted.message.contextUsage).toEqual({
       tokens: 11,
       contextWindow: 100,
-      percent: 11,
     });
-    expect(redacted.message.context).toEqual({
-      tokens: 11,
-      contextWindow: 100,
-    });
+    expect(redacted.message.context).toBeUndefined();
     expect(redacted.message[CHILD_PROVIDER_ERROR_REPLAY_FIELD]).toEqual({
       class: "provider-error",
       httpStatus: 500,
@@ -1768,7 +1769,14 @@ describe("child provider error retention in the overlay", () => {
         stopReason: "error",
         text: "live terminal text",
         content: [{ type: "text", text: "live terminal text" }],
-        usage: { input: 8, output: 2 },
+        usage: {
+          input: 8,
+          output: 2,
+          totalTokens: 10,
+          authorization: SENTINELS.authorization,
+          cost: { total: 999, token: SENTINELS.token },
+          nested: { path: SENTINELS.path, url: SENTINELS.url },
+        },
         model: "claude-sonnet-5",
         responseModel: "claude-sonnet-5-20260101",
         contextUsage: { tokens: 20, contextWindow: 200, percent: 10 },
@@ -1809,14 +1817,17 @@ describe("child provider error retention in the overlay", () => {
       { type: "text", text: "live terminal text" },
     ]);
     expect(endMessage.stopReason).toBe("error");
-    expect(endMessage.usage).toEqual({ input: 8, output: 2 });
+    expect(endMessage.usage).toEqual({
+      input: 8,
+      output: 2,
+      totalTokens: 10,
+    });
     expect(endMessage.model).toBe("claude-sonnet-5");
     expect(endMessage.contextUsage).toEqual({
       tokens: 20,
       contextWindow: 200,
-      percent: 10,
     });
-    expect(endMessage.context).toEqual({ tokens: 20, contextWindow: 200 });
+    expect(endMessage.context).toBeUndefined();
     expect(endMessage[CHILD_PROVIDER_ERROR_REPLAY_FIELD]).toEqual({
       class: "rate-limit",
       httpStatus: 429,
@@ -1849,7 +1860,15 @@ describe("child provider error retention in the overlay", () => {
             stopReason: "error",
             text: "historical terminal text",
             content: [{ type: "text", text: "historical terminal text" }],
-            usage: { input: 5, output: 6 },
+            usage: {
+              input: 5,
+              output: 6,
+              cacheRead: 7,
+              authorization: SENTINELS.authorization,
+              cost: { total: 999, secret: SENTINELS.secret },
+              nested: { path: SENTINELS.path, url: SENTINELS.url },
+              [Symbol("historical-usage-secret")]: SENTINELS.token,
+            },
             model: "claude-sonnet-5",
             contextUsage: { tokens: 15, contextWindow: 150, percent: 10 },
             context: { tokens: 15, contextWindow: 150 },
@@ -1885,7 +1904,11 @@ describe("child provider error retention in the overlay", () => {
       }
     ).message;
     expect(endMessage.stopReason).toBe("error");
-    expect(endMessage.usage).toEqual({ input: 5, output: 6 });
+    expect(endMessage.usage).toEqual({
+      input: 5,
+      output: 6,
+      cacheRead: 7,
+    });
     expect(endMessage.model).toBe("claude-sonnet-5");
     expect(endMessage[CHILD_PROVIDER_ERROR_REPLAY_FIELD]).toEqual({
       class: "overload",
