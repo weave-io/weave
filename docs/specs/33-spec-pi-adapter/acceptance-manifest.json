@@ -278,7 +278,7 @@
         ]
       },
       "result": "pending",
-      "notes": "Closed-set check verifies all 9 PI_CONTROL_KINDS private control envelope kinds appear across the referenced tests. Pi 0.83.0 lacks descriptor-relative-native-session-io (path-only-session-api), so persistent child spawn fails closed before any controller or child process call. S014 and S015 are historical checklist version 1 rows on Pi 0.81.1, and S056's PersistentParentSessionRequired path is superseded by the capability gate. No current live evidence supports delegation on this host."
+      "notes": "Closed-set check verifies all 9 PI_CONTROL_KINDS private control envelope kinds across the referenced tests. The earlier Pi 0.83 descriptor-only gate is superseded. Pi 0.84.1 Task 14 live evidence for persistent spawn and the PersistentParentSessionRequired path is pending."
     },
     {
       "id": "PI-CMD",
@@ -647,7 +647,7 @@
         ]
       },
       "result": "pass",
-      "notes": "Closed-set check verifies all 20 ALL_CAPABILITY_IDS appear across the referenced tests."
+      "notes": "The earlier Pi 0.83 descriptor-only readiness result is historical. Current Pi-native readiness proves SessionManager create/open, the private root, and process launch, then reports only pi-session-api-unavailable, pi-session-root-unavailable, pi-session-root-unsafe, or pi-process-unavailable. Pi 0.84.1 Task 14 live evidence is pending."
     },
     {
       "id": "PI-ERR",
@@ -777,7 +777,7 @@
         ]
       },
       "result": "pass",
-      "notes": "Pi 0.83.0 reports descriptor-relative-native-session-io unavailable (path-only-session-api), so every generation enters health-only mode and fails closed for all persistent session mutation and child spawn. S067 and S057 were re-run live on the final fail-closed head 9a8c6468 in docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md: delegation unavailable with 0 children, $XDG_DATA_HOME/weave absent, no db, ref, lease, or child session. No mutation claim."
+      "notes": "The earlier Pi 0.83 descriptor-only readiness result is historical. Current Pi-native readiness proves SessionManager create/open, the private root, and process launch, then reports only pi-session-api-unavailable, pi-session-root-unavailable, pi-session-root-unsafe, or pi-process-unavailable. Pi 0.84.1 Task 14 live evidence is pending."
     },
     {
       "id": "PI-INS",
@@ -824,7 +824,7 @@
         ]
       },
       "result": "pending",
-      "notes": "Native child session paging proves bounded bidirectional reads without full materialization; multi-chunk backward assembly stays chronological. Every cited live row needs a spawned child or a session mutation, which Pi 0.83.0 fails closed for lack of descriptor-relative-native-session-io (path-only-session-api). The Task 20 proofs for those rows are historical pre-c24182f records, and S042 was never run live, so this row stays pending on automated coverage alone."
+      "notes": "Automated native child paging proves bounded bidirectional reads without full materialization and preserves chronological multi-chunk assembly. Earlier Pi 0.83 proofs are historical; Pi 0.84.1 Task 14 live overlay and fallback evidence is pending."
     },
     {
       "id": "PI-INT",
@@ -857,7 +857,7 @@
         ]
       },
       "result": "pending",
-      "notes": "Overlay steer, follow-up, retry, continue, and settlement all require a running persistent child. Pi 0.83.0 lacks descriptor-relative-native-session-io (path-only-session-api), so those routes fail closed before any child process starts. The Task 20 records for S044, S049, S051, S052, S053, and S055 are historical pre-c24182f proofs, not evidence for this head; only S050 still passes. Pending until a descriptor-safe host exists."
+      "notes": "Automated coverage exercises overlay steering, follow-up, retry, continue, settlement, key ownership, compact mode, and cancellation. Earlier Pi 0.83 proofs are historical; Pi 0.84.1 Task 14 live evidence is pending."
     },
     {
       "id": "PI-PRI",
@@ -895,7 +895,7 @@
         ]
       },
       "result": "pending",
-      "notes": "ADR 0014 replaces JSONL private-history migration with native Pi child sessions and an explicit no-migration decision. Every cited live row needs child sessions that Pi 0.83.0 cannot create: the host lacks descriptor-relative-native-session-io (path-only-session-api), so spawn fails closed. The Task 20 records for S059 and S061 are historical pre-c24182f proofs, and on-disk permission modes (S062) were never inspected, so this stays pending."
+      "notes": "ADR 0014 replaces JSONL private-history migration with native Pi child sessions and an explicit no-migration decision. Earlier Pi 0.83 proofs are historical; Pi 0.84.1 Task 14 live session isolation, reopen, and permission evidence is pending."
     },
     {
       "id": "PI-BND",
@@ -987,7 +987,7 @@
         ]
       },
       "result": "pending",
-      "notes": "ADR 0014 removes byte quotas, trimming, and automatic pruning. `weave adapter pi children delete` is a persistent session mutation, so Pi 0.83.0 fails it closed for lack of descriptor-relative-native-session-io. 33-task21-final-head-fail-closed-proof.md observed RequiredCapabilityUnavailable before the children port through the production CLI, with list, show, and doctor leaving the roots empty, which is not the tombstone behaviour S065 and S066 need. Stays pending on automated coverage."
+      "notes": "ADR 0014 removes byte quotas, trimming, and automatic pruning. Production children.delete now uses Pi-native readiness and tombstones a selected terminal child. Earlier Pi 0.83 fail-closed evidence is historical; Pi 0.84.1 Task 14 live delete and orphan evidence is pending."
     },
     {
       "id": "PI-SET",

@@ -55,14 +55,25 @@ Every delegated child runs in a persistent native Pi v3 session.
 
 - Session root: `$XDG_DATA_HOME/weave/adapters/pi/sessions/`
   (default: `~/.local/share/weave/adapters/pi/sessions/`).
-- The root is fixed. The adapter passes it to the child as an explicit custom
-  session directory; the child never writes into Pi's default session tree.
+- Pi's `SessionManager.create` supplies the generated native path, exact v3
+  header, session ID, parent, and working directory. Because Pi defers the first
+  write, the adapter exclusively creates the validated `0600` leaf with that
+  exact generated header plus one newline. It then calls `SessionManager.open`
+  and revalidates the path and all identity fields before spawn. The adapter must
+  never fabricate or normalize a v3 or fork header.
+- The root is fixed. The adapter launches the child with both
+  `--session <validated-file>` and `--session-dir <validated-directory>` and
+  removes inherited `PI_CODING_AGENT_SESSION_DIR`; Pi settings or environment
+  state cannot redirect the explicit directory. The child never writes into Pi's
+  default session tree.
 - Child sessions must never appear in Pi's `/resume` list and are not a
   supported target for manual native Pi CLI access.
 - Directory mode `0700`, file mode `0600`. Sessions are user-only.
-- All session I/O is no-follow and descriptor-relative, strictly contained under
-  the root. Path traversal and symbolic-link dereference outside the root are
-  rejected, not repaired.
+- All session I/O is strictly contained under the adapter's trusted path
+  boundary. Canonical immediate-child equality, no-follow traversal, leaf type,
+  ownership, mode, and link-count checks reject traversal, symbolic links, hard
+  links, replacement, and root escape. No session path crosses into the engine,
+  parent result, health, diagnostics, lifecycle, Runtime Store, logs, or model.
 - Read-only consumers open a session file once and read it through that
   descriptor in bounded positional chunks of at most 64 KiB. Each production
   range read performs at most one OS `pread`; a short read is resumed by a
@@ -92,9 +103,10 @@ Every delegated child runs in a persistent native Pi v3 session.
   failure fails the delegation; the adapter must never fall back to an ephemeral
   non-persistent child.
 - Removal is explicit only. There is no automatic pruning, no age-based expiry,
-  and no quota-driven deletion. Explicit deletion requires a confirmation token
-  from the caller and appends a tombstone record; tombstones append and never
-  rewrite or truncate prior records.
+  and no quota-driven deletion. Production deletion is available only after the
+  same Pi-native readiness proof as delegation, resolves a selected terminal
+  child, removes its verified session, and appends a tombstone record; tombstones
+  append and never rewrite or truncate prior records. Read routes stay read-only.
 - A missing or unreadable session resolves to a typed unavailable state that the
   UI presents with repair or remove options. It is never treated as recoverable
   execution authority.
@@ -389,15 +401,32 @@ Rules:
   current tool and skill policy is revalidated against live configuration at
   each run start.
 - Results expose the opaque thread ID, run number, status, retryability, and the
-  final response or error. Results must not leak filesystem paths or native
-  session paths.
+  final response or error. Direct workflow children use the same provision, ref,
+  native Pi session, terminal lifecycle, and tombstone rules; a reachable settled
+  direct child records exactly one terminal lifecycle event instead of remaining
+  `running`. Results must not leak filesystem paths or native session paths.
 - Failures are structured: `ThreadAlreadyRunning`, `ThreadStale`,
   `ThreadIntegrityError`, `ThreadNotRetryable`.
 
 ## 10. Child result contract
 
 A valid child result requires a parent-observed terminal assistant response with
-non-whitespace content.
+non-whitespace content. The terminal assistant event's semantic `stopReason` is
+authoritative over process exit and stderr. `stopReason: "error"` projects a
+bounded provider error; non-provider tool failures do not.
+
+Provider errors use one canonical sanitized shape and one canonical line across
+the live full overlay, live compact overlay, historical full and compact views,
+custom-editor fallback, and parent-facing summary. Structured 429 and 5xx facts,
+connection and timeout classifications, and safe provider identifiers may be
+shown within fixed field and display bounds. Missing, malformed, JSON-only, or
+unsafe details render `assistant error · details unavailable`. Raw payloads,
+response bodies, arbitrary exception text, request data, and sentinel input must
+not appear. A later successful terminal assistant event clears the stale error.
+General DLP for secret-shaped tool call IDs or arbitrary credentials embedded in
+ordinary tool output is outside this contract; those values remain governed by
+the existing transcript boundary.
+
 
 - Completion that is empty, whitespace-only, thinking-only, or tool-only does not
   satisfy the contract and settles as `ChildResponseMissing`.
@@ -554,27 +583,25 @@ log file.
 
 ## 16. Capability probes and compatibility
 
-- Host version floor stays `0.81.1`, with no maximum.
-- Required probes: persistent RPC session and restore, `appendEntry`,
-  `get_entries`/`get_tree`, custom session directory support, and
-  descriptor-relative native session I/O.
-- Descriptor-relative native session I/O means every native session read and
-  write is addressed by an opaque, host-owned session descriptor rather than by
-  a caller-supplied filesystem path. Pi 0.83 exposes a path-only session API, so
-  this probe reports `unavailable` with reason `path-only-session-api` and the
-  adapter runs in health-only mode on that host. The probe is not overridable:
-  session restore, custom session directories, and RPC method presence do not
-  raise it, and no environment variable or configuration setting enables it.
-- While that capability is unavailable, every persistent session mutation —
-  delegation, direct workflow dispatch, retry, continue, steering, follow-up,
-  cancellation, clear, recovery, and adapter CLI delete — fails with a typed
-  `RequiredCapabilityUnavailable` result before any controller, session service,
-  filesystem, cache, lease, or child process call. Read-only status, health,
-  history, inspection, doctor, list, and show routes stay available.
-- Probes must be side-effect free; probing must not create a session.
-- A missing required session capability puts the adapter in health-only mode with
-  a diagnostic naming the capability, host version, contract, probe result, mode,
-  and remediation.
+- Host version floor stays `0.81.1`, with no maximum. The Pi-native live proof
+  target is Pi `0.84.1`.
+- Required host probes remain persistent RPC session and restore, `appendEntry`,
+  `get_entries`/`get_tree`, and custom session directory support.
+- Pi-native readiness is not a capability descriptor and has no authority outside
+  the Pi adapter. Before generation activation, the adapter proves the real
+  `SessionManager.create` and `SessionManager.open` API, the fixed private root,
+  and the Pi process launch surface. The externally visible capability remains
+  `delegated-specialist-execution`.
+- A failed proof enters health-only mode before config materialization, persistent
+  session mutation, lease acquisition, or process spawn. It reports exactly one
+  path-free reason: `pi-session-api-unavailable`,
+  `pi-session-root-unavailable`, `pi-session-root-unsafe`, or
+  `pi-process-unavailable`. There is no `descriptor-relative-native-session-io`
+  capability, `path-only-session-api` reason, unsafe flag, environment override,
+  or config override.
+- The same readiness proof gates production `children.delete` before writable
+  diagnostics initialize. Read-only status, health, history, inspection, doctor,
+  list, and show routes do not initialize writable state.
 - An overlay-only capability gap does not force health-only mode; it routes to
   the existing custom-editor fallback (§7).
 

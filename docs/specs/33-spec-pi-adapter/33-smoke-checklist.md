@@ -1,55 +1,51 @@
 # Pi child-session smoke checklist
 
-Version: 5
+Version: 6
 
 This checklist covers the acceptance surfaces defined in
 [Spec 33](33-spec-pi-adapter.md). A row is `Pending` until a real-harness Pi
-`0.83.0` run records a proof under [`33-proofs/`](33-proofs/), indexed by
-[`33-proofs/README.md`](33-proofs/README.md). Version 4 adds the true-overlay,
-owned-editor, short-terminal, Kitty-key, and primary-editor coexistence checks
-in rows S043–S047. Each row runs in a fresh Herdr pane that the test creates and
-closes; pre-existing panes are never touched. The driver uses disposable `XDG_DATA_HOME` and `PI_CODING_AGENT_DIR`
-and project roots.
+`0.84.1` run records a proof under [`33-proofs/`](33-proofs/), indexed by
+[`33-proofs/README.md`](33-proofs/README.md). Every live row runs in a fresh
+Herdr pane that the test creates and closes, with isolated Pi config, data,
+session, and project roots. The driver records the exact subject, artifact and
+dist hashes, package provenance, Pi version, commands, observations, and cleanup.
 
-## Pi 0.83 fail-closed session contract
+## Pi 0.84.1 native-session contract
 
-Pi `0.83.0` addresses native sessions by caller-supplied filesystem path, so
-the adapter cannot prove that a session write lands inside host-owned storage.
-The required capability `descriptor-relative-native-session-io` therefore
-probes `unavailable` with reason `path-only-session-api`, and the production
-probe port answers that surface `false` unconditionally.
+Pi `0.84.1` provides native path sessions through `SessionManager.create` and
+`SessionManager.open`. The adapter validates Pi's generated path, ID, parent,
+working directory, and exact v3 header; exclusively writes the deferred header;
+reopens and revalidates it; launches with both `--session` and `--session-dir`;
+and removes inherited `PI_CODING_AGENT_SESSION_DIR`. Paths remain adapter-private.
 
-Every generation on this host enters health-only mode and fails closed for all
-persistent session mutation and child spawn. Commits `c24182f`, `50d59b4`, and
-`5af9f1b` enforce the boundary before any controller, session service,
-filesystem, cache, execution lease, or child process call. Blocked routes:
-`weave_delegate` (start, retry, continue, steer, follow-up), relayed child
-delegation, direct workflow dispatch, cancellation, clear, recovery, and
-`weave adapter pi children delete`.
+Readiness exposes only `delegated-specialist-execution`. There is no descriptor
+capability, `path-only-session-api` reason, or unsafe flag. A generation enters
+health-only mode before mutation when the real preflight yields
+`pi-session-api-unavailable`, `pi-session-root-unavailable`,
+`pi-session-root-unsafe`, or `pi-process-unavailable`. The proof should exercise
+each closed reason where a deterministic isolated fixture can do so without
+altering the global Pi install.
 
-Descriptor-safe read-only surfaces stay available: status, health, plan,
-inspect, `/weave:history`, `/weave:doctor`, and `weave adapter pi children
-list` / `show`. The rows that record them prove read availability only, never
-mutation support.
+The earlier Pi `0.83.0` descriptor-only acceptance model and its fail-closed
+proofs are historical. Their observations remain intact, but their readiness
+conclusion does not govern this checklist. Version 6 requires live Pi 0.84.1
+evidence for native child create, streaming, settlement, continue, historical
+reopen, direct workflow persistence, lifecycle, readiness-gated deletion, and
+path non-disclosure.
 
-Every Task 20 row that required a persistent child spawn or a native session
-mutation is `Pending` below. Its proof file is retained as a **historical**
-record of pre-`c24182f` behaviour and is not evidence for the fail-closed head.
-Re-running those rows requires a host that proves
-`descriptor-relative-native-session-io`.
-
-The Task 20 matrix ran as per-item live runs on Pi `0.83.0` under checklist
-version 3, each bound to the subject and artifact recorded inside its own proof
-file, never to one shared artifact. The `Proof` column names the exact file that
-recorded the row. Proof files are sanitized: they record digests, counts, and
-outcomes, never prompts or transcripts.
-Version 5 adds the overlay UX rows `S070`–`S077` and rewrites `S051`: `Escape`
-now closes inspection instead of arming a cancel.
+Version 6 also adds sanitized child provider-error evidence. Controlled child
+events must cover 429, 500 with no body, connection/timeout, and unknown JSON
+without an actual provider outage or credential use. The canonical bounded line
+must agree in full, compact, historical, fallback, and parent-summary surfaces;
+a later success must clear it. Raw input and sentinel values must remain absent.
+General DLP for secret-shaped tool call IDs and credentials in ordinary tool
+output is outside this acceptance scope.
 
 ## Overlay UX live procedure (rows S051, S070–S077)
 
-Run every step in one fresh Pi `0.83.0` TUI on a real PTY, through the local
-adapter build, after confirming the loaded `dist/extension.js` SHA-256. Delegate
+Run every step in one fresh Pi `0.84.1` TUI on a real PTY, through the exact
+packaged adapter artifact, after confirming the loaded `dist/extension.js` and
+`dist/index.js` SHA-256 values and package provenance. Delegate
 one child that produces enough output to overflow the viewport, and open it with
 `Alt+I`.
 

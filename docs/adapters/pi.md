@@ -127,7 +127,7 @@ A delegation call addresses a *thread*, not a single run. Omitting `action` star
 
 A run that settles with no terminal assistant response fails with `ChildResponseMissing` and one reason: `empty`, `whitespace-only`, `thinking-only`, `tool-only`, or `no-response`. This is a result failure, not a transport failure — the recorded session stays intact, capacity is released like any other settlement, the failure is retryable, and its recovery hint is to retry the thread.
 
-Authorized work enters a FIFO queue per parent and spawns an independent `pi --mode rpc --no-session` process. Each child has its own 256-bit secret, read once from the environment and then erased.
+Authorized work enters a FIFO queue per parent and spawns an independent persistent Pi RPC process. The child receives both `--session <validated-file>` and `--session-dir <validated-directory>`; the adapter removes inherited `PI_CODING_AGENT_SESSION_DIR` so Pi settings or environment state cannot redirect it. Each child has its own 256-bit secret, read once from the environment and then erased.
 
 The control protocol uses:
 
@@ -154,11 +154,11 @@ Children are inspectable and cancellable through the TUI tree, not steerable. Pu
 
 ### Native child sessions
 
-Every delegated child runs in a persistent native Pi v3 session created through the host's own session manager, so recorded child work is real Pi session data rather than an adapter transcript format.
+Every delegated child runs in a persistent native Pi v3 session created through Pi's `SessionManager.create` and reopened through `SessionManager.open`, so recorded child work is real Pi session data rather than an adapter transcript format. Pi supplies the generated path, v3 header, session ID, parent, and working directory. Because Pi defers the first write, the adapter exclusively writes that exact generated header to the validated `0600` leaf, then reopens it and revalidates every identity field before spawn. It never fabricates a v3 or fork header.
 
 Sessions live under `$XDG_DATA_HOME/weave/adapters/pi/sessions/`, defaulting to `~/.local/share/weave/adapters/pi/sessions/`. That root sits outside Pi's default session tree, so child sessions never appear in Pi discovery or `/resume`, while remaining readable through Pi's native open and read APIs. A relative `XDG_DATA_HOME` is a root violation, not a silently ignored value.
 
-All filesystem access goes through a no-follow `openat` chain: directories are `0700`, files are `0600`, and traversal, absolute escape, symlinked components, and permissive modes fail closed. The adapter never copies transcript bytes into its own storage; entry reads return the host's `getEntries()` output.
+The adapter uses its private, trusted path boundary: directories are `0700`, files are `0600`, and traversal, absolute escape, symlinked components, permissive modes, and anything other than canonical immediate-child equality fail closed. No caller, model, engine API, health report, Runtime Store record, lifecycle field, or diagnostic receives a session path. The adapter never copies transcript bytes into its own storage; entry reads return Pi's `getEntries()` output.
 
 A bounded metadata cache lives beside it at `$XDG_DATA_HOME/weave/adapters/pi/cache/child-metadata.sqlite` (schema version 1, same permissions). It stores metadata only — ids, titles, statuses, and timestamps — with no column for any prompt, message, response, thinking block, tool call, tool result, or transcript. It is fully rebuildable from the parent session's child references, and its loss is never fatal: an open failure, permission failure, corruption, or schema mismatch degrades to reading the bounded parent references directly, so delegation, settlement, and the live overlay keep working with no cache at all.
 
@@ -168,7 +168,7 @@ The authoritative record of which children belong to a parent is a custom entry 
 
 Cleanup is explicit only. The adapter runs no retention timer, prunes nothing on a schedule, enforces no byte quota, and deletes no session because it is old, large, or settled. Data disappears only when you ask for it through `/weave:clear-children` or `weave adapter pi children delete <id>`.
 
-Deletion appends a tombstone record to `tombstones.jsonl` at the session-tree root. The tombstone file is append-only: there is no rewrite or truncate path. A tombstoned child stays listed, marked `tombstoned`, so a removal is visible rather than silent.
+Production `children.delete` is available only after the same Pi-native readiness proof used for delegation. The command resolves a selected terminal child through its immutable origin record, removes its verified session, and appends a tombstone record to `tombstones.jsonl` at the session-tree root. The tombstone file is append-only: there is no rewrite or truncate path. A tombstoned child stays listed, marked `tombstoned`, so a removal is visible rather than silent. List, show, doctor, history, and inspect stay read-only.
 
 A child whose parent session is gone becomes an orphan. Orphans stay readable and stay listed; the overlay marks them `Read-only orphan — mutations disabled` and refuses steering, follow-up, retry, and continue. `ChildOrphanReadOnly` is the corresponding failure code. The adapter does not delete orphans.
 
@@ -216,7 +216,7 @@ A header meta row reports the focused child's runtime: `provider · model · ctx
 
 `Ctrl+O` switches the focused child between the full transcript and a compact one-line-per-entry view, and the header shows a `compact` badge while it is on. Compact is a render-time projection: no entry is dropped or rewritten, the draft and search state survive the toggle, and the viewport stays anchored on the same entry even though the row count changes. The mode is per child and defaults to full.
 
-Historical pages adapt native session entries directly through the host's read API. Live output flows through the same parser and compact pipeline as the collapsed block, so the two views cannot disagree. The visible help lists PageUp, PageDown, Shift+Up, Shift+Down, Home, and End. Scroll keys are matched by key identity rather than by raw bytes, so legacy, Kitty event-aware, and SS3 encodings of the same key all scroll, and a Kitty release frame never repeats a page. Pi does not enable terminal mouse reporting (including SGR-1006 and modes 1002/1003), so mouse-wheel events cannot reach the component. Mouse-wheel scrolling remains unavailable until Pi exposes a mouse input surface.
+Historical pages adapt native session entries directly through the host's read API. Live output flows through the same parser and compact pipeline as the collapsed block, so the two views cannot disagree. A terminal assistant `stopReason: "error"` also flows through one bounded sanitizer and renderer: safe 429, 5xx, connection, and timeout facts can appear, while unavailable or unsafe facts show `assistant error · details unavailable`. Full, compact, historical, fallback, and parent-summary surfaces use the same canonical line. A later successful assistant terminal event clears a stale error; tool failure alone does not create one. The visible help lists PageUp, PageDown, Shift+Up, Shift+Down, Home, and End. Scroll keys are matched by key identity rather than by raw bytes, so legacy, Kitty event-aware, and SS3 encodings of the same key all scroll, and a Kitty release frame never repeats a page. Pi does not enable terminal mouse reporting (including SGR-1006 and modes 1002/1003), so mouse-wheel events cannot reach the component. Mouse-wheel scrolling remains unavailable until Pi exposes a mouse input surface.
 
 When the host does not provide the `child-overlay-lifecycle` surface, the overlay degrades to the existing custom-editor inspection path instead of disappearing. Delegation itself is unaffected: overlay gaps never trigger health-only mode.
 
@@ -350,7 +350,7 @@ The adapter never logs prompts, responses, transcripts, raw RPC, tool input/outp
 
 Beyond the engine's closed capability IDs, the adapter declares the concrete Pi host surfaces it needs, each with a severity. The compatibility floor is Pi `0.81.1`.
 
-- `required-for-delegation` — a gap puts the generation into health-only mode. Native child sessions add `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, `custom-session-directory`, and `descriptor-relative-native-session-io` to this set, alongside the existing editor, RPC, and session-restore surfaces.
+- `required-for-delegation` — a gap puts the generation into health-only mode. Native child sessions add `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` to this set, alongside the existing editor, RPC, and session-restore surfaces.
 - `overlay-only` — a gap selects the custom-editor fallback and never triggers health-only mode. `child-overlay-lifecycle` is the only such surface. Session reads are deliberately not overlay-only.
 - `rendering-fallback` — a gap uses Pi's default rendering.
 
@@ -362,20 +362,18 @@ Static capability declarations are ceilings. Activation probes every closed capa
 
 Health-only mode exposes health and safe diagnostics but blocks materialization, workflow mutation, and delegation. Pi/tool-owner authorization remains in force regardless of mode.
 
-## Path-only session API on Pi 0.83
+## Pi-native readiness
 
-Pi 0.83 addresses native sessions by caller-supplied filesystem path. The adapter therefore cannot prove that a session write lands inside host-owned storage, so the required capability `descriptor-relative-native-session-io` probes `unavailable` with reason `path-only-session-api` and every generation on this host enters health-only mode.
+Pi 0.84.1 exposes path-addressed native sessions through `SessionManager.create` and `SessionManager.open`. Weave does not claim a descriptor capability or accept an unsafe override. Instead, the Pi adapter owns and validates the concrete path boundary described above, then exposes the existing emulated `delegated-specialist-execution` capability.
 
-The probe is not overridable. Session restore, custom session directories, and the presence of any `SessionManager` method do not raise it, and there is no environment variable or configuration setting that enables it. Only a test double may model a descriptor-safe host.
+Before config activation, the adapter proves four facts against the real host: the create/open API is present, the private session root can initialize, that root has safe ownership and permissions, and the Pi executable can launch through the process surface. A failed proof enters health-only mode before materialization, session mutation, lease creation, or spawn. Health uses only these path-free reasons:
 
-While the capability is unavailable, the adapter fails every persistent session mutation with a typed `RequiredCapabilityUnavailable` result before it reaches a controller, session service, filesystem, metadata cache, execution lease, or child process:
+- `pi-session-api-unavailable`;
+- `pi-session-root-unavailable`;
+- `pi-session-root-unsafe`;
+- `pi-process-unavailable`.
 
-- `weave_delegate` (start, retry, continue, steer, follow-up) and relayed child delegation;
-- direct workflow dispatch, `/weave:start`, `/weave:run`, `/weave:advance`, `/weave:resume`, `/weave:artifact`;
-- cancellation and cleanup: `/weave:abort`, `/weave:clear-children`, `/weave:recover-children`;
-- the adapter CLI `children delete` command.
-
-`/weave:status`, `/weave:health`, `/weave:plan`, `/weave:inspect`, `/weave:history`, `/weave:doctor`, and the CLI `list`, `show`, and `doctor` commands stay available and perform no mutation. `/weave:health` and the status line name the unsupported capability and its reason without printing a path or a prompt.
+Raw exceptions, method names, environment values, and paths do not enter health, status, doctor, CLI, logs, lifecycle metadata, or model output. The mutating `children.delete` route repeats this readiness gate. Read routes never open writable ports.
 
 ## Verification
 

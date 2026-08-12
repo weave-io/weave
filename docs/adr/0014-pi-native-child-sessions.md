@@ -16,6 +16,10 @@ Two constraints shape the design. First, child sessions must not pollute Pi's de
 
 ## Decision
 
+Pi remains the session identity and format authority. The adapter calls Pi 0.84.1's `SessionManager.create`, validates the generated path and v3 header, exclusively persists that exact header because Pi defers its first write, then calls `SessionManager.open` and revalidates the session ID, parent, working directory, path, and persistence. This bridge does not fabricate a v3 or fork header.
+
+The RPC child receives both `--session <validated-file>` and `--session-dir <validated-directory>`. The adapter removes inherited `PI_CODING_AGENT_SESSION_DIR`; the explicit CLI directory cannot be redirected by Pi settings or environment state. Ordinary delegated children and direct workflow children use this same persistent lifecycle. Pi assistant `stopReason` and `errorMessage` are authoritative terminal state; stderr and process exit are secondary.
+
 1. **Native child sessions.** Each delegated child runs in a persistent native Pi v3 session. Child sessions live under `$XDG_DATA_HOME/weave/adapters/pi/sessions/`, defaulting to `~/.local/share/weave/adapters/pi/sessions/`. The adapter-owned JSONL child-history store, its V1 index, its checkpoints, its quotas, and its trimming are removed.
 
 2. **Isolation.** The child session directory is separate from Pi's default session tree. Child sessions are never offered by Pi's `/resume` and are not intended for manual native Pi CLI access. They are reachable only through Weave's own surfaces.
@@ -36,7 +40,9 @@ Two constraints shape the design. First, child sessions must not pollute Pi's de
 
 10. **Fork/clone ref-origin rejection.** When a parent session is forked, cloned, or otherwise copied, the copied child refs no longer match their recorded origin. The adapter rejects those refs instead of adopting children it does not own. Rejected refs are reported, not silently dropped in a way that implies ownership.
 
-11. **Boundary unchanged.** All of the above is Pi adapter state. The engine does not scan, parse, own, or recover Pi child sessions, and the normative details — paths, permissions, entry shapes, cache schema, failure codes, commands — stay in Spec 33.
+11. **Boundary unchanged.** All of the above is Pi adapter state. The engine does not scan, parse, own, or recover Pi child sessions, and the normative details — paths, permissions, entry shapes, cache schema, failure codes, commands — stay in Spec 33. The adapter requires canonical immediate-child equality, private `0700` directories, regular `0600` leaves, and no caller-supplied path. Health, status, CLI, lifecycle, logs, Runtime Store data, and model output never receive a session path.
+
+12. **Readiness.** Native-session readiness is not a public descriptor capability. Before delegation or deletion, the adapter proves the real Pi create/open API, private root, and process surface. Failure enters health-only mode with one path-free reason: `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, or `pi-process-unavailable`. Read routes remain read-only.
 
 ## Consequences
 

@@ -233,7 +233,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
   - **Acceptance**:
     - Each test fails for one missing contract behavior without relying on unknown dirty source hunks. Commit: `test(pi): define the Pi-native child session contract`.
 
-- [ ] 11. Implement Pi-native path sessions and remove the descriptor gate
+- [x] 11. Implement Pi-native path sessions and remove the descriptor gate
   - **What**: Conform delegation to Pi 0.84.1's real path/session/process APIs and delete the fictional descriptor requirement.
   - **Files**: `packages/adapters/pi/src/native-session-host.ts`, `child-native-sessions.ts`, `child-session-storage-authority.ts` (remove or reduce to real API/root readiness), `host-compatibility-matrix.ts`, capability declarations/prober, `extension.ts`, RPC/direct-dispatch/session-ref wiring, exports, and Task 10 tests.
   - **Depends on**: Task 10.
@@ -248,7 +248,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - Task 10 is green; real Pi 0.84.1 reaches ready and creates, streams, settles, resumes, and reopens a native child session without unsafe flags or fictional capabilities; no path crosses the adapter boundary; Warp and Weft approve.
     - Commit: `fix(pi): use Pi-native path sessions for child delegation`.
 
-- [ ] 12. Project bounded, sanitized child provider errors
+- [x] 12. Project bounded, sanitized child provider errors
   - **What**: Parse Pi 0.84.1 assistant terminal errors into a closed, bounded child-error model without retaining raw provider payloads.
   - **Files**: coordinate handoff before touching `packages/adapters/pi/src/child-session-events.ts`; prefer a new `child-provider-error.ts`; update `child-overlay-types.ts`, replay/controller wiring, exports, and new `__tests__/child-provider-error.test.ts` plus parser/replay tests.
   - **Depends on**: Task 8; may run after Task 9 once the concurrent parser owner hands off.
@@ -261,7 +261,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
   - **Acceptance**:
     - Tests prove useful safe fields survive and prohibited data never does; all expected failures use `Result`/`ResultAsync`. Commit: `feat(pi): project sanitized child provider errors`.
 
-- [ ] 13. Render useful child errors in every inspection surface
+- [x] 13. Render useful child errors in every inspection surface
   - **What**: Replace generic `assistant stop reason: error` output with the sanitized projection in full, compact, historical, and fallback child views.
   - **Files**: `packages/adapters/pi/src/child-transcript.ts`, `child-overlay-replay.ts`, `child-overlay-component.ts`, compact/fallback renderer(s) that emit the generic string, focused render-width/mount/history tests, and parent-summary tests where applicable.
   - **Depends on**: Task 12.

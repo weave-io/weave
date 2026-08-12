@@ -1,5 +1,13 @@
 # Task 21 final-head fail-closed proof (S057, S063, S064, S067)
 
+> [!IMPORTANT]
+> **Superseded readiness model.** This file preserves Pi 0.83 descriptor-only
+> observations. The current contract uses Pi 0.84.1 `SessionManager.create/open`
+> with an adapter-contained path boundary and four real readiness reasons. The
+> descriptor capability and `path-only-session-api` conclusion no longer govern
+> current acceptance. See `33-overlay-ux-live-proof.md` for Task 14 evidence.
+
+
 **Verdict: PASS**
 
 Checklist version `3`. Rows `S057`, `S063`, `S064`, and `S067`, re-run live on

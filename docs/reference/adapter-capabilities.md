@@ -79,7 +79,7 @@ The Pi adapter declares three severities:
 
 Its native child-session storage adds four `required-for-delegation` probes — `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` — plus the `overlay-only` `child-overlay-lifecycle` surface. A missing session read surface is never treated as overlay-only, because reading recorded child work must not silently disappear.
 
-A fifth `required-for-delegation` surface, `descriptor-relative-native-session-io`, backs the required capability of the same name. It is the only surface the production probe port answers `false` for unconditionally: the exact tested Pi host addresses native sessions by caller-supplied filesystem path, so the adapter cannot prove where a session write would land. Method presence for session restore, custom session directories, or any RPC call does not override it, and no environment variable or configuration can enable it. Only a test double may model a descriptor-safe host.
+Pi native-session readiness is not a public capability or host-surface ID. Before activation, the adapter proves the real `SessionManager.create` and `SessionManager.open` API, its private session root, and the Pi process launch surface. It maps a failure to one closed, path-free reason: `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, or `pi-process-unavailable`. No environment variable or descriptor capability can raise readiness.
 
 A gap reports the stable surface ID and a remediation string. See [Pi Adapter](../adapters/pi.md#host-surface-probes).
 
@@ -100,11 +100,11 @@ Health-only mode may expose health and other read-only diagnostics. It blocks ag
 
 ### Persistent session mutation
 
-`descriptor-relative-native-session-io` is a required capability that states one contract: every native session read and write is addressed by an opaque, host-owned session descriptor rather than by a caller-supplied filesystem path. It is supplied by the host, never emulated by an adapter.
+Pi uses path-addressed native sessions. The adapter contains those paths behind its own Pi-specific boundary: Pi's `SessionManager` creates and opens the session identity, the adapter validates the generated immediate-child path under its fixed private root, and no path enters an engine capability, health report, lifecycle record, or model result.
 
-When it is unavailable, every route that would perform a persistent session mutation fails with a typed `RequiredCapabilityUnavailable` result before it calls a controller, session service, filesystem, metadata cache, execution lease, or child process. That covers delegation, direct workflow dispatch, retry, continue, steering, follow-up, cancellation, clear, recovery, and the adapter CLI's delete command. Read-only status, health, history, inspection, doctor, list, and show routes stay available and perform no mutation.
+`delegated-specialist-execution` becomes ready only after the native session API, private root, and process surface pass the generation preflight. If they do not, the generation enters health-only mode before any child spawn or persistent mutation. Mutation routes use the same readiness proof. Read-only status, health, history, inspection, doctor, list, and show routes stay read-only.
 
-Unlike an ordinary health-only gap, this capability also blocks idempotent cleanup: cleanup still writes to persistent session state, and the host cannot prove where that write would land.
+The adapter CLI also gates `children.delete` on this proof before it opens writable diagnostics. Delete removes the verified terminal child session and appends its tombstone. List, show, and doctor never inherit write access.
 
 ## Adapter responsibilities
 
