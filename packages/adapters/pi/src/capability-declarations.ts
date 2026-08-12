@@ -129,6 +129,16 @@ export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       readiness: "emulated",
     },
     {
+      id: "provider-fast-activation",
+      description: "Request provider acceleration and report bounded evidence",
+      readiness: "degraded",
+      runtimeStatus: "not-confirmed",
+      notes:
+        "Pi can mutate an allowlisted provider request, but the public host surface does not expose response-body proof. The ceiling is request-capable and cannot claim applied or native.",
+      remediationHint:
+        "Keep reporting not-confirmed until the host exposes correlated official response-body evidence.",
+    },
+    {
       id: "idle-continuation",
       description: "Resuming idle work within one live generation",
       readiness: "emulated",

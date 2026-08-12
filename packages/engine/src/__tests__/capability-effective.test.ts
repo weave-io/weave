@@ -72,15 +72,15 @@ describe("lowerReadinessByProbe", () => {
 });
 
 describe("evaluateEffectiveCapabilities", () => {
-  it("requires exactly one sanitized probe outcome per capability id (21)", () => {
+  it("requires exactly one sanitized probe outcome per capability id (22)", () => {
     const evaluation = evaluateEffectiveCapabilities(
       contractWith("native"),
       probes(() => "ok"),
     );
-    expect(evaluation.effectiveCapabilities).toHaveLength(21);
+    expect(evaluation.effectiveCapabilities).toHaveLength(22);
     expect(
       new Set(evaluation.effectiveCapabilities.map((c) => c.id)).size,
-    ).toBe(21);
+    ).toBe(22);
   });
 
   it("ok probes preserve static declarations in effective readiness", () => {
@@ -128,7 +128,7 @@ describe("evaluateEffectiveCapabilities", () => {
       contractWith("native"),
       [],
     );
-    expect(evaluation.effectiveCapabilities).toHaveLength(21);
+    expect(evaluation.effectiveCapabilities).toHaveLength(22);
     for (const entry of evaluation.effectiveCapabilities) {
       expect(entry.probeResolution).toBe("missing");
       expect(entry.effectiveReadiness).toBe("unsupported");
@@ -224,7 +224,7 @@ describe("buildAdapterHealthReport effective integration", () => {
 
     expect(report.capabilityContract).toBe(contract);
     expect(report.healthOnlyMode).toBe(true);
-    expect(report.effectiveCapabilities).toHaveLength(21);
+    expect(report.effectiveCapabilities).toHaveLength(22);
     expect(report.profileResult.ready).toBe(false);
     expect(
       report.profileResult.failures.some(
@@ -253,5 +253,91 @@ describe("buildAdapterHealthReport effective integration", () => {
     expect(report.profileResult.passes).toHaveLength(
       REQUIRED_CAPABILITIES.length + OPTIONAL_CAPABILITIES.length,
     );
+  });
+});
+
+describe("provider-fast-activation effective readiness", () => {
+  it("optional provider-fast gaps warn without health-only mode", () => {
+    const evaluation = evaluateEffectiveCapabilities(
+      contractWith("native"),
+      probes((id) =>
+        id === "provider-fast-activation" ? "unavailable" : "ok",
+      ),
+    );
+    expect(evaluation.healthOnlyMode).toBe(false);
+    expect(evaluation.profileResult.ready).toBe(true);
+    const entry = evaluation.effectiveCapabilities.find(
+      (capability) => capability.id === "provider-fast-activation",
+    );
+    expect(entry?.declaredReadiness).toBe("native");
+    expect(entry?.effectiveReadiness).toBe("unsupported");
+    expect(
+      evaluation.profileResult.warnings.some(
+        (warning) => warning.capabilityId === "provider-fast-activation",
+      ),
+    ).toBe(true);
+  });
+
+  it("runtime evidence lowers a request-capable ceiling and cannot raise unsupported", () => {
+    const contract: AdapterCapabilityContract = {
+      capabilities: ALL_CAPABILITY_IDS.map((id) => ({
+        id,
+        description: id,
+        readiness: id === "provider-fast-activation" ? "degraded" : "native",
+      })),
+    };
+    const lowered = evaluateEffectiveCapabilities(
+      contract,
+      probes((id) =>
+        id === "provider-fast-activation" ? "unavailable" : "ok",
+      ),
+    );
+    const raised = evaluateEffectiveCapabilities(
+      {
+        capabilities: ALL_CAPABILITY_IDS.map((id) => ({
+          id,
+          description: id,
+          readiness:
+            id === "provider-fast-activation" ? "unsupported" : "native",
+        })),
+      },
+      probes((id) => (id === "provider-fast-activation" ? "ok" : "ok")),
+    );
+    expect(
+      lowered.effectiveCapabilities.find(
+        (capability) => capability.id === "provider-fast-activation",
+      )?.effectiveReadiness,
+    ).toBe("unsupported");
+    expect(
+      raised.effectiveCapabilities.find(
+        (capability) => capability.id === "provider-fast-activation",
+      )?.effectiveReadiness,
+    ).toBe("unsupported");
+    expect(lowered.healthOnlyMode).toBe(false);
+    expect(raised.healthOnlyMode).toBe(false);
+  });
+
+  it("omitting the optional capability does not force health-only mode", () => {
+    const requiredOnly: AdapterCapabilityContract = {
+      capabilities: REQUIRED_CAPABILITIES.map((id) => ({
+        id,
+        description: id,
+        readiness: "native" as const,
+      })),
+    };
+    const evaluation = evaluateEffectiveCapabilities(
+      requiredOnly,
+      probes((id) =>
+        (REQUIRED_CAPABILITIES as readonly string[]).includes(id)
+          ? "ok"
+          : "unavailable",
+      ),
+    );
+    expect(evaluation.healthOnlyMode).toBe(false);
+    expect(
+      evaluation.effectiveCapabilities.find(
+        (capability) => capability.id === "provider-fast-activation",
+      )?.effectiveReadiness,
+    ).toBe("unsupported");
   });
 });

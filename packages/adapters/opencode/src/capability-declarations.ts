@@ -20,5 +20,15 @@ export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       notes:
         "Missing behaviors: no persisted goal state, no enforced continuation budget, no pause/resume, and no status surface.",
     },
+    {
+      id: "provider-fast-activation",
+      description: "Request provider acceleration and report bounded evidence",
+      readiness: "degraded",
+      runtimeStatus: "not-confirmed",
+      notes:
+        "OpenCode can mutate an allowlisted provider request, but the public plugin surface does not expose response-body proof. The ceiling is request-capable and cannot claim applied or native.",
+      remediationHint:
+        "Keep reporting not-confirmed until the plugin contract exposes correlated official response-body evidence.",
+    },
   ],
 };

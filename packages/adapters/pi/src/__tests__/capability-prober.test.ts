@@ -90,7 +90,7 @@ describe("PI_ADAPTER_CAPABILITY_CONTRACT", () => {
 describe("buildBlockedProbeSet", () => {
   it("returns exactly one unavailable probe for all 20 capability IDs", () => {
     const probes = buildBlockedProbeSet("interactive-tui-required");
-    expect(probes).toHaveLength(21);
+    expect(probes).toHaveLength(ALL_CAPABILITY_IDS.length);
     expect(probes).toHaveLength(ALL_CAPABILITY_IDS.length);
     for (const probe of probes) {
       expect(probe.probeStatus).toBe("unavailable");
@@ -110,9 +110,9 @@ describe("DefaultPiCapabilityProber", () => {
       trust: "trusted",
       commands: ALL_OWNED_COMMANDS,
     });
-    expect(probes).toHaveLength(21);
+    expect(probes).toHaveLength(ALL_CAPABILITY_IDS.length);
     const ids = probes.map((probe) => probe.capabilityId);
-    expect(new Set(ids).size).toBe(21);
+    expect(new Set(ids).size).toBe(ALL_CAPABILITY_IDS.length);
     expect([...ids].sort()).toEqual([...ALL_CAPABILITY_IDS].sort());
   });
 
@@ -652,7 +652,7 @@ describe("sanitizeCapabilityProbeResults", () => {
 
   it("passes a fully well-formed probe set through unchanged, one row per ID", () => {
     const sanitized = sanitizeCapabilityProbeResults(fullValidSet());
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(ALL_CAPABILITY_IDS.length);
     expect([...sanitized.map((probe) => probe.capabilityId)].sort()).toEqual(
       [...ALL_CAPABILITY_IDS].sort(),
     );
@@ -666,7 +666,7 @@ describe("sanitizeCapabilityProbeResults", () => {
       (probe) => probe.capabilityId !== "workflow-persistence",
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(ALL_CAPABILITY_IDS.length);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "workflow-persistence",
     );
@@ -676,7 +676,7 @@ describe("sanitizeCapabilityProbeResults", () => {
   it("normalizes a duplicated capability ID (same status) to a single unavailable row", () => {
     const raw = [...fullValidSet(), okProbe("workflow-persistence")];
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(ALL_CAPABILITY_IDS.length);
     const entries = sanitized.filter(
       (probe) => probe.capabilityId === "workflow-persistence",
     );
@@ -692,7 +692,7 @@ describe("sanitizeCapabilityProbeResults", () => {
     );
     raw.push(okProbe("tool-policy-mapping"));
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(ALL_CAPABILITY_IDS.length);
     const entries = sanitized.filter(
       (probe) => probe.capabilityId === "tool-policy-mapping",
     );
@@ -707,7 +707,7 @@ describe("sanitizeCapabilityProbeResults", () => {
         : probe,
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(ALL_CAPABILITY_IDS.length);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "event-logging",
     );
@@ -720,7 +720,7 @@ describe("sanitizeCapabilityProbeResults", () => {
       { capabilityId: "not-a-real-capability", probeStatus: "ok" },
     ];
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(ALL_CAPABILITY_IDS.length);
     expect(
       sanitized.some(
         (probe) => (probe.capabilityId as string) === "not-a-real-capability",
@@ -735,7 +735,7 @@ describe("sanitizeCapabilityProbeResults", () => {
         : probe,
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(ALL_CAPABILITY_IDS.length);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "agent-materialization",
     );
@@ -749,7 +749,7 @@ describe("sanitizeCapabilityProbeResults", () => {
         : probe,
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(ALL_CAPABILITY_IDS.length);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "primary-agent-selection",
     );
@@ -792,7 +792,7 @@ describe("sanitizeCapabilityProbeResults", () => {
       },
     ];
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(21);
+    expect(sanitized).toHaveLength(ALL_CAPABILITY_IDS.length);
     expect([...sanitized.map((probe) => probe.capabilityId)].sort()).toEqual(
       [...ALL_CAPABILITY_IDS].sort(),
     );

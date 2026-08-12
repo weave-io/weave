@@ -19,5 +19,16 @@ export const CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract 
         notes:
           "Claude Code's /weave:start projection submits and enters plan work as a foreground command; it does not provide persisted idle-continuation state, an enforced continuation budget, pause/resume, or a status surface.",
       },
+      {
+        id: "provider-fast-activation",
+        description:
+          "Request provider acceleration and report bounded evidence",
+        readiness: "unsupported",
+        runtimeStatus: "unsupported",
+        notes:
+          "Claude Code static materialization has no owned request or response-evidence seam. Generated agent files must not claim that fast intent was requested or applied.",
+        remediationHint:
+          "Do not encode guessed frontmatter, environment, or provider controls. Supporting this requires a runtime Agent SDK integration plus per-attempt response proof.",
+      },
     ],
   };

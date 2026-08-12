@@ -31,4 +31,22 @@ describe("Claude Code adapter capability contract", () => {
     expect(notes).not.toContain(["goal", "command"].join(" "));
     expect(notes).not.toContain(["/weave", "goal"].join(":"));
   });
+
+  it("declares provider-fast-activation as unsupported for static materialization", () => {
+    const capability =
+      CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+        (entry) => entry.id === "provider-fast-activation",
+      );
+    const serialized = JSON.stringify(capability);
+
+    expect(capability?.readiness).toBe("unsupported");
+    expect(capability?.runtimeStatus).toBe("unsupported");
+    expect(capability?.notes).toContain("static materialization");
+    expect(capability?.notes).toContain("no owned request");
+    expect(capability?.readiness).not.toBe("native");
+    expect(capability?.readiness).not.toBe("degraded");
+    expect(serialized).not.toContain("service_tier");
+    expect(serialized).not.toContain("fastMode");
+    expect(serialized).not.toContain("anthropic-beta");
+  });
 });

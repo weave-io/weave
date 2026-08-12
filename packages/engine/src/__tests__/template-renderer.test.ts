@@ -757,10 +757,7 @@ describe("renderTemplate — strict full-path validation", () => {
         "delegation.targets",
         "delegation.targets.name",
         "delegation.targets.description",
-        "delegation.targets.domains",
         "delegation.targets.triggers",
-        "delegation.targets.triggers.domain",
-        "delegation.targets.triggers.trigger",
       ),
     );
     expect(error.type).toBe("UnknownPath");
@@ -780,29 +777,21 @@ describe("renderTemplate — strict full-path validation", () => {
         "delegation.targets",
         "delegation.targets.name",
         "delegation.targets.description",
-        "delegation.targets.domains",
         "delegation.targets.triggers",
-        "delegation.targets.triggers.domain",
-        "delegation.targets.triggers.trigger",
       ),
     );
     expect(output).toBe("shuttlewarp");
   });
 
-  it("allows nested valid paths: {{#delegation.targets}}{{#triggers}}{{domain}}{{/triggers}}{{/delegation.targets}}", () => {
-    // Inside {{#delegation.targets}}{{#triggers}}, child "domain" resolves to
-    // "delegation.targets.triggers.domain" which IS in ALLOWED_TEMPLATE_PATHS.
+  it("renders exact trigger strings in source order with {{.}}", () => {
     const output = render(
-      "{{#delegation.targets}}{{#triggers}}{{domain}}:{{trigger}} {{/triggers}}{{/delegation.targets}}",
+      "{{#delegation.targets}}{{#triggers}}- {{.}}\n{{/triggers}}{{/delegation.targets}}",
       {
         delegation: {
           targets: [
             {
               name: "shuttle",
-              triggers: [
-                { domain: "Backend", trigger: "API work" },
-                { domain: "Frontend", trigger: "UI work" },
-              ],
+              triggers: ["review code", "fix tests", "audit APIs"],
             },
           ],
         },
@@ -812,13 +801,74 @@ describe("renderTemplate — strict full-path validation", () => {
         "delegation.targets",
         "delegation.targets.name",
         "delegation.targets.description",
-        "delegation.targets.domains",
         "delegation.targets.triggers",
-        "delegation.targets.triggers.domain",
-        "delegation.targets.triggers.trigger",
+        ".",
       ),
     );
-    expect(output).toBe("Backend:API work Frontend:UI work ");
+    expect(output).toBe("- review code\n- fix tests\n- audit APIs\n");
+  });
+
+  it("renders empty trigger arrays as no items", () => {
+    const output = render(
+      "{{#delegation.targets}}[{{#triggers}}{{.}}{{/triggers}}]{{/delegation.targets}}",
+      {
+        delegation: {
+          targets: [{ name: "shuttle", triggers: [] }],
+        },
+      },
+      allowed(
+        "delegation",
+        "delegation.targets",
+        "delegation.targets.name",
+        "delegation.targets.triggers",
+        ".",
+      ),
+    );
+    expect(output).toBe("[]");
+  });
+
+  it("HTML-escapes trigger strings rendered with {{.}}", () => {
+    const output = render(
+      "{{#delegation.targets}}{{#triggers}}{{.}}{{/triggers}}{{/delegation.targets}}",
+      {
+        delegation: {
+          targets: [
+            {
+              name: "shuttle",
+              triggers: ['use <fast> & "quoted" hints'],
+            },
+          ],
+        },
+      },
+      allowed(
+        "delegation",
+        "delegation.targets",
+        "delegation.targets.triggers",
+        ".",
+      ),
+    );
+    expect(output).toBe("use &lt;fast&gt; &amp; &quot;quoted&quot; hints");
+  });
+
+  it("rejects removed trigger object members as UnknownPath", () => {
+    const error = renderErr(
+      "{{#delegation.targets}}{{#triggers}}{{domain}}{{/triggers}}{{/delegation.targets}}",
+      {
+        delegation: {
+          targets: [{ name: "shuttle", triggers: ["review code"] }],
+        },
+      },
+      allowed(
+        "delegation",
+        "delegation.targets",
+        "delegation.targets.triggers",
+        ".",
+      ),
+    );
+    expect(error.type).toBe("UnknownPath");
+    if (error.type === "UnknownPath") {
+      expect(error.path).toBe("delegation.targets.triggers.domain");
+    }
   });
 });
 
@@ -853,10 +903,7 @@ describe("renderTemplate — execution lifecycle contract trust boundary", () =>
     "delegation.targets",
     "delegation.targets.name",
     "delegation.targets.description",
-    "delegation.targets.domains",
     "delegation.targets.triggers",
-    "delegation.targets.triggers.domain",
-    "delegation.targets.triggers.trigger",
     "delegation.targets.isCategory",
     "delegation.targets.isCategory.name",
     "delegation.targets.isCategory.description",

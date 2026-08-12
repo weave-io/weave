@@ -48,8 +48,8 @@ export const CapabilityReadinessSchema = z.enum([
 // ---------------------------------------------------------------------------
 
 /**
- * Stable identifiers for all 21 capabilities defined in the Core Readiness
- * Profile (13 required + 8 optional).
+ * Stable identifiers for all 22 capabilities defined in the Core Readiness
+ * Profile (13 required + 9 optional).
  *
  * Required capabilities (13):
  *   config-materialization, agent-materialization, primary-agent-selection,
@@ -58,10 +58,11 @@ export const CapabilityReadinessSchema = z.enum([
  *   command-entrypoints, event-logging, token-usage-reporting,
  *   descriptor-relative-native-session-io
  *
- * Optional capabilities (8):
+ * Optional capabilities (9):
  *   idle-continuation, compaction-recovery, context-window-monitor,
  *   analytics-dashboard, eval-integration, static-artifact-generation,
- *   multiple-active-workflows, model-thinking-activation
+ *   multiple-active-workflows, model-thinking-activation,
+ *   provider-fast-activation
  *
  * ## Execution-entry capability model (execution lifecycle contract)
  *
@@ -111,7 +112,8 @@ export type CapabilityId =
   | "eval-integration"
   | "static-artifact-generation"
   | "multiple-active-workflows"
-  | "model-thinking-activation";
+  | "model-thinking-activation"
+  | "provider-fast-activation";
 
 export const CapabilityIdSchema = z.enum([
   // Required
@@ -137,6 +139,7 @@ export const CapabilityIdSchema = z.enum([
   "static-artifact-generation",
   "multiple-active-workflows",
   "model-thinking-activation",
+  "provider-fast-activation",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -252,8 +255,14 @@ export const REQUIRED_CAPABILITIES: readonly CapabilityId[] = [
 ] as const;
 
 /**
- * The 8 optional capability IDs for the Core Readiness Profile.
+ * The 9 optional capability IDs for the Core Readiness Profile.
  * Gaps in optional capabilities produce warnings, not failures.
+ *
+ * `provider-fast-activation` is the optional provider-acceleration capability.
+ * Static readiness is a truthful ceiling for whether the adapter can request
+ * acceleration. Runtime evidence may only lower that ceiling. A descriptor
+ * without `fast true` does not require this capability and emits no requested
+ * or applied state.
  */
 export const OPTIONAL_CAPABILITIES: readonly CapabilityId[] = [
   "idle-continuation",
@@ -264,13 +273,82 @@ export const OPTIONAL_CAPABILITIES: readonly CapabilityId[] = [
   "static-artifact-generation",
   "multiple-active-workflows",
   "model-thinking-activation",
+  "provider-fast-activation",
 ] as const;
 
-/** All 21 capability IDs in profile order (required then optional). */
+/** All 22 capability IDs in profile order (required then optional). */
 export const ALL_CAPABILITY_IDS: readonly CapabilityId[] = [
   ...REQUIRED_CAPABILITIES,
   ...OPTIONAL_CAPABILITIES,
 ] as const;
+
+/** Optional capability for provider acceleration request and evidence. */
+export const PROVIDER_FAST_ACTIVATION_ID = "provider-fast-activation" as const;
+
+/**
+ * Bounded runtime states for `provider-fast-activation`.
+ *
+ * Absence of `fast true` emits no acceleration state at all. These values are
+ * sanitized `runtimeStatus` tokens, not a second readiness machine:
+ * `applied` may only accompany `native`, `requested`/`declared`/`not-confirmed`
+ * stay at or below `degraded`, and `unsupported` cannot be raised.
+ */
+export const PROVIDER_FAST_ACTIVATION_STATUSES = [
+  "declared",
+  "requested",
+  "applied",
+  "not-confirmed",
+  "unsupported",
+] as const;
+
+export type ProviderFastActivationStatus =
+  (typeof PROVIDER_FAST_ACTIVATION_STATUSES)[number];
+
+export const ProviderFastActivationStatusSchema = z.enum(
+  PROVIDER_FAST_ACTIVATION_STATUSES,
+);
+
+/**
+ * Map a bounded acceleration state onto the existing readiness vocabulary.
+ * This is a ceiling hint for that state, not a grant to raise a declaration.
+ */
+export function readinessForProviderFastStatus(
+  status: ProviderFastActivationStatus,
+): CapabilityReadiness {
+  if (status === "applied") return "native";
+  if (status === "unsupported") return "unsupported";
+  return "degraded";
+}
+
+/**
+ * Resolve the acceleration state for one descriptor.
+ *
+ * No `fast true` returns `undefined` and must not emit requested/applied.
+ * A declared descriptor with no attempt is `declared`.
+ */
+export function providerFastActivationState(input: {
+  readonly fast?: true;
+  readonly status?: ProviderFastActivationStatus;
+}): ProviderFastActivationStatus | undefined {
+  if (input.fast !== true) return undefined;
+  return input.status ?? "declared";
+}
+
+/**
+ * Combine a static ceiling with one bounded acceleration state.
+ * Evidence can lower readiness but never raise it.
+ */
+export function effectiveProviderFastReadiness(
+  declared: CapabilityReadiness,
+  status: ProviderFastActivationStatus | undefined,
+): CapabilityReadiness {
+  if (status === undefined) return declared;
+  if (status === "applied") return lowerReadinessByProbe(declared, "ok");
+  if (status === "unsupported") {
+    return lowerReadinessByProbe(declared, "unavailable");
+  }
+  return lowerReadinessByProbe(declared, "degraded");
+}
 
 // ---------------------------------------------------------------------------
 // § 2.1 — Readiness Verdict and Outcome
@@ -544,7 +622,7 @@ export interface EffectiveCapabilityEntry extends CapabilityEntry {
 export interface EffectiveCapabilityEvaluation {
   /** Static declarations preserved unchanged. */
   readonly declarations: AdapterCapabilityContract;
-  /** Exactly one effective entry per known capability ID (19). */
+  /** Exactly one effective entry per known capability ID (22). */
   readonly effectiveCapabilities: EffectiveCapabilityEntry[];
   /** Profile evaluation against effective readiness. */
   readonly profileResult: ProfileEvaluationResult;

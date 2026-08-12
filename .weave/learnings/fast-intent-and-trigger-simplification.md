@@ -42,3 +42,10 @@
 - Engine descriptors now carry only `fast?: true` and `DelegationTarget.triggers: string[]`. Category metadata no longer has `patterns`. `generateCategoryShuttles()` copies category triggers, never base Shuttle triggers, and sets `fast true` when the category or the base Shuttle declares it. There is no `false` value.
 - Descriptor outputs must copy trigger, model, and skill arrays. Sharing `targetConfig.triggers` or `category.triggers` leaks caller mutation into the normalized shape.
 - Changing `DelegationTarget.triggers` to `string[]` immediately breaks later-task consumers that still validate object triggers, including the Pi bootstrap schema (Task 8) and template trigger projection (Task 6). This slice keeps a compile-only template-context bridge and does not migrate those owners.
+
+## Task 6 prompt and capability boundary
+
+- Template context now copies `DelegationTarget.triggers` as ordered `string[]`. Domains, trigger objects, and `CategoryInput.patterns` are gone. Loom renders exact strings with `{{.}}` and routes category shuttles by description plus listed triggers only.
+- The optional capability ID is `provider-fast-activation`. Bounded `runtimeStatus` values reuse existing readiness: no `fast true` emits no state; `declared`/`requested`/`not-confirmed` stay at or below `degraded`; `applied` may only accompany `native`; `unsupported` cannot be raised. Static declarations are ceilings.
+- Task 1 ceilings: Pi and OpenCode are `degraded`/`not-confirmed` (request-capable, not applied/native). Claude Code static materialization is `unsupported`. Optional gaps do not enter health-only mode.
+- Immediate leftover type consumers needed count updates (`ALL_CAPABILITY_IDS.length` is 22) and leftover `patterns` fixture deletions. Root typecheck still fails in `packages/adapters/pi/src/extension.ts` `parseChildBootstrapBody` because Task 8 still owns converting authenticated child bootstrap triggers from objects to `string[]`.

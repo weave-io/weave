@@ -72,11 +72,7 @@ export const ALLOWED_TEMPLATE_PATHS: Set<string> = new Set([
   // Delegation target fields (accessed inside {{#delegation.targets}} sections)
   "delegation.targets.name",
   "delegation.targets.description",
-  "delegation.targets.domains",
   "delegation.targets.triggers",
-  "delegation.targets.triggers.domain",
-  "delegation.targets.triggers.trigger",
-  "delegation.targets.triggers.routing_hint",
   "delegation.targets.isCategory",
 
   // Fields accessible inside {{#delegation.targets}}{{#isCategory}} sections
@@ -130,10 +126,8 @@ export interface ToolPolicyContextEntry {
 export interface DelegationTargetContextEntry {
   name: string;
   description?: string;
-  /** Deduplicated domain strings across all triggers for this target. */
-  domains: string[];
-  /** Full trigger details including optional routing hints. */
-  triggers: Array<{ domain: string; trigger: string; routing_hint?: string }>;
+  /** Ordered copy of the target's declared string triggers. */
+  triggers: string[];
   /** True when this target is a generated category shuttle agent. */
   isCategory: boolean;
 }
@@ -205,7 +199,6 @@ export type TemplateContextError = {
 export interface CategoryInput {
   name: string;
   description?: string;
-  patterns?: string[];
 }
 
 /** Inputs for building an `AgentPromptTemplateContext`. */
@@ -229,17 +222,15 @@ export interface TemplateContextInput {
 /**
  * Project a `DelegationTarget` into a `DelegationTargetContextEntry`.
  *
- * Task 6 owns string-trigger prompt projection. This compile bridge keeps the
- * existing context types valid against `DelegationTarget.triggers: string[]`
- * and does not invent structured trigger objects or domain strings.
+ * Copies declared trigger strings in source order. Does not invent domains,
+ * structured trigger objects, or provider-specific fields.
  */
 function projectDelegationTarget(
   target: DelegationTarget,
 ): DelegationTargetContextEntry {
   const entry: DelegationTargetContextEntry = {
     name: target.name,
-    domains: [],
-    triggers: [],
+    triggers: [...target.triggers],
     isCategory: target.isCategory,
   };
 

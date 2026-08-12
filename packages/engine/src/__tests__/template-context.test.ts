@@ -8,7 +8,7 @@
  * - No raw config/model/temperature/path exposure
  * - Optional category behavior (present for category shuttles, absent otherwise)
  * - Allowed-path metadata completeness
- * - Compile-only trigger bridge until Task 6 owns projection
+ * - Exact string-trigger projection and bounded context
  */
 
 import { describe, expect, it } from "bun:test";
@@ -108,16 +108,21 @@ describe("ALLOWED_TEMPLATE_PATHS", () => {
     expect(ALLOWED_TEMPLATE_PATHS.has("delegation.targets.description")).toBe(
       true,
     );
-    expect(ALLOWED_TEMPLATE_PATHS.has("delegation.targets.domains")).toBe(true);
     expect(ALLOWED_TEMPLATE_PATHS.has("delegation.targets.triggers")).toBe(
       true,
     );
+    expect(ALLOWED_TEMPLATE_PATHS.has("delegation.targets.domains")).toBe(
+      false,
+    );
     expect(
       ALLOWED_TEMPLATE_PATHS.has("delegation.targets.triggers.domain"),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       ALLOWED_TEMPLATE_PATHS.has("delegation.targets.triggers.trigger"),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      ALLOWED_TEMPLATE_PATHS.has("delegation.targets.triggers.routing_hint"),
+    ).toBe(false);
     expect(ALLOWED_TEMPLATE_PATHS.has("delegation.targets.isCategory")).toBe(
       true,
     );
@@ -243,11 +248,20 @@ describe("buildTemplateContext — category context", () => {
   });
 
   it("does NOT expose category patterns or other raw fields", () => {
-    const ctx = build({ category: { name: "backend" } });
+    const ctx = build({
+      category: {
+        name: "backend",
+        description: "APIs",
+      },
+    });
     expect(
       (ctx.category as unknown as Record<string, unknown> | undefined)
         ?.patterns,
     ).toBeUndefined();
+    expect(Object.keys(ctx.category ?? {}).sort()).toEqual([
+      "description",
+      "name",
+    ]);
   });
 });
 
@@ -333,16 +347,7 @@ describe("buildTemplateContext — delegation with targets", () => {
     expect(ctx.delegation.targets[0]?.description).toBeUndefined();
   });
 
-  it("does not invent structured trigger objects from string triggers", () => {
-    const ctx = build({
-      delegationTargets: [
-        makeTarget("shuttle-backend", undefined, ["REST endpoint changes"]),
-      ],
-    });
-    expect(ctx.delegation.targets[0]?.triggers).toEqual([]);
-  });
-
-  it("does not invent domains from string triggers", () => {
+  it("projects exact trigger strings in source order", () => {
     const ctx = build({
       delegationTargets: [
         makeTarget("shuttle-backend", undefined, [
@@ -352,14 +357,50 @@ describe("buildTemplateContext — delegation with targets", () => {
         ]),
       ],
     });
-    expect(ctx.delegation.targets[0]?.domains).toEqual([]);
+    expect(ctx.delegation.targets[0]?.triggers).toEqual([
+      "REST endpoint changes",
+      "GraphQL changes",
+      "Schema migrations",
+    ]);
   });
 
-  it("empty domains array when target has no triggers", () => {
+  it("projects an empty trigger array when the target has no triggers", () => {
     const ctx = build({
       delegationTargets: [makeTarget("shuttle-backend")],
     });
-    expect(ctx.delegation.targets[0]?.domains).toEqual([]);
+    expect(ctx.delegation.targets[0]?.triggers).toEqual([]);
+  });
+
+  it("copies trigger arrays so later mutation cannot change the context", () => {
+    const triggers = ["review code", "fix tests"];
+    const ctx = build({
+      delegationTargets: [makeTarget("shuttle", undefined, triggers)],
+    });
+    triggers.push("do not leak");
+    expect(ctx.delegation.targets[0]?.triggers).toEqual([
+      "review code",
+      "fix tests",
+    ]);
+    expect(ctx.delegation.targets[0]?.triggers).not.toBe(triggers);
+  });
+
+  it("does not invent domains or structured trigger members", () => {
+    const ctx = build({
+      delegationTargets: [
+        makeTarget("shuttle-backend", undefined, ["REST endpoint changes"]),
+      ],
+    });
+    const target = ctx.delegation.targets[0] as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(target.domains).toBeUndefined();
+    expect(target.triggers).toEqual(["REST endpoint changes"]);
+    expect(Object.keys(target).sort()).toEqual([
+      "isCategory",
+      "name",
+      "triggers",
+    ]);
   });
 
   it("projects isCategory=false for regular agents", () => {
