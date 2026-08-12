@@ -1751,7 +1751,10 @@ describe("child provider error retention in the overlay", () => {
   };
 
   it("drops live message_end top-level and nested catchall from replay and view", async () => {
-    const { controller } = await open([liveChild("child-live-catch")], "child-live-catch");
+    const { controller } = await open(
+      [liveChild("child-live-catch")],
+      "child-live-catch",
+    );
     const live = apply(controller, {
       type: "message_end",
       secret: SENTINELS.secret,

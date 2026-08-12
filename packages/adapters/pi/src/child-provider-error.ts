@@ -367,7 +367,7 @@ const stringField = (
  * throwing `has` trap is reported as absence so inherited and accessor noise
  * cannot widen the allowlisted copy.
  */
-const hasOwnProperty = (
+const recordHasOwnKey = (
   record: Record<string, unknown>,
   key: string,
 ): boolean => {
@@ -724,7 +724,7 @@ function copySafeAssistantFields(
   return guardValue(() => {
     const next: Record<string, unknown> = {};
     for (const key of SAFE_ASSISTANT_MESSAGE_FIELDS) {
-      if (!hasOwnProperty(message, key)) continue;
+      if (!recordHasOwnKey(message, key)) continue;
       const value = field(message, key);
       if (value === undefined) continue;
       next[key] = value;
