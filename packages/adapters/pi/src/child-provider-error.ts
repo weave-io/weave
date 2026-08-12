@@ -89,6 +89,7 @@ import {
   MAX_CHILD_EVENT_STRING,
   type PiChildSessionEvent,
   PiChildSessionEventSchema,
+  PiExtensionUiResponseSchema,
   projectAssistantUsageFacts,
 } from "./child-session-events.js";
 
@@ -946,6 +947,13 @@ const parseRebuiltEvent = (value: unknown): PiChildSessionEvent => {
   return parsed.success ? parsed.data : invalidReplayEvent();
 };
 
+const safeUiRequestId = (value: unknown): string | undefined => {
+  const candidate = safeToolText(value);
+  return candidate !== undefined && candidate.length <= 256
+    ? candidate
+    : undefined;
+};
+
 /** Rebuild one parser-approved event through a closed reducer allowlist. */
 export function redactProviderErrorFromEvent(
   event: PiChildSessionEvent,
@@ -1025,9 +1033,35 @@ export function redactProviderErrorFromEvent(
         copyNumber(rebuilt, source, "attempt");
         copyString(rebuilt, source, "reason");
         break;
-      case "extension_ui_request":
-      case "extension_ui_response":
-        return invalidReplayEvent();
+      case "extension_ui_request": {
+        const requestId = safeUiRequestId(ownDataField(source, "requestId"));
+        if (requestId === undefined) return invalidReplayEvent();
+        rebuilt.requestId = requestId;
+        copyString(rebuilt, source, "requestType", 128);
+        const message = ownDataField(source, "message");
+        if (message !== undefined)
+          rebuilt.message = projectReducerValue(message);
+        for (const key of ["widget", "dialog"] as const) {
+          const value = ownDataField(source, key);
+          if (value !== undefined) rebuilt[key] = projectReducerValue(value);
+        }
+        break;
+      }
+      case "extension_ui_response": {
+        const requestId = safeUiRequestId(ownDataField(source, "requestId"));
+        if (requestId === undefined) return invalidReplayEvent();
+        rebuilt.requestId = requestId;
+        const response = ownDataField(source, "response");
+        if (response !== undefined)
+          rebuilt.response = projectReducerValue(response);
+        copyBoolean(rebuilt, source, "cancelled");
+        const error = ownDataField(source, "error");
+        if (typeof error === "string")
+          rebuilt.error = safeToolText(error) ?? TOOL_ERROR_DETAILS_UNAVAILABLE;
+        return PiExtensionUiResponseSchema.safeParse(rebuilt).success
+          ? parseRebuiltEvent(rebuilt)
+          : invalidReplayEvent();
+      }
       case "unknown":
         copyString(rebuilt, source, "originalType", 256);
         break;

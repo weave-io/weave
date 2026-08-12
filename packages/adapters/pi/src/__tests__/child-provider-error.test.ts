@@ -39,7 +39,11 @@ import {
   TOOL_ERROR_DETAILS_UNAVAILABLE,
   TOOL_RESULT_DETAILS_UNAVAILABLE,
 } from "../child-provider-error.js";
-import { parsePiChildSessionEvent } from "../child-session-events.js";
+import {
+  type PiChildSessionEvent,
+  PiChildSessionEventSchema,
+  parsePiChildSessionEvent,
+} from "../child-session-events.js";
 import { PiChildTranscriptReducer } from "../child-transcript.js";
 
 /**
@@ -1028,6 +1032,81 @@ describe("child provider error safe message copy", () => {
     expect(JSON.stringify(projected)).toContain(
       TOOL_RESULT_DETAILS_UNAVAILABLE,
     );
+  });
+
+  it("preserves validated extension UI correlation and sanitizes payloads", () => {
+    const request = replay({
+      type: "extension_ui_request",
+      requestType: "dialog",
+      requestId: "ui-request-1",
+      message: "Choose one option",
+      dialog: {
+        title: "Safe title",
+        options: ["One", "xoxb-1234567890-secret"],
+      },
+      providerRequestId: "ghp_top_level_secret",
+    });
+    const response = replay({
+      type: "extension_ui_response",
+      requestId: "ui-request-1",
+      response: {
+        selection: "One",
+        metadata: { Authorization: "Bearer opaque", note: "User choice" },
+      },
+      providerRequestId: "github_pat_top_level_secret",
+    });
+
+    expect(PiChildSessionEventSchema.safeParse(request).success).toBe(true);
+    expect(PiChildSessionEventSchema.safeParse(response).success).toBe(true);
+    expect(request.type).toBe("extension_ui_request");
+    expect(response.type).toBe("extension_ui_response");
+    if (
+      request.type !== "extension_ui_request" ||
+      response.type !== "extension_ui_response"
+    )
+      throw new Error("unreachable");
+    expect(request.requestId).toBe("ui-request-1");
+    expect(response.requestId).toBe("ui-request-1");
+    const serialized = JSON.stringify([request, response]);
+    expect(serialized).not.toContain("xoxb-");
+    expect(serialized).not.toContain("Bearer opaque");
+    expect(serialized).not.toContain("ghp_top_level_secret");
+    expect(serialized).not.toContain("github_pat_top_level_secret");
+    expect(serialized).toContain(TOOL_RESULT_DETAILS_UNAVAILABLE);
+
+    const reducer = new PiChildTranscriptReducer();
+    reducer.applyEvent(request);
+    reducer.applyEvent(response);
+    expect(reducer.getState().extensionUi[0]?.requestId).toBe("ui-request-1");
+  });
+
+  it("fails closed for invalid extension UI correlation IDs", () => {
+    for (const requestId of [
+      "",
+      "x".repeat(257),
+      "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+    ]) {
+      const projected = replay({
+        type: "extension_ui_request",
+        requestType: "notification",
+        requestId,
+        message: "Safe notice",
+      });
+      expect(projected).toEqual({
+        type: "unknown",
+        originalType: "redacted-invalid-event",
+      });
+    }
+
+    const missing = redactProviderErrorFromEvent({
+      type: "extension_ui_response",
+      requestId: "ui-valid-before-hostile-access",
+      get response() {
+        throw new Error("ghp_response_getter_secret");
+      },
+    });
+    expect(PiChildSessionEventSchema.safeParse(missing).success).toBe(true);
+    expect(JSON.stringify(missing)).not.toContain("ghp_");
   });
 
   const hostileMessage = {
