@@ -102,7 +102,7 @@ agent tapestry {
 }
 
 agent shuttle {
-  description "General implementation worker: bounded coding, testing, debugging, and refactoring tasks; may read, write, and run commands, but cannot delegate; select for scoped changes when no category shuttle matches the files"
+  description "General implementation worker: bounded coding, testing, debugging, and refactoring tasks; may read, write, and run commands, but cannot delegate; select for scoped changes when no category shuttle matches the work"
   prompt_file "shuttle.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -117,9 +117,9 @@ agent shuttle {
   }
 
   triggers [
-    { domain "Uncategorized Implementation" trigger "A bounded code change whose files no declared category claims" routing_hint "Use for a scoped change only when no listed category shuttle clearly matches the files" }
-    { domain "Cross-Category Change" trigger "One small change that spans several categories and cannot be assigned to a single one" routing_hint "Use when an edit crosses category boundaries and splitting it would cost more than doing it once" }
-    { domain "Repository Tooling" trigger "Edits to build files, scripts, CI config, or dependency manifests" routing_hint "Use for build, script, CI, and manifest files that no category pattern covers" }
+    "Use for a scoped change only when no listed category shuttle clearly matches the work"
+    "Use when an edit crosses category boundaries and splitting it would cost more than doing it once"
+    "Use for build, script, CI, and manifest files that no category covers"
   ]
 }
 
@@ -139,9 +139,9 @@ agent pattern {
   }
 
   triggers [
-    { domain "Planning" trigger "Creating structured implementation plans before execution" routing_hint "Use for multi-file features, complex refactors, or work spanning 5+ steps" }
-    { domain "Architecture" trigger "Designing system structure, component boundaries, and data flow" routing_hint "Use when system design decisions need to be made before implementation" }
-    { domain "Decomposition" trigger "Breaking complex goals into discrete, sequenced tasks" routing_hint "Use when a large goal needs to be broken into an actionable plan" }
+    "Use for multi-file features, complex refactors, or work spanning 5+ steps"
+    "Use when system design decisions need to be made before implementation"
+    "Use when a large goal needs to be broken into an actionable plan"
   ]
 }
 
@@ -161,9 +161,9 @@ agent thread {
   }
 
   triggers [
-    { domain "Exploration" trigger "Tracing symbols, call graphs, and data flow across the codebase" routing_hint "Use for fast codebase exploration — read-only and cheap" }
-    { domain "Discovery" trigger "Locating where a concept, pattern, or behavior is implemented" routing_hint "Use when answering 'where is X' or 'how does Y work' questions" }
-    { domain "Audit" trigger "Surveying existing code before planning a change" routing_hint "Use to gather evidence before routing to implementation agents" }
+    "Use for fast codebase exploration — read-only and cheap"
+    "Use when answering 'where is X' or 'how does Y work' questions"
+    "Use to gather evidence before routing to implementation agents"
   ]
 }
 
@@ -183,9 +183,9 @@ agent spindle {
   }
 
   triggers [
-    { domain "Research" trigger "Fetching external documentation, API references, or library guides" routing_hint "Use for external docs and research — read-only" }
-    { domain "Verification" trigger "Confirming facts, versions, or behaviors against authoritative sources" routing_hint "Use when facts need verification against official sources" }
-    { domain "Discovery" trigger "Finding relevant third-party tools, packages, or standards" routing_hint "Use when exploring external options, libraries, or standards" }
+    "Use for external docs and research — read-only"
+    "Use when facts need verification against official sources"
+    "Use when exploring external options, libraries, or standards"
   ]
 }
 
@@ -205,9 +205,9 @@ agent weft {
   }
 
   triggers [
-    { domain "Code Review" trigger "Reviewing code quality, correctness, and maintainability" routing_hint "Use after non-trivial changes (3+ files, or when quality matters)" }
-    { domain "Gate" trigger "Approving or requesting changes before a task is considered complete" routing_hint "Use as a quality gate before considering work complete" }
-    { domain "Feedback" trigger "Providing structured critique on a plan, design, or implementation" routing_hint "Use when structured feedback is needed on plans or designs" }
+    "Use after non-trivial changes (3+ files, or when quality matters)"
+    "Use as a quality gate before considering work complete"
+    "Use when structured feedback is needed on plans or designs"
   ]
 }
 
@@ -227,9 +227,9 @@ agent warp {
   }
 
   triggers [
-    { domain "Security" trigger "Auditing code for vulnerabilities, misconfigurations, or unsafe patterns" routing_hint "MANDATORY when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation" }
-    { domain "Gate" trigger "Security approval checkpoint before shipping or merging" routing_hint "Use as security gate before shipping security-sensitive changes" }
-    { domain "Threat Modeling" trigger "Identifying attack surfaces and risk areas in a design or implementation" routing_hint "Use when security implications of a design need analysis" }
+    "MANDATORY when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation"
+    "Use as security gate before shipping security-sensitive changes"
+    "Use when security implications of a design need analysis"
   ]
 }
 

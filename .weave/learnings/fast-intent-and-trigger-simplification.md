@@ -23,3 +23,10 @@
 
 - The safe graph copier treated every non-object `typeof` result as a primitive. Because JavaScript reports callables as `"function"`, a callable AST node with an own `type` getter bypassed the descriptor checks and reached exported `validate()`, where the getter ran repeatedly.
 - `copyGraph()` now rejects callable values before its primitive return path. Direct `validate()` and exported-schema regressions prove that callable graph nodes fail without executing their getters, while the existing suite continues to cover valid primitive values and prior graph protections.
+
+## Task 4 conversion boundary
+
+- Legacy JSONC conversion must copy the parsed graph through own enumerable writable data descriptors before any field read. jsonc-parser output is untrusted even though it usually creates plain objects.
+- Trigger conversion selects nonblank `routing_hint`, else nonblank `trigger`, preserves source order, and drops only exact duplicate strings. Every discarded structured field and every malformed or empty entry gets a warning.
+- Valid category patterns are dropped with a warning; malformed patterns also warn. A category with a nonblank description still converts. Generated DSL must not emit `patterns`, trigger objects, or inferred `fast`.
+- Task 5 owns engine descriptor, category-shuttle inheritance, and normalized pattern removal. This slice does not change engine production files.

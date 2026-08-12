@@ -85,7 +85,7 @@ Available specialists:
 - **{{name}}** — {{description}}
 {{/delegation.targets}}
 
-Route implementation tasks to `shuttle-{category}` agents when file patterns match. Fall back to `shuttle` when no category matches.
+Route implementation tasks to `shuttle-{category}` agents when the task matches a listed category's domain. Fall back to `shuttle` when no category matches.
 
 {{#reviewRouting}}
 
@@ -114,9 +114,9 @@ Run all of the following reviewers:
 <Routing>
 For each task, route using this decision tree:
 
-1. **Check file patterns first** (if task specifies files):
-   - Match a configured category pattern → `shuttle-{category}`
-   - Files span multiple categories or no match → `shuttle`
+1. **Check category domain first**:
+   - The task clearly belongs to a listed category → `shuttle-{category}`
+   - The task spans several categories or matches none → `shuttle`
 
 2. **Check explicit category hints**: if the plan task names a category, route to `shuttle-{category}` when available.
 

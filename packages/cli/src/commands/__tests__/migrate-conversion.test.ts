@@ -26,11 +26,17 @@ import { describe, expect, it } from "bun:test";
 import { parseConfig } from "@weaveio/weave-core";
 import { MemoryFileSystem } from "../../fs/file-system.js";
 import { BufferTerminal } from "../../io/terminal.js";
+import {
+  LEGACY_GRAPH_TOO_LARGE_MESSAGE,
+  MAX_LEGACY_ARRAY_LENGTH,
+  UNSAFE_LEGACY_GRAPH_MESSAGE,
+} from "../../migration/legacy-graph-copy.js";
 import { StaticPromptAdapter } from "../../prompt/index.js";
 import { ThemeManager } from "../../theme/colors.js";
 import {
   type ConversionResult,
   convertLegacyJsonc,
+  convertLegacyValue,
   type MigrationPlan,
   runInit,
   writeMigratedDsl,
@@ -1108,14 +1114,14 @@ describe("convertLegacyJsonc — model + fallback_models → ordered models [...
         },
       }),
     );
-    expect(result.warnings).toHaveLength(0);
     expect(result.dsl).toContain('models ["gpt-4o", "claude-sonnet-4-5"]');
+    expect(result.dsl).not.toContain("patterns");
   });
 });
 
 // 4.5 — Category blocks (no flattened shuttle agents)
 describe("convertLegacyJsonc — categories → category blocks", () => {
-  it("converts a category into a category block", () => {
+  it("converts a category into a category block and drops patterns", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
@@ -1126,10 +1132,17 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
         },
       }),
     );
-    expect(result.warnings).toHaveLength(0);
+    expect(result.warnings).toEqual([
+      {
+        field: "categories.backend.patterns",
+        reason:
+          "category file patterns are not supported; dropped valid patterns and did not emit a replacement",
+      },
+    ]);
     expect(result.dsl).toContain("category backend {");
     expect(result.dsl).toContain('description "Backend APIs"');
-    expect(result.dsl).toContain('patterns ["src/api/**", "src/server/**"]');
+    expect(result.dsl).not.toContain("patterns");
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
   });
 
   it("does NOT generate a standalone shuttle-backend agent", () => {
@@ -1163,9 +1176,10 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
         },
       }),
     );
-    expect(result.warnings).toHaveLength(0);
+    expect(result.warnings).toHaveLength(2);
     expect(result.dsl).toContain("category backend {");
     expect(result.dsl).toContain("category frontend {");
+    expect(result.dsl).not.toContain("patterns");
   });
 
   it("converts category with temperature and prompt_append", () => {
@@ -1181,12 +1195,13 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
         },
       }),
     );
-    expect(result.warnings).toHaveLength(0);
     expect(result.dsl).toContain("temperature 0.2");
     expect(result.dsl).toContain('prompt_append "Focus on API contracts."');
+    expect(result.dsl).not.toContain("patterns");
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
   });
 
-  it("warns and skips a category when patterns is not an array", () => {
+  it("warns on malformed patterns and skips a category without a description", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
@@ -1194,13 +1209,20 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
         },
       }),
     );
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("categories.backend.patterns");
-    expect(result.warnings[0]!.reason).toContain("non-empty array");
+    expect(
+      result.warnings.some(
+        (warning) => warning.field === "categories.backend.patterns",
+      ),
+    ).toBe(true);
+    expect(
+      result.warnings.some(
+        (warning) => warning.field === "categories.backend.description",
+      ),
+    ).toBe(true);
     expect(result.dsl).not.toContain("category backend");
   });
 
-  it("warns and skips a category when patterns is missing", () => {
+  it("converts a category that has a description even when patterns are missing", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
@@ -1212,18 +1234,14 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
       }),
     );
 
-    expect(result.warnings).toEqual([
-      {
-        field: "categories.mini.patterns",
-        reason:
-          "a non-empty array of glob patterns is required; category skipped",
-      },
-    ]);
-    expect(result.dsl).not.toContain("category mini");
+    expect(result.warnings).toEqual([]);
+    expect(result.dsl).toContain("category mini {");
+    expect(result.dsl).toContain('description "Fast mechanical changes"');
+    expect(result.dsl).not.toContain("patterns");
     expect(parseConfig(result.dsl).isOk()).toBe(true);
   });
 
-  it("warns and skips a category when patterns has no string entries", () => {
+  it("warns on malformed pattern entries and skips a category without a description", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
@@ -1232,11 +1250,16 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
       }),
     );
 
-    expect(result.warnings[0]).toEqual({
-      field: "categories.tests.patterns",
-      reason:
-        "a non-empty array of glob patterns is required; category skipped",
-    });
+    expect(
+      result.warnings.some((warning) =>
+        warning.field.startsWith("categories.tests.patterns"),
+      ),
+    ).toBe(true);
+    expect(
+      result.warnings.some(
+        (warning) => warning.field === "categories.tests.description",
+      ),
+    ).toBe(true);
     expect(result.dsl).not.toContain("category tests");
     expect(parseConfig(result.dsl).isOk()).toBe(true);
   });
@@ -1254,12 +1277,13 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
       }),
     );
 
-    expect(result.warnings).toEqual([
-      {
-        field: "categories.backend.description",
-        reason: "a non-empty string is required; category skipped",
-      },
-    ]);
+    expect(
+      result.warnings.some(
+        (warning) =>
+          warning.field === "categories.backend.description" &&
+          warning.reason === "a non-empty string is required; category skipped",
+      ),
+    ).toBe(true);
     expect(result.dsl).not.toContain("category backend");
     expect(parseConfig(result.dsl).isOk()).toBe(true);
   });
@@ -1274,7 +1298,7 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
       }),
     );
 
-    expect(result.warnings).toEqual([]);
+    expect(result.dsl).not.toContain("patterns");
     const parsed = parseConfig(result.dsl);
     expect(parsed.isOk()).toBe(true);
     expect(parsed._unsafeUnwrap().categories.docs?.description).toBe(
@@ -1303,7 +1327,7 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
         },
       }),
     );
-    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).not.toContain("patterns");
     const parseResult = parseConfig(result.dsl);
     expect(parseResult.isOk()).toBe(true);
   });
@@ -1443,10 +1467,10 @@ describe("convertLegacyJsonc — tool_policy mapping", () => {
         },
       }),
     );
-    expect(result.warnings).toHaveLength(0);
     expect(result.dsl).toContain("tool_policy {");
     expect(result.dsl).toContain("write allow");
     expect(result.dsl).toContain("read allow");
+    expect(result.dsl).not.toContain("patterns");
   });
 });
 
@@ -1581,11 +1605,11 @@ describe("convertLegacyJsonc — full agent/category fixture", () => {
       },
     });
     const result = convertLegacyJsonc(source);
-    expect(result.warnings).toHaveLength(0);
     expect(result.dsl).toContain("agent loom {");
     expect(result.dsl).toContain("agent shuttle {");
     expect(result.dsl).toContain("agent my-helper {");
     expect(result.dsl).toContain("category backend {");
+    expect(result.dsl).not.toContain("patterns");
   });
 
   it("full fixture DSL passes parseConfig validation", () => {
@@ -1608,9 +1632,9 @@ describe("convertLegacyJsonc — full agent/category fixture", () => {
       },
     });
     const result = convertLegacyJsonc(source);
-    expect(result.warnings).toHaveLength(0);
     const parseResult = parseConfig(result.dsl);
     expect(parseResult.isOk()).toBe(true);
+    expect(result.dsl).not.toContain("patterns");
   });
 
   it("builtin collision warning appears alongside successful non-colliding conversions", () => {
@@ -1627,10 +1651,9 @@ describe("convertLegacyJsonc — full agent/category fixture", () => {
       },
     });
     const result = convertLegacyJsonc(source);
-    // One warning for the collision
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("custom_agents.loom");
-    // Non-colliding agent and category are converted
+    expect(
+      result.warnings.some((warning) => warning.field === "custom_agents.loom"),
+    ).toBe(true);
     expect(result.dsl).toContain("agent my-helper {");
     expect(result.dsl).toContain("category backend {");
   });
@@ -1708,7 +1731,7 @@ describe("runInit migration — agent/category conversion written to destination
     const content = fs.snapshot()["/project/.weave/config.weave"] ?? "";
     expect(content).toContain("category backend {");
     expect(content).toContain('description "Backend APIs"');
-    expect(content).toContain('patterns ["src/api/**"]');
+    expect(content).not.toContain("patterns");
   });
 
   it("builtin collision warning appears in output and file is still written", async () => {
@@ -2043,8 +2066,8 @@ describe("convertLegacyJsonc — control character escaping in string fields", (
         },
       }),
     );
-    expect(result.warnings).toHaveLength(0);
     expect(result.dsl).toContain("\\u0002");
+    expect(result.dsl).not.toContain("patterns");
   });
 
   it("generated DSL with escaped control characters passes parseConfig validation", () => {
@@ -2141,5 +2164,245 @@ describe("convertLegacyJsonc — real-world JSONC trailing commas and comments (
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]!.field).toBe("<source>");
     expect(result.warnings[0]!.reason).toContain("failed to parse");
+  });
+});
+
+describe("convertLegacyJsonc — string trigger conversion", () => {
+  it("converts structured triggers using routing_hint else trigger, preserving order and exact dedupe", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: {
+          loom: {
+            triggers: [
+              {
+                domain: "Review",
+                trigger: "Review code",
+                routing_hint: "Use for pull request review",
+              },
+              { domain: "Tests", trigger: "Fix tests" },
+              {
+                domain: "Review",
+                trigger: "Duplicate",
+                routing_hint: "Use for pull request review",
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(result.dsl).toContain(
+      'triggers ["Use for pull request review", "Fix tests"]',
+    );
+    expect(result.dsl).not.toMatch(/domain\s+"/);
+    expect(result.dsl).not.toContain("routing_hint");
+    expect(
+      result.warnings.some((warning) =>
+        warning.field.includes("agents.loom.triggers.0.domain"),
+      ),
+    ).toBe(true);
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+
+  it("warns for empty, malformed, and non-array trigger entries", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: {
+          helper: {
+            prompt: "Help",
+            triggers: ["Keep me", "", "   ", 42, null, { trigger: "" }],
+          },
+        },
+      }),
+    );
+    expect(result.dsl).toContain('triggers ["Keep me"]');
+    expect(
+      result.warnings.some((warning) =>
+        warning.reason.includes("empty trigger string discarded"),
+      ),
+    ).toBe(true);
+    expect(
+      result.warnings.some((warning) =>
+        warning.reason.includes("malformed trigger entry discarded"),
+      ),
+    ).toBe(true);
+  });
+
+  it("converts category triggers and never emits trigger objects or fast aliases", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          backend: {
+            description: "Backend APIs",
+            triggers: [
+              { trigger: "Use for APIs", domain: "API" },
+              "Use for persistence",
+            ],
+            fast: true,
+            service_class: "priority",
+            speed: "fast",
+            variant: "turbo",
+            priority: "high",
+          },
+        },
+      }),
+    );
+    expect(result.dsl).toContain(
+      'triggers ["Use for APIs", "Use for persistence"]',
+    );
+    expect(result.dsl).not.toContain("fast");
+    expect(result.dsl).not.toContain("service_class");
+    expect(result.dsl).not.toContain("speed");
+    expect(result.dsl).not.toContain("variant");
+    expect(result.dsl).not.toContain("priority");
+    expect(
+      result.warnings.some((warning) => warning.field.endsWith(".fast")),
+    ).toBe(true);
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
+  });
+});
+
+describe("convertLegacyValue — descriptor-safe conversion", () => {
+  it("does not execute getters on crafted objects", () => {
+    let getterExecutions = 0;
+    const input: Record<string, unknown> = {};
+    Object.defineProperty(input, "log_level", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return "DEBUG";
+      },
+    });
+
+    const result = convertLegacyValue(input);
+    expect(getterExecutions).toBe(0);
+    expect(result.dsl).toBe("");
+    expect(result.warnings[0]?.reason).toBe(UNSAFE_LEGACY_GRAPH_MESSAGE);
+  });
+
+  it("does not read inherited properties", () => {
+    let inheritedGetterExecutions = 0;
+    Object.defineProperty(Object.prototype, "log_level", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        inheritedGetterExecutions += 1;
+        return "DEBUG";
+      },
+    });
+    try {
+      const result = convertLegacyValue({ agents: {} });
+      expect(inheritedGetterExecutions).toBe(0);
+      expect(result.dsl).not.toContain("log_level");
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "log_level");
+    }
+  });
+
+  it("rejects callable values without executing getters", () => {
+    let getterExecutions = 0;
+    const callable = () => undefined;
+    Object.defineProperty(callable, "log_level", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return "DEBUG";
+      },
+    });
+
+    const result = convertLegacyValue(callable);
+    expect(getterExecutions).toBe(0);
+    expect(result.dsl).toBe("");
+    expect(result.warnings[0]?.reason).toBe(UNSAFE_LEGACY_GRAPH_MESSAGE);
+  });
+
+  it("rejects cycles without throwing", () => {
+    const input: Record<string, unknown> = { agents: {} };
+    (input.agents as Record<string, unknown>).loom = input;
+
+    const result = convertLegacyValue(input);
+    expect(result.dsl).toBe("");
+    expect(result.warnings[0]?.reason).toBe(UNSAFE_LEGACY_GRAPH_MESSAGE);
+  });
+
+  it("rejects oversized arrays without throwing", () => {
+    const result = convertLegacyValue({
+      disabled_agents: Array.from(
+        { length: MAX_LEGACY_ARRAY_LENGTH + 1 },
+        (_, index) => `agent-${index}`,
+      ),
+    });
+    expect(result.dsl).toBe("");
+    expect(result.warnings[0]?.reason).toBe(LEGACY_GRAPH_TOO_LARGE_MESSAGE);
+  });
+
+  it("rejects sparse arrays without executing getters", () => {
+    let getterExecutions = 0;
+    const sparse: unknown[] = [];
+    sparse[1] = "loom";
+    Object.defineProperty(sparse, "0", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return "warp";
+      },
+    });
+
+    const result = convertLegacyValue({ disabled_agents: sparse });
+    expect(getterExecutions).toBe(0);
+    expect(result.dsl).toBe("");
+    expect(result.warnings[0]?.reason).toBe(UNSAFE_LEGACY_GRAPH_MESSAGE);
+  });
+
+  it("rejects nested trigger getters without executing them", () => {
+    let getterExecutions = 0;
+    const trigger: Record<string, unknown> = {};
+    Object.defineProperty(trigger, "routing_hint", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return "Use for review";
+      },
+    });
+
+    const result = convertLegacyValue({
+      agents: { loom: { triggers: [trigger] } },
+    });
+    expect(getterExecutions).toBe(0);
+    expect(result.dsl).toBe("");
+    expect(result.warnings[0]?.reason).toBe(UNSAFE_LEGACY_GRAPH_MESSAGE);
+  });
+
+  it("falls back from blank routing_hint to trigger and warns for discarded fields", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: {
+          loom: {
+            triggers: [
+              {
+                routing_hint: "   ",
+                trigger: "Review code",
+                domain: "Review",
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(result.dsl).toContain('triggers ["Review code"]');
+    expect(
+      result.warnings.some((warning) =>
+        warning.field.includes("agents.loom.triggers.0.routing_hint"),
+      ),
+    ).toBe(true);
+    expect(
+      result.warnings.some((warning) =>
+        warning.field.includes("agents.loom.triggers.0.domain"),
+      ),
+    ).toBe(true);
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
   });
 });

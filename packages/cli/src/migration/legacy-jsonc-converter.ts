@@ -8,6 +8,12 @@
 
 import { type ParseError, parse as parseJsonc } from "jsonc-parser";
 
+import {
+  copyLegacyGraph,
+  LEGACY_GRAPH_TOO_LARGE_MESSAGE,
+  type LegacyGraphCopyError,
+  UNSAFE_LEGACY_GRAPH_MESSAGE,
+} from "./legacy-graph-copy.js";
 import type { ConversionResult, ConversionWarning } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -95,6 +101,26 @@ const VALID_LOG_LEVELS = new Set([
   "FATAL",
 ]);
 
+/**
+ * Legacy names that must never become `fast true`. The converter never infers
+ * acceleration intent from a legacy or provider-specific field.
+ */
+const REJECTED_FAST_ALIASES = [
+  "fast",
+  "service_class",
+  "speed",
+  "variant",
+  "priority",
+] as const;
+
+const MAX_CONVERSION_WARNINGS = 32;
+const MAX_WARNING_FIELD_LENGTH = 256;
+const MAX_WARNING_REASON_LENGTH = 512;
+const MAX_WARNING_DIAGNOSTIC_SIZE = 8 * 1024;
+const WARNING_TRUNCATION_SUFFIX = "... [truncated]";
+const WARNINGS_TRUNCATED_REASON =
+  "additional conversion diagnostics were truncated";
+
 // ---------------------------------------------------------------------------
 // JSONC parsing
 // ---------------------------------------------------------------------------
@@ -139,6 +165,241 @@ function escapeForDsl(str: string): string {
       const hex = ch.charCodeAt(0).toString(16).padStart(4, "0");
       return `\\u${hex}`;
     });
+}
+
+function truncateWarningText(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit - WARNING_TRUNCATION_SUFFIX.length)}${WARNING_TRUNCATION_SUFFIX}`;
+}
+
+function warningSize(warning: ConversionWarning): number {
+  return warning.field.length + warning.reason.length;
+}
+
+function boundWarning(warning: ConversionWarning): ConversionWarning {
+  return {
+    field: truncateWarningText(warning.field, MAX_WARNING_FIELD_LENGTH),
+    reason: truncateWarningText(warning.reason, MAX_WARNING_REASON_LENGTH),
+  };
+}
+
+function pushWarning(
+  warnings: ConversionWarning[],
+  field: string,
+  reason: string,
+): void {
+  const next = boundWarning({ field, reason });
+  let aggregate = 0;
+  for (const warning of warnings) {
+    aggregate += warningSize(warning);
+  }
+  const wouldExceedCount = warnings.length >= MAX_CONVERSION_WARNINGS;
+  const wouldExceedSize =
+    aggregate + warningSize(next) > MAX_WARNING_DIAGNOSTIC_SIZE;
+  if (wouldExceedCount || wouldExceedSize) {
+    const marker = boundWarning({
+      field: "<diagnostics>",
+      reason: WARNINGS_TRUNCATED_REASON,
+    });
+    const last = warnings[warnings.length - 1];
+    if (last?.field === marker.field && last.reason === marker.reason) {
+      return;
+    }
+    if (warnings.length >= MAX_CONVERSION_WARNINGS) {
+      warnings[warnings.length - 1] = marker;
+      return;
+    }
+    warnings.push(marker);
+    return;
+  }
+  warnings.push(next);
+}
+
+function absorbWarnings(
+  warnings: ConversionWarning[],
+  extra: ConversionWarning[],
+): void {
+  for (const warning of extra) {
+    pushWarning(warnings, warning.field, warning.reason);
+  }
+}
+
+function graphCopyWarning(error: LegacyGraphCopyError): ConversionWarning {
+  return boundWarning({
+    field: "<source>",
+    reason:
+      error.type === "GraphTooLarge"
+        ? LEGACY_GRAPH_TOO_LARGE_MESSAGE
+        : UNSAFE_LEGACY_GRAPH_MESSAGE,
+  });
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function formatTriggerList(triggers: string[]): string {
+  return `  triggers [${triggers.map((trigger) => JSON.stringify(trigger)).join(", ")}]`;
+}
+
+function warnRejectedFastAliases(
+  entry: Record<string, unknown>,
+  contextLabel: string,
+  warnings: ConversionWarning[],
+): void {
+  for (const alias of REJECTED_FAST_ALIASES) {
+    if (entry[alias] !== undefined) {
+      pushWarning(
+        warnings,
+        `${contextLabel}.${alias}`,
+        `"${alias}" is not converted to fast intent; skipped`,
+      );
+    }
+  }
+}
+
+/**
+ * Convert a legacy trigger array into ordered unique strings.
+ *
+ * For each object, choose a nonblank `routing_hint`, else a nonblank `trigger`.
+ * Preserve source order, drop exact duplicate strings, and warn for every
+ * discarded structured field and every malformed or empty entry.
+ */
+function convertLegacyTriggers(
+  value: unknown,
+  fieldPath: string,
+  warnings: ConversionWarning[],
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    pushWarning(
+      warnings,
+      fieldPath,
+      "expected an array of trigger strings or legacy trigger objects; skipped",
+    );
+    return undefined;
+  }
+
+  const selected: string[] = [];
+  const seen = new Set<string>();
+
+  for (let index = 0; index < value.length; index += 1) {
+    const entryPath = `${fieldPath}.${index}`;
+    const entry = value[index];
+
+    if (typeof entry === "string") {
+      if (entry.trim().length === 0) {
+        pushWarning(warnings, entryPath, "empty trigger string discarded");
+        continue;
+      }
+      if (!seen.has(entry)) {
+        seen.add(entry);
+        selected.push(entry);
+      }
+      continue;
+    }
+
+    if (!isPlainRecord(entry)) {
+      pushWarning(warnings, entryPath, "malformed trigger entry discarded");
+      continue;
+    }
+
+    const routingHint = entry.routing_hint;
+    const trigger = entry.trigger;
+    let chosen: string | undefined;
+    let chosenKey: "routing_hint" | "trigger" | undefined;
+    if (isNonBlankString(routingHint)) {
+      chosen = routingHint;
+      chosenKey = "routing_hint";
+    } else if (isNonBlankString(trigger)) {
+      chosen = trigger;
+      chosenKey = "trigger";
+    }
+
+    for (const key of Object.keys(entry)) {
+      if (key === chosenKey) continue;
+      const discarded = entry[key];
+      let preview: string;
+      if (typeof discarded === "string") {
+        preview = discarded;
+      } else if (discarded === null) {
+        preview = "null";
+      } else if (Array.isArray(discarded)) {
+        preview = "array";
+      } else {
+        preview = typeof discarded;
+      }
+      pushWarning(
+        warnings,
+        `${entryPath}.${key}`,
+        `legacy trigger field "${key}" (${preview}) cannot be represented as a trigger string; discarded`,
+      );
+    }
+
+    if (chosen === undefined) {
+      pushWarning(
+        warnings,
+        entryPath,
+        "malformed or empty trigger entry discarded",
+      );
+      continue;
+    }
+
+    if (!seen.has(chosen)) {
+      seen.add(chosen);
+      selected.push(chosen);
+    }
+  }
+
+  return selected.length > 0 ? selected : undefined;
+}
+
+function convertLegacyPatternField(
+  value: unknown,
+  fieldPath: string,
+  warnings: ConversionWarning[],
+): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    pushWarning(
+      warnings,
+      fieldPath,
+      "malformed category patterns discarded; categories no longer use file patterns",
+    );
+    return;
+  }
+
+  let validCount = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const pattern = value[index];
+    if (typeof pattern === "string" && pattern.trim().length > 0) {
+      validCount += 1;
+      continue;
+    }
+    pushWarning(
+      warnings,
+      `${fieldPath}.${index}`,
+      "malformed category pattern discarded",
+    );
+  }
+
+  if (validCount > 0) {
+    pushWarning(
+      warnings,
+      fieldPath,
+      "category file patterns are not supported; dropped valid patterns and did not emit a replacement",
+    );
+  } else if (value.length === 0) {
+    pushWarning(
+      warnings,
+      fieldPath,
+      "empty category patterns discarded; categories no longer use file patterns",
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -317,7 +578,7 @@ function convertLegacyAgentEntry(
   const lines: string[] = [`agent ${name} {`];
 
   const modelsResult = convertLegacyModels(entry, `agents.${name}`);
-  warnings.push(...modelsResult.warnings);
+  absorbWarnings(warnings, modelsResult.warnings);
   if (modelsResult.lines.length > 0) lines.push(...modelsResult.lines);
 
   if (typeof entry["temperature"] === "number") {
@@ -334,30 +595,38 @@ function convertLegacyAgentEntry(
       entry["prompt_file"],
       `agents.${name}`,
     );
-    warnings.push(...promptFileResult.warnings);
+    absorbWarnings(warnings, promptFileResult.warnings);
     if (promptFileResult.line !== undefined) lines.push(promptFileResult.line);
   }
 
-  if (
-    entry["tools"] !== null &&
-    typeof entry["tools"] === "object" &&
-    !Array.isArray(entry["tools"])
-  ) {
+  if (isPlainRecord(entry["tools"])) {
     const toolResult = convertLegacyTools(
       entry["tools"] as Record<string, boolean>,
       `agents.${name}`,
     );
-    warnings.push(...toolResult.warnings);
+    for (const warning of toolResult.warnings) {
+      pushWarning(warnings, warning.field, warning.reason);
+    }
     if (toolResult.lines.length > 0) lines.push(...toolResult.lines);
   }
 
-  const unsupportedAgentFields = ["display_name", "skills", "mode", "triggers"];
+  const triggers = convertLegacyTriggers(
+    entry["triggers"],
+    `agents.${name}.triggers`,
+    warnings,
+  );
+  if (triggers !== undefined) lines.push(formatTriggerList(triggers));
+
+  warnRejectedFastAliases(entry, `agents.${name}`, warnings);
+
+  const unsupportedAgentFields = ["display_name", "skills", "mode"];
   for (const field of unsupportedAgentFields) {
     if (entry[field] !== undefined) {
-      warnings.push({
-        field: `agents.${name}.${field}`,
-        reason: `"${field}" is not supported in agent override migration v1; skipped`,
-      });
+      pushWarning(
+        warnings,
+        `agents.${name}.${field}`,
+        `"${field}" is not supported in agent override migration v1; skipped`,
+      );
     }
   }
 
@@ -396,21 +665,21 @@ function convertLegacyCustomAgent(
       entry["prompt_file"],
       `custom_agents.${name}`,
     );
-    warnings.push(...promptFileResult.warnings);
+    absorbWarnings(warnings, promptFileResult.warnings);
     if (promptFileResult.line !== undefined) lines.push(promptFileResult.line);
   } else if (
     entry["prompt_file"] !== undefined &&
     entry["prompt"] !== undefined
   ) {
-    warnings.push({
-      field: `custom_agents.${name}.prompt_file`,
-      reason:
-        "both prompt and prompt_file are set; prompt_file skipped (prompt takes precedence)",
-    });
+    pushWarning(
+      warnings,
+      `custom_agents.${name}.prompt_file`,
+      "both prompt and prompt_file are set; prompt_file skipped (prompt takes precedence)",
+    );
   }
 
   const modelsResult = convertLegacyModels(entry, `custom_agents.${name}`);
-  warnings.push(...modelsResult.warnings);
+  absorbWarnings(warnings, modelsResult.warnings);
   if (modelsResult.lines.length > 0) lines.push(...modelsResult.lines);
 
   if (typeof entry["temperature"] === "number") {
@@ -422,10 +691,11 @@ function convertLegacyCustomAgent(
     if (typeof entry["mode"] === "string" && validModes.has(entry["mode"])) {
       lines.push(`  mode ${entry["mode"]}`);
     } else {
-      warnings.push({
-        field: `custom_agents.${name}.mode`,
-        reason: `"${entry["mode"]}" is not a valid mode (expected primary, subagent, or all); skipped`,
-      });
+      pushWarning(
+        warnings,
+        `custom_agents.${name}.mode`,
+        `"${String(entry["mode"])}" is not a valid mode (expected primary, subagent, or all); skipped`,
+      );
     }
   }
 
@@ -434,26 +704,34 @@ function convertLegacyCustomAgent(
     lines.push(`  prompt_append "${escaped}"`);
   }
 
-  if (
-    entry["tools"] !== null &&
-    typeof entry["tools"] === "object" &&
-    !Array.isArray(entry["tools"])
-  ) {
+  if (isPlainRecord(entry["tools"])) {
     const toolResult = convertLegacyTools(
       entry["tools"] as Record<string, boolean>,
       `custom_agents.${name}`,
     );
-    warnings.push(...toolResult.warnings);
+    for (const warning of toolResult.warnings) {
+      pushWarning(warnings, warning.field, warning.reason);
+    }
     if (toolResult.lines.length > 0) lines.push(...toolResult.lines);
   }
 
-  const unsupportedCustomAgentFields = ["skills", "triggers", "display_name"];
+  const triggers = convertLegacyTriggers(
+    entry["triggers"],
+    `custom_agents.${name}.triggers`,
+    warnings,
+  );
+  if (triggers !== undefined) lines.push(formatTriggerList(triggers));
+
+  warnRejectedFastAliases(entry, `custom_agents.${name}`, warnings);
+
+  const unsupportedCustomAgentFields = ["skills", "display_name"];
   for (const field of unsupportedCustomAgentFields) {
     if (entry[field] !== undefined) {
-      warnings.push({
-        field: `custom_agents.${name}.${field}`,
-        reason: `"${field}" is not supported in custom agent migration v1; skipped`,
-      });
+      pushWarning(
+        warnings,
+        `custom_agents.${name}.${field}`,
+        `"${field}" is not supported in custom agent migration v1; skipped`,
+      );
     }
   }
 
@@ -466,53 +744,44 @@ function convertLegacyCustomAgent(
  *
  * Supported fields:
  * - `description` → `description "..."`
- * - `patterns` → `patterns [...]`
+ * - `triggers` → `triggers [...]` (string or legacy object conversion)
  * - `model` + `fallback_models` → `models [...]`
  * - `temperature` → `temperature <value>`
  * - `prompt_append` → `prompt_append "..."`
  * - `tools` → `tool_policy { ... }`
  *
- * Unsupported fields are warned and skipped.
- * Note: categories do NOT generate standalone shuttle agents — the current
- * DSL generates `shuttle-<category>` semantics automatically.
+ * Valid and malformed `patterns` are dropped with warnings. A category with a
+ * nonblank description still converts. The converter never emits `patterns` or
+ * infers `fast`.
  */
 function convertLegacyCategory(
   name: string,
   entry: Record<string, unknown>,
   warnings: ConversionWarning[],
 ): string[] {
-  const patterns = Array.isArray(entry["patterns"])
-    ? entry["patterns"].filter(
-        (pattern): pattern is string => typeof pattern === "string",
-      )
-    : [];
-  if (patterns.length === 0) {
-    warnings.push({
-      field: `categories.${name}.patterns`,
-      reason:
-        "a non-empty array of glob patterns is required; category skipped",
-    });
-    return [];
-  }
+  convertLegacyPatternField(
+    entry["patterns"],
+    `categories.${name}.patterns`,
+    warnings,
+  );
 
   const description = entry["description"];
-  if (typeof description !== "string" || description.trim().length === 0) {
-    warnings.push({
-      field: `categories.${name}.description`,
-      reason: "a non-empty string is required; category skipped",
-    });
+  if (!isNonBlankString(description)) {
+    pushWarning(
+      warnings,
+      `categories.${name}.description`,
+      "a non-empty string is required; category skipped",
+    );
     return [];
   }
 
   const lines: string[] = [`category ${name} {`];
-  const escapedDescription = escapeForDsl(description);
-  lines.push(`  description "${escapedDescription}"`);
-
-  const items = patterns.map((pattern) => JSON.stringify(pattern)).join(", ");
-  lines.push(`  patterns [${items}]`);
+  lines.push(`  description "${escapeForDsl(description)}"`);
 
   const modelsResult = convertLegacyModels(entry, `categories.${name}`);
-  warnings.push(...modelsResult.warnings);
+  for (const warning of modelsResult.warnings) {
+    pushWarning(warnings, warning.field, warning.reason);
+  }
   if (modelsResult.lines.length > 0) lines.push(...modelsResult.lines);
 
   if (typeof entry["temperature"] === "number") {
@@ -520,22 +789,28 @@ function convertLegacyCategory(
   }
 
   if (typeof entry["prompt_append"] === "string") {
-    const escaped = escapeForDsl(entry["prompt_append"]);
-    lines.push(`  prompt_append "${escaped}"`);
+    lines.push(`  prompt_append "${escapeForDsl(entry["prompt_append"])}"`);
   }
 
-  if (
-    entry["tools"] !== null &&
-    typeof entry["tools"] === "object" &&
-    !Array.isArray(entry["tools"])
-  ) {
+  if (isPlainRecord(entry["tools"])) {
     const toolResult = convertLegacyTools(
       entry["tools"] as Record<string, boolean>,
       `categories.${name}`,
     );
-    warnings.push(...toolResult.warnings);
+    for (const warning of toolResult.warnings) {
+      pushWarning(warnings, warning.field, warning.reason);
+    }
     if (toolResult.lines.length > 0) lines.push(...toolResult.lines);
   }
+
+  const triggers = convertLegacyTriggers(
+    entry["triggers"],
+    `categories.${name}.triggers`,
+    warnings,
+  );
+  if (triggers !== undefined) lines.push(formatTriggerList(triggers));
+
+  warnRejectedFastAliases(entry, `categories.${name}`, warnings);
 
   lines.push("}");
   return lines;
@@ -568,9 +843,6 @@ function convertLegacyCategory(
  * - `workflows`, `continuation`, `analytics`, `background`
  */
 export function convertLegacyJsonc(source: string): ConversionResult {
-  const warnings: ConversionWarning[] = [];
-  const dslLines: string[] = [];
-
   const parseResult = parseLegacyJsonc(source);
   if (
     parseResult === undefined ||
@@ -578,27 +850,64 @@ export function convertLegacyJsonc(source: string): ConversionResult {
     typeof parseResult !== "object" ||
     Array.isArray(parseResult)
   ) {
-    warnings.push({
-      field: "<source>",
-      reason:
-        "failed to parse legacy JSONC source; no fields could be converted",
-    });
-    return { dsl: "", warnings };
+    return {
+      dsl: "",
+      warnings: [
+        boundWarning({
+          field: "<source>",
+          reason:
+            "failed to parse legacy JSONC source; no fields could be converted",
+        }),
+      ],
+    };
   }
-  const parsed = parseResult as Record<string, unknown>;
+  return convertLegacyValue(parseResult);
+}
+
+/**
+ * Convert an already-parsed legacy value. Used by `convertLegacyJsonc` after
+ * JSONC parsing, and by tests that inject crafted objects to prove the
+ * descriptor-safe copy rejects getters, inherited fields, and callables
+ * without executing them.
+ */
+export function convertLegacyValue(value: unknown): ConversionResult {
+  const copied = copyLegacyGraph(value);
+  if (copied.isErr()) {
+    return { dsl: "", warnings: [graphCopyWarning(copied.error)] };
+  }
+  const copiedValue = copied.value;
+  if (
+    copiedValue === null ||
+    typeof copiedValue !== "object" ||
+    Array.isArray(copiedValue)
+  ) {
+    return {
+      dsl: "",
+      warnings: [
+        boundWarning({
+          field: "<source>",
+          reason:
+            "failed to parse legacy JSONC source; no fields could be converted",
+        }),
+      ],
+    };
+  }
+  return convertCopiedRoot(copiedValue as Record<string, unknown>);
+}
+
+function convertCopiedRoot(parsed: Record<string, unknown>): ConversionResult {
+  const warnings: ConversionWarning[] = [];
+  const dslLines: string[] = [];
 
   for (const [key, value] of Object.entries(parsed)) {
     if (key in UNSUPPORTED_LEGACY_FIELDS) {
-      warnings.push({ field: key, reason: UNSUPPORTED_LEGACY_FIELDS[key]! });
+      pushWarning(warnings, key, UNSUPPORTED_LEGACY_FIELDS[key]!);
       continue;
     }
 
     if (key === "disabled_agents") {
       if (!Array.isArray(value)) {
-        warnings.push({
-          field: key,
-          reason: "expected an array of agent names; skipped",
-        });
+        pushWarning(warnings, key, "expected an array of agent names; skipped");
         continue;
       }
       const items = value
@@ -611,10 +920,7 @@ export function convertLegacyJsonc(source: string): ConversionResult {
 
     if (key === "disabled_hooks") {
       if (!Array.isArray(value)) {
-        warnings.push({
-          field: key,
-          reason: "expected an array of hook names; skipped",
-        });
+        pushWarning(warnings, key, "expected an array of hook names; skipped");
         continue;
       }
       const items = value
@@ -627,10 +933,7 @@ export function convertLegacyJsonc(source: string): ConversionResult {
 
     if (key === "disabled_skills") {
       if (!Array.isArray(value)) {
-        warnings.push({
-          field: key,
-          reason: "expected an array of skill names; skipped",
-        });
+        pushWarning(warnings, key, "expected an array of skill names; skipped");
         continue;
       }
       const items = value
@@ -643,18 +946,20 @@ export function convertLegacyJsonc(source: string): ConversionResult {
 
     if (key === "log_level") {
       if (typeof value !== "string") {
-        warnings.push({
-          field: key,
-          reason: "expected a string log level value; skipped",
-        });
+        pushWarning(
+          warnings,
+          key,
+          "expected a string log level value; skipped",
+        );
         continue;
       }
       const normalized = value.toUpperCase();
       if (!VALID_LOG_LEVELS.has(normalized)) {
-        warnings.push({
-          field: key,
-          reason: `"${value}" is not a valid log level (expected one of TRACE, DEBUG, INFO, WARN, ERROR, FATAL); skipped`,
-        });
+        pushWarning(
+          warnings,
+          key,
+          `"${value}" is not a valid log level (expected one of TRACE, DEBUG, INFO, WARN, ERROR, FATAL); skipped`,
+        );
         continue;
       }
       dslLines.push(`settings {`);
@@ -664,119 +969,99 @@ export function convertLegacyJsonc(source: string): ConversionResult {
     }
 
     if (key === "agents") {
-      if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        warnings.push({
-          field: key,
-          reason: "expected an object of agent override entries; skipped",
-        });
+      if (!isPlainRecord(value)) {
+        pushWarning(
+          warnings,
+          key,
+          "expected an object of agent override entries; skipped",
+        );
         continue;
       }
-      for (const [agentName, agentEntry] of Object.entries(
-        value as Record<string, unknown>,
-      )) {
+      for (const [agentName, agentEntry] of Object.entries(value)) {
         if (!BUILTIN_AGENT_NAMES.has(agentName)) {
-          warnings.push({
-            field: `agents.${agentName}`,
-            reason: `"${agentName}" is not a builtin agent name; entries under "agents" are overrides of existing builtins only — use "custom_agents" to create new agents`,
-          });
+          pushWarning(
+            warnings,
+            `agents.${agentName}`,
+            `"${agentName}" is not a builtin agent name; entries under "agents" are overrides of existing builtins only — use "custom_agents" to create new agents`,
+          );
           continue;
         }
-        if (
-          agentEntry === null ||
-          typeof agentEntry !== "object" ||
-          Array.isArray(agentEntry)
-        ) {
-          warnings.push({
-            field: `agents.${agentName}`,
-            reason: "expected an object; skipped",
-          });
+        if (!isPlainRecord(agentEntry)) {
+          pushWarning(
+            warnings,
+            `agents.${agentName}`,
+            "expected an object; skipped",
+          );
           continue;
         }
-        const agentLines = convertLegacyAgentEntry(
-          agentName,
-          agentEntry as Record<string, unknown>,
-          warnings,
+        dslLines.push(
+          ...convertLegacyAgentEntry(agentName, agentEntry, warnings),
         );
-        dslLines.push(...agentLines);
       }
       continue;
     }
 
     if (key === "custom_agents") {
-      if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        warnings.push({
-          field: key,
-          reason: "expected an object of custom agent entries; skipped",
-        });
+      if (!isPlainRecord(value)) {
+        pushWarning(
+          warnings,
+          key,
+          "expected an object of custom agent entries; skipped",
+        );
         continue;
       }
-      for (const [agentName, agentEntry] of Object.entries(
-        value as Record<string, unknown>,
-      )) {
+      for (const [agentName, agentEntry] of Object.entries(value)) {
         if (BUILTIN_AGENT_NAMES.has(agentName)) {
-          warnings.push({
-            field: `custom_agents.${agentName}`,
-            reason: `"${agentName}" collides with a builtin agent name; skipped to avoid silently overriding the builtin`,
-          });
+          pushWarning(
+            warnings,
+            `custom_agents.${agentName}`,
+            `"${agentName}" collides with a builtin agent name; skipped to avoid silently overriding the builtin`,
+          );
           continue;
         }
-        if (
-          agentEntry === null ||
-          typeof agentEntry !== "object" ||
-          Array.isArray(agentEntry)
-        ) {
-          warnings.push({
-            field: `custom_agents.${agentName}`,
-            reason: "expected an object; skipped",
-          });
+        if (!isPlainRecord(agentEntry)) {
+          pushWarning(
+            warnings,
+            `custom_agents.${agentName}`,
+            "expected an object; skipped",
+          );
           continue;
         }
-        const agentLines = convertLegacyCustomAgent(
-          agentName,
-          agentEntry as Record<string, unknown>,
-          warnings,
+        dslLines.push(
+          ...convertLegacyCustomAgent(agentName, agentEntry, warnings),
         );
-        dslLines.push(...agentLines);
       }
       continue;
     }
 
     if (key === "categories") {
-      if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        warnings.push({
-          field: key,
-          reason: "expected an object of category entries; skipped",
-        });
+      if (!isPlainRecord(value)) {
+        pushWarning(
+          warnings,
+          key,
+          "expected an object of category entries; skipped",
+        );
         continue;
       }
-      for (const [catName, catEntry] of Object.entries(
-        value as Record<string, unknown>,
-      )) {
-        if (
-          catEntry === null ||
-          typeof catEntry !== "object" ||
-          Array.isArray(catEntry)
-        ) {
-          warnings.push({
-            field: `categories.${catName}`,
-            reason: "expected an object; skipped",
-          });
+      for (const [catName, catEntry] of Object.entries(value)) {
+        if (!isPlainRecord(catEntry)) {
+          pushWarning(
+            warnings,
+            `categories.${catName}`,
+            "expected an object; skipped",
+          );
           continue;
         }
-        const catLines = convertLegacyCategory(
-          catName,
-          catEntry as Record<string, unknown>,
-          warnings,
-        );
-        dslLines.push(...catLines);
+        dslLines.push(...convertLegacyCategory(catName, catEntry, warnings));
       }
       continue;
     }
 
-    warnings.push({
-      field: key,
-      reason: "unknown legacy field; not supported in migration v1",
-    });
+    pushWarning(
+      warnings,
+      key,
+      "unknown legacy field; not supported in migration v1",
+    );
   }
 
   return { dsl: dslLines.join("\n"), warnings };

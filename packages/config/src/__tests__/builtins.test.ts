@@ -287,16 +287,16 @@ describe("getBuiltinConfig", () => {
     }
   });
 
-  it("(k4) each specialist trigger has non-empty domain and trigger strings", () => {
+  it("(k4) each specialist trigger is a non-empty string", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     for (const name of SPECIALIST_AGENTS) {
       const agent = config.agents[name];
       expect(agent).toBeDefined();
       const triggers = agent?.triggers ?? [];
       expect(triggers.length).toBeGreaterThan(0);
-      for (const t of triggers) {
-        expect(t.domain.trim().length).toBeGreaterThan(0);
-        expect(t.trigger.trim().length).toBeGreaterThan(0);
+      for (const trigger of triggers) {
+        expect(typeof trigger).toBe("string");
+        expect(trigger.trim().length).toBeGreaterThan(0);
       }
     }
   });
@@ -313,27 +313,31 @@ describe("getBuiltinConfig", () => {
 
     expect(triggers.length).toBeGreaterThan(0);
 
-    // Every trigger carries an explicit routing hint.
-    for (const t of triggers) {
-      expect((t.routing_hint ?? "").trim().length).toBeGreaterThan(0);
+    for (const trigger of triggers) {
+      expect(trigger.trim().length).toBeGreaterThan(0);
     }
 
-    // Domains are unique and none of them claims a broad specialism that a
-    // category shuttle (e.g. shuttle-tests) would own.
-    const domains = triggers.map((t) => t.domain.toLowerCase());
-    expect(new Set(domains).size).toBe(domains.length);
+    const lowered = triggers.map((trigger) => trigger.toLowerCase());
     for (const forbidden of ["testing", "debugging", "refactoring"]) {
-      expect(domains).not.toContain(forbidden);
+      expect(lowered.some((trigger) => trigger === forbidden)).toBe(false);
     }
 
-    // At least one hint states the fallback rule explicitly.
-    const hints = triggers.map((t) => (t.routing_hint ?? "").toLowerCase());
     expect(
-      hints.some(
-        (h) =>
-          h.includes("no listed category shuttle") ||
-          h.includes("no category shuttle"),
+      lowered.some(
+        (trigger) =>
+          trigger.includes("no listed category shuttle") ||
+          trigger.includes("no category shuttle"),
       ),
     ).toBe(true);
+  });
+
+  it("(k6) builtin source has no structured triggers, category patterns, or rejected aliases", () => {
+    expect(BUILTIN_WEAVE_SOURCE).not.toMatch(/routing_hint/);
+    expect(BUILTIN_WEAVE_SOURCE).not.toMatch(/patterns\s*\[/);
+    expect(BUILTIN_WEAVE_SOURCE).not.toMatch(/domain\s+"/);
+    expect(BUILTIN_WEAVE_SOURCE).not.toMatch(
+      /\bservice_class\b|\bvariant\b|\bpriority\b/,
+    );
+    expect(BUILTIN_WEAVE_SOURCE).not.toMatch(/\bfast false\b/);
   });
 });

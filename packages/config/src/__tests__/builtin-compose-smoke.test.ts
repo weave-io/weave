@@ -136,33 +136,51 @@ describe("builtin compose smoke", () => {
     expect(descriptor.composedPrompt).toContain("# Delegation Guidance");
   });
 
-  it("loom composedPrompt contains routing_hint-based delegation guidance for each specialist", () => {
+  it("builtin specialists declare string trigger guidance", () => {
+    expect(config.agents.thread?.triggers).toEqual(
+      expect.arrayContaining([
+        "Use for fast codebase exploration — read-only and cheap",
+      ]),
+    );
+    expect(config.agents.spindle?.triggers).toEqual(
+      expect.arrayContaining([
+        "Use for external docs and research — read-only",
+      ]),
+    );
+    expect(config.agents.pattern?.triggers).toEqual(
+      expect.arrayContaining([
+        "Use for multi-file features, complex refactors, or work spanning 5+ steps",
+      ]),
+    );
+    expect(config.agents.shuttle?.triggers).toEqual(
+      expect.arrayContaining([
+        "Use for a scoped change only when no listed category shuttle clearly matches the work",
+      ]),
+    );
+    expect(config.agents.weft?.triggers).toEqual(
+      expect.arrayContaining([
+        "Use after non-trivial changes (3+ files, or when quality matters)",
+      ]),
+    );
+    expect(config.agents.warp?.triggers).toEqual(
+      expect.arrayContaining([
+        "MANDATORY when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation",
+      ]),
+    );
+  });
+
+  it("loom composedPrompt lists each specialist by name", () => {
     const descriptor = getDescriptor("loom");
-    // Thread routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "Use for fast codebase exploration",
-    );
-    // Spindle routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "Use for external docs and research",
-    );
-    // Pattern routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "Use for multi-file features, complex refactors",
-    );
-    // Shuttle routing hints: the generic shuttle is a scoped fallback, so its
-    // hints must not claim broad domains that category shuttles own.
-    expect(descriptor.composedPrompt).toContain(
-      "Use for a scoped change only when no listed category shuttle clearly matches the files",
-    );
-    // Weft routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "Use after non-trivial changes",
-    );
-    // Warp routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "MANDATORY when changes touch auth, crypto, tokens",
-    );
+    for (const name of [
+      "shuttle",
+      "pattern",
+      "thread",
+      "spindle",
+      "weft",
+      "warp",
+    ]) {
+      expect(descriptor.composedPrompt).toContain(name);
+    }
   });
 
   it("loom composedPrompt contains delegate aggressively guidance", () => {

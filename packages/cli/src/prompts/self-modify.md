@@ -124,7 +124,7 @@ disable agents ["warp"]
 category backend {
   description "Backend APIs and services"
   models ["claude-sonnet-4-5"]
-  patterns ["src/api/**", "src/server/**"]
+  triggers ["Use for API contracts, services, and persistence"]
   temperature 0.2
 }
 ```

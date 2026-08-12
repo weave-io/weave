@@ -23,7 +23,6 @@ const testConfig: WeaveConfig = {
     backend: {
       description: "Backend category",
       models: ["test-model"],
-      patterns: ["src/api/**"],
       temperature: 0.2,
     },
   },
