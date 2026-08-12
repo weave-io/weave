@@ -142,6 +142,36 @@ export const CapabilityIdSchema = z.enum([
   "provider-fast-activation",
 ]);
 
+/** Optional capability for provider acceleration request and evidence. */
+export const PROVIDER_FAST_ACTIVATION_ID = "provider-fast-activation" as const;
+
+/**
+ * Bounded runtime states for `provider-fast-activation`.
+ *
+ * Absence of `fast true` emits no acceleration state at all. These values are
+ * sanitized `runtimeStatus` tokens, not a second readiness machine:
+ * `applied` may only accompany `native`, `requested`/`declared`/`not-confirmed`
+ * stay at or below `degraded`, and `unsupported` cannot be raised.
+ */
+export const PROVIDER_FAST_ACTIVATION_STATUSES = [
+  "declared",
+  "requested",
+  "applied",
+  "not-confirmed",
+  "unsupported",
+] as const;
+
+export type ProviderFastActivationStatus =
+  (typeof PROVIDER_FAST_ACTIVATION_STATUSES)[number];
+
+export const ProviderFastActivationStatusSchema = z.enum(
+  PROVIDER_FAST_ACTIVATION_STATUSES,
+);
+
+const OtherCapabilityIdSchema = CapabilityIdSchema.exclude([
+  PROVIDER_FAST_ACTIVATION_ID,
+]);
+
 // ---------------------------------------------------------------------------
 // § 1.2 — Capability Entry
 // ---------------------------------------------------------------------------
@@ -171,6 +201,8 @@ export interface CapabilityEntry {
   /**
    * Current runtime status string, if the adapter can supply one.
    * Must be sanitized — no credentials, local paths, or secrets.
+   * For `provider-fast-activation`, a present value must be one of
+   * {@link ProviderFastActivationStatus}.
    */
   runtimeStatus?: string;
   /**
@@ -190,16 +222,31 @@ export interface CapabilityEntry {
   remediationHint?: string;
 }
 
-export const CapabilityEntrySchema = z.object({
-  id: CapabilityIdSchema,
+const CapabilityEntryFieldsSchema = z.object({
   description: z.string().min(1),
   readiness: CapabilityReadinessSchema,
   notes: z.string().optional(),
-  runtimeStatus: z.string().optional(),
   blockingImpact: z.string().optional(),
   supplier: z.string().optional(),
   remediationHint: z.string().optional(),
 });
+
+/**
+ * Exported capability entry. `provider-fast-activation` reuses the shared
+ * fields and accepts only {@link ProviderFastActivationStatus} when
+ * `runtimeStatus` is present. Other capabilities keep sanitized freeform
+ * status strings.
+ */
+export const CapabilityEntrySchema = z.discriminatedUnion("id", [
+  CapabilityEntryFieldsSchema.extend({
+    id: z.literal(PROVIDER_FAST_ACTIVATION_ID),
+    runtimeStatus: ProviderFastActivationStatusSchema.optional(),
+  }),
+  CapabilityEntryFieldsSchema.extend({
+    id: OtherCapabilityIdSchema,
+    runtimeStatus: z.string().optional(),
+  }),
+]);
 
 // ---------------------------------------------------------------------------
 // § 1.3 — Adapter Capability Contract
@@ -281,32 +328,6 @@ export const ALL_CAPABILITY_IDS: readonly CapabilityId[] = [
   ...REQUIRED_CAPABILITIES,
   ...OPTIONAL_CAPABILITIES,
 ] as const;
-
-/** Optional capability for provider acceleration request and evidence. */
-export const PROVIDER_FAST_ACTIVATION_ID = "provider-fast-activation" as const;
-
-/**
- * Bounded runtime states for `provider-fast-activation`.
- *
- * Absence of `fast true` emits no acceleration state at all. These values are
- * sanitized `runtimeStatus` tokens, not a second readiness machine:
- * `applied` may only accompany `native`, `requested`/`declared`/`not-confirmed`
- * stay at or below `degraded`, and `unsupported` cannot be raised.
- */
-export const PROVIDER_FAST_ACTIVATION_STATUSES = [
-  "declared",
-  "requested",
-  "applied",
-  "not-confirmed",
-  "unsupported",
-] as const;
-
-export type ProviderFastActivationStatus =
-  (typeof PROVIDER_FAST_ACTIVATION_STATUSES)[number];
-
-export const ProviderFastActivationStatusSchema = z.enum(
-  PROVIDER_FAST_ACTIVATION_STATUSES,
-);
 
 /**
  * Map a bounded acceleration state onto the existing readiness vocabulary.

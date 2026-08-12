@@ -470,4 +470,72 @@ describe("provider-fast-activation", () => {
     expect(serialized).not.toContain("prompt");
     expect(serialized).not.toContain("completion");
   });
+
+  it("accepts every bounded fast runtimeStatus and omitted status", () => {
+    const base = {
+      id: "provider-fast-activation" as const,
+      description: "Request provider acceleration and report bounded evidence",
+      readiness: "degraded" as const,
+    };
+    expect(CapabilityEntrySchema.safeParse(base).success).toBe(true);
+    for (const runtimeStatus of PROVIDER_FAST_ACTIVATION_STATUSES) {
+      expect(
+        CapabilityEntrySchema.safeParse({ ...base, runtimeStatus }).success,
+      ).toBe(true);
+      expect(
+        AdapterCapabilityContractSchema.safeParse({
+          capabilities: [{ ...base, runtimeStatus }],
+        }).success,
+      ).toBe(true);
+    }
+  });
+
+  it("rejects arbitrary, secret-shaped, empty, and wrong-type fast runtimeStatus", () => {
+    const base = {
+      id: "provider-fast-activation",
+      description: "Request provider acceleration and report bounded evidence",
+      readiness: "degraded",
+    };
+    const invalidStatuses = [
+      "applied-with-secret-payload",
+      "sk-secret-token",
+      "",
+      42,
+      null,
+      { status: "applied" },
+    ];
+    for (const runtimeStatus of invalidStatuses) {
+      expect(
+        CapabilityEntrySchema.safeParse({ ...base, runtimeStatus }).success,
+      ).toBe(false);
+      expect(
+        AdapterCapabilityContractSchema.safeParse({
+          capabilities: [{ ...base, runtimeStatus }],
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("leaves unrelated capability runtimeStatus as sanitized freeform text", () => {
+    const entry = {
+      id: "tool-policy-mapping",
+      description: "Tool policy mapping",
+      readiness: "emulated",
+      runtimeStatus: "active",
+    };
+    expect(CapabilityEntrySchema.safeParse(entry).success).toBe(true);
+    expect(
+      AdapterCapabilityContractSchema.safeParse({
+        capabilities: [
+          entry,
+          {
+            id: "provider-fast-activation",
+            description: "Request provider acceleration",
+            readiness: "degraded",
+            runtimeStatus: "not-confirmed",
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
 });

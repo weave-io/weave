@@ -1,7 +1,15 @@
 import { describe, expect, it } from "bun:test";
+import { AdapterCapabilityContractSchema } from "@weaveio/weave-engine";
 import { CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT } from "../index.js";
 
 describe("Claude Code adapter capability contract", () => {
+  it("parses the declared contract through the exported capability schema", () => {
+    const parsed = AdapterCapabilityContractSchema.safeParse(
+      CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT,
+    );
+    expect(parsed.success).toBe(true);
+  });
+
   it("declares thinking-level activation as unsupported with the host-control gap", () => {
     const capability =
       CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(

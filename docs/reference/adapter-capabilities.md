@@ -37,6 +37,8 @@ An adapter returns one ordered `AdapterCapabilityContract`. Each entry has:
 
 The closed ID vocabulary and current required/optional profile live in [`packages/engine/src/capability-contract.ts`](../../packages/engine/src/capability-contract.ts). Do not copy the list into adapter code or documentation; import it so additions cannot drift.
 
+`provider-fast-activation` is the optional provider-acceleration capability. When `runtimeStatus` is present, the exported contract accepts only the bounded evidence tokens from that module. Other capabilities keep sanitized freeform status strings. A descriptor without `fast true` does not require this capability and emits no requested or applied state.
+
 ## Effective evaluation
 
 A safe initializer supplies exactly one `CapabilityProbeResult` for every known capability. Evaluation:

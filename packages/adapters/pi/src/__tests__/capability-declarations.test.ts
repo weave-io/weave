@@ -1,7 +1,15 @@
 import { describe, expect, it } from "bun:test";
+import { AdapterCapabilityContractSchema } from "@weaveio/weave-engine";
 import { PI_ADAPTER_CAPABILITY_CONTRACT } from "../capability-declarations.js";
 
 describe("Pi adapter capability contract", () => {
+  it("parses the declared contract through the exported capability schema", () => {
+    const parsed = AdapterCapabilityContractSchema.safeParse(
+      PI_ADAPTER_CAPABILITY_CONTRACT,
+    );
+    expect(parsed.success).toBe(true);
+  });
+
   it("declares provider-fast-activation as degraded request-capable, not applied or native", () => {
     const capability = PI_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
       (entry) => entry.id === "provider-fast-activation",

@@ -1,7 +1,15 @@
 import { describe, expect, it } from "bun:test";
+import { AdapterCapabilityContractSchema } from "@weaveio/weave-engine";
 import { OPENCODE_ADAPTER_CAPABILITY_CONTRACT } from "../capability-declarations.js";
 
 describe("OpenCode adapter capability contract", () => {
+  it("parses the declared contract through the exported capability schema", () => {
+    const parsed = AdapterCapabilityContractSchema.safeParse(
+      OPENCODE_ADAPTER_CAPABILITY_CONTRACT,
+    );
+    expect(parsed.success).toBe(true);
+  });
+
   it("declares model-thinking-activation as degraded with an explicit SDK gap", () => {
     const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
       (entry) => entry.id === "model-thinking-activation",
