@@ -56,12 +56,6 @@ function addModelIntentIssues(
   });
 }
 
-export const DelegationTriggerSchema = z.object({
-  domain: z.string(),
-  trigger: z.string(),
-  routing_hint: z.string().optional(),
-});
-
 export const ToolPolicySchema = z
   .object({
     read: ToolPermissionSchema.optional(),
@@ -157,8 +151,13 @@ export const AgentConfigSchema = z
     delegation: AgentDelegationConfigSchema.optional(),
     routing: RoutingConfigSchema.optional(),
     skills: z.array(z.string()).optional(),
-    triggers: z.array(DelegationTriggerSchema).optional(),
+    triggers: z
+      .array(NonBlankStringSchema("trigger must be a non-empty string"))
+      .min(1, "triggers must have at least one entry")
+      .optional(),
+    fast: z.literal(true).optional(),
   })
+  .strict()
   .refine(...refinePromptExclusive())
   .refine(...refinePromptFileSafe("prompt_file"))
   .refine(...refinePromptAppendExclusive())
@@ -184,15 +183,18 @@ export const CategoryConfigSchema = z
     description: NonBlankStringSchema(
       "category description must be a non-empty string",
     ),
-    patterns: z
-      .array(z.string())
-      .min(1, "patterns must have at least one entry"),
     models: z.array(z.string()).optional(),
+    triggers: z
+      .array(NonBlankStringSchema("trigger must be a non-empty string"))
+      .min(1, "triggers must have at least one entry")
+      .optional(),
+    fast: z.literal(true).optional(),
     temperature: z.number().min(0).max(2).optional(),
     tool_policy: ToolPolicySchema.optional(),
     prompt_append: z.string().optional(),
     prompt_append_file: z.string().optional(),
   })
+  .strict()
   .refine(...refinePromptAppendExclusive())
   .refine(...refinePromptFileSafe("prompt_append_file"))
   .superRefine((category, ctx) => {
@@ -855,7 +857,6 @@ export const WeaveConfigSchema = z
 
 export type ToolPermission = z.infer<typeof ToolPermissionSchema>;
 export type ThinkingLevelDecl = z.infer<typeof ThinkingLevelSchema>;
-export type DelegationTrigger = z.infer<typeof DelegationTriggerSchema>;
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
 export type DelegationSettings = z.infer<typeof DelegationSettingsSchema>;
 export type AgentDelegationConfig = z.infer<typeof AgentDelegationConfigSchema>;

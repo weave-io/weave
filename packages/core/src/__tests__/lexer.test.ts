@@ -91,6 +91,29 @@ describe("Lexer — valid tokenization", () => {
     }
   });
 
+  it("tokenizes agent and category fast intent with string triggers", () => {
+    const result = tokenize(`agent loom {
+  fast true
+  triggers ["Plan work", "Review work"]
+}
+category mini {
+  fast true
+  triggers ["Bounded changes"]
+}`);
+    expect(result.isOk()).toBe(true);
+    const tokens = result._unsafeUnwrap();
+    expect(tokens.filter((token) => token.value === "fast")).toHaveLength(2);
+    expect(tokens.filter((token) => token.value === "true")).toHaveLength(2);
+    expect(tokens.filter((token) => token.value === "triggers")).toHaveLength(
+      2,
+    );
+    expect(
+      tokens
+        .filter((token) => token.type === TokenType.String)
+        .map((token) => token.value),
+    ).toEqual(["Plan work", "Review work", "Bounded changes"]);
+  });
+
   it("skips line comments and tokenizes the next line", () => {
     const src = `# this is a comment\nfoo`;
     const result = tokenize(src);

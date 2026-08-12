@@ -1037,11 +1037,101 @@ describe("AgentConfigSchema — prompt_append_file", () => {
 // CategoryConfigSchema — description (required, non-blank)
 // ---------------------------------------------------------------------------
 
+describe("AgentConfigSchema and CategoryConfigSchema — fast intent and triggers", () => {
+  const schemas = [
+    ["agent", AgentConfigSchema, {}],
+    ["category", CategoryConfigSchema, { description: "Bounded work" }],
+  ] as const;
+
+  for (const [kind, schema, base] of schemas) {
+    it(`${kind} accepts literal fast true and ordered non-blank triggers`, () => {
+      const result = schema.safeParse({
+        ...base,
+        fast: true,
+        triggers: ["First trigger", "Second trigger"],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.fast).toBe(true);
+        expect(result.data.triggers).toEqual([
+          "First trigger",
+          "Second trigger",
+        ]);
+      }
+    });
+
+    it(`${kind} preserves omission of fast and triggers`, () => {
+      const result = schema.safeParse(base);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.fast).toBeUndefined();
+        expect(result.data.triggers).toBeUndefined();
+      }
+    });
+
+    it(`${kind} rejects false and wrong scalar fast values`, () => {
+      for (const fast of [false, "true", 1, null]) {
+        expect(schema.safeParse({ ...base, fast }).success).toBe(false);
+      }
+    });
+
+    it(`${kind} rejects empty, blank, non-string, and structured triggers`, () => {
+      for (const triggers of [
+        [],
+        [""],
+        ["   "],
+        [42],
+        [{ domain: "Orchestration", trigger: "Plan work" }],
+      ]) {
+        expect(schema.safeParse({ ...base, triggers }).success).toBe(false);
+      }
+    });
+
+    it(`${kind} rejects provider acceleration aliases`, () => {
+      for (const alias of [
+        "service_class",
+        "speed",
+        "variant",
+        "priority",
+      ] as const) {
+        expect(schema.safeParse({ ...base, [alias]: true }).success).toBe(
+          false,
+        );
+      }
+    });
+  }
+
+  it("exports public agent and category types with the new shapes", () => {
+    const agent: import("@weaveio/weave-core").AgentConfig = {
+      fast: true,
+      triggers: ["Plan work"],
+    };
+    const category: import("@weaveio/weave-core").CategoryConfig = {
+      description: "Bounded work",
+      fast: true,
+      triggers: ["Small changes"],
+    };
+    expect(agent).toEqual({ fast: true, triggers: ["Plan work"] });
+    expect(category).toEqual({
+      description: "Bounded work",
+      fast: true,
+      triggers: ["Small changes"],
+    });
+  });
+
+  it("rejects removed category patterns", () => {
+    const result = CategoryConfigSchema.safeParse({
+      description: "Backend work",
+      patterns: ["src/**"],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("CategoryConfigSchema — description", () => {
   it("accepts a category with a non-blank description", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "Frontend components and styling",
-      patterns: ["src/components/**"],
     });
     expect(r.success).toBe(true);
     if (r.success) {
@@ -1052,16 +1142,13 @@ describe("CategoryConfigSchema — description", () => {
   it("preserves surrounding whitespace verbatim when content is present", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "  Backend services  ",
-      patterns: ["src/server/**"],
     });
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.description).toBe("  Backend services  ");
   });
 
   it("rejects a category with no description at all", () => {
-    const r = CategoryConfigSchema.safeParse({
-      patterns: ["src/**"],
-    });
+    const r = CategoryConfigSchema.safeParse({});
     expect(r.success).toBe(false);
     if (!r.success) {
       const issue = r.error.issues.find(
@@ -1075,7 +1162,6 @@ describe("CategoryConfigSchema — description", () => {
   it("rejects an empty-string description with the non-empty message", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "",
-      patterns: ["src/**"],
     });
     expect(r.success).toBe(false);
     if (!r.success) {
@@ -1091,7 +1177,6 @@ describe("CategoryConfigSchema — description", () => {
   it("rejects a whitespace-only description with the non-empty message", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "   \t\n  ",
-      patterns: ["src/**"],
     });
     expect(r.success).toBe(false);
     if (!r.success) {
@@ -1107,7 +1192,6 @@ describe("CategoryConfigSchema — description", () => {
   it("rejects a non-string description", () => {
     const r = CategoryConfigSchema.safeParse({
       description: 42,
-      patterns: ["src/**"],
     });
     expect(r.success).toBe(false);
     if (!r.success) {
@@ -1126,7 +1210,6 @@ describe("CategoryConfigSchema — description", () => {
 describe("CategoryConfigSchema — prompt_append_file", () => {
   const baseCategory = {
     description: "TypeScript source edits",
-    patterns: ["src/**/*.ts"],
   };
 
   it("accepts prompt_append_file with a valid relative path", () => {
@@ -2093,7 +2176,6 @@ describe("model thinking suffix validation", () => {
   it("accepts plain, suffixed, and escaped category model entries", () => {
     const result = CategoryConfigSchema.safeParse({
       description: "Source tree work",
-      patterns: ["src/**"],
       models: ["plain-category", "category-model#max", "category\\#model"],
     });
     expect(result.success).toBe(true);
@@ -2139,7 +2221,6 @@ describe("model thinking suffix validation", () => {
   it("rejects an invalid category model suffix with a readable indexed error", () => {
     const result = CategoryConfigSchema.safeParse({
       description: "Source tree work",
-      patterns: ["src/**"],
       models: ["plain-category", "category-model#bad"],
     });
     expect(result.success).toBe(false);

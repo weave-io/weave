@@ -33,7 +33,6 @@ describe("validate — model thinking suffix", () => {
 }
 category backend {
   description "Backend services and persistence"
-  patterns ["src/**"]
   models ["plain-category", "category-model#max", "category\\#model"]
 }`);
     expect(result.isOk()).toBe(true);
@@ -80,9 +79,8 @@ describe("validate — valid agent", () => {
     delegate allow
     network ask
   }
-  triggers [
-    { domain "Orchestration" trigger "Complex tasks" }
-  ]
+  triggers ["Complex tasks"]
+  fast true
 }`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
@@ -93,6 +91,8 @@ describe("validate — valid agent", () => {
     expect(config.agents.loom?.mode).toBe("primary");
     expect(config.agents.loom?.models).toEqual(["claude-sonnet-4-5"]);
     expect(config.agents.loom?.skills).toEqual(["tdd"]);
+    expect(config.agents.loom?.triggers).toEqual(["Complex tasks"]);
+    expect(config.agents.loom?.fast).toBe(true);
   });
 
   it("agent with prompt_file (safe path)", () => {
@@ -109,10 +109,11 @@ describe("validate — valid agent", () => {
 });
 
 describe("validate — valid category", () => {
-  it("category with patterns and tool_policy", () => {
+  it("category with fast, triggers, and tool_policy", () => {
     const src = `category backend {
   description "Backend APIs"
-  patterns ["src/api/**", "src/db/**"]
+  triggers ["API and database changes"]
+  fast true
   temperature 0.2
   tool_policy {
     read allow
@@ -124,11 +125,100 @@ describe("validate — valid category", () => {
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
     expect(config.categories.backend).toBeDefined();
-    expect(config.categories.backend?.patterns).toEqual([
-      "src/api/**",
-      "src/db/**",
+    expect(config.categories.backend?.triggers).toEqual([
+      "API and database changes",
     ]);
+    expect(config.categories.backend?.fast).toBe(true);
     expect(config.categories.backend?.temperature).toBe(0.2);
+  });
+});
+
+describe("validate — fast intent and string triggers", () => {
+  const scopes = [
+    ["agent", "agent helper {", "}", "agents.helper"],
+    [
+      "category",
+      'category helper {\n  description "Bounded work"',
+      "}",
+      "categories.helper",
+    ],
+  ] as const;
+
+  function expectBoundedDiagnostic(source: string, expectedPath: string): void {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      const issue = result.error.find((error) => error.path === expectedPath);
+      expect(issue).toBeDefined();
+      expect(issue?.type).toBe("ValidationError");
+      expect(issue?.message.length).toBeLessThanOrEqual(256);
+    }
+  }
+
+  for (const [kind, open, close, path] of scopes) {
+    it(`${kind} preserves omission of fast and triggers`, () => {
+      const result = validateSource(`${open}\n${close}`);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        const entry =
+          kind === "agent"
+            ? result.value.agents.helper
+            : result.value.categories.helper;
+        expect(entry?.fast).toBeUndefined();
+        expect(entry?.triggers).toBeUndefined();
+      }
+    });
+
+    it(`${kind} rejects fast false with a bounded diagnostic`, () => {
+      expectBoundedDiagnostic(
+        `${open}\n  fast false\n${close}`,
+        `${path}.fast`,
+      );
+    });
+
+    it(`${kind} rejects wrong scalar fast types`, () => {
+      for (const value of ['"true"', "1", '"fast"']) {
+        expectBoundedDiagnostic(
+          `${open}\n  fast ${value}\n${close}`,
+          `${path}.fast`,
+        );
+      }
+    });
+
+    it(`${kind} rejects empty and invalid triggers`, () => {
+      const cases = [
+        ["triggers []", `${path}.triggers`],
+        ['triggers [""]', `${path}.triggers.0`],
+        ['triggers ["   "]', `${path}.triggers.0`],
+        ["triggers [1]", `${path}.triggers.0`],
+      ] as const;
+      for (const [property, expectedPath] of cases) {
+        expectBoundedDiagnostic(
+          `${open}\n  ${property}\n${close}`,
+          expectedPath,
+        );
+      }
+    });
+
+    it(`${kind} rejects old structured trigger objects`, () => {
+      expectBoundedDiagnostic(
+        `${open}\n  triggers [{ domain "Orchestration" trigger "Plan work" }]\n${close}`,
+        `${path}.triggers.0`,
+      );
+    });
+
+    it(`${kind} rejects provider acceleration aliases`, () => {
+      for (const alias of ["service_class", "speed", "variant", "priority"]) {
+        expectBoundedDiagnostic(`${open}\n  ${alias} true\n${close}`, path);
+      }
+    });
+  }
+
+  it("rejects removed category patterns with a bounded diagnostic", () => {
+    expectBoundedDiagnostic(
+      `category helper {\n  description "Bounded work"\n  patterns ["src/**"]\n}`,
+      "categories.helper",
+    );
   });
 });
 
@@ -198,26 +288,12 @@ describe("validate — schema constraint errors", () => {
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
   });
-
-  it("empty patterns array on category → err", () => {
-    const src = `category empty {
-  description "Category with no patterns"
-  patterns []
-}`;
-    const result = validateSource(src);
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
-    expect(errors.some((e) => e.path.includes("patterns"))).toBe(true);
-  });
 });
 
 describe("validate — category description is required and non-blank", () => {
-  const patternsOnly = `  patterns ["src/**"]`;
-
   it("category with a non-blank description → ok and preserved", () => {
     const src = `category backend {
   description "Backend services and persistence"
-${patternsOnly}
 }`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
@@ -229,7 +305,6 @@ ${patternsOnly}
 
   it("category with no description → err at categories.<name>.description", () => {
     const src = `category backend {
-${patternsOnly}
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
@@ -243,7 +318,6 @@ ${patternsOnly}
   it("category with an empty description → err with the non-empty message", () => {
     const src = `category backend {
   description ""
-${patternsOnly}
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
@@ -259,7 +333,6 @@ ${patternsOnly}
   it("category with a whitespace-only description → err with the non-empty message", () => {
     const src = `category backend {
   description "   "
-${patternsOnly}
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
@@ -274,11 +347,9 @@ ${patternsOnly}
 
   it("reports each undescribed category separately", () => {
     const src = `category backend {
-${patternsOnly}
 }
 
 category frontend {
-  patterns ["src/components/**"]
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
@@ -619,7 +690,6 @@ describe("validate — prompt_append_file (category)", () => {
   it("category with prompt_append_file → ok and field preserved", () => {
     const src = `category frontend {
   description "Frontend components"
-  patterns ["src/components/**"]
   prompt_append_file "cat-extra.md"
 }`;
     const result = validateSource(src);
@@ -632,7 +702,6 @@ describe("validate — prompt_append_file (category)", () => {
   it("category with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
     const src = `category frontend {
   description "Frontend components"
-  patterns ["src/components/**"]
   prompt_append "inline extra"
   prompt_append_file "cat-extra.md"
 }`;

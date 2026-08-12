@@ -22,7 +22,6 @@ describe("parseConfig — model thinking suffix", () => {
 }
 category backend {
   description "Backend services and persistence"
-  patterns ["src/**"]
   models ["plain-category", "category/model#max", "category\\#model"]
 }`);
     expect(result.isOk()).toBe(true);
@@ -51,7 +50,6 @@ category backend {
 }
 category backend {
   description "Backend services and persistence"
-  patterns ["src/**"]
   models ["plain-category", "category/model#invalid"]
 }`);
     expect(result.isErr()).toBe(true);
@@ -105,9 +103,8 @@ describe("parseConfig — valid sources", () => {
     delegate allow
     network ask
   }
-  triggers [
-    { domain "Orchestration" trigger "Complex multi-step tasks" }
-  ]
+  triggers ["Complex multi-step tasks"]
+  fast true
   skills ["tdd", "code-review"]
 }
 
@@ -128,7 +125,6 @@ agent shuttle {
 category backend {
   description "Backend APIs, services, persistence"
   models ["claude-sonnet-4-5"]
-  patterns ["src/api/**", "src/server/**", "src/db/**"]
   temperature 0.2
   tool_policy {
     read allow
@@ -139,7 +135,6 @@ category backend {
 
 category frontend {
   description "Frontend UI, styling"
-  patterns ["src/components/**", "src/pages/**"]
 }
 
 disable agents ["warp", "spindle"]
@@ -163,7 +158,9 @@ settings {
     // Categories
     expect(config.categories.backend).toBeDefined();
     expect(config.categories.frontend).toBeDefined();
-    expect(config.categories.backend?.patterns).toContain("src/api/**");
+    expect(config.categories.backend?.description).toBe(
+      "Backend APIs, services, persistence",
+    );
 
     // Disabled
     expect(config.disabled.agents).toEqual(["warp", "spindle"]);
@@ -191,10 +188,8 @@ settings {
     network ask
   }
 
-  triggers [
-    { domain "Orchestration" trigger "Complex multi-step tasks" }
-    { domain "Architecture" trigger "System design and planning" }
-  ]
+  triggers ["Complex multi-step tasks", "System design and planning"]
+  fast true
 
   skills ["tdd", "code-review"]
 }`;
@@ -203,10 +198,8 @@ settings {
     const loom = result._unsafeUnwrap().agents.loom;
     expect(loom?.models).toEqual(["claude-sonnet-4-5", "gpt-4o"]);
     expect(loom?.triggers).toHaveLength(2);
-    expect(loom?.triggers?.[0]).toEqual({
-      domain: "Orchestration",
-      trigger: "Complex multi-step tasks",
-    });
+    expect(loom?.triggers?.[0]).toBe("Complex multi-step tasks");
+    expect(loom?.fast).toBe(true);
     expect(loom?.skills).toEqual(["tdd", "code-review"]);
   });
 
@@ -252,6 +245,100 @@ describe("parseConfig — parse errors", () => {
   });
 });
 
+describe("parseConfig — fast intent and trigger validation", () => {
+  const scopes = [
+    ["agent", "agent helper {", "}", "agents.helper"],
+    [
+      "category",
+      'category helper {\n  description "Bounded work"',
+      "}",
+      "categories.helper",
+    ],
+  ] as const;
+
+  function expectValidationPath(source: string, expectedPath: string): void {
+    const result = parseConfig(source);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      const issue = result.error.find(
+        (error) =>
+          error.type === "ValidationError" && error.path === expectedPath,
+      );
+      expect(issue).toBeDefined();
+      if (issue?.type === "ValidationError") {
+        expect(issue.message.length).toBeLessThanOrEqual(256);
+      }
+    }
+  }
+
+  for (const [kind, open, close, path] of scopes) {
+    it(`${kind} accepts fast true and ordered triggers end to end`, () => {
+      const result = parseConfig(
+        `${open}\n  fast true\n  triggers ["First", "Second"]\n${close}`,
+      );
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        const entry =
+          kind === "agent"
+            ? result.value.agents.helper
+            : result.value.categories.helper;
+        expect(entry?.fast).toBe(true);
+        expect(entry?.triggers).toEqual(["First", "Second"]);
+      }
+    });
+
+    it(`${kind} preserves omission end to end`, () => {
+      const result = parseConfig(`${open}\n${close}`);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        const entry =
+          kind === "agent"
+            ? result.value.agents.helper
+            : result.value.categories.helper;
+        expect(entry?.fast).toBeUndefined();
+        expect(entry?.triggers).toBeUndefined();
+      }
+    });
+
+    it(`${kind} rejects fast false and wrong scalar types end to end`, () => {
+      for (const value of ["false", '"true"', "1"]) {
+        expectValidationPath(
+          `${open}\n  fast ${value}\n${close}`,
+          `${path}.fast`,
+        );
+      }
+    });
+
+    it(`${kind} rejects empty, invalid, and structured triggers end to end`, () => {
+      const cases = [
+        ["triggers []", `${path}.triggers`],
+        ['triggers [""]', `${path}.triggers.0`],
+        ["triggers [1]", `${path}.triggers.0`],
+        [
+          'triggers [{ domain "Orchestration" trigger "Plan work" }]',
+          `${path}.triggers.0`,
+        ],
+      ] as const;
+      for (const [property, expectedPath] of cases) {
+        expectValidationPath(`${open}\n  ${property}\n${close}`, expectedPath);
+      }
+    });
+
+    it(`${kind} rejects provider acceleration aliases end to end`, () => {
+      for (const alias of ["service_class", "speed", "variant", "priority"]) {
+        expectValidationPath(`${open}\n  ${alias} true\n${close}`, path);
+      }
+    });
+  }
+
+  it("rejects category patterns end to end", () => {
+    expectValidationPath(
+      `category helper {\n  description "Bounded work"\n  patterns ["src/**"]\n}`,
+      "categories.helper",
+    );
+  });
+});
+
 describe("parseConfig — validation errors", () => {
   it("both prompt and prompt_file → err with ValidationError", () => {
     const src = `agent bad {
@@ -279,7 +366,6 @@ describe("parseConfig — category description", () => {
   it("a described category survives the full pipeline", () => {
     const src = `category backend {
   description "Backend services, APIs, and persistence"
-  patterns ["src/api/**"]
 }`;
     const result = parseConfig(src);
     expect(result.isOk()).toBe(true);
@@ -290,7 +376,6 @@ describe("parseConfig — category description", () => {
 
   it("a category with no description → ValidationError at categories.<name>.description", () => {
     const src = `category backend {
-  patterns ["src/api/**"]
 }`;
     const result = parseConfig(src);
     expect(result.isErr()).toBe(true);
@@ -307,7 +392,6 @@ describe("parseConfig — category description", () => {
   it("an empty category description → ValidationError with the non-empty message", () => {
     const src = `category backend {
   description ""
-  patterns ["src/api/**"]
 }`;
     const result = parseConfig(src);
     expect(result.isErr()).toBe(true);
@@ -325,7 +409,6 @@ describe("parseConfig — category description", () => {
   it("a whitespace-only category description → ValidationError with the non-empty message", () => {
     const src = `category backend {
   description "   "
-  patterns ["src/api/**"]
 }`;
     const result = parseConfig(src);
     expect(result.isErr()).toBe(true);
@@ -694,7 +777,6 @@ describe("parseConfig — workflows", () => {
 
 category backend {
   description "Backend API surface"
-  patterns ["src/api/**"]
 }
 
 workflow quick-fix {
@@ -862,7 +944,6 @@ describe("parseConfig — prompt_append_file", () => {
   it("category with prompt_append_file parses successfully and field is present in output", () => {
     const src = `category frontend {
   description "Frontend UI"
-  patterns ["src/components/**"]
   prompt_append_file "cat-extra.md"
 }`;
     const result = parseConfig(src);

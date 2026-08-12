@@ -83,41 +83,52 @@ describe("Parser — agent block", () => {
     });
   });
 
-  it("parses agent with triggers array of block objects", () => {
+  it("parses agent with fast and ordered string triggers", () => {
     const src = `agent loom {
-  triggers [
-    { domain "Orchestration" trigger "Complex tasks" }
-  ]
+  fast true
+  triggers ["Complex tasks", "System design"]
 }`;
     const result = parseSource(src);
     expect(result.isOk()).toBe(true);
     const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    expect(agent.properties.find((p) => p.key === "fast")?.value).toMatchObject(
+      {
+        kind: "boolean",
+        value: true,
+      },
+    );
     const triggers = agent.properties.find((p) => p.key === "triggers");
     expect(triggers?.value.kind).toBe("array");
     const arr = triggers?.value as ArrayValue;
-    expect(arr.elements).toHaveLength(1);
-    expect(arr.elements[0]?.kind).toBe("block");
+    expect(arr.elements).toMatchObject([
+      { kind: "string", value: "Complex tasks" },
+      { kind: "string", value: "System design" },
+    ]);
   });
 });
 
 describe("Parser — category block", () => {
-  it("parses a category with patterns array", () => {
+  it("parses a category with fast and ordered string triggers", () => {
     const src = `category backend {
-  patterns ["src/api/**", "src/db/**"]
+  description "Backend work"
+  fast true
+  triggers ["API changes", "Database changes"]
 }`;
     const result = parseSource(src);
     expect(result.isOk()).toBe(true);
     const cat = result._unsafeUnwrap()[0] as CategoryBlock;
     expect(cat.type).toBe("category");
     expect(cat.name).toBe("backend");
-    const patterns = cat.properties.find((p) => p.key === "patterns");
-    expect(patterns?.value.kind).toBe("array");
-    const arr = patterns?.value as ArrayValue;
-    expect(arr.elements).toHaveLength(2);
-    expect(arr.elements[0]).toMatchObject({
-      kind: "string",
-      value: "src/api/**",
+    expect(cat.properties.find((p) => p.key === "fast")?.value).toMatchObject({
+      kind: "boolean",
+      value: true,
     });
+    const triggers = cat.properties.find((p) => p.key === "triggers");
+    expect(triggers?.value.kind).toBe("array");
+    expect((triggers?.value as ArrayValue).elements).toMatchObject([
+      { kind: "string", value: "API changes" },
+      { kind: "string", value: "Database changes" },
+    ]);
   });
 });
 
@@ -307,7 +318,7 @@ describe("Parser — multiple top-level blocks", () => {
 }
 
 category backend {
-  patterns ["src/api/**"]
+  description "Backend work"
 }
 
 log_level INFO`;
