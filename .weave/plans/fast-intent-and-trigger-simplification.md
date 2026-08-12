@@ -157,7 +157,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - Run Weft after the slice.
     - Run Warp for converter input validation and lossy migration diagnostics.
 
-- [ ] 5. Simplify normalized descriptors and category generation
+- [x] 5. Simplify normalized descriptors and category generation
   - **What**: Carry neutral fast intent through engine descriptors, propagate category triggers to generated shuttles, and remove patterns from every normalized shape.
   - **Files**: `packages/engine/src/compose.ts`, `packages/engine/src/descriptors.ts`, `packages/engine/src/index.ts`, `packages/engine/src/materialization.ts` if type propagation requires it, `packages/engine/src/__tests__/compose.test.ts`, `packages/engine/src/__tests__/descriptors.test.ts`, `packages/engine/src/__tests__/category-shuttle-routing.test.ts`, `packages/engine/src/__tests__/category-routing-scaling.test.ts`, materialization tests that construct `AgentDescriptor`
   - **Depends on**: Task 4
