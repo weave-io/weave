@@ -48,6 +48,7 @@ import {
 } from "./child-overlay-scroll.js";
 import {
   matchingEntryIds,
+  matchingTerminalErrorEntryIds,
   mergeMatchIds,
   stripPathLike,
 } from "./child-overlay-search.js";
@@ -58,6 +59,7 @@ import {
   latestUsageInWindow,
   NO_TERMINAL_ERROR_EVIDENCE,
   pageEvidence,
+  terminalErrorOf,
   terminalErrorView,
 } from "./child-overlay-telemetry.js";
 import {
@@ -85,21 +87,15 @@ import {
   OverlayTextSchema,
 } from "./child-overlay-types.js";
 import {
-  type PiChildSessionEvent,
   type PiChildUsageReport,
   parsePiChildSessionEvent,
   parsePiChildUsageReport,
 } from "./child-session-events.js";
 import {
   createPiChildTranscriptState,
-  type PiChildTranscriptEntry,
   type PiChildTranscriptState,
   reducePiChildTranscript,
 } from "./child-transcript.js";
-
-// ---------------------------------------------------------------------------
-// Per-child saved state (LRU)
-// ---------------------------------------------------------------------------
 
 interface SavedChildState extends OverlayScrollState {
   draft: string;
@@ -126,7 +122,6 @@ interface SavedChildState extends OverlayScrollState {
    */
   viewMode: ChildOverlayViewMode;
   compact: ChildCompactState;
-  /** Latest parsed usage report: replaces prior state, never summed. */
   usage: PiChildUsageReport | undefined;
   evidence: ChildTerminalErrorEvidence;
   transcript: PiChildTranscriptState;
@@ -1056,14 +1051,21 @@ export class ChildOverlayController {
     state: SavedChildState,
   ): ChildOverlayView {
     const needle = state.searchQuery.trim().toLowerCase();
-    // Matches from every scanned page come first, in transcript order; live
-    // entries added after the search are appended. Trimmed matches still count.
+    const terminalError = terminalErrorOf(state.evidence);
+    const terminalErrorMatches = matchingTerminalErrorEntryIds(
+      state.transcript.entries,
+      terminalError,
+      needle,
+    );
     const searchMatches =
       needle.length === 0
         ? []
         : mergeMatchIds(
-            state.searchMatchIds,
-            matchingEntryIds(state.entries, needle),
+            mergeMatchIds(
+              state.searchMatchIds,
+              matchingEntryIds(state.entries, needle),
+            ),
+            terminalErrorMatches,
           );
     return {
       child,
@@ -1089,7 +1091,7 @@ export class ChildOverlayController {
       compact: state.compact,
       transcript: state.transcript,
       telemetry: deriveChildOverlayTelemetry(state.usage, child),
-      ...terminalErrorView(state.evidence),
+      ...(terminalError === undefined ? {} : { terminalError }),
     };
   }
 

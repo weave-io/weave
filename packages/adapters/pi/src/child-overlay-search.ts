@@ -8,6 +8,8 @@
  * module untouched.
  */
 import { boundText } from "./child-overlay-replay.js";
+import type { PiChildProviderError } from "./child-provider-error.js";
+import { formatPiChildProviderError } from "./child-provider-error-render.js";
 
 /** Bounded entry text with absolute path prefixes removed. */
 export function stripPathLike(value: string): string {
@@ -39,6 +41,31 @@ export function matchingEntryIds(
     }
   }
   return result;
+}
+
+/** Match the canonical visible terminal error to its transcript entry. */
+export function matchingTerminalErrorEntryIds(
+  entries: readonly {
+    readonly kind: string;
+    readonly overlayEntryId?: string;
+    readonly terminalError?: PiChildProviderError;
+  }[],
+  error: PiChildProviderError | undefined,
+  needle: string,
+): string[] {
+  if (
+    error === undefined ||
+    !formatPiChildProviderError(error).toLowerCase().includes(needle)
+  ) {
+    return [];
+  }
+  const entryId = [...entries]
+    .reverse()
+    .find(
+      (entry) =>
+        entry.kind === "assistant" && entry.terminalError !== undefined,
+    )?.overlayEntryId;
+  return entryId === undefined ? [] : [entryId];
 }
 
 /** Concatenates two ordered id lists, keeping the first occurrence of each. */

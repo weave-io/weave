@@ -52,6 +52,7 @@ import {
   type ChildOverlayView,
   SCROLL_KEYS,
 } from "./child-overlay-types.js";
+import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import {
   createPiChildTranscriptRenderer,
   type PiChildTranscriptRenderedRow,
@@ -592,14 +593,21 @@ export function createChildOverlayCustomComponent(
     view: ChildOverlayView,
     width: number,
   ): Result<OverlayRenderedTranscript, ChildOverlayFallbackRequired> => {
+    const terminalErrorLine =
+      view.terminalError === undefined
+        ? undefined
+        : fitLineToWidth(formatPiChildProviderError(view.terminalError), width);
     if (view.viewMode === "compact") {
       // Render-time projection of the same bounded entries; the native
       // transcript model is left untouched so toggling back is lossless.
-      const lines = compactChildOverlayLines(view.entries, width);
+      const entryLines = compactChildOverlayLines(view.entries, width);
       return ok({
-        lines,
+        lines:
+          terminalErrorLine === undefined
+            ? entryLines
+            : [...entryLines, terminalErrorLine],
         spans: view.entries
-          .slice(0, lines.length)
+          .slice(0, entryLines.length)
           .map((entry) => ({ entryId: entry.id, rows: 1 })),
       });
     }
@@ -609,7 +617,16 @@ export function createChildOverlayCustomComponent(
           componentFactory: factory(),
         });
         if (rendered.lines.length > 0) {
-          return { lines: rendered.lines, spans: spansFromRows(rendered.rows) };
+          const hasErrorRow = rendered.rows.some((row) =>
+            row.factId.endsWith(":error"),
+          );
+          return {
+            lines:
+              terminalErrorLine === undefined || hasErrorRow
+                ? rendered.lines
+                : [...rendered.lines, terminalErrorLine],
+            spans: spansFromRows(rendered.rows),
+          };
         }
         // Native factory may suppress bookkeeping rows; fall back to overlay
         // entry text so kinds remain visible in the bounded window.
@@ -621,7 +638,10 @@ export function createChildOverlayCustomComponent(
           ),
         );
         return {
-          lines,
+          lines:
+            terminalErrorLine === undefined
+              ? lines
+              : [...lines, terminalErrorLine],
           spans: view.entries.map((entry) => ({
             entryId: entry.id,
             rows: 1,

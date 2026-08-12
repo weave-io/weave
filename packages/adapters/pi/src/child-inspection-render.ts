@@ -9,6 +9,8 @@
  * Every public function returns `Result`; nothing throws on an expected path.
  */
 import { ok, type Result } from "neverthrow";
+import type { PiChildProviderError } from "./child-provider-error.js";
+import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import type {
   PiChildTranscriptRender,
   PiChildTranscriptState,
@@ -109,6 +111,8 @@ export interface PiChildInspectionRenderInput {
   readonly transcriptState: PiChildTranscriptState;
   /** Transcript renderer input (component factory, theme, etc.). */
   readonly transcriptInput?: PiTranscriptRenderInput;
+  /** Latest authoritative sanitized provider error for this child. */
+  readonly terminalError?: PiChildProviderError;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +167,7 @@ export interface InspectionCacheKey {
   readonly transcriptNextSequence: number;
   readonly transcriptEntryCount: number;
   readonly transcriptHistoryTrimmedCount: number;
+  readonly terminalErrorKey: string | undefined;
   readonly themeRef: unknown;
   readonly taskPreviewHash: string | undefined;
 }
@@ -442,6 +447,10 @@ function computeCacheKey(
     transcriptNextSequence: ts.nextSequence,
     transcriptEntryCount: ts.entries.length,
     transcriptHistoryTrimmedCount: ts.historyTrimmedCount,
+    terminalErrorKey:
+      input.terminalError === undefined
+        ? undefined
+        : formatPiChildProviderError(input.terminalError),
     themeRef,
     taskPreviewHash: input.taskPreview,
   };
@@ -475,6 +484,7 @@ function cacheKeysEqual(a: InspectionCacheKey, b: InspectionCacheKey): boolean {
     a.transcriptNextSequence === b.transcriptNextSequence &&
     a.transcriptEntryCount === b.transcriptEntryCount &&
     a.transcriptHistoryTrimmedCount === b.transcriptHistoryTrimmedCount &&
+    a.terminalErrorKey === b.terminalErrorKey &&
     Object.is(a.themeRef, b.themeRef) &&
     a.taskPreviewHash === b.taskPreviewHash
   );
@@ -528,12 +538,17 @@ export function renderChildInspection(
     w,
     input.transcriptInput,
   );
+  const transcriptLines = withTerminalErrorLine(
+    transcript,
+    input.terminalError,
+    w,
+  );
   const lines = composeLines(
     breadcrumb,
     statusLine,
     markers,
     taskPreviewLines,
-    transcript.lines,
+    transcriptLines,
     w,
   );
 
@@ -546,6 +561,23 @@ export function renderChildInspection(
     taskPreviewLines,
     transcript,
   });
+}
+
+function withTerminalErrorLine(
+  transcript: PiChildTranscriptRender,
+  terminalError: PiChildProviderError | undefined,
+  width: number,
+): readonly string[] {
+  if (
+    terminalError === undefined ||
+    transcript.rows.some((row) => row.factId.endsWith(":error"))
+  ) {
+    return transcript.lines;
+  }
+  return [
+    ...transcript.lines,
+    clipToWidth(formatPiChildProviderError(terminalError), width),
+  ];
 }
 
 function resolveTranscriptOptions(
@@ -609,12 +641,17 @@ export class PiChildInspectionRenderer {
       w,
       resolvedOptions,
     );
+    const transcriptLines = withTerminalErrorLine(
+      transcript,
+      input.terminalError,
+      w,
+    );
     const lines = composeLines(
       breadcrumb,
       statusLine,
       markers,
       taskPreviewLines,
-      transcript.lines,
+      transcriptLines,
       w,
     );
 

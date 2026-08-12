@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { getKeybindings } from "@earendil-works/pi-tui";
+import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import {
   PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
@@ -2832,6 +2832,69 @@ describe("createChildOverlayCustomComponent", () => {
       renders: () => renders,
     };
   };
+
+  it("renders and searches the canonical provider error in full and compact views", async () => {
+    const { component, controller } = await mount({ status: "live" });
+    controller.applyLiveEvent({
+      type: "message_start",
+      message: { id: "provider-error" },
+    });
+    controller.applyLiveEvent({
+      type: "message_end",
+      message: {
+        id: "provider-error",
+        role: "assistant",
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "claude-safe",
+        content: [],
+        stopReason: "error",
+        errorMessage:
+          "429 raw-secret /private/tmp/key https://provider.test/request req_123 authorization: Bearer token",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0,
+          },
+        },
+        timestamp: 1,
+      },
+    });
+
+    const full = component.render(80).join("\n");
+    expect(full).toContain(
+      "assistant error · rate limit · HTTP 429 · Provider rate limit exceeded.",
+    );
+    expect(full).not.toContain("raw-secret");
+    expect(
+      (await controller.search("rate limit"))._unsafeUnwrap().searchMatches,
+    ).toHaveLength(1);
+
+    component.handleInput(CTRL_O);
+    await flush();
+    const compact = component.render(40);
+    expect(compact.some((line) => line.includes("assistant error"))).toBe(true);
+    expect(compact.every((line) => visibleWidth(line) <= 40)).toBe(true);
+    const joined = compact.join("\n");
+    for (const sentinel of [
+      "raw-secret",
+      "/private/tmp/key",
+      "https://provider.test/request",
+      "req_123",
+      "authorization",
+      "Bearer token",
+    ]) {
+      expect(joined).not.toContain(sentinel);
+    }
+  });
 
   it("renders native entry kinds with a bounded header for a live child", async () => {
     const { component, controller } = await mount({ status: "live" });

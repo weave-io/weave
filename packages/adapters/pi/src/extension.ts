@@ -142,6 +142,11 @@ import {
   BunPiChildProcessPort,
   type PiChildProcessPort,
 } from "./child-process-port.js";
+import {
+  type PiChildProviderError,
+  projectAssistantProviderError,
+} from "./child-provider-error.js";
+import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import type {
   PiChildRecoveryRecord,
   PiChildRecoverySpawnInput,
@@ -1203,6 +1208,8 @@ interface PiChildModeState {
    * the only observable signal available to derive a failed outcome.
    */
   lastAssistantStopReason: string | undefined;
+  /** Latest closed sanitized provider-error projection for this turn. */
+  terminalError: PiChildProviderError | undefined;
   /**
    * Present only for a direct-step child (Pi adapter contract) - `undefined`
    * for every ordinary-delegation child. Drives `weave_complete_step`
@@ -1234,6 +1241,7 @@ function createChildModeState(): PiChildModeState {
     latestAssistantOutput: "",
     fullAssistantOutput: "",
     lastAssistantStopReason: undefined,
+    terminalError: undefined,
   };
 }
 
@@ -1598,6 +1606,7 @@ async function activateChildModeIfApplicable(
   pi.on("turn_start", () => {
     state.latestAssistantOutput = "";
     state.fullAssistantOutput = "";
+    state.terminalError = undefined;
   });
 
   pi.on("message_update", (event) => {
@@ -1625,6 +1634,14 @@ async function activateChildModeIfApplicable(
     if (record === undefined) return undefined;
     const stopReason = extractAssistantStopReason(record);
     if (stopReason !== undefined) state.lastAssistantStopReason = stopReason;
+    const projectedError = projectAssistantProviderError(record.message);
+    state.terminalError = projectedError.match(
+      (projection) => projection,
+      (absence) =>
+        absence.type === "ProviderErrorCleared"
+          ? undefined
+          : state.terminalError,
+    );
     const completed = extractFullAssistantText(record.message);
     // Only a terminal assistant response is eligible for settlement output.
     // Intermediate tool-use assistant messages and non-terminal canaries never
@@ -1655,7 +1672,10 @@ async function activateChildModeIfApplicable(
       state.lastAssistantStopReason === "aborted"
     ) {
       await reportSettlement("failed", {
-        reason: `assistant stop reason: ${state.lastAssistantStopReason}`,
+        reason:
+          state.lastAssistantStopReason === "error"
+            ? formatPiChildProviderError(state.terminalError)
+            : "assistant stop reason: aborted",
       });
       return;
     }
@@ -5111,6 +5131,7 @@ export function createPiExtension(
           | ReturnType<typeof createChildInspectionCustomComponent>
           | undefined;
         let customInspectionTui: { requestRender(): void } | undefined;
+        const fallbackTerminalErrors = new Map<string, PiChildProviderError>();
         // Settles the currently mounted inspection overlay: releases the
         // borrowed session editor, returns the view to the root, and resolves
         // the host `custom()` promise exactly once. `undefined` whenever no
@@ -5216,7 +5237,13 @@ export function createPiExtension(
           error !== null &&
           "kind" in error &&
           (error as { kind?: unknown }).kind === "fallback-required";
-        const activateCustomEditorInspection = (childId: string): void => {
+        const activateCustomEditorInspection = (
+          childId: string,
+          terminalError?: PiChildProviderError,
+        ): void => {
+          if (terminalError === undefined)
+            fallbackTerminalErrors.delete(childId);
+          else fallbackTerminalErrors.set(childId, terminalError);
           if (inspectionEditor === undefined) return;
           const node = inspectionRegistry
             .snapshotLive()
@@ -5392,7 +5419,10 @@ export function createPiExtension(
                       "mounted",
                     ),
                   );
-                  activateCustomEditorInspection(fallback.metadata.childId);
+                  activateCustomEditorInspection(
+                    fallback.metadata.childId,
+                    fallback.terminalError,
+                  );
                 },
                 { cwd: ctx.cwd },
                 overlayKeysCell.interceptor,
@@ -5437,7 +5467,10 @@ export function createPiExtension(
                   opened.error.metadata.sourceErrorType,
                 ),
               );
-              activateCustomEditorInspection(opened.error.metadata.childId);
+              activateCustomEditorInspection(
+                opened.error.metadata.childId,
+                opened.error.terminalError,
+              );
               return;
             }
             reportOverlayFallback(
@@ -5542,9 +5575,20 @@ export function createPiExtension(
                           view?.childId ?? "",
                         )
                       : inspectionRegistry.getTranscriptState(node.id);
-                  const runtimeMeta = inspectionRegistry.getChildRuntimeMeta(
-                    node?.id ?? view?.childId ?? "",
-                  );
+                  const childId = node?.id ?? view?.childId ?? "";
+                  const runtimeMeta =
+                    inspectionRegistry.getChildRuntimeMeta(childId);
+                  const latestTerminalEntry = [...transcriptState.entries]
+                    .reverse()
+                    .find(
+                      (entry) =>
+                        entry.kind === "assistant" &&
+                        entry.stopReason !== undefined,
+                    );
+                  const terminalError =
+                    latestTerminalEntry?.kind === "assistant"
+                      ? latestTerminalEntry.terminalError
+                      : fallbackTerminalErrors.get(childId);
                   return {
                     topologyPath: [],
                     childName: node?.name ?? view?.childId ?? "child",
@@ -5570,6 +5614,7 @@ export function createPiExtension(
                     interruptedHistory: false,
                     readOnlyCompletion: view?.readOnly ?? false,
                     transcriptState,
+                    terminalError,
                   };
                 },
                 () => inspectionEditor.currentView()?.state.draft ?? "",

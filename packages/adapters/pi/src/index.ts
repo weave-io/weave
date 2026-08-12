@@ -471,9 +471,6 @@ export type {
   PiChildProviderErrorDescriptor,
   PiChildSafeErrorCode,
 } from "./child-provider-error.js";
-// Narrow public surface: the read-only model Task 13 renders. Ingestion of
-// unknown input, event parsing, and replay-field plumbing stay internal to the
-// adapter, so no external caller can feed arbitrary values into the projection.
 export {
   CHILD_ERROR_CANONICAL_MESSAGE,
   CHILD_PROVIDER_ERROR_BOUNDS,
@@ -482,6 +479,10 @@ export {
   PI_CHILD_ERROR_MESSAGES,
   PiChildProviderErrorSchema,
 } from "./child-provider-error.js";
+// Narrow public surface: the read-only model Task 13 renders. Ingestion of
+// unknown input, event parsing, and replay-field plumbing stay internal to the
+// adapter, so no external caller can feed arbitrary values into the projection.
+export { formatPiChildProviderError } from "./child-provider-error-render.js";
 export {
   authorizeChildAccess,
   classifyChildAccess,

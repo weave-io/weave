@@ -612,6 +612,80 @@ describe("Pi child transcript reducer", () => {
     }
   });
 
+  it("renders only the canonical provider error and clears it after success", () => {
+    const reducer = new PiChildTranscriptReducer();
+    applyAll(reducer, [
+      { type: "message_start", message: { id: "provider-error" } },
+      {
+        type: "message_end",
+        message: {
+          id: "provider-error",
+          role: "assistant",
+          stopReason: "error",
+          errorMessage:
+            "429 raw-secret /private/tmp/key https://provider.test/request req_123 authorization: Bearer token",
+        },
+      },
+    ]);
+
+    const wide = renderPiChildTranscriptLines(reducer.getState(), 120).join(
+      "\n",
+    );
+    expect(wide).toContain(
+      "assistant error · rate limit · HTTP 429 · Provider rate limit exceeded. Retry later.",
+    );
+    expect(wide).not.toContain("assistant stop: error");
+    for (const sentinel of [
+      "raw-secret",
+      "/private/tmp/key",
+      "https://provider.test/request",
+      "req_123",
+      "authorization",
+      "Bearer token",
+    ]) {
+      expect(wide).not.toContain(sentinel);
+    }
+
+    const narrow = renderPiChildTranscriptLines(reducer.getState(), 40);
+    expect(narrow.some((line) => line.startsWith("assistant error"))).toBe(
+      true,
+    );
+    expect(narrow.every((line) => line.length <= 40)).toBe(true);
+
+    applyAll(reducer, [
+      {
+        type: "message_end",
+        message: {
+          id: "provider-error",
+          role: "assistant",
+          stopReason: "stop",
+          text: "recovered",
+        },
+      },
+    ]);
+    expect(
+      renderPiChildTranscriptLines(reducer.getState(), 120).join("\n"),
+    ).not.toContain("assistant error");
+  });
+
+  it("renders details unavailable when provider evidence is absent", () => {
+    const reducer = new PiChildTranscriptReducer();
+    applyAll(reducer, [
+      { type: "message_start", message: { id: "unknown-error" } },
+      {
+        type: "message_end",
+        message: {
+          id: "unknown-error",
+          role: "assistant",
+          stopReason: "error",
+        },
+      },
+    ]);
+    expect(
+      renderPiChildTranscriptLines(reducer.getState(), 80).join("\n"),
+    ).toContain("assistant error · details unavailable");
+  });
+
   it("summarizes a retained large event without exposing its payload", () => {
     const raw = {
       type: "future_large_event",

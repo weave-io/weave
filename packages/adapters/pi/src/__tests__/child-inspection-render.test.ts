@@ -102,6 +102,29 @@ function allLinesFitWidth(lines: readonly string[], width: number): boolean {
 
 describe("Pi child inspection render", () => {
   // -- AC1: Typed input/model --
+  it("renders a bounded sanitized fallback error for only the selected child", () => {
+    const error = {
+      class: "rate-limit" as const,
+      message: "Provider rate limit exceeded. Retry later." as const,
+      httpStatus: 429,
+      code: "rate_limit_error" as const,
+      source: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-safe",
+    };
+    const rendered = renderChildInspection(
+      baseInput({ terminalError: error }),
+      40,
+    )._unsafeUnwrap();
+    expect(
+      rendered.lines.some((line) => line.startsWith("assistant error")),
+    ).toBe(true);
+    expect(rendered.lines.every((line) => line.length <= 40)).toBe(true);
+
+    const sibling = renderChildInspection(baseInput(), 80)._unsafeUnwrap();
+    expect(sibling.lines.join("\n")).not.toContain("assistant error");
+  });
+
   describe("typed input model", () => {
     it("accepts all required fields and produces a valid output", () => {
       const input = baseInput();

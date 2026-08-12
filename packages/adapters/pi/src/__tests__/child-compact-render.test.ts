@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
+  type ChildCompactReducerInput,
+  type ChildCompactState,
   childCompactLineCount,
   createChildCompactState,
   degradedChildCompactRender,
@@ -11,9 +13,8 @@ import {
   renderChildCompact,
   renderChildCompactSafe,
   sanitizeChildCompactText,
-  type ChildCompactReducerInput,
-  type ChildCompactState,
 } from "../child-compact-render.js";
+import { formatPiChildProviderError } from "../child-provider-error-render.js";
 import type { PiChildSessionEvent } from "../child-session-events.js";
 import type { PiChildSettlement } from "../rpc-child.js";
 
@@ -60,7 +61,10 @@ function linesOf(state: ChildCompactState, expanded = false) {
 
 describe("child-compact-render", () => {
   it("starts a run with a running 3-line block", () => {
-    const state = mustReduce(createChildCompactState("thread-opaque-1"), start());
+    const state = mustReduce(
+      createChildCompactState("thread-opaque-1"),
+      start(),
+    );
     expect(state.currentRunNumber).toBe(1);
     expect(state.runs).toHaveLength(1);
     expect(state.runs[0]?.status).toBe("running");
@@ -142,6 +146,28 @@ describe("child-compact-render", () => {
     expect(rendered.lines[1]).not.toContain("tool");
   });
 
+  it("renders the canonical provider error in the parent compact summary", () => {
+    let state = mustReduce(createChildCompactState("t1"), start());
+    state = mustReduce(state, fragment("raw provider preview"));
+    const reason = formatPiChildProviderError({
+      class: "rate-limit",
+      message: "Provider rate limit exceeded. Retry later.",
+      httpStatus: 429,
+      code: "rate_limit_error",
+    });
+    state = mustReduce(state, {
+      kind: "settle",
+      settlement: { outcome: "failed", reason },
+    });
+
+    const rendered = linesOf(state).lines.join("\n");
+    expect(rendered).toContain(
+      "assistant error · rate limit · HTTP 429 · rate_limit_error · Provider rate limit exceeded. Retry later.",
+    );
+    expect(rendered).not.toContain("raw provider preview");
+    expect(rendered).not.toContain("undefined");
+  });
+
   it("settles success, error, and cancel only from Task 8 settlement", () => {
     const successSettlement: PiChildSettlement = {
       outcome: "completed",
@@ -197,10 +223,7 @@ describe("child-compact-render", () => {
     const frozenFragment = state.runs[0]?.latestMeaningfulFragment;
     const frozenError = state.runs[0]?.errorSummary;
 
-    state = mustReduce(
-      state,
-      start("t1", 2, "retry", "shuttle"),
-    );
+    state = mustReduce(state, start("t1", 2, "retry", "shuttle"));
     expect(state.runs).toHaveLength(2);
     expect(state.runs[0]?.frozen).toBe(true);
     expect(state.runs[0]?.latestMeaningfulFragment).toBe(frozenFragment);
@@ -210,7 +233,10 @@ describe("child-compact-render", () => {
     expect(state.currentRunNumber).toBe(2);
 
     // Mutating the new run must not alter the frozen prior block
-    state = mustReduce(state, fragment("retry attempt text", "assistant", "r1"));
+    state = mustReduce(
+      state,
+      fragment("retry attempt text", "assistant", "r1"),
+    );
     expect(state.runs[0]?.latestMeaningfulFragment).toBe(frozenFragment);
     expect(state.runs[0]?.errorSummary).toBe(frozenError);
     expect(state.runs[1]?.latestMeaningfulFragment).toBe("retry attempt text");
@@ -222,7 +248,10 @@ describe("child-compact-render", () => {
 
   it("nested delegation has the same compact render parity", () => {
     const apply = (threadId: string) => {
-      let state = mustReduce(createChildCompactState(threadId), start(threadId));
+      let state = mustReduce(
+        createChildCompactState(threadId),
+        start(threadId),
+      );
       state = mustReduce(state, fragment("nested-ok", "assistant", "n1"));
       state = mustReduce(state, {
         kind: "settle",
@@ -317,16 +346,16 @@ describe("child-compact-render", () => {
 
     const collapsed = linesOf(state, false);
     expect(collapsed.expandedCurrentItem).toBeUndefined();
-    expect(collapsed.lines[1].startsWith("…") || collapsed.lines[1].length <= 240).toBe(
-      true,
-    );
+    expect(
+      collapsed.lines[1].startsWith("…") || collapsed.lines[1].length <= 240,
+    ).toBe(true);
 
     const expanded = linesOf(state, true);
     expect(expanded.expandedCurrentItem).toBeDefined();
     expect(expanded.expandedCurrentItem?.includes("word")).toBe(true);
-    expect([...(expanded.expandedCurrentItem ?? "")].length).toBeLessThanOrEqual(
-      4_096,
-    );
+    expect(
+      [...(expanded.expandedCurrentItem ?? "")].length,
+    ).toBeLessThanOrEqual(4_096);
   });
 
   it("does not leak path, session, or native ids in chrome lines", () => {

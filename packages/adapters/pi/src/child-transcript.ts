@@ -1,4 +1,9 @@
 import { err, ok, Result } from "neverthrow";
+import {
+  historicalProviderErrorFacts,
+  type PiChildProviderError,
+} from "./child-provider-error.js";
+import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
 /** Maximum size of one private transcript event, measured as UTF-8 JSON bytes. */
 export const MAX_TRANSCRIPT_HISTORY_EVENT_BYTES = 2 * 1024 * 1024;
@@ -93,6 +98,7 @@ export interface PiChildTranscriptAssistantEntry
   readonly markdown: string;
   readonly streaming: boolean;
   readonly stopReason?: string;
+  readonly terminalError?: PiChildProviderError;
   readonly usage?: PiChildTranscriptUsage;
   readonly imageIds: readonly string[];
 }
@@ -646,6 +652,25 @@ function applyEventBody(
       });
     const terminalText =
       messageText(message?.text) ?? messageText(message?.content);
+    const terminalFacts =
+      eventType === "message_end"
+        ? historicalProviderErrorFacts(message)
+        : undefined;
+    let terminalError = current.terminalError;
+    if (eventType === "message_end") {
+      terminalError = undefined;
+      next = {
+        ...next,
+        entries: next.entries.map((entry) =>
+          entry.kind === "assistant" && entry.stopReason === "error"
+            ? { ...entry, stopReason: undefined, terminalError: undefined }
+            : entry,
+        ),
+      };
+    }
+    if (terminalFacts?.stopReason === "error") {
+      terminalError = terminalFacts.providerError;
+    }
     const updated: PiChildTranscriptAssistantEntry = {
       ...addEventType(current, eventType),
       text:
@@ -655,7 +680,11 @@ function applyEventBody(
       thinking: current.thinking + (parts.thinking ?? ""),
       markdown: current.markdown + (parts.markdown ?? ""),
       streaming: eventType !== "message_end",
-      stopReason: stringValue(message?.stopReason) ?? current.stopReason,
+      stopReason:
+        terminalFacts?.stopReason ??
+        stringValue(message?.stopReason) ??
+        current.stopReason,
+      terminalError,
       messageId: current.messageId,
     };
     next = withUpdatedEntry(next, index, updated);
@@ -1557,7 +1586,18 @@ function renderEntry(
           width,
         ),
       );
-    if (entry.stopReason)
+    if (entry.stopReason === "error")
+      rows.push(
+        row(
+          entry.id,
+          entry.sequence,
+          entry.kind,
+          "error",
+          formatPiChildProviderError(entry.terminalError),
+          width,
+        ),
+      );
+    else if (entry.stopReason)
       rows.push(
         row(
           entry.id,
