@@ -102,7 +102,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - [repo: docs/architecture/adapter-boundary.md] The proposed neutral contract contains no raw provider payload, header, credential, or harness object.
     - [proposed] Every supported allowlist entry cites official request and response contracts; absence of response proof prevents an `applied` state. This controls false capability claims.
 
-- [ ] 2. Freeze the breaking contract and migration semantics
+- [x] 2. Freeze the breaking contract and migration semantics
   - **What**: Turn the approved decisions and Task 1 findings into the normative DSL, merge, adapter, evidence, and migration contract before production edits.
   - **Files**: `docs/specs/fast-provider-acceleration-contract.md`, `docs/reference/dsl.md`, `docs/reference/configuration.md`
   - **Depends on**: Task 1 and approval of all items under **Decisions needed before execution**

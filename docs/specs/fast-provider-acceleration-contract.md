@@ -1,8 +1,8 @@
-# Fast provider acceleration contract research
+# Fast provider acceleration contract
 
 Date: 2026-08-12
 
-Status: Task 1 research baseline; provider mappings are not yet implemented
+Status: Approved contract baseline; provider mappings are not yet implemented
 
 Retrieval date for web sources: 2026-08-12
 
@@ -16,7 +16,9 @@ Normative provider facts below come from first-party API documentation. Harness 
 
 Core and engine may carry only the user's neutral acceleration intent and bounded outcome state. They must not carry provider request fields, request or response headers, credentials, raw payloads, raw responses, harness event objects, or arbitrary provider metadata. Each adapter owns provider recognition, the exact allowlist, request mutation, response interpretation, and safe diagnostics.
 
-An adapter must preserve the provider default when fast intent is absent. Intent alone does not select a provider, model, endpoint, or credential.
+The only acceleration declaration is the literal `fast true` on an agent or category. Omission preserves the provider default. `fast false` is invalid, and there is no unset operator. The names `service_class`, `speed`, `variant`, and `priority` are invalid aliases in the DSL. Intent alone does not select a provider, model, endpoint, or credential.
+
+For a category-generated agent, an explicit category `fast true` takes precedence over the base `shuttle` value. If the category omits `fast`, the generated agent inherits the base `shuttle` intent. Because the only valid value is `true`, a higher-priority config layer cannot cancel an inherited declaration; it can only omit the field and leave the lower declaration in place.
 
 ## Official provider contracts
 
@@ -134,11 +136,11 @@ The neutral runtime states are:
 
 | State | Meaning |
 | --- | --- |
-| `declared` | The active descriptor contains fast intent. No provider attempt exists. |
-| `requested` | The adapter matched an allowlist entry and inserted or preserved the exact request control for this attempt. |
-| `applied` | The same attempt completed and the provider's official response field positively confirmed acceleration. |
-| `not-confirmed` | A request was made, but evidence was absent, inaccessible, ambiguous, standard-tier, or uncorrelated. |
-| `unsupported` | The harness seam, provider, endpoint, model, transport, or collision policy prevents a valid request or proof. |
+| `declared` | The effective active descriptor contains `fast true`, but no provider attempt exists. A source declaration that was overridden or did not reach the active descriptor does not qualify. |
+| `requested` | For this attempt, the adapter matched an exact allowlist entry and inserted or preserved every required request control. This is not evidence that the provider applied acceleration. |
+| `applied` | The same correlated attempt completed, and the provider's official response field contained the exact positive value defined in this contract. No other signal qualifies. |
+| `not-confirmed` | The adapter made a valid fast request, but positive response evidence was absent, inaccessible, ambiguous, standard-tier, or not correlated to that attempt. |
+| `unsupported` | The adapter cannot make a valid fast request for this descriptor and attempt because of its harness seam, provider, endpoint, model, transport, malformed input, or collision policy. |
 
 Allowed transitions are:
 
@@ -151,6 +153,77 @@ declared -> unsupported
 ```
 
 `requested` is not a success alias. It is transient attempt state. Only `applied` is positive application. A capability declaration, request mutation, HTTP success, latency observation, premium-looking charge, response limit header, project default, or harness mode indicator cannot substitute for the provider's documented response field.
+
+### Adapter fallback
+
+- With no effective `fast` declaration, an adapter leaves provider controls unchanged and emits no acceleration state.
+- Pi and OpenCode may enter `requested` only for an exact mapping in this contract. Their current public hooks cannot read positive response-body evidence, so the terminal result is `not-confirmed`, never `applied`.
+- Claude Code static materialization enters `unsupported`. It must not encode a guessed frontmatter field, environment value, prompt instruction, or provider control. Agent materialization still continues.
+- An unknown provider, endpoint, model, proxy, malformed input, or conflicting existing control enters `unsupported`. The adapter does not guess or overwrite the conflict. It preserves unrelated request data and allows normal harness behavior to continue when safe.
+- Failure of this optional capability does not fail agent activation, materialization, or an otherwise valid standard request. Existing adapter safety rules may still reject an independently invalid request.
+
+## Breaking DSL, merge, and migration contract
+
+The normative DSL syntax is defined in the [DSL reference](../reference/dsl.md). This section freezes the cross-layer behavior that adapters and exported consumers must implement.
+
+### Merge and generated-category behavior
+
+`fast` uses scalar merge behavior. A higher-priority `fast true` wins; omission does not erase a lower-priority declaration. Trigger arrays use ordered union merge. At each merge, entries from the higher-priority layer come first in their declared order, followed by lower-priority entries that are not exact string duplicates.
+
+For example, builtin triggers `["review code", "fix tests"]`, global triggers `["fix tests", "audit APIs"]`, and project triggers `["ship patch", "review code"]` produce:
+
+```text
+["ship patch", "review code", "fix tests", "audit APIs"]
+```
+
+Matching is exact and case-sensitive. The merge does not trim, case-fold, sort, or interpret trigger text.
+
+A generated `shuttle-{category}` uses the final merged category trigger list in its existing order. It does not inherit the base `shuttle` triggers. If the category omits triggers, the generated agent has no triggers. The generic `shuttle` keeps its own triggers as the fallback target. A category `fast true` overrides the base value; category omission inherits the base `shuttle` intent. Categories have no file patterns or replacement file-routing field.
+
+### Deterministic migration outcomes
+
+| Legacy form | Required outcome |
+| --- | --- |
+| Handwritten `.weave` | Parsing fails for a structured trigger object, any category `patterns` field, `fast false`, or a rejected alias. The user must replace each trigger object with one string, delete `patterns`, and use `fast true` only when opting in. No compatibility parser rewrites the file at runtime. |
+| Legacy JSONC | The converter selects each trigger object's nonblank `routing_hint`; if absent, it selects its nonblank `trigger`. It preserves source order, removes exact duplicate strings, and warns when `domain` or any other field is discarded. It drops a valid category pattern array with a warning. A malformed pattern value also warns and produces no metadata. A category with a nonblank description still converts; one without a nonblank description is skipped. The converter never infers `fast` from a legacy or provider-specific name. |
+| Builtin config | Maintainers replace each structured trigger with its nonblank `routing_hint`, or its `trigger` when no nonblank hint exists; exact duplicates are removed in source order. All category patterns are deleted. Builtins pass through the same strict DSL parser and receive no compatibility path. |
+| Exported core, engine, and adapter consumers | Consumers replace structured trigger types with `string[]`, remove every category `patterns` read/write, and accept the optional literal intent `fast?: true`. Removed trigger-object and pattern types receive no deprecated alias. Old TypeScript values fail compilation, and old untyped values fail strict runtime validation. |
+
+Example legacy JSONC input:
+
+```jsonc
+{
+  "agents": {
+    "loom": {
+      "triggers": [
+        { "domain": "Review", "trigger": "Review code", "routing_hint": "Use for pull request review" },
+        { "domain": "Tests", "trigger": "Fix tests" },
+        { "domain": "Review", "trigger": "Duplicate", "routing_hint": "Use for pull request review" }
+      ]
+    }
+  },
+  "categories": {
+    "backend": {
+      "description": "Backend APIs",
+      "patterns": ["src/api/**"]
+    }
+  }
+}
+```
+
+The deterministic converted declarations are:
+
+```weave
+agent loom {
+  triggers ["Use for pull request review", "Fix tests"]
+}
+
+category backend {
+  description "Backend APIs"
+}
+```
+
+The converter reports discarded trigger fields and dropped patterns. It does not emit aliases, structured trigger objects, or a pattern replacement.
 
 ## Sanitized evidence
 
