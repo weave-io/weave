@@ -30,6 +30,16 @@ export type {
   WorkflowBlock,
 } from "./ast.js";
 // ---------------------------------------------------------------------------
+// End-to-end pipeline
+// ---------------------------------------------------------------------------
+export {
+  CONFIG_ERRORS_TRUNCATED,
+  MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+  MAX_CONFIG_ERROR_FIELD_LENGTH,
+  MAX_CONFIG_ERROR_ISSUES,
+  MAX_CONFIG_ERROR_PATH_LENGTH,
+} from "./config-error-policy.js";
+// ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
 export type {
@@ -51,9 +61,6 @@ export type {
   ModelIntentParseError,
 } from "./model-thinking-syntax.js";
 export { parseModelIntentEntry } from "./model-thinking-syntax.js";
-// ---------------------------------------------------------------------------
-// End-to-end pipeline
-// ---------------------------------------------------------------------------
 export { parseConfig } from "./parse-config.js";
 export { parse } from "./parser.js";
 // ---------------------------------------------------------------------------

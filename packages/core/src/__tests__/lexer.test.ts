@@ -1,4 +1,10 @@
 import { describe, expect, it } from "bun:test";
+import {
+  CONFIG_ERRORS_TRUNCATED,
+  MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+  MAX_CONFIG_ERROR_FIELD_LENGTH,
+  MAX_CONFIG_ERROR_ISSUES,
+} from "../config-error-policy.js";
 import { tokenize } from "../lexer.js";
 import { TokenType } from "../tokens.js";
 
@@ -209,6 +215,35 @@ describe("Lexer — errors", () => {
     const types = errors.map((e) => e.type);
     expect(types).toContain("UnexpectedCharacter");
     expect(types).toContain("UnterminatedString");
+  });
+
+  it("bounds adversarial lexer diagnostics at the direct boundary", () => {
+    const errors = tokenize(
+      `1.${"x".repeat(20_000)} ${"@".repeat(100)}`,
+    )._unsafeUnwrapErr();
+    const size = errors.reduce((total, error) => {
+      if (error.type === "InvalidNumber") return total + error.value.length;
+      if (error.type === "UnexpectedCharacter")
+        return total + error.char.length;
+      return total;
+    }, 0);
+
+    expect(errors.length).toBeLessThanOrEqual(MAX_CONFIG_ERROR_ISSUES);
+    expect(size).toBeLessThanOrEqual(MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE);
+    expect(errors).toContainEqual(
+      expect.objectContaining({
+        type: "InvalidNumber",
+        value: expect.stringContaining("[truncated]"),
+      }),
+    );
+    expect(
+      errors.every(
+        (error) =>
+          error.type !== "InvalidNumber" ||
+          error.value.length <= MAX_CONFIG_ERROR_FIELD_LENGTH,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(errors)).toContain(CONFIG_ERRORS_TRUNCATED);
   });
 
   it("reports correct line for error on second line", () => {

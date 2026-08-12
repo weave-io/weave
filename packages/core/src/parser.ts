@@ -26,6 +26,10 @@ import type {
   StringValue,
   WorkflowBlock,
 } from "./ast.js";
+import {
+  boundConfigErrors,
+  CONFIG_ERRORS_TRUNCATED,
+} from "./config-error-policy.js";
 import type { ParseError } from "./errors.js";
 import type { SourcePos } from "./tokens.js";
 import { type Token, TokenType } from "./tokens.js";
@@ -703,7 +707,17 @@ class Parser {
       }
     }
 
-    if (this.#errors.length > 0) return err(this.#errors);
+    if (this.#errors.length > 0) {
+      return err(
+        boundConfigErrors<ParseError>(this.#errors, () => ({
+          type: "UnexpectedToken",
+          line: 0,
+          column: 0,
+          found: "",
+          expected: CONFIG_ERRORS_TRUNCATED,
+        })),
+      );
+    }
     return ok(nodes);
   }
 }

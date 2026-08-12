@@ -15,6 +15,7 @@ import {
   refinePromptExclusive,
   refinePromptFileSafe,
 } from "./prompt-schema-helpers.js";
+import { safeSchemaInput } from "./safe-schema-input.js";
 
 // ---------------------------------------------------------------------------
 // Primitives
@@ -134,7 +135,7 @@ export const RoutingConfigSchema = z
 // Agent
 // ---------------------------------------------------------------------------
 
-export const AgentConfigSchema = z
+const AgentConfigObjectSchema = z
   .object({
     name: z.string().optional(),
     description: z.string().optional(),
@@ -167,6 +168,8 @@ export const AgentConfigSchema = z
     addModelIntentIssues(agent.review_models, ["review_models"], ctx);
   });
 
+export const AgentConfigSchema = safeSchemaInput(AgentConfigObjectSchema);
+
 // ---------------------------------------------------------------------------
 // Category
 // ---------------------------------------------------------------------------
@@ -177,7 +180,7 @@ export const AgentConfigSchema = z
  * choosing between generated shuttles. Without it a generated shuttle would
  * advertise the generic Shuttle description, which contradicts its domain.
  */
-export const CategoryConfigSchema = z
+const CategoryConfigObjectSchema = z
   .object({
     name: z.string().optional(),
     description: NonBlankStringSchema(
@@ -200,6 +203,8 @@ export const CategoryConfigSchema = z
   .superRefine((category, ctx) => {
     addModelIntentIssues(category.models, ["models"], ctx);
   });
+
+export const CategoryConfigSchema = safeSchemaInput(CategoryConfigObjectSchema);
 
 // ---------------------------------------------------------------------------
 // Disabled
@@ -774,7 +779,7 @@ export const SettingsConfigSchema = z
  * per-workflow targeting in v1. The config layer inserts these steps into
  * every workflow that publishes `extension_points { before-plan }`.
  */
-export const WeaveConfigSchema = z
+const WeaveConfigObjectSchema = z
   .object({
     agents: z.record(z.string(), AgentConfigSchema).default({}),
     categories: z.record(z.string(), CategoryConfigSchema).default({}),
@@ -850,6 +855,8 @@ export const WeaveConfigSchema = z
       }
     }
   });
+
+export const WeaveConfigSchema = safeSchemaInput(WeaveConfigObjectSchema);
 
 // ---------------------------------------------------------------------------
 // Inferred types

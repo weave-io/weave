@@ -6,6 +6,10 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
+import {
+  boundConfigErrors,
+  CONFIG_ERRORS_TRUNCATED,
+} from "./config-error-policy.js";
 import type { LexError } from "./errors.js";
 import { type Token, TokenType } from "./tokens.js";
 
@@ -351,7 +355,16 @@ class Lexer {
       column: this.#col,
     });
 
-    if (errors.length > 0) return err(errors);
+    if (errors.length > 0) {
+      return err(
+        boundConfigErrors<LexError>(errors, () => ({
+          type: "UnexpectedCharacter",
+          line: 0,
+          column: 0,
+          char: CONFIG_ERRORS_TRUNCATED,
+        })),
+      );
+    }
     return ok(tokens);
   }
 }

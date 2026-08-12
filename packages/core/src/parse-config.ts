@@ -6,7 +6,16 @@
  */
 
 import { err, type Result } from "neverthrow";
-import type { ConfigError } from "./errors.js";
+import {
+  boundConfigErrors,
+  CONFIG_ERRORS_TRUNCATED,
+} from "./config-error-policy.js";
+import type {
+  ConfigError,
+  LexError,
+  ParseError,
+  ValidationError,
+} from "./errors.js";
 import { tokenize } from "./lexer.js";
 import { parse } from "./parser.js";
 import type { WeaveConfig } from "./schema.js";
@@ -24,13 +33,40 @@ export function parseConfig(
   source: string,
 ): Result<WeaveConfig, ConfigError[]> {
   const lexResult = tokenize(source);
-  if (lexResult.isErr()) return err(lexResult.error);
+  if (lexResult.isErr()) {
+    return err(
+      boundConfigErrors<LexError>(lexResult.error, () => ({
+        type: "UnexpectedCharacter",
+        line: 0,
+        column: 0,
+        char: CONFIG_ERRORS_TRUNCATED,
+      })),
+    );
+  }
 
   const parseResult = parse(lexResult.value);
-  if (parseResult.isErr()) return err(parseResult.error);
+  if (parseResult.isErr()) {
+    return err(
+      boundConfigErrors<ParseError>(parseResult.error, () => ({
+        type: "UnexpectedToken",
+        line: 0,
+        column: 0,
+        found: "",
+        expected: CONFIG_ERRORS_TRUNCATED,
+      })),
+    );
+  }
 
   const validateResult = validate(parseResult.value);
-  if (validateResult.isErr()) return err(validateResult.error);
+  if (validateResult.isErr()) {
+    return err(
+      boundConfigErrors<ValidationError>(validateResult.error, () => ({
+        type: "ValidationError",
+        path: "",
+        message: CONFIG_ERRORS_TRUNCATED,
+      })),
+    );
+  }
 
   return validateResult;
 }

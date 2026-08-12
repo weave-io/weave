@@ -12,6 +12,14 @@ import type {
   IdentifierValue,
   Property,
 } from "./ast.js";
+import {
+  boundConfigErrors,
+  CONFIG_ERRORS_TRUNCATED,
+  MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+  MAX_CONFIG_ERROR_FIELD_LENGTH,
+  MAX_CONFIG_ERROR_ISSUES,
+  MAX_CONFIG_ERROR_PATH_LENGTH,
+} from "./config-error-policy.js";
 import type { ValidationError } from "./errors.js";
 import { type WeaveConfig, WeaveConfigSchema } from "./schema.js";
 
@@ -19,61 +27,21 @@ import { type WeaveConfig, WeaveConfigSchema } from "./schema.js";
 // Validation diagnostic and AST structure bounds
 // ---------------------------------------------------------------------------
 
-export const MAX_VALIDATION_ISSUES = 32;
-export const MAX_VALIDATION_PATH_LENGTH = 256;
-export const MAX_VALIDATION_MESSAGE_LENGTH = 512;
-export const MAX_VALIDATION_DIAGNOSTIC_SIZE = 8 * 1024;
-export const VALIDATION_DIAGNOSTICS_TRUNCATED =
-  "[validation diagnostics truncated]";
+export const MAX_VALIDATION_ISSUES = MAX_CONFIG_ERROR_ISSUES;
+export const MAX_VALIDATION_PATH_LENGTH = MAX_CONFIG_ERROR_PATH_LENGTH;
+export const MAX_VALIDATION_MESSAGE_LENGTH = MAX_CONFIG_ERROR_FIELD_LENGTH;
+export const MAX_VALIDATION_DIAGNOSTIC_SIZE = MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE;
+export const VALIDATION_DIAGNOSTICS_TRUNCATED = CONFIG_ERRORS_TRUNCATED;
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const STRUCTURAL_ERROR_COLLECTION_LIMIT = MAX_VALIDATION_ISSUES + 1;
 
-function truncateDiagnosticPart(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  const marker = "... [truncated]";
-  return `${value.slice(0, maxLength - marker.length)}${marker}`;
-}
-
 function boundValidationErrors(errors: ValidationError[]): ValidationError[] {
-  let partWasTruncated = false;
-  const sanitized = errors.map((error) => {
-    const path = truncateDiagnosticPart(error.path, MAX_VALIDATION_PATH_LENGTH);
-    const message = truncateDiagnosticPart(
-      error.message,
-      MAX_VALIDATION_MESSAGE_LENGTH,
-    );
-    partWasTruncated ||= path !== error.path || message !== error.message;
-    return { ...error, path, message };
-  });
-  const aggregateSize = sanitized.reduce(
-    (size, error) => size + error.path.length + error.message.length,
-    0,
-  );
-  if (
-    !partWasTruncated &&
-    sanitized.length <= MAX_VALIDATION_ISSUES &&
-    aggregateSize <= MAX_VALIDATION_DIAGNOSTIC_SIZE
-  ) {
-    return sanitized;
-  }
-
-  const bounded: ValidationError[] = [];
-  const markerSize = VALIDATION_DIAGNOSTICS_TRUNCATED.length;
-  let size = 0;
-  for (const error of sanitized) {
-    if (bounded.length >= MAX_VALIDATION_ISSUES - 1) break;
-    const errorSize = error.path.length + error.message.length;
-    if (size + errorSize + markerSize > MAX_VALIDATION_DIAGNOSTIC_SIZE) break;
-    bounded.push(error);
-    size += errorSize;
-  }
-  bounded.push({
+  return boundConfigErrors<ValidationError>(errors, () => ({
     type: "ValidationError",
     path: "",
-    message: VALIDATION_DIAGNOSTICS_TRUNCATED,
-  });
-  return bounded;
+    message: CONFIG_ERRORS_TRUNCATED,
+  }));
 }
 
 function structuralError(
@@ -177,6 +145,64 @@ function validatePropertyStructure(
   }
 }
 
+function validateDestinationOwnership(
+  properties: readonly Property[],
+  path: string,
+  errors: ValidationError[],
+  reservedDestinations: ReadonlySet<string>,
+  destinationOf: (property: Property) => string = (property) => property.key,
+): void {
+  const owners = new Map<string, Property>();
+  for (const property of properties) {
+    const destination = destinationOf(property);
+    if (reservedDestinations.has(destination)) {
+      structuralError(
+        errors,
+        `${path}.${property.key}`,
+        `property '${property.key}' collides with generated '${destination}'`,
+        property,
+      );
+      continue;
+    }
+    const previous = owners.get(destination);
+    if (previous !== undefined && previous.key !== property.key) {
+      structuralError(
+        errors,
+        `${path}.${property.key}`,
+        `properties '${previous.key}' and '${property.key}' both map to '${destination}'`,
+        property,
+      );
+    }
+    owners.set(destination, property);
+  }
+}
+
+function validateCompletionDestinationOwnership(
+  properties: readonly Property[],
+  path: string,
+  errors: ValidationError[],
+): void {
+  for (const property of properties) {
+    if (property.key !== "completion" || property.value.kind !== "block") {
+      continue;
+    }
+    const hasGeneratedMethod = property.value.properties.some(
+      (nested) => nested.key === "__name",
+    );
+    if (!hasGeneratedMethod) continue;
+    for (const nested of property.value.properties) {
+      if (nested.key === "method") {
+        structuralError(
+          errors,
+          `${path}.completion.method`,
+          "property 'method' collides with generated 'method'",
+          nested,
+        );
+      }
+    }
+  }
+}
+
 function validateAstStructure(nodes: AstNode[]): ValidationError[] {
   const errors: ValidationError[] = [];
   const declarations = {
@@ -219,6 +245,12 @@ function validateAstStructure(nodes: AstNode[]): ValidationError[] {
         node.type === "agent" || node.type === "category",
       );
       if (node.type === "workflow") {
+        validateDestinationOwnership(
+          node.properties,
+          path,
+          errors,
+          new Set(["steps"]),
+        );
         const stepNames = new Set<string>();
         for (const step of node.steps) {
           const stepPath = `${path}.steps.${step.name}`;
@@ -243,6 +275,19 @@ function validateAstStructure(nodes: AstNode[]): ValidationError[] {
             errors,
             false,
             false,
+          );
+          validateDestinationOwnership(
+            step.properties,
+            stepPath,
+            errors,
+            new Set(["name"]),
+            (property) =>
+              property.key === "name" ? "display_name" : property.key,
+          );
+          validateCompletionDestinationOwnership(
+            step.properties,
+            stepPath,
+            errors,
           );
         }
       }

@@ -1037,6 +1037,89 @@ describe("AgentConfigSchema — prompt_append_file", () => {
 // CategoryConfigSchema — description (required, non-blank)
 // ---------------------------------------------------------------------------
 
+describe("exported schema input boundaries", () => {
+  it.each([
+    ["root agents", WeaveConfigSchema, "agents", {}],
+    ["agent fast", AgentConfigSchema, "fast", true],
+    ["agent triggers", AgentConfigSchema, "triggers", ["owned"]],
+    ["category fast", CategoryConfigSchema, "fast", true],
+    ["category triggers", CategoryConfigSchema, "triggers", ["owned"]],
+    ["category description", CategoryConfigSchema, "description", "inherited"],
+  ])("rejects prototype-provided %s", (_case, schema, key, value) => {
+    const input = Object.create({ [key]: value }) as Record<string, unknown>;
+    if (schema === CategoryConfigSchema && key !== "description") {
+      input.description = "Owned description";
+    }
+    expect(schema.safeParse(input).success).toBe(false);
+  });
+
+  it.each([
+    [AgentConfigSchema, "fast"],
+    [AgentConfigSchema, "triggers"],
+    [CategoryConfigSchema, "description"],
+    [WeaveConfigSchema, "agents"],
+  ])("rejects %s accessors without executing getters", (schema, key) => {
+    let getterExecutions = 0;
+    const input: Record<string, unknown> = {};
+    if (schema === CategoryConfigSchema && key !== "description") {
+      input.description = "Owned description";
+    }
+    Object.defineProperty(input, key, {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return key === "triggers" ? ["unsafe"] : true;
+      },
+    });
+
+    expect(schema.safeParse(input).success).toBe(false);
+    expect(getterExecutions).toBe(0);
+  });
+
+  it("rejects unexpected prototypes and unsafe data descriptors", () => {
+    class AgentInput {}
+    const classInput = new AgentInput();
+    Object.defineProperty(classInput, "fast", {
+      value: true,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    expect(AgentConfigSchema.safeParse(classInput).success).toBe(false);
+
+    const readonlyInput: Record<string, unknown> = {};
+    Object.defineProperty(readonlyInput, "fast", {
+      value: true,
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    });
+    expect(AgentConfigSchema.safeParse(readonlyInput).success).toBe(false);
+  });
+
+  it("accepts own data properties on plain and null-prototype records", () => {
+    expect(
+      AgentConfigSchema.safeParse({ fast: true, triggers: ["plain"] }).success,
+    ).toBe(true);
+
+    const category = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(category, "description", {
+      value: "Safe category",
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(category, "fast", {
+      value: true,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    expect(CategoryConfigSchema.safeParse(category).success).toBe(true);
+  });
+});
+
 describe("AgentConfigSchema and CategoryConfigSchema — fast intent and triggers", () => {
   const schemas = [
     ["agent", AgentConfigSchema, {}],

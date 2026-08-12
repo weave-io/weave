@@ -1,4 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import {
+  CONFIG_ERRORS_TRUNCATED,
+  MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+  MAX_CONFIG_ERROR_FIELD_LENGTH,
+  MAX_CONFIG_ERROR_ISSUES,
+} from "../config-error-policy.js";
+import type { ConfigError } from "../errors.js";
 import { parseConfig } from "../parse-config.js";
 import {
   MAX_VALIDATION_DIAGNOSTIC_SIZE,
@@ -120,6 +127,20 @@ describe("parseConfig — fail-closed DSL structure", () => {
     }
   });
 
+  it.each([
+    `workflow flow { version 1 step run { name "Run" display_name "Overwrite" } }`,
+    `workflow flow { version 1 step run { completion plan_created { method "overwrite" } } }`,
+    `workflow flow { version 1 steps [] step run { agent helper } }`,
+  ])("rejects generated-destination collisions end to end", (source) => {
+    const result = parseConfig(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringMatching(/collid|map to/),
+      }),
+    );
+  });
+
   it("bounds adversarial aggregate diagnostics end to end", () => {
     const longKey = "x".repeat(MAX_VALIDATION_PATH_LENGTH * 4);
     const unknowns = Array.from(
@@ -145,6 +166,87 @@ describe("parseConfig — fail-closed DSL structure", () => {
     ).toBeLessThanOrEqual(MAX_VALIDATION_MESSAGE_LENGTH);
     expect(aggregate).toBeLessThanOrEqual(MAX_VALIDATION_DIAGNOSTIC_SIZE);
     expect(errors.at(-1)?.message).toBe(VALIDATION_DIAGNOSTICS_TRUNCATED);
+  });
+});
+
+describe("parseConfig — all ConfigError bounds", () => {
+  function diagnosticSize(errors: ConfigError[]): number {
+    return errors.reduce((size: number, error: ConfigError) => {
+      switch (error.type) {
+        case "InvalidNumber":
+          return size + error.value.length;
+        case "UnexpectedCharacter":
+          return size + error.char.length;
+        case "UnexpectedToken":
+          return size + error.found.length + error.expected.length;
+        case "MissingBlockName":
+          return size + error.blockType.length;
+        case "ValidationError":
+          return size + error.path.length + error.message.length;
+        case "UnterminatedString":
+        case "UnclosedBlock":
+          return size;
+        default:
+          return size;
+      }
+    }, 0);
+  }
+
+  it("bounds lexer issue count, fields, and aggregate diagnostics", () => {
+    const source = `1.${"x".repeat(20_000)} ${"@".repeat(100)}`;
+    const first = parseConfig(source)._unsafeUnwrapErr();
+    const second = parseConfig(source)._unsafeUnwrapErr();
+
+    expect(second).toEqual(first);
+    expect(first.length).toBeLessThanOrEqual(MAX_CONFIG_ERROR_ISSUES);
+    expect(diagnosticSize(first)).toBeLessThanOrEqual(
+      MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+    );
+    expect(
+      first.some(
+        (error) =>
+          error.type === "InvalidNumber" &&
+          error.value.length <= MAX_CONFIG_ERROR_FIELD_LENGTH,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(first)).toContain(CONFIG_ERRORS_TRUNCATED);
+  });
+
+  it("bounds a deterministic 20,000-character duplicate key", () => {
+    const key = `x${"y".repeat(19_999)}`;
+    const source = `agent helper { ${key} true ${key} false }`;
+    const first = parseConfig(source)._unsafeUnwrapErr();
+    const second = parseConfig(source)._unsafeUnwrapErr();
+
+    expect(second).toEqual(first);
+    expect(first.length).toBeLessThanOrEqual(MAX_CONFIG_ERROR_ISSUES);
+    expect(diagnosticSize(first)).toBeLessThanOrEqual(
+      MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+    );
+    expect(first).toContainEqual(
+      expect.objectContaining({
+        type: "ValidationError",
+        path: expect.stringContaining("[truncated]"),
+        message: expect.stringContaining("[truncated]"),
+      }),
+    );
+    expect(JSON.stringify(first)).toContain(CONFIG_ERRORS_TRUNCATED);
+  });
+
+  it("bounds parser-controlled fields before returning them", () => {
+    const source = `agent helper x${"y".repeat(19_999)}`;
+    const errors = parseConfig(source)._unsafeUnwrapErr();
+
+    expect(errors).toContainEqual(
+      expect.objectContaining({
+        type: "UnexpectedToken",
+        found: expect.stringContaining("[truncated]"),
+      }),
+    );
+    expect(diagnosticSize(errors)).toBeLessThanOrEqual(
+      MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+    );
+    expect(JSON.stringify(errors)).toContain(CONFIG_ERRORS_TRUNCATED);
   });
 });
 

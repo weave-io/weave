@@ -133,6 +133,32 @@ describe("validate — fail-closed AST structure", () => {
     }
   });
 
+  it.each([
+    [
+      "step display name",
+      `workflow flow { version 1 step run { name "Run" display_name "Overwrite" } }`,
+      "display_name",
+    ],
+    [
+      "completion method",
+      `workflow flow { version 1 step run { completion plan_created { method "overwrite" } } }`,
+      "method",
+    ],
+    [
+      "workflow steps",
+      `workflow flow { version 1 steps [] step run { agent helper } }`,
+      "steps",
+    ],
+  ])("rejects %s generated-destination collisions", (_case, source, destination) => {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining(`'${destination}'`),
+      }),
+    );
+  });
+
   it("rejects dangerous declaration, property, nested block, and step names", () => {
     for (const source of [
       `agent __proto__ { fast true }`,

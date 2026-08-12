@@ -9,6 +9,11 @@ import type {
   SettingAssignment,
   WorkflowBlock,
 } from "../ast.js";
+import {
+  CONFIG_ERRORS_TRUNCATED,
+  MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+  MAX_CONFIG_ERROR_FIELD_LENGTH,
+} from "../config-error-policy.js";
 import { tokenize } from "../lexer.js";
 import { parse } from "../parser.js";
 
@@ -63,6 +68,37 @@ describe("Parser — structural preservation", () => {
         }),
       );
     }
+  });
+
+  it("bounds adversarial parser fields at the direct boundary", () => {
+    const result = parseSource(`agent helper x${"y".repeat(19_999)}`);
+    const errors = result._unsafeUnwrapErr();
+    const size = errors.reduce((total, error) => {
+      if (error.type === "UnexpectedToken") {
+        return total + error.found.length + error.expected.length;
+      }
+      if (error.type === "MissingBlockName") {
+        return total + error.blockType.length;
+      }
+      return total;
+    }, 0);
+
+    expect(errors).toContainEqual(
+      expect.objectContaining({
+        type: "UnexpectedToken",
+        found: expect.stringContaining("[truncated]"),
+      }),
+    );
+    expect(
+      errors.every(
+        (error) =>
+          error.type !== "UnexpectedToken" ||
+          (error.found.length <= MAX_CONFIG_ERROR_FIELD_LENGTH &&
+            error.expected.length <= MAX_CONFIG_ERROR_FIELD_LENGTH),
+      ),
+    ).toBe(true);
+    expect(size).toBeLessThanOrEqual(MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE);
+    expect(JSON.stringify(errors)).toContain(CONFIG_ERRORS_TRUNCATED);
   });
 });
 
