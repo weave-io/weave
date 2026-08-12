@@ -886,48 +886,87 @@ describe("generated category shuttles do not inherit base shuttle triggers", () 
     expect(generic?.triggers).toHaveLength(2);
   });
 
-  it("(d) Loom's delegation section renders no category trigger bullets when categories omit triggers", async () => {
-    // Mirrors the loom.md delegation block: name/description plus one bullet
-    // per projected trigger. Task 6 will change that projection; until then
-    // object fields stay empty so no category bullets appear.
-    const desc = await descriptor(
-      "loom",
-      `
-        agent loom {
-          prompt "{{#delegation.targets}}\\n- **{{name}}** — {{description}}{{#triggers}}\\n  - {{trigger}}{{/triggers}}\\n{{/delegation.targets}}"
-          models ["claude-sonnet-4-5"]
-          mode primary
-          tool_policy { delegate allow }
-        }
-        ${BASE_WITH_TRIGGERS}
-      `,
-    );
-
-    const lines = desc.composedPrompt.split("\n");
-    const hintsFor = (target: string): string[] => {
-      const start = lines.findIndex((l) => l.startsWith(`- **${target}** —`));
-      expect(start).toBeGreaterThanOrEqual(0);
-      const hints: string[] = [];
-      for (let i = start + 1; i < lines.length; i++) {
-        const line = lines[i] ?? "";
-        if (!line.startsWith("  - ")) break;
-        hints.push(line);
+  it("(d) category triggers copy in declared order and generic shuttle keeps its own", async () => {
+    // Task 5 proof stays at generation and composed-descriptor level.
+    // Prompt-context string rendering belongs to Task 6.
+    const source = `
+      agent loom {
+        prompt "I am loom."
+        models ["claude-sonnet-4-5"]
+        mode primary
+        tool_policy { delegate allow }
       }
-      return hints;
-    };
-
-    expect(hintsFor("shuttle-mini")).toEqual([]);
-    expect(hintsFor("shuttle-tests")).toEqual([]);
-    expect(hintsFor("shuttle")).toEqual([
-      "  - Use only when no listed category shuttle clearly matches the work",
-      "  - Use for build, script, CI, and manifest files",
+      agent shuttle {
+        description "Shuttle (Domain Specialist)"
+        prompt "Base."
+        models ["claude-sonnet-4-5"]
+        triggers ["generic fallback"]
+      }
+      category mini {
+        description "Small, surgical edits in a single file"
+        triggers ["tiny localized change", "single-file fix"]
+      }
+      category tests {
+        description "Test authoring and coverage work"
+      }
+    `;
+    const config = cfg(source);
+    const categoryTriggers = config.categories.mini?.triggers;
+    const shuttleTriggers = config.agents.shuttle?.triggers;
+    expect(categoryTriggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
     ]);
+    expect(shuttleTriggers).toEqual(["generic fallback"]);
 
-    const occurrences =
-      desc.composedPrompt.split(
-        "Use only when no listed category shuttle clearly matches the work",
-      ).length - 1;
-    expect(occurrences).toBe(1);
+    const generated = generateCategoryShuttles(config);
+    if (generated.isErr()) throw new Error(generated.error.message);
+    const generatedMini = generated.value["shuttle-mini"]?.config.triggers;
+    const generatedTests = generated.value["shuttle-tests"]?.config.triggers;
+    expect(generatedMini).toEqual(["tiny localized change", "single-file fix"]);
+    expect(generatedMini).not.toBe(categoryTriggers);
+    expect(generatedTests).toEqual([]);
+    expect(config.agents.shuttle?.triggers).toEqual(["generic fallback"]);
+
+    const desc = await descriptor("loom", source);
+    const mini = desc.delegationTargets.find((t) => t.name === "shuttle-mini");
+    const tests = desc.delegationTargets.find(
+      (t) => t.name === "shuttle-tests",
+    );
+    const generic = desc.delegationTargets.find((t) => t.name === "shuttle");
+
+    expect(mini?.triggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
+    ]);
+    expect(mini?.triggers).not.toBe(categoryTriggers);
+    expect(mini?.triggers).not.toBe(generatedMini);
+    expect(tests?.triggers).toEqual([]);
+    expect(generic?.triggers).toEqual(["generic fallback"]);
+    expect(generic?.triggers).not.toBe(shuttleTriggers);
+
+    categoryTriggers?.push("mutated category");
+    shuttleTriggers?.push("mutated shuttle");
+    generatedMini?.push("mutated generated");
+    expect(mini?.triggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
+    ]);
+    expect(generic?.triggers).toEqual(["generic fallback"]);
+    expect(generated.value["shuttle-mini"]?.config.triggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
+      "mutated generated",
+    ]);
+    expect(config.categories.mini?.triggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
+      "mutated category",
+    ]);
+    expect(config.agents.shuttle?.triggers).toEqual([
+      "generic fallback",
+      "mutated shuttle",
+    ]);
   });
 
   it("(e) category triggers appear on the generated shuttle and generic shuttle keeps its own", async () => {
