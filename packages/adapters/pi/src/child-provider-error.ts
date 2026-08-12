@@ -43,20 +43,25 @@
  * the top-level `errorMessage`:
  *
  * 1. an HTTP status anchored at offset zero (the provider-SDK convention,
- *    `429 {"type":"error",...}`), restricted to 400–599;
- * 2. an allowlisted code token read as a **direct member** — `type` or `code` —
- *    of the object held by the **direct** top-level `error` member, found by a
- *    bounded structural scan rather than by searching the text;
- * 3. an allowlisted code token that is the entire remaining body (the errno
- *    convention, `ECONNRESET`).
+ *    `429 …`), restricted to 400–599;
+ * 2. an allowlisted code token that is the entire remaining body after that
+ *    optional status (the errno convention, `ECONNRESET`).
  *
- * Nothing else is read. Assistant content, prompts, completions, arbitrary
- * nested JSON, free prose, and unmarked numbers contribute nothing, so a
- * completion that happens to contain `HTTP 429 rate_limit_error` cannot change
- * the class. Nested members (`error.details.code`, `error.completion.type`) and
- * siblings of the envelope (`completion.code`) are structurally out of reach:
- * the scan skips every nested value instead of reading it. Ambiguous or
- * unrecognized data collapses to `provider-error` or `unknown`.
+ * Every JSON-shaped body is untrusted generic unknown. After any separately
+ * handled authoritative non-JSON HTTP status prefix, if the bounded trimmed
+ * remainder starts with `{` or `[`, this module does not inspect type, code,
+ * status, or any member inside it. The JSON suffix contributes no evidence:
+ * no safe code is retained from it, and classification uses only the leading
+ * HTTP status when one is present — otherwise the class is `unknown` with the
+ * canonical details-unavailable message. Bare valid JSON Anthropic/OpenAI
+ * envelopes, malformed JSON, trailing content or commas, duplicates, arrays,
+ * nested or sibling members, inherited or proxy shapes, and oversized JSON all
+ * stay unknown and never throw.
+ *
+ * Nothing else is read. Assistant content, prompts, completions, free prose,
+ * and unmarked numbers contribute nothing, so a completion that happens to
+ * contain `HTTP 429 rate_limit_error` cannot change the class. Ambiguous or
+ * unrecognized non-JSON data collapses to `provider-error` or `unknown`.
  *
  * ## Identity labels
  *
@@ -98,32 +103,6 @@ export const MAX_CHILD_ERROR_MESSAGE_LENGTH = 160;
 /** Pinned ceiling on how much raw text is scanned for evidence. */
 export const MAX_CHILD_ERROR_SCAN_LENGTH = 4_096;
 
-/**
- * Pinned ceiling on the window scanned inside an anchored error envelope. A
- * genuine envelope names its type or code in the first members; a longer reach
- * would start mining arbitrary nested JSON.
- */
-export const MAX_CHILD_ERROR_ENVELOPE_WINDOW = 256;
-
-/**
- * Pinned ceiling on direct members examined per object during the structural
- * envelope scan. A genuine provider envelope is a handful of members.
- */
-export const MAX_CHILD_ERROR_ENVELOPE_MEMBERS = 32;
-
-/**
- * Pinned ceiling on nesting the scan will *skip over*. Nested values are never
- * read; the depth bound exists so a deeply nested payload cannot drive the
- * skip recursion without limit. Beyond it the scan yields no evidence.
- */
-export const MAX_CHILD_ERROR_ENVELOPE_DEPTH = 8;
-
-/**
- * Pinned ceiling on one scanned string literal. Every allowlisted code is far
- * below it; a longer literal is not read as a token at all.
- */
-export const MAX_CHILD_ERROR_ENVELOPE_TOKEN = 64;
-
 /** Pinned ceiling on trusted identity labels (source, provider, model). */
 export const MAX_CHILD_ERROR_LABEL_LENGTH = 64;
 
@@ -141,10 +120,6 @@ export const MAX_CHILD_ERROR_EVIDENCE_STATUS = 599;
 export const CHILD_PROVIDER_ERROR_BOUNDS = Object.freeze({
   maxMessageLength: MAX_CHILD_ERROR_MESSAGE_LENGTH,
   maxScanLength: MAX_CHILD_ERROR_SCAN_LENGTH,
-  maxEnvelopeWindow: MAX_CHILD_ERROR_ENVELOPE_WINDOW,
-  maxEnvelopeMembers: MAX_CHILD_ERROR_ENVELOPE_MEMBERS,
-  maxEnvelopeDepth: MAX_CHILD_ERROR_ENVELOPE_DEPTH,
-  maxEnvelopeToken: MAX_CHILD_ERROR_ENVELOPE_TOKEN,
   maxLabelLength: MAX_CHILD_ERROR_LABEL_LENGTH,
   maxCodeLength: MAX_CHILD_ERROR_CODE_LENGTH,
   minHttpStatus: 100,
@@ -461,10 +436,18 @@ function anchoredEvidence(raw: string | undefined): AnchoredEvidence {
     statusText === undefined ? head : head.slice(statusText.length)
   ).replace(/^\s+/u, "");
 
+  // JSON-shaped remainder is never inspected for type/code/status members.
+  if (body.startsWith("{") || body.startsWith("[")) {
+    return {
+      ...(httpStatus === undefined ? {} : { httpStatus }),
+      present: true,
+    };
+  }
+
   return {
     ...(httpStatus === undefined ? {} : { httpStatus }),
     ...(() => {
-      const code = anchoredCode(body);
+      const code = anchoredBareCode(body);
       return code === undefined ? {} : { code };
     })(),
     present: true,
@@ -472,280 +455,14 @@ function anchoredEvidence(raw: string | undefined): AnchoredEvidence {
 }
 
 /**
- * An allowlisted code token from an anchored position in the body: either a
- * body that is nothing but a code token, or a direct member of the direct
- * top-level `error` object.
+ * An allowlisted code token only when the entire remaining body is that token
+ * (errno convention). JSON-shaped bodies never reach this helper.
  */
-function anchoredCode(body: string): PiChildSafeErrorCode | undefined {
+function anchoredBareCode(body: string): PiChildSafeErrorCode | undefined {
   const bare = BARE_CODE_BODY.exec(body.trim());
   const bareToken = bare?.[1];
-  if (bareToken !== undefined) {
-    const code = allowlistedCode(bareToken);
-    if (code !== undefined) return code;
-  }
-  return directEnvelopeCode(body);
-}
-
-// ---------------------------------------------------------------------------
-// Bounded structural envelope scan
-// ---------------------------------------------------------------------------
-
-/*
- * Why a scanner and not a regular expression, and not `JSON.parse`.
- *
- * A regular expression over the raw text has no notion of depth or ownership,
- * so a window anchored at `{"error":{` also covers whatever follows: a nested
- * `error.completion.type`, a nested `error.details.code`, or a sibling
- * `completion.code` after the envelope closes. Any of those lets a provider
- * completion — that is, model output — choose Weave's error class.
- *
- * `JSON.parse` would fix depth but materializes an object, which reintroduces
- * prototype members (`__proto__`), and would force a full-document parse of an
- * arbitrarily large payload before any bound applied.
- *
- * This scanner walks the text once, left to right, inside pinned bounds. It
- * reads only two positions: the direct top-level `error` member, and the direct
- * `type` / `code` members of the object that member holds. Every other value —
- * nested object, array, string, number — is *skipped* structurally, never read.
- * Because no object is ever created, inherited members, getters, proxies, and
- * `toJSON` cannot participate at all. Any malformation, truncation, or bound
- * breach yields no evidence rather than a guess.
- */
-
-/** A mutable position in the scanned text. */
-interface ScanCursor {
-  readonly text: string;
-  index: number;
-}
-
-/**
- * One scanned string literal. `token` is the literal's text when it is short
- * and escape-free, and `undefined` when the literal was oversized or carried
- * any escape sequence — such a literal is consumed for structure but is never
- * usable as evidence. A `null` scan result means the text is malformed.
- */
-interface ScannedString {
-  readonly token: string | undefined;
-}
-
-const SCAN_WHITESPACE = " \t\n\r";
-const SCAN_PRIMITIVE_END = ",}] \t\n\r";
-
-const skipScanWhitespace = (cursor: ScanCursor): void => {
-  while (
-    cursor.index < cursor.text.length &&
-    SCAN_WHITESPACE.includes(cursor.text.charAt(cursor.index))
-  ) {
-    cursor.index += 1;
-  }
-};
-
-const charAt = (cursor: ScanCursor): string | undefined =>
-  cursor.index < cursor.text.length
-    ? cursor.text.charAt(cursor.index)
-    : undefined;
-
-/**
- * Consume a JSON string literal. Escapes are consumed so the structural walk
- * stays in sync, but they make the literal unusable as evidence: an allowlisted
- * code never needs one, so refusing escaped literals removes any decoding step
- * from the trust boundary.
- */
-function scanString(cursor: ScanCursor): ScannedString | null {
-  if (charAt(cursor) !== '"') return null;
-  cursor.index += 1;
-  let token = "";
-  let usable = true;
-  while (cursor.index < cursor.text.length) {
-    const char = cursor.text.charAt(cursor.index);
-    cursor.index += 1;
-    if (char === '"') return { token: usable ? token : undefined };
-    if (char === "\\") {
-      usable = false;
-      if (cursor.index >= cursor.text.length) return null;
-      cursor.index += 1;
-      continue;
-    }
-    if (token.length >= MAX_CHILD_ERROR_ENVELOPE_TOKEN) {
-      usable = false;
-      continue;
-    }
-    token += char;
-  }
-  return null;
-}
-
-/**
- * Consume one value without reading it. Objects and arrays are walked to their
- * close so the caller lands on the next sibling member; nothing inside them is
- * ever inspected. `false` means the text is malformed or exceeded the depth
- * bound, which the caller treats as no evidence.
- */
-function skipValue(cursor: ScanCursor, depth: number): boolean {
-  skipScanWhitespace(cursor);
-  const open = charAt(cursor);
-  if (open === undefined) return false;
-  if (open === '"') return scanString(cursor) !== null;
-  if (open === "{" || open === "[") {
-    if (depth >= MAX_CHILD_ERROR_ENVELOPE_DEPTH) return false;
-    const close = open === "{" ? "}" : "]";
-    cursor.index += 1;
-    let members = 0;
-    for (;;) {
-      skipScanWhitespace(cursor);
-      const next = charAt(cursor);
-      if (next === undefined) return false;
-      if (next === close) {
-        cursor.index += 1;
-        return true;
-      }
-      if (next === ",") {
-        cursor.index += 1;
-        continue;
-      }
-      members += 1;
-      if (members > MAX_CHILD_ERROR_ENVELOPE_MEMBERS) return false;
-      if (open === "{") {
-        if (scanString(cursor) === null) return false;
-        skipScanWhitespace(cursor);
-        if (charAt(cursor) !== ":") return false;
-        cursor.index += 1;
-      }
-      if (!skipValue(cursor, depth + 1)) return false;
-    }
-  }
-  const start = cursor.index;
-  while (
-    cursor.index < cursor.text.length &&
-    !SCAN_PRIMITIVE_END.includes(cursor.text.charAt(cursor.index))
-  ) {
-    cursor.index += 1;
-  }
-  return cursor.index > start;
-}
-
-/** A direct code-bearing member of the error object, or an ambiguity marker. */
-interface DirectMemberEvidence {
-  token?: string;
-  seen: boolean;
-  ambiguous: boolean;
-}
-
-const noMember = (): DirectMemberEvidence => ({
-  seen: false,
-  ambiguous: false,
-});
-
-const recordMember = (
-  member: DirectMemberEvidence,
-  token: string | undefined,
-): void => {
-  if (member.seen) {
-    // A repeated direct member has no single meaning. Rather than pick one
-    // spelling, the member stops being evidence at all.
-    member.ambiguous = true;
-    delete member.token;
-    return;
-  }
-  member.seen = true;
-  if (token !== undefined) member.token = token;
-};
-
-const usableToken = (member: DirectMemberEvidence): string | undefined =>
-  member.ambiguous ? undefined : member.token;
-
-/**
- * Read the direct `type` and `code` members of the error object the cursor is
- * positioned on, within the pinned window measured from the opening brace.
- *
- * `type` is the provider taxonomy member and outranks `code` when both are
- * present and both are allowlisted, which keeps the class deterministic for the
- * real envelopes that carry both.
- */
-function errorObjectCode(cursor: ScanCursor): PiChildSafeErrorCode | undefined {
-  cursor.index += 1;
-  const windowEnd = cursor.index + MAX_CHILD_ERROR_ENVELOPE_WINDOW;
-  const type = noMember();
-  const code = noMember();
-  let members = 0;
-  for (;;) {
-    skipScanWhitespace(cursor);
-    // A member that begins outside the window is out of reach, so the scan
-    // stops with whatever it already read rather than reaching further.
-    if (cursor.index >= windowEnd) break;
-    const next = charAt(cursor);
-    if (next === undefined) return undefined;
-    if (next === "}") break;
-    if (next === ",") {
-      cursor.index += 1;
-      continue;
-    }
-    members += 1;
-    if (members > MAX_CHILD_ERROR_ENVELOPE_MEMBERS) break;
-    const key = scanString(cursor);
-    if (key === null) return undefined;
-    skipScanWhitespace(cursor);
-    if (charAt(cursor) !== ":") return undefined;
-    cursor.index += 1;
-    skipScanWhitespace(cursor);
-    const keyToken = key.token;
-    const codeBearing = keyToken === "type" || keyToken === "code";
-    if (codeBearing && charAt(cursor) === '"') {
-      const literal = scanString(cursor);
-      if (literal === null) return undefined;
-      recordMember(keyToken === "type" ? type : code, literal.token);
-      continue;
-    }
-    // A code-bearing key whose value is an object, array, or primitive carries
-    // no direct token, and it still counts as a sighting so a later duplicate
-    // cannot be treated as the single authoritative spelling.
-    if (codeBearing) recordMember(keyToken === "type" ? type : code, undefined);
-    if (!skipValue(cursor, 1)) return undefined;
-  }
-  for (const token of [usableToken(type), usableToken(code)]) {
-    if (token === undefined) continue;
-    const allowlisted = allowlistedCode(token);
-    if (allowlisted !== undefined) return allowlisted;
-  }
-  return undefined;
-}
-
-/**
- * Find the direct top-level `error` member of the body and read its object's
- * direct code-bearing members. A body that is not a top-level object, or that
- * has no direct `error` member holding an object, yields no evidence.
- */
-function directEnvelopeCode(body: string): PiChildSafeErrorCode | undefined {
-  const cursor: ScanCursor = {
-    text: body.slice(0, MAX_CHILD_ERROR_SCAN_LENGTH),
-    index: 0,
-  };
-  skipScanWhitespace(cursor);
-  if (charAt(cursor) !== "{") return undefined;
-  cursor.index += 1;
-  let members = 0;
-  for (;;) {
-    skipScanWhitespace(cursor);
-    const next = charAt(cursor);
-    if (next === undefined) return undefined;
-    if (next === "}") return undefined;
-    if (next === ",") {
-      cursor.index += 1;
-      continue;
-    }
-    members += 1;
-    if (members > MAX_CHILD_ERROR_ENVELOPE_MEMBERS) return undefined;
-    const key = scanString(cursor);
-    if (key === null) return undefined;
-    skipScanWhitespace(cursor);
-    if (charAt(cursor) !== ":") return undefined;
-    cursor.index += 1;
-    skipScanWhitespace(cursor);
-    if (key.token === "error" && charAt(cursor) === "{") {
-      return errorObjectCode(cursor);
-    }
-    if (!skipValue(cursor, 1)) return undefined;
-  }
+  if (bareToken === undefined) return undefined;
+  return allowlistedCode(bareToken);
 }
 
 // ---------------------------------------------------------------------------

@@ -221,7 +221,6 @@ describe("child provider error canonicalization", () => {
     expect(projected).toEqual({
       class: "rate-limit",
       httpStatus: 429,
-      code: "rate_limit_error",
       message: CANON["rate-limit"],
     });
   });
@@ -311,27 +310,48 @@ describe("child provider error anchored evidence", () => {
     }
   });
 
-  it("reads an allowlisted code from an anchored error envelope", () => {
+  it("treats every JSON-shaped body as untrusted generic unknown", () => {
     const anthropic = projectOk(
       errorEnd('{"type":"error","error":{"type":"authentication_error"}}'),
     );
-    expect(anthropic.code).toBe("authentication_error");
-    expect(anthropic.class).toBe("auth");
-    expect(anthropic.message).toBe(CANON.auth);
+    expect(anthropic.code).toBeUndefined();
+    expect(anthropic.class).toBe("unknown");
+    expect(anthropic.message).toBe(CANON.unknown);
+
+    const openai = projectOk(
+      errorEnd(
+        '{"error":{"message":"bad key","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}',
+      ),
+    );
+    expect(openai.code).toBeUndefined();
+    expect(openai.class).toBe("unknown");
+    expect(openai.message).toBe(CANON.unknown);
 
     const bare = projectOk(errorEnd('{"error":{"type":"abort_err"}}'));
-    expect(bare.code).toBe("abort_err");
-    expect(bare.class).toBe("cancelled");
+    expect(bare.code).toBeUndefined();
+    expect(bare.class).toBe("unknown");
+  });
 
-    // A code that follows a message member inside the anchored envelope is
-    // still anchored evidence.
+  it("classifies leading HTTP status beside JSON from the status alone", () => {
     const later = projectOk(
       errorEnd(
         '400 {"error":{"message":"bad request","type":"invalid_request_error"}}',
       ),
     );
-    expect(later.code).toBe("invalid_request_error");
+    expect(later.httpStatus).toBe(400);
+    expect(later.code).toBeUndefined();
     expect(later.class).toBe("provider-error");
+    expect(later.message).toBe(CANON["provider-error"]);
+
+    const rateLimited = projectOk(
+      errorEnd(
+        '429 {"type":"error","error":{"type":"rate_limit_error","message":"exceeded"}}',
+      ),
+    );
+    expect(rateLimited.httpStatus).toBe(429);
+    expect(rateLimited.code).toBeUndefined();
+    expect(rateLimited.class).toBe("rate-limit");
+    expect(rateLimited.message).toBe(CANON["rate-limit"]);
   });
 
   it("reads an allowlisted code when the whole body is one errno token", () => {
@@ -357,12 +377,12 @@ describe("child provider error anchored evidence", () => {
     }
   });
 
-  it("does not mine an unanchored or non-envelope structure for a code", () => {
-    // No `"error": {` at offset zero, so nothing inside is evidence.
+  it("does not mine JSON or prefixed JSON for a code", () => {
     for (const raw of [
       '{"data":{"error":{"type":"rate_limit_error"}}}',
       '{"raw":{"nested":{"type":"rate_limit_error"}}}',
       'prefix {"error":{"type":"rate_limit_error"}}',
+      `{"error":{${`"note":"${"p".repeat(300)}",`}"type":"rate_limit_error"}}`,
     ]) {
       const projected = projectOk(errorEnd(raw));
       expect(projected.code).toBeUndefined();
@@ -370,36 +390,19 @@ describe("child provider error anchored evidence", () => {
     }
   });
 
-  it("ignores an allowlisted code beyond the bounded envelope window", () => {
-    const padding = `"note":"${"p".repeat(
-      CHILD_PROVIDER_ERROR_BOUNDS.maxEnvelopeWindow + 40,
-    )}",`;
-    const projected = projectOk(
-      errorEnd(`{"error":{${padding}"type":"rate_limit_error"}}`),
-    );
-    expect(projected.code).toBeUndefined();
-    expect(projected.class).toBe("unknown");
-  });
-
-  it("pins precedence when status and code disagree", () => {
-    // Status says server error, code says rate limit: rate-limit outranks.
-    const projected = projectOk(
+  it("pins precedence when status and bare code disagree", () => {
+    // Status says rate limit, bare code says connection: rate-limit outranks.
+    expect(projectOk(errorEnd("429 econnreset")).class).toBe("rate-limit");
+    // Auth outranks timeout, timeout outranks overload.
+    expect(projectOk(errorEnd("504 authentication_error")).class).toBe("auth");
+    expect(projectOk(errorEnd("503 gateway_timeout")).class).toBe("timeout");
+    // JSON beside a status never supplies a competing code.
+    const statusOnly = projectOk(
       errorEnd('500 {"error":{"type":"rate_limit_error"}}'),
     );
-    expect(projected.class).toBe("rate-limit");
-    expect(projected.httpStatus).toBe(500);
-    // Status says rate limit, code says connection: rate-limit outranks.
-    expect(
-      projectOk(errorEnd('429 {"error":{"type":"econnreset"}}')).class,
-    ).toBe("rate-limit");
-    // Auth outranks timeout, timeout outranks overload.
-    expect(
-      projectOk(errorEnd('504 {"error":{"type":"authentication_error"}}'))
-        .class,
-    ).toBe("auth");
-    expect(
-      projectOk(errorEnd('503 {"error":{"type":"gateway_timeout"}}')).class,
-    ).toBe("timeout");
+    expect(statusOnly.class).toBe("provider-error");
+    expect(statusOnly.httpStatus).toBe(500);
+    expect(statusOnly.code).toBeUndefined();
   });
 
   it("does not let prompt or completion content influence the class", () => {
@@ -417,9 +420,7 @@ describe("child provider error anchored evidence", () => {
     }
   });
 
-  it("still classifies an anchored known envelope beside content keys", () => {
-    // The anchored evidence is at offset zero, so trailing content is ignored
-    // rather than allowed to suppress a real fact.
+  it("classifies leading HTTP beside trailing JSON and prose from status alone", () => {
     const projected = projectOk(
       errorEnd(
         `429 {"type":"error","error":{"type":"rate_limit_error"}} messages ${SENTINELS.prompt}`,
@@ -427,17 +428,15 @@ describe("child provider error anchored evidence", () => {
     );
     expect(projected.class).toBe("rate-limit");
     expect(projected.httpStatus).toBe(429);
-    expect(projected.code).toBe("rate_limit_error");
+    expect(projected.code).toBeUndefined();
   });
 });
 
-describe("child provider error direct envelope members", () => {
+describe("child provider error JSON-shaped bodies", () => {
   /**
-   * The envelope scan reads exactly two positions: the direct top-level
-   * `error` member, and the direct `type` / `code` members of the object it
-   * holds. Every fixture below places an allowlisted code somewhere else and
-   * asserts that the class stays `unknown`, which is what makes model output
-   * unable to pick Weave's error class.
+   * Every JSON-shaped body is untrusted generic unknown. Nested, sibling,
+   * direct, malformed, oversized, array, and proxy shapes never contribute
+   * type/code evidence and never throw.
    */
   const noForge = (raw: string): void => {
     const projected = projectOk(errorEnd(raw));
@@ -446,36 +445,35 @@ describe("child provider error direct envelope members", () => {
     expect(projected.message).toBe(CANON.unknown);
   };
 
-  it("ignores a code nested inside the error object", () => {
+  it("ignores nested, sibling, and direct JSON members", () => {
     noForge('{"error":{"completion":{"type":"rate_limit_error"}}}');
     noForge('{"error":{"details":{"code":"invalid_api_key"}}}');
     noForge(
       '{"error":{"message":"failed","details":[{"code":"invalid_api_key"}]}}',
     );
     noForge('{"type":"error","error":{"cause":{"type":"econnreset"}}}');
-    // Deeply nested is no different: nesting is skipped, never read.
     noForge('{"error":{"a":{"b":{"c":{"d":{"type":"rate_limit_error"}}}}}}');
-  });
-
-  it("ignores a code in a sibling of the error envelope", () => {
     noForge('{"error":{},"completion":{"code":"invalid_api_key"}}');
     noForge('{"error":{"message":"failed"},"code":"rate_limit_error"}');
     noForge(
       `{"error":{},"completion":"${SENTINELS.completion} rate_limit_error"}`,
     );
     noForge('{"error":{},"diagnostics":{"type":"overloaded_error"}}');
-    // A sibling that precedes the envelope is equally out of reach.
     noForge('{"prompt":{"type":"rate_limit_error"},"error":{}}');
+    noForge('{"error":{"type":"rate_limit_error"}}');
+    noForge('{"type":"error","error":{"type":"overloaded_error"}}');
+    noForge('{"error":{"type":"rate_limit_error","code":"invalid_api_key"}}');
+    noForge('{ "error" : { "type" : "permission_error" } }');
+    noForge('{"id":"x","error":{"type":"etimedout"}}');
   });
 
-  it("ignores an error member that is not an object", () => {
+  it("ignores arrays and non-object error values", () => {
     noForge('{"error":["rate_limit_error"]}');
     noForge('{"error":"rate_limit_error"}');
     noForge('{"error":429}');
     noForge('{"error":null}');
-  });
-
-  it("ignores a code-bearing member that is not a direct string", () => {
+    noForge('["rate_limit_error"]');
+    noForge('[{"type":"rate_limit_error"}]');
     noForge('{"error":{"type":{"value":"rate_limit_error"}}}');
     noForge('{"error":{"code":["invalid_api_key"]}}');
   });
@@ -485,8 +483,6 @@ describe("child provider error direct envelope members", () => {
     noForge('{"__proto__":{"error":{"type":"rate_limit_error"}}}');
     noForge('{"error":{"constructor":{"type":"invalid_api_key"}}}');
 
-    // The scan creates no object, so a real prototype carrying the member
-    // cannot contribute either.
     const inherited = Object.create({
       errorMessage: '{"error":{"type":"rate_limit_error"}}',
     }) as Record<string, unknown>;
@@ -494,54 +490,39 @@ describe("child provider error direct envelope members", () => {
     inherited.stopReason = "error";
     const projected = projectAssistantProviderError(inherited);
     expect(projected.isOk()).toBe(true);
-    // `errorMessage` lives on the prototype, so the projection reads the raw
-    // value through the normal property read and still yields only bounded,
-    // canonical facts — no provider prose and no forged nesting.
-    expect(projected._unsafeUnwrap().message).toBe(
-      CANON[projected._unsafeUnwrap().class],
-    );
+    expect(projected._unsafeUnwrap().class).toBe("unknown");
+    expect(projected._unsafeUnwrap().code).toBeUndefined();
+    expect(projected._unsafeUnwrap().message).toBe(CANON.unknown);
   });
 
-  it("discards duplicate and ambiguous direct members", () => {
+  it("keeps duplicates, escapes, and trailing content unknown", () => {
     noForge('{"error":{"type":"rate_limit_error","type":"econnreset"}}');
     noForge('{"error":{"code":"invalid_api_key","code":"invalid_api_key"}}');
-    // A first sighting that carries no usable token still counts, so a later
-    // duplicate cannot become the single authoritative spelling.
     noForge('{"error":{"type":{},"type":"rate_limit_error"}}');
     noForge('{"error":{"code":"not_allowlisted_x","code":"invalid_api_key"}}');
-    // Duplicating `type` does not promote a nested code either.
     noForge(
       '{"error":{"type":"rate_limit_error","type":"rate_limit_error","details":{"code":"invalid_api_key"}}}',
     );
-  });
-
-  it("never accepts an escaped or oversized literal as a token", () => {
     noForge(String.raw`{"error":{"type":"rate_limit\u005Ferror"}}`);
     noForge(String.raw`{"error":{"typ\u0065":"rate_limit_error"}}`);
-    noForge(
-      `{"error":{"type":"${"z".repeat(
-        CHILD_PROVIDER_ERROR_BOUNDS.maxEnvelopeToken + 8,
-      )}"}}`,
-    );
+    noForge(`{"error":{"type":"${"z".repeat(80)}"}}`);
+    noForge('{"error":{"type":"rate_limit_error"},}');
   });
 
-  it("yields no evidence for malformed, truncated, or oversized JSON", () => {
+  it("yields unknown for malformed, truncated, or oversized JSON", () => {
     noForge('{"error":{"type":"rate_limit_error"');
     noForge('{"error":{"type" "rate_limit_error"}}');
     noForge('{"error"{"type":"rate_limit_error"}}');
-    // Beyond the scan bound the envelope is truncated mid-structure, so the
-    // code that follows the padding is never reached.
     const padding = "q".repeat(CHILD_PROVIDER_ERROR_BOUNDS.maxScanLength);
     noForge(`{"note":"${padding}","error":{"type":"rate_limit_error"}}`);
-    // Too many direct members to be a genuine envelope.
     const many = Array.from(
-      { length: CHILD_PROVIDER_ERROR_BOUNDS.maxEnvelopeMembers + 4 },
+      { length: 40 },
       (_unused, index) => `"k${index}":${index}`,
     ).join(",");
     noForge(`{${many},"error":{"type":"rate_limit_error"}}`);
   });
 
-  it("stays typed and quiet for a hostile envelope proxy", () => {
+  it("stays typed and quiet for a hostile JSON proxy", () => {
     const forged = '{"error":{"completion":{"type":"rate_limit_error"}}}';
     const proxy = new Proxy(
       { role: "assistant", stopReason: "error", errorMessage: forged },
@@ -561,7 +542,6 @@ describe("child provider error direct envelope members", () => {
     expect(() => projectAssistantProviderError(proxy)).not.toThrow();
     const projected = projectAssistantProviderError(proxy);
     expect(projected.isOk()).toBe(true);
-    // The nested forge is out of reach even though the value was read.
     expect(projected._unsafeUnwrap().code).toBeUndefined();
     expect(projected._unsafeUnwrap().class).toBe("unknown");
 
@@ -581,46 +561,23 @@ describe("child provider error direct envelope members", () => {
     );
   });
 
-  it("still classifies a direct error type or code", () => {
+  it("never classifies from JSON members even when they look authoritative", () => {
     expect(
       projectOk(errorEnd('{"error":{"type":"rate_limit_error"}}')).class,
-    ).toBe("rate-limit");
+    ).toBe("unknown");
     expect(
       projectOk(
         errorEnd('{"type":"error","error":{"type":"overloaded_error"}}'),
       ).class,
-    ).toBe("overload");
-    // A direct `code` beside prose members is read.
+    ).toBe("unknown");
     const openai = projectOk(
       errorEnd(
         '401 {"error":{"message":"bad key","param":null,"code":"invalid_api_key"}}',
       ),
     );
-    expect(openai.code).toBe("invalid_api_key");
+    expect(openai.code).toBeUndefined();
     expect(openai.class).toBe("auth");
-    // `type` outranks `code` when both direct members are allowlisted.
-    const both = projectOk(
-      errorEnd(
-        '{"error":{"type":"rate_limit_error","code":"invalid_api_key"}}',
-      ),
-    );
-    expect(both.code).toBe("rate_limit_error");
-    expect(both.class).toBe("rate-limit");
-    // An unallowlisted `type` falls through to a direct allowlisted `code`.
-    const fallthrough = projectOk(
-      errorEnd('{"error":{"type":"acct_9911_sentinel","code":"econnreset"}}'),
-    );
-    expect(fallthrough.code).toBe("econnreset");
-    expect(fallthrough.class).toBe("connection");
-    // The envelope may appear after another direct top-level member.
-    expect(
-      projectOk(errorEnd('{"id":"x","error":{"type":"etimedout"}}')).class,
-    ).toBe("timeout");
-    // Whitespace inside the envelope does not defeat the scan.
-    expect(
-      projectOk(errorEnd('{ "error" : { "type" : "permission_error" } }'))
-        .class,
-    ).toBe("auth");
+    expect(openai.httpStatus).toBe(401);
   });
 });
 
@@ -634,7 +591,6 @@ describe("child provider error identity labels", () => {
     expect(projected.model).toBeUndefined();
     expect(Object.keys(projected).sort()).toEqual([
       "class",
-      "code",
       "httpStatus",
       "message",
     ]);
@@ -1393,7 +1349,7 @@ describe("child provider error retention in the overlay", () => {
     );
     expect(view.terminalError?.class).toBe("rate-limit");
     expect(view.terminalError?.httpStatus).toBe(429);
-    expect(view.terminalError?.code).toBe("rate_limit_error");
+    expect(view.terminalError?.code).toBeUndefined();
     expect(view.terminalError?.message).toBe(CANON["rate-limit"]);
     expect(JSON.stringify(view)).not.toContain(SENTINELS.requestId);
   });
