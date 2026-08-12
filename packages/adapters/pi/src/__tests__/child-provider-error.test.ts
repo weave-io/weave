@@ -695,6 +695,28 @@ describe("child provider error absence", () => {
     }
   });
 
+  it("clears a valid carried error for every authoritative non-error stop reason", () => {
+    for (const stopReason of [
+      "stop",
+      "length",
+      "toolUse",
+      "aborted",
+      "pending",
+      "deferred",
+    ]) {
+      expect(
+        projectAssistantProviderError({
+          role: "assistant",
+          stopReason,
+          weaveProviderError: {
+            class: "auth",
+            message: CANON.auth,
+          },
+        })._unsafeUnwrapErr(),
+      ).toEqual({ type: "ProviderErrorCleared" });
+    }
+  });
+
   it("is unavailable for malformed, missing, and non-object messages", () => {
     for (const message of [undefined, null, 42, "boom", [], { role: 7 }]) {
       expect(projectAssistantProviderError(message).isErr()).toBe(true);

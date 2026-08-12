@@ -642,12 +642,12 @@ export function projectAssistantProviderError(
       return err(UNAVAILABLE);
     }
 
-    const carried = preProjected(record);
-    if (carried !== undefined) return carried;
-
     const stopReason = field(record, "stopReason");
     if (typeof stopReason !== "string") return err(UNAVAILABLE);
     if (stopReason !== "error") return err(CLEARED);
+
+    const carried = preProjected(record);
+    if (carried !== undefined) return carried;
 
     return build(stringField(record, "errorMessage"), descriptor);
   });
