@@ -117,7 +117,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - [user] The normative contract uses only `fast true`, absence for provider defaults, string triggers, and no category patterns.
     - [proposed] The contract gives one deterministic outcome for each legacy form before implementation starts. This prevents parser, converter, and docs behavior from diverging.
 
-- [ ] 3. Change the core DSL, schema, public types, and language tests
+- [x] 3. Change the core DSL, schema, public types, and language tests
   - **What**: Add fast intent to agents/categories, replace structured triggers with strings, and reject category patterns across the complete language pipeline.
   - **Files**: `packages/core/src/lexer.ts`, `packages/core/src/parser.ts`, `packages/core/src/ast.ts`, `packages/core/src/schema.ts`, `packages/core/src/validate.ts`, `packages/core/src/index.ts`, `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/__tests__/parser.test.ts`, `packages/core/src/__tests__/schema.test.ts`, `packages/core/src/__tests__/validate.test.ts`, `packages/core/src/__tests__/parse_config.test.ts`
   - **Depends on**: Task 2
