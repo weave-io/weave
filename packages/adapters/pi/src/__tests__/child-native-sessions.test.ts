@@ -1238,6 +1238,49 @@ describe("deletion and tombstones", () => {
       (await store.openSession(RECORD.ref, PARENT))._unsafeUnwrapErr(),
     ).toEqual({ type: "SessionMissing", ref: RECORD.ref });
   });
+
+  test("coalesces concurrent deletion into one intent and one completion", async () => {
+    const { store, create } = harness();
+    (await create())._unsafeUnwrap();
+    const token = nativeSessionDeletionToken(RECORD.ref);
+
+    const [left, right] = await Promise.all([
+      store.deleteSession(RECORD, token),
+      store.deleteSession(RECORD, token),
+    ]);
+    expect(left.isOk()).toBe(true);
+    expect(right).toEqual(left);
+    expect(
+      (await store.readDeletionLedger())
+        ._unsafeUnwrap()
+        .map(({ phase }) => phase),
+    ).toEqual(["intent", "completed"]);
+  });
+
+  test("refuses deletion when the ledger ends in a partial record", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    const directory = (await fs.openDirectory(ROOT, true))._unsafeUnwrap();
+    (
+      await directory.appendFile(
+        PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+        new TextEncoder().encode('{"version":1,"ref":"child-1/session.jsonl"'),
+        0o600,
+      )
+    )._unsafeUnwrap();
+    directory.close();
+
+    expect(
+      await store.deleteSession(RECORD, nativeSessionDeletionToken(RECORD.ref)),
+    ).toEqual(
+      err({
+        type: "SessionCorrupt",
+        ref: PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+        reason: "unreadable",
+      }),
+    );
+    expect((await store.openSession(RECORD.ref, PARENT)).isOk()).toBe(true);
+  });
 });
 
 describe("default session tree isolation", () => {

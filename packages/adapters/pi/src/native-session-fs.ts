@@ -1097,6 +1097,14 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
       });
   }
 
+  sync(): ResultAsync<void, PiNativeSessionFsError> {
+    return this.identity().andThen(() =>
+      this.libc.fsync(this.fd) === 0
+        ? fsVoidAsync()
+        : fsErrAsync<void>({ type: "io" }),
+    );
+  }
+
   close(): void {
     this.libc.close(this.fd);
     this.libc.dispose();
@@ -1625,6 +1633,9 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
           }
           return this.identity().map<void>(() => undefined);
         });
+      },
+      sync() {
+        return this.identity().map<void>(() => undefined);
       },
       createExclusiveFile(name, bytes, mode) {
         if (!safeName(name)) return fsErrAsync<void>({ type: "unsafe-path" });
