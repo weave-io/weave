@@ -87,7 +87,6 @@ const generous = config(`settings {
 agent shuttle {
 }
 agent loom {
-  delegation_targets [shuttle]
 }
 `);
 
