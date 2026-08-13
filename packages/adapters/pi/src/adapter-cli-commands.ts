@@ -772,26 +772,29 @@ export function createPiChildrenCommandPort(
           message: "delete requires confirmation or --yes",
         });
       }
+      // Retry must not depend on the native leaf still being readable. After a
+      // durable intent the file may already be gone; the store resumes from the
+      // held, already-validated cache ref and the append-only deletion ledger.
       return options.sessions
-        .openSession(record.sessionRef, record.originParentSessionId)
-        .mapErr(
-          (error): PiAdapterCommandPortError => ({
-            type: "Unavailable",
-            message: error.type,
-          }),
+        .deleteSession(
+          {
+            childId: record.childId,
+            sessionId: record.nativeSessionId,
+            ref: record.sessionRef,
+            path: record.sessionRef,
+            parentSession: record.originParentSessionId,
+            cwd: "",
+          },
+          nativeSessionDeletionToken(record.sessionRef),
         )
-        .andThen((session) =>
-          options.sessions
-            .deleteSession(session, nativeSessionDeletionToken(session.ref))
-            .mapErr(
-              (error): PiAdapterCommandPortError =>
-                error.type === "SessionConfirmationRequired"
-                  ? {
-                      type: "ConfirmationRequired",
-                      message: "delete confirmation token mismatch",
-                    }
-                  : { type: "Unavailable", message: error.type },
-            ),
+        .mapErr(
+          (error): PiAdapterCommandPortError =>
+            error.type === "SessionConfirmationRequired"
+              ? {
+                  type: "ConfirmationRequired",
+                  message: "delete confirmation token mismatch",
+                }
+              : { type: "Unavailable", message: error.type },
         )
         .andThen((tombstone) => {
           const marked = options.cache.tombstone(

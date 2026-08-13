@@ -164,6 +164,11 @@ export type PiNativeSessionError =
       readonly reason: "io" | "unavailable" | "permission";
     }
   | {
+      readonly type: "SessionUnlinkFailed";
+      readonly ref: string;
+      readonly reason: "io" | "unavailable" | "permission";
+    }
+  | {
       readonly type: "SessionStorageUnavailable";
       readonly reason: PiNativeSessionStorageUnavailableReason;
     };
@@ -698,7 +703,21 @@ export type PiNativeSessionState =
       readonly error: PiNativeSessionError;
     };
 
-/** Append-only deletion record. */
+/** Phase of one append-only native deletion ledger record. */
+export type PiNativeSessionDeletionPhase = "intent" | "failed" | "completed";
+
+/** Append-only deletion ledger record, including recoverable partial states. */
+export interface PiNativeSessionDeletionRecord {
+  readonly version: 1;
+  readonly ref: string;
+  readonly childId: string;
+  readonly parentSession: string;
+  readonly deletedAt: string;
+  readonly reason: "explicit-user-deletion";
+  readonly phase: PiNativeSessionDeletionPhase;
+}
+
+/** Completed append-only deletion record. Legacy lines omit `phase`. */
 export interface PiNativeSessionTombstone {
   readonly version: 1;
   readonly ref: string;
@@ -706,6 +725,7 @@ export interface PiNativeSessionTombstone {
   readonly parentSession: string;
   readonly deletedAt: string;
   readonly reason: "explicit-user-deletion";
+  readonly phase?: PiNativeSessionDeletionPhase;
 }
 
 /**
@@ -2894,8 +2914,10 @@ export class PiNativeSessionStore {
 
   /**
    * Explicitly deletes one child session. The caller must echo the token from
-   * {@link nativeSessionDeletionToken}; the deletion is then recorded by
-   * appending - never rewriting - a 0600 tombstone line.
+   * {@link nativeSessionDeletionToken}. Durable visible deletion intent is
+   * appended first; the native leaf is unlinked only after that record exists.
+   * Unlink failure after intent is a typed recoverable pending/failed state,
+   * never a completed tombstone while the session remains present.
    */
   deleteSession(
     record: PiNativeSessionRecord,
@@ -2907,38 +2929,136 @@ export class PiNativeSessionStore {
         ref: record.ref,
       });
     }
-    const verified = verifyNativeSessionRef(record.ref);
-    if (verified.isErr()) return errAsync(verified.error);
-    const separator = verified.value.lastIndexOf("/");
-    const component = verified.value.slice(0, separator);
-    const fileName = verified.value.slice(separator + 1);
-    const childDir = join(this.root, component);
-    return withDirectory(
-      this.fs,
-      childDir,
-      false,
-      verified.value,
-      (directory) =>
-        directory
-          .deleteFile(fileName)
-          .mapErr((error) => fromFsError(error, verified.value)),
-    ).andThen(() => this.appendTombstone(record));
+    const located = this.locate(record.ref);
+    if (located.isErr()) return errAsync(located.error);
+    return this.readDeletionLedger().andThen((ledger) => {
+      const latest = latestDeletionForRef(ledger, located.value.verified);
+      if (latest?.phase === "completed") {
+        return this.unlinkNativeLeaf(located.value).andThen((unlinked) =>
+          unlinked.isErr()
+            ? errAsync(unlinked.error)
+            : okAsync(asCompletedTombstone(latest)),
+        );
+      }
+      const ensureIntent =
+        latest === undefined
+          ? this.requirePresentLeaf(located.value).andThen(() =>
+              this.appendDeletionRecord(record, "intent"),
+            )
+          : okAsync(latest);
+      return ensureIntent.andThen((current) =>
+        this.unlinkNativeLeaf(located.value).andThen(
+          (
+            unlinked,
+          ): ResultAsync<PiNativeSessionTombstone, PiNativeSessionError> => {
+            if (unlinked.isErr()) {
+              const recordedFailed =
+                current.phase === "failed"
+                  ? okAsync(current)
+                  : this.appendDeletionRecord(record, "failed").orElse(() =>
+                      okAsync(current),
+                    );
+              return recordedFailed.andThen(() => errAsync(unlinked.error));
+            }
+            return this.appendDeletionRecord(record, "completed").map(
+              asCompletedTombstone,
+            );
+          },
+        ),
+      );
+    });
   }
 
   /**
-   * Appends one tombstone record. Uses the port's append primitive only, so
-   * prior records can never be rewritten or truncated by this module.
+   * Appends one completed tombstone record. Uses the port's append primitive
+   * only, so prior records can never be rewritten or truncated by this module.
+   * Callers that must not unlink a live session (failed provision) still use
+   * this path; explicit user deletion goes through {@link deleteSession}.
    */
   appendTombstone(
     record: PiNativeSessionRecord,
   ): ResultAsync<PiNativeSessionTombstone, PiNativeSessionError> {
-    const tombstone: PiNativeSessionTombstone = {
+    return this.appendDeletionRecord(record, "completed").map(
+      asCompletedTombstone,
+    );
+  }
+
+  /** Reads every appended deletion record, newest last. Absent ledger reads empty. */
+  readDeletionLedger(): ResultAsync<
+    readonly PiNativeSessionDeletionRecord[],
+    PiNativeSessionError
+  > {
+    return withDirectory(
+      this.fs,
+      this.root,
+      false,
+      PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+      (directory) =>
+        readBoundedFileFromDirectory(
+          directory,
+          PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+          PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+          PI_NATIVE_SESSION_MAX_FILE_BYTES,
+        ).map((bytes) => parseDeletionLedger(bytes)),
+    ).orElse((error) =>
+      error.type === "SessionMissing"
+        ? okAsync<
+            readonly PiNativeSessionDeletionRecord[],
+            PiNativeSessionError
+          >([])
+        : errAsync(error),
+    );
+  }
+
+  /** Reads completed tombstones, newest last. Absent ledger reads empty. */
+  readTombstones(): ResultAsync<
+    readonly PiNativeSessionTombstone[],
+    PiNativeSessionError
+  > {
+    return this.readDeletionLedger().map((records) =>
+      records
+        .filter((record) => record.phase === "completed")
+        .map(asCompletedTombstone),
+    );
+  }
+
+  private requirePresentLeaf(located: {
+    readonly verified: string;
+    readonly fileName: string;
+    readonly childDir: string;
+  }): ResultAsync<void, PiNativeSessionError> {
+    return withDirectory(
+      this.fs,
+      located.childDir,
+      false,
+      located.verified,
+      (directory) =>
+        directory
+          .statFile(located.fileName)
+          .mapErr((error) => fromFsError(error, located.verified))
+          .andThen((stat) =>
+            stat === undefined
+              ? errAsync<void, PiNativeSessionError>({
+                  type: "SessionMissing",
+                  ref: located.verified,
+                })
+              : okAsync(undefined),
+          ),
+    );
+  }
+
+  private appendDeletionRecord(
+    record: PiNativeSessionRecord,
+    phase: PiNativeSessionDeletionPhase,
+  ): ResultAsync<PiNativeSessionDeletionRecord, PiNativeSessionError> {
+    const tombstone: PiNativeSessionDeletionRecord = {
       version: 1,
       ref: record.ref,
       childId: record.childId,
       parentSession: record.parentSession,
       deletedAt: this.now().toISOString(),
       reason: "explicit-user-deletion",
+      phase,
     };
     const line = textEncoder.encode(`${JSON.stringify(tombstone)}\n`);
     return withDirectory(this.fs, this.root, true, record.ref, (directory) =>
@@ -2959,37 +3079,89 @@ export class PiNativeSessionStore {
     );
   }
 
-  /** Reads every appended tombstone, newest last. Absent ledger reads empty. */
-  readTombstones(): ResultAsync<
-    readonly PiNativeSessionTombstone[],
-    PiNativeSessionError
-  > {
+  private unlinkNativeLeaf(located: {
+    readonly verified: string;
+    readonly fileName: string;
+    readonly childDir: string;
+  }): ResultAsync<Result<void, PiNativeSessionError>, PiNativeSessionError> {
     return withDirectory(
       this.fs,
-      this.root,
+      located.childDir,
       false,
-      PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+      located.verified,
       (directory) =>
-        readBoundedFileFromDirectory(
-          directory,
-          PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
-          PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
-          PI_NATIVE_SESSION_MAX_FILE_BYTES,
-        ).map((bytes) => parseTombstones(bytes)),
-    ).orElse((error) =>
-      error.type === "SessionMissing"
-        ? okAsync<readonly PiNativeSessionTombstone[], PiNativeSessionError>([])
-        : errAsync(error),
-    );
+        directory
+          .deleteFile(located.fileName)
+          .mapErr((error) => mapUnlinkError(error, located.verified)),
+    )
+      .map(() => ok<void, PiNativeSessionError>(undefined))
+      .orElse((error) => {
+        if (error.type === "SessionMissing") {
+          return okAsync(ok<void, PiNativeSessionError>(undefined));
+        }
+        if (error.type === "SessionUnlinkFailed") {
+          return okAsync(err<void, PiNativeSessionError>(error));
+        }
+        return errAsync(error);
+      });
   }
 }
 
-function parseTombstones(
+function mapUnlinkError(
+  error: PiNativeSessionFsError,
+  ref: string,
+): PiNativeSessionError {
+  if (error.type === "permissive-mode") {
+    return { type: "SessionUnlinkFailed", ref, reason: "permission" };
+  }
+  if (error.type === "unavailable") {
+    return { type: "SessionUnlinkFailed", ref, reason: "unavailable" };
+  }
+  if (error.type === "missing") {
+    return { type: "SessionMissing", ref };
+  }
+  if (
+    error.type === "unsafe-path" ||
+    error.type === "symlink-rejected" ||
+    error.type === "relative-xdg-data-home" ||
+    error.type === "empty-home"
+  ) {
+    return fromFsError(error, ref);
+  }
+  return { type: "SessionUnlinkFailed", ref, reason: "io" };
+}
+
+function asCompletedTombstone(
+  record: PiNativeSessionDeletionRecord,
+): PiNativeSessionTombstone {
+  return {
+    version: 1,
+    ref: record.ref,
+    childId: record.childId,
+    parentSession: record.parentSession,
+    deletedAt: record.deletedAt,
+    reason: "explicit-user-deletion",
+    phase: "completed",
+  };
+}
+
+function latestDeletionForRef(
+  records: readonly PiNativeSessionDeletionRecord[],
+  ref: string,
+): PiNativeSessionDeletionRecord | undefined {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    if (record?.ref === ref) return record;
+  }
+  return undefined;
+}
+
+function parseDeletionLedger(
   bytes: Uint8Array | undefined,
-): readonly PiNativeSessionTombstone[] {
+): readonly PiNativeSessionDeletionRecord[] {
   if (bytes === undefined) return [];
   const text = new TextDecoder().decode(bytes);
-  const records: PiNativeSessionTombstone[] = [];
+  const records: PiNativeSessionDeletionRecord[] = [];
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
     const parsed = Result.fromThrowable(
@@ -2999,7 +3171,7 @@ function parseTombstones(
     if (parsed.isErr()) continue;
     const value = parsed.value;
     if (typeof value !== "object" || value === null) continue;
-    const candidate = value as Partial<PiNativeSessionTombstone>;
+    const candidate = value as Partial<PiNativeSessionDeletionRecord>;
     if (
       candidate.version !== 1 ||
       typeof candidate.ref !== "string" ||
@@ -3008,6 +3180,17 @@ function parseTombstones(
     ) {
       continue;
     }
+    let phase: PiNativeSessionDeletionPhase | undefined;
+    if (
+      candidate.phase === "intent" ||
+      candidate.phase === "failed" ||
+      candidate.phase === "completed"
+    ) {
+      phase = candidate.phase;
+    } else if (candidate.phase === undefined) {
+      phase = "completed";
+    }
+    if (phase === undefined) continue;
     records.push({
       version: 1,
       ref: candidate.ref,
@@ -3015,6 +3198,7 @@ function parseTombstones(
       parentSession: candidate.parentSession ?? "",
       deletedAt: candidate.deletedAt,
       reason: "explicit-user-deletion",
+      phase,
     });
   }
   return records;

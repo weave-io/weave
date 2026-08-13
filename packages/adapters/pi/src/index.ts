@@ -281,6 +281,8 @@ export {
 export type {
   CreateNativeChildSessionInput,
   PiNativeSessionCorruption,
+  PiNativeSessionDeletionPhase,
+  PiNativeSessionDeletionRecord,
   PiNativeSessionDirectory,
   PiNativeSessionEntries,
   PiNativeSessionEntryCursor,

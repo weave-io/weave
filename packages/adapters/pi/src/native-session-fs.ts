@@ -1188,6 +1188,11 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     string,
     PiNativeSessionFsError
   >();
+  private readonly appendFailures = new Map<
+    string,
+    { remainingSuccesses: number; error: PiNativeSessionFsError }[]
+  >();
+  private readonly deleteFailures = new Map<string, PiNativeSessionFsError>();
 
   private midReadKey(path: string, name: string): string {
     return `${path}\0${name}`;
@@ -1585,6 +1590,8 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
             kind: "file",
           });
         }
+        const forced = fs.takeAppendFailure(path, name);
+        if (forced !== undefined) return fsErrAsync<void>(forced);
         return this.identity().andThen(() => {
           const current = fs.directories.get(path);
           if (current === undefined) {
@@ -1663,6 +1670,8 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
       },
       deleteFile(name) {
         if (!safeName(name)) return fsErrAsync<void>({ type: "unsafe-path" });
+        const forced = fs.takeDeleteFailure(path, name);
+        if (forced !== undefined) return fsErrAsync<void>(forced);
         return this.identity().andThen(() => {
           const current = fs.directories.get(path);
           if (current === undefined) {
@@ -1820,6 +1829,64 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     error: PiNativeSessionFsError = { type: "already-exists" },
   ): void {
     this.exclusiveCreateFailures.set(this.midReadKey(path, name), error);
+  }
+
+  /**
+   * Forces a later {@link PiNativeSessionDirectory.appendFile} for
+   * `path`/`name` to fail. `afterSuccesses` lets a test keep the first N
+   * appends (intent, then a later completion) and fail a specific one.
+   */
+  simulateAppendFailure(
+    path: string,
+    name: string,
+    error: PiNativeSessionFsError,
+    afterSuccesses = 0,
+  ): void {
+    const key = this.midReadKey(path, name);
+    const queued = this.appendFailures.get(key) ?? [];
+    queued.push({ remainingSuccesses: afterSuccesses, error });
+    this.appendFailures.set(key, queued);
+  }
+
+  /**
+   * Forces the next {@link PiNativeSessionDirectory.deleteFile} for
+   * `path`/`name` to fail with the given error.
+   */
+  simulateDeleteFailure(
+    path: string,
+    name: string,
+    error: PiNativeSessionFsError,
+  ): void {
+    this.deleteFailures.set(this.midReadKey(path, name), error);
+  }
+
+  private takeAppendFailure(
+    path: string,
+    name: string,
+  ): PiNativeSessionFsError | undefined {
+    const key = this.midReadKey(path, name);
+    const queued = this.appendFailures.get(key);
+    if (queued === undefined || queued.length === 0) return undefined;
+    const next = queued[0];
+    if (next === undefined) return undefined;
+    if (next.remainingSuccesses > 0) {
+      next.remainingSuccesses -= 1;
+      return undefined;
+    }
+    queued.shift();
+    if (queued.length === 0) this.appendFailures.delete(key);
+    return next.error;
+  }
+
+  private takeDeleteFailure(
+    path: string,
+    name: string,
+  ): PiNativeSessionFsError | undefined {
+    const key = this.midReadKey(path, name);
+    const error = this.deleteFailures.get(key);
+    if (error === undefined) return undefined;
+    this.deleteFailures.delete(key);
+    return error;
   }
 
   simulateDirectoryFile(path: string, name: string): void {

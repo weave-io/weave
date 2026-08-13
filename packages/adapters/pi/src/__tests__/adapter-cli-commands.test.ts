@@ -16,6 +16,7 @@ import {
 import type { PiChildMetadataRecord } from "../child-metadata-cache.js";
 import {
   decodePiNativeSessionEntryCursor,
+  nativeSessionDeletionToken,
   PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
   type PiNativeSessionFsPort,
   type PiNativeSessionHandle,
@@ -807,6 +808,182 @@ describe("createPiChildrenCommandPort children.delete status gate", () => {
       openCalls: 0,
       deleteCalls: 0,
       tombstoneCalls: 0,
+    });
+  });
+
+  it("deletes from the held cache ref without reopening the native session", async () => {
+    const record = metadataRecord();
+    let openCalls = 0;
+    let deleteCalls = 0;
+    let tombstoneCalls = 0;
+    const port = createPiChildrenCommandPort({
+      cache: {
+        list: () => ok({ records: [record], nextCursor: undefined }),
+        get: () => okAsync(record),
+        findByChildId: () => ok([record]),
+        tombstone: () => {
+          tombstoneCalls += 1;
+          return ok(undefined);
+        },
+      },
+      sessions: {
+        openSession: () => {
+          openCalls += 1;
+          return errAsync({
+            type: "SessionMissing" as const,
+            ref: REF,
+          });
+        },
+        readSessionEntryPage: () =>
+          errAsync({
+            type: "SessionMissing" as const,
+            ref: REF,
+          }),
+        deleteSession: (session, token) => {
+          deleteCalls += 1;
+          expect(session.ref).toBe(REF);
+          expect(session.childId).toBe("child-1");
+          expect(session.parentSession).toBe(PARENT);
+          expect(token).toBe(nativeSessionDeletionToken(REF));
+          return okAsync({
+            version: 1 as const,
+            ref: REF,
+            childId: "child-1",
+            parentSession: PARENT,
+            deletedAt: "2026-01-01T00:00:00.000Z",
+            reason: "explicit-user-deletion" as const,
+            phase: "completed" as const,
+          });
+        },
+      },
+    });
+    const deleted = (
+      await port.delete({
+        workspaceKey: "ws",
+        childId: "child-1",
+        parentSessionId: PARENT,
+        confirmed: true,
+      })
+    )._unsafeUnwrap();
+    expect({
+      deleted,
+      openCalls,
+      deleteCalls,
+      tombstoneCalls,
+    }).toEqual({
+      deleted: {
+        childId: "child-1",
+        tombstoned: true,
+        deletedAt: "2026-01-01T00:00:00.000Z",
+      },
+      openCalls: 0,
+      deleteCalls: 1,
+      tombstoneCalls: 1,
+    });
+  });
+
+  it("does not mark the cache tombstoned when native deletion is still pending", async () => {
+    const record = metadataRecord();
+    let tombstoneCalls = 0;
+    const port = createPiChildrenCommandPort({
+      cache: {
+        list: () => ok({ records: [record], nextCursor: undefined }),
+        get: () => okAsync(record),
+        findByChildId: () => ok([record]),
+        tombstone: () => {
+          tombstoneCalls += 1;
+          return ok(undefined);
+        },
+      },
+      sessions: {
+        openSession: () =>
+          errAsync({ type: "SessionMissing" as const, ref: REF }),
+        readSessionEntryPage: () =>
+          errAsync({ type: "SessionMissing" as const, ref: REF }),
+        deleteSession: () =>
+          errAsync({
+            type: "SessionUnlinkFailed" as const,
+            ref: REF,
+            reason: "io" as const,
+          }),
+      },
+    });
+    const refused = await port.delete({
+      workspaceKey: "ws",
+      childId: "child-1",
+      parentSessionId: PARENT,
+      confirmed: true,
+    });
+    expect({
+      error: refused.isErr() ? refused.error : "unexpected-success",
+      tombstoneCalls,
+    }).toEqual({
+      error: { type: "Unavailable", message: "SessionUnlinkFailed" },
+      tombstoneCalls: 0,
+    });
+  });
+
+  it("retries cache tombstone after a durable native completion without reporting false success", async () => {
+    const record = metadataRecord();
+    let deleteCalls = 0;
+    let tombstoneCalls = 0;
+    const port = createPiChildrenCommandPort({
+      cache: {
+        list: () => ok({ records: [record], nextCursor: undefined }),
+        get: () => okAsync(record),
+        findByChildId: () => ok([record]),
+        tombstone: () => {
+          tombstoneCalls += 1;
+          return tombstoneCalls === 1
+            ? err({ type: "CacheUnavailable" as const, reason: "io" as const })
+            : ok(undefined);
+        },
+      },
+      sessions: {
+        openSession: () =>
+          errAsync({ type: "SessionMissing" as const, ref: REF }),
+        readSessionEntryPage: () =>
+          errAsync({ type: "SessionMissing" as const, ref: REF }),
+        deleteSession: () => {
+          deleteCalls += 1;
+          return okAsync({
+            version: 1 as const,
+            ref: REF,
+            childId: "child-1",
+            parentSession: PARENT,
+            deletedAt: "2026-01-01T00:00:00.000Z",
+            reason: "explicit-user-deletion" as const,
+            phase: "completed" as const,
+          });
+        },
+      },
+    });
+    const first = await port.delete({
+      workspaceKey: "ws",
+      childId: "child-1",
+      parentSessionId: PARENT,
+      confirmed: true,
+    });
+    const second = await port.delete({
+      workspaceKey: "ws",
+      childId: "child-1",
+      parentSessionId: PARENT,
+      confirmed: true,
+    });
+    expect({
+      first: first.isErr() ? first.error : "unexpected-success",
+      second: second.isOk() ? second.value : "unexpected-failure",
+      deleteCalls,
+      tombstoneCalls,
+    }).toEqual({
+      first: { type: "Unavailable", message: "CacheUnavailable" },
+      second: {
+        childId: "child-1",
+        tombstoned: true,
+        deletedAt: "2026-01-01T00:00:00.000Z",
+      },
+      deleteCalls: 2,
+      tombstoneCalls: 2,
     });
   });
 });

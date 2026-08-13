@@ -996,6 +996,7 @@ describe("deletion and tombstones", () => {
       parentSession: PARENT,
       deletedAt: "2026-01-01T00:00:00.000Z",
       reason: "explicit-user-deletion",
+      phase: "completed",
     });
     expect(
       (await store.openSession(RECORD.ref, PARENT))._unsafeUnwrapErr(),
@@ -1058,6 +1059,184 @@ describe("deletion and tombstones", () => {
     const token = nativeSessionDeletionToken("child-1/session.jsonl");
     expect(token).toBe(nativeSessionDeletionToken("child-1/session.jsonl"));
     expect(token).not.toBe(nativeSessionDeletionToken("child-2/session.jsonl"));
+  });
+
+  test("intent append failure leaves the session readable and un-tombstoned", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    fs.simulateAppendFailure(ROOT, PI_NATIVE_SESSION_LAYOUT.tombstoneFile, {
+      type: "io",
+    });
+    const result = await store.deleteSession(
+      RECORD,
+      nativeSessionDeletionToken(RECORD.ref),
+    );
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "TombstoneAppendFailed",
+      reason: "io",
+    });
+    expect((await store.openSession(RECORD.ref, PARENT)).isOk()).toBe(true);
+    expect((await store.readDeletionLedger())._unsafeUnwrap()).toEqual([]);
+    expect((await store.readTombstones())._unsafeUnwrap()).toEqual([]);
+  });
+
+  test("ledger read failure before unlink leaves the session readable", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    (
+      await store.appendTombstone({ ...RECORD, childId: "other" })
+    )._unsafeUnwrap();
+    fs.simulatePermissiveFile(ROOT, PI_NATIVE_SESSION_LAYOUT.tombstoneFile);
+    const result = await store.deleteSession(
+      RECORD,
+      nativeSessionDeletionToken(RECORD.ref),
+    );
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionPermissionError",
+      kind: "file",
+    });
+    expect((await store.openSession(RECORD.ref, PARENT)).isOk()).toBe(true);
+  });
+
+  test("unlink failure after intent is a recoverable failed state, not a completed tombstone", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    fs.simulateDeleteFailure(`${ROOT}/child-1`, "session.jsonl", {
+      type: "io",
+    });
+    const result = await store.deleteSession(
+      RECORD,
+      nativeSessionDeletionToken(RECORD.ref),
+    );
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionUnlinkFailed",
+      ref: RECORD.ref,
+      reason: "io",
+    });
+    expect((await store.openSession(RECORD.ref, PARENT)).isOk()).toBe(true);
+    expect(
+      (await store.readDeletionLedger())
+        ._unsafeUnwrap()
+        .map((entry) => entry.phase),
+    ).toEqual(["intent", "failed"]);
+    expect((await store.readTombstones())._unsafeUnwrap()).toEqual([]);
+  });
+
+  test("retry after unlink failure is idempotent and completes once", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    const token = nativeSessionDeletionToken(RECORD.ref);
+    fs.simulateDeleteFailure(`${ROOT}/child-1`, "session.jsonl", {
+      type: "io",
+    });
+    expect((await store.deleteSession(RECORD, token)).isErr()).toBe(true);
+    fs.simulateDeleteFailure(`${ROOT}/child-1`, "session.jsonl", {
+      type: "unavailable",
+      operation: "delete",
+    });
+    const second = await store.deleteSession(RECORD, token);
+    expect(second._unsafeUnwrapErr()).toEqual({
+      type: "SessionUnlinkFailed",
+      ref: RECORD.ref,
+      reason: "unavailable",
+    });
+    expect(
+      (await store.readDeletionLedger())
+        ._unsafeUnwrap()
+        .map((entry) => entry.phase),
+    ).toEqual(["intent", "failed"]);
+    const completed = (
+      await store.deleteSession(RECORD, token)
+    )._unsafeUnwrap();
+    expect(completed.phase).toBe("completed");
+    expect(
+      (await store.openSession(RECORD.ref, PARENT))._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionMissing", ref: RECORD.ref });
+    expect(
+      (await store.readDeletionLedger())
+        ._unsafeUnwrap()
+        .map((entry) => entry.phase),
+    ).toEqual(["intent", "failed", "completed"]);
+    expect((await store.readTombstones())._unsafeUnwrap()).toHaveLength(1);
+  });
+
+  test("completion append failure after unlink stays pending, not completed", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    fs.simulateAppendFailure(
+      ROOT,
+      PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+      { type: "io" },
+      1,
+    );
+    const result = await store.deleteSession(
+      RECORD,
+      nativeSessionDeletionToken(RECORD.ref),
+    );
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "TombstoneAppendFailed",
+      reason: "io",
+    });
+    expect(
+      (await store.openSession(RECORD.ref, PARENT))._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionMissing", ref: RECORD.ref });
+    expect(
+      (await store.readDeletionLedger())
+        ._unsafeUnwrap()
+        .map((entry) => entry.phase),
+    ).toEqual(["intent"]);
+    expect((await store.readTombstones())._unsafeUnwrap()).toEqual([]);
+  });
+
+  test("retry after completion-append failure writes exactly one completed tombstone", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    const token = nativeSessionDeletionToken(RECORD.ref);
+    fs.simulateAppendFailure(
+      ROOT,
+      PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+      { type: "unavailable", operation: "write" },
+      1,
+    );
+    expect((await store.deleteSession(RECORD, token)).isErr()).toBe(true);
+    const completed = (
+      await store.deleteSession(RECORD, token)
+    )._unsafeUnwrap();
+    expect(completed.phase).toBe("completed");
+    expect(
+      (await store.openSession(RECORD.ref, PARENT))._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionMissing", ref: RECORD.ref });
+    expect(
+      (await store.readDeletionLedger())
+        ._unsafeUnwrap()
+        .map((entry) => entry.phase),
+    ).toEqual(["intent", "completed"]);
+    const retry = (await store.deleteSession(RECORD, token))._unsafeUnwrap();
+    expect(retry).toEqual(completed);
+    expect(
+      (await store.readDeletionLedger())
+        ._unsafeUnwrap()
+        .map((entry) => entry.phase),
+    ).toEqual(["intent", "completed"]);
+  });
+
+  test("successful deletion records intent before completed and is idempotent", async () => {
+    const { store, create } = harness();
+    (await create())._unsafeUnwrap();
+    const token = nativeSessionDeletionToken(RECORD.ref);
+    const first = (await store.deleteSession(RECORD, token))._unsafeUnwrap();
+    const second = (await store.deleteSession(RECORD, token))._unsafeUnwrap();
+    expect(first.phase).toBe("completed");
+    expect(second).toEqual(first);
+    expect(
+      (await store.readDeletionLedger())
+        ._unsafeUnwrap()
+        .map((entry) => entry.phase),
+    ).toEqual(["intent", "completed"]);
+    expect((await store.readTombstones())._unsafeUnwrap()).toHaveLength(1);
+    expect(
+      (await store.openSession(RECORD.ref, PARENT))._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionMissing", ref: RECORD.ref });
   });
 });
 
