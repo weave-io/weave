@@ -3,6 +3,7 @@ import type {
   CapabilityProbeResult,
 } from "@weaveio/weave-engine";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
+import type { PiChildSessionReadinessReason } from "./child-session-storage-authority.js";
 import { isOwnSourceInfo, WEAVE_COMMAND_NAMES } from "./commands.js";
 import {
   PI_HOST_SURFACE_IDS,
@@ -54,6 +55,19 @@ export interface PiCandidatePlanContext {
   readonly plansDirectoryContained?: boolean;
 }
 
+/**
+ * This generation's real spawn-authority verdict, produced by the single
+ * generation-scoped session authority every launch path consumes (Spec 33
+ * §5.6). Probing reads the same object the launch paths hold, so readiness
+ * and launch can no longer disagree.
+ */
+export type PiDelegationAuthorityReadiness =
+  | { readonly status: "ready" }
+  | {
+      readonly status: "unavailable";
+      readonly reason: PiDelegationReadinessReason;
+    };
+
 /** Input a capability prober needs; assembled after mode/host/trust are known. */
 export interface PiPreflightContext {
   readonly mode: PiMode;
@@ -61,6 +75,12 @@ export interface PiPreflightContext {
   readonly commands: readonly PiCommandInfo[];
   readonly candidatePlan?: PiCandidatePlanContext;
   readonly hostSurface?: PiHostSurfaceReport;
+  /**
+   * Absent only for embeddings that wire no session authority at all;
+   * production always supplies it, so `delegated-specialist-execution` can
+   * never claim readiness a spawn would refuse.
+   */
+  readonly delegationAuthority?: PiDelegationAuthorityReadiness;
 }
 
 /**
@@ -277,11 +297,7 @@ function evaluateCandidatePlanCapability(
  * method names never reach an operator surface, so every host-surface gap is
  * mapped onto exactly one of these constants.
  */
-export type PiDelegationReadinessReason =
-  | "pi-session-api-unavailable"
-  | "pi-session-root-unavailable"
-  | "pi-session-root-unsafe"
-  | "pi-process-unavailable";
+export type PiDelegationReadinessReason = PiChildSessionReadinessReason;
 
 /**
  * Which closed reason each required host surface maps to. Total over
@@ -436,6 +452,20 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
         details: describeDelegationReadinessGap(
           context.hostSurface.requiredGaps,
         ),
+      };
+    }
+    // The spawn authority is a real, generation-scoped fact, so a generation
+    // whose session API, session root, or process surface is missing reports
+    // delegation as unavailable even when the candidate plan is perfect.
+    if (
+      id === "delegated-specialist-execution" &&
+      context.delegationAuthority !== undefined &&
+      context.delegationAuthority.status === "unavailable"
+    ) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: context.delegationAuthority.reason,
       };
     }
     if (id === "command-entrypoints") {

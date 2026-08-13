@@ -18,6 +18,7 @@ import {
 } from "../child-metadata-cache.js";
 import {
   type CreateNativeChildSessionInput,
+  type MintNativeSessionLaunchGrantInput,
   PI_NATIVE_THREAD_ENTRY_TYPE,
   PI_NATIVE_THREAD_SCHEMA_VERSION,
   type PiNativeSessionEntries,
@@ -53,13 +54,24 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import {
+  createTestOnlyGrantedSessionStorageAuthority,
+  mintTestOnlyLaunchGrant,
+} from "./fakes/test-only-session-storage-authority.js";
 
 const GENERATION = "gen-1";
 const OWNER_SESSION = "parent-session-1";
 const SESSION_REF = "workspace/child-1/session.jsonl";
 const SESSION_PATH =
   "/data/weave/adapters/pi/sessions/workspace/child-1/session.jsonl";
+/**
+ * The validated root these fixtures live directly under. One authority is
+ * shared by the fake store (which mints launch grants) and every controller
+ * in this file, exactly as production shares one generation authority.
+ */
+const SESSION_ROOT = "/data/weave/adapters/pi/sessions/workspace";
+const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
+  createTestOnlyGrantedSessionStorageAuthority(SESSION_ROOT);
 const SECRET_TASK_SENTINEL = "SECRET_TASK_TOKEN_WARP_T6";
 const SECRET_TASK = [
   SECRET_TASK_SENTINEL,
@@ -117,17 +129,21 @@ function switchableSessionStorageAuthority(): PiChildSessionStorageAuthority & {
   readonly deny: () => void;
 } {
   let available = true;
+  const granted = TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY;
+  const refusal = {
+    type: "SessionStorageUnavailable" as const,
+    reason: "pi-session-api-unavailable" as const,
+  };
   return {
     deny: () => {
       available = false;
     },
     requireNativeSessionAuthority: () =>
-      available
-        ? ok(undefined)
-        : err({
-            type: "SessionStorageUnavailable" as const,
-            reason: "pi-session-api-unavailable" as const,
-          }),
+      available ? granted.requireNativeSessionAuthority() : err(refusal),
+    requireLaunchAuthority: () =>
+      available ? granted.requireLaunchAuthority() : err(refusal),
+    readinessReason: () =>
+      available ? granted.readinessReason() : refusal.reason,
   };
 }
 
@@ -355,6 +371,25 @@ class FakeSessionStore implements PiThreadSessionPort {
 
   clearEntries(ref: string = SESSION_REF): void {
     this.entries.set(ref, []);
+  }
+
+  mintLaunchGrant(input: MintNativeSessionLaunchGrantInput) {
+    // The fake store mints through the same shared authority the controller
+    // holds, so redemption sees one authority identity exactly as in
+    // production.
+    return ok(
+      mintTestOnlyLaunchGrant(TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY, {
+        childId: input.childId,
+        sessionId: input.record.sessionId,
+        ref: input.record.ref.slice(input.record.ref.indexOf("/") + 1),
+        sessionDir: input.record.path.slice(
+          0,
+          input.record.path.lastIndexOf("/"),
+        ),
+        sessionPath: input.record.path,
+        activeLeafId: input.activeLeafId,
+      }),
+    );
   }
 
   createChildSession(input: CreateNativeChildSessionInput) {

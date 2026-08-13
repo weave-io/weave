@@ -11,6 +11,7 @@ import {
   buildBlockedProbeSet,
   type PiCandidatePlanContext,
   type PiCapabilityProbeSource,
+  type PiDelegationAuthorityReadiness,
   sanitizeCapabilityProbeResults,
 } from "./capability-prober.js";
 import {
@@ -162,6 +163,14 @@ export interface PiSafeInitializerDeps {
   readonly chooseInvalidChildInspectionSettings?: (
     issues: readonly PiChildInspectionSettingsIssue[],
   ) => ResultAsync<PiChildInspectionSettingsChoice, never>;
+  /**
+   * Reads this generation's real spawn-authority verdict from the single
+   * session authority every launch path consumes (Spec 33 §5.6). Production
+   * wiring MUST supply it, so `delegated-specialist-execution` never reports
+   * ready while every spawn would refuse. Embeddings that wire no authority
+   * omit it and keep the candidate-plan verdict.
+   */
+  readonly delegationAuthority?: () => PiDelegationAuthorityReadiness;
 }
 
 interface HostOutcome {
@@ -200,6 +209,18 @@ export class PiSafeInitializer {
     const trust: PiTrustState = session.isProjectTrusted()
       ? "trusted"
       : "withheld";
+    // Read once per preflight, from the same authority object the delegation
+    // controller, direct dispatch, and every RPC child will consume.
+    const delegationAuthority = Result.fromThrowable(
+      () => this.deps.delegationAuthority?.(),
+      (): PiDelegationAuthorityReadiness => ({
+        status: "unavailable",
+        reason: "pi-session-api-unavailable",
+      }),
+    )().match(
+      (readiness) => readiness,
+      (fallback) => fallback,
+    );
 
     return this.readHost().andThen((hostOutcome) => {
       const hostSupported = hostOutcome.compatibility.isOk();
@@ -222,6 +243,9 @@ export class PiSafeInitializer {
               commands,
               candidatePlan: candidate.probeContext,
               hostSurface: normalizedHostSurface,
+              ...(delegationAuthority === undefined
+                ? {}
+                : { delegationAuthority }),
             }).andThen((probes) => {
               const healthReport = buildAdapterHealthReport({
                 harness: HOST_PACKAGE_NAME,
@@ -448,6 +472,7 @@ export class PiSafeInitializer {
       commands: readonly PiCommandInfo[];
       candidatePlan?: PiCandidatePlanContext;
       hostSurface?: PiHostSurfaceReport;
+      delegationAuthority?: PiDelegationAuthorityReadiness;
     },
   ): Result<CapabilityProbeResult[], PiAdapterFailure> {
     return Result.fromThrowable(

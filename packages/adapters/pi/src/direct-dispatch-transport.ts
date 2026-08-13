@@ -14,7 +14,6 @@ import { toModelIdentityBody } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
 import {
-  createPiChildSessionStorageAuthority,
   describeChildSessionStorageUnavailable,
   type PiChildSessionStorageAuthority,
 } from "./child-session-storage-authority.js";
@@ -51,12 +50,13 @@ const DIRECT_DISPATCH_UNAUTHORIZED_CHILD_ID = "direct-step";
 export interface PiDirectDispatchTransportDeps {
   readonly processPort: PiChildProcessPort;
   /**
-   * Storage authority handed to the direct-step child. Direct dispatch
-   * deliberately bypasses `PiDelegationController`'s budget and tree, so it
-   * must name its own authority rather than inherit one. Absent means the
-   * production authority, which always refuses.
+   * The generation-scoped authority handed to the direct-step child. Direct
+   * dispatch deliberately bypasses `PiDelegationController`'s budget and
+   * tree, so it must name this authority explicitly. It is required, with no
+   * default: a silent fallback would let readiness report ready while every
+   * direct-step spawn refuses.
    */
-  readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
+  readonly sessionStorageAuthority: PiChildSessionStorageAuthority;
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly logger: PiAdapterLogger;
@@ -160,8 +160,7 @@ export function createDirectDispatchTransport(
   deps: PiDirectDispatchTransportDeps,
   generationId: string,
 ): DirectDispatchTransport {
-  const sessionStorageAuthority =
-    deps.sessionStorageAuthority ?? createPiChildSessionStorageAuthority();
+  const sessionStorageAuthority = deps.sessionStorageAuthority;
   return (
     input: PiDirectDispatchInput,
   ): ResultAsync<DirectDispatchSettlement, PiAdapterFailure> => {

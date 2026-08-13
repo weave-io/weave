@@ -31,6 +31,11 @@
 import { isAbsolute, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
+import {
+  mintPiChildSessionLaunchGrant,
+  type PiChildSessionLaunchAuthority,
+  type PiChildSessionLaunchGrant,
+} from "./child-session-launch.js";
 import { isLexicallyContained } from "./path-containment.js";
 import {
   createBunPiTrustedDataRootPort,
@@ -179,6 +184,18 @@ export type PiNativeSessionStorageUnavailableReason =
    * mutating path may run.
    */
   | "pi-session-api-unavailable"
+  /**
+   * The adapter-owned session root could not be resolved or created, so no
+   * session may be minted and no child may be launched.
+   */
+  | "pi-session-root-unavailable"
+  /**
+   * The resolved session root exists but failed a safety check (foreign
+   * owner, group/world-writable base, symlink, wrong kind).
+   */
+  | "pi-session-root-unsafe"
+  /** The child process launch surface is not available this generation. */
+  | "pi-process-unavailable"
   /** The verified storage tree itself could not be reached or canonicalized. */
   | "filesystem-unavailable";
 
@@ -186,9 +203,19 @@ export type PiNativeSessionStorageUnavailableReason =
 export function describePiNativeSessionStorageUnavailable(
   reason: PiNativeSessionStorageUnavailableReason,
 ): string {
-  return reason === "pi-session-api-unavailable"
-    ? "the installed Pi host does not expose the public session create/open API"
-    : "native session storage is unavailable";
+  if (reason === "pi-session-api-unavailable") {
+    return "the installed Pi host does not expose the public session create/open API";
+  }
+  if (reason === "pi-session-root-unavailable") {
+    return "the Weave-owned native session root is unavailable";
+  }
+  if (reason === "pi-session-root-unsafe") {
+    return "the Weave-owned native session root failed its safety checks";
+  }
+  if (reason === "pi-process-unavailable") {
+    return "the child process launch surface is unavailable";
+  }
+  return "native session storage is unavailable";
 }
 
 /** The single storage-unavailable variant, as returned by the host preflight. */
@@ -738,6 +765,27 @@ export interface PiNativeSessionStoreOptions {
   readonly fs: PiNativeSessionFsPort;
   readonly host: PiNativeSessionHostPort;
   readonly now?: () => Date;
+  /**
+   * The generation-scoped launch authority this store mints launch grants
+   * from (Spec 33 §5.3 / R5). Omitted for read-only stores: without it, no
+   * grant can be minted and therefore no child can be launched from this
+   * store's sessions.
+   */
+  readonly launchAuthority?: PiChildSessionLaunchAuthority;
+}
+
+/** What a caller must prove before a validated session may launch a child. */
+export interface MintNativeSessionLaunchGrantInput {
+  /**
+   * The child process this grant authorizes. A thread's later runs use fresh
+   * child ids, so the grant is bound to the id that will actually launch,
+   * never to the id that originally created the session.
+   */
+  readonly childId: string;
+  /** The validated session record this store returned. */
+  readonly record: PiNativeSessionRecord;
+  readonly activeLeafId: string;
+  readonly checkpointCursor?: number;
 }
 
 export interface CreateNativeChildSessionInput {
@@ -1754,17 +1802,66 @@ export class PiNativeSessionStore {
   private readonly fs: PiNativeSessionFsPort;
   private readonly host: PiNativeSessionHostPort;
   private readonly now: () => Date;
+  private readonly launchAuthority: PiChildSessionLaunchAuthority | undefined;
 
   constructor(options: PiNativeSessionStoreOptions) {
     this.root = options.root;
     this.fs = options.fs;
     this.host = options.host;
     this.now = options.now ?? (() => new Date());
+    this.launchAuthority = options.launchAuthority;
   }
 
   /** Absolute session root this store is bound to. */
   sessionRoot(): string {
     return this.root;
+  }
+
+  /**
+   * Mints the unforgeable launch grant a child process needs to start against
+   * this validated session (Spec 33 §5.3 / R5).
+   *
+   * The store is the only mint authority: it holds the generation's launch
+   * authority, and the authority's validated root must be exactly this
+   * store's root. Callers never hand a filesystem path to a launch path; they
+   * hand this opaque grant, which only the RPC transport can redeem, and only
+   * for the child the grant names.
+   */
+  mintLaunchGrant(
+    input: MintNativeSessionLaunchGrantInput,
+  ): Result<PiChildSessionLaunchGrant, PiNativeSessionError> {
+    const authority = this.launchAuthority;
+    if (authority === undefined) {
+      return err({
+        type: "SessionStorageUnavailable",
+        reason: "pi-session-root-unavailable",
+      });
+    }
+    if (authority.sessionRoot !== this.root) {
+      return err({ type: "SessionRootViolation", reason: "path-escape" });
+    }
+    return mintPiChildSessionLaunchGrant(authority, {
+      childId: input.childId,
+      sessionId: input.record.sessionId,
+      ref: input.record.ref,
+      sessionDir: input.record.path.slice(
+        0,
+        Math.max(input.record.path.lastIndexOf("/"), 0),
+      ),
+      sessionPath: input.record.path,
+      activeLeafId: input.activeLeafId,
+      ...(input.checkpointCursor === undefined
+        ? {}
+        : { checkpointCursor: input.checkpointCursor }),
+    }).mapErr((rejection): PiNativeSessionError => {
+      if (
+        rejection === "invalid-session-path" ||
+        rejection === "session-path-not-in-root"
+      ) {
+        return { type: "SessionRootViolation", reason: "path-escape" };
+      }
+      return { type: "SessionRootViolation", reason: "unsafe-component" };
+    });
   }
 
   /**

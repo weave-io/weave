@@ -41,7 +41,14 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import {
+  createTestOnlyGrantedSessionStorageAuthority,
+  mintTestOnlyLaunchGrant,
+} from "./fakes/test-only-session-storage-authority.js";
+
+/** One shared authority: it mints every launch grant these fixtures use. */
+const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
+  createTestOnlyGrantedSessionStorageAuthority("/history/children");
 
 const encoder = new TextEncoder();
 const randomPort = new WebCryptoRandomPort();
@@ -288,6 +295,23 @@ function restoreSessions(childId: string) {
   });
   return () =>
     ({
+      mintLaunchGrant: (input: {
+        readonly childId: string;
+        readonly record: { readonly path: string; readonly sessionId: string };
+        readonly activeLeafId: string;
+      }) =>
+        ok(
+          mintTestOnlyLaunchGrant(TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY, {
+            childId: input.childId,
+            sessionId: input.record.sessionId,
+            sessionDir: input.record.path.slice(
+              0,
+              input.record.path.lastIndexOf("/"),
+            ),
+            sessionPath: input.record.path,
+            activeLeafId: input.activeLeafId,
+          }),
+        ),
       createChildSession: () =>
         okAsync(record(`children/${childId}/session.jsonl`)),
       establishThreadLeaf: (ref: string) =>

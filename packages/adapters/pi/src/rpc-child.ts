@@ -68,6 +68,13 @@ import {
   parsePiChildSessionEvent,
 } from "./child-session-events.js";
 import {
+  describePiChildSessionLaunchRejection,
+  type PiChildSessionLaunchAuthority,
+  type PiChildSessionLaunchDetails,
+  type PiChildSessionLaunchGrant,
+  redeemPiChildSessionLaunchGrant,
+} from "./child-session-launch.js";
+import {
   describeChildSessionStorageUnavailable,
   type PiChildSessionStorageAuthority,
 } from "./child-session-storage-authority.js";
@@ -235,15 +242,21 @@ export interface PiRpcChildDeps {
   readonly onInterventionCountChanged?: (count: number) => void;
 }
 
+/**
+ * How this child's transcript is stored.
+ *
+ * There is no caller-constructed path mode. A persistent child launches only
+ * against an opaque, store-minted {@link PiChildSessionLaunchGrant} bound to
+ * the generation's validated session root, the validated child directory, the
+ * exact validated session file, and this child's identity (Spec 33 §5.3 /
+ * R5). A public caller therefore cannot ask Weave to launch `pi` against an
+ * arbitrary absolute path, however well-formed that path looks.
+ */
 export type PiRpcChildSpawnSession =
   | { readonly mode: "ephemeral" }
-  | { readonly mode: "new"; readonly sessionDir: string }
   | {
-      readonly mode: "restore";
-      readonly sessionDir: string;
-      readonly sessionPath: string;
-      readonly activeLeafId: string;
-      readonly checkpointCursor?: number;
+      readonly mode: "native";
+      readonly grant: PiChildSessionLaunchGrant;
     };
 
 export interface PiRpcChildSpawnInput {
@@ -294,9 +307,7 @@ const MAX_GET_ENTRIES = 256;
 const MAX_GET_ENTRIES_BYTES = 512 * 1024;
 const MAX_LIVE_JSON_DEPTH = 8;
 
-type SpawnSessionValidationResult = Result<readonly string[], string>;
-
-function invalidSpawnSession(reason: string): SpawnSessionValidationResult {
+function invalidSpawnSession<T>(reason: string): Result<T, string> {
   return err(`invalid session spawn configuration: ${reason}`);
 }
 
@@ -338,10 +349,21 @@ function validateSpawnSessionId(value: unknown): Result<string, string> {
   return ok(value);
 }
 
+interface SpawnSessionPlan {
+  readonly command: readonly string[];
+  readonly launch?: PiChildSessionLaunchDetails;
+}
+
+type SpawnSessionPlanResult = Result<SpawnSessionPlan, string>;
+
 function buildSpawnCommand(
   baseCommand: readonly string[],
   session: PiRpcChildSpawnSession | undefined,
-): SpawnSessionValidationResult {
+  identity: {
+    readonly childId: string;
+    readonly authority: PiChildSessionLaunchAuthority;
+  },
+): SpawnSessionPlanResult {
   for (const argument of baseCommand) {
     if (
       typeof argument !== "string" ||
@@ -358,25 +380,34 @@ function buildSpawnCommand(
     return invalidSpawnSession("session must be an object");
   }
   if (selected.mode === "ephemeral") {
-    return ok([...baseCommand, "--no-session"]);
+    return ok({ command: [...baseCommand, "--no-session"] });
   }
-
-  const sessionDir = validateAbsoluteSpawnPath(
-    selected.sessionDir,
-    "sessionDir",
-  );
-  if (sessionDir.isErr()) return invalidSpawnSession(sessionDir.error);
-
-  if (selected.mode === "new") {
-    return ok([...baseCommand, "--session-dir", sessionDir.value]);
-  }
-
-  if (selected.mode !== "restore") {
+  if (selected.mode !== "native") {
     return invalidSpawnSession("unknown session mode");
   }
 
+  // The only path authority: an opaque grant this process minted through the
+  // store, bound to the generation's validated root and to this child. A
+  // caller-supplied path, however well-formed, has no grant and stops here.
+  const launch = redeemPiChildSessionLaunchGrant(selected.grant, {
+    childId: identity.childId,
+    authority: identity.authority,
+  });
+  if (launch.isErr()) {
+    return err(describePiChildSessionLaunchRejection(launch.error));
+  }
+  const details = launch.value;
+
+  // Defence in depth: the grant was validated at mint time, and is validated
+  // again here so the exact argv this transport emits is proven independently
+  // of the minting path.
+  const sessionDir = validateAbsoluteSpawnPath(
+    details.sessionDir,
+    "sessionDir",
+  );
+  if (sessionDir.isErr()) return invalidSpawnSession(sessionDir.error);
   const sessionPath = validateAbsoluteSpawnPath(
-    selected.sessionPath,
+    details.sessionPath,
     "sessionPath",
   );
   if (sessionPath.isErr()) return invalidSpawnSession(sessionPath.error);
@@ -396,24 +427,27 @@ function buildSpawnCommand(
     );
   }
 
-  const activeLeafId = validateSpawnSessionId(selected.activeLeafId);
+  const activeLeafId = validateSpawnSessionId(details.activeLeafId);
   if (activeLeafId.isErr()) return invalidSpawnSession(activeLeafId.error);
   if (
-    selected.checkpointCursor !== undefined &&
-    (!Number.isSafeInteger(selected.checkpointCursor) ||
-      selected.checkpointCursor < 0 ||
-      selected.checkpointCursor > MAX_SPAWN_CHECKPOINT_CURSOR)
+    details.checkpointCursor !== undefined &&
+    (!Number.isSafeInteger(details.checkpointCursor) ||
+      details.checkpointCursor < 0 ||
+      details.checkpointCursor > MAX_SPAWN_CHECKPOINT_CURSOR)
   ) {
     return invalidSpawnSession("checkpointCursor is out of bounds");
   }
 
-  return ok([
-    ...baseCommand,
-    "--session-dir",
-    sessionDir.value,
-    "--session",
-    sessionPath.value,
-  ]);
+  return ok({
+    command: [
+      ...baseCommand,
+      "--session-dir",
+      sessionDir.value,
+      "--session",
+      sessionPath.value,
+    ],
+    launch: details,
+  });
 }
 
 /** Native Pi commands, kept outside the authenticated private envelope kinds. */
@@ -810,9 +844,7 @@ export class PiRpcChild {
   private readonly cancelGraceMs: number;
   private readonly baseEnv: Readonly<Record<string, string>>;
   /** The restore selector used by the actual spawn; never inferred from task input. */
-  private restoreSession:
-    | Extract<PiRpcChildSpawnSession, { readonly mode: "restore" }>
-    | undefined;
+  private restoreSession: PiChildSessionLaunchDetails | undefined;
 
   constructor(
     childId: string,
@@ -902,9 +934,13 @@ export class PiRpcChild {
    * process port is touched. A refusal is mapped onto the closed transport
    * failure carrying the same bounded, path-free reason.
    */
-  private requireSessionStorageAuthority(): Result<void, PiAdapterFailure> {
+  private requireSessionStorageAuthority(): Result<
+    PiChildSessionLaunchAuthority,
+    PiAdapterFailure
+  > {
     return this.sessionStorageAuthority
       .requireNativeSessionAuthority()
+      .andThen(() => this.sessionStorageAuthority.requireLaunchAuthority())
       .mapErr((unavailable) =>
         makeChildSpawnFailedFailure(
           this.childId,
@@ -926,15 +962,18 @@ export class PiRpcChild {
       return errAsync(authority.error);
     }
 
-    const command = buildSpawnCommand(this.command, input.session);
-    if (command.isErr()) {
-      const failure = makeChildSpawnFailedFailure(this.childId, command.error);
+    const plan = buildSpawnCommand(this.command, input.session, {
+      childId: this.childId,
+      authority: authority.value,
+    });
+    if (plan.isErr()) {
+      const failure = makeChildSpawnFailedFailure(this.childId, plan.error);
       this.failOutstanding(failure);
       return errAsync(failure);
     }
+    const command = plan.value.command;
 
-    this.restoreSession =
-      input.session?.mode === "restore" ? { ...input.session } : undefined;
+    this.restoreSession = plan.value.launch;
     this.startedAtMs = this.now();
     this.status = "spawning";
     this.onStreamingUpdate?.(this.snapshot());
@@ -965,7 +1004,7 @@ export class PiRpcChild {
     // untrusted for that choice, so it never reaches the child environment.
     delete env[PI_INHERITED_SESSION_DIR_ENV];
     return this.processPort
-      .spawn({ command: command.value, env, cwd: input.cwd })
+      .spawn({ command, env, cwd: input.cwd })
       .mapErr((spawnError) =>
         makeChildSpawnFailedFailure(this.childId, spawnError.reason),
       )

@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import type { HmacPort, RandomPort } from "../child-crypto.js";
-import { CHILD_SESSION_STORAGE_UNAVAILABLE_REASON } from "../child-session-storage-authority.js";
+import {
+  CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
+  createPiChildSessionStorageAuthority,
+} from "../child-session-storage-authority.js";
 import type { PiDirectDispatchInput } from "../direct-dispatch.js";
 import {
   createDirectDispatchTransport,
@@ -33,6 +36,9 @@ test("direct dispatch refuses before input, id, model, registry, bootstrap, or s
   };
   const deps = {
     processPort,
+    // Named explicitly, as every construction site must: the production
+    // authority proves nothing here, so it refuses.
+    sessionStorageAuthority: createPiChildSessionStorageAuthority(),
     randomPort: {} as RandomPort,
     hmacPort: {} as HmacPort,
     logger: {} as PiAdapterLogger,

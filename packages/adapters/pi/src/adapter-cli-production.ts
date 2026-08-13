@@ -46,7 +46,6 @@ import {
   resolvePiNativeSessionRoot,
 } from "./child-native-sessions.js";
 import { createNativeChildRefSourceAuthority } from "./child-session-refs.js";
-import { createPiChildSessionStorageAuthority } from "./child-session-storage-authority.js";
 import {
   makeRequiredCapabilityUnavailableFailure,
   type PiAdapterFailure,
@@ -172,14 +171,14 @@ export function evaluateProductionChildrenDeleteGate(
   const candidate =
     options.SessionManager ??
     (PiPublicExports as { SessionManager?: unknown }).SessionManager;
-  const authority = createPiChildSessionStorageAuthority({
-    SessionManager: candidate,
-  }).requireNativeSessionAuthority();
-  if (authority.isErr()) {
+  // This gate answers one narrow question - does the installed host expose
+  // the public session create/open API - because the CLI resolves and proves
+  // its own session root later, on the delete path itself.
+  if (!isPiSessionManagerStatic(candidate)) {
     return err(
       makeRequiredCapabilityUnavailableFailure(
         SESSION_MUTATION_REQUIRED_CAPABILITY,
-        authority.error.reason,
+        "pi-session-api-unavailable",
       ),
     );
   }

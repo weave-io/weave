@@ -83,6 +83,59 @@ function initializerWith(prober: PiCapabilityProbeSource) {
   });
 }
 
+/** Captures the probe context so a test can assert what preflight passed on. */
+class RecordingProber implements PiCapabilityProbeSource {
+  readonly contexts: unknown[] = [];
+  probe(context: unknown): readonly CapabilityProbeResult[] {
+    this.contexts.push(context);
+    return allOkProbes();
+  }
+}
+
+describe("PiSafeInitializer delegation authority", () => {
+  it("passes this generation's real spawn-authority verdict into probing", async () => {
+    const prober = new RecordingProber();
+    const initializer = new PiSafeInitializer({
+      hostPackageReader: FakeHostPackageReader.ok({
+        name: HOST_PACKAGE_NAME,
+        version: "0.81.1",
+      }),
+      capabilityProber: prober,
+      configActivator: fakeConfigActivator(),
+      delegationAuthority: () => ({
+        status: "unavailable",
+        reason: "pi-session-root-unsafe",
+      }),
+    });
+
+    await initializer.preflight(
+      sessionOf("tui", true),
+      ALL_OWNED_COMMANDS,
+      readyHostSurfaceReport(),
+    );
+
+    expect(
+      (prober.contexts[0] as { delegationAuthority?: unknown })
+        .delegationAuthority,
+    ).toEqual({ status: "unavailable", reason: "pi-session-root-unsafe" });
+  });
+
+  it("omits the verdict when no authority is wired at all", async () => {
+    const prober = new RecordingProber();
+    const initializer = initializerWith(prober);
+
+    await initializer.preflight(
+      sessionOf("tui", true),
+      ALL_OWNED_COMMANDS,
+      readyHostSurfaceReport(),
+    );
+
+    expect(
+      Object.hasOwn(prober.contexts[0] as object, "delegationAuthority"),
+    ).toBe(false);
+  });
+});
+
 describe("PiSafeInitializer.preflight", () => {
   it("keeps the ready fixture ready with fallback rendering and preserves exact immutable host and engine inventories", async () => {
     const initializer = initializerWith(new FixedProber(allOkProbes()));

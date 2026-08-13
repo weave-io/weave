@@ -98,7 +98,10 @@ import {
   removeRealTempRoot,
   reserveRealTempPath,
 } from "./fakes/real-temp-root.js";
-import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import {
+  createTestOnlyObservedSessionStorageAuthority,
+  TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+} from "./fakes/test-only-session-storage-authority.js";
 
 const EMPTY_CONFIG = {
   agents: {},
@@ -3473,15 +3476,12 @@ describe("createPiExtension: config activation, materialization consumption, pri
       order.push("upsert");
       return originalUpsert(ref, workspaceKey);
     }) as typeof cache.upsertRef;
-    const storage = {
-      requireNativeSessionAuthority: () => {
+    const storage = createTestOnlyObservedSessionStorageAuthority({
+      granted: false,
+      onCheck: () => {
         order.push("authority");
-        return err({
-          type: "SessionStorageUnavailable" as const,
-          reason: "pi-session-api-unavailable" as const,
-        });
       },
-    };
+    });
     const factory: PiThreadSourceFactory = (input) => {
       order.push(
         input.readOnly === true ? "factory-readonly" : "factory-mutating",
@@ -3546,12 +3546,12 @@ describe("createPiExtension: config activation, materialization consumption, pri
       order.push("upsert");
       return originalUpsert(ref, workspaceKey);
     }) as typeof cache.upsertRef;
-    const storage = {
-      requireNativeSessionAuthority: () => {
+    const storage = createTestOnlyObservedSessionStorageAuthority({
+      granted: true,
+      onCheck: () => {
         order.push("authority");
-        return ok(undefined);
       },
-    };
+    });
     const factory: PiThreadSourceFactory = (input) => {
       order.push(
         input.readOnly === true ? "factory-readonly" : "factory-mutating",
@@ -3608,15 +3608,12 @@ describe("createPiExtension: config activation, materialization consumption, pri
       deleteValue: () => undefined,
     };
     const order: string[] = [];
-    const storage = {
-      requireNativeSessionAuthority: () => {
+    const storage = createTestOnlyObservedSessionStorageAuthority({
+      granted: false,
+      onCheck: () => {
         order.push("authority");
-        return err({
-          type: "SessionStorageUnavailable" as const,
-          reason: "pi-session-api-unavailable" as const,
-        });
       },
-    };
+    });
     let openDatabaseCalls = 0;
     const production = createProductionPiThreadSourceFactory();
     const factory: PiThreadSourceFactory = (

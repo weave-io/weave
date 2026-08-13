@@ -47,12 +47,22 @@ describe("child session storage authority", () => {
     }
   });
 
-  test("grants only for a host exposing public create and open", () => {
+  test("grants only for a host exposing public create and open with a proven root", () => {
     const result = createPiChildSessionStorageAuthority({
       SessionManager: { create: () => undefined, open: () => undefined },
+      sessionRoot: { status: "resolved", root: "/data/weave/sessions" },
     }).requireNativeSessionAuthority();
 
     expect(result.isOk()).toBe(true);
+  });
+
+  test("refuses storage when the API is present but the root is not proven", () => {
+    const authority = createPiChildSessionStorageAuthority({
+      SessionManager: { create: () => undefined, open: () => undefined },
+    });
+
+    expect(authority.requireNativeSessionAuthority().isErr()).toBe(true);
+    expect(authority.readinessReason()).toBe("pi-session-root-unavailable");
   });
 
   test("granted authority without a host is an explicit test-only opt-in", () => {

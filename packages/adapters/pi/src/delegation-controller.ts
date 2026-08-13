@@ -26,6 +26,7 @@ import {
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type {
   CreateNativeChildSessionInput,
+  MintNativeSessionLaunchGrantInput,
   PiNativeSessionEntries,
   PiNativeSessionEntryPage,
   PiNativeSessionEntryPageOptions,
@@ -41,6 +42,7 @@ import type {
   PiChildRecoverySpawnInput,
 } from "./child-recovery.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
+import type { PiChildSessionLaunchGrant } from "./child-session-launch.js";
 import type {
   AppendChildRefLifecycleInput,
   AppendChildRefRunInput,
@@ -51,7 +53,6 @@ import type {
   PiChildRefStatus,
 } from "./child-session-refs.js";
 import {
-  createPiChildSessionStorageAuthority,
   describeChildSessionStorageUnavailable,
   type PiChildSessionStorageAuthority,
 } from "./child-session-storage-authority.js";
@@ -118,13 +119,13 @@ export interface PiDelegationControllerDeps {
   readonly logger: PiAdapterLogger;
   readonly processPort: PiChildProcessPort;
   /**
-   * Storage authority handed to every child this controller launches,
-   * including retry and continue spawns. Absent means the production
-   * authority, which always refuses: the safe default is the closed one, so
-   * a wiring omission cannot open a path-only spawn. Only a test may pass a
-   * different authority, and only by naming one explicitly.
+   * The one generation-scoped authority handed to every child this
+   * controller launches, including retry and continue spawns. It is
+   * required, with no default: a silent fallback authority would let
+   * readiness report ready while every spawn refuses, so each construction
+   * site must state, by name, which authority governs its launches.
    */
-  readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
+  readonly sessionStorageAuthority: PiChildSessionStorageAuthority;
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly timerPort?: TimerPort;
@@ -345,7 +346,25 @@ export interface PiThreadRefPort {
 }
 
 /** Structural view of the Task 4 native session store. */
+/**
+ * Internal, path-free handle on a proven native session: the store's own
+ * validated record plus the leaf it is anchored at. It never leaves the
+ * controller; only the store converts it into a launch grant.
+ */
+interface PiThreadLaunchSource {
+  readonly record: PiNativeSessionRecord;
+  readonly activeLeafId: string;
+}
+
 export interface PiThreadSessionPort {
+  /**
+   * Mints the unforgeable launch grant one child needs to start against one
+   * validated native session (Spec 33 §5.3 / R5). The controller never hands
+   * a filesystem path to a launch path.
+   */
+  mintLaunchGrant(
+    input: MintNativeSessionLaunchGrantInput,
+  ): Result<PiChildSessionLaunchGrant, PiNativeSessionError>;
   createChildSession(
     input: CreateNativeChildSessionInput,
   ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError>;
@@ -612,8 +631,7 @@ export class PiDelegationController {
   private readonly sessionStorageAuthority: PiChildSessionStorageAuthority;
 
   constructor(private readonly deps: PiDelegationControllerDeps) {
-    this.sessionStorageAuthority =
-      deps.sessionStorageAuthority ?? createPiChildSessionStorageAuthority();
+    this.sessionStorageAuthority = deps.sessionStorageAuthority;
   }
 
   private requireSessionStorageAuthority(
@@ -944,17 +962,32 @@ export class PiDelegationController {
                   "thread-ref-write-failed",
                 );
               })
-              .map((ref) => {
+              .andThen((ref) => {
+                // The launch grant is minted by the store, from the store's
+                // own validated record, and bound to the child that will
+                // actually start. Nothing downstream sees a path.
+                const grant = sessions.mintLaunchGrant({
+                  childId,
+                  record,
+                  activeLeafId: leaf.leafId,
+                });
+                if (grant.isErr()) {
+                  this.tombstoneProvisionedSession(sessions, record);
+                  return errAsync(
+                    makeChildSpawnFailedFailure(
+                      childId,
+                      "thread-launch-grant-unavailable",
+                    ),
+                  );
+                }
                 this.rememberThreadRecord(ref);
-                return {
+                return okAsync({
                   session: {
-                    mode: "restore" as const,
-                    sessionDir: dirname(record.path),
-                    sessionPath: record.path,
-                    activeLeafId: leaf.leafId,
+                    mode: "native" as const,
+                    grant: grant.value,
                   },
                   ref,
-                };
+                });
               }),
           ),
       );
@@ -1435,6 +1468,35 @@ export class PiDelegationController {
         // A new run is a new tool block and a new child id. The previous run's
         // record keeps its own id and is never reopened or rewritten.
         const runChildId = this.deps.idGenerator.next();
+        // The grant is minted for this run's child id, from the store that
+        // owns the session, before the divider is written or any process
+        // starts. A thread with no proven source stays path-free too.
+        const sessions = this.deps.threadSessions?.();
+        let runSession: PiRpcChildSpawnSession | undefined;
+        if (source.launch !== undefined) {
+          if (sessions === undefined) {
+            return errAsync<PiThreadRunOutcome, PiAdapterFailure>(
+              makeThreadResumeUnavailableFailure(
+                threadId,
+                "session-unavailable",
+              ),
+            );
+          }
+          const minted = this.mintLaunchSession(
+            sessions,
+            source.launch,
+            runChildId,
+          );
+          if (minted.isErr()) {
+            return errAsync<PiThreadRunOutcome, PiAdapterFailure>(
+              makeThreadResumeUnavailableFailure(
+                threadId,
+                "session-unavailable",
+              ),
+            );
+          }
+          runSession = minted.value;
+        }
         const priorOutcome = state.status;
         return this.appendThreadDivider(
           source.ref,
@@ -1459,9 +1521,7 @@ export class PiDelegationController {
               parentDepth: state.parentDepth,
               cwd: state.cwd,
             }),
-            ...(source.session === undefined
-              ? {}
-              : { session: source.session }),
+            ...(runSession === undefined ? {} : { session: runSession }),
             ...(request.onSessionEvent === undefined
               ? {}
               : { onSessionEvent: request.onSessionEvent }),
@@ -1748,7 +1808,7 @@ export class PiDelegationController {
   private resolveThreadSource(state: PiThreadState): ResultAsync<
     {
       readonly ref: PiChildRefRecord | undefined;
-      readonly session: PiRpcChildSpawnSession | undefined;
+      readonly launch: PiThreadLaunchSource | undefined;
     },
     PiAdapterFailure
   > {
@@ -1777,7 +1837,7 @@ export class PiDelegationController {
           return errAsync<
             {
               readonly ref: PiChildRefRecord | undefined;
-              readonly session: PiRpcChildSpawnSession | undefined;
+              readonly launch: PiThreadLaunchSource | undefined;
             },
             PiAdapterFailure
           >(this.threadScanFailure(state.threadId, scan));
@@ -1786,7 +1846,7 @@ export class PiDelegationController {
           return errAsync<
             {
               readonly ref: PiChildRefRecord | undefined;
-              readonly session: PiRpcChildSpawnSession | undefined;
+              readonly launch: PiThreadLaunchSource | undefined;
             },
             PiAdapterFailure
           >(makeThreadNotFoundFailure(state.threadId, "origin-mismatch"));
@@ -1795,14 +1855,14 @@ export class PiDelegationController {
           return errAsync<
             {
               readonly ref: PiChildRefRecord | undefined;
-              readonly session: PiRpcChildSpawnSession | undefined;
+              readonly launch: PiThreadLaunchSource | undefined;
             },
             PiAdapterFailure
           >(makeThreadStaleFailure(state.threadId, "tombstoned"));
         }
-        return this.openThreadSession(state, record).map((session) => ({
+        return this.openThreadSession(state, record).map((launch) => ({
           ref: record,
-          session,
+          launch,
         }));
       });
   }
@@ -1849,7 +1909,7 @@ export class PiDelegationController {
   private openThreadSession(
     state: PiThreadState,
     record: PiChildRefRecord,
-  ): ResultAsync<PiRpcChildSpawnSession, PiAdapterFailure> {
+  ): ResultAsync<PiThreadLaunchSource, PiAdapterFailure> {
     const sessions = this.deps.threadSessions?.();
     if (sessions === undefined) {
       return errAsync(
@@ -1866,24 +1926,39 @@ export class PiDelegationController {
       .andThen((opened) => {
         const activeLeaf = readActiveLeafId(opened.entries);
         if (activeLeaf === undefined) {
-          return err<PiRpcChildSpawnSession, PiAdapterFailure>(
+          return err<PiThreadLaunchSource, PiAdapterFailure>(
             makeThreadIntegrityFailure(state.threadId, "session-corrupt"),
           );
         }
-        const sessionPath = opened.record.path;
-        const sessionDir = dirname(sessionPath);
-        if (!isAbsolute(sessionPath) || sessionDir === ".") {
-          return err<PiRpcChildSpawnSession, PiAdapterFailure>(
-            makeThreadIntegrityFailure(state.threadId, "session-corrupt"),
-          );
-        }
-        return ok<PiRpcChildSpawnSession, PiAdapterFailure>({
-          mode: "restore",
-          sessionDir,
-          sessionPath,
+        // The record stays inside the controller. Only the store may turn it
+        // into a launch grant, and only for the child that will start.
+        return ok<PiThreadLaunchSource, PiAdapterFailure>({
+          record: opened.record,
           activeLeafId: activeLeaf,
         });
       });
+  }
+
+  /**
+   * Mints this run's launch grant from the store that owns the session.
+   * Every resumed or restored run passes through here, so no launch path
+   * ever receives a caller-constructed session path.
+   */
+  private mintLaunchSession(
+    sessions: PiThreadSessionPort,
+    launch: PiThreadLaunchSource,
+    childId: string,
+  ): Result<PiRpcChildSpawnSession, PiAdapterFailure> {
+    return sessions
+      .mintLaunchGrant({
+        childId,
+        record: launch.record,
+        activeLeafId: launch.activeLeafId,
+      })
+      .map((grant): PiRpcChildSpawnSession => ({ mode: "native", grant }))
+      .mapErr(() =>
+        makeThreadResumeUnavailableFailure(childId, "session-unavailable"),
+      );
   }
 
   private nativeSessionFailure(
@@ -2751,30 +2826,29 @@ export class PiDelegationController {
       }))
       .andThen((opened) => {
         const activeLeaf = readActiveLeafId(opened.entries);
-        const sessionPath = opened.record.path;
-        const sessionDir = dirname(sessionPath);
-        type RestoreSession = {
-          readonly sessionDir: string;
-          readonly sessionPath: string;
-          readonly activeLeaf: string;
-        };
-        if (
-          activeLeaf === undefined ||
-          activeLeaf.length === 0 ||
-          !isAbsolute(sessionPath) ||
-          sessionDir === "."
-        )
+        type RestoreSession = { readonly session: PiRpcChildSpawnSession };
+        if (activeLeaf === undefined || activeLeaf.length === 0)
           return errAsync<RestoreSession, PiChildRestoreFailure>({
             type: "ChildRecoveryUnavailable",
             reason: "active leaf is missing",
           });
+        // Only the store may authorize this launch, and only for the exact
+        // child being restored. The absolute path never leaves the store.
+        const grant = sessions.mintLaunchGrant({
+          childId: record.childId,
+          record: opened.record,
+          activeLeafId: activeLeaf,
+        });
+        if (grant.isErr())
+          return errAsync<RestoreSession, PiChildRestoreFailure>({
+            type: "ChildRecoveryUnavailable",
+            reason: "containment failed",
+          });
         return okAsync<RestoreSession, PiChildRestoreFailure>({
-          sessionDir,
-          sessionPath,
-          activeLeaf,
+          session: { mode: "native", grant: grant.value },
         });
       })
-      .andThen(({ sessionDir, sessionPath, activeLeaf }) => {
+      .andThen(({ session }) => {
         const authorization = this.authorize({
           parentId: ROOT_NODE_ID,
           parentDepth: 0,
@@ -2867,12 +2941,7 @@ export class PiDelegationController {
           cwd,
           env,
           task: input.continuation,
-          session: {
-            mode: "restore" as const,
-            sessionDir,
-            sessionPath,
-            activeLeafId: activeLeaf,
-          },
+          session,
         };
         this.restoreReservations.add(childId);
         const attached =

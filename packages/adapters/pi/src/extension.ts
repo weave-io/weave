@@ -49,6 +49,7 @@ import { BunPiArtifactProvider } from "./artifact-provider.js";
 import {
   DefaultPiCapabilityProber,
   type PiCapabilityProbeSource,
+  type PiDelegationAuthorityReadiness,
   WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
 } from "./capability-prober.js";
 import {
@@ -169,6 +170,7 @@ import {
 import {
   createPiChildSessionStorageAuthority,
   type PiChildSessionStorageAuthority,
+  resolvePiChildSessionRoot,
 } from "./child-session-storage-authority.js";
 import {
   applyTreeControlKey,
@@ -2263,6 +2265,31 @@ export function createPiExtension(
   // The generation the held controller belongs to stays beside the instance
   // so replacement and authority checks can never drift apart.
   const delegationControllerCell = createDelegationControllerCell();
+  /**
+   * The single generation-scoped native-session authority (Spec 33 §5.6).
+   *
+   * It is built once per `session_start`, before preflight, from three real
+   * facts: Pi's public `SessionManager`, the resolved Weave session root, and
+   * the child process launch surface. The *same object* then feeds capability
+   * probing, thread sources, the session store that mints launch grants, the
+   * delegation controller, direct dispatch, and every `PiRpcChild`. Because
+   * readiness and every launch consult one authority, a generation can no
+   * longer report delegation ready while each spawn refuses.
+   */
+  const sessionAuthorityCell: {
+    authority: PiChildSessionStorageAuthority | undefined;
+  } = { authority: undefined };
+  const readDelegationAuthorityReadiness =
+    (): PiDelegationAuthorityReadiness => {
+      const authority = sessionAuthorityCell.authority;
+      if (authority === undefined) {
+        return { status: "unavailable", reason: "pi-session-api-unavailable" };
+      }
+      const reason = authority.readinessReason();
+      return reason === undefined
+        ? { status: "ready" }
+        : { status: "unavailable", reason };
+    };
   const sessionTransitionNoticeCell = createSessionTransitionNoticeCell();
   /**
    * Generation-scoped thread sources: the parent ref store (Task 5), the
@@ -2636,6 +2663,8 @@ export function createPiExtension(
       capabilityProber: deps.capabilityProber,
       configActivator: deps.configActivator,
       pathContainmentPort: deps.pathContainmentPort,
+      // Probing reads the same authority object every launch path consumes.
+      delegationAuthority: readDelegationAuthorityReadiness,
       chooseInvalidChildInspectionSettings: (issues) => {
         const ui = childInspectionSettingsUi.ui;
         if (ui === undefined) return okAsync("health-only" as const);
@@ -4250,6 +4279,26 @@ export function createPiExtension(
         () => emptyHostSurfaceReport(),
       );
       if (!startupStillCurrent()) return;
+      // Built before preflight so capability probing, and every later launch
+      // consumer, share one authority. The root is resolved here, once, and
+      // the raw violation never leaves `resolvePiChildSessionRoot`.
+      const sessionRootResolution = await resolvePiChildSessionRoot({
+        env: {
+          XDG_DATA_HOME: deps.envPort.read("XDG_DATA_HOME"),
+          HOME: deps.envPort.read("HOME"),
+        },
+      }).unwrapOr({ status: "unavailable" as const });
+      if (!startupStillCurrent()) return;
+      sessionAuthorityCell.authority =
+        deps.sessionStorageAuthority ??
+        createPiChildSessionStorageAuthority({
+          SessionManager: (PiPublicExports as { SessionManager?: unknown })
+            .SessionManager,
+          sessionRoot: sessionRootResolution,
+          processAvailable: typeof deps.processPort.spawn === "function",
+          scopeId: `pi-startup-${startupSequence}`,
+        });
+      const sessionAuthority = sessionAuthorityCell.authority;
       const activation = await controller.activate(
         ctx,
         commands.value,
@@ -4520,12 +4569,7 @@ export function createPiExtension(
         // create/open API refuses with `pi-session-api-unavailable`;
         // health-only and refused generations open non-creating read-only
         // sources only and skip every write path.
-        const sessionStorage =
-          deps.sessionStorageAuthority ??
-          createPiChildSessionStorageAuthority({
-            SessionManager: (PiPublicExports as { SessionManager?: unknown })
-              .SessionManager,
-          });
+        const sessionStorage = sessionAuthority;
         const sessionStorageDecision = Result.fromThrowable(
           () => sessionStorage.requireNativeSessionAuthority(),
           () => ({
@@ -4723,7 +4767,7 @@ export function createPiExtension(
             idGenerator: deps.idGenerator,
             logger: deps.logger,
             processPort: deps.processPort,
-            sessionStorageAuthority: deps.sessionStorageAuthority,
+            sessionStorageAuthority: sessionAuthority,
             randomPort: deps.randomPort,
             hmacPort: deps.hmacPort,
             ...(deps.childResponseDrainMs === undefined
@@ -5121,7 +5165,7 @@ export function createPiExtension(
               createDirectDispatchTransport(
                 {
                   processPort: deps.processPort,
-                  sessionStorageAuthority: deps.sessionStorageAuthority,
+                  sessionStorageAuthority: sessionAuthority,
                   randomPort: deps.randomPort,
                   hmacPort: deps.hmacPort,
                   logger: deps.logger,

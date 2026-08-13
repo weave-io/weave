@@ -21,7 +21,19 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import {
+  createTestOnlyGrantedSessionStorageAuthority,
+  tryMintTestOnlyLaunchGrant,
+} from "./fakes/test-only-session-storage-authority.js";
+
+/**
+ * One authority for this file, rooted so the recovery fixtures' session
+ * directory is a valid immediate child of it. The same object mints the
+ * launch grants and governs every controller here, exactly as production
+ * shares one generation authority.
+ */
+const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
+  createTestOnlyGrantedSessionStorageAuthority("/history/children");
 
 function config(source: string): WeaveConfig {
   const result = parseConfig(source);
@@ -443,6 +455,32 @@ function recoverySessions(
   });
   return () =>
     ({
+      mintLaunchGrant: (input: {
+        readonly childId: string;
+        readonly record: { readonly path: string; readonly sessionId: string };
+        readonly activeLeafId: string;
+      }) => {
+        const path = input.record.path;
+        const separator = path.lastIndexOf("/");
+        if (separator <= 0)
+          return err({
+            type: "SessionRootViolation" as const,
+            reason: "path-escape" as const,
+          });
+        return tryMintTestOnlyLaunchGrant(
+          TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+          {
+            childId: input.childId,
+            sessionId: input.record.sessionId,
+            sessionDir: path.slice(0, separator),
+            sessionPath: path,
+            activeLeafId: input.activeLeafId,
+          },
+        ).mapErr(() => ({
+          type: "SessionRootViolation" as const,
+          reason: "path-escape" as const,
+        }));
+      },
       createChildSession: (input: { readonly childId: string }) =>
         okAsync(
           sessionRecord(

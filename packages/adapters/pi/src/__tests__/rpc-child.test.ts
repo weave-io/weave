@@ -31,10 +31,52 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import {
+  createTestOnlyGrantedSessionStorageAuthority,
+  mintTestOnlyLaunchGrant,
+} from "./fakes/test-only-session-storage-authority.js";
 
 const randomPort = new WebCryptoRandomPort();
 const hmacPort = new WebCryptoHmacPort();
+
+/**
+ * One authority for this file, rooted so `/tmp/weave-sessions` is a valid
+ * immediate-child session directory under it.
+ */
+const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
+  createTestOnlyGrantedSessionStorageAuthority("/tmp");
+const SESSION_DIR = "/tmp/weave-sessions";
+const SESSION_PATH = `${SESSION_DIR}/child-1.jsonl`;
+
+/** Mints the launch grant a persistent child needs, as the store would. */
+function nativeSession(
+  overrides: {
+    readonly childId?: string;
+    readonly sessionDir?: string;
+    readonly sessionPath?: string;
+    readonly activeLeafId?: string;
+    readonly checkpointCursor?: number;
+    readonly authority?: ReturnType<
+      typeof createTestOnlyGrantedSessionStorageAuthority
+    >;
+  } = {},
+): NonNullable<PiRpcChildSpawnInput["session"]> {
+  return {
+    mode: "native",
+    grant: mintTestOnlyLaunchGrant(
+      overrides.authority ?? TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+      {
+        childId: overrides.childId ?? "child-1",
+        sessionDir: overrides.sessionDir ?? SESSION_DIR,
+        sessionPath: overrides.sessionPath ?? SESSION_PATH,
+        activeLeafId: overrides.activeLeafId ?? "leaf-1",
+        ...(overrides.checkpointCursor === undefined
+          ? {}
+          : { checkpointCursor: overrides.checkpointCursor }),
+      },
+    ),
+  };
+}
 
 type TestPiRpcChildDeps = Omit<PiRpcChildDeps, "sessionStorageAuthority"> &
   Partial<Pick<PiRpcChildDeps, "sessionStorageAuthority">>;
@@ -277,13 +319,10 @@ type SpawnSession = NonNullable<PiRpcChildSpawnInput["session"]>;
 
 async function startRestoreChild(
   deps: Partial<ConstructorParameters<typeof PiRpcChild>[5]> = {},
-  session: SpawnSession = {
-    mode: "restore",
-    sessionDir: "/tmp/weave-sessions",
-    sessionPath: "/tmp/weave-sessions/child-1.jsonl",
+  session: SpawnSession = nativeSession({
     activeLeafId: "leaf-restore",
     checkpointCursor: 42,
-  },
+  }),
 ): Promise<{
   child: PiRpcChild;
   processPort: FakeChildProcessPort;
@@ -1052,7 +1091,7 @@ describe("PiRpcChild", () => {
     }
   });
 
-  it("rejects restore input with an unknown active-leaf cursor before spawning", async () => {
+  it("rejects a grant minted for another child before spawning", async () => {
     const processPort = new FakeChildProcessPort();
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
@@ -1061,29 +1100,16 @@ describe("PiRpcChild", () => {
       logger: noopLogger(),
     });
     const result = await child.spawnAndHandshake(
-      baseSpawnInput({
-        session: {
-          mode: "restore",
-          sessionDir: "/tmp/weave-sessions",
-          sessionPath: "/tmp/weave-sessions/child-1.jsonl",
-          activeLeafId: undefined as unknown as string,
-        },
-      }),
+      baseSpawnInput({ session: nativeSession({ childId: "other-child" }) }),
     );
     expect(result.isErr()).toBe(true);
     expect(processPort.spawnInputs).toHaveLength(0);
   });
 
-  it("skips restore verification for ephemeral and new sessions", async () => {
-    const sessions: readonly SpawnSession[] = [
-      { mode: "ephemeral" },
-      { mode: "new", sessionDir: "/tmp/weave-sessions" },
-    ];
-    for (const session of sessions) {
-      const running =
-        session.mode === "ephemeral"
-          ? await startRunningChild()
-          : await startRestoreChild({}, session);
+  it("skips restore verification for ephemeral sessions", async () => {
+    const sessions: readonly SpawnSession[] = [{ mode: "ephemeral" }];
+    for (const _session of sessions) {
+      const running = await startRunningChild();
       await flush();
       expect(
         running.spawned
@@ -1141,41 +1167,22 @@ describe("PiRpcChild", () => {
     expect(child.snapshot().status).toBe("handshaking");
   });
 
-  it("builds the typed ephemeral, new, and restore session argv slices", async () => {
+  it("builds the typed ephemeral and granted native session argv slices", async () => {
     const cases = [
       {
         session: { mode: "ephemeral" as const },
         command: ["pi", "--mode", "rpc", "--no-session"],
       },
       {
-        session: {
-          mode: "new" as const,
-          sessionDir: "/tmp/weave-sessions",
-        },
+        session: nativeSession({ checkpointCursor: 7 }),
         command: [
           "pi",
           "--mode",
           "rpc",
           "--session-dir",
-          "/tmp/weave-sessions",
-        ],
-      },
-      {
-        session: {
-          mode: "restore" as const,
-          sessionDir: "/tmp/weave-sessions",
-          sessionPath: "/tmp/weave-sessions/child-1.jsonl",
-          activeLeafId: "leaf-1",
-          checkpointCursor: 7,
-        },
-        command: [
-          "pi",
-          "--mode",
-          "rpc",
-          "--session-dir",
-          "/tmp/weave-sessions",
+          SESSION_DIR,
           "--session",
-          "/tmp/weave-sessions/child-1.jsonl",
+          SESSION_PATH,
         ],
       },
     ] as const;
@@ -1198,49 +1205,21 @@ describe("PiRpcChild", () => {
     }
   });
 
-  it("rejects unsafe session argv inputs before spawning", async () => {
+  it("rejects forged, foreign, and unrecognized launch grants before spawning", async () => {
+    const foreignAuthority =
+      createTestOnlyGrantedSessionStorageAuthority("/tmp");
     const invalidSessions: readonly PiRpcChildSpawnInput["session"][] = [
-      { mode: "new", sessionDir: "relative/sessions" },
-      { mode: "new", sessionDir: "/tmp/weave-sessions\0" },
-      { mode: "new", sessionDir: "/tmp/weave-sessions/." },
-      { mode: "new", sessionDir: "/tmp/weave-sessions/../other" },
+      // A hand-built look-alike carries no minted payload.
       {
-        mode: "restore",
-        sessionDir: "/tmp/weave-sessions",
-        sessionPath: "/tmp/weave-sessions/child.txt",
-        activeLeafId: "leaf-1",
-      },
-      {
-        mode: "restore",
-        sessionDir: "/tmp/weave-sessions",
-        sessionPath: "child-1.jsonl",
-        activeLeafId: "leaf-1",
-      },
-      {
-        mode: "restore",
-        sessionDir: "/tmp/weave-sessions",
-        sessionPath: "/tmp/weave-sessions-other/child-1.jsonl",
-        activeLeafId: "leaf-1",
-      },
-      {
-        mode: "restore",
-        sessionDir: "/tmp/weave-sessions",
-        sessionPath: "/tmp/weave-sessions/sub/../../child-1.jsonl",
-        activeLeafId: "leaf-1",
-      },
-      {
-        mode: "restore",
-        sessionDir: "/tmp/weave-sessions",
-        sessionPath: "/tmp/weave-sessions/child-1.jsonl",
-        activeLeafId: "",
-      },
-      {
-        mode: "restore",
-        sessionDir: "/tmp/weave-sessions",
-        sessionPath: "/tmp/weave-sessions/child-1.jsonl",
-        activeLeafId: "leaf-1",
-        checkpointCursor: -1,
-      },
+        mode: "native",
+        grant: { kind: "pi-child-session-launch-grant" },
+      } as unknown as PiRpcChildSpawnInput["session"],
+      // A grant minted by a different authority (another generation).
+      nativeSession({ authority: foreignAuthority }),
+      // A grant naming a different child.
+      nativeSession({ childId: "child-2" }),
+      // A mode the transport does not know.
+      { mode: "restore" } as unknown as PiRpcChildSpawnInput["session"],
     ];
 
     for (const session of invalidSessions) {

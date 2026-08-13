@@ -218,10 +218,30 @@ function openWithSessionRoot(
   host: PiNativeSessionHostPort,
 ): ResultAsync<PiThreadSources, PiThreadSourceFactoryError> {
   const now = input.now;
+  // One authority governs this generation's storage *and* its launches. When
+  // the caller names none (unit embeddings), a storage-only authority is
+  // built over this same resolved root, so a launch still has to prove a
+  // process surface separately instead of inheriting storage readiness.
+  const storageAuthority =
+    input.storageAuthority ??
+    createPiChildSessionStorageAuthority({
+      SessionManager:
+        input.SessionManager ??
+        (PiPublicExports as { SessionManager?: unknown }).SessionManager,
+      sessionRoot: { status: "resolved", root },
+    });
+  // The store mints launch grants only when the same authority already
+  // proved a launch surface. Without it the store can still read and write
+  // sessions, but no child can be launched from them.
+  const launchAuthority = storageAuthority.requireLaunchAuthority().match(
+    (granted) => granted,
+    () => undefined,
+  );
   const sessions = new PiNativeSessionStore({
     root,
     fs: input.fs ?? createBunPiNativeSessionFs(),
     host,
+    ...(launchAuthority === undefined ? {} : { launchAuthority }),
     ...(now === undefined ? {} : { now: () => new Date(now()) }),
   });
   const authority = createNativeChildRefSourceAuthority(sessions);
@@ -230,13 +250,7 @@ function openWithSessionRoot(
     append: input.append,
     read: input.read,
     authority,
-    storage:
-      input.storageAuthority ??
-      createPiChildSessionStorageAuthority({
-        SessionManager:
-          input.SessionManager ??
-          (PiPublicExports as { SessionManager?: unknown }).SessionManager,
-      }),
+    storage: storageAuthority,
     ...(now === undefined ? {} : { now }),
   });
 
