@@ -1,12 +1,14 @@
 import { err, ok, Result } from "neverthrow";
 
 /**
- * Exact allowlist classifier and stateless request mutation for Pi
- * provider-fast activation.
+ * Exact allowlist classifier, stateless request mutation, and an
+ * instance-owned attempt tracker for Pi provider-fast activation.
  *
  * Classification never copies caller strings. Mutation copies only a bounded
  * own-data payload graph, or applies one planned Anthropic header write after
- * the full map validates. Diagnostics carry closed reason codes only.
+ * the full map validates. The tracker correlates request attempts with opaque
+ * tokens and never reports `applied`. Diagnostics carry closed reason codes
+ * only.
  */
 
 export const PROVIDER_FAST_INPUT_MAX_LENGTH = 128;
@@ -110,6 +112,171 @@ export type ProviderFastHeaderPlan =
   | { readonly action: "none" }
   | { readonly action: "preserve" }
   | { readonly action: "write" };
+
+export const PROVIDER_FAST_ATTEMPT_PENDING_LIMIT = 32;
+export const PROVIDER_FAST_ATTEMPT_SEQUENCE_MAX = Number.MAX_SAFE_INTEGER;
+
+export const PROVIDER_FAST_ATTEMPT_STATES = [
+  "declared",
+  "requested",
+  "not-confirmed",
+  "unsupported",
+] as const;
+
+export type ProviderFastAttemptState =
+  (typeof PROVIDER_FAST_ATTEMPT_STATES)[number];
+
+export const PROVIDER_FAST_ATTEMPT_EVIDENCE_KINDS = [
+  "none",
+  "response-status",
+] as const;
+
+export type ProviderFastAttemptEvidenceKind =
+  (typeof PROVIDER_FAST_ATTEMPT_EVIDENCE_KINDS)[number];
+
+export const PROVIDER_FAST_ATTEMPT_EVIDENCE_OUTCOMES = [
+  "none",
+  "unavailable",
+] as const;
+
+export type ProviderFastAttemptEvidenceOutcome =
+  (typeof PROVIDER_FAST_ATTEMPT_EVIDENCE_OUTCOMES)[number];
+
+export const PROVIDER_FAST_ATTEMPT_REASONS = [
+  "none",
+  "response-body-evidence-unavailable",
+  "cancelled",
+  "expired",
+  "generation-superseded",
+  "reset",
+  "session-replaced",
+  "primary-switched",
+  ...PROVIDER_FAST_UNSUPPORTED_REASONS,
+  ...PROVIDER_FAST_MUTATION_REASONS,
+] as const;
+
+export type ProviderFastAttemptReason =
+  (typeof PROVIDER_FAST_ATTEMPT_REASONS)[number];
+
+export const PROVIDER_FAST_ATTEMPT_EXPIRE_REASONS = [
+  "cancelled",
+  "expired",
+  "generation-superseded",
+  "reset",
+  "session-replaced",
+  "primary-switched",
+] as const;
+
+export type ProviderFastAttemptExpireReason =
+  (typeof PROVIDER_FAST_ATTEMPT_EXPIRE_REASONS)[number];
+
+export const PROVIDER_FAST_ATTEMPT_ERROR_REASONS = [
+  "forged-token",
+  "stale-token",
+  "duplicate-token",
+  "out-of-order",
+  "pending-capacity-exceeded",
+  "sequence-overflow",
+  "invalid-input",
+  "invalid-status",
+] as const;
+
+export type ProviderFastAttemptErrorReason =
+  (typeof PROVIDER_FAST_ATTEMPT_ERROR_REASONS)[number];
+
+export type ProviderFastAttemptError =
+  | {
+      readonly type: "InvalidAttemptToken";
+      readonly reason: "forged-token";
+    }
+  | {
+      readonly type: "StaleAttemptToken";
+      readonly reason: "stale-token";
+    }
+  | {
+      readonly type: "DuplicateAttemptToken";
+      readonly reason: "duplicate-token";
+    }
+  | {
+      readonly type: "OutOfOrderAttempt";
+      readonly reason: "out-of-order";
+    }
+  | {
+      readonly type: "AttemptCapacityExceeded";
+      readonly reason: "pending-capacity-exceeded";
+    }
+  | {
+      readonly type: "AttemptSequenceOverflow";
+      readonly reason: "sequence-overflow";
+    }
+  | {
+      readonly type: "InvalidAttemptInput";
+      readonly reason: "invalid-input";
+    }
+  | {
+      readonly type: "InvalidResponseStatus";
+      readonly reason: "invalid-status";
+    };
+
+export type ProviderFastAttemptRequestSnapshot = {
+  readonly generation: number;
+  readonly primaryName: string;
+  readonly selectedModel?:
+    | {
+        readonly provider: string;
+        readonly id: string;
+        readonly name?: string;
+      }
+    | undefined;
+  readonly fast?: true;
+};
+
+export type ProviderFastAttemptClassification =
+  | ProviderFastActivationClassification
+  | ProviderFastMutationUnsupported;
+
+export type ProviderFastAttemptBeginInput = {
+  readonly snapshot: ProviderFastAttemptRequestSnapshot;
+  readonly apiFamily: ProviderFastApiFamily;
+  readonly classification: ProviderFastAttemptClassification;
+};
+
+export type ProviderFastAttemptToken = {
+  readonly sequence: number;
+};
+
+export type ProviderFastAttemptPublicSnapshot = {
+  readonly sequence: number;
+  readonly pendingCount: number;
+  readonly providerFamily: ProviderFastProviderFamily | "none";
+  readonly apiFamily: ProviderFastApiFamily | "none";
+  readonly allowlistRuleId: ProviderFastAllowlistRuleId | "none";
+  readonly collision: boolean;
+  readonly state: ProviderFastAttemptState;
+  readonly evidenceKind: ProviderFastAttemptEvidenceKind;
+  readonly evidenceOutcome: ProviderFastAttemptEvidenceOutcome;
+  readonly reason: ProviderFastAttemptReason;
+};
+
+export type ProviderFastAttemptBeginResult =
+  | {
+      readonly kind: "no-state";
+      readonly pendingCount: number;
+    }
+  | {
+      readonly kind: "unsupported";
+      readonly snapshot: ProviderFastAttemptPublicSnapshot;
+    }
+  | {
+      readonly kind: "pending";
+      readonly token: ProviderFastAttemptToken;
+      readonly snapshot: ProviderFastAttemptPublicSnapshot;
+    };
+
+export type ProviderFastAttemptTrackerOptions = {
+  readonly pendingLimit?: number;
+  readonly sequenceMax?: number;
+};
 
 type PayloadCopyBudget = {
   nodes: number;
@@ -808,4 +975,552 @@ export function applyAnthropicProviderFastHeaders(
     return err(written.error);
   }
   return ok(headers);
+}
+
+type InternalAttemptLifecycle = "declared" | "requested";
+
+type InternalAttemptRecord = {
+  readonly sequence: number;
+  readonly generation: number;
+  readonly primaryName: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly apiFamily: ProviderFastApiFamily;
+  readonly providerFamily: ProviderFastProviderFamily;
+  readonly allowlistRuleId: ProviderFastAllowlistRuleId;
+  readonly collision: boolean;
+  readonly reason: ProviderFastAttemptReason;
+  lifecycle: InternalAttemptLifecycle;
+};
+
+function attemptError(
+  type: ProviderFastAttemptError["type"],
+  reason: ProviderFastAttemptErrorReason,
+): ProviderFastAttemptError {
+  return Object.freeze({ type, reason }) as ProviderFastAttemptError;
+}
+
+function copyPublicSnapshot(
+  snapshot: ProviderFastAttemptPublicSnapshot,
+): ProviderFastAttemptPublicSnapshot {
+  return Object.freeze({
+    sequence: snapshot.sequence,
+    pendingCount: snapshot.pendingCount,
+    providerFamily: snapshot.providerFamily,
+    apiFamily: snapshot.apiFamily,
+    allowlistRuleId: snapshot.allowlistRuleId,
+    collision: snapshot.collision,
+    state: snapshot.state,
+    evidenceKind: snapshot.evidenceKind,
+    evidenceOutcome: snapshot.evidenceOutcome,
+    reason: snapshot.reason,
+  });
+}
+
+function copyAttemptToken(
+  token: ProviderFastAttemptToken,
+): ProviderFastAttemptToken {
+  return Object.freeze({ sequence: token.sequence });
+}
+
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value);
+}
+
+function resolvePositiveBound(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined || !isSafeInteger(value) || value < 1) {
+    return fallback;
+  }
+  return value;
+}
+
+function isExactApiFamily(value: unknown): value is ProviderFastApiFamily {
+  return (
+    typeof value === "string" &&
+    API_FAMILIES.has(value as ProviderFastApiFamily)
+  );
+}
+
+function isCollisionReason(reason: string): boolean {
+  return reason === "request-collision";
+}
+
+function readAttemptToken(
+  token: unknown,
+): Result<number, ProviderFastAttemptError> {
+  if (typeof token !== "object" || token === null || Array.isArray(token)) {
+    return err(attemptError("InvalidAttemptToken", "forged-token"));
+  }
+  const prototype = Object.getPrototypeOf(token);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return err(attemptError("InvalidAttemptToken", "forged-token"));
+  }
+  const ownKeys = Reflect.ownKeys(token);
+  if (ownKeys.length !== 1 || ownKeys[0] !== "sequence") {
+    return err(attemptError("InvalidAttemptToken", "forged-token"));
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(token, "sequence");
+  if (
+    descriptor === undefined ||
+    !("value" in descriptor) ||
+    !isSafeInteger(descriptor.value) ||
+    descriptor.value < 1
+  ) {
+    return err(attemptError("InvalidAttemptToken", "forged-token"));
+  }
+  return ok(descriptor.value);
+}
+
+const inspectAttemptToken = Result.fromThrowable(
+  (token: unknown) => readAttemptToken(token),
+  () => attemptError("InvalidAttemptToken", "forged-token"),
+);
+
+function inspectExpireReason(
+  reason: unknown,
+): Result<ProviderFastAttemptExpireReason, ProviderFastAttemptError> {
+  if (
+    reason === "cancelled" ||
+    reason === "expired" ||
+    reason === "generation-superseded" ||
+    reason === "reset" ||
+    reason === "session-replaced" ||
+    reason === "primary-switched"
+  ) {
+    return ok(reason);
+  }
+  return err(attemptError("InvalidAttemptInput", "invalid-input"));
+}
+
+function inspectGeneration(
+  generation: unknown,
+): Result<number, ProviderFastAttemptError> {
+  if (!isSafeInteger(generation) || generation < 1) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  return ok(generation);
+}
+
+type InspectedBeginInput = {
+  readonly snapshot: {
+    readonly generation: number;
+    readonly primaryName: string;
+    readonly provider: string;
+    readonly model: string;
+    readonly fast: true | undefined;
+  };
+  readonly apiFamily: ProviderFastApiFamily;
+  readonly classification: ProviderFastAttemptClassification;
+};
+
+function readBeginInput(
+  input: unknown,
+): Result<InspectedBeginInput, ProviderFastAttemptError> {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+
+  const snapshotValue = Reflect.get(input, "snapshot");
+  const apiFamilyValue = Reflect.get(input, "apiFamily");
+  const classificationValue = Reflect.get(input, "classification");
+  if (!isExactApiFamily(apiFamilyValue)) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  if (
+    typeof snapshotValue !== "object" ||
+    snapshotValue === null ||
+    Array.isArray(snapshotValue)
+  ) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  if (
+    typeof classificationValue !== "object" ||
+    classificationValue === null ||
+    Array.isArray(classificationValue)
+  ) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+
+  const generation = Reflect.get(snapshotValue, "generation");
+  const primaryName = Reflect.get(snapshotValue, "primaryName");
+  const selectedModel = Reflect.get(snapshotValue, "selectedModel");
+  const fast = Object.hasOwn(snapshotValue, "fast")
+    ? Reflect.get(snapshotValue, "fast")
+    : undefined;
+  if (!isSafeInteger(generation) || generation < 1) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  if (typeof primaryName !== "string" || primaryName.length === 0) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  if (fast !== undefined && fast !== true) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+
+  let provider = "";
+  let model = "";
+  if (selectedModel !== undefined) {
+    if (
+      typeof selectedModel !== "object" ||
+      selectedModel === null ||
+      Array.isArray(selectedModel)
+    ) {
+      return err(attemptError("InvalidAttemptInput", "invalid-input"));
+    }
+    const selectedProvider = Reflect.get(selectedModel, "provider");
+    const selectedId = Reflect.get(selectedModel, "id");
+    if (typeof selectedProvider !== "string" || selectedProvider.length === 0) {
+      return err(attemptError("InvalidAttemptInput", "invalid-input"));
+    }
+    if (typeof selectedId !== "string" || selectedId.length === 0) {
+      return err(attemptError("InvalidAttemptInput", "invalid-input"));
+    }
+    provider = selectedProvider;
+    model = selectedId;
+  }
+
+  const kind = Reflect.get(classificationValue, "kind");
+  if (kind === "no-intent") {
+    return ok({
+      snapshot: { generation, primaryName, provider, model, fast },
+      apiFamily: apiFamilyValue,
+      classification: Object.freeze({ kind: "no-intent" }),
+    });
+  }
+  if (kind === "supported") {
+    const providerFamily = Reflect.get(classificationValue, "providerFamily");
+    const allowlistRuleId = Reflect.get(classificationValue, "allowlistRuleId");
+    if (
+      (providerFamily !== "openai" && providerFamily !== "anthropic") ||
+      typeof allowlistRuleId !== "string" ||
+      !PROVIDER_FAST_ALLOWLIST_RULE_IDS.includes(
+        allowlistRuleId as ProviderFastAllowlistRuleId,
+      )
+    ) {
+      return err(attemptError("InvalidAttemptInput", "invalid-input"));
+    }
+    return ok({
+      snapshot: { generation, primaryName, provider, model, fast },
+      apiFamily: apiFamilyValue,
+      classification: Object.freeze({
+        kind: "supported",
+        providerFamily,
+        allowlistRuleId: allowlistRuleId as ProviderFastAllowlistRuleId,
+      }),
+    });
+  }
+  if (kind === "unsupported") {
+    const reason = Reflect.get(classificationValue, "reason");
+    if (
+      typeof reason !== "string" ||
+      (!PROVIDER_FAST_UNSUPPORTED_REASONS.includes(
+        reason as ProviderFastUnsupportedReason,
+      ) &&
+        !PROVIDER_FAST_MUTATION_REASONS.includes(
+          reason as ProviderFastMutationReason,
+        ))
+    ) {
+      return err(attemptError("InvalidAttemptInput", "invalid-input"));
+    }
+    return ok({
+      snapshot: { generation, primaryName, provider, model, fast },
+      apiFamily: apiFamilyValue,
+      classification: Object.freeze({
+        kind: "unsupported",
+        reason: reason as
+          | ProviderFastUnsupportedReason
+          | ProviderFastMutationReason,
+      }),
+    });
+  }
+  return err(attemptError("InvalidAttemptInput", "invalid-input"));
+}
+
+const inspectBeginInput = Result.fromThrowable(
+  (input: unknown) => readBeginInput(input),
+  () => attemptError("InvalidAttemptInput", "invalid-input"),
+);
+
+function readResponseStatus(
+  observation: unknown,
+): Result<number, ProviderFastAttemptError> {
+  if (typeof observation !== "object" || observation === null) {
+    return err(attemptError("InvalidResponseStatus", "invalid-status"));
+  }
+  const ownKeys = Reflect.ownKeys(observation);
+  if (ownKeys.length !== 1 || ownKeys[0] !== "status") {
+    return err(attemptError("InvalidResponseStatus", "invalid-status"));
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(observation, "status");
+  if (
+    descriptor === undefined ||
+    !("value" in descriptor) ||
+    typeof descriptor.value !== "number" ||
+    !Number.isInteger(descriptor.value)
+  ) {
+    return err(attemptError("InvalidResponseStatus", "invalid-status"));
+  }
+  return ok(descriptor.value);
+}
+
+const inspectResponseStatus = Result.fromThrowable(
+  (observation: unknown) => readResponseStatus(observation),
+  () => attemptError("InvalidResponseStatus", "invalid-status"),
+);
+
+/**
+ * Instance-owned tracker for one Pi session's provider-fast attempts.
+ * Public snapshots never include raw primary, provider, or model strings.
+ * Response observation can only settle `not-confirmed`.
+ */
+export class ProviderFastAttemptTracker {
+  private readonly pending = new Map<number, InternalAttemptRecord>();
+  private readonly pendingLimit: number;
+  private readonly sequenceMax: number;
+  private nextSequence = 1;
+
+  constructor(options: ProviderFastAttemptTrackerOptions = {}) {
+    this.pendingLimit = resolvePositiveBound(
+      options.pendingLimit,
+      PROVIDER_FAST_ATTEMPT_PENDING_LIMIT,
+    );
+    this.sequenceMax = resolvePositiveBound(
+      options.sequenceMax,
+      PROVIDER_FAST_ATTEMPT_SEQUENCE_MAX,
+    );
+  }
+
+  begin(
+    input: ProviderFastAttemptBeginInput,
+  ): Result<ProviderFastAttemptBeginResult, ProviderFastAttemptError> {
+    const inspected = inspectBeginInput(input);
+    if (inspected.isErr()) {
+      return err(inspected.error);
+    }
+    if (inspected.value.isErr()) {
+      return err(inspected.value.error);
+    }
+
+    const { snapshot, apiFamily, classification } = inspected.value.value;
+    if (classification.kind === "no-intent" || snapshot.fast !== true) {
+      return ok(
+        Object.freeze({
+          kind: "no-state",
+          pendingCount: this.pending.size,
+        }),
+      );
+    }
+
+    if (this.nextSequence > this.sequenceMax) {
+      return err(attemptError("AttemptSequenceOverflow", "sequence-overflow"));
+    }
+
+    const sequence = this.nextSequence;
+    this.nextSequence += 1;
+
+    if (classification.kind === "unsupported") {
+      return ok(
+        Object.freeze({
+          kind: "unsupported",
+          snapshot: this.publicSnapshot({
+            sequence,
+            providerFamily: "none",
+            apiFamily,
+            allowlistRuleId: "none",
+            collision: isCollisionReason(classification.reason),
+            state: "unsupported",
+            evidenceKind: "none",
+            evidenceOutcome: "none",
+            reason: classification.reason,
+          }),
+        }),
+      );
+    }
+
+    if (this.pending.size >= this.pendingLimit) {
+      this.nextSequence -= 1;
+      return err(
+        attemptError("AttemptCapacityExceeded", "pending-capacity-exceeded"),
+      );
+    }
+
+    const record: InternalAttemptRecord = {
+      sequence,
+      generation: snapshot.generation,
+      primaryName: snapshot.primaryName,
+      provider: snapshot.provider,
+      model: snapshot.model,
+      apiFamily,
+      providerFamily: classification.providerFamily,
+      allowlistRuleId: classification.allowlistRuleId,
+      collision: false,
+      reason: "none",
+      lifecycle: "declared",
+    };
+    this.pending.set(sequence, record);
+    return ok(
+      Object.freeze({
+        kind: "pending",
+        token: copyAttemptToken({ sequence }),
+        snapshot: this.snapshotFromRecord(record, "declared"),
+      }),
+    );
+  }
+
+  markRequested(
+    token: ProviderFastAttemptToken,
+  ): Result<ProviderFastAttemptPublicSnapshot, ProviderFastAttemptError> {
+    const recordResult = this.requirePending(token);
+    if (recordResult.isErr()) {
+      return err(recordResult.error);
+    }
+    const record = recordResult.value;
+    if (record.lifecycle !== "declared") {
+      return err(
+        record.lifecycle === "requested"
+          ? attemptError("DuplicateAttemptToken", "duplicate-token")
+          : attemptError("OutOfOrderAttempt", "out-of-order"),
+      );
+    }
+    record.lifecycle = "requested";
+    return ok(this.snapshotFromRecord(record, "requested"));
+  }
+
+  observeResponse(
+    token: ProviderFastAttemptToken,
+    observation: { readonly status: number },
+  ): Result<ProviderFastAttemptPublicSnapshot, ProviderFastAttemptError> {
+    const status = inspectResponseStatus(observation);
+    if (status.isErr()) {
+      return err(status.error);
+    }
+    if (status.value.isErr()) {
+      return err(status.value.error);
+    }
+    const recordResult = this.requirePending(token);
+    if (recordResult.isErr()) {
+      return err(recordResult.error);
+    }
+    const record = recordResult.value;
+    if (record.lifecycle !== "requested") {
+      return err(attemptError("OutOfOrderAttempt", "out-of-order"));
+    }
+    this.pending.delete(record.sequence);
+    return ok(
+      this.snapshotFromRecord(record, "not-confirmed", {
+        evidenceKind: "response-status",
+        evidenceOutcome: "unavailable",
+        reason: "response-body-evidence-unavailable",
+      }),
+    );
+  }
+
+  cancel(
+    token: ProviderFastAttemptToken,
+    reason: ProviderFastAttemptExpireReason,
+  ): Result<ProviderFastAttemptPublicSnapshot, ProviderFastAttemptError> {
+    return this.expire(token, reason);
+  }
+
+  expire(
+    token: ProviderFastAttemptToken,
+    reason: ProviderFastAttemptExpireReason,
+  ): Result<ProviderFastAttemptPublicSnapshot, ProviderFastAttemptError> {
+    const expireReason = inspectExpireReason(reason);
+    if (expireReason.isErr()) {
+      return err(expireReason.error);
+    }
+    const recordResult = this.requirePending(token);
+    if (recordResult.isErr()) {
+      return err(recordResult.error);
+    }
+    const record = recordResult.value;
+    this.pending.delete(record.sequence);
+    return ok(
+      this.snapshotFromRecord(record, record.lifecycle, {
+        reason: expireReason.value,
+      }),
+    );
+  }
+
+  expireGeneration(
+    generation: number,
+  ): Result<{ readonly expiredCount: number }, ProviderFastAttemptError> {
+    const inspected = inspectGeneration(generation);
+    if (inspected.isErr()) {
+      return err(inspected.error);
+    }
+    let expiredCount = 0;
+    for (const [sequence, record] of this.pending) {
+      if (record.generation === inspected.value) {
+        this.pending.delete(sequence);
+        expiredCount += 1;
+      }
+    }
+    return ok(Object.freeze({ expiredCount }));
+  }
+
+  reset(): Result<{ readonly expiredCount: number }, never> {
+    const expiredCount = this.pending.size;
+    this.pending.clear();
+    return ok(Object.freeze({ expiredCount }));
+  }
+
+  pendingCount(): number {
+    return this.pending.size;
+  }
+
+  private requirePending(
+    token: unknown,
+  ): Result<InternalAttemptRecord, ProviderFastAttemptError> {
+    const sequence = inspectAttemptToken(token);
+    if (sequence.isErr()) {
+      return err(sequence.error);
+    }
+    if (sequence.value.isErr()) {
+      return err(sequence.value.error);
+    }
+    const record = this.pending.get(sequence.value.value);
+    if (record === undefined) {
+      if (sequence.value.value >= this.nextSequence) {
+        return err(attemptError("InvalidAttemptToken", "forged-token"));
+      }
+      return err(attemptError("StaleAttemptToken", "stale-token"));
+    }
+    return ok(record);
+  }
+
+  private snapshotFromRecord(
+    record: InternalAttemptRecord,
+    state: ProviderFastAttemptState,
+    extras: {
+      readonly evidenceKind?: ProviderFastAttemptEvidenceKind;
+      readonly evidenceOutcome?: ProviderFastAttemptEvidenceOutcome;
+      readonly reason?: ProviderFastAttemptReason;
+    } = {},
+  ): ProviderFastAttemptPublicSnapshot {
+    return this.publicSnapshot({
+      sequence: record.sequence,
+      providerFamily: record.providerFamily,
+      apiFamily: record.apiFamily,
+      allowlistRuleId: record.allowlistRuleId,
+      collision: record.collision,
+      state,
+      evidenceKind: extras.evidenceKind ?? "none",
+      evidenceOutcome: extras.evidenceOutcome ?? "none",
+      reason: extras.reason ?? record.reason,
+    });
+  }
+
+  private publicSnapshot(
+    snapshot: Omit<ProviderFastAttemptPublicSnapshot, "pendingCount">,
+  ): ProviderFastAttemptPublicSnapshot {
+    return copyPublicSnapshot({
+      ...snapshot,
+      pendingCount: this.pending.size,
+    });
+  }
 }
