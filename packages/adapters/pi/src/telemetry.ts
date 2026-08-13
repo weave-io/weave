@@ -135,7 +135,22 @@ export type PiProviderFastJournalData = {
   readonly reason: ProviderFastAttemptReason;
 };
 
-export type PiProviderFastJournalRecordOutcome = "recorded" | "duplicate";
+export type PiProviderFastJournalRecordOutcome =
+  | "recorded"
+  | "duplicate"
+  | "transient";
+
+/**
+ * Only a terminal attempt outcome is durable. `declared` and `requested`
+ * describe an in-flight request that no longer exists once the attempt
+ * settles, so persisting them would leave a permanent record of a state the
+ * adapter never confirmed.
+ */
+const PI_PROVIDER_FAST_TERMINAL_STATES: ReadonlySet<ProviderFastAttemptState> =
+  new Set(["not-confirmed", "unsupported"]);
+
+/** Bound for the in-memory terminal-outcome dedupe window. */
+export const PI_PROVIDER_FAST_DEDUPE_LIMIT = 64;
 
 const PROVIDER_FAST_API_FAMILIES: ReadonlySet<ProviderFastApiFamily> = new Set([
   "openai-responses",
@@ -567,6 +582,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
   private readonly maxTrackedUsageIds: number;
   private readonly notified = new Set<string>();
   private readonly usageTimestamps = new Map<string, string>();
+  /** Bounded FIFO of recorded terminal outcome keys; oldest entries evict. */
   private readonly providerFastReported = new Set<string>();
   private readonly disposeLogSink:
     | (() => ResultAsync<void, PiAdapterFailure>)
@@ -597,9 +613,10 @@ export class PiTelemetry implements PiTelemetryUsageSink {
   }
 
   /**
-   * Persist one sanitized provider-fast lifecycle transition. Repeats of the
-   * same sequence/state are no-ops. Session replacement must call
-   * `resetProviderFastReporting()` so later sequences can be recorded again.
+   * Persist one sanitized terminal provider-fast outcome. Transient
+   * `declared` and `requested` states are reported in live status only and
+   * are never written durably. Repeats of the same sequence/state are
+   * no-ops, and the dedupe window itself is bounded.
    */
   recordProviderFastTransition(
     snapshot: ProviderFastAttemptPublicSnapshot,
@@ -612,6 +629,9 @@ export class PiTelemetry implements PiTelemetryUsageSink {
     if (data.sequence < 1) {
       return okAsync("duplicate");
     }
+    if (!PI_PROVIDER_FAST_TERMINAL_STATES.has(data.state)) {
+      return okAsync("transient");
+    }
     const key = providerFastDedupeKey(data);
     if (this.providerFastReported.has(key)) {
       return okAsync("duplicate");
@@ -622,9 +642,20 @@ export class PiTelemetry implements PiTelemetryUsageSink {
       severity: data.state === "unsupported" ? "warn" : "info",
       data,
     }).map(() => {
-      this.providerFastReported.add(key);
+      this.rememberProviderFastKey(key);
       return "recorded" as const;
     });
+  }
+
+  private rememberProviderFastKey(key: string): void {
+    this.providerFastReported.add(key);
+    while (this.providerFastReported.size > PI_PROVIDER_FAST_DEDUPE_LIMIT) {
+      const oldest = this.providerFastReported.values().next();
+      if (oldest.done === true) {
+        return;
+      }
+      this.providerFastReported.delete(oldest.value);
+    }
   }
 
   /**

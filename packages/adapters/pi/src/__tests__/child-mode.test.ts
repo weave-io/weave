@@ -1032,6 +1032,135 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     });
   });
 
+  it.each([
+    ["ordinary", {}],
+    [
+      "direct-step",
+      {
+        mode: "direct-step",
+        workflowInstanceId: "workflow-1",
+        leaseId: "lease-1",
+        stepName: "review",
+        completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+      },
+    ],
+  ] as const)("applies request-scoped fast controls to a %s child's provider request", async (_mode, modeFields) => {
+    const model = {
+      provider: "openai",
+      id: "gpt-5.6-sol",
+      api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+    };
+    const ctx = fakeCtx({ model });
+    const { host, secretBytes } = await buildChildExtension(ctx);
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, { ...modeFields, fast: true }),
+      ctx,
+    );
+    await flush();
+
+    const headers: Record<string, string> = {
+      Authorization: "Bearer child-secret-value",
+    };
+    await host.fire(
+      "before_provider_headers",
+      { type: "before_provider_headers", headers },
+      ctx,
+    );
+    const replaced = await host.fire(
+      "before_provider_request",
+      {
+        type: "before_provider_request",
+        payload: { model: "gpt-5.6-sol" },
+      },
+      ctx,
+    );
+
+    expect(replaced).toEqual({
+      model: "gpt-5.6-sol",
+      service_tier: "fast",
+    });
+    expect(headers).toEqual({ Authorization: "Bearer child-secret-value" });
+  });
+
+  it.each([
+    ["ordinary", {}],
+    [
+      "direct-step",
+      {
+        mode: "direct-step",
+        workflowInstanceId: "workflow-1",
+        leaseId: "lease-1",
+        stepName: "review",
+        completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+      },
+    ],
+  ] as const)("leaves a %s child's provider request untouched without fast intent", async (_mode, modeFields) => {
+    const model = {
+      provider: "openai",
+      id: "gpt-5.6-sol",
+      api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+    };
+    const ctx = fakeCtx({ model });
+    const { host, secretBytes } = await buildChildExtension(ctx);
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, modeFields),
+      ctx,
+    );
+    await flush();
+
+    const payload = { model: "gpt-5.6-sol" };
+    await host.fire(
+      "before_provider_headers",
+      { type: "before_provider_headers", headers: {} },
+      ctx,
+    );
+    const replaced = await host.fire(
+      "before_provider_request",
+      { type: "before_provider_request", payload },
+      ctx,
+    );
+
+    expect(replaced).toBeUndefined();
+    expect(payload).toEqual({ model: "gpt-5.6-sol" });
+  });
+
+  it("never applies child fast controls to an unallowlisted live model", async () => {
+    const ctx = fakeCtx({
+      model: {
+        provider: "openai",
+        id: "gpt-5.6-sol",
+        api: "openai-responses",
+        baseUrl: "https://gateway.example.com/openai/v1",
+      },
+    });
+    const { host, secretBytes } = await buildChildExtension(ctx);
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, { fast: true }),
+      ctx,
+    );
+    await flush();
+
+    const payload = { model: "gpt-5.6-sol" };
+    await host.fire(
+      "before_provider_headers",
+      { type: "before_provider_headers", headers: {} },
+      ctx,
+    );
+    const replaced = await host.fire(
+      "before_provider_request",
+      { type: "before_provider_request", payload },
+      ctx,
+    );
+
+    expect(replaced).toBeUndefined();
+    expect(payload).toEqual({ model: "gpt-5.6-sol" });
+  });
+
   it("applies transported thinking intent after ordinary child model activation", async () => {
     const catalogModel = {
       provider: "fake",

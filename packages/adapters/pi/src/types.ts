@@ -64,6 +64,8 @@ export interface PiModelInfo {
   readonly id: string;
   readonly name?: string;
   readonly api?: string;
+  /** The model's declared transport base URL, when the host reports one. */
+  readonly baseUrl?: string;
 }
 
 /** Narrow projection of `ctx.modelRegistry`: authenticated-model discovery only. */
@@ -189,6 +191,68 @@ export function projectPiProviderEvent(
   )();
 
   return projected.andThen((result) => result);
+}
+
+/**
+ * The live model identity a provider hook must classify against. Provider
+ * hooks read this from the hook context, never from activation-time state,
+ * so a `/model` change cannot be mutated under a stale allowlist decision.
+ */
+export interface PiProviderHookModel {
+  readonly provider: string;
+  readonly id: string;
+  readonly api: string;
+  readonly baseUrl: string;
+}
+
+const PI_HOOK_MODEL_FIELD_MAX_LENGTH = 512;
+
+function readHookModelField(model: object, field: string): string | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(model, field);
+  if (descriptor === undefined || !("value" in descriptor)) {
+    return undefined;
+  }
+  const value = descriptor.value;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > PI_HOOK_MODEL_FIELD_MAX_LENGTH
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+/**
+ * Project `ctx.model` into the four fields a provider mapping may use.
+ * Only own data descriptors are read, so getters never run, and a model that
+ * does not declare all four fields yields `undefined` rather than a partial
+ * identity that could be classified optimistically.
+ */
+export function projectPiHookModel(
+  model: unknown,
+): PiProviderHookModel | undefined {
+  return Result.fromThrowable(
+    (): PiProviderHookModel | undefined => {
+      if (typeof model !== "object" || model === null || Array.isArray(model)) {
+        return undefined;
+      }
+      const provider = readHookModelField(model, "provider");
+      const id = readHookModelField(model, "id");
+      const api = readHookModelField(model, "api");
+      const baseUrl = readHookModelField(model, "baseUrl");
+      if (
+        provider === undefined ||
+        id === undefined ||
+        api === undefined ||
+        baseUrl === undefined
+      ) {
+        return undefined;
+      }
+      return Object.freeze({ provider, id, api, baseUrl });
+    },
+    () => undefined,
+  )().unwrapOr(undefined);
 }
 
 export type PiProviderEventFieldError = {

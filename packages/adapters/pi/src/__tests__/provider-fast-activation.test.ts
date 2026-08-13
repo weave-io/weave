@@ -7,19 +7,15 @@ import {
   PROVIDER_FAST_ALLOWLIST_RULE_IDS,
   PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
   PROVIDER_FAST_ATTEMPT_PENDING_LIMIT,
-  PROVIDER_FAST_HEADER_MAX_COUNT,
+  PROVIDER_FAST_BASE_URL_MAX_LENGTH,
   PROVIDER_FAST_INPUT_MAX_LENGTH,
-  PROVIDER_FAST_PAYLOAD_MAX_ARRAY_LENGTH,
-  PROVIDER_FAST_PAYLOAD_MAX_DEPTH,
-  PROVIDER_FAST_PAYLOAD_MAX_NODES,
-  PROVIDER_FAST_PAYLOAD_MAX_PROPERTIES_PER_OBJECT,
-  PROVIDER_FAST_PAYLOAD_MAX_STRING_LENGTH,
   type ProviderFastActivationClassification,
   type ProviderFastActivationInput,
   type ProviderFastAllowlistRuleId,
   type ProviderFastApiFamily,
   type ProviderFastAttemptBeginInput,
   type ProviderFastAttemptError,
+  type ProviderFastAttemptExpireReason,
   type ProviderFastAttemptPublicSnapshot,
   type ProviderFastAttemptToken,
   ProviderFastAttemptTracker,
@@ -29,15 +25,24 @@ import {
   type ProviderFastMutationReason,
   type ProviderFastUnsupportedReason,
   planAnthropicProviderFastHeaders,
+  revertAnthropicProviderFastHeaderWrite,
 } from "../provider-fast-activation.js";
 
 const SECRET_SHAPED_INPUT = "sk-proj-fast-secret-value-DO-NOT-ECHO-9f3c2a1b";
+
+const OPENAI_BASE_URL = "https://api.openai.com/v1";
+const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
+
+function defaultBaseUrl(provider: string): string {
+  return provider === "anthropic" ? ANTHROPIC_BASE_URL : OPENAI_BASE_URL;
+}
 
 type SupportedCase = {
   readonly provider: "openai" | "anthropic";
   readonly apiFamily: ProviderFastApiFamily;
   readonly model: string;
   readonly allowlistRuleId: ProviderFastAllowlistRuleId;
+  readonly baseUrl?: string;
 };
 
 const SUPPORTED_CASES: readonly SupportedCase[] = [
@@ -92,9 +97,17 @@ const SUPPORTED_CASES: readonly SupportedCase[] = [
 ];
 
 function intent(
-  input: Omit<ProviderFastActivationInput, "fast">,
+  input: Omit<ProviderFastActivationInput, "fast" | "baseUrl"> & {
+    readonly baseUrl?: string;
+  },
 ): ProviderFastActivationInput {
-  return { fast: true, ...input };
+  return {
+    fast: true,
+    provider: input.provider,
+    apiFamily: input.apiFamily,
+    model: input.model,
+    baseUrl: input.baseUrl ?? defaultBaseUrl(input.provider),
+  };
 }
 
 function serializedClassification(input: ProviderFastActivationInput): string {
@@ -122,6 +135,7 @@ describe("classifyProviderFastActivation", () => {
       provider: "openai",
       apiFamily: "openai-responses",
       model: "gpt-5.6-sol",
+      baseUrl: OPENAI_BASE_URL,
     });
     expect(result.isOk()).toBe(true);
     if (result.isErr()) {
@@ -284,6 +298,78 @@ describe("classifyProviderFastActivation", () => {
     );
   });
 
+  it("requires an exact first-party provider transport", () => {
+    const rejectedOpenAi = [
+      "",
+      "http://api.openai.com/v1",
+      "https://api.openai.com:8443/v1",
+      "https://user:pass@api.openai.com/v1",
+      "https://api.openai.com.evil.example/v1",
+      "https://proxy.example.com/openai/v1",
+      "https://gateway.internal/v1",
+      "api.openai.com/v1",
+      "not a url",
+      `https://api.openai.com/${"p".repeat(PROVIDER_FAST_BASE_URL_MAX_LENGTH)}`,
+    ] as const;
+    for (const baseUrl of rejectedOpenAi) {
+      expectUnsupported(
+        intent({
+          provider: "openai",
+          apiFamily: "openai-responses",
+          model: "gpt-5.6-sol",
+          baseUrl,
+        }),
+        "transport-not-first-party",
+      );
+    }
+
+    expectUnsupported(
+      intent({
+        provider: "anthropic",
+        apiFamily: "anthropic-messages",
+        model: "claude-opus-5",
+        baseUrl: OPENAI_BASE_URL,
+      }),
+      "transport-not-first-party",
+    );
+    expectUnsupported(
+      intent({
+        provider: "openai",
+        apiFamily: "openai-responses",
+        model: "gpt-5.6-sol",
+        baseUrl: ANTHROPIC_BASE_URL,
+      }),
+      "transport-not-first-party",
+    );
+
+    for (const baseUrl of [
+      "https://api.openai.com",
+      "https://api.openai.com/v1",
+      "https://API.OpenAI.com/v1",
+    ]) {
+      const accepted = classifyProviderFastActivation(
+        intent({
+          provider: "openai",
+          apiFamily: "openai-responses",
+          model: "gpt-5.6-sol",
+          baseUrl,
+        }),
+      );
+      expect(accepted.isOk()).toBe(true);
+    }
+
+    // An unlisted model on a first-party host still fails on the model.
+    expectUnsupported(
+      intent({
+        provider: "openai",
+        apiFamily: "openai-responses",
+        model: "gpt-4.1",
+        baseUrl: OPENAI_BASE_URL,
+      }),
+      "model-not-allowed",
+    );
+  });
+
   it("keeps secret-shaped input out of the serialized result", () => {
     const result = classifyProviderFastActivation(
       intent({
@@ -331,6 +417,7 @@ describe("classifyProviderFastActivation", () => {
         provider: "anthropic",
         apiFamily: "anthropic-messages",
         model: "claude-opus-5",
+        baseUrl: ANTHROPIC_BASE_URL,
       }),
     ).toBe('{"kind":"no-intent"}');
   });
@@ -428,7 +515,55 @@ describe("applyOpenAiProviderFastPayload", () => {
     });
   });
 
-  it("preserves a compatible existing service_tier without rewriting it", () => {
+  it("keeps nested identity and unrelated large values by reference", () => {
+    const messages = [
+      { role: "user", content: "x".repeat(64 * 1024) },
+      { role: "assistant", content: { nested: { deep: [1, 2, 3] } } },
+    ];
+    const tools = Array.from({ length: 512 }, (_, index) => ({
+      name: `tool-${index}`,
+    }));
+    const when = new Date(0);
+    const payload = { model: "gpt-5.6-sol", messages, tools, when };
+    const result = applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, payload);
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) {
+      return;
+    }
+    const patched = result.value as Record<string, unknown>;
+    expect(patched.messages).toBe(messages);
+    expect(patched.tools).toBe(tools);
+    expect(patched.when).toBe(when);
+    expect(patched.service_tier).toBe("fast");
+    expect(Object.hasOwn(payload, "service_tier")).toBe(false);
+  });
+
+  it("carries an unrelated accessor through without invoking it", () => {
+    let unrelatedReads = 0;
+    const payload: Record<string, unknown> = { model: "gpt-5.6-sol" };
+    Object.defineProperty(payload, "lazy", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        unrelatedReads += 1;
+        return SECRET_SHAPED_INPUT;
+      },
+    });
+    const result = applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, payload);
+    expect(result.isOk()).toBe(true);
+    expect(unrelatedReads).toBe(0);
+    if (result.isErr()) {
+      return;
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(
+      result.value as object,
+      "lazy",
+    );
+    expect(descriptor?.get).toBeDefined();
+    expect(unrelatedReads).toBe(0);
+  });
+
+  it("preserves a compatible existing service_tier without any copy", () => {
     const payload = {
       model: "gpt-5.6-sol",
       service_tier: "fast",
@@ -440,9 +575,8 @@ describe("applyOpenAiProviderFastPayload", () => {
     if (result.isErr()) {
       return;
     }
-    expect(result.value).not.toBe(payload);
+    expect(result.value).toBe(payload);
     expect(payload).toEqual(original);
-    expect(result.value).toEqual(original);
   });
 
   it("rejects an incompatible existing service_tier", () => {
@@ -487,10 +621,10 @@ describe("applyOpenAiProviderFastPayload", () => {
     expect(payload).toEqual({ model: "gpt-5.6-sol" });
   });
 
-  it("rejects accessors, inherited fields, symbols, callables, and cycles without executing getters", () => {
+  it("rejects an owned accessor, a foreign prototype, and a callable without executing getters", () => {
     let getterExecutions = 0;
-    const accessor: Record<string, unknown> = { model: "gpt-5.6-sol" };
-    Object.defineProperty(accessor, "service_tier", {
+    const ownedAccessor: Record<string, unknown> = { model: "gpt-5.6-sol" };
+    Object.defineProperty(ownedAccessor, "service_tier", {
       enumerable: true,
       configurable: true,
       get() {
@@ -498,107 +632,82 @@ describe("applyOpenAiProviderFastPayload", () => {
         return SECRET_SHAPED_INPUT;
       },
     });
+    expectMutationUnsupported(
+      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, ownedAccessor),
+      "payload-unsafe",
+    );
 
     const inherited = Object.create({
       service_tier: "fast",
     }) as Record<string, unknown>;
     inherited.model = "gpt-5.6-sol";
-
-    const withSymbol: Record<string, unknown> = { model: "gpt-5.6-sol" };
-    Object.defineProperty(withSymbol, Symbol("hidden"), {
-      value: SECRET_SHAPED_INPUT,
-      enumerable: true,
-    });
+    expectMutationUnsupported(
+      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, inherited),
+      "payload-unsafe",
+    );
 
     const callable = () => SECRET_SHAPED_INPUT;
     callable.model = "gpt-5.6-sol";
+    expectMutationUnsupported(
+      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, callable),
+      "payload-unsafe",
+    );
 
-    const cyclic: Record<string, unknown> = { model: "gpt-5.6-sol" };
-    cyclic.self = cyclic;
+    const mapPayload = new Map();
+    expectMutationUnsupported(
+      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, mapPayload),
+      "payload-unsafe",
+    );
 
-    const sparse = { items: [] as unknown[] };
-    sparse.items.length = 2;
-
-    const datePayload = { when: new Date(0) };
-    const mapPayload = { extra: new Map() };
-
-    const cases: readonly unknown[] = [
-      accessor,
-      inherited,
-      withSymbol,
-      callable,
-      cyclic,
-      sparse,
-      datePayload,
-      mapPayload,
-    ];
-    for (const candidate of cases) {
+    for (const candidate of [ownedAccessor, inherited, callable, mapPayload]) {
       const result = applyOpenAiProviderFastPayload(
         OPENAI_SUPPORTED,
         candidate,
       );
-      expectMutationUnsupported(result, "payload-unsafe");
       expect(serializedMutation(result)).not.toContain(SECRET_SHAPED_INPUT);
       expect(serializedMutation(result)).not.toContain("sk-proj");
     }
     expect(getterExecutions).toBe(0);
   });
 
-  it("rejects oversized and malformed payload graphs", () => {
-    const oversizedKeys: Record<string, unknown> = {};
-    for (
-      let index = 0;
-      index < PROVIDER_FAST_PAYLOAD_MAX_PROPERTIES_PER_OBJECT + 1;
-      index += 1
-    ) {
-      oversizedKeys[`k${index}`] = index;
-    }
-    expectMutationUnsupported(
-      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, oversizedKeys),
-      "payload-oversized",
+  it("accepts cycles and symbols that belong to unrelated payload data", () => {
+    const cyclic: Record<string, unknown> = { model: "gpt-5.6-sol" };
+    cyclic.self = cyclic;
+    const cyclicResult = applyOpenAiProviderFastPayload(
+      OPENAI_SUPPORTED,
+      cyclic,
     );
+    expect(cyclicResult.isOk()).toBe(true);
+    if (cyclicResult.isErr()) {
+      return;
+    }
+    expect((cyclicResult.value as Record<string, unknown>).self).toBe(cyclic);
 
-    const oversizedArray = {
-      items: Array.from(
-        { length: PROVIDER_FAST_PAYLOAD_MAX_ARRAY_LENGTH + 1 },
-        (_, index) => index,
-      ),
+    const hidden = Symbol("hidden");
+    const withSymbol: Record<string | symbol, unknown> = {
+      model: "gpt-5.6-sol",
     };
-    expectMutationUnsupported(
-      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, oversizedArray),
-      "payload-oversized",
+    Object.defineProperty(withSymbol, hidden, {
+      value: SECRET_SHAPED_INPUT,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    const symbolResult = applyOpenAiProviderFastPayload(
+      OPENAI_SUPPORTED,
+      withSymbol,
     );
-
-    const oversizedString = {
-      note: "x".repeat(PROVIDER_FAST_PAYLOAD_MAX_STRING_LENGTH + 1),
-    };
-    expectMutationUnsupported(
-      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, oversizedString),
-      "payload-oversized",
-    );
-
-    let deep: unknown = { leaf: true };
-    for (
-      let depth = 0;
-      depth < PROVIDER_FAST_PAYLOAD_MAX_DEPTH + 1;
-      depth += 1
-    ) {
-      deep = { nested: deep };
+    expect(symbolResult.isOk()).toBe(true);
+    if (symbolResult.isErr()) {
+      return;
     }
-    expectMutationUnsupported(
-      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, deep),
-      "payload-oversized",
-    );
+    expect(
+      (symbolResult.value as Record<string | symbol, unknown>)[hidden],
+    ).toBe(SECRET_SHAPED_INPUT);
+    expect(serializedMutation(symbolResult)).not.toContain(SECRET_SHAPED_INPUT);
+  });
 
-    const tooManyNodes: Record<string, unknown> = {};
-    for (let index = 0; index < PROVIDER_FAST_PAYLOAD_MAX_NODES; index += 1) {
-      tooManyNodes[`n${index}`] = { v: index };
-    }
-    expectMutationUnsupported(
-      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, tooManyNodes),
-      "payload-oversized",
-    );
-
+  it("rejects malformed payload containers", () => {
     expectMutationUnsupported(
       applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, null),
       "payload-malformed",
@@ -608,7 +717,13 @@ describe("applyOpenAiProviderFastPayload", () => {
       "payload-malformed",
     );
     expectMutationUnsupported(
-      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, { n: Number.NaN }),
+      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, "not-an-object"),
+      "payload-malformed",
+    );
+    expectMutationUnsupported(
+      applyOpenAiProviderFastPayload(OPENAI_SUPPORTED, {
+        service_tier: Number.NaN,
+      }),
       "payload-malformed",
     );
   });
@@ -652,7 +767,7 @@ describe("applyAnthropicProviderFastPayload", () => {
     });
   });
 
-  it("preserves a compatible existing speed value", () => {
+  it("preserves a compatible existing speed value without a copy", () => {
     const payload = { model: "claude-opus-5", speed: "fast" };
     const original = clonePlain(payload);
     const result = applyAnthropicProviderFastPayload(
@@ -663,9 +778,8 @@ describe("applyAnthropicProviderFastPayload", () => {
     if (result.isErr()) {
       return;
     }
-    expect(result.value).not.toBe(payload);
+    expect(result.value).toBe(payload);
     expect(payload).toEqual(original);
-    expect(result.value).toEqual(original);
   });
 
   it("rejects an incompatible or malformed existing speed", () => {
@@ -708,14 +822,15 @@ describe("Anthropic provider-fast headers", () => {
     if (applied.isErr()) {
       return;
     }
-    expect(applied.value).toBe(headers);
+    expect(applied.value).toEqual({ action: "none" });
     expect(headers).toEqual({ Authorization: SECRET_AUTHORIZATION });
   });
 
   it("adds the exact beta token once and preserves unrelated headers", () => {
-    const headers: Record<string, string> = {
+    const headers: Record<string, string | null> = {
       Authorization: SECRET_AUTHORIZATION,
       "x-request-id": "req-1",
+      "x-dropped-by-another-extension": null,
     };
     const plan = planAnthropicProviderFastHeaders(ANTHROPIC_SUPPORTED, headers);
     expect(plan.isOk()).toBe(true);
@@ -731,38 +846,50 @@ describe("Anthropic provider-fast headers", () => {
     if (result.isErr()) {
       return;
     }
-    expect(result.value).toBe(headers);
+    expect(result.value).toEqual({
+      action: "write",
+      name: "anthropic-beta",
+    });
     expect(headers).toEqual({
       Authorization: SECRET_AUTHORIZATION,
       "x-request-id": "req-1",
+      "x-dropped-by-another-extension": null,
       "anthropic-beta": PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
     });
   });
 
-  it("merges the token into an existing beta header without duplicating it", () => {
+  it("treats every non-exact existing beta value as a collision", () => {
     const headers = {
       "anthropic-beta": "prompt-caching-2024-07-31",
       Authorization: SECRET_AUTHORIZATION,
     };
-    const result = applyAnthropicProviderFastHeaders(
-      ANTHROPIC_SUPPORTED,
-      headers,
+    const original = clonePlain(headers);
+    expectMutationUnsupported(
+      planAnthropicProviderFastHeaders(ANTHROPIC_SUPPORTED, headers),
+      "request-collision",
     );
-    expect(result.isOk()).toBe(true);
-    if (result.isErr()) {
-      return;
-    }
-    expect(headers["anthropic-beta"]).toBe(
-      `prompt-caching-2024-07-31, ${PROVIDER_FAST_ANTHROPIC_BETA_TOKEN}`,
+    expectMutationUnsupported(
+      applyAnthropicProviderFastHeaders(ANTHROPIC_SUPPORTED, headers),
+      "request-collision",
     );
-    expect(headers.Authorization).toBe(SECRET_AUTHORIZATION);
+    expect(headers).toEqual(original);
 
-    const alreadyPresent = {
+    const appendShaped = {
       "anthropic-beta": `prompt-caching-2024-07-31, ${PROVIDER_FAST_ANTHROPIC_BETA_TOKEN}`,
+    };
+    const originalAppendShaped = clonePlain(appendShaped);
+    expectMutationUnsupported(
+      applyAnthropicProviderFastHeaders(ANTHROPIC_SUPPORTED, appendShaped),
+      "request-collision",
+    );
+    expect(appendShaped).toEqual(originalAppendShaped);
+
+    const alreadyExact = {
+      "anthropic-beta": PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
     };
     const preservePlan = planAnthropicProviderFastHeaders(
       ANTHROPIC_SUPPORTED,
-      alreadyPresent,
+      alreadyExact,
     );
     expect(preservePlan.isOk()).toBe(true);
     if (preservePlan.isErr()) {
@@ -771,12 +898,69 @@ describe("Anthropic provider-fast headers", () => {
     expect(preservePlan.value).toEqual({ action: "preserve" });
     const preserved = applyAnthropicProviderFastHeaders(
       ANTHROPIC_SUPPORTED,
-      alreadyPresent,
+      alreadyExact,
     );
     expect(preserved.isOk()).toBe(true);
-    expect(alreadyPresent["anthropic-beta"]).toBe(
-      `prompt-caching-2024-07-31, ${PROVIDER_FAST_ANTHROPIC_BETA_TOKEN}`,
+    if (preserved.isErr()) {
+      return;
+    }
+    expect(preserved.value).toEqual({ action: "preserve" });
+    expect(alreadyExact["anthropic-beta"]).toBe(
+      PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
     );
+  });
+
+  it("reverts only its own beta write and never a later edit", () => {
+    const headers: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+    };
+    const written = applyAnthropicProviderFastHeaders(
+      ANTHROPIC_SUPPORTED,
+      headers,
+    );
+    expect(written.isOk()).toBe(true);
+    if (written.isErr()) {
+      return;
+    }
+    const reverted = revertAnthropicProviderFastHeaderWrite(
+      headers,
+      written.value,
+    );
+    expect(reverted.isOk()).toBe(true);
+    if (reverted.isErr()) {
+      return;
+    }
+    expect(reverted.value).toBe("reverted");
+    expect(headers).toEqual({ Authorization: SECRET_AUTHORIZATION });
+
+    const overwritten: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+    };
+    const secondWrite = applyAnthropicProviderFastHeaders(
+      ANTHROPIC_SUPPORTED,
+      overwritten,
+    );
+    expect(secondWrite.isOk()).toBe(true);
+    if (secondWrite.isErr()) {
+      return;
+    }
+    overwritten["anthropic-beta"] = "another-extension-2026-01-01";
+    const untouched = revertAnthropicProviderFastHeaderWrite(
+      overwritten,
+      secondWrite.value,
+    );
+    expect(untouched.isOk()).toBe(true);
+    if (untouched.isErr()) {
+      return;
+    }
+    expect(untouched.value).toBe("unchanged");
+    expect(overwritten["anthropic-beta"]).toBe("another-extension-2026-01-01");
+
+    const preserveOnly = revertAnthropicProviderFastHeaderWrite(overwritten, {
+      action: "preserve",
+    });
+    expect(preserveOnly.isOk()).toBe(true);
+    expect(overwritten["anthropic-beta"]).toBe("another-extension-2026-01-01");
   });
 
   it("rejects case-insensitive duplicate beta headers with no mutation", () => {
@@ -816,7 +1000,7 @@ describe("Anthropic provider-fast headers", () => {
     expect(sealed).toEqual({ Authorization: SECRET_AUTHORIZATION });
   });
 
-  it("rejects malformed, unsafe, and colliding header maps with no partial write", () => {
+  it("rejects malformed and unsafe beta headers with no partial write", () => {
     let getterExecutions = 0;
     const accessor: Record<string, unknown> = {
       Authorization: SECRET_AUTHORIZATION,
@@ -853,25 +1037,18 @@ describe("Anthropic provider-fast headers", () => {
     );
     expect(colliding).toEqual(originalColliding);
 
-    const malformedTokens = { "anthropic-beta": "bad token" };
-    const originalMalformed = clonePlain(malformedTokens);
-    expectMutationUnsupported(
-      applyAnthropicProviderFastHeaders(ANTHROPIC_SUPPORTED, malformedTokens),
-      "header-malformed",
-    );
-    expect(malformedTokens).toEqual(originalMalformed);
-
-    const oversized: Record<string, string> = {};
-    for (
-      let index = 0;
-      index < PROVIDER_FAST_HEADER_MAX_COUNT + 1;
-      index += 1
-    ) {
-      oversized[`h${index}`] = "v";
+    // Unrelated headers are never validated, however many or large they are.
+    const manyUnrelated: Record<string, string> = {};
+    for (let index = 0; index < 256; index += 1) {
+      manyUnrelated[`h${index}`] = "v".repeat(1024);
     }
-    expectMutationUnsupported(
-      applyAnthropicProviderFastHeaders(ANTHROPIC_SUPPORTED, oversized),
-      "header-malformed",
+    const manyWritten = applyAnthropicProviderFastHeaders(
+      ANTHROPIC_SUPPORTED,
+      manyUnrelated,
+    );
+    expect(manyWritten.isOk()).toBe(true);
+    expect(manyUnrelated["anthropic-beta"]).toBe(
+      PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
     );
   });
 
@@ -1571,14 +1748,32 @@ function coordinatorSnapshot(
   return {
     generation: 1,
     primaryName: "loom",
-    selectedModel: {
+    liveModel: {
       provider: "openai",
       id: "gpt-5.6-sol",
       api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
     },
     fast: true,
     ...overrides,
   };
+}
+
+/**
+ * A live-state change settles the attempt with its own terminal reason and
+ * applies no controls, instead of collapsing into a generic ordering error.
+ */
+function expectSettledMismatch(
+  result: ReturnType<ProviderFastCoordinator["applyRequest"]>,
+  reason: ProviderFastAttemptExpireReason,
+): void {
+  expect(result.isOk()).toBe(true);
+  if (result.isErr()) {
+    return;
+  }
+  expect(result.value.kind).toBe("settled");
+  expect(result.value.snapshot.reason).toBe(reason);
+  expect(Object.hasOwn(result.value, "payload")).toBe(false);
 }
 
 function expectCoordinatorError(
@@ -1647,7 +1842,7 @@ describe("ProviderFastCoordinator", () => {
       payload,
     );
     expect(requested.isOk()).toBe(true);
-    if (requested.isErr()) {
+    if (requested.isErr() || requested.value.kind !== "applied") {
       return;
     }
     expect(payload).toEqual(originalPayload);
@@ -1696,10 +1891,11 @@ describe("ProviderFastCoordinator", () => {
   it("runs the exact Anthropic sequence and mutates only the beta header", () => {
     const coordinator = new ProviderFastCoordinator();
     const snapshot = coordinatorSnapshot({
-      selectedModel: {
+      liveModel: {
         provider: "anthropic",
         id: "claude-opus-5",
         api: "anthropic-messages",
+        baseUrl: "https://api.anthropic.com/v1",
       },
     });
     const headers: Record<string, string> = {
@@ -1742,7 +1938,7 @@ describe("ProviderFastCoordinator", () => {
       payload,
     );
     expect(requested.isOk()).toBe(true);
-    if (requested.isErr()) {
+    if (requested.isErr() || requested.value.kind !== "applied") {
       return;
     }
     expect(payload).toEqual(originalPayload);
@@ -1780,10 +1976,11 @@ describe("ProviderFastCoordinator", () => {
       {
         generation: 1,
         primaryName: "loom",
-        selectedModel: {
+        liveModel: {
           provider: "openai",
           id: "gpt-5.6-sol",
           api: "openai-responses",
+          baseUrl: "https://api.openai.com/v1",
         },
       },
       headers,
@@ -1803,10 +2000,11 @@ describe("ProviderFastCoordinator", () => {
     const result = coordinator.beginHeaders(
       coordinatorSnapshot({
         primaryName: SECRET_PRIMARY,
-        selectedModel: {
+        liveModel: {
           provider: SECRET_PROVIDER,
           id: SECRET_MODEL,
           api: "openai-compatible",
+          baseUrl: "https://gateway.example.com/v1",
         },
       }),
       headers,
@@ -1834,10 +2032,11 @@ describe("ProviderFastCoordinator", () => {
 
     const unknownModel = coordinator.beginHeaders(
       coordinatorSnapshot({
-        selectedModel: {
+        liveModel: {
           provider: "openai",
           id: "gpt-5.6",
           api: "openai-responses",
+          baseUrl: "https://api.openai.com/v1",
         },
       }),
       headers,
@@ -1859,10 +2058,11 @@ describe("ProviderFastCoordinator", () => {
     const original = clonePlain(headers);
     const result = coordinator.beginHeaders(
       coordinatorSnapshot({
-        selectedModel: {
+        liveModel: {
           provider: "anthropic",
           id: "claude-opus-5",
           api: "anthropic-messages",
+          baseUrl: "https://api.anthropic.com/v1",
         },
       }),
       headers,
@@ -1894,16 +2094,111 @@ describe("ProviderFastCoordinator", () => {
     }
     const collidingPayload = { service_tier: "priority" };
     const originalPayload = clonePlain(collidingPayload);
-    expectCoordinatorError(
-      payloadCoordinator.applyRequest(
-        payloadSnapshot,
-        begun.value.token,
-        collidingPayload,
-      ),
-      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+    const collided = payloadCoordinator.applyRequest(
+      payloadSnapshot,
+      begun.value.token,
+      collidingPayload,
     );
+    expect(collided.isOk()).toBe(true);
+    if (collided.isErr()) {
+      return;
+    }
+    expect(collided.value.kind).toBe("unsupported");
+    expectSanitizedSnapshot(collided.value.snapshot, {
+      sequence: 1,
+      pendingCount: 0,
+      providerFamily: "none",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "none",
+      collision: true,
+      state: "unsupported",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "request-collision",
+    });
     expect(collidingPayload).toEqual(originalPayload);
-    expectIdleLatest(payloadCoordinator);
+    expect(payloadCoordinator.latest()).toEqual(collided.value.snapshot);
+  });
+
+  it("rolls back only its own beta header when the payload collides", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot({
+      liveModel: {
+        provider: "anthropic",
+        id: "claude-opus-5",
+        api: "anthropic-messages",
+        baseUrl: ANTHROPIC_BASE_URL,
+      },
+    });
+    const headers: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+      "x-request-id": "req-1",
+    };
+    const begun = coordinator.beginHeaders(snapshot, headers);
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    expect(headers["anthropic-beta"]).toBe(PROVIDER_FAST_ANTHROPIC_BETA_TOKEN);
+
+    const colliding = { model: "claude-opus-5", speed: "standard" };
+    const original = clonePlain(colliding);
+    const result = coordinator.applyRequest(
+      snapshot,
+      begun.value.token,
+      colliding,
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) {
+      return;
+    }
+    expect(result.value.kind).toBe("unsupported");
+    expect(result.value.snapshot.reason).toBe("request-collision");
+    expect(colliding).toEqual(original);
+    expect(headers).toEqual({
+      Authorization: SECRET_AUTHORIZATION,
+      "x-request-id": "req-1",
+    });
+  });
+
+  it("settles a live model switch with its own reason and rolls back the header", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot({
+      liveModel: {
+        provider: "anthropic",
+        id: "claude-opus-5",
+        api: "anthropic-messages",
+        baseUrl: ANTHROPIC_BASE_URL,
+      },
+    });
+    const headers: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+    };
+    const begun = coordinator.beginHeaders(snapshot, headers);
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    const switched = coordinator.applyRequest(
+      coordinatorSnapshot({
+        liveModel: {
+          provider: "anthropic",
+          id: "claude-opus-4-8",
+          api: "anthropic-messages",
+          baseUrl: ANTHROPIC_BASE_URL,
+        },
+      }),
+      begun.value.token,
+      { model: "claude-opus-4-8" },
+    );
+    expect(switched.isOk()).toBe(true);
+    if (switched.isErr()) {
+      return;
+    }
+    expect(switched.value.kind).toBe("settled");
+    expect(switched.value.snapshot.state).toBe("declared");
+    expect(switched.value.snapshot.reason).toBe("model-switched");
+    expect(headers).toEqual({ Authorization: SECRET_AUTHORIZATION });
   });
 
   it("fails closed on overlap, order, token, snapshot, generation, and reset", () => {
@@ -1944,16 +2239,15 @@ describe("ProviderFastCoordinator", () => {
     if (afterForged.isErr() || afterForged.value.kind !== "pending") {
       return;
     }
-    expectCoordinatorError(
+    expectSettledMismatch(
       coordinator.applyRequest(
         coordinatorSnapshot({ generation: 2 }),
         afterForged.value.token,
         payload,
       ),
-      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+      "generation-superseded",
     );
     expect(payload).toEqual(originalPayload);
-    expectIdleLatest(coordinator);
 
     const afterGeneration = coordinator.beginHeaders(snapshot, {});
     expect(
@@ -1962,15 +2256,14 @@ describe("ProviderFastCoordinator", () => {
     if (afterGeneration.isErr() || afterGeneration.value.kind !== "pending") {
       return;
     }
-    expectCoordinatorError(
+    expectSettledMismatch(
       coordinator.applyRequest(
         coordinatorSnapshot({ primaryName: "tapestry" }),
         afterGeneration.value.token,
         payload,
       ),
-      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+      "primary-switched",
     );
-    expectIdleLatest(coordinator);
 
     const afterPrimary = coordinator.beginHeaders(snapshot, {});
     expect(afterPrimary.isOk() && afterPrimary.value.kind === "pending").toBe(
@@ -1979,22 +2272,22 @@ describe("ProviderFastCoordinator", () => {
     if (afterPrimary.isErr() || afterPrimary.value.kind !== "pending") {
       return;
     }
-    expectCoordinatorError(
+    expectSettledMismatch(
       coordinator.applyRequest(
         coordinatorSnapshot({
-          selectedModel: {
+          liveModel: {
             provider: "openai",
             id: "gpt-5.6-terra",
             api: "openai-responses",
+            baseUrl: "https://api.openai.com/v1",
           },
         }),
         afterPrimary.value.token,
         payload,
       ),
-      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+      "model-switched",
     );
     expect(payload).toEqual(originalPayload);
-    expectIdleLatest(coordinator);
 
     const afterModel = coordinator.beginHeaders(snapshot, {});
     expect(afterModel.isOk() && afterModel.value.kind === "pending").toBe(true);
@@ -2053,10 +2346,11 @@ describe("ProviderFastCoordinator", () => {
   it("treats retries after settlement as a new sequence", () => {
     const coordinator = new ProviderFastCoordinator();
     const snapshot = coordinatorSnapshot({
-      selectedModel: {
+      liveModel: {
         provider: "openai",
         id: "gpt-5.6-luna",
         api: "openai-completions",
+        baseUrl: "https://api.openai.com/v1",
       },
     });
     const first = coordinator.beginHeaders(snapshot, {});
@@ -2285,11 +2579,11 @@ describe("ProviderFastCoordinator", () => {
     const coordinator = new ProviderFastCoordinator();
     const secretSnapshot = coordinatorSnapshot({
       primaryName: SECRET_PRIMARY,
-      selectedModel: {
+      liveModel: {
         provider: "openai",
         id: "gpt-5.6-sol",
-        name: SECRET_SHAPED_INPUT,
         api: "openai-responses",
+        baseUrl: "https://api.openai.com/v1",
       },
     });
     const begun = coordinator.beginHeaders(secretSnapshot, {

@@ -1,31 +1,25 @@
 import { err, ok, Result } from "neverthrow";
 
 /**
- * Exact allowlist classifier, stateless request mutation, an instance-owned
+ * Exact allowlist classifier, narrow request patching, an instance-owned
  * attempt tracker, and a one-sequence coordinator for Pi provider-fast hooks.
  *
- * Classification never copies caller strings. Mutation copies only a bounded
- * own-data payload graph, or applies one planned Anthropic header write after
- * the full map validates. The tracker correlates request attempts with opaque
- * tokens and never reports `applied`. The coordinator maps host API strings
- * by a literal table, owns one active sequence, and exposes only sanitized
- * diagnostics.
+ * Classification never copies caller strings and requires a first-party
+ * provider transport. Mutation validates only the adapter-owned payload field
+ * or header name and patches it without reconstructing unrelated data, so
+ * nested object identity and legitimate large values survive untouched. The
+ * tracker correlates request attempts with opaque tokens and never reports
+ * `applied`. The coordinator maps host API strings by a literal table, owns
+ * one active sequence, and exposes only sanitized diagnostics.
  */
 
 export const PROVIDER_FAST_INPUT_MAX_LENGTH = 128;
 
-export const PROVIDER_FAST_PAYLOAD_MAX_DEPTH = 16;
-export const PROVIDER_FAST_PAYLOAD_MAX_NODES = 1_024;
-export const PROVIDER_FAST_PAYLOAD_MAX_PROPERTIES = 1_024;
-export const PROVIDER_FAST_PAYLOAD_MAX_PROPERTIES_PER_OBJECT = 128;
-export const PROVIDER_FAST_PAYLOAD_MAX_STRING_LENGTH = 16 * 1_024;
-export const PROVIDER_FAST_PAYLOAD_MAX_ARRAY_LENGTH = 256;
+/** Bound for the model's transport base URL before any parsing is attempted. */
+export const PROVIDER_FAST_BASE_URL_MAX_LENGTH = 512;
 
-export const PROVIDER_FAST_HEADER_MAX_COUNT = 64;
+/** Bound for the adapter-owned header name only; unrelated names are ignored. */
 export const PROVIDER_FAST_HEADER_MAX_NAME_LENGTH = 256;
-export const PROVIDER_FAST_HEADER_MAX_VALUE_LENGTH = 4_096;
-export const PROVIDER_FAST_HEADER_MAX_BETA_TOKENS = 16;
-export const PROVIDER_FAST_HEADER_MAX_BETA_TOKEN_LENGTH = 128;
 
 export const PROVIDER_FAST_OPENAI_SERVICE_TIER = "fast";
 export const PROVIDER_FAST_ANTHROPIC_SPEED = "fast";
@@ -56,6 +50,7 @@ export const PROVIDER_FAST_UNSUPPORTED_REASONS = [
   "provider-not-allowed",
   "endpoint-not-allowed",
   "model-not-allowed",
+  "transport-not-first-party",
 ] as const;
 
 export type ProviderFastUnsupportedReason =
@@ -65,7 +60,6 @@ export const PROVIDER_FAST_MUTATION_REASONS = [
   "request-collision",
   "payload-malformed",
   "payload-unsafe",
-  "payload-oversized",
   "header-malformed",
   "header-unsafe",
   "header-duplicate",
@@ -79,6 +73,11 @@ export type ProviderFastActivationInput = {
   readonly provider: string;
   readonly apiFamily: ProviderFastApiFamily;
   readonly model: string;
+  /**
+   * The live model's transport base URL. Only an exact first-party provider
+   * origin can carry fast controls; proxies and gateways are unsupported.
+   */
+  readonly baseUrl: string;
 };
 
 export type ProviderFastNoIntent = {
@@ -152,6 +151,7 @@ export const PROVIDER_FAST_ATTEMPT_REASONS = [
   "reset",
   "session-replaced",
   "primary-switched",
+  "model-switched",
   ...PROVIDER_FAST_UNSUPPORTED_REASONS,
   ...PROVIDER_FAST_MUTATION_REASONS,
 ] as const;
@@ -166,6 +166,7 @@ export const PROVIDER_FAST_ATTEMPT_EXPIRE_REASONS = [
   "reset",
   "session-replaced",
   "primary-switched",
+  "model-switched",
 ] as const;
 
 export type ProviderFastAttemptExpireReason =
@@ -279,16 +280,7 @@ export type ProviderFastAttemptTrackerOptions = {
   readonly sequenceMax?: number;
 };
 
-type PayloadCopyBudget = {
-  nodes: number;
-  properties: number;
-};
-
-type CopiedPayloadRecord = Record<string, unknown>;
-
-type HeaderSnapshot = {
-  readonly entries: readonly HeaderEntry[];
-};
+type PayloadRecord = Record<string, unknown>;
 
 type HeaderEntry = {
   readonly name: string;
@@ -309,8 +301,6 @@ const NO_INTENT: ProviderFastNoIntent = Object.freeze({ kind: "no-intent" });
 const OPENAI_SERVICE_TIER_FIELD = "service_tier";
 const ANTHROPIC_SPEED_FIELD = "speed";
 const ANTHROPIC_BETA_HEADER_LOWER = "anthropic-beta";
-const ANTHROPIC_FAST_BETA_PREFIX = "fast-mode-";
-
 const API_FAMILIES: ReadonlySet<ProviderFastApiFamily> = new Set([
   "openai-responses",
   "openai-completions",
@@ -335,6 +325,16 @@ const ANTHROPIC_MODEL_RULES: ReadonlyMap<string, ProviderFastAllowlistRuleId> =
     ["claude-opus-4-8", "anthropic-claude-opus-4-8"],
   ]);
 
+/**
+ * Exact first-party API origins. Fast controls are provider contracts, so a
+ * proxy, gateway, compatible endpoint, or partner host is never eligible.
+ */
+const FIRST_PARTY_HOSTS: ReadonlyMap<ProviderFastProviderFamily, string> =
+  new Map([
+    ["openai", "api.openai.com"],
+    ["anthropic", "api.anthropic.com"],
+  ]);
+
 const CREDENTIAL_HEADER_NAMES: ReadonlySet<string> = new Set([
   "authorization",
   "proxy-authorization",
@@ -350,8 +350,6 @@ const CREDENTIAL_HEADER_NAMES: ReadonlySet<string> = new Set([
   "access-token",
   "x-access-token",
 ]);
-
-const BETA_TOKEN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function unsupported(
   reason: ProviderFastUnsupportedReason,
@@ -388,6 +386,48 @@ function classifySupported(
       allowlistRuleId,
     }),
   );
+}
+
+const parseTransportUrl = Result.fromThrowable(
+  (value: string) => new URL(value),
+  () => unsupported("transport-not-first-party"),
+);
+
+/**
+ * Prove the request goes to the provider's own documented API host. This
+ * reads only the model's declared transport; it never touches credentials,
+ * authentication headers, or environment values.
+ */
+function classifyFirstPartyTransport(
+  providerFamily: ProviderFastProviderFamily,
+  baseUrl: unknown,
+): Result<undefined, ProviderFastUnsupported> {
+  if (
+    typeof baseUrl !== "string" ||
+    baseUrl.length === 0 ||
+    baseUrl.length > PROVIDER_FAST_BASE_URL_MAX_LENGTH
+  ) {
+    return err(unsupported("transport-not-first-party"));
+  }
+  const expectedHost = FIRST_PARTY_HOSTS.get(providerFamily);
+  if (expectedHost === undefined) {
+    return err(unsupported("transport-not-first-party"));
+  }
+  const parsed = parseTransportUrl(baseUrl);
+  if (parsed.isErr()) {
+    return err(parsed.error);
+  }
+  const url = parsed.value;
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== expectedHost ||
+    url.port !== "" ||
+    url.username !== "" ||
+    url.password !== ""
+  ) {
+    return err(unsupported("transport-not-first-party"));
+  }
+  return ok(undefined);
 }
 
 /**
@@ -431,6 +471,10 @@ export function classifyProviderFastActivation(
     if (allowlistRuleId === undefined) {
       return err(unsupported("model-not-allowed"));
     }
+    const transport = classifyFirstPartyTransport("openai", input.baseUrl);
+    if (transport.isErr()) {
+      return err(transport.error);
+    }
     return classifySupported("openai", allowlistRuleId);
   }
 
@@ -441,6 +485,10 @@ export function classifyProviderFastActivation(
     const allowlistRuleId = ANTHROPIC_MODEL_RULES.get(model);
     if (allowlistRuleId === undefined) {
       return err(unsupported("model-not-allowed"));
+    }
+    const transport = classifyFirstPartyTransport("anthropic", input.baseUrl);
+    if (transport.isErr()) {
+      return err(transport.error);
     }
     return classifySupported("anthropic", allowlistRuleId);
   }
@@ -466,203 +514,53 @@ function isSupportedFamily(
   );
 }
 
-function defineOwn(
-  target: CopiedPayloadRecord,
-  key: string,
-  value: unknown,
-): void {
-  Object.defineProperty(target, key, {
-    value,
-    enumerable: true,
-    configurable: true,
-    writable: true,
-  });
-}
-
-function copyPayloadArray(
-  source: unknown[],
-  active: WeakSet<object>,
-  budget: PayloadCopyBudget,
-  depth: number,
-): Result<unknown[], ProviderFastMutationUnsupported> {
-  const lengthDescriptor = Object.getOwnPropertyDescriptor(source, "length");
-  if (
-    lengthDescriptor === undefined ||
-    !("value" in lengthDescriptor) ||
-    typeof lengthDescriptor.value !== "number" ||
-    !Number.isSafeInteger(lengthDescriptor.value) ||
-    lengthDescriptor.value < 0 ||
-    lengthDescriptor.enumerable !== false
-  ) {
-    return err(mutationUnsupported("payload-unsafe"));
-  }
-  const length = lengthDescriptor.value;
-  if (length > PROVIDER_FAST_PAYLOAD_MAX_ARRAY_LENGTH) {
-    return err(mutationUnsupported("payload-oversized"));
-  }
-  const ownKeys = Reflect.ownKeys(source);
-  if (ownKeys.length !== length + 1) {
-    return err(mutationUnsupported("payload-unsafe"));
-  }
-  budget.properties += ownKeys.length;
-  if (budget.properties > PROVIDER_FAST_PAYLOAD_MAX_PROPERTIES) {
-    return err(mutationUnsupported("payload-oversized"));
-  }
-
-  const copy: unknown[] = [];
-  for (let index = 0; index < length; index += 1) {
-    const key = String(index);
-    if (ownKeys[index] !== key) {
-      return err(mutationUnsupported("payload-unsafe"));
-    }
-    const descriptor = Object.getOwnPropertyDescriptor(source, key);
-    if (
-      descriptor === undefined ||
-      !("value" in descriptor) ||
-      descriptor.enumerable !== true
-    ) {
-      return err(mutationUnsupported("payload-unsafe"));
-    }
-    const copiedValue = copyPayloadGraph(
-      descriptor.value,
-      active,
-      budget,
-      depth + 1,
-    );
-    if (copiedValue.isErr()) {
-      return err(copiedValue.error);
-    }
-    copy.push(copiedValue.value);
-  }
-  if (ownKeys[length] !== "length") {
-    return err(mutationUnsupported("payload-unsafe"));
-  }
-  return ok(copy);
-}
-
-function copyPayloadRecord(
-  source: object,
-  active: WeakSet<object>,
-  budget: PayloadCopyBudget,
-  depth: number,
-): Result<CopiedPayloadRecord, ProviderFastMutationUnsupported> {
-  const ownKeys = Reflect.ownKeys(source);
-  if (ownKeys.length > PROVIDER_FAST_PAYLOAD_MAX_PROPERTIES_PER_OBJECT) {
-    return err(mutationUnsupported("payload-oversized"));
-  }
-  budget.properties += ownKeys.length;
-  if (budget.properties > PROVIDER_FAST_PAYLOAD_MAX_PROPERTIES) {
-    return err(mutationUnsupported("payload-oversized"));
-  }
-
-  const copy = Object.create(null) as CopiedPayloadRecord;
-  for (const key of ownKeys) {
-    if (typeof key === "symbol") {
-      return err(mutationUnsupported("payload-unsafe"));
-    }
-    if (key.length > PROVIDER_FAST_PAYLOAD_MAX_STRING_LENGTH) {
-      return err(mutationUnsupported("payload-oversized"));
-    }
-    const descriptor = Object.getOwnPropertyDescriptor(source, key);
-    if (
-      descriptor === undefined ||
-      !("value" in descriptor) ||
-      descriptor.enumerable !== true
-    ) {
-      return err(mutationUnsupported("payload-unsafe"));
-    }
-    const copiedValue = copyPayloadGraph(
-      descriptor.value,
-      active,
-      budget,
-      depth + 1,
-    );
-    if (copiedValue.isErr()) {
-      return err(copiedValue.error);
-    }
-    defineOwn(copy, key, copiedValue.value);
-  }
-  return ok(copy);
-}
-
-function copyPayloadGraph(
-  value: unknown,
-  active: WeakSet<object>,
-  budget: PayloadCopyBudget,
-  depth: number,
-): Result<unknown, ProviderFastMutationUnsupported> {
-  if (depth > PROVIDER_FAST_PAYLOAD_MAX_DEPTH) {
-    return err(mutationUnsupported("payload-oversized"));
-  }
-  budget.nodes += 1;
-  if (budget.nodes > PROVIDER_FAST_PAYLOAD_MAX_NODES) {
-    return err(mutationUnsupported("payload-oversized"));
-  }
-
-  if (typeof value === "function") {
-    return err(mutationUnsupported("payload-unsafe"));
-  }
-  if (typeof value === "string") {
-    if (value.length > PROVIDER_FAST_PAYLOAD_MAX_STRING_LENGTH) {
-      return err(mutationUnsupported("payload-oversized"));
-    }
-    return ok(value);
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      return err(mutationUnsupported("payload-malformed"));
-    }
-    return ok(value);
-  }
-  if (typeof value === "boolean" || value === null) {
-    return ok(value);
-  }
-  if (
-    value === undefined ||
-    typeof value === "symbol" ||
-    typeof value === "bigint"
-  ) {
-    return err(mutationUnsupported("payload-unsafe"));
-  }
-  if (typeof value !== "object") {
-    return err(mutationUnsupported("payload-unsafe"));
-  }
-  if (active.has(value)) {
-    return err(mutationUnsupported("payload-unsafe"));
-  }
-
-  const isArray = Array.isArray(value);
-  const prototype = Object.getPrototypeOf(value);
-  if (
-    isArray
-      ? prototype !== Array.prototype
-      : prototype !== Object.prototype && prototype !== null
-  ) {
-    return err(mutationUnsupported("payload-unsafe"));
-  }
-
-  active.add(value);
-  const copied = isArray
-    ? copyPayloadArray(value, active, budget, depth)
-    : copyPayloadRecord(value, active, budget, depth);
-  active.delete(value);
-  return copied;
-}
-
-const copyBoundedPayloadGraph = Result.fromThrowable(
-  (value: unknown) =>
-    copyPayloadGraph(
-      value,
-      new WeakSet<object>(),
-      { nodes: 0, properties: 0 },
-      0,
-    ),
+/**
+ * Shallow own-property copy that keeps every unrelated value by reference.
+ * Descriptors are read, never invoked, so a getter on an unrelated field is
+ * carried through untouched rather than executed or rejected.
+ */
+const copyOwnProperties = Result.fromThrowable(
+  (payload: object): PayloadRecord => {
+    const copy = Object.create(
+      Object.getPrototypeOf(payload) as object | null,
+    ) as PayloadRecord;
+    Object.defineProperties(copy, Object.getOwnPropertyDescriptors(payload));
+    return copy;
+  },
   () => mutationUnsupported("payload-unsafe"),
 );
 
-function copyPayloadObject(
+const readOwnPayloadField = Result.fromThrowable(
+  (payload: object, fieldName: string) =>
+    Object.getOwnPropertyDescriptor(payload, fieldName),
+  () => mutationUnsupported("payload-unsafe"),
+);
+
+const definePayloadField = Result.fromThrowable(
+  (target: PayloadRecord, key: string, value: string): void => {
+    Object.defineProperty(target, key, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  },
+  () => mutationUnsupported("payload-unsafe"),
+);
+
+/**
+ * Validate only the payload container and the one adapter-owned field.
+ *
+ * An exact existing value is preserved by returning the caller's own
+ * reference, so nothing is rewritten. A missing field produces one shallow
+ * copy with that single field added; nested objects, arrays, and large
+ * strings keep their identity. Any other state fails closed without a write.
+ */
+function applyExactPayloadField(
   payload: unknown,
-): Result<CopiedPayloadRecord, ProviderFastMutationUnsupported> {
+  fieldName: string,
+  requiredValue: string,
+): Result<unknown, ProviderFastMutationUnsupported> {
   if (typeof payload === "function") {
     return err(mutationUnsupported("payload-unsafe"));
   }
@@ -673,43 +571,38 @@ function copyPayloadObject(
   ) {
     return err(mutationUnsupported("payload-malformed"));
   }
-  return copyBoundedPayloadGraph(payload).andThen((copied) => {
-    if (copied.isErr()) {
-      return err(copied.error);
+  const prototype = Object.getPrototypeOf(payload);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return err(mutationUnsupported("payload-unsafe"));
+  }
+
+  const existing = readOwnPayloadField(payload, fieldName);
+  if (existing.isErr()) {
+    return err(existing.error);
+  }
+  const descriptor = existing.value;
+  if (descriptor !== undefined) {
+    if (!("value" in descriptor)) {
+      return err(mutationUnsupported("payload-unsafe"));
     }
-    if (
-      copied.value === null ||
-      typeof copied.value !== "object" ||
-      Array.isArray(copied.value)
-    ) {
+    if (typeof descriptor.value !== "string") {
       return err(mutationUnsupported("payload-malformed"));
     }
-    return ok(copied.value as CopiedPayloadRecord);
-  });
-}
+    if (descriptor.value !== requiredValue) {
+      return err(mutationUnsupported("request-collision"));
+    }
+    return ok(payload);
+  }
 
-function applyExactPayloadField(
-  payload: unknown,
-  fieldName: string,
-  requiredValue: string,
-): Result<CopiedPayloadRecord, ProviderFastMutationUnsupported> {
-  const copied = copyPayloadObject(payload);
+  const copied = copyOwnProperties(payload);
   if (copied.isErr()) {
     return err(copied.error);
   }
-  const record = copied.value;
-  const existing = Object.getOwnPropertyDescriptor(record, fieldName);
-  if (existing === undefined) {
-    defineOwn(record, fieldName, requiredValue);
-    return ok(record);
+  const written = definePayloadField(copied.value, fieldName, requiredValue);
+  if (written.isErr()) {
+    return err(written.error);
   }
-  if (!("value" in existing) || typeof existing.value !== "string") {
-    return err(mutationUnsupported("payload-malformed"));
-  }
-  if (existing.value !== requiredValue) {
-    return err(mutationUnsupported("request-collision"));
-  }
-  return ok(record);
+  return ok(copied.value);
 }
 
 /**
@@ -758,48 +651,29 @@ function isCredentialHeaderName(name: string): boolean {
   return CREDENTIAL_HEADER_NAMES.has(name.toLowerCase());
 }
 
-function snapshotHeaderMap(
-  headers: unknown,
-): Result<HeaderSnapshot, ProviderFastMutationUnsupported> {
-  if (
-    headers === null ||
-    typeof headers !== "object" ||
-    Array.isArray(headers)
-  ) {
-    return err(mutationUnsupported("header-malformed"));
-  }
-  if (typeof headers === "function") {
-    return err(mutationUnsupported("header-unsafe"));
-  }
-  if (!Object.isExtensible(headers) || Object.isFrozen(headers)) {
-    return err(mutationUnsupported("header-unsafe"));
-  }
-
-  const prototype = Object.getPrototypeOf(headers);
-  if (prototype !== Object.prototype && prototype !== null) {
-    return err(mutationUnsupported("header-unsafe"));
-  }
-
-  const ownKeys = Reflect.ownKeys(headers);
-  if (ownKeys.length > PROVIDER_FAST_HEADER_MAX_COUNT) {
-    return err(mutationUnsupported("header-malformed"));
-  }
-
-  const seenLower = new Set<string>();
-  const entries: HeaderEntry[] = [];
-  for (const key of ownKeys) {
-    if (typeof key === "symbol") {
-      return err(mutationUnsupported("header-unsafe"));
+/**
+ * Locate the adapter-owned `anthropic-beta` header without reading any other
+ * header value. Unrelated names, values, deletions (`null`), and sizes stay
+ * untouched; only a case-insensitive duplicate of the owned name is ambiguous
+ * enough to fail closed.
+ */
+function findBetaHeaderEntry(
+  headers: object,
+): Result<HeaderEntry | undefined, ProviderFastMutationUnsupported> {
+  let found: HeaderEntry | undefined;
+  for (const key of Reflect.ownKeys(headers)) {
+    if (typeof key !== "string") {
+      continue;
     }
-    if (key.length === 0 || key.length > PROVIDER_FAST_HEADER_MAX_NAME_LENGTH) {
-      return err(mutationUnsupported("header-malformed"));
+    if (key.toLowerCase() !== ANTHROPIC_BETA_HEADER_LOWER) {
+      continue;
     }
-    const lower = key.toLowerCase();
-    if (seenLower.has(lower)) {
+    if (found !== undefined) {
       return err(mutationUnsupported("header-duplicate"));
     }
-    seenLower.add(lower);
-
+    if (key.length > PROVIDER_FAST_HEADER_MAX_NAME_LENGTH) {
+      return err(mutationUnsupported("header-malformed"));
+    }
     const descriptor = Object.getOwnPropertyDescriptor(headers, key);
     if (
       descriptor === undefined ||
@@ -813,46 +687,19 @@ function snapshotHeaderMap(
     if (typeof descriptor.value !== "string") {
       return err(mutationUnsupported("header-malformed"));
     }
-    if (descriptor.value.length > PROVIDER_FAST_HEADER_MAX_VALUE_LENGTH) {
-      return err(mutationUnsupported("header-malformed"));
-    }
-    entries.push({ name: key, value: descriptor.value });
+    found = { name: key, value: descriptor.value };
   }
-
-  return ok({ entries });
+  return ok(found);
 }
 
-function parseBetaTokens(
-  value: string,
-): Result<readonly string[], ProviderFastMutationUnsupported> {
-  if (value.length === 0) {
-    return err(mutationUnsupported("header-malformed"));
-  }
-  const rawTokens = value.split(",");
-  if (rawTokens.length > PROVIDER_FAST_HEADER_MAX_BETA_TOKENS) {
-    return err(mutationUnsupported("header-malformed"));
-  }
-  const tokens: string[] = [];
-  for (const rawToken of rawTokens) {
-    const token = rawToken.trim();
-    if (
-      token.length === 0 ||
-      token.length > PROVIDER_FAST_HEADER_MAX_BETA_TOKEN_LENGTH ||
-      !BETA_TOKEN_PATTERN.test(token)
-    ) {
-      return err(mutationUnsupported("header-malformed"));
-    }
-    if (
-      token.startsWith(ANTHROPIC_FAST_BETA_PREFIX) &&
-      token !== PROVIDER_FAST_ANTHROPIC_BETA_TOKEN
-    ) {
-      return err(mutationUnsupported("request-collision"));
-    }
-    tokens.push(token);
-  }
-  return ok(tokens);
-}
-
+/**
+ * Resolve the one planned header edit.
+ *
+ * The beta header carries an exact provider contract value, so it is either
+ * absent (write ours), exactly ours (preserve), or owned by someone else
+ * (collision). Weave never appends to, rewrites, or partially edits another
+ * extension's beta value.
+ */
 function resolveAnthropicHeaderPlan(
   classification: ProviderFastActivationClassification,
   headers: unknown,
@@ -864,45 +711,43 @@ function resolveAnthropicHeaderPlan(
     return ok({ kind: "none" });
   }
 
-  const snapshot = snapshotHeaderMap(headers);
-  if (snapshot.isErr()) {
-    return err(snapshot.error);
+  if (typeof headers === "function") {
+    return err(mutationUnsupported("header-unsafe"));
+  }
+  if (
+    headers === null ||
+    typeof headers !== "object" ||
+    Array.isArray(headers)
+  ) {
+    return err(mutationUnsupported("header-malformed"));
+  }
+  const prototype = Object.getPrototypeOf(headers);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return err(mutationUnsupported("header-unsafe"));
+  }
+  if (!Object.isExtensible(headers) || Object.isFrozen(headers)) {
+    return err(mutationUnsupported("header-unsafe"));
   }
 
-  let betaEntry: HeaderEntry | undefined;
-  for (const entry of snapshot.value.entries) {
-    if (entry.name.toLowerCase() === ANTHROPIC_BETA_HEADER_LOWER) {
-      betaEntry = entry;
-      break;
-    }
+  const betaEntry = findBetaHeaderEntry(headers);
+  if (betaEntry.isErr()) {
+    return err(betaEntry.error);
   }
-
-  if (betaEntry === undefined) {
+  const entry = betaEntry.value;
+  if (entry === undefined) {
     return ok({
       kind: "write",
       name: PROVIDER_FAST_ANTHROPIC_BETA_HEADER,
       value: PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
     });
   }
-  if (isCredentialHeaderName(betaEntry.name)) {
+  if (isCredentialHeaderName(entry.name)) {
     return err(mutationUnsupported("header-unsafe"));
   }
-
-  const tokens = parseBetaTokens(betaEntry.value);
-  if (tokens.isErr()) {
-    return err(tokens.error);
-  }
-  if (tokens.value.includes(PROVIDER_FAST_ANTHROPIC_BETA_TOKEN)) {
+  if (entry.value === PROVIDER_FAST_ANTHROPIC_BETA_TOKEN) {
     return ok({ kind: "preserve" });
   }
-  if (tokens.value.length + 1 > PROVIDER_FAST_HEADER_MAX_BETA_TOKENS) {
-    return err(mutationUnsupported("header-malformed"));
-  }
-  return ok({
-    kind: "write",
-    name: betaEntry.name,
-    value: `${betaEntry.value}, ${PROVIDER_FAST_ANTHROPIC_BETA_TOKEN}`,
-  });
+  return err(mutationUnsupported("request-collision"));
 }
 
 const inspectHeaderPlan = Result.fromThrowable(
@@ -945,14 +790,28 @@ const writeHeaderValue = Result.fromThrowable(
   () => mutationUnsupported("header-unsafe"),
 );
 
+const deleteHeaderValue = Result.fromThrowable(
+  (headers: object, name: string): boolean =>
+    Reflect.deleteProperty(headers, name),
+  () => mutationUnsupported("header-unsafe"),
+);
+
+/** What the adapter actually did to the caller's header map. */
+export type ProviderFastHeaderWrite =
+  | { readonly action: "none" }
+  | { readonly action: "preserve" }
+  | { readonly action: "write"; readonly name: string };
+
 /**
  * Atomically apply a planned Anthropic beta-header write. On any failure the
- * original map is left untouched. Credential headers are never written.
+ * original map is left untouched. Credential headers are never written. The
+ * result names the adapter-owned edit so the caller can roll back exactly
+ * that one write and nothing else.
  */
 export function applyAnthropicProviderFastHeaders(
   classification: ProviderFastActivationClassification,
   headers: object,
-): Result<object, ProviderFastMutationUnsupported> {
+): Result<ProviderFastHeaderWrite, ProviderFastMutationUnsupported> {
   const planned = inspectHeaderPlan(classification, headers);
   if (planned.isErr()) {
     return err(planned.error);
@@ -961,21 +820,56 @@ export function applyAnthropicProviderFastHeaders(
   if (resolved.isErr()) {
     return err(resolved.error);
   }
-  if (resolved.value.kind !== "write") {
-    return ok(headers);
+  if (resolved.value.kind === "none") {
+    return ok({ action: "none" });
+  }
+  if (resolved.value.kind === "preserve") {
+    return ok({ action: "preserve" });
   }
   if (isCredentialHeaderName(resolved.value.name)) {
     return err(mutationUnsupported("header-unsafe"));
   }
-  const written = writeHeaderValue(
-    headers,
-    resolved.value.name,
-    resolved.value.value,
-  );
+  const name = resolved.value.name;
+  const written = writeHeaderValue(headers, name, resolved.value.value);
   if (written.isErr()) {
     return err(written.error);
   }
-  return ok(headers);
+  return ok({ action: "write", name });
+}
+
+/**
+ * Undo one adapter-owned beta-header write. The header is removed only while
+ * it still holds the exact value this adapter wrote, so a later extension's
+ * edit is never reverted and no unrelated header is touched.
+ */
+export function revertAnthropicProviderFastHeaderWrite(
+  headers: object,
+  write: ProviderFastHeaderWrite,
+): Result<"reverted" | "unchanged", ProviderFastMutationUnsupported> {
+  if (write.action !== "write") {
+    return ok("unchanged");
+  }
+  const current = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(headers, write.name),
+    () => mutationUnsupported("header-unsafe"),
+  )();
+  if (current.isErr()) {
+    return err(current.error);
+  }
+  const descriptor = current.value;
+  if (
+    descriptor === undefined ||
+    !("value" in descriptor) ||
+    descriptor.value !== PROVIDER_FAST_ANTHROPIC_BETA_TOKEN ||
+    descriptor.configurable !== true
+  ) {
+    return ok("unchanged");
+  }
+  const deleted = deleteHeaderValue(headers, write.name);
+  if (deleted.isErr()) {
+    return err(deleted.error);
+  }
+  return deleted.value ? ok("reverted") : ok("unchanged");
 }
 
 type InternalAttemptLifecycle = "declared" | "requested";
@@ -1090,14 +984,12 @@ function inspectExpireReason(
   reason: unknown,
 ): Result<ProviderFastAttemptExpireReason, ProviderFastAttemptError> {
   if (
-    reason === "cancelled" ||
-    reason === "expired" ||
-    reason === "generation-superseded" ||
-    reason === "reset" ||
-    reason === "session-replaced" ||
-    reason === "primary-switched"
+    typeof reason === "string" &&
+    PROVIDER_FAST_ATTEMPT_EXPIRE_REASONS.includes(
+      reason as ProviderFastAttemptExpireReason,
+    )
   ) {
-    return ok(reason);
+    return ok(reason as ProviderFastAttemptExpireReason);
   }
   return err(attemptError("InvalidAttemptInput", "invalid-input"));
 }
@@ -1401,6 +1293,43 @@ export class ProviderFastAttemptTracker {
     return ok(this.snapshotFromRecord(record, "requested"));
   }
 
+  /**
+   * Settle a pending attempt that cannot carry fast controls after all, such
+   * as a payload collision discovered at request time. The typed mutation
+   * reason survives as the attempt's terminal outcome instead of collapsing
+   * into a generic ordering failure.
+   */
+  markUnsupported(
+    token: ProviderFastAttemptToken,
+    reason: ProviderFastMutationReason,
+  ): Result<ProviderFastAttemptPublicSnapshot, ProviderFastAttemptError> {
+    if (
+      typeof reason !== "string" ||
+      !PROVIDER_FAST_MUTATION_REASONS.includes(reason)
+    ) {
+      return err(attemptError("InvalidAttemptInput", "invalid-input"));
+    }
+    const recordResult = this.requirePending(token);
+    if (recordResult.isErr()) {
+      return err(recordResult.error);
+    }
+    const record = recordResult.value;
+    this.pending.delete(record.sequence);
+    return ok(
+      this.publicSnapshot({
+        sequence: record.sequence,
+        providerFamily: "none",
+        apiFamily: record.apiFamily,
+        allowlistRuleId: "none",
+        collision: isCollisionReason(reason),
+        state: "unsupported",
+        evidenceKind: "none",
+        evidenceOutcome: "none",
+        reason,
+      }),
+    );
+  }
+
   observeResponse(
     token: ProviderFastAttemptToken,
     observation: { readonly status: number },
@@ -1558,15 +1487,21 @@ export const PROVIDER_FAST_HOST_API_TABLE = Object.freeze({
 
 export type ProviderFastHostApi = keyof typeof PROVIDER_FAST_HOST_API_TABLE;
 
+/**
+ * One request-scoped view of the live execution: the committed intent owner
+ * plus the model the harness reports for *this* hook. The model is never read
+ * from activation-time state, so a `/model` change cannot be mutated under a
+ * stale allowlist decision.
+ */
 export type ProviderFastCoordinatorSnapshot = {
   readonly generation: number;
   readonly primaryName: string;
-  readonly selectedModel?:
+  readonly liveModel?:
     | {
         readonly provider: string;
         readonly id: string;
-        readonly name?: string;
         readonly api?: string;
+        readonly baseUrl?: string;
       }
     | undefined;
   readonly fast?: true;
@@ -1593,10 +1528,20 @@ export type ProviderFastCoordinatorHeadersResult =
       readonly snapshot: ProviderFastAttemptPublicSnapshot;
     };
 
-export type ProviderFastCoordinatorRequestResult = {
-  readonly payload: unknown;
-  readonly snapshot: ProviderFastAttemptPublicSnapshot;
-};
+export type ProviderFastCoordinatorRequestResult =
+  | {
+      readonly kind: "applied";
+      readonly payload: unknown;
+      readonly snapshot: ProviderFastAttemptPublicSnapshot;
+    }
+  | {
+      readonly kind: "unsupported";
+      readonly snapshot: ProviderFastAttemptPublicSnapshot;
+    }
+  | {
+      readonly kind: "settled";
+      readonly snapshot: ProviderFastAttemptPublicSnapshot;
+    };
 
 export type ProviderFastCoordinatorCancelResult =
   | {
@@ -1610,6 +1555,10 @@ export type ProviderFastCoordinatorCancelResult =
 type ActiveCoordinatorAttempt = {
   readonly token: ProviderFastAttemptToken;
   readonly snapshot: ProviderFastCoordinatorSnapshot;
+  readonly headerWrite?: {
+    readonly headers: object;
+    readonly write: ProviderFastHeaderWrite;
+  };
 };
 
 const EMPTY_COORDINATOR_SNAPSHOT: ProviderFastAttemptPublicSnapshot =
@@ -1668,8 +1617,8 @@ function copyCoordinatorSnapshot(
     return err(attemptError("InvalidAttemptInput", "invalid-input"));
   }
 
-  const selectedModel = Object.hasOwn(snapshot, "selectedModel")
-    ? Reflect.get(snapshot, "selectedModel")
+  const selectedModel = Object.hasOwn(snapshot, "liveModel")
+    ? Reflect.get(snapshot, "liveModel")
     : undefined;
   if (selectedModel === undefined) {
     return ok(
@@ -1695,27 +1644,27 @@ function copyCoordinatorSnapshot(
   if (typeof id !== "string" || id.length === 0) {
     return err(attemptError("InvalidAttemptInput", "invalid-input"));
   }
-  const name = Object.hasOwn(selectedModel, "name")
-    ? Reflect.get(selectedModel, "name")
-    : undefined;
-  if (name !== undefined && typeof name !== "string") {
-    return err(attemptError("InvalidAttemptInput", "invalid-input"));
-  }
   const api = Object.hasOwn(selectedModel, "api")
     ? Reflect.get(selectedModel, "api")
     : undefined;
   if (api !== undefined && typeof api !== "string") {
     return err(attemptError("InvalidAttemptInput", "invalid-input"));
   }
+  const baseUrl = Object.hasOwn(selectedModel, "baseUrl")
+    ? Reflect.get(selectedModel, "baseUrl")
+    : undefined;
+  if (baseUrl !== undefined && typeof baseUrl !== "string") {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
   return ok(
     Object.freeze({
       generation,
       primaryName,
-      selectedModel: Object.freeze({
+      liveModel: Object.freeze({
         provider,
         id,
-        ...(name === undefined ? {} : { name }),
         ...(api === undefined ? {} : { api }),
+        ...(baseUrl === undefined ? {} : { baseUrl }),
       }),
       ...(fast === true ? { fast: true as const } : {}),
     }),
@@ -1739,17 +1688,34 @@ function coordinatorSnapshotsMatch(
   ) {
     return false;
   }
-  const leftModel = left.selectedModel;
-  const rightModel = right.selectedModel;
+  const leftModel = left.liveModel;
+  const rightModel = right.liveModel;
   if (leftModel === undefined || rightModel === undefined) {
     return leftModel === rightModel;
   }
   return (
     leftModel.provider === rightModel.provider &&
     leftModel.id === rightModel.id &&
-    leftModel.name === rightModel.name &&
-    leftModel.api === rightModel.api
+    leftModel.api === rightModel.api &&
+    leftModel.baseUrl === rightModel.baseUrl
   );
+}
+
+/**
+ * Name why a live snapshot no longer describes the pending attempt, so the
+ * settled record keeps a fixed cause instead of a generic ordering failure.
+ */
+function snapshotMismatchReason(
+  live: ProviderFastCoordinatorSnapshot,
+  active: ProviderFastCoordinatorSnapshot,
+): ProviderFastAttemptExpireReason {
+  if (live.generation !== active.generation) {
+    return "generation-superseded";
+  }
+  if (live.primaryName !== active.primaryName) {
+    return "primary-switched";
+  }
+  return "model-switched";
 }
 
 function classifyCoordinatorSnapshot(
@@ -1758,16 +1724,17 @@ function classifyCoordinatorSnapshot(
   if (snapshot.fast !== true) {
     return ok(NO_INTENT);
   }
-  const selectedModel = snapshot.selectedModel;
-  const apiFamily = mapHostApiFamily(selectedModel?.api);
+  const liveModel = snapshot.liveModel;
+  const apiFamily = mapHostApiFamily(liveModel?.api);
   if (apiFamily === "none") {
     return err(unsupported("endpoint-not-allowed"));
   }
   return classifyProviderFastActivation({
     fast: true,
-    provider: selectedModel?.provider ?? "",
+    provider: liveModel?.provider ?? "",
     apiFamily,
-    model: selectedModel?.id ?? "",
+    model: liveModel?.id ?? "",
+    baseUrl: liveModel?.baseUrl ?? "",
   });
 }
 
@@ -1786,15 +1753,12 @@ function toTrackerSnapshot(
   return {
     generation: snapshot.generation,
     primaryName: snapshot.primaryName,
-    ...(snapshot.selectedModel === undefined
+    ...(snapshot.liveModel === undefined
       ? {}
       : {
           selectedModel: {
-            provider: snapshot.selectedModel.provider,
-            id: snapshot.selectedModel.id,
-            ...(snapshot.selectedModel.name === undefined
-              ? {}
-              : { name: snapshot.selectedModel.name }),
+            provider: snapshot.liveModel.provider,
+            id: snapshot.liveModel.id,
           },
         }),
     ...(snapshot.fast === true ? { fast: true as const } : {}),
@@ -1804,7 +1768,7 @@ function toTrackerSnapshot(
 function applyCoordinatorHeaders(
   classification: ProviderFastActivationClassification,
   headers: object,
-): Result<object, ProviderFastMutationUnsupported> {
+): Result<ProviderFastHeaderWrite, ProviderFastMutationUnsupported> {
   return applyAnthropicProviderFastHeaders(classification, headers);
 }
 
@@ -1877,7 +1841,7 @@ export class ProviderFastCoordinator {
     );
     const begun = this.tracker.begin({
       snapshot: toTrackerSnapshot(copied),
-      apiFamily: mapHostApiFamily(copied.selectedModel?.api),
+      apiFamily: mapHostApiFamily(copied.liveModel?.api),
       classification: trackerClassification,
     });
     if (begun.isErr()) {
@@ -1898,6 +1862,9 @@ export class ProviderFastCoordinator {
     this.active = {
       token: begun.value.token,
       snapshot: copied,
+      ...(headerResult.isOk() && headerResult.value.action === "write"
+        ? { headerWrite: { headers, write: headerResult.value } }
+        : {}),
     };
     this.latestSnapshot = begun.value.snapshot;
     return ok(
@@ -1937,7 +1904,7 @@ export class ProviderFastCoordinator {
     const classification = classificationFromResult(classified);
     const begun = this.tracker.begin({
       snapshot: toTrackerSnapshot(copied),
-      apiFamily: mapHostApiFamily(copied.selectedModel?.api),
+      apiFamily: mapHostApiFamily(copied.liveModel?.api),
       classification: beginClassificationForTracker(classification),
     });
     if (begun.isErr()) {
@@ -2005,28 +1972,38 @@ export class ProviderFastCoordinator {
           : attemptError("StaleAttemptToken", "stale-token"),
       );
     }
+    // The live state moved on between the two hooks. Settle this attempt
+    // with the exact reason instead of losing it to a generic ordering
+    // failure, and undo the adapter's own header edit for a request that
+    // will never carry the matching payload control.
     if (!coordinatorSnapshotsMatch(copied, active.snapshot)) {
-      let expireReason: ProviderFastAttemptExpireReason | undefined;
-      if (copied.generation !== active.snapshot.generation) {
-        expireReason = "generation-superseded";
-      } else if (copied.primaryName !== active.snapshot.primaryName) {
-        expireReason = "primary-switched";
+      const expireReason = snapshotMismatchReason(copied, active.snapshot);
+      const expired = this.tracker.expire(active.token, expireReason);
+      this.rollbackHeaderWrite(active);
+      this.active = undefined;
+      if (expired.isErr()) {
+        return this.failClosed(expired.error);
       }
-      if (expireReason !== undefined) {
-        this.tracker.expire(active.token, expireReason);
-      }
-      return this.failClosed(
-        coordinatorError("AmbiguousFastAttempt", "out-of-order"),
-      );
+      this.latestSnapshot = expired.value;
+      return ok(Object.freeze({ kind: "settled", snapshot: expired.value }));
     }
 
     const classified = classifyCoordinatorSnapshot(copied);
     const classification = classificationFromResult(classified);
     const mutated = applyCoordinatorPayload(classification, payload);
     if (mutated.isErr()) {
-      this.tracker.expire(active.token, "cancelled");
-      return this.failClosed(
-        coordinatorError("AmbiguousFastAttempt", "out-of-order"),
+      const settled = this.tracker.markUnsupported(
+        active.token,
+        mutated.error.reason,
+      );
+      this.rollbackHeaderWrite(active);
+      this.active = undefined;
+      if (settled.isErr()) {
+        return this.failClosed(settled.error);
+      }
+      this.latestSnapshot = settled.value;
+      return ok(
+        Object.freeze({ kind: "unsupported", snapshot: settled.value }),
       );
     }
     const requested = this.tracker.markRequested(active.token);
@@ -2036,10 +2013,24 @@ export class ProviderFastCoordinator {
     this.latestSnapshot = requested.value;
     return ok(
       Object.freeze({
+        kind: "applied",
         payload: mutated.value,
         snapshot: requested.value,
       }),
     );
+  }
+
+  /**
+   * Undo only this adapter's own beta-header write. Payload and headers are
+   * separate Pi hooks, so a failed payload edit must not leave a fast beta
+   * header on a request that carries no fast field.
+   */
+  private rollbackHeaderWrite(active: ActiveCoordinatorAttempt): void {
+    const owned = active.headerWrite;
+    if (owned === undefined) {
+      return;
+    }
+    void revertAnthropicProviderFastHeaderWrite(owned.headers, owned.write);
   }
 
   observeResponse(

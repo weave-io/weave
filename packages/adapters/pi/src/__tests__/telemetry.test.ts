@@ -15,6 +15,7 @@ import {
   createPiTelemetryLogger,
   extractAssistantUsageFromMessage,
   PI_JOURNAL_FAMILIES,
+  PI_PROVIDER_FAST_DEDUPE_LIMIT,
   PI_PROVIDER_FAST_JOURNAL_DATA_KEYS,
   type PiJournalPort,
   type PiProviderFastJournalData,
@@ -740,7 +741,7 @@ describe("PiTelemetry — provider-fast journal family", () => {
     expect(entries).toHaveLength(0);
   });
 
-  it("records each lifecycle state once and deduplicates repeats", async () => {
+  it("persists only terminal outcomes and deduplicates repeats", async () => {
     const store = createInMemoryRuntimeStore();
     const telemetry = buildTelemetry({
       journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
@@ -750,7 +751,7 @@ describe("PiTelemetry — provider-fast journal family", () => {
       state: "requested",
       pendingCount: 1,
     });
-    const confirmed = providerFastSnapshot({
+    const notConfirmed = providerFastSnapshot({
       state: "not-confirmed",
       pendingCount: 0,
       evidenceKind: "response-status",
@@ -767,16 +768,16 @@ describe("PiTelemetry — provider-fast journal family", () => {
     });
     expect(
       expectOkValue(await telemetry.recordProviderFastTransition(declared)),
-    ).toBe("recorded");
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(declared)),
-    ).toBe("duplicate");
+    ).toBe("transient");
     expect(
       expectOkValue(await telemetry.recordProviderFastTransition(requested)),
+    ).toBe("transient");
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(notConfirmed)),
     ).toBe("recorded");
     expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(confirmed)),
-    ).toBe("recorded");
+      expectOkValue(await telemetry.recordProviderFastTransition(notConfirmed)),
+    ).toBe("duplicate");
     expect(
       expectOkValue(await telemetry.recordProviderFastTransition(unsupported)),
     ).toBe("recorded");
@@ -785,36 +786,10 @@ describe("PiTelemetry — provider-fast journal family", () => {
       .filter((entry) => entry.eventType.startsWith("provider-fast."))
       .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
     expect(entries.map((entry) => entry.eventType)).toEqual([
-      "provider-fast.declared",
-      "provider-fast.requested",
       "provider-fast.not-confirmed",
       "provider-fast.unsupported",
     ]);
     expectExactJournalData(entries[0]?.data, {
-      providerFamily: "openai",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "openai-gpt-5-6-sol",
-      sequence: 1,
-      pendingCount: 1,
-      collision: false,
-      state: "declared",
-      evidenceKind: "none",
-      evidenceOutcome: "none",
-      reason: "none",
-    });
-    expectExactJournalData(entries[1]?.data, {
-      providerFamily: "openai",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "openai-gpt-5-6-sol",
-      sequence: 1,
-      pendingCount: 1,
-      collision: false,
-      state: "requested",
-      evidenceKind: "none",
-      evidenceOutcome: "none",
-      reason: "none",
-    });
-    expectExactJournalData(entries[2]?.data, {
       providerFamily: "openai",
       apiFamily: "openai-responses",
       allowlistRuleId: "openai-gpt-5-6-sol",
@@ -826,7 +801,7 @@ describe("PiTelemetry — provider-fast journal family", () => {
       evidenceOutcome: "unavailable",
       reason: "response-body-evidence-unavailable",
     });
-    expectExactJournalData(entries[3]?.data, {
+    expectExactJournalData(entries[1]?.data, {
       providerFamily: "none",
       apiFamily: "openai-responses",
       allowlistRuleId: "none",
@@ -856,7 +831,7 @@ describe("PiTelemetry — provider-fast journal family", () => {
     });
     expect(
       expectOkValue(await telemetry.recordProviderFastTransition(requested)),
-    ).toBe("recorded");
+    ).toBe("transient");
     expect(
       expectOkValue(await telemetry.recordProviderFastTransition(cancelled)),
     ).toBe("recorded");
@@ -868,10 +843,9 @@ describe("PiTelemetry — provider-fast journal family", () => {
       .filter((entry) => entry.eventType.startsWith("provider-fast."))
       .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
     expect(entries.map((entry) => entry.eventType)).toEqual([
-      "provider-fast.requested",
       "provider-fast.not-confirmed",
     ]);
-    expectExactJournalData(entries[1]?.data, {
+    expectExactJournalData(entries[0]?.data, {
       providerFamily: "openai",
       apiFamily: "openai-responses",
       allowlistRuleId: "openai-gpt-5-6-sol",
@@ -890,8 +864,16 @@ describe("PiTelemetry — provider-fast journal family", () => {
     const telemetry = buildTelemetry({
       journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
     });
-    const first = providerFastSnapshot({ sequence: 1, state: "requested" });
-    const retry = providerFastSnapshot({ sequence: 2, state: "requested" });
+    const first = providerFastSnapshot({
+      sequence: 1,
+      state: "not-confirmed",
+      reason: "expired",
+    });
+    const retry = providerFastSnapshot({
+      sequence: 2,
+      state: "not-confirmed",
+      reason: "response-body-evidence-unavailable",
+    });
     expect(
       expectOkValue(await telemetry.recordProviderFastTransition(first)),
     ).toBe("recorded");
@@ -905,6 +887,43 @@ describe("PiTelemetry — provider-fast journal family", () => {
     expect(entries.map((entry) => entry.data.sequence)).toEqual([1, 2]);
   });
 
+  it("bounds the in-memory dedupe window instead of growing per attempt", async () => {
+    const store = createInMemoryRuntimeStore();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+    });
+    const oldest = providerFastSnapshot({
+      sequence: 1,
+      state: "not-confirmed",
+      reason: "cancelled",
+    });
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(oldest)),
+    ).toBe("recorded");
+    for (
+      let sequence = 2;
+      sequence <= PI_PROVIDER_FAST_DEDUPE_LIMIT + 1;
+      sequence += 1
+    ) {
+      expect(
+        expectOkValue(
+          await telemetry.recordProviderFastTransition(
+            providerFastSnapshot({
+              sequence,
+              state: "not-confirmed",
+              reason: "cancelled",
+            }),
+          ),
+        ),
+      ).toBe("recorded");
+    }
+    // The oldest key was evicted, so its repeat is recorded again rather
+    // than retained forever in memory.
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(oldest)),
+    ).toBe("recorded");
+  });
+
   it("degrades through the typed journal path when persistence fails", async () => {
     const failingJournal: PiJournalPort = {
       write: () =>
@@ -915,7 +934,7 @@ describe("PiTelemetry — provider-fast journal family", () => {
     };
     const telemetry = buildTelemetry({ journal: failingJournal });
     const result = await telemetry.recordProviderFastTransition(
-      providerFastSnapshot(),
+      providerFastSnapshot({ state: "not-confirmed", reason: "cancelled" }),
     );
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
@@ -1013,7 +1032,10 @@ describe("PiTelemetry — provider-fast journal family", () => {
     const telemetry = buildTelemetry({
       journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
     });
-    const snapshot = providerFastSnapshot();
+    const snapshot = providerFastSnapshot({
+      state: "not-confirmed",
+      reason: "cancelled",
+    });
     expect(
       expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
     ).toBe("recorded");
@@ -1029,7 +1051,9 @@ describe("PiTelemetry — provider-fast journal family", () => {
     );
     expect(entries).toHaveLength(2);
     expect(
-      entries.every((entry) => entry.eventType === "provider-fast.declared"),
+      entries.every(
+        (entry) => entry.eventType === "provider-fast.not-confirmed",
+      ),
     ).toBe(true);
   });
 
