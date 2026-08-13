@@ -10,18 +10,21 @@ describe("Pi adapter capability contract", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("declares provider-fast-activation as degraded request-capable, not applied or native", () => {
+  it("declares provider-fast-activation as unsupported, never requested or applied", () => {
     const capability = PI_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
       (entry) => entry.id === "provider-fast-activation",
     );
     const serialized = JSON.stringify(capability);
 
-    expect(capability?.readiness).toBe("degraded");
-    expect(capability?.runtimeStatus).toBe("not-confirmed");
-    expect(capability?.notes).toContain("request");
-    expect(capability?.notes).toContain("response-body proof");
-    expect(capability?.notes).toContain("cannot claim applied or native");
+    expect(capability?.readiness).toBe("unsupported");
+    expect(capability?.runtimeStatus).toBe("unsupported");
+    expect(capability?.notes).toContain("sends no acceleration control");
+    expect(capability?.notes).toContain("unchanged");
     expect(capability?.readiness).not.toBe("native");
+    expect(capability?.readiness).not.toBe("degraded");
+    expect(serialized).not.toContain("applied");
+    expect(serialized).not.toContain("requested");
+    expect(serialized).not.toContain("not-confirmed");
     expect(serialized).not.toContain("service_tier");
     expect(serialized).not.toContain("anthropic-beta");
     expect(serialized).not.toContain("Authorization");

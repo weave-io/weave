@@ -375,17 +375,6 @@ export class RecordingFakePiHost {
   private getAvailableModelsOverride:
     | (() => readonly PiModelInfo[])
     | undefined;
-  /**
-   * Stands in for `ctx.modelRegistry.getProviderAuth(provider)`. The default
-   * mirrors an ordinary first-party provider: auth resolution supplies no
-   * base URL, so Pi keeps the declared model URL. Tests override it to model
-   * an auth-resolved gateway, an unconfigured provider, or a host that does
-   * not expose the seam at all.
-   */
-  private getProviderAuthOverride:
-    | ((provider: string) => Promise<unknown>)
-    | undefined;
-  private providerAuthSeamAvailable = true;
   private sendMessageOverride:
     | ((
         message: RecordedSendMessage["message"],
@@ -608,20 +597,6 @@ export class RecordingFakePiHost {
     return this.currentModel;
   }
 
-  /**
-   * Replaces the resolved provider auth for every later provider hook. The
-   * value stands in for one `AuthResult`; only its `auth.baseUrl` is ever
-   * read by production code.
-   */
-  setProviderAuth(resolve: (provider: string) => Promise<unknown>): void {
-    this.getProviderAuthOverride = resolve;
-  }
-
-  /** Models a host whose model registry does not expose the auth seam. */
-  removeProviderAuthSeam(): void {
-    this.providerAuthSeamAvailable = false;
-  }
-
   /** Makes the next `modelRegistry.getAvailable()` call throw. */
   poisonGetAvailableModels(): void {
     this.getAvailableModelsOverride = () => {
@@ -774,16 +749,6 @@ export class RecordingFakePiHost {
         }
         return this.availableModels;
       },
-      ...(this.providerAuthSeamAvailable
-        ? {
-            getProviderAuth: async (provider: string): Promise<unknown> => {
-              if (this.getProviderAuthOverride !== undefined) {
-                return await this.getProviderAuthOverride(provider);
-              }
-              return { auth: { apiKey: "sk-proj-fake" } };
-            },
-          }
-        : {}),
     };
     const builtUi: PiUiPort = {
       ...(this.theme === undefined ? {} : { theme: this.theme }),
@@ -938,6 +903,11 @@ export class RecordingFakePiHost {
 
   setPendingMessages(pending: boolean): void {
     this.pendingMessages = pending;
+  }
+
+  /** How many handlers the extension registered for one host event. */
+  registeredEventHandlerCount(event: string): number {
+    return (this.handlers.get(event) ?? []).length;
   }
 
   async triggerEvent(

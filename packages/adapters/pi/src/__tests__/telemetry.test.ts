@@ -9,7 +9,10 @@ import {
 import { errAsync, okAsync } from "neverthrow";
 import type { PiAdapterFailure } from "../errors.js";
 import { makeChildCapacityExceededFailure } from "../errors.js";
-import type { ProviderFastAttemptPublicSnapshot } from "../provider-fast-activation.js";
+import {
+  PROVIDER_FAST_UNSUPPORTED_SNAPSHOT,
+  type ProviderFastPublicSnapshot,
+} from "../provider-fast-activation.js";
 import {
   createPiTelemetry,
   createPiTelemetryLogger,
@@ -612,21 +615,9 @@ describe("PiTelemetry — activation and cleanup (Pi adapter contract)", () => {
 const PROVIDER_FAST_SECRET = "sk-proj-fast-secret-value-DO-NOT-ECHO-9f3c2a1b";
 
 function providerFastSnapshot(
-  overrides: Partial<ProviderFastAttemptPublicSnapshot> = {},
-): ProviderFastAttemptPublicSnapshot {
-  return {
-    sequence: 1,
-    pendingCount: 1,
-    providerFamily: "openai",
-    apiFamily: "openai-responses",
-    allowlistRuleId: "openai-gpt-5-6-sol",
-    collision: false,
-    state: "declared",
-    evidenceKind: "none",
-    evidenceOutcome: "none",
-    reason: "none",
-    ...overrides,
-  };
+  overrides: Partial<ProviderFastPublicSnapshot> = {},
+): ProviderFastPublicSnapshot {
+  return { ...PROVIDER_FAST_UNSUPPORTED_SNAPSHOT, ...overrides };
 }
 
 function expectOkValue<T>(result: {
@@ -648,18 +639,6 @@ function expectExactJournalData(
   expect(Object.keys(data as object).sort()).toEqual(
     [...PI_PROVIDER_FAST_JOURNAL_DATA_KEYS].sort(),
   );
-  expect(typeof (data as PiProviderFastJournalData).providerFamily).toBe(
-    "string",
-  );
-  expect(typeof (data as PiProviderFastJournalData).apiFamily).toBe("string");
-  expect(typeof (data as PiProviderFastJournalData).allowlistRuleId).toBe(
-    "string",
-  );
-  expect(typeof (data as PiProviderFastJournalData).sequence).toBe("number");
-  expect(typeof (data as PiProviderFastJournalData).pendingCount).toBe(
-    "number",
-  );
-  expect(typeof (data as PiProviderFastJournalData).collision).toBe("boolean");
   expect(typeof (data as PiProviderFastJournalData).state).toBe("string");
   expect(typeof (data as PiProviderFastJournalData).evidenceKind).toBe(
     "string",
@@ -678,16 +657,10 @@ describe("PiTelemetry — provider-fast journal family", () => {
       return;
     }
     expectExactJournalData(projected.value, {
-      providerFamily: "openai",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "openai-gpt-5-6-sol",
-      sequence: 1,
-      pendingCount: 1,
-      collision: false,
-      state: "declared",
+      state: "unsupported",
       evidenceKind: "none",
-      evidenceOutcome: "none",
-      reason: "none",
+      evidenceOutcome: "absent",
+      reason: "harness-seam-unavailable",
     });
   });
 
@@ -698,230 +671,105 @@ describe("PiTelemetry — provider-fast journal family", () => {
       prompt: PROVIDER_FAST_SECRET,
       authorization: `Bearer ${PROVIDER_FAST_SECRET}`,
     };
-    const missing = {
-      sequence: 1,
-      state: "declared",
-    };
+    const missing = { state: "unsupported" };
     const rawReason = {
       ...providerFastSnapshot(),
       reason: PROVIDER_FAST_SECRET,
     };
-    expect(projectProviderFastJournalData(extra).isErr()).toBe(true);
     expect(
       projectProviderFastJournalData(
-        missing as unknown as ProviderFastAttemptPublicSnapshot,
+        extra as unknown as ProviderFastPublicSnapshot,
       ).isErr(),
     ).toBe(true);
     expect(
       projectProviderFastJournalData(
-        rawReason as unknown as ProviderFastAttemptPublicSnapshot,
+        missing as unknown as ProviderFastPublicSnapshot,
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      projectProviderFastJournalData(
+        rawReason as unknown as ProviderFastPublicSnapshot,
       ).isErr(),
     ).toBe(true);
   });
 
-  it("does not persist no-intent idle snapshots", async () => {
+  it("rejects every retired attempt state and evidence token", () => {
+    // These values described an attempt that carried controls. The adapter
+    // makes no attempt, so they must not be persistable at all.
+    for (const state of ["declared", "requested", "not-confirmed", "applied"]) {
+      expect(
+        projectProviderFastJournalData(
+          providerFastSnapshot({
+            state,
+          } as unknown as Partial<ProviderFastPublicSnapshot>),
+        ).isErr(),
+      ).toBe(true);
+    }
+    expect(
+      projectProviderFastJournalData(
+        providerFastSnapshot({
+          evidenceKind: "response-status",
+        } as unknown as Partial<ProviderFastPublicSnapshot>),
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      projectProviderFastJournalData(
+        providerFastSnapshot({
+          evidenceOutcome: "unavailable",
+        } as unknown as Partial<ProviderFastPublicSnapshot>),
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      projectProviderFastJournalData(
+        providerFastSnapshot({
+          reason: "response-body-evidence-unavailable",
+        } as unknown as Partial<ProviderFastPublicSnapshot>),
+      ).isErr(),
+    ).toBe(true);
+  });
+
+  it("persists the terminal unsupported outcome once and deduplicates repeats", async () => {
     const store = createInMemoryRuntimeStore();
     const telemetry = buildTelemetry({
       journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
     });
-    const recorded = await telemetry.recordProviderFastTransition(
-      providerFastSnapshot({
-        sequence: 0,
-        pendingCount: 0,
-        providerFamily: "none",
-        apiFamily: "none",
-        allowlistRuleId: "none",
-        state: "unsupported",
-      }),
-    );
-    expect(recorded.isOk() && recorded.value).toBe("duplicate");
+    const snapshot = providerFastSnapshot();
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
+    ).toBe("recorded");
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
+    ).toBe("duplicate");
+
     const entries = [...store.journal.snapshot().values()].filter((entry) =>
       entry.eventType.startsWith("provider-fast."),
     );
-    expect(entries).toHaveLength(0);
-  });
-
-  it("persists only terminal outcomes and deduplicates repeats", async () => {
-    const store = createInMemoryRuntimeStore();
-    const telemetry = buildTelemetry({
-      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
-    });
-    const declared = providerFastSnapshot();
-    const requested = providerFastSnapshot({
-      state: "requested",
-      pendingCount: 1,
-    });
-    const notConfirmed = providerFastSnapshot({
-      state: "not-confirmed",
-      pendingCount: 0,
-      evidenceKind: "response-status",
-      evidenceOutcome: "unavailable",
-      reason: "response-body-evidence-unavailable",
-    });
-    const unsupported = providerFastSnapshot({
-      sequence: 2,
-      pendingCount: 0,
-      providerFamily: "none",
-      allowlistRuleId: "none",
-      state: "unsupported",
-      reason: "model-not-allowed",
-    });
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(declared)),
-    ).toBe("transient");
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(requested)),
-    ).toBe("transient");
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(notConfirmed)),
-    ).toBe("recorded");
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(notConfirmed)),
-    ).toBe("duplicate");
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(unsupported)),
-    ).toBe("recorded");
-
-    const entries = [...store.journal.snapshot().values()]
-      .filter((entry) => entry.eventType.startsWith("provider-fast."))
-      .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
     expect(entries.map((entry) => entry.eventType)).toEqual([
-      "provider-fast.not-confirmed",
       "provider-fast.unsupported",
     ]);
     expectExactJournalData(entries[0]?.data, {
-      providerFamily: "openai",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "openai-gpt-5-6-sol",
-      sequence: 1,
-      pendingCount: 0,
-      collision: false,
-      state: "not-confirmed",
-      evidenceKind: "response-status",
-      evidenceOutcome: "unavailable",
-      reason: "response-body-evidence-unavailable",
-    });
-    expectExactJournalData(entries[1]?.data, {
-      providerFamily: "none",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "none",
-      sequence: 2,
-      pendingCount: 0,
-      collision: false,
       state: "unsupported",
       evidenceKind: "none",
-      evidenceOutcome: "none",
-      reason: "model-not-allowed",
+      evidenceOutcome: "absent",
+      reason: "harness-seam-unavailable",
     });
   });
 
-  it("records a cancelled attempt as its own terminal event", async () => {
+  it("bounds the in-memory dedupe window instead of growing per record", async () => {
     const store = createInMemoryRuntimeStore();
     const telemetry = buildTelemetry({
       journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
     });
-    const requested = providerFastSnapshot({
-      state: "requested",
-      pendingCount: 1,
-    });
-    const cancelled = providerFastSnapshot({
-      state: "not-confirmed",
-      pendingCount: 0,
-      reason: "cancelled",
-    });
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(requested)),
-    ).toBe("transient");
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(cancelled)),
-    ).toBe("recorded");
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(cancelled)),
-    ).toBe("duplicate");
-
-    const entries = [...store.journal.snapshot().values()]
-      .filter((entry) => entry.eventType.startsWith("provider-fast."))
-      .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
-    expect(entries.map((entry) => entry.eventType)).toEqual([
-      "provider-fast.not-confirmed",
-    ]);
-    expectExactJournalData(entries[0]?.data, {
-      providerFamily: "openai",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "openai-gpt-5-6-sol",
-      sequence: 1,
-      pendingCount: 0,
-      collision: false,
-      state: "not-confirmed",
-      evidenceKind: "none",
-      evidenceOutcome: "none",
-      reason: "cancelled",
-    });
-  });
-
-  it("records retries as a later sequence without collapsing prior events", async () => {
-    const store = createInMemoryRuntimeStore();
-    const telemetry = buildTelemetry({
-      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
-    });
-    const first = providerFastSnapshot({
-      sequence: 1,
-      state: "not-confirmed",
-      reason: "expired",
-    });
-    const retry = providerFastSnapshot({
-      sequence: 2,
-      state: "not-confirmed",
-      reason: "response-body-evidence-unavailable",
-    });
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(first)),
-    ).toBe("recorded");
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(retry)),
-    ).toBe("recorded");
+    expect(PI_PROVIDER_FAST_DEDUPE_LIMIT).toBeGreaterThan(0);
+    for (let repeat = 0; repeat < PI_PROVIDER_FAST_DEDUPE_LIMIT * 4; repeat++) {
+      await telemetry.recordProviderFastTransition(providerFastSnapshot());
+    }
+    // One state/reason key exists, so the window can never exceed its bound
+    // and the durable journal keeps exactly one record.
     const entries = [...store.journal.snapshot().values()].filter((entry) =>
       entry.eventType.startsWith("provider-fast."),
     );
-    expect(entries).toHaveLength(2);
-    expect(entries.map((entry) => entry.data.sequence)).toEqual([1, 2]);
-  });
-
-  it("bounds the in-memory dedupe window instead of growing per attempt", async () => {
-    const store = createInMemoryRuntimeStore();
-    const telemetry = buildTelemetry({
-      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
-    });
-    const oldest = providerFastSnapshot({
-      sequence: 1,
-      state: "not-confirmed",
-      reason: "cancelled",
-    });
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(oldest)),
-    ).toBe("recorded");
-    for (
-      let sequence = 2;
-      sequence <= PI_PROVIDER_FAST_DEDUPE_LIMIT + 1;
-      sequence += 1
-    ) {
-      expect(
-        expectOkValue(
-          await telemetry.recordProviderFastTransition(
-            providerFastSnapshot({
-              sequence,
-              state: "not-confirmed",
-              reason: "cancelled",
-            }),
-          ),
-        ),
-      ).toBe("recorded");
-    }
-    // The oldest key was evicted, so its repeat is recorded again rather
-    // than retained forever in memory.
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(oldest)),
-    ).toBe("recorded");
+    expect(entries).toHaveLength(1);
   });
 
   it("degrades through the typed journal path when persistence fails", async () => {
@@ -934,7 +782,7 @@ describe("PiTelemetry — provider-fast journal family", () => {
     };
     const telemetry = buildTelemetry({ journal: failingJournal });
     const result = await telemetry.recordProviderFastTransition(
-      providerFastSnapshot({ state: "not-confirmed", reason: "cancelled" }),
+      providerFastSnapshot(),
     );
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
@@ -946,83 +794,16 @@ describe("PiTelemetry — provider-fast journal family", () => {
     }
   });
 
-  it("renders concise status lines for every public state and omits no-intent", () => {
+  it("renders the bounded unsupported status line and omits no-intent", () => {
     expect(
       expectOkValue(renderProviderFastStatusLine(undefined)),
     ).toBeUndefined();
-    expect(
-      expectOkValue(
-        renderProviderFastStatusLine(
-          providerFastSnapshot({
-            sequence: 0,
-            pendingCount: 0,
-            providerFamily: "none",
-            apiFamily: "none",
-            allowlistRuleId: "none",
-            state: "unsupported",
-          }),
-        ),
-      ),
-    ).toBeUndefined();
-    expect(
-      expectOkValue(renderProviderFastStatusLine(providerFastSnapshot())),
-    ).toBe("fast: declared");
-    expect(
-      expectOkValue(
-        renderProviderFastStatusLine(
-          providerFastSnapshot({ state: "requested" }),
-        ),
-      ),
-    ).toBe("fast: requested");
-    expect(
-      expectOkValue(
-        renderProviderFastStatusLine(
-          providerFastSnapshot({
-            state: "not-confirmed",
-            evidenceKind: "response-status",
-            evidenceOutcome: "unavailable",
-            reason: "response-body-evidence-unavailable",
-          }),
-        ),
-      ),
-    ).toBe("fast: not-confirmed");
-    expect(
-      expectOkValue(
-        renderProviderFastStatusLine(
-          providerFastSnapshot({
-            state: "unsupported",
-            reason: "model-not-allowed",
-          }),
-        ),
-      ),
-    ).toBe("fast: unsupported (model-not-allowed)");
-    expect(
-      expectOkValue(
-        renderProviderFastStatusLine(
-          providerFastSnapshot({
-            state: "unsupported",
-            reason: "expired",
-          }),
-        ),
-      ),
-    ).toBe("fast: unsupported (expired)");
-    const rendered = [
-      expectOkValue(renderProviderFastStatusLine(providerFastSnapshot())),
-      expectOkValue(
-        renderProviderFastStatusLine(
-          providerFastSnapshot({ state: "requested" }),
-        ),
-      ),
-      expectOkValue(
-        renderProviderFastStatusLine(
-          providerFastSnapshot({
-            state: "not-confirmed",
-            reason: "response-body-evidence-unavailable",
-          }),
-        ),
-      ),
-    ].join("\n");
+    const rendered = expectOkValue(
+      renderProviderFastStatusLine(providerFastSnapshot()),
+    );
+    expect(rendered).toBe("fast: unsupported (harness-seam-unavailable)");
     expect(rendered).not.toContain("applied");
+    expect(rendered).not.toContain("requested");
     expect(rendered).not.toContain("active");
     expect(rendered).not.toMatch(/(?<!not-)confirmed/);
   });
@@ -1032,10 +813,7 @@ describe("PiTelemetry — provider-fast journal family", () => {
     const telemetry = buildTelemetry({
       journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
     });
-    const snapshot = providerFastSnapshot({
-      state: "not-confirmed",
-      reason: "cancelled",
-    });
+    const snapshot = providerFastSnapshot();
     expect(
       expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
     ).toBe("recorded");
@@ -1051,9 +829,7 @@ describe("PiTelemetry — provider-fast journal family", () => {
     );
     expect(entries).toHaveLength(2);
     expect(
-      entries.every(
-        (entry) => entry.eventType === "provider-fast.not-confirmed",
-      ),
+      entries.every((entry) => entry.eventType === "provider-fast.unsupported"),
     ).toBe(true);
   });
 
@@ -1065,22 +841,10 @@ describe("PiTelemetry — provider-fast journal family", () => {
       logger,
     });
     const recorded = await telemetry.recordProviderFastTransition(
-      providerFastSnapshot({
-        state: "not-confirmed",
-        evidenceKind: "response-status",
-        evidenceOutcome: "unavailable",
-        reason: "response-body-evidence-unavailable",
-      }),
+      providerFastSnapshot(),
     );
     expect(recorded.isOk()).toBe(true);
-    const status = renderProviderFastStatusLine(
-      providerFastSnapshot({
-        state: "not-confirmed",
-        evidenceKind: "response-status",
-        evidenceOutcome: "unavailable",
-        reason: "response-body-evidence-unavailable",
-      }),
-    );
+    const status = renderProviderFastStatusLine(providerFastSnapshot());
     const sinks = [
       JSON.stringify(store.journal.snapshot()),
       JSON.stringify(logs),

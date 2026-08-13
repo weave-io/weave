@@ -66,29 +66,16 @@ export interface PiModelInfo {
   readonly api?: string;
   /**
    * The model's *declared* transport base URL, when the host reports one.
-   * This is configuration, not proof of where the request goes: Pi replaces
-   * it with `resolution.auth.baseUrl` during request preparation whenever
-   * auth resolution supplies one. Never classify a transport from this field
-   * alone; resolve the effective origin through `getProviderAuth` first.
+   * This is configuration, not proof of where a request goes: Pi replaces it
+   * with the auth-resolved base URL during request preparation. It describes
+   * the catalog entry and must never decide provider eligibility.
    */
   readonly baseUrl?: string;
 }
 
-/**
- * Narrow projection of `ctx.modelRegistry`: authenticated-model discovery,
- * plus the documented provider-auth seam that reports the base URL Pi will
- * actually use for the next request. `getProviderAuth` is optional because a
- * host that does not expose it leaves the final transport unprovable.
- */
+/** Narrow projection of `ctx.modelRegistry`: authenticated-model discovery. */
 export interface PiModelRegistry {
   getAvailable(): readonly PiModelInfo[];
-  /**
-   * `ctx.modelRegistry.getProviderAuth(provider)`. Documented to resolve the
-   * provider's current API key, headers, base URL, and environment. Only the
-   * resolved base URL is ever read from the result; credentials, headers, and
-   * environment values are never inspected.
-   */
-  getProviderAuth?(provider: string): Promise<unknown>;
 }
 
 /**
@@ -114,9 +101,10 @@ export interface PiBeforeAgentStartEvent {
 }
 
 /**
- * Narrow projections of Pi's provider hooks for eventual request mapping.
- * These types deliberately omit payload, header maps, response bodies, and
- * other harness objects. Task 9 owns any later mutation or evidence read.
+ * Narrow projections of Pi's provider hooks. These types deliberately omit
+ * payload, header maps, response bodies, and other harness objects. The
+ * adapter never mutates a provider request, so no projection here reaches
+ * request data.
  */
 export type PiProviderHookName =
   | "before_provider_request"
@@ -209,205 +197,6 @@ export function projectPiProviderEvent(
   )();
 
   return projected.andThen((result) => result);
-}
-
-/**
- * The live model identity a provider hook must classify against. Provider
- * hooks read this from the hook context, never from activation-time state,
- * so a `/model` change cannot be mutated under a stale allowlist decision.
- */
-export interface PiProviderHookModel {
-  readonly provider: string;
-  readonly id: string;
-  readonly api: string;
-  /**
-   * The declared transport base URL only. Pi may replace it through auth
-   * resolution before the request leaves, so this field identifies the model
-   * for correlation and must never decide first-party eligibility.
-   */
-  readonly baseUrl: string;
-}
-
-/**
- * The proven final transport origin for the next provider request, or an
- * explicit statement that the host did not let the adapter prove it.
- */
-export type PiResolvedTransport =
-  | { readonly kind: "proved"; readonly baseUrl: string }
-  | { readonly kind: "unprovable" };
-
-const PI_RESOLVED_TRANSPORT: PiResolvedTransport = Object.freeze({
-  kind: "unprovable",
-});
-
-function readOwnObjectField(
-  container: object,
-  field: string,
-): object | undefined {
-  const descriptor = Object.getOwnPropertyDescriptor(container, field);
-  if (descriptor === undefined || !("value" in descriptor)) {
-    return undefined;
-  }
-  const value = descriptor.value;
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-  return value;
-}
-
-/**
- * Project one `AuthResult` into the base URL Pi will actually send to.
- *
- * Pi composes the request model as `resolution.auth.baseUrl ? { ...model,
- * baseUrl: resolution.auth.baseUrl } : model`. An own string `auth.baseUrl`
- * therefore *is* the final origin; an absent `auth.baseUrl` proves the
- * declared model URL survives unreplaced. Anything else - a missing result, a
- * non-object `auth`, an accessor, or a non-string override - leaves the final
- * origin unproven, and the caller must fail closed rather than trust the
- * declaration. Only `auth.baseUrl` is read; `auth.apiKey`, `auth.headers`,
- * and `env` are never touched.
- */
-export function projectPiResolvedTransport(
-  resolved: unknown,
-  declaredBaseUrl: string,
-): PiResolvedTransport {
-  return Result.fromThrowable(
-    (): PiResolvedTransport => {
-      if (
-        typeof resolved !== "object" ||
-        resolved === null ||
-        Array.isArray(resolved)
-      ) {
-        return PI_RESOLVED_TRANSPORT;
-      }
-      const auth = readOwnObjectField(resolved, "auth");
-      if (auth === undefined) {
-        return PI_RESOLVED_TRANSPORT;
-      }
-      if (!Object.hasOwn(auth, "baseUrl")) {
-        return Object.freeze({
-          kind: "proved" as const,
-          baseUrl: declaredBaseUrl,
-        });
-      }
-      const descriptor = Object.getOwnPropertyDescriptor(auth, "baseUrl");
-      if (descriptor === undefined || !("value" in descriptor)) {
-        return PI_RESOLVED_TRANSPORT;
-      }
-      // Pi treats a falsy `auth.baseUrl` as "no override", so an absent or
-      // empty value proves the declared URL survives. A present non-string is
-      // a shape this adapter does not understand, so it stays unprovable.
-      const override = descriptor.value;
-      if (override === undefined || override === "") {
-        return Object.freeze({
-          kind: "proved" as const,
-          baseUrl: declaredBaseUrl,
-        });
-      }
-      if (
-        typeof override !== "string" ||
-        override.length > PI_HOOK_MODEL_FIELD_MAX_LENGTH
-      ) {
-        return PI_RESOLVED_TRANSPORT;
-      }
-      return Object.freeze({ kind: "proved" as const, baseUrl: override });
-    },
-    () => PI_RESOLVED_TRANSPORT,
-  )().unwrapOr(PI_RESOLVED_TRANSPORT);
-}
-
-const PI_HOOK_MODEL_FIELD_MAX_LENGTH = 512;
-
-function readHookModelField(model: object, field: string): string | undefined {
-  const descriptor = Object.getOwnPropertyDescriptor(model, field);
-  if (descriptor === undefined || !("value" in descriptor)) {
-    return undefined;
-  }
-  const value = descriptor.value;
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > PI_HOOK_MODEL_FIELD_MAX_LENGTH
-  ) {
-    return undefined;
-  }
-  return value;
-}
-
-/**
- * Project `ctx.model` into the four fields a provider mapping may use.
- * Only own data descriptors are read, so getters never run, and a model that
- * does not declare all four fields yields `undefined` rather than a partial
- * identity that could be classified optimistically.
- */
-export function projectPiHookModel(
-  model: unknown,
-): PiProviderHookModel | undefined {
-  return Result.fromThrowable(
-    (): PiProviderHookModel | undefined => {
-      if (typeof model !== "object" || model === null || Array.isArray(model)) {
-        return undefined;
-      }
-      const provider = readHookModelField(model, "provider");
-      const id = readHookModelField(model, "id");
-      const api = readHookModelField(model, "api");
-      const baseUrl = readHookModelField(model, "baseUrl");
-      if (
-        provider === undefined ||
-        id === undefined ||
-        api === undefined ||
-        baseUrl === undefined
-      ) {
-        return undefined;
-      }
-      return Object.freeze({ provider, id, api, baseUrl });
-    },
-    () => undefined,
-  )().unwrapOr(undefined);
-}
-
-export type PiProviderEventFieldError = {
-  readonly type: "UnsafeProviderEventField";
-};
-
-function readOwnDataField(
-  event: object,
-  field: string,
-): Result<unknown, PiProviderEventFieldError> {
-  return Result.fromThrowable(
-    () => {
-      const ownKeys = Reflect.ownKeys(event);
-      if (!ownKeys.includes(field)) {
-        return err({ type: "UnsafeProviderEventField" } as const);
-      }
-      const descriptor = Object.getOwnPropertyDescriptor(event, field);
-      if (
-        descriptor === undefined ||
-        !("value" in descriptor) ||
-        descriptor.enumerable !== true ||
-        descriptor.writable !== true ||
-        descriptor.configurable !== true
-      ) {
-        return err({ type: "UnsafeProviderEventField" } as const);
-      }
-      return ok(descriptor.value);
-    },
-    () => ({ type: "UnsafeProviderEventField" }) as const,
-  )().andThen((result) => result);
-}
-
-/**
- * Read a raw host `headers` or `payload` field through its own writable,
- * configurable, enumerable data descriptor. Getters are never invoked.
- */
-export function extractPiProviderEventField(
-  event: unknown,
-  field: "headers" | "payload",
-): Result<unknown, PiProviderEventFieldError> {
-  if (typeof event !== "object" || event === null) {
-    return err({ type: "UnsafeProviderEventField" });
-  }
-  return readOwnDataField(event, field);
 }
 
 /** Notification severity accepted by `ctx.ui.notify`. */

@@ -45,20 +45,15 @@ import {
   type PiAdapterFailure,
 } from "./errors.js";
 import {
-  PROVIDER_FAST_ALLOWLIST_RULE_IDS,
-  PROVIDER_FAST_ATTEMPT_EVIDENCE_KINDS,
-  PROVIDER_FAST_ATTEMPT_EVIDENCE_OUTCOMES,
-  PROVIDER_FAST_ATTEMPT_REASONS,
-  PROVIDER_FAST_ATTEMPT_SEQUENCE_MAX,
-  PROVIDER_FAST_ATTEMPT_STATES,
-  type ProviderFastAllowlistRuleId,
-  type ProviderFastApiFamily,
-  type ProviderFastAttemptEvidenceKind,
-  type ProviderFastAttemptEvidenceOutcome,
-  type ProviderFastAttemptPublicSnapshot,
-  type ProviderFastAttemptReason,
-  type ProviderFastAttemptState,
-  type ProviderFastProviderFamily,
+  PROVIDER_FAST_EVIDENCE_KINDS,
+  PROVIDER_FAST_EVIDENCE_OUTCOMES,
+  PROVIDER_FAST_STATES,
+  PROVIDER_FAST_UNSUPPORTED_REASONS,
+  type ProviderFastEvidenceKind,
+  type ProviderFastEvidenceOutcome,
+  type ProviderFastPublicSnapshot,
+  type ProviderFastState,
+  type ProviderFastUnsupportedReason,
 } from "./provider-fast-activation.js";
 import type { JsonValue } from "./strict-json.js";
 import type { Clock, PiAdapterLogger } from "./types.js";
@@ -96,23 +91,16 @@ export type PiJournalSafeData = Readonly<
   Record<string, string | number | boolean>
 >;
 
-export const PI_PROVIDER_FAST_JOURNAL_EVENTS = [
-  "declared",
-  "requested",
-  "not-confirmed",
-  "unsupported",
-] as const;
+/**
+ * The adapter sends no acceleration control, so the only outcome it can ever
+ * journal is the terminal unsupported one.
+ */
+export const PI_PROVIDER_FAST_JOURNAL_EVENTS = ["unsupported"] as const;
 
 export type PiProviderFastJournalEvent =
   (typeof PI_PROVIDER_FAST_JOURNAL_EVENTS)[number];
 
 export const PI_PROVIDER_FAST_JOURNAL_DATA_KEYS = [
-  "providerFamily",
-  "apiFamily",
-  "allowlistRuleId",
-  "sequence",
-  "pendingCount",
-  "collision",
   "state",
   "evidenceKind",
   "evidenceOutcome",
@@ -123,115 +111,52 @@ export type PiProviderFastJournalDataKey =
   (typeof PI_PROVIDER_FAST_JOURNAL_DATA_KEYS)[number];
 
 export type PiProviderFastJournalData = {
-  readonly providerFamily: ProviderFastProviderFamily | "none";
-  readonly apiFamily: ProviderFastApiFamily | "none";
-  readonly allowlistRuleId: ProviderFastAllowlistRuleId | "none";
-  readonly sequence: number;
-  readonly pendingCount: number;
-  readonly collision: boolean;
-  readonly state: ProviderFastAttemptState;
-  readonly evidenceKind: ProviderFastAttemptEvidenceKind;
-  readonly evidenceOutcome: ProviderFastAttemptEvidenceOutcome;
-  readonly reason: ProviderFastAttemptReason;
+  readonly state: ProviderFastState;
+  readonly evidenceKind: ProviderFastEvidenceKind;
+  readonly evidenceOutcome: ProviderFastEvidenceOutcome;
+  readonly reason: ProviderFastUnsupportedReason;
 };
 
-export type PiProviderFastJournalRecordOutcome =
-  | "recorded"
-  | "duplicate"
-  | "transient";
-
-/**
- * Only a terminal attempt outcome is durable. `declared` and `requested`
- * describe an in-flight request that no longer exists once the attempt
- * settles, so persisting them would leave a permanent record of a state the
- * adapter never confirmed.
- */
-const PI_PROVIDER_FAST_TERMINAL_STATES: ReadonlySet<ProviderFastAttemptState> =
-  new Set(["not-confirmed", "unsupported"]);
+export type PiProviderFastJournalRecordOutcome = "recorded" | "duplicate";
 
 /** Bound for the in-memory terminal-outcome dedupe window. */
 export const PI_PROVIDER_FAST_DEDUPE_LIMIT = 64;
 
-const PROVIDER_FAST_API_FAMILIES: ReadonlySet<ProviderFastApiFamily> = new Set([
-  "openai-responses",
-  "openai-completions",
-  "anthropic-messages",
-]);
-
-function isSafeNonNegativeInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isSafeInteger(value) &&
-    value >= 0 &&
-    value <= PROVIDER_FAST_ATTEMPT_SEQUENCE_MAX
-  );
-}
-
-function isProviderFastProviderFamily(
-  value: unknown,
-): value is ProviderFastProviderFamily | "none" {
-  return value === "none" || value === "openai" || value === "anthropic";
-}
-
-function isProviderFastApiFamily(
-  value: unknown,
-): value is ProviderFastApiFamily | "none" {
-  return (
-    value === "none" ||
-    (typeof value === "string" &&
-      PROVIDER_FAST_API_FAMILIES.has(value as ProviderFastApiFamily))
-  );
-}
-
-function isProviderFastAllowlistRuleId(
-  value: unknown,
-): value is ProviderFastAllowlistRuleId | "none" {
-  return (
-    value === "none" ||
-    (typeof value === "string" &&
-      PROVIDER_FAST_ALLOWLIST_RULE_IDS.includes(
-        value as ProviderFastAllowlistRuleId,
-      ))
-  );
-}
-
-function isProviderFastAttemptState(
-  value: unknown,
-): value is ProviderFastAttemptState {
+function isProviderFastState(value: unknown): value is ProviderFastState {
   return (
     typeof value === "string" &&
-    PROVIDER_FAST_ATTEMPT_STATES.includes(value as ProviderFastAttemptState)
+    PROVIDER_FAST_STATES.includes(value as ProviderFastState)
   );
 }
 
 function isProviderFastEvidenceKind(
   value: unknown,
-): value is ProviderFastAttemptEvidenceKind {
+): value is ProviderFastEvidenceKind {
   return (
     typeof value === "string" &&
-    PROVIDER_FAST_ATTEMPT_EVIDENCE_KINDS.includes(
-      value as ProviderFastAttemptEvidenceKind,
-    )
+    PROVIDER_FAST_EVIDENCE_KINDS.includes(value as ProviderFastEvidenceKind)
   );
 }
 
 function isProviderFastEvidenceOutcome(
   value: unknown,
-): value is ProviderFastAttemptEvidenceOutcome {
+): value is ProviderFastEvidenceOutcome {
   return (
     typeof value === "string" &&
-    PROVIDER_FAST_ATTEMPT_EVIDENCE_OUTCOMES.includes(
-      value as ProviderFastAttemptEvidenceOutcome,
+    PROVIDER_FAST_EVIDENCE_OUTCOMES.includes(
+      value as ProviderFastEvidenceOutcome,
     )
   );
 }
 
-function isProviderFastAttemptReason(
+function isProviderFastUnsupportedReason(
   value: unknown,
-): value is ProviderFastAttemptReason {
+): value is ProviderFastUnsupportedReason {
   return (
     typeof value === "string" &&
-    PROVIDER_FAST_ATTEMPT_REASONS.includes(value as ProviderFastAttemptReason)
+    PROVIDER_FAST_UNSUPPORTED_REASONS.includes(
+      value as ProviderFastUnsupportedReason,
+    )
   );
 }
 
@@ -276,23 +201,11 @@ const inspectProviderFastPublicState = Result.fromThrowable(
       }
     }
 
-    const providerFamily = readOwnDataDescriptor(input, "providerFamily");
-    const apiFamily = readOwnDataDescriptor(input, "apiFamily");
-    const allowlistRuleId = readOwnDataDescriptor(input, "allowlistRuleId");
-    const sequence = readOwnDataDescriptor(input, "sequence");
-    const pendingCount = readOwnDataDescriptor(input, "pendingCount");
-    const collision = readOwnDataDescriptor(input, "collision");
     const state = readOwnDataDescriptor(input, "state");
     const evidenceKind = readOwnDataDescriptor(input, "evidenceKind");
     const evidenceOutcome = readOwnDataDescriptor(input, "evidenceOutcome");
     const reason = readOwnDataDescriptor(input, "reason");
     if (
-      providerFamily.isErr() ||
-      apiFamily.isErr() ||
-      allowlistRuleId.isErr() ||
-      sequence.isErr() ||
-      pendingCount.isErr() ||
-      collision.isErr() ||
       state.isErr() ||
       evidenceKind.isErr() ||
       evidenceOutcome.isErr() ||
@@ -301,27 +214,15 @@ const inspectProviderFastPublicState = Result.fromThrowable(
       return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
     }
     if (
-      !isProviderFastProviderFamily(providerFamily.value) ||
-      !isProviderFastApiFamily(apiFamily.value) ||
-      !isProviderFastAllowlistRuleId(allowlistRuleId.value) ||
-      !isSafeNonNegativeInteger(sequence.value) ||
-      !isSafeNonNegativeInteger(pendingCount.value) ||
-      typeof collision.value !== "boolean" ||
-      !isProviderFastAttemptState(state.value) ||
+      !isProviderFastState(state.value) ||
       !isProviderFastEvidenceKind(evidenceKind.value) ||
       !isProviderFastEvidenceOutcome(evidenceOutcome.value) ||
-      !isProviderFastAttemptReason(reason.value)
+      !isProviderFastUnsupportedReason(reason.value)
     ) {
       return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
     }
     return ok(
       Object.freeze({
-        providerFamily: providerFamily.value,
-        apiFamily: apiFamily.value,
-        allowlistRuleId: allowlistRuleId.value,
-        sequence: sequence.value,
-        pendingCount: pendingCount.value,
-        collision: collision.value,
         state: state.value,
         evidenceKind: evidenceKind.value,
         evidenceOutcome: evidenceOutcome.value,
@@ -337,37 +238,29 @@ const inspectProviderFastPublicState = Result.fromThrowable(
  * raw provider/model strings, and secret-shaped fields never enter the copy.
  */
 export function projectProviderFastJournalData(
-  snapshot: ProviderFastAttemptPublicSnapshot,
+  snapshot: ProviderFastPublicSnapshot,
 ): Result<PiProviderFastJournalData, PiAdapterFailure> {
   return inspectProviderFastPublicState(snapshot).andThen((copied) => copied);
 }
 
 function providerFastDedupeKey(data: PiProviderFastJournalData): string {
-  return `${data.sequence}:${data.state}`;
+  return `${data.state}:${data.reason}`;
 }
 
 /**
  * Render the optional `/weave:status` fast line from sanitized public state.
- * Idle no-intent snapshots produce no line. The line never says applied.
+ * No declared intent produces no line. The line can only report the bounded
+ * unsupported outcome; it never says requested, confirmed, or applied.
  */
 export function renderProviderFastStatusLine(
-  snapshot: ProviderFastAttemptPublicSnapshot | undefined,
+  snapshot: ProviderFastPublicSnapshot | undefined,
 ): Result<string | undefined, PiAdapterFailure> {
   if (snapshot === undefined) {
     return ok(undefined);
   }
-  const projected = projectProviderFastJournalData(snapshot);
-  if (projected.isErr()) {
-    return err(projected.error);
-  }
-  const data = projected.value;
-  if (data.sequence < 1) {
-    return ok(undefined);
-  }
-  if (data.state === "unsupported") {
-    return ok(`fast: unsupported (${data.reason})`);
-  }
-  return ok(`fast: ${data.state}`);
+  return projectProviderFastJournalData(snapshot).map(
+    (data) => `fast: ${data.state} (${data.reason})`,
+  );
 }
 
 /**
@@ -613,38 +506,39 @@ export class PiTelemetry implements PiTelemetryUsageSink {
   }
 
   /**
-   * Persist one sanitized terminal provider-fast outcome. Transient
-   * `declared` and `requested` states are reported in live status only and
-   * are never written durably. Repeats of the same sequence/state are
-   * no-ops, and the dedupe window itself is bounded.
+   * Persist one sanitized terminal provider-fast outcome. The adapter sends
+   * no acceleration control, so the only durable outcome is the bounded
+   * unsupported one. Repeats of the same state/reason are no-ops, and the
+   * dedupe window itself is bounded.
    */
   recordProviderFastTransition(
-    snapshot: ProviderFastAttemptPublicSnapshot,
+    snapshot: ProviderFastPublicSnapshot,
   ): ResultAsync<PiProviderFastJournalRecordOutcome, PiAdapterFailure> {
     const projected = projectProviderFastJournalData(snapshot);
     if (projected.isErr()) {
       return errAsync(projected.error);
     }
     const data = projected.value;
-    if (data.sequence < 1) {
-      return okAsync("duplicate");
-    }
-    if (!PI_PROVIDER_FAST_TERMINAL_STATES.has(data.state)) {
-      return okAsync("transient");
-    }
     const key = providerFastDedupeKey(data);
     if (this.providerFastReported.has(key)) {
       return okAsync("duplicate");
     }
+    // Claim the key before the write starts. Two settled turns can call this
+    // before the first write resolves, and a claim made only on success
+    // would let both of them persist the same outcome.
+    this.rememberProviderFastKey(key);
     return this.recordJournalEvent({
       family: "provider-fast",
       event: data.state,
-      severity: data.state === "unsupported" ? "warn" : "info",
+      severity: "warn",
       data,
-    }).map(() => {
-      this.rememberProviderFastKey(key);
-      return "recorded" as const;
-    });
+    })
+      .map(() => "recorded" as const)
+      .mapErr((failure) => {
+        // Nothing was persisted, so a later attempt may try again.
+        this.providerFastReported.delete(key);
+        return failure;
+      });
   }
 
   private rememberProviderFastKey(key: string): void {

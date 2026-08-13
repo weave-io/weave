@@ -65,10 +65,7 @@ import {
 } from "../host-inventory.js";
 import { FakePathContainmentPort } from "../path-containment.js";
 import { FakePiPlanCatalogPort } from "../plan-catalog.js";
-import {
-  PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
-  type ProviderFastAttemptPublicSnapshot,
-} from "../provider-fast-activation.js";
+import type { ProviderFastPublicSnapshot } from "../provider-fast-activation.js";
 import type {
   PiRecoveryPointerStore,
   PiWeaveRecoveryPointerV1,
@@ -712,16 +709,14 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
         },
       },
     ]);
+    // No provider request/header/response hook is registered: the adapter
+    // sends no acceleration control and reads no provider response.
     expect(host.onCalls.map((call) => call.event).sort()).toEqual([
-      "after_provider_response",
       "agent_settled",
       "agent_start",
       "before_agent_start",
-      "before_provider_headers",
-      "before_provider_request",
       "input",
       "message_end",
-      "model_select",
       "session_before_fork",
       "session_before_switch",
       "session_before_tree",
@@ -8894,30 +8889,23 @@ describe("readOverlaySessionEntryPage: extension source boundary", () => {
 const PROVIDER_FAST_SECRET = "sk-proj-fast-secret-value-DO-NOT-ECHO-9f3c2a1b";
 const PROVIDER_FAST_AUTHORIZATION = `Bearer ${PROVIDER_FAST_SECRET}`;
 
-function idleProviderFastSnapshot(): ProviderFastAttemptPublicSnapshot {
-  return {
-    sequence: 0,
-    pendingCount: 0,
-    providerFamily: "none",
-    apiFamily: "none",
-    allowlistRuleId: "none",
-    collision: false,
-    state: "unsupported",
-    evidenceKind: "none",
-    evidenceOutcome: "none",
-    reason: "none",
-  };
-}
+const UNSUPPORTED_FAST_SNAPSHOT: ProviderFastPublicSnapshot = {
+  state: "unsupported",
+  evidenceKind: "none",
+  evidenceOutcome: "absent",
+  reason: "harness-seam-unavailable",
+};
 
 function expectSanitizedProviderFast(
-  snapshot: ProviderFastAttemptPublicSnapshot,
-  expected: ProviderFastAttemptPublicSnapshot,
+  snapshot: ProviderFastPublicSnapshot | undefined,
+  expected: ProviderFastPublicSnapshot | undefined,
 ): void {
   expect(snapshot).toEqual(expected);
   const serialized = JSON.stringify(snapshot);
   expect(serialized).not.toContain(PROVIDER_FAST_SECRET);
   expect(serialized).not.toContain("sk-proj");
   expect(serialized).not.toContain("applied");
+  expect(serialized).not.toContain("requested");
   expect(serialized).not.toContain("Authorization");
 }
 
@@ -8930,7 +8918,7 @@ function defineOwnData(target: object, key: string, value: unknown): void {
   });
 }
 
-describe("createPiExtension: provider fast hooks", () => {
+describe("createPiExtension: provider fast intent", () => {
   const openaiModel = {
     provider: "openai",
     id: "gpt-5.6-sol",
@@ -8942,12 +8930,6 @@ describe("createPiExtension: provider fast hooks", () => {
     id: "claude-opus-5",
     api: "anthropic-messages",
     baseUrl: "https://api.anthropic.com/v1",
-  };
-  const proxiedOpenaiModel = {
-    provider: "openai",
-    id: "gpt-5.6-sol",
-    api: "openai-responses",
-    baseUrl: "https://gateway.example.com/openai/v1",
   };
 
   function installFastPrimary(
@@ -8997,72 +8979,64 @@ describe("createPiExtension: provider fast hooks", () => {
     });
   }
 
-  it("applies exact OpenAI hooks and preserves previous handler edits", async () => {
+  function journalRecordingOverrides(
+    sink: unknown[],
+  ): Partial<PiExtensionDeps> {
+    return {
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      telemetryJournal: {
+        write: (entry) => {
+          sink.push(entry);
+          return okAsync(undefined);
+        },
+      },
+      telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+    };
+  }
+
+  function providerFastEvents(entries: readonly unknown[]): string[] {
+    return entries
+      .map((entry) =>
+        typeof entry === "object" && entry !== null && "eventType" in entry
+          ? String((entry as { eventType?: unknown }).eventType)
+          : "",
+      )
+      .filter((eventType) => eventType.startsWith("provider-fast."));
+  }
+
+  it("registers no provider request or header mutation at all", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
       availableModels: [openaiModel],
     });
-    const extension = installFastPrimary(host, { fast: true });
+    installFastPrimary(host, { fast: true });
+    await host.triggerSessionStart();
+
+    expect(host.registeredEventHandlerCount("before_provider_headers")).toBe(0);
+    expect(host.registeredEventHandlerCount("before_provider_request")).toBe(0);
+    expect(host.registeredEventHandlerCount("after_provider_response")).toBe(0);
+  });
+
+  it.each([
+    ["openai", openaiModel],
+    ["anthropic", anthropicModel],
+  ] as const)("leaves a fast-declaring %s primary's payload and headers exactly unchanged", async (_provider, model) => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [model],
+    });
+    const extension = installFastPrimary(host, { model, fast: true });
+    // A foreign extension still owns its own edits; Weave adds nothing.
     host.api.on("before_provider_headers", (event) => {
       const headers = (event as { headers: Record<string, string> }).headers;
       headers["x-prior"] = "keep-me";
     });
-    host.api.on("before_provider_request", (event) => {
-      const payload = (event as { payload: Record<string, unknown> }).payload;
-      return { ...payload, temperature: 0 };
-    });
     await host.triggerSessionStart();
 
-    const headers = {
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-      "x-prior": "keep-me",
-    };
-    await host.triggerBeforeProviderHeaders(headers);
-    expect(headers).toEqual({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-      "x-prior": "keep-me",
-    });
-    const originalPayload = {
-      model: "gpt-5.6-sol",
-      messages: [{ role: "user", content: "hi" }],
-      temperature: 0,
-    };
-    const payload = { ...originalPayload };
-    const replaced = await host.triggerBeforeProviderRequest(payload);
-    expect(payload).toEqual(originalPayload);
-    expect(replaced).toEqual({
-      ...originalPayload,
-      service_tier: "fast",
-    });
-    await host.triggerAfterProviderResponse(200, {
-      "retry-after": "1",
-    });
-    expectSanitizedProviderFast(extension.providerFastLatestForTest(), {
-      sequence: 1,
-      pendingCount: 0,
-      providerFamily: "openai",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "openai-gpt-5-6-sol",
-      collision: false,
-      state: "not-confirmed",
-      evidenceKind: "response-status",
-      evidenceOutcome: "unavailable",
-      reason: "response-body-evidence-unavailable",
-    });
-  });
-
-  it("applies exact Anthropic hooks without rewriting previous headers", async () => {
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [anthropicModel],
-    });
-    const extension = installFastPrimary(host, {
-      model: anthropicModel,
-      fast: true,
-    });
-    await host.triggerSessionStart();
     const headers: Record<string, string> = {
       Authorization: PROVIDER_FAST_AUTHORIZATION,
       "x-request-id": "req-1",
@@ -9071,26 +9045,30 @@ describe("createPiExtension: provider fast hooks", () => {
     expect(headers).toEqual({
       Authorization: PROVIDER_FAST_AUTHORIZATION,
       "x-request-id": "req-1",
-      "anthropic-beta": PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
+      "x-prior": "keep-me",
     });
+    expect(Object.keys(headers)).not.toContain("anthropic-beta");
+
     const payload = {
-      model: "claude-opus-5",
-      max_tokens: 32,
+      model: model.id,
       messages: [{ role: "user", content: "hi" }],
     };
+    const originalPayload = { ...payload };
     const replaced = await host.triggerBeforeProviderRequest(payload);
-    expect(replaced).toEqual({
-      ...payload,
-      speed: "fast",
-    });
-    await host.triggerAfterProviderResponse(529, {});
-    expect(extension.providerFastLatestForTest().state).toBe("not-confirmed");
-    expect(extension.providerFastLatestForTest().apiFamily).toBe(
-      "anthropic-messages",
+    // Identity, not just deep equality: no copy, no added field.
+    expect(replaced).toBe(payload);
+    expect(payload).toEqual(originalPayload);
+    expect(Object.keys(payload)).not.toContain("service_tier");
+    expect(Object.keys(payload)).not.toContain("speed");
+
+    await host.triggerAfterProviderResponse(200, { "retry-after": "1" });
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
     );
   });
 
-  it("leaves no-intent payloads and headers untouched", async () => {
+  it("leaves a no-intent primary's payload and headers untouched and emits no state", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
@@ -9104,320 +9082,10 @@ describe("createPiExtension: provider fast hooks", () => {
     const replaced = await host.triggerBeforeProviderRequest(payload);
     expect(headers).toEqual({ Authorization: PROVIDER_FAST_AUTHORIZATION });
     expect(replaced).toBe(payload);
-    expectSanitizedProviderFast(
-      extension.providerFastLatestForTest(),
-      idleProviderFastSnapshot(),
-    );
+    expect(extension.providerFastLatestForTest()).toBeUndefined();
   });
 
-  it("records unsupported api, provider, and model without mutation", async () => {
-    const unsupportedModel = {
-      provider: "openai",
-      id: "gpt-4.1",
-      api: "openai-responses",
-      baseUrl: "https://api.openai.com/v1",
-    };
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [unsupportedModel],
-    });
-    const extension = installFastPrimary(host, {
-      model: unsupportedModel,
-      fast: true,
-    });
-    await host.triggerSessionStart();
-    const headers = { Authorization: PROVIDER_FAST_AUTHORIZATION };
-    await host.triggerBeforeProviderHeaders(headers);
-    const payload = { model: "gpt-4.1" };
-    const replaced = await host.triggerBeforeProviderRequest(payload);
-    expect(headers).toEqual({ Authorization: PROVIDER_FAST_AUTHORIZATION });
-    expect(replaced).toBe(payload);
-    expectSanitizedProviderFast(extension.providerFastLatestForTest(), {
-      sequence: 1,
-      pendingCount: 0,
-      providerFamily: "none",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "none",
-      collision: false,
-      state: "unsupported",
-      evidenceKind: "none",
-      evidenceOutcome: "none",
-      reason: "model-not-allowed",
-    });
-  });
-
-  it("fails closed on collisions without a partial request or header write", async () => {
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [anthropicModel],
-    });
-    const extension = installFastPrimary(host, {
-      model: anthropicModel,
-      fast: true,
-    });
-    await host.triggerSessionStart();
-    const collidingHeaders = {
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-      "anthropic-beta": "fast-mode-2099-01-01",
-    };
-    const originalHeaders = { ...collidingHeaders };
-    await host.triggerBeforeProviderHeaders(collidingHeaders);
-    expect(collidingHeaders).toEqual(originalHeaders);
-    expect(extension.providerFastLatestForTest().reason).toBe(
-      "request-collision",
-    );
-
-    const openaiHost = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel],
-    });
-    const openaiExtension = installFastPrimary(openaiHost, { fast: true });
-    await openaiHost.triggerSessionStart();
-    await openaiHost.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    const collidingPayload = { service_tier: "priority" };
-    const originalPayload = { ...collidingPayload };
-    const replaced =
-      await openaiHost.triggerBeforeProviderRequest(collidingPayload);
-    expect(replaced).toBe(collidingPayload);
-    expect(collidingPayload).toEqual(originalPayload);
-    // The payload collision keeps its own terminal reason instead of being
-    // reset into an untyped idle state.
-    expectSanitizedProviderFast(openaiExtension.providerFastLatestForTest(), {
-      sequence: 1,
-      pendingCount: 0,
-      providerFamily: "none",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "none",
-      collision: true,
-      state: "unsupported",
-      evidenceKind: "none",
-      evidenceOutcome: "none",
-      reason: "request-collision",
-    });
-  });
-
-  it("reports a proxied transport as unsupported and mutates nothing", async () => {
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [proxiedOpenaiModel],
-    });
-    const extension = installFastPrimary(host, {
-      model: proxiedOpenaiModel,
-      fast: true,
-    });
-    await host.triggerSessionStart();
-    const headers = { Authorization: PROVIDER_FAST_AUTHORIZATION };
-    await host.triggerBeforeProviderHeaders(headers);
-    const payload = { model: "gpt-5.6-sol" };
-    const replaced = await host.triggerBeforeProviderRequest(payload);
-    expect(headers).toEqual({ Authorization: PROVIDER_FAST_AUTHORIZATION });
-    expect(replaced).toBe(payload);
-    expectSanitizedProviderFast(extension.providerFastLatestForTest(), {
-      sequence: 1,
-      pendingCount: 0,
-      providerFamily: "none",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "none",
-      collision: false,
-      state: "unsupported",
-      evidenceKind: "none",
-      evidenceOutcome: "none",
-      reason: "transport-not-first-party",
-    });
-    await host.invokeCommand("weave:status");
-    expect(host.notifyCalls.at(-1)?.message).toContain(
-      "fast: unsupported (transport-not-first-party)",
-    );
-  });
-
-  it("reports an auth-resolved gateway as unsupported despite a first-party model URL", async () => {
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [anthropicModel],
-    });
-    // `ctx.model.baseUrl` still declares api.anthropic.com, but Pi rebuilds
-    // the request model from `resolution.auth.baseUrl`, so this request
-    // really leaves through a gateway.
-    host.setProviderAuth(async () => ({
-      auth: {
-        apiKey: "sk-proj-resolved",
-        baseUrl: "https://gateway.example.com/anthropic",
-      },
-    }));
-    const extension = installFastPrimary(host, {
-      model: anthropicModel,
-      fast: true,
-    });
-    await host.triggerSessionStart();
-    const headers = { Authorization: PROVIDER_FAST_AUTHORIZATION };
-    await host.triggerBeforeProviderHeaders(headers);
-    const payload = { model: "claude-opus-5" };
-    const replaced = await host.triggerBeforeProviderRequest(payload);
-    expect(headers).toEqual({ Authorization: PROVIDER_FAST_AUTHORIZATION });
-    expect(replaced).toBe(payload);
-    expect(extension.providerFastLatestForTest().reason).toBe(
-      "transport-not-first-party",
-    );
-  });
-
-  it("fails closed when the host cannot prove the final transport", async () => {
-    const missingSeam = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel],
-    });
-    missingSeam.removeProviderAuthSeam();
-    const missingSeamExtension = installFastPrimary(missingSeam, {
-      fast: true,
-    });
-    await missingSeam.triggerSessionStart();
-    await missingSeam.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    const missingPayload = { model: "gpt-5.6-sol" };
-    expect(await missingSeam.triggerBeforeProviderRequest(missingPayload)).toBe(
-      missingPayload,
-    );
-    expect(missingSeamExtension.providerFastLatestForTest().reason).toBe(
-      "transport-not-first-party",
-    );
-
-    const rejecting = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel],
-    });
-    rejecting.setProviderAuth(async () => {
-      throw new Error("leaked: token=sk-super-secret-123");
-    });
-    const rejectingExtension = installFastPrimary(rejecting, { fast: true });
-    await rejecting.triggerSessionStart();
-    await rejecting.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    const rejectedPayload = { model: "gpt-5.6-sol" };
-    expect(await rejecting.triggerBeforeProviderRequest(rejectedPayload)).toBe(
-      rejectedPayload,
-    );
-    const snapshot = rejectingExtension.providerFastLatestForTest();
-    expect(snapshot.reason).toBe("transport-not-first-party");
-    expect(JSON.stringify(snapshot)).not.toContain("sk-super-secret-123");
-  });
-
-  it("applies controls when auth resolution proves the first-party origin", async () => {
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel],
-    });
-    // Auth resolution overrides the declared URL with the provider's own
-    // documented host, which is proof enough to carry the control.
-    host.setProviderAuth(async () => ({
-      auth: { apiKey: "sk-proj-resolved", baseUrl: "https://api.openai.com" },
-    }));
-    const extension = installFastPrimary(host, { fast: true });
-    await host.triggerSessionStart();
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    const payload = { model: "gpt-5.6-sol" };
-    expect(await host.triggerBeforeProviderRequest(payload)).toEqual({
-      model: "gpt-5.6-sol",
-      service_tier: "fast",
-    });
-    await host.triggerAfterProviderResponse(200, {});
-    expectSanitizedProviderFast(extension.providerFastLatestForTest(), {
-      sequence: 1,
-      pendingCount: 0,
-      providerFamily: "openai",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "openai-gpt-5-6-sol",
-      collision: false,
-      state: "not-confirmed",
-      evidenceKind: "response-status",
-      evidenceOutcome: "unavailable",
-      reason: "response-body-evidence-unavailable",
-    });
-  });
-
-  it("classifies each request from the live hook model, not activation state", async () => {
-    const unlistedModel = {
-      provider: "openai",
-      id: "gpt-4.1",
-      api: "openai-responses",
-      baseUrl: "https://api.openai.com/v1",
-    };
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel, unlistedModel],
-    });
-    const extension = installFastPrimary(host, { fast: true });
-    await host.triggerSessionStart();
-
-    // A native `/model` change to an unallowlisted model must not inherit
-    // the activated model's allowlist decision.
-    await host.triggerModelSelect(unlistedModel, "set");
-    const headers = { Authorization: PROVIDER_FAST_AUTHORIZATION };
-    await host.triggerBeforeProviderHeaders(headers);
-    const payload = { model: "gpt-4.1" };
-    const replaced = await host.triggerBeforeProviderRequest(payload);
-    expect(headers).toEqual({ Authorization: PROVIDER_FAST_AUTHORIZATION });
-    expect(replaced).toBe(payload);
-    expect(extension.providerFastLatestForTest().reason).toBe(
-      "model-not-allowed",
-    );
-
-    // Switching back to the allowlisted model makes the next request
-    // eligible again, from the live model alone.
-    await host.triggerModelSelect(openaiModel, "cycle");
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    const eligible = await host.triggerBeforeProviderRequest({
-      model: "gpt-5.6-sol",
-    });
-    expect(eligible).toEqual({
-      model: "gpt-5.6-sol",
-      service_tier: "fast",
-    });
-  });
-
-  it("settles an in-flight attempt when the model changes mid-turn", async () => {
-    const otherModel = {
-      provider: "openai",
-      id: "gpt-5.6-terra",
-      api: "openai-responses",
-      baseUrl: "https://api.openai.com/v1",
-    };
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel, otherModel],
-    });
-    const extension = installFastPrimary(host, { fast: true });
-    await host.triggerSessionStart();
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    expect(extension.providerFastLatestForTest().state).toBe("declared");
-
-    await host.triggerModelSelect(otherModel, "set");
-    expect(extension.providerFastLatestForTest().reason).toBe("model-switched");
-
-    // The abandoned attempt cannot be revived by a late response.
-    await host.triggerAfterProviderResponse(200, {});
-    expect(extension.providerFastLatestForTest().reason).toBe("model-switched");
-  });
-
-  it("treats a transport retry with no response callback as a new attempt", async () => {
+  it("cannot be raised out of unsupported by any response event", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
@@ -9425,66 +9093,18 @@ describe("createPiExtension: provider fast hooks", () => {
     });
     const extension = installFastPrimary(host, { fast: true });
     await host.triggerSessionStart();
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    const first = await host.triggerBeforeProviderRequest({
-      model: "gpt-5.6-sol",
-    });
-    expect(first).toEqual({ model: "gpt-5.6-sol", service_tier: "fast" });
-    expect(extension.providerFastLatestForTest().sequence).toBe(1);
-
-    // Pi's transport retried without ever calling `after_provider_response`
-    // for the first request. The retry still carries the controls.
-    const retried = await host.triggerBeforeProviderRequest({
-      model: "gpt-5.6-sol",
-    });
-    expect(retried).toEqual({ model: "gpt-5.6-sol", service_tier: "fast" });
-    expect(extension.providerFastLatestForTest().sequence).toBe(2);
-    expect(extension.providerFastLatestForTest().state).toBe("requested");
-
-    await host.triggerAfterProviderResponse(200, {});
-    expectSanitizedProviderFast(extension.providerFastLatestForTest(), {
-      sequence: 2,
-      pendingCount: 0,
-      providerFamily: "openai",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "openai-gpt-5-6-sol",
-      collision: false,
-      state: "not-confirmed",
-      evidenceKind: "response-status",
-      evidenceOutcome: "unavailable",
-      reason: "response-body-evidence-unavailable",
-    });
+    for (const status of [200, 201, 400, 429, 500]) {
+      await host.triggerAfterProviderResponse(status, {
+        "anthropic-fast-limit": "ok",
+      });
+      expectSanitizedProviderFast(
+        extension.providerFastLatestForTest(),
+        UNSUPPORTED_FAST_SNAPSHOT,
+      );
+    }
   });
 
-  it("rolls back its own beta header when the Anthropic payload collides", async () => {
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [anthropicModel],
-    });
-    const extension = installFastPrimary(host, {
-      model: anthropicModel,
-      fast: true,
-    });
-    await host.triggerSessionStart();
-    const headers: Record<string, string> = {
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    };
-    await host.triggerBeforeProviderHeaders(headers);
-    expect(headers["anthropic-beta"]).toBe(PROVIDER_FAST_ANTHROPIC_BETA_TOKEN);
-
-    const collidingPayload = { model: "claude-opus-5", speed: "standard" };
-    const replaced = await host.triggerBeforeProviderRequest(collidingPayload);
-    expect(replaced).toBe(collidingPayload);
-    expect(headers).toEqual({ Authorization: PROVIDER_FAST_AUTHORIZATION });
-    expect(extension.providerFastLatestForTest().reason).toBe(
-      "request-collision",
-    );
-  });
-
-  it("ignores hostile event descriptors without invoking getters", async () => {
+  it("ignores hostile provider event descriptors without invoking getters", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
@@ -9518,125 +9138,31 @@ describe("createPiExtension: provider fast hooks", () => {
         throw new Error("payload getter must not run");
       },
     });
-    const requestResult = await host.triggerEvent(
-      "before_provider_request",
-      hostilePayload,
-    );
+    await host.triggerEvent("before_provider_request", hostilePayload);
     expect(payloadReads).toBe(0);
-    expect(requestResult).toBeDefined();
     expectSanitizedProviderFast(
       extension.providerFastLatestForTest(),
-      idleProviderFastSnapshot(),
+      UNSUPPORTED_FAST_SNAPSHOT,
     );
   });
 
-  it("fails closed on overlapping hooks and out-of-order request/response", async () => {
+  it("reports unsupported on the status line for a fast primary", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
       availableModels: [openaiModel],
     });
-    const extension = installFastPrimary(host, { fast: true });
+    installFastPrimary(host, { fast: true });
     await host.triggerSessionStart();
-    const headers = { Authorization: PROVIDER_FAST_AUTHORIZATION };
-    await host.triggerBeforeProviderHeaders(headers);
-    await host.triggerBeforeProviderHeaders(headers);
-    const payload = { model: "gpt-5.6-sol" };
-    const replaced = await host.triggerBeforeProviderRequest(payload);
-    expect(replaced).toBe(payload);
-    await host.triggerAfterProviderResponse(200, {});
-    expectSanitizedProviderFast(
-      extension.providerFastLatestForTest(),
-      idleProviderFastSnapshot(),
-    );
-  });
-
-  it("treats stale session and primary-switch events as no-ops", async () => {
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel, anthropicModel],
-    });
-    const extension = installFastPrimary(host, {
-      fast: true,
-      second: { name: "tapestry", model: anthropicModel, fast: true },
-    });
-    await host.triggerSessionStart();
-    const headers: Record<string, string> = {
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    };
-    await host.triggerBeforeProviderHeaders(headers);
-    await host.invokeShortcut("alt+a");
-    const payload = { model: "gpt-5.6-sol" };
-    const replaced = await host.triggerBeforeProviderRequest(payload);
-    expect(replaced).toBe(payload);
-    expect(headers["anthropic-beta"]).toBeUndefined();
-    expectSanitizedProviderFast(
-      extension.providerFastLatestForTest(),
-      idleProviderFastSnapshot(),
-    );
-  });
-
-  it("resets on session replacement and shutdown", async () => {
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel],
-    });
-    const extension = installFastPrimary(host, { fast: true });
-    await host.triggerSessionStart();
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    await host.triggerSessionStart();
-    expectSanitizedProviderFast(
-      extension.providerFastLatestForTest(),
-      idleProviderFastSnapshot(),
-    );
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    await host.triggerSessionShutdown();
-    expectSanitizedProviderFast(
-      extension.providerFastLatestForTest(),
-      idleProviderFastSnapshot(),
-    );
-  });
-
-  it("retries after settlement and never treats 2xx or 4xx as applied", async () => {
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel],
-    });
-    const extension = installFastPrimary(host, { fast: true });
-    await host.triggerSessionStart();
-    const headers = { Authorization: PROVIDER_FAST_AUTHORIZATION };
-    await host.triggerBeforeProviderHeaders(headers);
-    const first = await host.triggerBeforeProviderRequest({
-      model: "gpt-5.6-sol",
-    });
-    expect(first).toEqual({
-      model: "gpt-5.6-sol",
-      service_tier: "fast",
-    });
-    await host.triggerAfterProviderResponse(429, {});
-    const retry = await host.triggerBeforeProviderRequest({
-      model: "gpt-5.6-sol",
-    });
-    expect(retry).toEqual({
-      model: "gpt-5.6-sol",
-      service_tier: "fast",
-    });
-    await host.triggerAfterProviderResponse(200, {});
-    expect(extension.providerFastLatestForTest().state).toBe("not-confirmed");
-    expect(extension.providerFastLatestForTest().sequence).toBe(2);
-    expect(JSON.stringify(extension.providerFastLatestForTest())).not.toContain(
-      "applied",
-    );
-    expect(JSON.stringify(extension.providerFastLatestForTest())).not.toContain(
-      PROVIDER_FAST_SECRET,
-    );
+    await host.invokeCommand("weave:status");
+    const message = host.notifyCalls.at(-1)?.message ?? "";
+    expect(message).toContain("fast: unsupported (harness-seam-unavailable)");
+    expect(message).not.toContain("applied");
+    expect(message).not.toContain("fast: requested");
+    expect(message).not.toContain("fast: declared");
+    expect(message).not.toMatch(/(?<!not-)confirmed/);
+    expect(message).not.toContain(PROVIDER_FAST_SECRET);
+    expect(message).not.toContain("gpt-5.6-sol");
   });
 
   it("omits the status fast line when there is no intent", async () => {
@@ -9647,251 +9173,86 @@ describe("createPiExtension: provider fast hooks", () => {
     });
     installFastPrimary(host);
     await host.triggerSessionStart();
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
     await host.invokeCommand("weave:status");
     const message = host.notifyCalls.at(-1)?.message ?? "";
     expect(message).toContain("health-only: false");
     expect(message).not.toContain("fast:");
     expect(message).not.toContain("applied");
-    expect(message).not.toContain(PROVIDER_FAST_SECRET);
   });
 
-  it("shows requested, not-confirmed, and unsupported status lines without applied text", async () => {
+  it("stops reporting a fast primary's state after switching to a non-fast primary", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel, anthropicModel],
+    });
+    const extension = installFastPrimary(host, {
+      fast: true,
+      second: { name: "tapestry", model: anthropicModel },
+    });
+    await host.triggerSessionStart();
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+
+    await host.invokeShortcut("alt+a");
+    expect(extension.providerFastLatestForTest()).toBeUndefined();
+    await host.invokeCommand("weave:status");
+    expect(host.notifyCalls.at(-1)?.message ?? "").not.toContain("fast:");
+  });
+
+  it("persists exactly one sanitized terminal unsupported record per session", async () => {
+    const journalEntries: unknown[] = [];
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
       availableModels: [openaiModel],
     });
-    const extension = installFastPrimary(host, { fast: true });
-    await host.triggerSessionStart();
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    await host.invokeCommand("weave:status");
-    expect(host.notifyCalls.at(-1)?.message).toContain("fast: declared");
-
-    await host.triggerBeforeProviderRequest({ model: "gpt-5.6-sol" });
-    await host.invokeCommand("weave:status");
-    expect(host.notifyCalls.at(-1)?.message).toContain("fast: requested");
-    expect(host.notifyCalls.at(-1)?.message).not.toContain("applied");
-
-    await host.triggerAfterProviderResponse(200, {});
-    await host.invokeCommand("weave:status");
-    const notConfirmed = host.notifyCalls.at(-1)?.message ?? "";
-    expect(notConfirmed).toContain("fast: not-confirmed");
-    expect(notConfirmed).not.toContain("applied");
-    expect(notConfirmed).not.toContain("active");
-    expect(notConfirmed).not.toMatch(/(?<!not-)confirmed/);
-    expect(notConfirmed).not.toContain(PROVIDER_FAST_SECRET);
-    expect(notConfirmed).not.toContain("gpt-5.6-sol");
-    expect(extension.providerFastLatestForTest().state).toBe("not-confirmed");
-
-    const unsupportedHost = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [
-        {
-          provider: "openai",
-          id: "gpt-4.1",
-          api: "openai-responses",
-          baseUrl: "https://api.openai.com/v1",
-        },
-      ],
-    });
-    installFastPrimary(unsupportedHost, {
-      model: {
-        provider: "openai",
-        id: "gpt-4.1",
-        api: "openai-responses",
-        baseUrl: "https://api.openai.com/v1",
-      },
+    installFastPrimary(host, {
       fast: true,
+      overrides: journalRecordingOverrides(journalEntries),
     });
-    await unsupportedHost.triggerSessionStart();
-    await unsupportedHost.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    await unsupportedHost.invokeCommand("weave:status");
-    expect(unsupportedHost.notifyCalls.at(-1)?.message).toContain(
-      "fast: unsupported (model-not-allowed)",
-    );
+    await host.triggerSessionStart();
+    await host.triggerEvent("agent_settled");
+    await host.triggerEvent("agent_settled");
+    await flushBackgroundWork();
+
+    expect(providerFastEvents(journalEntries)).toEqual([
+      "provider-fast.unsupported",
+    ]);
+    const serialized = JSON.stringify(journalEntries);
+    expect(serialized).not.toContain(PROVIDER_FAST_SECRET);
+    expect(serialized).not.toContain("Authorization");
+    expect(serialized).not.toContain("applied");
+    expect(serialized).not.toContain("requested");
+    expect(serialized).not.toContain("not-confirmed");
+    expect(serialized).not.toContain("gpt-5.6-sol");
   });
 
-  it("settles an abandoned turn instead of keeping the requested state", async () => {
+  it("persists nothing for a session with no fast intent", async () => {
     const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    installFastPrimary(host, {
+      overrides: journalRecordingOverrides(journalEntries),
+    });
+    await host.triggerSessionStart();
+    await host.triggerEvent("agent_settled");
+    await flushBackgroundWork();
+    expect(providerFastEvents(journalEntries)).toEqual([]);
+  });
+
+  it("degrades a failing provider-fast journal write without leaking it", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
       availableModels: [openaiModel],
     });
     const extension = installFastPrimary(host, {
-      fast: true,
-      overrides: {
-        runtimeStoreFactory: {
-          open: () => okAsync(createInMemoryRuntimeStore()),
-        },
-        telemetryJournal: {
-          write: (entry) => {
-            journalEntries.push(entry);
-            return okAsync(undefined);
-          },
-        },
-        telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
-      },
-    });
-    await host.triggerSessionStart();
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    await host.triggerBeforeProviderRequest({ model: "gpt-5.6-sol" });
-    expect(extension.providerFastLatestForTest().state).toBe("requested");
-
-    // The turn ends without `after_provider_response`, as a cancelled or
-    // aborted provider call does.
-    await host.triggerEvent("agent_settled");
-    await flushBackgroundWork();
-    expectSanitizedProviderFast(extension.providerFastLatestForTest(), {
-      sequence: 1,
-      pendingCount: 0,
-      providerFamily: "openai",
-      apiFamily: "openai-responses",
-      allowlistRuleId: "openai-gpt-5-6-sol",
-      collision: false,
-      state: "not-confirmed",
-      evidenceKind: "none",
-      evidenceOutcome: "none",
-      reason: "cancelled",
-    });
-    await host.invokeCommand("weave:status");
-    const message = host.notifyCalls.at(-1)?.message ?? "";
-    expect(message).toContain("fast: not-confirmed");
-    expect(message).not.toContain("fast: requested");
-    expect(message).not.toContain("applied");
-
-    // A late response for the abandoned attempt cannot revive it.
-    await host.triggerAfterProviderResponse(200, {});
-    await flushBackgroundWork();
-    expect(extension.providerFastLatestForTest().state).toBe("not-confirmed");
-
-    const events = journalEntries
-      .map((entry) =>
-        typeof entry === "object" && entry !== null && "eventType" in entry
-          ? String((entry as { eventType?: unknown }).eventType)
-          : "",
-      )
-      .filter((eventType) => eventType.startsWith("provider-fast."));
-    // Only the terminal outcome is durable; `declared` and `requested`
-    // describe an in-flight request and are never persisted.
-    expect(events).toEqual(["provider-fast.not-confirmed"]);
-    expect(JSON.stringify(journalEntries)).not.toContain(PROVIDER_FAST_SECRET);
-    expect(JSON.stringify(journalEntries)).not.toContain("Authorization");
-    expect(JSON.stringify(journalEntries)).not.toContain("applied");
-  });
-
-  it("ignores turn settlement when no fast attempt is in flight", async () => {
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel],
-    });
-    const extension = installFastPrimary(host);
-    await host.triggerSessionStart();
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    await host.triggerEvent("agent_settled");
-    expect(extension.providerFastLatestForTest().sequence).toBe(0);
-    await host.invokeCommand("weave:status");
-    expect(host.notifyCalls.at(-1)?.message ?? "").not.toContain("fast:");
-  });
-
-  it("records sanitized transitions, ignores no-intent, and degrades journal failure", async () => {
-    const journalEntries: unknown[] = [];
-    const host = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel],
-    });
-    const store = createInMemoryRuntimeStore();
-    installFastPrimary(host, {
-      fast: true,
-      overrides: {
-        runtimeStoreFactory: { open: () => okAsync(store) },
-        telemetryJournal: {
-          write: (entry) => {
-            journalEntries.push(entry);
-            return okAsync(undefined);
-          },
-        },
-        telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
-      },
-    });
-    await host.triggerSessionStart();
-    await host.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    await host.triggerBeforeProviderRequest({ model: "gpt-5.6-sol" });
-    await host.triggerAfterProviderResponse(200, {});
-    await flushBackgroundWork();
-    const events = journalEntries
-      .map((entry) =>
-        typeof entry === "object" && entry !== null && "eventType" in entry
-          ? String((entry as { eventType?: unknown }).eventType)
-          : "",
-      )
-      .filter((eventType) => eventType.startsWith("provider-fast."));
-    // Only the terminal outcome is durable; `declared` and `requested`
-    // describe an in-flight request and are never persisted.
-    expect(events).toEqual(["provider-fast.not-confirmed"]);
-    expect(JSON.stringify(journalEntries)).not.toContain(PROVIDER_FAST_SECRET);
-    expect(JSON.stringify(journalEntries)).not.toContain("Authorization");
-    expect(JSON.stringify(journalEntries)).not.toContain("applied");
-
-    const noIntentHost = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel],
-    });
-    const noIntentEntries: unknown[] = [];
-    installFastPrimary(noIntentHost, {
-      overrides: {
-        runtimeStoreFactory: {
-          open: () => okAsync(createInMemoryRuntimeStore()),
-        },
-        telemetryJournal: {
-          write: (entry) => {
-            noIntentEntries.push(entry);
-            return okAsync(undefined);
-          },
-        },
-        telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
-      },
-    });
-    await noIntentHost.triggerSessionStart();
-    await noIntentHost.triggerBeforeProviderHeaders({
-      Authorization: PROVIDER_FAST_AUTHORIZATION,
-    });
-    await noIntentHost.triggerBeforeProviderRequest({ model: "gpt-5.6-sol" });
-    await flushBackgroundWork();
-    expect(
-      noIntentEntries.some(
-        (entry) =>
-          typeof entry === "object" &&
-          entry !== null &&
-          String((entry as { eventType?: unknown }).eventType ?? "").startsWith(
-            "provider-fast.",
-          ),
-      ),
-    ).toBe(false);
-
-    const failingHost = new RecordingFakePiHost({
-      mode: "tui",
-      trusted: true,
-      availableModels: [openaiModel],
-    });
-    const failingExtension = installFastPrimary(failingHost, {
       fast: true,
       overrides: {
         runtimeStoreFactory: {
@@ -9917,24 +9278,46 @@ describe("createPiExtension: provider fast hooks", () => {
         telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
       },
     });
-    await failingHost.triggerSessionStart();
-    const headers = { Authorization: PROVIDER_FAST_AUTHORIZATION };
-    await failingHost.triggerBeforeProviderHeaders(headers);
-    const replaced = await failingHost.triggerBeforeProviderRequest({
-      model: "gpt-5.6-sol",
-    });
-    expect(replaced).toEqual({
-      model: "gpt-5.6-sol",
-      service_tier: "fast",
-    });
-    await failingHost.triggerAfterProviderResponse(200, {});
+    await host.triggerSessionStart();
+    const payload = { model: "gpt-5.6-sol" };
+    expect(await host.triggerBeforeProviderRequest(payload)).toBe(payload);
+    await host.triggerEvent("agent_settled");
     await flushBackgroundWork();
-    expect(failingExtension.providerFastLatestForTest().state).toBe(
-      "not-confirmed",
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
     );
-    expect(JSON.stringify(failingHost.notifyCalls)).not.toContain(
+    expect(JSON.stringify(host.notifyCalls)).not.toContain(
       PROVIDER_FAST_SECRET,
     );
-    expect(JSON.stringify(failingHost.notifyCalls)).not.toContain("applied");
+    expect(JSON.stringify(host.notifyCalls)).not.toContain("applied");
+  });
+
+  it("records the replacement session's own outcome after a session reset", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const extension = installFastPrimary(host, {
+      fast: true,
+      overrides: journalRecordingOverrides(journalEntries),
+    });
+    await host.triggerSessionStart();
+    await host.triggerEvent("agent_settled");
+    await flushBackgroundWork();
+    await host.triggerSessionStart();
+    await host.triggerEvent("agent_settled");
+    await flushBackgroundWork();
+
+    expect(providerFastEvents(journalEntries)).toEqual([
+      "provider-fast.unsupported",
+      "provider-fast.unsupported",
+    ]);
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
   });
 });

@@ -260,7 +260,6 @@ import { safelyListAvailableModels } from "./port-safety.js";
 import {
   DEFAULT_PRIMARY_AGENT_NAME,
   type PiPrimaryActivationError,
-  type PiPrimaryRequestSnapshot,
   PiPrimarySession,
   UNKNOWN_PARENT_SESSION,
 } from "./primary-session.js";
@@ -271,11 +270,8 @@ import {
   promptTransferNackReason,
 } from "./prompt-chunking.js";
 import {
-  type ProviderFastAttemptExpireReason,
-  type ProviderFastAttemptPublicSnapshot,
-  type ProviderFastAttemptToken,
-  ProviderFastCoordinator,
-  type ProviderFastCoordinatorSnapshot,
+  classifyProviderFastIntent,
+  type ProviderFastPublicSnapshot,
 } from "./provider-fast-activation.js";
 import {
   activeInstanceFromRecoveryPointer,
@@ -321,21 +317,15 @@ import {
   createProductionPiThreadSourceFactory,
   type PiThreadSourceFactory,
 } from "./thread-sources.js";
-import {
-  type Clock,
-  extractPiProviderEventField,
-  type IdGenerator,
-  type PiAdapterLogger,
-  type PiEnvPort,
-  type PiExtensionApi,
-  type PiModelInfo,
-  type PiProviderHookModel,
-  type PiResolvedTransport,
-  type PiSessionContext,
-  type PiSkillInfo,
-  projectPiHookModel,
-  projectPiProviderEvent,
-  projectPiResolvedTransport,
+import type {
+  Clock,
+  IdGenerator,
+  PiAdapterLogger,
+  PiEnvPort,
+  PiExtensionApi,
+  PiModelInfo,
+  PiSessionContext,
+  PiSkillInfo,
 } from "./types.js";
 import {
   buildPaletteActions,
@@ -1929,7 +1919,7 @@ function renderStatusMessage(
   _activeSession: PiActiveSession | undefined,
   delegationController?: PiDelegationController,
   reconstructed?: PiChildReconstructionSummary | undefined,
-  providerFastLatest?: ProviderFastAttemptPublicSnapshot,
+  providerFastLatest?: ProviderFastPublicSnapshot,
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
@@ -2239,7 +2229,9 @@ class WeaveChildTreeEditor extends CustomEditor {
  * timer, or launches a child process at factory time.
  */
 export type PiExtensionInstance = ((pi: PiExtensionApi) => void) & {
-  readonly providerFastLatestForTest: () => ProviderFastAttemptPublicSnapshot;
+  readonly providerFastLatestForTest: () =>
+    | ProviderFastPublicSnapshot
+    | undefined;
 };
 
 export function createPiExtension(
@@ -2486,74 +2478,66 @@ export function createPiExtension(
    * naming a target's model needs a context the extension already holds.
    */
   let latestSessionCtx: PiSessionContext | undefined;
-  const providerFastCoordinator = new ProviderFastCoordinator();
-  let providerFastActiveToken: ProviderFastAttemptToken | undefined;
-  let providerFastActiveGeneration: number | undefined;
-  let providerFastActivePrimaryName: string | undefined;
   /**
-   * The live model identity the active attempt was classified against.
-   * A later hook that reports a different model belongs to a different
-   * request and must never inherit this attempt's allowlist decision.
+   * The owner whose committed neutral intent applies to this session: an
+   * authenticated child bootstrap in child mode, otherwise the committed
+   * primary of the current generation. Activation-time model state is never
+   * consulted, because the model cannot change this adapter's outcome.
    */
-  let providerFastActiveModelKey: string | undefined;
-  /** True once this attempt's controls were applied to a provider payload. */
-  let providerFastActiveRequested = false;
-
-  const forgetProviderFastAttempt = (): void => {
-    providerFastActiveToken = undefined;
-    providerFastActiveGeneration = undefined;
-    providerFastActivePrimaryName = undefined;
-    providerFastActiveModelKey = undefined;
-    providerFastActiveRequested = false;
-  };
-
-  /**
-   * Settle an attempt that can no longer receive a correlated response with a
-   * typed sanitized reason, so reporting never keeps the transient
-   * `requested` state of a request that was abandoned.
-   */
-  const cancelProviderFastAttempt = (
-    reason: ProviderFastAttemptExpireReason,
-  ): void => {
-    const cancelled = providerFastCoordinator.cancelActive(reason);
-    if (cancelled.isOk() && cancelled.value.kind === "cancelled") {
-      recordProviderFastTransitionSafely(cancelled.value.snapshot);
-    }
-    forgetProviderFastAttempt();
-  };
-
-  const resetProviderFastCoordinator = (
-    reason: ProviderFastAttemptExpireReason = "reset",
-  ): void => {
-    cancelProviderFastAttempt(reason);
-    providerFastCoordinator.reset();
-    forgetProviderFastAttempt();
-    telemetryCell.telemetry?.resetProviderFastReporting();
-  };
-
-  /**
-   * Pi settles a turn without a provider response when the caller cancels or
-   * the transport aborts. The attempt is terminal, and no evidence exists.
-   */
-  const settleAbandonedProviderFastAttempt = (): undefined => {
-    const run = Result.fromThrowable(
-      (): undefined => {
-        if (providerFastActiveToken === undefined) {
-          return undefined;
-        }
-        cancelProviderFastAttempt("cancelled");
+  const activeProviderFastIntentOwner = (): unknown => {
+    if (childModeState.active) {
+      if (
+        !childModeState.bootstrapApplied ||
+        childModeState.agentName.length === 0
+      ) {
         return undefined;
+      }
+      return childModeState;
+    }
+    const session = activeSession;
+    const generation = controller.getCurrentGeneration();
+    if (
+      session === undefined ||
+      generation === undefined ||
+      session.generationId !== generation.id ||
+      effectiveHealthOnly(generation)
+    ) {
+      return undefined;
+    }
+    return session.primarySession.captureRequestSnapshot();
+  };
+
+  /**
+   * The sanitized acceleration state for this session. Pi cannot carry fast
+   * intent, so a declaring owner reports the terminal unsupported outcome and
+   * an owner without intent reports no state at all. No provider request or
+   * header is inspected or changed to reach this answer.
+   */
+  const resolveProviderFastState = ():
+    | ProviderFastPublicSnapshot
+    | undefined => {
+    const resolve = Result.fromThrowable(
+      (): ProviderFastPublicSnapshot | undefined => {
+        const classified = classifyProviderFastIntent(
+          activeProviderFastIntentOwner(),
+        );
+        return classified.kind === "unsupported"
+          ? classified.snapshot
+          : undefined;
       },
       () => undefined,
     );
-    run();
-    return undefined;
+    return resolve().unwrapOr(undefined);
   };
 
-  const recordProviderFastTransitionSafely = (
-    snapshot: ProviderFastAttemptPublicSnapshot | undefined,
-  ): void => {
-    if (snapshot === undefined || snapshot.sequence < 1) {
+  /**
+   * Persist the one bounded terminal outcome for a declaring owner. The
+   * telemetry dedupe window keeps this to a single durable record per
+   * state/reason, so repeated turns do not grow the journal.
+   */
+  const reportProviderFastIntent = (): void => {
+    const snapshot = resolveProviderFastState();
+    if (snapshot === undefined) {
       return;
     }
     const telemetry = telemetryCell.telemetry;
@@ -2566,359 +2550,13 @@ export function createPiExtension(
     });
   };
 
-  const toProviderFastCoordinatorSnapshot = (
-    snapshot: PiPrimaryRequestSnapshot,
-    liveModel: PiProviderHookModel | undefined,
-  ): ProviderFastCoordinatorSnapshot => ({
-    generation: snapshot.generation,
-    primaryName: snapshot.primaryName,
-    ...(liveModel === undefined ? {} : { liveModel }),
-    ...(snapshot.fast === true ? { fast: true as const } : {}),
-  });
-
   /**
-   * Prove where this request will really go.
-   *
-   * `ctx.model.baseUrl` is declared configuration: Pi rebuilds the request
-   * model as `resolution.auth.baseUrl ? { ...model, baseUrl: <resolved> } :
-   * model` during request preparation, so an auth-resolved gateway can
-   * silently replace a first-party declaration. This consults the documented
-   * `ctx.modelRegistry.getProviderAuth(provider)` seam and reads only the
-   * resolved base URL from its result - never the API key, headers, or
-   * environment. A host without the seam, a rejected resolution, an
-   * unconfigured provider, or an unrecognized shape leaves the final origin
-   * unproven, and the caller then classifies as `transport-not-first-party`.
+   * Drop the in-memory reporting dedupe so a replaced session or a new
+   * primary records its own terminal outcome. Durable journal events stay as
+   * bounded audit facts.
    */
-  const resolveEffectiveTransport = async (
-    ctx: PiSessionContext | undefined,
-    liveModel: PiProviderHookModel,
-  ): Promise<PiResolvedTransport> => {
-    const registry = ctx?.modelRegistry;
-    if (registry === undefined || typeof registry !== "object") {
-      return { kind: "unprovable" };
-    }
-    const resolve = Reflect.get(registry, "getProviderAuth");
-    if (typeof resolve !== "function") {
-      return { kind: "unprovable" };
-    }
-    const resolved = await ResultAsync.fromThrowable(
-      async (): Promise<unknown> =>
-        await (registry.getProviderAuth?.(liveModel.provider) ?? undefined),
-      () => undefined,
-    )();
-    if (resolved.isErr()) {
-      return { kind: "unprovable" };
-    }
-    return projectPiResolvedTransport(resolved.value, liveModel.baseUrl);
-  };
-
-  /**
-   * Attach the proven transport to a snapshot that actually declares intent.
-   * A snapshot without `fast true` never reaches the allowlist, so it never
-   * pays for auth resolution.
-   */
-  const withProvenTransport = async (
-    ctx: PiSessionContext | undefined,
-    snapshot: ProviderFastCoordinatorSnapshot,
-  ): Promise<ProviderFastCoordinatorSnapshot> => {
-    const liveModel = snapshot.liveModel;
-    if (snapshot.fast !== true || liveModel === undefined) {
-      return snapshot;
-    }
-    const transport = await resolveEffectiveTransport(ctx, {
-      provider: liveModel.provider,
-      id: liveModel.id,
-      api: liveModel.api ?? "",
-      baseUrl: liveModel.baseUrl ?? "",
-    });
-    if (transport.kind !== "proved") {
-      return snapshot;
-    }
-    return {
-      ...snapshot,
-      liveModel: { ...liveModel, effectiveBaseUrl: transport.baseUrl },
-    };
-  };
-
-  /**
-   * The intent owner for this request plus the model the hook itself
-   * reports. Ordinary and direct-step children own their authenticated
-   * bootstrap intent; the parent owns its committed primary. Activation-time
-   * model state is never used, so `/model` and model cycling cannot leave a
-   * request classified against a model it no longer uses.
-   */
-  const resolveDeclaredProviderFastSnapshot = (
-    ctx: PiSessionContext | undefined,
-  ): ProviderFastCoordinatorSnapshot | undefined => {
-    const liveModel = projectPiHookModel(ctx?.model);
-    if (childModeState.active) {
-      if (
-        !childModeState.bootstrapApplied ||
-        childModeState.agentName.length === 0 ||
-        childModeState.bootstrapGeneration < 1
-      ) {
-        return undefined;
-      }
-      return {
-        generation: childModeState.bootstrapGeneration,
-        primaryName: childModeState.agentName,
-        ...(liveModel === undefined ? {} : { liveModel }),
-        ...(childModeState.fast === true ? { fast: true as const } : {}),
-      };
-    }
-    const session = activeSession;
-    const generation = controller.getCurrentGeneration();
-    if (
-      session === undefined ||
-      generation === undefined ||
-      session.generationId !== generation.id ||
-      effectiveHealthOnly(generation)
-    ) {
-      return undefined;
-    }
-    const captured = session.primarySession.captureRequestSnapshot();
-    if (captured === undefined) {
-      return undefined;
-    }
-    const resolved = session.primarySession.resolveRequestSnapshot(captured);
-    if (resolved.isErr()) {
-      return undefined;
-    }
-    return toProviderFastCoordinatorSnapshot(resolved.value, liveModel);
-  };
-
-  /**
-   * The declared request owner plus the transport the host proved for it.
-   * Every provider hook resolves both, so a mid-request transport change is
-   * a correlation mismatch rather than a silently inherited decision.
-   */
-  const resolveActiveProviderFastSnapshot = async (
-    ctx: PiSessionContext | undefined,
-  ): Promise<ProviderFastCoordinatorSnapshot | undefined> => {
-    const declared = resolveDeclaredProviderFastSnapshot(ctx);
-    if (declared === undefined) {
-      return undefined;
-    }
-    return await withProvenTransport(ctx, declared);
-  };
-
-  const providerFastModelKey = (
-    snapshot: ProviderFastCoordinatorSnapshot,
-  ): string =>
-    snapshot.liveModel === undefined
-      ? "none"
-      : JSON.stringify([
-          snapshot.liveModel.provider,
-          snapshot.liveModel.id,
-          snapshot.liveModel.api,
-          snapshot.liveModel.baseUrl,
-          snapshot.liveModel.effectiveBaseUrl ?? null,
-        ]);
-
-  const rememberProviderFastToken = (
-    token: ProviderFastAttemptToken,
-    snapshot: ProviderFastCoordinatorSnapshot,
-  ): void => {
-    providerFastActiveToken = token;
-    providerFastActiveGeneration = snapshot.generation;
-    providerFastActivePrimaryName = snapshot.primaryName;
-    providerFastActiveModelKey = providerFastModelKey(snapshot);
-    providerFastActiveRequested = false;
-  };
-
-  const providerFastCorrelates = (
-    snapshot: ProviderFastCoordinatorSnapshot,
-  ): boolean =>
-    snapshot.generation === providerFastActiveGeneration &&
-    snapshot.primaryName === providerFastActivePrimaryName &&
-    providerFastModelKey(snapshot) === providerFastActiveModelKey;
-
-  /**
-   * Name why an in-flight attempt no longer describes the live state, so the
-   * settled record carries a fixed reason instead of a generic reset.
-   */
-  const providerFastMismatchReason = (
-    snapshot: ProviderFastCoordinatorSnapshot,
-  ): ProviderFastAttemptExpireReason => {
-    if (snapshot.generation !== providerFastActiveGeneration) {
-      return "generation-superseded";
-    }
-    if (snapshot.primaryName !== providerFastActivePrimaryName) {
-      return "primary-switched";
-    }
-    return "model-switched";
-  };
-
-  const handleProviderFastHeaders = async (
-    event: unknown,
-    ctx: PiSessionContext | undefined,
-  ): Promise<undefined> => {
-    const run = ResultAsync.fromThrowable(
-      async (): Promise<undefined> => {
-        const snapshot = await resolveActiveProviderFastSnapshot(ctx);
-        if (snapshot === undefined) {
-          resetProviderFastCoordinator();
-          return undefined;
-        }
-        if (
-          providerFastActiveToken !== undefined &&
-          !providerFastCorrelates(snapshot)
-        ) {
-          resetProviderFastCoordinator(providerFastMismatchReason(snapshot));
-          return undefined;
-        }
-        const headersField = extractPiProviderEventField(event, "headers");
-        if (headersField.isErr()) {
-          resetProviderFastCoordinator();
-          return undefined;
-        }
-        const headers = headersField.value;
-        if (
-          headers === null ||
-          typeof headers !== "object" ||
-          Array.isArray(headers)
-        ) {
-          resetProviderFastCoordinator();
-          return undefined;
-        }
-        const begun = providerFastCoordinator.beginHeaders(snapshot, headers);
-        if (begun.isErr() || begun.value.kind !== "pending") {
-          forgetProviderFastAttempt();
-          if (begun.isOk() && begun.value.kind === "unsupported") {
-            recordProviderFastTransitionSafely(begun.value.snapshot);
-          }
-          return undefined;
-        }
-        rememberProviderFastToken(begun.value.token, snapshot);
-        recordProviderFastTransitionSafely(begun.value.snapshot);
-        return undefined;
-      },
-      () => undefined,
-    );
-    await run();
-    return undefined;
-  };
-
-  const handleProviderFastRequest = async (
-    event: unknown,
-    ctx: PiSessionContext | undefined,
-  ): Promise<{ readonly payload: unknown } | undefined> => {
-    const run = ResultAsync.fromThrowable(
-      async (): Promise<{ readonly payload: unknown } | undefined> => {
-        const snapshot = await resolveActiveProviderFastSnapshot(ctx);
-        if (snapshot === undefined) {
-          resetProviderFastCoordinator();
-          return undefined;
-        }
-        const payloadField = extractPiProviderEventField(event, "payload");
-        if (payloadField.isErr()) {
-          resetProviderFastCoordinator();
-          return undefined;
-        }
-        let token = providerFastActiveToken;
-        if (token !== undefined && !providerFastCorrelates(snapshot)) {
-          resetProviderFastCoordinator(providerFastMismatchReason(snapshot));
-          return undefined;
-        }
-        // A transport-level retry re-fires this hook with no response
-        // callback for the previous request. That request can never gain
-        // evidence, so it settles here and the retry becomes its own
-        // correlated attempt that still receives the controls.
-        if (token !== undefined && providerFastActiveRequested) {
-          cancelProviderFastAttempt("expired");
-          token = undefined;
-        }
-        if (token === undefined) {
-          if (providerFastCoordinator.latest().state !== "not-confirmed") {
-            return undefined;
-          }
-          const retry = providerFastCoordinator.beginSettledRetry(snapshot);
-          if (retry.isErr() || retry.value.kind !== "pending") {
-            forgetProviderFastAttempt();
-            if (retry.isOk() && retry.value.kind === "unsupported") {
-              recordProviderFastTransitionSafely(retry.value.snapshot);
-            }
-            return undefined;
-          }
-          token = retry.value.token;
-          rememberProviderFastToken(token, snapshot);
-          recordProviderFastTransitionSafely(retry.value.snapshot);
-        }
-        const applied = providerFastCoordinator.applyRequest(
-          snapshot,
-          token,
-          payloadField.value,
-        );
-        if (applied.isErr()) {
-          forgetProviderFastAttempt();
-          return undefined;
-        }
-        // A collision, malformed payload, or superseded state keeps its own
-        // terminal reason. The request goes out exactly as the previous
-        // handlers left it.
-        if (applied.value.kind !== "applied") {
-          forgetProviderFastAttempt();
-          recordProviderFastTransitionSafely(applied.value.snapshot);
-          return undefined;
-        }
-        providerFastActiveRequested = true;
-        recordProviderFastTransitionSafely(applied.value.snapshot);
-        if (Object.is(applied.value.payload, payloadField.value)) {
-          return undefined;
-        }
-        return { payload: applied.value.payload };
-      },
-      () => undefined,
-    );
-    return (await run()).unwrapOr(undefined);
-  };
-
-  const handleProviderFastResponse = async (
-    event: unknown,
-    ctx: PiSessionContext | undefined,
-  ): Promise<undefined> => {
-    const run = ResultAsync.fromThrowable(
-      async (): Promise<undefined> => {
-        const projected = projectPiProviderEvent(event);
-        if (
-          projected.isErr() ||
-          projected.value.type !== "after_provider_response"
-        ) {
-          resetProviderFastCoordinator();
-          return undefined;
-        }
-        const snapshot = await resolveActiveProviderFastSnapshot(ctx);
-        if (snapshot === undefined) {
-          resetProviderFastCoordinator();
-          return undefined;
-        }
-        const token = providerFastActiveToken;
-        if (token === undefined) {
-          return undefined;
-        }
-        if (!providerFastCorrelates(snapshot)) {
-          resetProviderFastCoordinator(providerFastMismatchReason(snapshot));
-          return undefined;
-        }
-        const observed = providerFastCoordinator.observeResponse(
-          token,
-          projected.value.status,
-        );
-        providerFastActiveToken = undefined;
-        providerFastActiveRequested = false;
-        if (observed.isErr()) {
-          providerFastActiveGeneration = undefined;
-          providerFastActivePrimaryName = undefined;
-          providerFastActiveModelKey = undefined;
-          return undefined;
-        }
-        recordProviderFastTransitionSafely(observed.value);
-        return undefined;
-      },
-      () => undefined,
-    );
-    await run();
-    return undefined;
+  const resetProviderFastReporting = (): void => {
+    telemetryCell.telemetry?.resetProviderFastReporting();
   };
   /**
    * The most recent session context *per generation*. Pi replaces
@@ -3519,7 +3157,7 @@ export function createPiExtension(
           activeSession,
           delegationControllerCell.controller,
           currentChildReconstruction(),
-          providerFastCoordinator.latest(),
+          resolveProviderFastState(),
         ),
         "info",
       );
@@ -3935,7 +3573,7 @@ export function createPiExtension(
           session.pendingPrimaryName = descriptor.name;
           session.primaryActivationAttempted = true;
           session.primaryActivationFailure = undefined;
-          resetProviderFastCoordinator("primary-switched");
+          resetProviderFastReporting();
           setActiveAgentStatus(ctx, descriptor.name);
           return undefined;
         })
@@ -4344,7 +3982,7 @@ export function createPiExtension(
     },
     closePlanTaskOverlay,
     shutdownExtensionController: () => {
-      resetProviderFastCoordinator();
+      resetProviderFastReporting();
       controller.shutdown();
     },
     clearBootActivationFailure: () => {
@@ -4474,36 +4112,24 @@ export function createPiExtension(
       },
     });
 
+    // No provider request or header hook is registered. Pi cannot bind a
+    // transport proof or a response proof to one prepared request, so the
+    // adapter sends no acceleration control and leaves every provider payload
+    // and header exactly as other handlers left it.
+    //
+    // A settled turn is the point where the session's committed intent is
+    // known and stable, so the bounded terminal unsupported outcome is
+    // recorded here. Telemetry dedupes it to one durable record.
+    pi.on("agent_settled", () => {
+      reportProviderFastIntent();
+    });
+
     // Parent-chat/workflow concurrency (Pi adapter contract): an ordinary prompt
     // arriving while a direct-step child is active must never be silently
     // interleaved with the workflow's own mutation. Ask first; only a
     // confirmed pause cancels the direct-step subtree and lets the prompt
     // continue to Loom - a reject leaves the workflow running untouched and
     // never submits the prompt.
-    pi.on("before_provider_headers", async (event, ctx: PiSessionContext) => {
-      await handleProviderFastHeaders(event, ctx);
-    });
-    pi.on("before_provider_request", async (event, ctx: PiSessionContext) => {
-      const replacement = await handleProviderFastRequest(event, ctx);
-      return replacement?.payload;
-    });
-    pi.on("after_provider_response", async (event, ctx: PiSessionContext) => {
-      await handleProviderFastResponse(event, ctx);
-    });
-    // `/model`, model cycling, and session restore replace the model an
-    // in-flight attempt was classified against. That attempt can no longer
-    // describe the request, so it settles instead of carrying an allowlist
-    // decision onto a model that never earned one.
-    pi.on("model_select", () => {
-      cancelProviderFastAttempt("model-switched");
-    });
-    // A cancelled or aborted turn never delivers `after_provider_response`.
-    // The abandoned attempt settles here so reporting stops describing a
-    // request that is no longer in flight.
-    pi.on("agent_settled", () => {
-      settleAbandonedProviderFastAttempt();
-    });
-
     pi.on("input", async (_event, ctx: PiSessionContext) => {
       if (childModeState.active) return { action: "continue" };
       if (!directStepChildRegistry.isActive()) return { action: "continue" };
@@ -4548,7 +4174,7 @@ export function createPiExtension(
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
       latestSessionCtx = ctx;
-      resetProviderFastCoordinator("session-replaced");
+      resetProviderFastReporting();
       // Revoke the prior generation synchronously, before the first await.
       // Overlays settle first, then the startup sequence bumps, then every
       // live authority cell is dropped so a retained tool registration or
@@ -4777,7 +4403,7 @@ export function createPiExtension(
             return;
           }
           lastBootActivationFailure = booted.error;
-          resetProviderFastCoordinator();
+          resetProviderFastReporting();
           activeSession = undefined;
           controller.shutdown();
           clearThreadSources(threadSourcesCell);
@@ -4821,7 +4447,7 @@ export function createPiExtension(
             error instanceof Error ? error : new Error(String(error)),
         );
         if (registerTools().isErr()) {
-          resetProviderFastCoordinator();
+          resetProviderFastReporting();
           activeSession = undefined;
           controller.shutdown();
           clearThreadSources(threadSourcesCell);
@@ -6273,7 +5899,7 @@ export function createPiExtension(
     });
   };
   piAdapterExtension.providerFastLatestForTest = () =>
-    providerFastCoordinator.latest();
+    resolveProviderFastState();
   return piAdapterExtension;
 }
 

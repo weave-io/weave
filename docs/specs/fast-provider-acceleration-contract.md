@@ -79,7 +79,7 @@ Versioned snapshots are not covered unless Anthropic lists them or guarantees al
 
 Versions inspected on 2026-08-12: Pi 0.84.1, OpenCode 1.18.9, and Claude Code 2.1.220. A public seam can support Weave only if the adapter can set the request without replacing unrelated values and can observe the provider's documented response proof for the same attempt.
 
-### Pi 0.84.1 — degraded
+### Pi 0.84.1 — unsupported for this adapter
 
 Pi's [extension documentation at tag v0.84.1](https://github.com/earendil-works/pi/blob/v0.84.1/packages/coding-agent/docs/extensions.md) and [public extension types](https://github.com/earendil-works/pi/blob/v0.84.1/packages/coding-agent/src/core/extensions/types.ts) define these seams:
 
@@ -87,11 +87,13 @@ Pi's [extension documentation at tag v0.84.1](https://github.com/earendil-works/
 - `before_provider_headers` mutates assembled request headers. It runs once for the provider operation; Pi retries reuse the result.
 - `after_provider_response` exposes HTTP status and normalized response headers before stream consumption.
 
-The hook context's `ctx.model.baseUrl` is declared configuration, not the request transport. Pi prepares each request as `resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model`, so auth resolution can replace a first-party declaration with a gateway. An adapter must therefore prove the final origin through the documented `ctx.modelRegistry.getProviderAuth(provider)` seam, reading only its resolved base URL, and must classify `transport-not-first-party` whenever that origin cannot be proven.
+Those hooks can mutate a request, but a mutation alone is not a truthful `requested` state. `requested` requires an exact allowlist match, and the allowlist is a first-party provider contract, so the adapter must know the transport of the request it is holding.
 
-These hooks prove request mutation. They do not expose the response body or streamed usage event. Pi's public finalized-message type does not expose OpenAI `service_tier` or Anthropic `usage.speed`. Response status and Anthropic limit headers are not positive application proof. Custom provider transports can also omit these callbacks.
+The hook context's `ctx.model.baseUrl` is declared configuration, not the request transport. Pi prepares each request as `resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model`, so auth resolution can replace a first-party declaration with a gateway. The only documented alternative, `ctx.modelRegistry.getProviderAuth(provider)`, performs a *fresh* auth resolution. Its result describes what a new resolution would return; it is not the resolution the held request was prepared with, and awaiting it also lets an asynchronous hook cross a session generation. No public Pi seam reports the effective transport of one prepared request.
 
-**Outcome:** degraded. Pi may reach `requested`, but it must not report `applied` with the current public seam. A later task may implement request mutation, but capability state must remain no higher than `not-confirmed` until Pi exposes documented response-body evidence correlated to the attempt. Header-only evidence does not meet the provider contracts.
+The hooks also do not expose the response body or streamed usage event. Pi's public finalized-message type does not expose OpenAI `service_tier` or Anthropic `usage.speed`. Response status and Anthropic limit headers are not positive application proof. Custom provider transports can also omit these callbacks.
+
+**Outcome:** unsupported for this adapter. With neither an effective-transport proof nor a response proof bound to the same prepared request, any acceleration control the adapter sent would be a guess. The adapter therefore registers no provider request or header hook, leaves every provider payload and header exactly unchanged, and reports declared intent as terminal `unsupported` with the reason `harness-seam-unavailable`. Agent activation, prompts, models, tools, and delegation are unaffected. Supporting `requested` requires a documented seam that reports the effective transport of one prepared request; `applied` additionally requires correlated official response-body evidence for that same request.
 
 ### OpenCode 1.18.9 — degraded
 
@@ -159,7 +161,7 @@ declared -> unsupported
 ### Adapter fallback
 
 - With no effective `fast` declaration, an adapter leaves provider controls unchanged and emits no acceleration state.
-- Pi and OpenCode may enter `requested` only for an exact mapping in this contract. Their current public hooks cannot read positive response-body evidence, so the terminal result is `not-confirmed`, never `applied`.
+- An adapter may enter `requested` only for an exact mapping in this contract, proven against the transport of the same prepared request. Pi and OpenCode cannot prove that today, so both enter `unsupported` and send no control.
 - Claude Code static materialization enters `unsupported`. It must not encode a guessed frontmatter field, environment value, prompt instruction, or provider control. Agent materialization still continues.
 - An unknown provider, endpoint, model, proxy, malformed input, or conflicting existing control enters `unsupported`. The adapter does not guess or overwrite the conflict. It preserves unrelated request data and allows normal harness behavior to continue when safe.
 - Failure of this optional capability does not fail agent activation, materialization, or an otherwise valid standard request. Existing adapter safety rules may still reject an independently invalid request.
@@ -240,7 +242,7 @@ Adapters may emit only these bounded fields:
 - collision boolean;
 - evidence kind enum: `openai-service-tier`, `anthropic-usage-speed`, or `none`;
 - evidence outcome enum: `confirmed`, `standard`, `absent`, `ambiguous`, or `inaccessible`;
-- bounded reason code, such as `model-not-allowed`, `endpoint-not-allowed`, `transport-not-first-party`, `request-collision`, `response-proof-unavailable`, `attempt-uncorrelated`, `rate-limited`, `capacity-limited`, `canceled`, or `timed-out`;
+- bounded reason code, such as `harness-seam-unavailable`, `model-not-allowed`, `endpoint-not-allowed`, `transport-not-first-party`, `request-collision`, `response-proof-unavailable`, `attempt-uncorrelated`, `rate-limited`, `capacity-limited`, `canceled`, or `timed-out`;
 - event time and bounded duration, if already part of the neutral runtime contract.
 
 Do not emit model prompts, completions, payload fragments, raw field values, full headers, header values, credentials, provider request/response objects, URLs, stack traces, harness objects, session transcripts, or private paths. Logs and errors follow the same rule.
@@ -249,7 +251,7 @@ Do not emit model prompts, completions, payload fragments, raw field values, ful
 
 No current Weave harness adapter has a complete request-plus-response seam that can prove `applied` under the official provider contracts:
 
-- Pi: degraded; safe request hooks, no provider response-body evidence.
+- Pi: unsupported; request hooks exist, but no seam binds an effective transport or a response proof to one prepared request.
 - OpenCode: degraded; request option/header hooks, no success evidence.
 - Claude Code materialization: unsupported; native fast controls exist outside the adapter's owned surface.
 
