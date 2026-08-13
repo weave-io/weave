@@ -80,6 +80,7 @@ import {
   makeCompletionRejectedFailure,
   makeInvariantViolationFailure,
   makeLeaseLostFailure,
+  makeRuntimeStoreWriteFailedFailure,
   makeLifecycleEffectFailedFailure,
   makeLifecycleProjectionFailedFailure,
   mapPlanStateErrorToPiFailure,
@@ -562,8 +563,24 @@ export class PiWorkflowController {
               workflowInstanceId: input.workflowInstanceId,
               leaseId: input.leaseId,
               agentName: "workflow-controller",
-              sessionStatus: input.signal === "cancel" ? "terminated" : "idle",
+              sessionStatus:
+                input.signal === "cancel" ? "terminated" : "idle",
             }),
+          )
+          .andThen(() =>
+            input.signal === "cancel"
+              ? this.deps.store.leases
+                  .release(
+                    createExecutionLeaseId(input.leaseId),
+                    createOwnerId(this.deps.ownerId),
+                  )
+                  .mapErr(() =>
+                    makeRuntimeStoreWriteFailedFailure(
+                      input.workflowInstanceId,
+                      "lease_release",
+                    ),
+                  )
+              : okAsync(undefined),
           )
           .map(() => {
             this.notifyPlanChanged(input.workflowInstanceId);

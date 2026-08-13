@@ -9,6 +9,7 @@ import {
   createOwnerId,
   createSqliteRuntimeStore,
   createWorkflowInstanceId,
+  queryError,
   type RuntimeStore,
   type WorkflowExecutionContext,
 } from "@weaveio/weave-engine";
@@ -155,6 +156,22 @@ workflow gated-flow {
 }
 `);
 
+const REVIEW_WAIT_WORKFLOW = cfg(`
+workflow review-wait-flow {
+  description "Workflow that pauses at a rejected review gate"
+  version 1
+
+  step review {
+    name "Review"
+    type gate
+    agent weft
+    prompt "Review the change"
+    completion review_verdict
+    on_reject pause
+  }
+}
+`);
+
 function gatedContext(): WorkflowExecutionContext {
   return {
     workflowName: "gated-flow",
@@ -165,6 +182,22 @@ function gatedContext(): WorkflowExecutionContext {
         const workflow = GATE_WORKFLOW.workflows["gated-flow"];
         if (workflow === undefined)
           throw new Error("fixture missing gated-flow workflow");
+        return workflow;
+      })(),
+    },
+  };
+}
+
+function reviewWaitContext(): WorkflowExecutionContext {
+  return {
+    workflowName: "review-wait-flow",
+    goal: "test goal",
+    slug: "test-goal",
+    workflows: {
+      "review-wait-flow": (() => {
+        const workflow = REVIEW_WAIT_WORKFLOW.workflows["review-wait-flow"];
+        if (workflow === undefined)
+          throw new Error("fixture missing review-wait-flow workflow");
         return workflow;
       })(),
     },
@@ -279,6 +312,11 @@ describe("PiWorkflowController — startExecution drives the full lifecycle", ()
       "implement",
     ]);
     expect(result.value.finalStatus).toBe("completed");
+    const leaseAfterCompletion = await store.leases.findActive();
+    expect(leaseAfterCompletion.isOk()).toBe(true);
+    if (leaseAfterCompletion.isOk()) {
+      expect(leaseAfterCompletion.value).toBeNull();
+    }
   });
 
   it("passes only completion-signal fields to the workflow state", async () => {
@@ -744,10 +782,68 @@ describe("PiWorkflowController — inspectExecution stays read-only", () => {
 });
 
 describe("PiWorkflowController — handleUserInterrupt routes to pause/cancel exactly", () => {
-  it("cancels a running execution on signal 'cancel'", async () => {
+  it("releases the lease after cancelling a review wait", async () => {
+    const { store, directDispatch, controller } = buildHarness();
+    const workflowInstanceId = await createInstance(
+      store,
+      "review-wait-flow",
+    );
+    directDispatch.enqueue(
+      okAsync({
+        outcome: "success",
+        method: "review_verdict",
+        approved: false,
+      } as PiDirectDispatchCandidate) as never,
+    );
+
+    const auth = authorizeByExplicitUser(true);
+    if (!auth.isOk()) throw new Error("unexpected");
+    const started = await controller.startExecution(
+      { workflowInstanceId, context: reviewWaitContext() },
+      auth.value,
+    );
+    expect(started.isOk()).toBe(true);
+    if (!started.isOk()) return;
+    expect(started.value.finalStatus).toBe("paused");
+
+    const activeLease = await store.leases.findActive();
+    expect(activeLease.isOk()).toBe(true);
+    if (!activeLease.isOk() || activeLease.value === null) return;
+
+    const aborted = await controller.handleUserInterrupt({
+      workflowInstanceId,
+      leaseId: activeLease.value.id,
+      signal: "cancel",
+    });
+    expect(aborted.isOk()).toBe(true);
+
+    const instanceAfterAbort = await store.instances.findById(
+      workflowInstanceId as never,
+    );
+    expect(instanceAfterAbort.isOk()).toBe(true);
+    if (instanceAfterAbort.isOk()) {
+      expect(instanceAfterAbort.value?.status).toBe("cancelled");
+    }
+
+    const leaseAfterAbort = await store.leases.findActive();
+    expect(leaseAfterAbort.isOk()).toBe(true);
+    if (leaseAfterAbort.isOk()) {
+      expect(leaseAfterAbort.value).toBeNull();
+    }
+
+    const secondRelease = await store.leases.release(
+      activeLease.value.id,
+      createOwnerId("test-owner"),
+    );
+    expect(secondRelease.isErr()).toBe(true);
+    if (secondRelease.isErr()) {
+      expect(secondRelease.error.type).toBe("not_found");
+    }
+  });
+
+  it("does not release the lease for pause", async () => {
     const { store, directDispatch, controller } = buildHarness();
     const workflowInstanceId = await createInstance(store);
-    // Enqueue a candidate that pauses the workflow so we have an active lease to interrupt against.
     directDispatch.enqueue(
       okAsync({
         outcome: "paused",
@@ -762,8 +858,90 @@ describe("PiWorkflowController — handleUserInterrupt routes to pause/cancel ex
       auth.value,
     );
     expect(started.isOk()).toBe(true);
+    if (!started.isOk() || started.value.leaseId === undefined) return;
+
+    const paused = await controller.handleUserInterrupt({
+      workflowInstanceId,
+      leaseId: started.value.leaseId,
+      signal: "pause",
+    });
+    expect(paused.isOk()).toBe(true);
+
+    const leaseAfterPause = await store.leases.findActive();
+    expect(leaseAfterPause.isOk()).toBe(true);
+    if (leaseAfterPause.isOk()) {
+      expect(leaseAfterPause.value?.id).toBe(
+        createExecutionLeaseId(started.value.leaseId),
+      );
+    }
+  });
+
+  it("returns a bounded failure when cancellation lease cleanup fails", async () => {
+    const store = createInMemoryRuntimeStore({
+      failOn: {
+        leaseRelease: queryError(
+          "release failed at /private/tmp/secret-runtime-store.db",
+        ),
+      },
+    });
+    const { directDispatch, controller } = buildHarness({ store });
+    const workflowInstanceId = await createInstance(
+      store,
+      "review-wait-flow",
+    );
+    directDispatch.enqueue(
+      okAsync({
+        outcome: "success",
+        method: "review_verdict",
+        approved: false,
+      } as PiDirectDispatchCandidate) as never,
+    );
+
+    const auth = authorizeByExplicitUser(true);
+    if (!auth.isOk()) throw new Error("unexpected");
+    const started = await controller.startExecution(
+      { workflowInstanceId, context: reviewWaitContext() },
+      auth.value,
+    );
+    expect(started.isOk()).toBe(true);
     if (!started.isOk()) return;
-    expect(started.value.finalStatus).toBe("paused");
+
+    const activeLease = await store.leases.findActive();
+    expect(activeLease.isOk()).toBe(true);
+    if (!activeLease.isOk() || activeLease.value === null) return;
+    store.setFailures({
+      leaseRelease: queryError(
+        "release failed at /private/tmp/secret-runtime-store.db",
+      ),
+    });
+
+    const aborted = await controller.handleUserInterrupt({
+      workflowInstanceId,
+      leaseId: activeLease.value.id,
+      signal: "cancel",
+    });
+    expect(aborted.isErr()).toBe(true);
+    if (aborted.isErr()) {
+      expect(aborted.error.code).toBe("RuntimeStoreWriteFailed");
+      expect(aborted.error.correlation).toEqual({ reason: "lease_release" });
+      expect(JSON.stringify(aborted.error)).not.toContain(
+        "/private/tmp/secret-runtime-store.db",
+      );
+    }
+
+    const instanceAfterAbort = await store.instances.findById(
+      workflowInstanceId as never,
+    );
+    expect(instanceAfterAbort.isOk()).toBe(true);
+    if (instanceAfterAbort.isOk()) {
+      expect(instanceAfterAbort.value?.status).toBe("cancelled");
+    }
+
+    const leaseAfterFailure = await store.leases.findActive();
+    expect(leaseAfterFailure.isOk()).toBe(true);
+    if (leaseAfterFailure.isOk()) {
+      expect(leaseAfterFailure.value?.id).toBe(activeLease.value.id);
+    }
   });
 });
 
