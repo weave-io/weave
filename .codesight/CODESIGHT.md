@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 275 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~29,600 tokens. Without it, AI exploration would cost ~90,200 tokens. **Saves ~60,600 tokens per conversation.**
-> **Last scanned:** 2026-08-13 09:18 — re-run after significant changes
+> **Last scanned:** 2026-08-13 09:35 — re-run after significant changes
 
 ---
 
@@ -249,7 +249,7 @@
   - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
-  - _...44 more_
+  - _...45 more_
 - `packages/adapters/pi/src/child-overlay-component.ts`
   - function formatChildOverlayTelemetryLine: (telemetry) => string
   - function compactChildOverlayEntryLine: (entry, width) => string

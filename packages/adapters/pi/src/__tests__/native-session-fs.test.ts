@@ -418,6 +418,28 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
     await removeRealTempRoot(root);
   });
 
+  test("serializes exclusive locks across independent filesystem ports", async () => {
+    const leftDirectory = (
+      await createBunPiNativeSessionFs().openDirectory(root, true)
+    )._unsafeUnwrap();
+    const rightDirectory = (
+      await createBunPiNativeSessionFs().openDirectory(root, true)
+    )._unsafeUnwrap();
+
+    const leftLock = (
+      await leftDirectory.tryExclusiveLock("delete.lock")
+    )._unsafeUnwrap();
+    expect(
+      (await rightDirectory.tryExclusiveLock("delete.lock"))._unsafeUnwrapErr(),
+    ).toEqual({ type: "already-exists" });
+    leftLock.release();
+    expect((await rightDirectory.tryExclusiveLock("delete.lock")).isOk()).toBe(
+      true,
+    );
+    leftDirectory.close();
+    rightDirectory.close();
+  });
+
   test("stat and positional pread return exact chunks with stable identity", async () => {
     const fs = createBunPiNativeSessionFs();
     const directory = (await fs.openDirectory(root, true))._unsafeUnwrap();

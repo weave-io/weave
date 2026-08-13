@@ -238,7 +238,7 @@
   - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
-  - _...44 more_
+  - _...45 more_
 - `packages/adapters/pi/src/child-overlay-component.ts`
   - function formatChildOverlayTelemetryLine: (telemetry) => string
   - function compactChildOverlayEntryLine: (entry, width) => string

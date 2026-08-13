@@ -21,6 +21,7 @@ import {
   type PiNativeSessionFileStat,
   type PiNativeSessionFsError,
   type PiNativeSessionFsPort,
+  type PiNativeSessionLock,
 } from "./child-native-sessions.js";
 
 /** Device/inode/mode triple used to bind a handle to one filesystem node. */
@@ -165,6 +166,7 @@ interface NativeLibc {
     offset: number,
   ) => number;
   readonly fsync: (fd: number) => number;
+  readonly flock: (fd: number, operation: number) => number;
   readonly renameat: (
     oldDir: number,
     oldName: Uint8Array,
@@ -177,7 +179,12 @@ interface NativeLibc {
 }
 
 const ERRNO_ENOENT = 2;
+const ERRNO_EAGAIN_LINUX = 11;
+const ERRNO_EWOULDBLOCK_DARWIN = 35;
 const ERRNO_EEXIST = 17;
+const FLOCK_EXCLUSIVE = 2;
+const FLOCK_NONBLOCKING = 4;
+const FLOCK_UNLOCK = 8;
 
 function nativeFlags(): NativeFlags | undefined {
   if (platform() === "darwin") {
@@ -242,6 +249,7 @@ function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
         // off_t is 64-bit on Darwin/Linux; count/return stay i32 like write().
         pread: { args: ["i32", "ptr", "i32", "i64"], returns: "i32" },
         fsync: { args: ["i32"], returns: "i32" },
+        flock: { args: ["i32", "i32"], returns: "i32" },
         renameat: { args: ["i32", "ptr", "i32", "ptr"], returns: "i32" },
         unlinkat: { args: ["i32", "ptr", "i32"], returns: "i32" },
         [errnoName]: { args: [], returns: "ptr" },
@@ -267,6 +275,7 @@ function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
         offset: bigint | number,
       ) => number;
       fsync: (fd: number) => number;
+      flock: (fd: number, operation: number) => number;
       renameat: (
         oldDir: number,
         oldName: unknown,
@@ -295,6 +304,7 @@ function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
       pread: (fd: number, bytes: Uint8Array, count: number, offset: number) =>
         symbols.pread(fd, ptr(bytes), count, BigInt(offset)),
       fsync: (fd: number) => symbols.fsync(fd),
+      flock: (fd: number, operation: number) => symbols.flock(fd, operation),
       renameat: (
         oldDir: number,
         oldName: Uint8Array,
@@ -1105,6 +1115,44 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
     );
   }
 
+  tryExclusiveLock(
+    name: string,
+  ): ResultAsync<PiNativeSessionLock, PiNativeSessionFsError> {
+    const safe = this.name(name);
+    if (safe.isErr()) return fsErrAsync(safe.error);
+    return this.identity().andThen(() => {
+      const fd = this.libc.openat(
+        this.fd,
+        cstr(safe.value),
+        this.libc.flags.O_RDWR |
+          this.libc.flags.O_CREAT |
+          this.libc.flags.O_NOFOLLOW |
+          this.libc.flags.O_CLOEXEC,
+        0o600,
+      );
+      if (fd < 0) return fsErrAsync({ type: "io" });
+      if (this.libc.fchmod(fd, 0o600) !== 0) {
+        this.libc.close(fd);
+        return fsErrAsync({ type: "io" });
+      }
+      if (this.libc.flock(fd, FLOCK_EXCLUSIVE | FLOCK_NONBLOCKING) !== 0) {
+        const errno = this.libc.errno();
+        const cause =
+          errno === ERRNO_EAGAIN_LINUX || errno === ERRNO_EWOULDBLOCK_DARWIN
+            ? ({ type: "already-exists" } as const)
+            : ({ type: "io" } as const);
+        this.libc.close(fd);
+        return fsErrAsync(cause);
+      }
+      return okAsync<PiNativeSessionLock, PiNativeSessionFsError>({
+        release: () => {
+          this.libc.flock(fd, FLOCK_UNLOCK);
+          this.libc.close(fd);
+        },
+      });
+    });
+  }
+
   close(): void {
     this.libc.close(this.fd);
     this.libc.dispose();
@@ -1171,6 +1219,7 @@ function nextMemoryMtime(): number {
 
 export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
   private readonly directories = new Map<string, MemoryDirectoryData>();
+  private readonly heldLocks = new Set<string>();
   private readonly replaced = new Set<string>();
   private readonly postValidationSwaps = new Map<
     string,
@@ -1636,6 +1685,19 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
       },
       sync() {
         return this.identity().map<void>(() => undefined);
+      },
+      tryExclusiveLock(name) {
+        if (!safeName(name)) return fsErrAsync({ type: "unsafe-path" });
+        const lockKey = `${path}/${name}`;
+        if (fs.heldLocks.has(lockKey)) {
+          return fsErrAsync({ type: "already-exists" });
+        }
+        fs.heldLocks.add(lockKey);
+        return okAsync({
+          release: () => {
+            fs.heldLocks.delete(lockKey);
+          },
+        });
       },
       createExclusiveFile(name, bytes, mode) {
         if (!safeName(name)) return fsErrAsync<void>({ type: "unsafe-path" });

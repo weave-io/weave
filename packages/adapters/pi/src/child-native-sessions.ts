@@ -311,6 +311,10 @@ export interface PiNativeSessionFileHandle {
 }
 
 /** One no-follow directory handle opened under the verified session root. */
+export interface PiNativeSessionLock {
+  release(): void;
+}
+
 export interface PiNativeSessionDirectory {
   readonly path: string;
   /**
@@ -348,6 +352,10 @@ export interface PiNativeSessionDirectory {
   ): ResultAsync<void, PiNativeSessionFsError>;
   /** Flushes directory-entry changes made through this held descriptor. */
   sync(): ResultAsync<void, PiNativeSessionFsError>;
+  /** Tries to acquire a process-shared advisory lock on a safe root leaf. */
+  tryExclusiveLock(
+    name: string,
+  ): ResultAsync<PiNativeSessionLock, PiNativeSessionFsError>;
   /**
    * Exclusive no-follow create of a new 0600 leaf. Fails with
    * {@link PiNativeSessionFsError} `already-exists` when the name is taken;
@@ -1879,10 +1887,6 @@ export class PiNativeSessionStore {
   private readonly fs: PiNativeSessionFsPort;
   private readonly host: PiNativeSessionHostPort;
   private readonly now: () => Date;
-  private readonly activeDeletions = new Map<
-    string,
-    Promise<Result<PiNativeSessionTombstone, PiNativeSessionError>>
-  >();
 
   constructor(options: PiNativeSessionStoreOptions) {
     this.root = options.root;
@@ -2937,22 +2941,15 @@ export class PiNativeSessionStore {
     }
     const located = this.locate(record.ref);
     if (located.isErr()) return errAsync(located.error);
-    const key = located.value.verified;
-    const active = this.activeDeletions.get(key);
-    if (active !== undefined) return new ResultAsync(active);
-
-    const operation = this.deleteLocatedSession(record, located.value);
-    let settled!: Promise<
-      Result<PiNativeSessionTombstone, PiNativeSessionError>
-    >;
-    settled = Promise.resolve(operation).then((result) => {
-      if (this.activeDeletions.get(key) === settled) {
-        this.activeDeletions.delete(key);
-      }
-      return result;
+    return this.acquireDeletionLock().andThen((lock) => {
+      const operation = this.deleteLocatedSession(record, located.value);
+      return new ResultAsync(
+        Promise.resolve(operation).then((result) => {
+          lock.release();
+          return result;
+        }),
+      );
     });
-    this.activeDeletions.set(key, settled);
-    return new ResultAsync(settled);
   }
 
   private deleteLocatedSession(
@@ -2979,26 +2976,66 @@ export class PiNativeSessionStore {
             )
           : okAsync(latest);
       return ensureIntent.andThen((current) =>
-        this.unlinkNativeLeaf(located).andThen(
-          (
-            unlinked,
-          ): ResultAsync<PiNativeSessionTombstone, PiNativeSessionError> => {
-            if (unlinked.isErr()) {
-              const recordedFailed =
-                current.phase === "failed"
-                  ? okAsync(current)
-                  : this.appendDeletionRecord(record, "failed").orElse(() =>
-                      okAsync(current),
-                    );
-              return recordedFailed.andThen(() => errAsync(unlinked.error));
-            }
-            return this.appendDeletionRecord(record, "completed").map(
-              asCompletedTombstone,
-            );
-          },
+        this.syncDeletionLedger().andThen(() =>
+          this.unlinkNativeLeaf(located).andThen(
+            (
+              unlinked,
+            ): ResultAsync<PiNativeSessionTombstone, PiNativeSessionError> => {
+              if (unlinked.isErr()) {
+                const recordedFailed =
+                  current.phase === "failed"
+                    ? okAsync(current)
+                    : this.appendDeletionRecord(record, "failed").orElse(() =>
+                        okAsync(current),
+                      );
+                return recordedFailed.andThen(() => errAsync(unlinked.error));
+              }
+              return this.appendDeletionRecord(record, "completed").map(
+                asCompletedTombstone,
+              );
+            },
+          ),
         ),
       );
     });
+  }
+
+  private acquireDeletionLock(): ResultAsync<
+    PiNativeSessionLock,
+    PiNativeSessionError
+  > {
+    const acquire = async (): Promise<
+      Result<PiNativeSessionLock, PiNativeSessionError>
+    > => {
+      for (let attempt = 0; attempt < 500; attempt += 1) {
+        const directoryResult = await this.fs.openDirectory(this.root, true);
+        if (directoryResult.isErr()) {
+          return err(fromFsError(directoryResult.error, "deletion-lock"));
+        }
+        const directory = directoryResult.value;
+        const lockResult = await directory.tryExclusiveLock(
+          ".session-deletion.lock",
+        );
+        directory.close();
+        if (lockResult.isOk()) return ok(lockResult.value);
+        if (lockResult.error.type !== "already-exists") {
+          return err(mapTombstoneWriteError(lockResult.error));
+        }
+        await Bun.sleep(10);
+      }
+      return err({ type: "TombstoneAppendFailed", reason: "unavailable" });
+    };
+    return new ResultAsync(acquire());
+  }
+
+  private syncDeletionLedger(): ResultAsync<void, PiNativeSessionError> {
+    return withDirectory(
+      this.fs,
+      this.root,
+      true,
+      PI_NATIVE_SESSION_LAYOUT.tombstoneFile,
+      (directory) => directory.sync().mapErr(mapTombstoneWriteError),
+    );
   }
 
   /**
