@@ -993,15 +993,142 @@ describe("projectPiProviderEvent", () => {
     });
   });
 
+  it("accepts safe plain and null-prototype events", () => {
+    const nullPrototypeRequest = Object.create(null) as Record<string, unknown>;
+    nullPrototypeRequest.type = "before_provider_request";
+    const nullPrototypeHeaders = Object.create(null) as Record<string, unknown>;
+    nullPrototypeHeaders.type = "before_provider_headers";
+    const nullPrototypeResponse = Object.create(null) as Record<
+      string,
+      unknown
+    >;
+    nullPrototypeResponse.type = "after_provider_response";
+    nullPrototypeResponse.status = 204;
+
+    expect(
+      projectPiProviderEvent({ type: "before_provider_request" }).isOk(),
+    ).toBe(true);
+    expect(projectPiProviderEvent(nullPrototypeRequest).isOk()).toBe(true);
+    expect(projectPiProviderEvent(nullPrototypeHeaders).isOk()).toBe(true);
+    expect(
+      projectPiProviderEvent(nullPrototypeResponse)._unsafeUnwrap(),
+    ).toEqual({ type: "after_provider_response", status: 204 });
+  });
+
+  it("rejects inherited, symbol, callable, and unexpected-prototype inputs", () => {
+    const inheritedType = Object.create({ type: "before_provider_request" });
+    const inheritedStatus = Object.create({ status: 200 });
+    Object.defineProperty(inheritedStatus, "type", {
+      value: "after_provider_response",
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const symbolKey = Symbol("provider-secret");
+    const withSymbol = { type: "before_provider_request" } as Record<
+      string | symbol,
+      unknown
+    >;
+    Object.defineProperty(withSymbol, symbolKey, {
+      value: "secret",
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const unexpectedPrototype = Object.create(Date.prototype) as {
+      type: string;
+    };
+    Object.defineProperty(unexpectedPrototype, "type", {
+      value: "before_provider_request",
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+
+    expect(projectPiProviderEvent(inheritedType).isErr()).toBe(true);
+    expect(projectPiProviderEvent(inheritedStatus).isErr()).toBe(true);
+    expect(projectPiProviderEvent(withSymbol).isErr()).toBe(true);
+    expect(projectPiProviderEvent(() => undefined).isErr()).toBe(true);
+    expect(projectPiProviderEvent(unexpectedPrototype).isErr()).toBe(true);
+  });
+
+  it("rejects accessors without invoking throwing or mutating getters", () => {
+    let throwingGetterReads = 0;
+    const throwingGetter = {};
+    Object.defineProperty(throwingGetter, "type", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        throwingGetterReads += 1;
+        throw new Error("getter must not run");
+      },
+    });
+
+    let mutatingGetterReads = 0;
+    const mutatingGetter = { type: "after_provider_response" };
+    Object.defineProperty(mutatingGetter, "status", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        mutatingGetterReads += 1;
+        mutatingGetter.type = "before_provider_request";
+        return 200;
+      },
+    });
+
+    let setterCalls = 0;
+    const setterOnly = {};
+    Object.defineProperty(setterOnly, "type", {
+      enumerable: true,
+      configurable: true,
+      set: () => {
+        setterCalls += 1;
+      },
+    });
+
+    expect(projectPiProviderEvent(throwingGetter).isErr()).toBe(true);
+    expect(projectPiProviderEvent(mutatingGetter).isErr()).toBe(true);
+    expect(projectPiProviderEvent(setterOnly).isErr()).toBe(true);
+    expect(throwingGetterReads).toBe(0);
+    expect(mutatingGetterReads).toBe(0);
+    expect(setterCalls).toBe(0);
+    expect(mutatingGetter.type).toBe("after_provider_response");
+  });
+
+  it("rejects unsafe descriptors before reading their values", () => {
+    for (const unsafeDescriptor of [
+      { enumerable: false },
+      { writable: false },
+      { configurable: false },
+    ]) {
+      const event = {};
+      Object.defineProperty(event, "type", {
+        value: "before_provider_request",
+        enumerable: true,
+        writable: true,
+        configurable: true,
+        ...unsafeDescriptor,
+      });
+      expect(projectPiProviderEvent(event).isErr()).toBe(true);
+    }
+  });
+
   it("rejects unknown or malformed provider events without throwing", () => {
     expect(projectPiProviderEvent(null).isErr()).toBe(true);
     expect(projectPiProviderEvent({ type: "session_start" }).isErr()).toBe(
       true,
     );
+    expect(projectPiProviderEvent({ type: 42 }).isErr()).toBe(true);
     expect(
       projectPiProviderEvent({
         type: "after_provider_response",
         status: "200",
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      projectPiProviderEvent({
+        type: "after_provider_response",
+        status: 200.5,
       }).isErr(),
     ).toBe(true);
   });

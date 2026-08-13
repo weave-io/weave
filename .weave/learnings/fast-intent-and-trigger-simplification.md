@@ -57,3 +57,4 @@
 - Request snapshots are instance-owned and frozen. They carry activation `generation`, primary name, copied model intent, selected model when available, and `fast?: true`. A later successful `activate()` increments generation, so a stale snapshot cannot describe the later primary.
 - `projectPiProviderEvent` copies only hook name and integer response status. Payload, headers, and response bodies stay behind this projection. Task 9 owns mutation and evidence.
 - Failed `activate()` still returns typed `NotEligiblePrimary` and leaves `getCurrent()` unchanged. Health-only, unsupported, and failed boot paths have no snapshot. Task 8 still owns authenticated child bootstrap trigger conversion; that remains the known Pi typecheck failure.
+- Provider events now fail closed from own safe data descriptors without executing accessors.
