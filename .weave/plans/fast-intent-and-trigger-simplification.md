@@ -231,7 +231,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - Run Weft after the slice.
     - Run Warp because authenticated child bootstrap and untrusted input validation changed. Resolve every blocking finding before Task 9.
 
-- [ ] 9. Implement Pi request mutation and truthful response evidence
+- [x] 9. Implement Pi request mutation and truthful response evidence
   - **What**: Apply allowlisted provider controls without clobbering prior extension edits, and expose only response-confirmed application as applied.
   - **Files**: `packages/adapters/pi/src/provider-fast-activation.ts` (create), `packages/adapters/pi/src/types.ts`, `packages/adapters/pi/src/extension.ts`, `packages/adapters/pi/src/telemetry.ts`, `packages/adapters/pi/src/weave-status-widget.ts`, `packages/adapters/pi/src/__tests__/provider-fast-activation.test.ts` (create), `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/telemetry.test.ts`, `packages/adapters/pi/src/__tests__/weave-status-widget.test.ts`
   - **Depends on**: Tasks 1, 6, 7, and 8
