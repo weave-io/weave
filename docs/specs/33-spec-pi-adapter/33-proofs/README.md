@@ -5,7 +5,9 @@
 > observations. The current contract uses Pi 0.84.1 `SessionManager.create/open`
 > with an adapter-contained path boundary and four real readiness reasons. The
 > descriptor capability and `path-only-session-api` conclusion no longer govern
-> current acceptance. See `33-overlay-ux-live-proof.md` for Task 14 evidence.
+> current acceptance. See `33-overlay-ux-live-proof.md` for Task 14 evidence and
+> `33-task13-generous-child-limits-proof.md` for the generous-child-limits
+> evidence.
 
 
 Every file in this directory is a sanitized record of one live Pi run: digests,
