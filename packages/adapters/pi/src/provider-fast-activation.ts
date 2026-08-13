@@ -1437,6 +1437,13 @@ export class ProviderFastAttemptTracker {
     return this.expire(token, reason);
   }
 
+  /**
+   * Settle an attempt that will never receive a correlated response. A
+   * request that already went out terminates as `not-confirmed` with the
+   * expire reason, because no response evidence can ever arrive for it. An
+   * attempt that never reached `requested` stays `declared`. Neither path
+   * can report evidence, so both carry `none`/`none`.
+   */
   expire(
     token: ProviderFastAttemptToken,
     reason: ProviderFastAttemptExpireReason,
@@ -1452,9 +1459,15 @@ export class ProviderFastAttemptTracker {
     const record = recordResult.value;
     this.pending.delete(record.sequence);
     return ok(
-      this.snapshotFromRecord(record, record.lifecycle, {
-        reason: expireReason.value,
-      }),
+      this.snapshotFromRecord(
+        record,
+        record.lifecycle === "requested" ? "not-confirmed" : "declared",
+        {
+          evidenceKind: "none",
+          evidenceOutcome: "none",
+          reason: expireReason.value,
+        },
+      ),
     );
   }
 
@@ -1584,6 +1597,15 @@ export type ProviderFastCoordinatorRequestResult = {
   readonly payload: unknown;
   readonly snapshot: ProviderFastAttemptPublicSnapshot;
 };
+
+export type ProviderFastCoordinatorCancelResult =
+  | {
+      readonly kind: "no-state";
+    }
+  | {
+      readonly kind: "cancelled";
+      readonly snapshot: ProviderFastAttemptPublicSnapshot;
+    };
 
 type ActiveCoordinatorAttempt = {
   readonly token: ProviderFastAttemptToken;
@@ -2051,6 +2073,33 @@ export class ProviderFastCoordinator {
     this.active = undefined;
     this.latestSnapshot = observed.value;
     return ok(observed.value);
+  }
+
+  /**
+   * Settle the active attempt when the turn ended, the caller cancelled, or
+   * the owning state was replaced before `after_provider_response`. Without
+   * this, an abandoned attempt would keep reporting the transient
+   * `requested` state that only describes an in-flight request.
+   */
+  cancelActive(
+    reason: ProviderFastAttemptExpireReason,
+  ): Result<ProviderFastCoordinatorCancelResult, ProviderFastCoordinatorError> {
+    const active = this.active;
+    if (active === undefined) {
+      return ok(Object.freeze({ kind: "no-state" }));
+    }
+    const expired = this.tracker.expire(active.token, reason);
+    this.active = undefined;
+    if (expired.isErr()) {
+      return this.failClosed(expired.error);
+    }
+    this.latestSnapshot = expired.value;
+    return ok(
+      Object.freeze({
+        kind: "cancelled",
+        snapshot: expired.value,
+      }),
+    );
   }
 
   reset(): Result<{ readonly expiredCount: number }, never> {

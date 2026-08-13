@@ -840,6 +840,51 @@ describe("PiTelemetry — provider-fast journal family", () => {
     });
   });
 
+  it("records a cancelled attempt as its own terminal event", async () => {
+    const store = createInMemoryRuntimeStore();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+    });
+    const requested = providerFastSnapshot({
+      state: "requested",
+      pendingCount: 1,
+    });
+    const cancelled = providerFastSnapshot({
+      state: "not-confirmed",
+      pendingCount: 0,
+      reason: "cancelled",
+    });
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(requested)),
+    ).toBe("recorded");
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(cancelled)),
+    ).toBe("recorded");
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(cancelled)),
+    ).toBe("duplicate");
+
+    const entries = [...store.journal.snapshot().values()]
+      .filter((entry) => entry.eventType.startsWith("provider-fast."))
+      .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+    expect(entries.map((entry) => entry.eventType)).toEqual([
+      "provider-fast.requested",
+      "provider-fast.not-confirmed",
+    ]);
+    expectExactJournalData(entries[1]?.data, {
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      sequence: 1,
+      pendingCount: 0,
+      collision: false,
+      state: "not-confirmed",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "cancelled",
+    });
+  });
+
   it("records retries as a later sequence without collapsing prior events", async () => {
     const store = createInMemoryRuntimeStore();
     const telemetry = buildTelemetry({

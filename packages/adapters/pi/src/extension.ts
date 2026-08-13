@@ -271,6 +271,7 @@ import {
   promptTransferNackReason,
 } from "./prompt-chunking.js";
 import {
+  type ProviderFastAttemptExpireReason,
   type ProviderFastAttemptPublicSnapshot,
   type ProviderFastAttemptToken,
   ProviderFastCoordinator,
@@ -2479,12 +2480,53 @@ export function createPiExtension(
   let providerFastActiveGeneration: number | undefined;
   let providerFastActivePrimaryName: string | undefined;
 
-  const resetProviderFastCoordinator = (): void => {
-    providerFastCoordinator.reset();
+  const forgetProviderFastAttempt = (): void => {
     providerFastActiveToken = undefined;
     providerFastActiveGeneration = undefined;
     providerFastActivePrimaryName = undefined;
+  };
+
+  /**
+   * Settle an attempt that can no longer receive a correlated response with a
+   * typed sanitized reason, so reporting never keeps the transient
+   * `requested` state of a request that was abandoned.
+   */
+  const cancelProviderFastAttempt = (
+    reason: ProviderFastAttemptExpireReason,
+  ): void => {
+    const cancelled = providerFastCoordinator.cancelActive(reason);
+    if (cancelled.isOk() && cancelled.value.kind === "cancelled") {
+      recordProviderFastTransitionSafely(cancelled.value.snapshot);
+    }
+    forgetProviderFastAttempt();
+  };
+
+  const resetProviderFastCoordinator = (
+    reason: ProviderFastAttemptExpireReason = "reset",
+  ): void => {
+    cancelProviderFastAttempt(reason);
+    providerFastCoordinator.reset();
+    forgetProviderFastAttempt();
     telemetryCell.telemetry?.resetProviderFastReporting();
+  };
+
+  /**
+   * Pi settles a turn without a provider response when the caller cancels or
+   * the transport aborts. The attempt is terminal, and no evidence exists.
+   */
+  const settleAbandonedProviderFastAttempt = (): undefined => {
+    const run = Result.fromThrowable(
+      (): undefined => {
+        if (providerFastActiveToken === undefined) {
+          return undefined;
+        }
+        cancelProviderFastAttempt("cancelled");
+        return undefined;
+      },
+      () => undefined,
+    );
+    run();
+    return undefined;
   };
 
   const recordProviderFastTransitionSafely = (
@@ -2548,6 +2590,17 @@ export function createPiExtension(
     providerFastActivePrimaryName = snapshot.primaryName;
   };
 
+  /**
+   * Name why an in-flight attempt no longer describes the live state, so the
+   * settled record carries a fixed reason instead of a generic reset.
+   */
+  const providerFastMismatchReason = (
+    snapshot: ProviderFastCoordinatorSnapshot,
+  ): ProviderFastAttemptExpireReason =>
+    snapshot.generation !== providerFastActiveGeneration
+      ? "generation-superseded"
+      : "primary-switched";
+
   const handleProviderFastHeaders = (event: unknown): undefined => {
     const run = Result.fromThrowable(
       (): undefined => {
@@ -2561,7 +2614,7 @@ export function createPiExtension(
           (snapshot.generation !== providerFastActiveGeneration ||
             snapshot.primaryName !== providerFastActivePrimaryName)
         ) {
-          resetProviderFastCoordinator();
+          resetProviderFastCoordinator(providerFastMismatchReason(snapshot));
           return undefined;
         }
         const headersField = extractPiProviderEventField(event, "headers");
@@ -2580,9 +2633,7 @@ export function createPiExtension(
         }
         const begun = providerFastCoordinator.beginHeaders(snapshot, headers);
         if (begun.isErr() || begun.value.kind !== "pending") {
-          providerFastActiveToken = undefined;
-          providerFastActiveGeneration = undefined;
-          providerFastActivePrimaryName = undefined;
+          forgetProviderFastAttempt();
           if (begun.isOk() && begun.value.kind === "unsupported") {
             recordProviderFastTransitionSafely(begun.value.snapshot);
           }
@@ -2620,9 +2671,7 @@ export function createPiExtension(
           }
           const retry = providerFastCoordinator.beginSettledRetry(snapshot);
           if (retry.isErr() || retry.value.kind !== "pending") {
-            providerFastActiveToken = undefined;
-            providerFastActiveGeneration = undefined;
-            providerFastActivePrimaryName = undefined;
+            forgetProviderFastAttempt();
             if (retry.isOk() && retry.value.kind === "unsupported") {
               recordProviderFastTransitionSafely(retry.value.snapshot);
             }
@@ -2635,7 +2684,7 @@ export function createPiExtension(
           snapshot.generation !== providerFastActiveGeneration ||
           snapshot.primaryName !== providerFastActivePrimaryName
         ) {
-          resetProviderFastCoordinator();
+          resetProviderFastCoordinator(providerFastMismatchReason(snapshot));
           return undefined;
         }
         const applied = providerFastCoordinator.applyRequest(
@@ -2644,9 +2693,7 @@ export function createPiExtension(
           payloadField.value,
         );
         if (applied.isErr()) {
-          providerFastActiveToken = undefined;
-          providerFastActiveGeneration = undefined;
-          providerFastActivePrimaryName = undefined;
+          forgetProviderFastAttempt();
           return undefined;
         }
         recordProviderFastTransitionSafely(applied.value.snapshot);
@@ -2684,7 +2731,7 @@ export function createPiExtension(
           snapshot.generation !== providerFastActiveGeneration ||
           snapshot.primaryName !== providerFastActivePrimaryName
         ) {
-          resetProviderFastCoordinator();
+          resetProviderFastCoordinator(providerFastMismatchReason(snapshot));
           return undefined;
         }
         const observed = providerFastCoordinator.observeResponse(
@@ -3720,7 +3767,7 @@ export function createPiExtension(
           session.pendingPrimaryName = descriptor.name;
           session.primaryActivationAttempted = true;
           session.primaryActivationFailure = undefined;
-          resetProviderFastCoordinator();
+          resetProviderFastCoordinator("primary-switched");
           setActiveAgentStatus(ctx, descriptor.name);
           return undefined;
         })
@@ -4275,6 +4322,12 @@ export function createPiExtension(
     pi.on("after_provider_response", (event) => {
       handleProviderFastResponse(event);
     });
+    // A cancelled or aborted turn never delivers `after_provider_response`.
+    // The abandoned attempt settles here so reporting stops describing a
+    // request that is no longer in flight.
+    pi.on("agent_settled", () => {
+      settleAbandonedProviderFastAttempt();
+    });
 
     pi.on("input", async (_event, ctx: PiSessionContext) => {
       if (childModeState.active) return { action: "continue" };
@@ -4320,7 +4373,7 @@ export function createPiExtension(
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
       latestSessionCtx = ctx;
-      resetProviderFastCoordinator();
+      resetProviderFastCoordinator("session-replaced");
       // Revoke the prior generation synchronously, before the first await.
       // Overlays settle first, then the startup sequence bumps, then every
       // live authority cell is dropped so a retained tool registration or

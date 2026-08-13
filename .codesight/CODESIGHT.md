@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 282 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~30,100 tokens. Without it, AI exploration would cost ~92,000 tokens. **Saves ~61,900 tokens per conversation.**
-> **Last scanned:** 2026-08-13 17:33 — re-run after significant changes
+> **Token savings:** this file is ~30,200 tokens. Without it, AI exploration would cost ~92,000 tokens. **Saves ~61,800 tokens per conversation.**
+> **Last scanned:** 2026-08-13 17:54 — re-run after significant changes
 
 ---
 
@@ -14,7 +14,12 @@
 - `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
 - `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
 - `packages/adapters/claude-code/src/bootstrap.ts` — function getBootstrapDir: () => string, const BOOTSTRAP_FILES
-- `packages/adapters/claude-code/src/model-resolution.ts` — function buildClaudeCodeModelInput: (descriptor) => ModelResolutionInput, const CLAUDE_CODE_AVAILABLE_MODELS: Set<string>
+- `packages/adapters/claude-code/src/model-resolution.ts`
+  - function buildClaudeCodeModelInput: (descriptor) => ModelResolutionInput
+  - function describeClaudeCodeFastActivation: (descriptor) => ClaudeCodeFastActivationDiagnostic | undefined
+  - interface ClaudeCodeFastActivationDiagnostic
+  - const CLAUDE_CODE_AVAILABLE_MODELS: Set<string>
+  - const CLAUDE_CODE_FAST_UNSUPPORTED_REASON
 - `packages/adapters/claude-code/src/skill-discovery.ts` — function discoverClaudeCodeSkills: (projectRoot, homeDir, readDir) => void
 - `packages/adapters/claude-code/src/tool-classification.ts`
   - function getClaudeCodeToolClassifications: () => readonly ConcreteToolClassification[]
@@ -77,7 +82,11 @@
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
-- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/opencode/src/translate-agent.ts`
+  - function describeFastActivation: (descriptor) => OpenCodeFastActivationReport | undefined
+  - function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>
+  - type TranslateAgentError
+  - type OpenCodeFastActivationReport
 - `packages/adapters/pi/src/active-plan-ui-state.ts`
   - function isTerminalWorkflowStatus: (status) => boolean
   - function resolveActivePlanIdentity: (port) => ResultAsync<ActivePlanIdentity | ActivePlanEmptyReason, ActivePlanUiError>
@@ -610,7 +619,7 @@
   - function planAnthropicProviderFastHeaders: (classification, headers) => Result<ProviderFastHeaderPlan, ProviderFastMutationUnsupported>
   - function applyAnthropicProviderFastHeaders: (classification, headers) => Result<object, ProviderFastMutationUnsupported>
   - class ProviderFastAttemptTracker
-  - _...61 more_
+  - _...62 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean

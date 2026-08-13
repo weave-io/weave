@@ -714,6 +714,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     ]);
     expect(host.onCalls.map((call) => call.event).sort()).toEqual([
       "after_provider_response",
+      "agent_settled",
       "agent_start",
       "before_agent_start",
       "before_provider_headers",
@@ -9403,6 +9404,96 @@ describe("createPiExtension: provider fast hooks", () => {
     expect(unsupportedHost.notifyCalls.at(-1)?.message).toContain(
       "fast: unsupported (model-not-allowed)",
     );
+  });
+
+  it("settles an abandoned turn instead of keeping the requested state", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const extension = installFastPrimary(host, {
+      fast: true,
+      overrides: {
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+        telemetryJournal: {
+          write: (entry) => {
+            journalEntries.push(entry);
+            return okAsync(undefined);
+          },
+        },
+        telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+      },
+    });
+    await host.triggerSessionStart();
+    await host.triggerBeforeProviderHeaders({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+    });
+    await host.triggerBeforeProviderRequest({ model: "gpt-5.6-sol" });
+    expect(extension.providerFastLatestForTest().state).toBe("requested");
+
+    // The turn ends without `after_provider_response`, as a cancelled or
+    // aborted provider call does.
+    await host.triggerEvent("agent_settled");
+    await flushBackgroundWork();
+    expectSanitizedProviderFast(extension.providerFastLatestForTest(), {
+      sequence: 1,
+      pendingCount: 0,
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      collision: false,
+      state: "not-confirmed",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "cancelled",
+    });
+    await host.invokeCommand("weave:status");
+    const message = host.notifyCalls.at(-1)?.message ?? "";
+    expect(message).toContain("fast: not-confirmed");
+    expect(message).not.toContain("fast: requested");
+    expect(message).not.toContain("applied");
+
+    // A late response for the abandoned attempt cannot revive it.
+    await host.triggerAfterProviderResponse(200, {});
+    await flushBackgroundWork();
+    expect(extension.providerFastLatestForTest().state).toBe("not-confirmed");
+
+    const events = journalEntries
+      .map((entry) =>
+        typeof entry === "object" && entry !== null && "eventType" in entry
+          ? String((entry as { eventType?: unknown }).eventType)
+          : "",
+      )
+      .filter((eventType) => eventType.startsWith("provider-fast."));
+    expect(events).toEqual([
+      "provider-fast.declared",
+      "provider-fast.requested",
+      "provider-fast.not-confirmed",
+    ]);
+    expect(JSON.stringify(journalEntries)).not.toContain(PROVIDER_FAST_SECRET);
+    expect(JSON.stringify(journalEntries)).not.toContain("Authorization");
+    expect(JSON.stringify(journalEntries)).not.toContain("applied");
+  });
+
+  it("ignores turn settlement when no fast attempt is in flight", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const extension = installFastPrimary(host);
+    await host.triggerSessionStart();
+    await host.triggerBeforeProviderHeaders({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+    });
+    await host.triggerEvent("agent_settled");
+    expect(extension.providerFastLatestForTest().sequence).toBe(0);
+    await host.invokeCommand("weave:status");
+    expect(host.notifyCalls.at(-1)?.message ?? "").not.toContain("fast:");
   });
 
   it("records sanitized transitions, ignores no-intent, and degrades journal failure", async () => {

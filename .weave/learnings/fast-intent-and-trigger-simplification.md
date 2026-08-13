@@ -75,3 +75,10 @@
 - The `provider-fast` journal family accepts only the public tracker snapshot: provider family, API family, rule ID, bounded sequence/pending count, collision, state, evidence kind/outcome, and a fixed reason. Extra keys, raw model/provider strings, payloads, headers, credentials, prompts, URLs, paths, and stacks are rejected at the projection boundary.
 - Lifecycle events persist once per sequence/state (`declared`, `requested`, `not-confirmed`, `unsupported`). No-intent never writes. Session replacement clears in-memory reporting dedupe only. Telemetry write failure degrades through the existing journal path and does not change request mutation.
 - `/weave:status` may add one concise line: `fast: requested`, `fast: not-confirmed`, `fast: unsupported (<fixed reason>)`, or `fast: declared`. It never says applied/active/confirmed. HTTP 2xx remains not-confirmed.
+
+## Task 9 slice E abandoned-attempt settlement
+
+- `requested` is transient attempt state, so an attempt that never receives `after_provider_response` must not keep reporting it. Expiring a `requested` attempt now terminates it as `not-confirmed` with `none`/`none` evidence and the fixed expire reason; expiring a `declared` attempt stays `declared`. Both keep the sequence and free the tracker slot, so a late or forged token cannot revive them.
+- `ProviderFastCoordinator.cancelActive(reason)` is the only cancellation seam. It reports `no-state` when nothing is active, keeps the settled snapshot in `latest()`, and fails closed on a malformed reason.
+- Pi's `agent_settled` is the abandonment signal for a cancelled or aborted turn. Session replacement, primary switch, and hook-detected generation/primary mismatch now settle with `session-replaced`, `primary-switched`, or `generation-superseded` instead of a silent reset, so the journal keeps one terminal record per sequence.
+- The `sequence:state` journal dedupe key already separates a cancelled `requested` attempt from its earlier `requested` event. A cancelled `declared` attempt intentionally records nothing new.

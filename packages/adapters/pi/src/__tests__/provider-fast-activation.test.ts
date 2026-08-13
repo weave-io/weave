@@ -1406,6 +1406,76 @@ describe("ProviderFastAttemptTracker", () => {
     expect(tracker.pendingCount()).toBe(0);
   });
 
+  it("settles an expired requested attempt as not-confirmed without evidence", () => {
+    const tracker = new ProviderFastAttemptTracker();
+    const begun = beginSupported(tracker);
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    expect(tracker.markRequested(begun.value.token).isOk()).toBe(true);
+    const cancelled = tracker.cancel(begun.value.token, "cancelled");
+    expect(cancelled.isOk()).toBe(true);
+    if (cancelled.isErr()) {
+      return;
+    }
+    expectSanitizedSnapshot(cancelled.value, {
+      sequence: 1,
+      pendingCount: 0,
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      collision: false,
+      state: "not-confirmed",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "cancelled",
+    });
+    expectAttemptError(
+      tracker.observeResponse(begun.value.token, { status: 200 }),
+      { type: "StaleAttemptToken", reason: "stale-token" },
+    );
+  });
+
+  it("keeps an expired declared attempt at declared without a request claim", () => {
+    const tracker = new ProviderFastAttemptTracker();
+    const begun = beginSupported(tracker);
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    const cancelled = tracker.cancel(begun.value.token, "session-replaced");
+    expect(cancelled.isOk()).toBe(true);
+    if (cancelled.isErr()) {
+      return;
+    }
+    expect(cancelled.value.state).toBe("declared");
+    expect(cancelled.value.reason).toBe("session-replaced");
+    expect(cancelled.value.evidenceKind).toBe("none");
+    expect(cancelled.value.evidenceOutcome).toBe("none");
+    expectAttemptError(tracker.markRequested(begun.value.token), {
+      type: "StaleAttemptToken",
+      reason: "stale-token",
+    });
+  });
+
+  it("rejects an unknown expire reason before touching a pending attempt", () => {
+    const tracker = new ProviderFastAttemptTracker();
+    const begun = beginSupported(tracker);
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    expectAttemptError(
+      tracker.expire(
+        begun.value.token,
+        SECRET_SHAPED_INPUT as unknown as "cancelled",
+      ),
+      { type: "InvalidAttemptInput", reason: "invalid-input" },
+    );
+    expect(tracker.pendingCount()).toBe(1);
+  });
+
   it("fails closed on pending capacity overflow without evicting existing attempts", () => {
     const tracker = new ProviderFastAttemptTracker({ pendingLimit: 2 });
     const first = beginSupported(tracker);
@@ -2115,6 +2185,100 @@ describe("ProviderFastCoordinator", () => {
         ) => unknown
       ).length,
     ).toBe(2);
+  });
+
+  it("settles an abandoned attempt as not-confirmed and frees the sequence", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot();
+    const begun = coordinator.beginHeaders(snapshot, {
+      Authorization: SECRET_AUTHORIZATION,
+    });
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    expect(
+      coordinator
+        .applyRequest(snapshot, begun.value.token, { model: "gpt-5.6-sol" })
+        .isOk(),
+    ).toBe(true);
+    expect(coordinator.latest().state).toBe("requested");
+
+    const cancelled = coordinator.cancelActive("cancelled");
+    expect(cancelled.isOk()).toBe(true);
+    if (cancelled.isErr() || cancelled.value.kind !== "cancelled") {
+      return;
+    }
+    expectSanitizedSnapshot(cancelled.value.snapshot, {
+      sequence: 1,
+      pendingCount: 0,
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      collision: false,
+      state: "not-confirmed",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "cancelled",
+    });
+    expect(coordinator.latest()).toEqual(cancelled.value.snapshot);
+    expectCoordinatorError(
+      coordinator.observeResponse(begun.value.token, 200),
+      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+    );
+    expectIdleLatest(coordinator);
+  });
+
+  it("reports no state when cancelling without an active attempt", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const idle = coordinator.cancelActive("cancelled");
+    expect(idle.isOk()).toBe(true);
+    if (idle.isErr()) {
+      return;
+    }
+    expect(idle.value).toEqual({ kind: "no-state" });
+    expectIdleLatest(coordinator);
+
+    const snapshot = coordinatorSnapshot();
+    const begun = coordinator.beginHeaders(snapshot, {});
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    expect(
+      coordinator
+        .applyRequest(snapshot, begun.value.token, { model: "gpt-5.6-sol" })
+        .isOk(),
+    ).toBe(true);
+    expect(coordinator.observeResponse(begun.value.token, 200).isOk()).toBe(
+      true,
+    );
+    const settled = coordinator.latest();
+    const afterSettlement = coordinator.cancelActive("cancelled");
+    expect(afterSettlement.isOk()).toBe(true);
+    if (afterSettlement.isErr()) {
+      return;
+    }
+    expect(afterSettlement.value).toEqual({ kind: "no-state" });
+    expect(coordinator.latest()).toEqual(settled);
+  });
+
+  it("fails closed on a malformed cancellation reason", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot();
+    const begun = coordinator.beginHeaders(snapshot, {});
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    expectCoordinatorError(
+      coordinator.cancelActive(SECRET_SHAPED_INPUT as unknown as "cancelled"),
+      { type: "InvalidAttemptInput", reason: "invalid-input" },
+    );
+    expectIdleLatest(coordinator);
+    expect(JSON.stringify(coordinator.latest())).not.toContain(
+      SECRET_SHAPED_INPUT,
+    );
   });
 
   it("keeps secret-shaped snapshot and header values out of latest()", () => {
