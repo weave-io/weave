@@ -802,8 +802,13 @@ export function createChildOverlayCustomComponent(
     const viewResult = controller.view();
     if (viewResult.isErr()) return errAsync(viewResult.error);
     const view = viewResult.value;
-    if (data === SCROLL_KEYS.pageUp && view.hasOlder) {
+    if (
+      (data === SCROLL_KEYS.pageUp || data === SCROLL_KEYS.home) &&
+      view.hasOlder
+    ) {
       // Older pages load once the viewport sits on the oldest rendered row.
+      // A fitting newest page reports scrollExtent 0, so PageUp/Home are
+      // already at that edge even though older history still exists.
       const nearOldest = view.scrollOffset >= Math.max(0, view.scrollExtent);
       if (nearOldest || view.entries.length === 0) {
         return controller.loadOlder().map(() => undefined);

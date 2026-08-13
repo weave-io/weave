@@ -43,6 +43,7 @@ import {
   maxScrollRows,
   type OverlayLayoutSpan,
   type OverlayScrollState,
+  restoreAfterOlderEntries,
   restoreScrollAnchor,
   scrollDelta,
 } from "./child-overlay-scroll.js";
@@ -950,65 +951,10 @@ export class ChildOverlayController {
     }
 
     if (mode === "prepend") {
-      // Prepend only entries not already retained. Middle-overlapping pages
-      // (resume from a page newer/older boundary inside the window) must not
-      // reorder the chronological window via naive [...incoming, ...state].
-      const existingIds = new Set(state.entries.map((entry) => entry.id));
-      const uniqueOlder = incoming.filter(
-        (entry) => !existingIds.has(entry.id),
-      );
-      const merged = dedupEntries([...uniqueOlder, ...state.entries]);
-      // Keep fetched older entries; trim the newest tail when over cap.
-      const retained = merged.slice(0, this.windowCap);
-      const trimmedNewest = merged.length - retained.length;
-
-      state.entries = retained;
-      // Always adopt the page older boundary. Overlapping pages must still
-      // advance the opaque cursor so loadOlder can reach the start.
-      state.olderCursor = page.olderCursor;
-      state.hasOlderFlag = page.hasOlder;
-      if (trimmedNewest > 0) {
-        // Never substitute retained entry ids for source opaque cursors.
-        // The page newer cursor is the boundary that can reload trimmed newer
-        // entries; when nothing was trimmed, keep the existing newer cursor.
-        state.newerCursor = page.newerCursor;
-        state.hasNewerFlag = true;
-        state.liveTail = false;
-      }
-      restoreScrollAnchor(state, priorAnchor);
-      syncTranscriptFromEntries(state);
-      // Older pages never carry a newer report; only fill an empty slot.
-      state.usage ??= latestUsageInWindow(incoming);
-      state.evidence = pageEvidence(state.evidence, incoming, "older");
+      prependOverlayPage(state, page, incoming, priorAnchor, this.windowCap);
       return;
     }
-
-    const existingIds = new Set(state.entries.map((entry) => entry.id));
-    const uniqueNewer = incoming.filter((entry) => !existingIds.has(entry.id));
-    const merged = dedupEntries([...state.entries, ...uniqueNewer]);
-    // Append keeps the newest side; trim the oldest head when over cap.
-    const retained = merged.slice(-this.windowCap);
-    const trimmedOldest = merged.length - retained.length;
-
-    state.entries = retained;
-    if (trimmedOldest > 0) {
-      // Never substitute retained entry ids for source opaque cursors.
-      // The page older cursor reloads trimmed older entries; when nothing was
-      // trimmed, keep the existing older cursor.
-      state.olderCursor = page.olderCursor;
-      state.hasOlderFlag = true;
-    }
-    // Always adopt the page newer boundary. Overlapping pages (common after
-    // prepend trim, which resumes from the older page's newer cursor) must
-    // still advance the opaque cursor so loadNewer can reach the tip.
-    state.newerCursor = page.newerCursor;
-    state.hasNewerFlag = page.hasNewer;
-    restoreScrollAnchor(state, priorAnchor);
-    if (uniqueNewer.length > 0) markTailGrowth(state);
-    syncTranscriptFromEntries(state);
-    // Appended entries are newer, so a report they replay supersedes.
-    state.usage = latestUsageInWindow(uniqueNewer) ?? state.usage;
-    state.evidence = pageEvidence(state.evidence, uniqueNewer, "newer");
+    appendOverlayPage(state, page, incoming, priorAnchor, this.windowCap);
   }
 
   private mergeEntry(state: SavedChildState, entry: ChildOverlayEntry): void {
@@ -1125,6 +1071,58 @@ function isReadOnly(child: ChildOverlayChild): boolean {
   return child.status === "settled" || child.status === "orphan";
 }
 
+function prependOverlayPage(
+  state: SavedChildState,
+  page: ChildOverlayPage,
+  incoming: readonly ChildOverlayEntry[],
+  priorAnchor: ChildOverlayAnchor | undefined,
+  windowCap: number,
+): void {
+  const existingIds = new Set(state.entries.map((entry) => entry.id));
+  const uniqueOlder = incoming.filter((entry) => !existingIds.has(entry.id));
+  const merged = dedupEntries([...uniqueOlder, ...state.entries]);
+  const retained = merged.slice(0, windowCap);
+  const trimmedNewest = merged.length - retained.length;
+  state.entries = retained;
+  state.olderCursor = page.olderCursor;
+  state.hasOlderFlag = page.hasOlder;
+  if (trimmedNewest > 0) {
+    state.newerCursor = page.newerCursor;
+    state.hasNewerFlag = true;
+    state.liveTail = false;
+  }
+  restoreAfterOlderEntries(state, priorAnchor, uniqueOlder[0], retained.length);
+  syncTranscriptFromEntries(state);
+  state.usage ??= latestUsageInWindow(incoming);
+  state.evidence = pageEvidence(state.evidence, incoming, "older");
+}
+
+function appendOverlayPage(
+  state: SavedChildState,
+  page: ChildOverlayPage,
+  incoming: readonly ChildOverlayEntry[],
+  priorAnchor: ChildOverlayAnchor | undefined,
+  windowCap: number,
+): void {
+  const existingIds = new Set(state.entries.map((entry) => entry.id));
+  const uniqueNewer = incoming.filter((entry) => !existingIds.has(entry.id));
+  const merged = dedupEntries([...state.entries, ...uniqueNewer]);
+  const retained = merged.slice(-windowCap);
+  const trimmedOldest = merged.length - retained.length;
+  state.entries = retained;
+  if (trimmedOldest > 0) {
+    state.olderCursor = page.olderCursor;
+    state.hasOlderFlag = true;
+  }
+  state.newerCursor = page.newerCursor;
+  state.hasNewerFlag = page.hasNewer;
+  restoreScrollAnchor(state, priorAnchor);
+  if (uniqueNewer.length > 0) markTailGrowth(state);
+  syncTranscriptFromEntries(state);
+  state.usage = latestUsageInWindow(uniqueNewer) ?? state.usage;
+  state.evidence = pageEvidence(state.evidence, uniqueNewer, "newer");
+}
+
 function dedupEntries(
   entries: readonly ChildOverlayEntry[],
 ): ChildOverlayEntry[] {
@@ -1142,7 +1140,7 @@ function dedupEntries(
  * Rebuilds {@link SavedChildState.transcript} from the retained overlay window
  * so paged merges (older/newer/search/replace) cannot leave the render model
  * pointing at a stale tip-only transcript. Preserves expanded IDs that still
- * resolve; scroll anchors are owned by {@link restoreScrollAnchor}.
+ * resolve; scroll anchors are owned by {@link restoreAfterOlderPrepend}.
  */
 function syncTranscriptFromEntries(state: SavedChildState): void {
   const priorExpandedIds = new Set<string>();

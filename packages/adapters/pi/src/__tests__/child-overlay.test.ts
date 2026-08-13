@@ -51,6 +51,7 @@ const ENTER = "\r";
 const ALT_ENTER = "\x1b\r";
 const PAGE_UP = "\x1b[5~";
 const PAGE_DOWN = "\x1b[6~";
+const HOME = "\x1b[H";
 const END = "\x1b[F";
 const CTRL_E = "\x05";
 
@@ -589,6 +590,24 @@ describe("mapNativeSessionEntryToOverlay", () => {
 });
 
 describe("ChildOverlayController", () => {
+  it("pageUp from a fitting newest page parks the viewport on prepended older rows", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "fit-1", status: "live", entries: entries(40) }),
+    ]);
+    const overlay = createChildOverlayController(source, { pageSize: 4 });
+    const opened = await mustOpen(overlay, "fit-1");
+    overlay.setScrollExtent(0)._unsafeUnwrap();
+    expect(opened.liveTail).toBe(true);
+    expect(opened.hasOlder).toBe(true);
+    expect(opened.entries[0]?.id).toBe("e36");
+
+    const after = (await overlay.loadOlder())._unsafeUnwrap();
+    expect(after.entries[0]?.id).toBe("e32");
+    expect(after.liveTail).toBe(false);
+    expect(after.scrollOffset).toBeGreaterThan(0);
+    expect(after.anchor?.entryId).toBe("e32");
+  });
+
   it("opens a historical child with the newest bounded page", async () => {
     const source = createMemoryChildOverlaySource([
       child({ childId: "hist-1", status: "settled", entries: entries(80) }),
@@ -3131,6 +3150,74 @@ describe("createChildOverlayCustomComponent", () => {
     expect(component.render(80).join("\n")).not.toContain(
       "newer line(s) below",
     );
+  });
+
+  it("pageUp at a fitting newest page loads older history and leaves live tail", async () => {
+    // Real PTY: a live child whose newest page still fits the overlay has
+    // scrollExtent 0. PageUp still calls loadOlder, but handleInput then
+    // clamped against that stale zero extent, so the viewport never left the
+    // tail and older history stayed unreachable.
+    const sourceEntries = Array.from({ length: 12 }, (_, index) => {
+      const id = `e${index}`;
+      const tall = index < 8;
+      return {
+        id,
+        payload: message(
+          id,
+          index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+          tall
+            ? Array.from(
+                { length: 8 },
+                (_line, line) => `older-${index}-line-${line}`,
+              ).join("\n")
+            : `newest-${index}`,
+        ),
+      };
+    });
+    const { component, controller } = await mount({
+      status: "live",
+      pageSize: 4,
+      sourceEntries,
+    });
+
+    const firstFrame = component.render(80).join("\n");
+    const before = controller.view()._unsafeUnwrap();
+    expect(before.liveTail).toBe(true);
+    expect(before.scrollOffset).toBe(0);
+    expect(before.hasOlder).toBe(true);
+    expect(before.scrollExtent).toBe(0);
+    expect(before.entries.map((entry) => entry.id)).toEqual([
+      "e8",
+      "e9",
+      "e10",
+      "e11",
+    ]);
+    expect(firstFrame).toContain("newest-11");
+    expect(firstFrame).not.toContain("older-7-line-0");
+    expect(firstFrame).not.toContain("newer line(s) below");
+
+    component.handleInput(PAGE_UP);
+    await flush();
+    const pagedFrame = component.render(80).join("\n");
+    const paged = controller.view()._unsafeUnwrap();
+    expect(paged.entries[0]?.id).toBe("e4");
+    expect(paged.liveTail).toBe(false);
+    expect(paged.scrollOffset).toBeGreaterThan(0);
+    expect(pagedFrame).toContain("older-7-line-0");
+    expect(pagedFrame).toContain(`${paged.scrollOffset} newer line(s) below`);
+
+    component.handleInput(END);
+    await flush();
+    component.render(80);
+    expect(controller.view()._unsafeUnwrap().liveTail).toBe(true);
+
+    component.handleInput(HOME);
+    await flush();
+    const homedFrame = component.render(80).join("\n");
+    const homed = controller.view()._unsafeUnwrap();
+    expect(homed.liveTail).toBe(false);
+    expect(homed.scrollOffset).toBeGreaterThan(0);
+    expect(homedFrame).toContain(`${homed.scrollOffset} newer line(s) below`);
   });
 
   it("normalizes Kitty scroll presses and ignores release frames", async () => {

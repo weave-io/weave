@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 275 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~29,600 tokens. Without it, AI exploration would cost ~90,200 tokens. **Saves ~60,600 tokens per conversation.**
-> **Last scanned:** 2026-08-13 11:10 — re-run after significant changes
+> **Last scanned:** 2026-08-13 17:25 — re-run after significant changes
 
 ---
 
@@ -290,7 +290,7 @@
   - function applyViewportAnchor: (state, anchor) => void
   - function markTailGrowth: (state) => void
   - function clearTailGrowth: (state) => void
-  - _...9 more_
+  - _...12 more_
 - `packages/adapters/pi/src/child-overlay-search.ts`
   - function stripPathLike: (value) => string
   - function matchingEntryIds: (entries, needle) => string[]

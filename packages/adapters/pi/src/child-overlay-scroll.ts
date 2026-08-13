@@ -329,6 +329,59 @@ export function restoreScrollAnchor(
   state.anchor = { entryId: anchor.entryId, lineOffset: anchor.lineOffset };
 }
 
+/**
+ * After older rows arrive on a fitting newest page, leave live tail.
+ *
+ * That page reports `scrollExtent` 0. Restoring the live-tail anchor against
+ * that stale measurement keeps the viewport on the newest row, so PageUp and
+ * Home never show the prepended history. Forget the measurement and park on
+ * the oldest prepended entry until the next paint re-measures.
+ */
+export function parkFittingNewestPrepend(
+  state: OverlayScrollState,
+  prependedOldest: ChildOverlayAnchor | undefined,
+  retainedCount: number,
+): void {
+  state.scrollExtent = undefined;
+  state.layoutSpans = undefined;
+  state.pendingViewportAnchor = undefined;
+  state.pendingViewportLiveTail = false;
+  state.liveTail = false;
+  state.scrollOffset = Math.max(0, Math.floor(retainedCount) - 1);
+  if (prependedOldest !== undefined) state.anchor = prependedOldest;
+}
+
+/** Place the viewport after older rows were prepended into the window. */
+export function restoreAfterOlderPrepend(
+  state: OverlayScrollState,
+  priorAnchor: ChildOverlayAnchor | undefined,
+  prependedOldest: ChildOverlayAnchor | undefined,
+  retainedCount: number,
+): void {
+  if (prependedOldest !== undefined && state.liveTail) {
+    parkFittingNewestPrepend(state, prependedOldest, retainedCount);
+    return;
+  }
+  restoreScrollAnchor(state, priorAnchor);
+}
+
+/** Park prepended older rows, or restore the prior viewport when none arrived. */
+export function restoreAfterOlderEntries(
+  state: OverlayScrollState,
+  priorAnchor: ChildOverlayAnchor | undefined,
+  prependedOldest: { readonly id: string } | undefined,
+  retainedCount: number,
+): void {
+  restoreAfterOlderPrepend(
+    state,
+    priorAnchor,
+    prependedOldest === undefined
+      ? undefined
+      : { entryId: prependedOldest.id, lineOffset: 0 },
+    retainedCount,
+  );
+}
+
 /** Scroll intent for a key press, in rendered rows or as an edge command. */
 export function scrollDelta(
   data: string,

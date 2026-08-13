@@ -279,7 +279,7 @@
   - function applyViewportAnchor: (state, anchor) => void
   - function markTailGrowth: (state) => void
   - function clearTailGrowth: (state) => void
-  - _...9 more_
+  - _...12 more_
 - `packages/adapters/pi/src/child-overlay-search.ts`
   - function stripPathLike: (value) => string
   - function matchingEntryIds: (entries, needle) => string[]

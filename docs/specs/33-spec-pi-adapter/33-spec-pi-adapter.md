@@ -251,8 +251,10 @@ Required behavior:
   bottom. Resize reflows. PageUp, PageDown, Shift+Up, Shift+Down, Home, and End
   must be matched semantically, never by raw byte comparison, so legacy CSI,
   Kitty event-aware, and SS3 (`ESC O H` / `ESC O F`) encodings of the same key
-  all scroll. Kitty release frames do not repeat an action. A global expansion
-  toggle applies to all entries.
+  all scroll. Kitty release frames do not repeat an action. When the newest
+  page still fits the overlay (`scrollExtent` 0) but older history exists,
+  PageUp and Home must load the older page and leave live tail so the prepended
+  rows become visible. A global expansion toggle applies to all entries.
 - The ownership-independent terminal-input route that carries scroll frames must
   prove its liveness by installation, never by inference from an unchanged host
   object. The host may clear extension listeners while keeping the same context,
