@@ -324,7 +324,28 @@ async function sendChildToRunning(
     hmacPort,
   );
   process.emitLine(bootstrapAck._unsafeUnwrap());
-  await flush();
+  // The controller verifies the ack (asynchronous HMAC) before it does any
+  // post-ack work. Wait for that work to be observable on the wire - the
+  // dispatched task prompt for an ordinary child, or the bounded restore
+  // `get_entries` read for a restored one - instead of racing it with a
+  // single event-loop turn, which a loaded machine loses.
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (hasPostAckDispatch(process)) return;
+    await flush();
+  }
+  throw new Error("timed out waiting for the child's post-ack dispatch");
+}
+
+function hasPostAckDispatch(process: FakeSpawnedProcess): boolean {
+  return (
+    process.writtenLines() as Array<{ type?: unknown; message?: unknown }>
+  ).some(
+    (line) =>
+      line.type === "get_entries" ||
+      (line.type === "prompt" &&
+        typeof line.message === "string" &&
+        !line.message.startsWith("/weave:__control__ ")),
+  );
 }
 
 function controlEnvelopesFromWritten(
@@ -382,6 +403,32 @@ async function waitForControlEnvelope(
   return controlEnvelopesFromWritten(process)
     .reverse()
     .find((envelope) => predicate(envelope));
+}
+
+/**
+ * Waits a bounded number of event-loop turns for a condition the controller
+ * only reaches after asynchronous work (envelope HMAC verification, queue
+ * promotion, persistence). A single `flush()` races that work on a loaded
+ * machine; this keeps the assertion intact while removing the race.
+ */
+async function flushUntil(
+  predicate: () => boolean,
+  label: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (predicate()) return;
+    await flush();
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
+function lastWrittenLine(
+  process: FakeSpawnedProcess,
+): Record<string, unknown> | undefined {
+  const line = process.writtenLines().at(-1);
+  return typeof line === "object" && line !== null
+    ? (line as Record<string, unknown>)
+    : undefined;
 }
 
 const GENEROUS = limitsSource({
@@ -636,7 +683,10 @@ describe("PiDelegationController", () => {
     expect((await firstPromise).isOk()).toBe(true);
 
     const nextPromise = controller.delegate(request());
-    await flush();
+    await flushUntil(
+      () => port.spawnedProcesses.length === 2,
+      "the next delegation to spawn after a settled child released capacity",
+    );
     expect(port.spawnedProcesses.length).toBe(2);
     await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
     expect((await nextPromise).isOk()).toBe(true);
@@ -704,7 +754,10 @@ describe("PiDelegationController", () => {
     const first = await firstPromise;
     expect(first.isOk()).toBe(true);
 
-    await flush();
+    await flushUntil(
+      () => port.spawnedProcesses.length === 2,
+      "the queued second delegation to spawn",
+    );
     expect(port.spawnedProcesses.length).toBe(2);
     await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
     const second = await secondPromise;
@@ -906,7 +959,10 @@ describe("PiDelegationController", () => {
     expect(port.spawnedProcesses.length).toBe(1);
 
     await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
-    await flush();
+    await flushUntil(
+      () => port.spawnedProcesses.length === 2,
+      "the queued second parent's child to spawn once the process budget freed",
+    );
     expect(port.spawnedProcesses.length).toBe(2);
     await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
     const second = await secondPromise;
@@ -1321,7 +1377,10 @@ describe("PiDelegationController", () => {
       hmacPort,
     );
     first.emitLine(settled._unsafeUnwrap());
-    await flush();
+    await flushUntil(
+      () => port.spawnedProcesses.length === 2,
+      "the relayed nested request to be promoted after the parent settled",
+    );
 
     // Once the parent settles and frees the global budget, the queued
     // relayed request is promoted and spawned as a real grandchild.
@@ -1661,7 +1720,10 @@ describe("PiDelegationController", () => {
     await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
     const first = await firstPromise;
     expect(first.isOk()).toBe(true);
-    await flush();
+    await flushUntil(
+      () => port.spawnedProcesses.length === 2,
+      "the queued child to spawn after terminal persistence",
+    );
     expect(events.some((event) => event.startsWith("terminal:"))).toBe(true);
     expect(observedAlive).toBe(true);
     expect(registry.snapshotHistory()[0]?.status).toBe("completed");
@@ -1764,7 +1826,10 @@ describe("PiDelegationController", () => {
     // time the queued second delegation is promoted and spawned - not left
     // running while a fresh process consumes another global-budget slot.
     expect(first.killed).toBe(true);
-    await flush();
+    await flushUntil(
+      () => port.spawnedProcesses.length === 2,
+      "the queued second delegation to be promoted after the first was killed",
+    );
     expect(port.spawnedProcesses.length).toBe(2);
 
     await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
@@ -2182,9 +2247,10 @@ describe("PiDelegationController", () => {
       new WebCryptoHmacPort(),
     );
     parent.emitLine(nested._unsafeUnwrap());
-    await flush();
-    await flush();
-    await flush();
+    await flushUntil(
+      () => port.spawnedProcesses.length === 2,
+      "the authenticated nested delegation to spawn a grandchild",
+    );
     expect(port.spawnedProcesses).toHaveLength(2);
     const grandchild = spawnedAt(port, 1);
     await respondHandshakeAndSettle(grandchild, port, "gen-1");
@@ -2407,7 +2473,10 @@ describe("PiDelegationController", () => {
     const childId = childIdOf(child, port);
 
     const steerPromise = controller.steerChild(childId, "steer please");
-    await flush();
+    await flushUntil(
+      () => lastWrittenLine(child)?.type === "steer",
+      "the steer command to reach the child",
+    );
     const steerLine = child.writtenLines().at(-1) as Record<string, unknown>;
     expect(steerLine).toMatchObject({
       type: "steer",
@@ -2422,7 +2491,10 @@ describe("PiDelegationController", () => {
     expect((await steerPromise).isOk()).toBe(true);
 
     const followPromise = controller.followUpChild(childId, "follow later");
-    await flush();
+    await flushUntil(
+      () => lastWrittenLine(child)?.type === "follow_up",
+      "the follow-up command to reach the child",
+    );
     const followLine = child.writtenLines().at(-1) as Record<string, unknown>;
     expect(followLine).toMatchObject({
       type: "follow_up",

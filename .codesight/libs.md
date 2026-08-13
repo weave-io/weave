@@ -76,13 +76,13 @@
   - interface ActivePlanUiError
   - _...7 more_
 - `packages/adapters/pi/src/adapter-cli-commands.ts`
+  - function encodeResultPageBase64: (bytes) => string
+  - function decodeResultPageBase64: (value) => Uint8Array
+  - function toResultWirePage: (childId, page) => PiChildrenResultResult
   - function createPlaceholderDoctorPort: () => PiAdapterDoctorPort
   - function looksLikeFilesystemPath: (value) => boolean
   - function stripPathsUnlessDiagnostic: (value, diagnostic) => T
-  - function createPiChildrenCommandPort: (options) => PiAdapterChildrenPort
-  - function createPiAdapterCommandHandlers: (options) => Readonly<Record<string, AdapterCommandHandler>>
-  - function createPiAdapterCommandRegistry: (options) => AdapterCommandRegistry
-  - _...21 more_
+  - _...28 more_
 - `packages/adapters/pi/src/adapter-cli-production.ts`
   - function openProductionPiAdapterCommandPorts: (options) => ResultAsync<
   - function createProductionPorts: (options) => ResultAsync<
@@ -125,12 +125,12 @@
   - _...24 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
+  - function makeCancelBody: (reason) => void
+  - function makeErrorBody: (reason) => void
   - function parseControlBody: (kind, body) => void
   - interface HostModelIdentity
   - type PiBootstrapBody
-  - type PiOrdinaryBootstrapBody
-  - type PiDirectStepBootstrapBody
-  - _...16 more_
+  - _...21 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -139,6 +139,14 @@
   - function generateNonceHex: (random) => string
   - class WebCryptoRandomPort
   - _...5 more_
+- `packages/adapters/pi/src/child-diagnostic-projection.ts`
+  - function jsonEscapedCodePointByteLength: (codePoint) => number
+  - function jsonStringSerializedByteLength: (value) => number
+  - function fitsDiagnosticBudget: (value, maxBytes, maxSerializedBytes) => boolean
+  - function projectDiagnosticText: (value, maxBytes, marker, maxSerializedBytes) => string
+  - const MAX_DIAGNOSTIC_REASON_BYTES
+  - const MAX_DIAGNOSTIC_SERIALIZED_BYTES
+  - _...1 more_
 - `packages/adapters/pi/src/child-doctor.ts`
   - function runChildDoctor: (input) => ResultAsync<PiDoctorResult, PiAdapterCommandPortError>
   - function createPiDoctorPort: (options) => void
@@ -218,6 +226,12 @@
   - interface PiInspectorViewState
   - interface PiInspectorView
   - _...7 more_
+- `packages/adapters/pi/src/child-lifecycle-settings.ts`
+  - function resolvePiChildLifecycleSettings: (config) => Result<
+  - interface PiChildLifecycleSettings
+  - interface PiChildLifecycleSettingsIssue
+  - const DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS
+  - const MAX_PI_CHILD_LIFECYCLE_SETTINGS
 - `packages/adapters/pi/src/child-metadata-cache.ts`
   - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
   - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
@@ -231,14 +245,30 @@
   - function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory
   - interface PiNativeTranscriptComponentDeps
   - const CHILD_COMPACT_NATIVE_RENDER_FAILED
-- `packages/adapters/pi/src/child-native-sessions.ts`
+- `packages/adapters/pi/src/child-native-results.ts`
+  - function readNativeResultGroup: (expected, entries) => PiNativeResultGroupState
+  - function planResultGroupWrite: (output) => Result<PiNativeResultWritePlan, PiNativeSessionError>
+  - function bindResultGroupWriteMeta: (plan, identity, leaf) => PiNativeResultGroupWriteMeta
+  - function appendResultGroup: (input) => ResultAsync<void, PiNativeSessionError>
+  - function prepareResultGroupRead: (options, expected, ref) => Result<PiNativeResultGroupReadPlan, PiNativeSessionError>
+  - function scanResultGroup: (source, expected, plan) => ResultAsync<PiNativeResultGroupRead, PiNativeSessionError>
+  - _...31 more_
+- `packages/adapters/pi/src/child-native-session-contracts.ts`
   - function describePiNativeSessionStorageUnavailable: (_reason) => string
   - function setPiNativeSessionMaxRangeLengthForTests: (length) => void
+  - function effectivePiNativeSessionMaxRangeLength: () => number
+  - function fromFsError: (error, ref) => PiNativeSessionError
+  - function encodeNativeSessionBase64Url: (bytes) => string
+  - function decodeNativeSessionBase64Url: (value) => Result<Uint8Array, undefined>
+  - _...20 more_
+- `packages/adapters/pi/src/child-native-sessions.ts`
   - function resolvePiNativeSessionRoot: (input) => ResultAsync<string, PiNativeSessionError>
   - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
-  - _...45 more_
+  - function nativeSessionDeletionToken: (ref) => string
+  - function readNativeThreadMetadata: (entries) => PiNativeThreadMetadata | undefined
+  - _...24 more_
 - `packages/adapters/pi/src/child-overlay-component.ts`
   - function formatChildOverlayTelemetryLine: (telemetry) => string
   - function compactChildOverlayEntryLine: (entry, width) => string
@@ -308,7 +338,7 @@
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
   - interface ChildOverlayConfig
-  - _...31 more_
+  - _...32 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
@@ -350,6 +380,7 @@
   - interface PiChildRecoveryHistory
   - interface PiChildRecoveryDescriptor
   - _...8 more_
+- `packages/adapters/pi/src/child-runtime-budget.ts` — function makeChildRuntimeExceededFailure: (childId, budgetMs) => PiAdapterFailure, class ChildRuntimeBudget
 - `packages/adapters/pi/src/child-runtime.ts`
   - function classifyChildAccess: (input) => PiChildAccessState
   - function authorizeChildAccess: (childId, state, operation) => Result<void, PiChildAccessDenial>
@@ -383,13 +414,13 @@
   - function readChildReconstruction: (cell, generationId, parentSessionId) => PiChildReconstructionSummary | undefined
   - _...15 more_
 - `packages/adapters/pi/src/child-session-refs.ts`
+  - function childRefTotalRuns: (record) => number
   - function createNativeChildRefSourceAuthority: (store) => PiChildRefSourceAuthority
   - function parseChildRefRecord: (value) => Result<PiChildRefRecord, PiChildRefError>
   - function parseChildRefEnvelope: (value) => Result<PiChildRefEnvelope, PiChildRefError>
   - function serializeChildRefEnvelope: (envelope) => string
   - function hasNoTranscriptFields: (serialized) => boolean
-  - class PiChildSessionRefStore
-  - _...29 more_
+  - _...31 more_
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
   - interface TimerHandle
@@ -397,7 +428,7 @@
   - const DEFAULT_HANDSHAKE_TIMEOUT_MS
   - const DEFAULT_REPLY_TIMEOUT_MS
   - const DEFAULT_SETTLEMENT_TIMEOUT_MS
-  - _...2 more_
+  - _...3 more_
 - `packages/adapters/pi/src/child-title.ts`
   - function durableChildTitleSuffix: (threadId) => string
   - function resolveDurableChildTitle: (input) => string
@@ -432,12 +463,12 @@
   - interface ChildTreeRenderOptions
 - `packages/adapters/pi/src/child-tree.ts`
   - function addUsage: (a, b) => PiChildUsageAggregate
+  - function truncateUtf8: (text, maxBytes) => string
+  - function truncateFinalOutput: (text) => string
   - function truncateLatestOutput: (text) => string
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
-  - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
-  - function applyTreeControlKey: (nodes, PiChildTreeNode>, selectedId, key) => PiTreeControlOutcome
-  - _...15 more_
+  - _...17 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -475,7 +506,7 @@
   - interface PiOverlayChildDescriptor
   - interface PiThreadRunAssignment
   - interface PiThreadRunRequest
-  - _...13 more_
+  - _...12 more_
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function formatDelegationAgentName: (agentName) => string
   - function renderDelegationCompactResult: (result, options, theme, context, onCompactRenderFailure?) => void
@@ -648,10 +679,10 @@
   - function authenticateRestoreStartupSuffix: (establishedLeafId, page) => Result<void, PiRestoreAuthenticationReason>
   - class PiRpcChild
   - interface PiRestoreContextMetadata
+  - interface PiChildPrivateOutputCapture
   - interface PiChildSessionObserver
   - interface PiRpcChildDeps
-  - interface PiRpcChildSpawnInput
-  - _...7 more_
+  - _...9 more_
 - `packages/adapters/pi/src/runtime-store-port.ts`
   - class SqliteRuntimeStoreFactory
   - class InMemoryRuntimeStoreFactory
@@ -735,12 +766,13 @@
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
 - `packages/cli/src/commands/adapter.ts`
+  - function decodeAdapterResultPage: (page) => Result<Uint8Array | undefined, string>
   - function renderAdapterHelp: (theme) => string
   - function runAdapter: (ctx) => Promise<Result<number, CliError>>
   - function resolveDeleteParentScope: (registry, workspaceKey, target, {...}) => Promise<
   - function parseAdapterTarget: (rest) => Result<AdapterCliTarget, CliError>
   - interface AdapterCommandContext
-  - type AdapterCliTarget
+  - _...1 more_
 - `packages/cli/src/commands/compose.ts`
   - function mapConfigLoadErrors: (path, errors) => CliError
   - function runCompose: (ctx) => Promise<Result<number, CliError>>

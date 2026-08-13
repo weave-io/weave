@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 275 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~29,600 tokens. Without it, AI exploration would cost ~90,200 tokens. **Saves ~60,600 tokens per conversation.**
-> **Last scanned:** 2026-08-13 17:25 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 280 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~30,200 tokens. Without it, AI exploration would cost ~91,700 tokens. **Saves ~61,500 tokens per conversation.**
+> **Last scanned:** 2026-08-13 22:28 — re-run after significant changes
 
 ---
 
@@ -87,13 +87,13 @@
   - interface ActivePlanUiError
   - _...7 more_
 - `packages/adapters/pi/src/adapter-cli-commands.ts`
+  - function encodeResultPageBase64: (bytes) => string
+  - function decodeResultPageBase64: (value) => Uint8Array
+  - function toResultWirePage: (childId, page) => PiChildrenResultResult
   - function createPlaceholderDoctorPort: () => PiAdapterDoctorPort
   - function looksLikeFilesystemPath: (value) => boolean
   - function stripPathsUnlessDiagnostic: (value, diagnostic) => T
-  - function createPiChildrenCommandPort: (options) => PiAdapterChildrenPort
-  - function createPiAdapterCommandHandlers: (options) => Readonly<Record<string, AdapterCommandHandler>>
-  - function createPiAdapterCommandRegistry: (options) => AdapterCommandRegistry
-  - _...21 more_
+  - _...28 more_
 - `packages/adapters/pi/src/adapter-cli-production.ts`
   - function openProductionPiAdapterCommandPorts: (options) => ResultAsync<
   - function createProductionPorts: (options) => ResultAsync<
@@ -136,12 +136,12 @@
   - _...24 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
+  - function makeCancelBody: (reason) => void
+  - function makeErrorBody: (reason) => void
   - function parseControlBody: (kind, body) => void
   - interface HostModelIdentity
   - type PiBootstrapBody
-  - type PiOrdinaryBootstrapBody
-  - type PiDirectStepBootstrapBody
-  - _...16 more_
+  - _...21 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -150,6 +150,14 @@
   - function generateNonceHex: (random) => string
   - class WebCryptoRandomPort
   - _...5 more_
+- `packages/adapters/pi/src/child-diagnostic-projection.ts`
+  - function jsonEscapedCodePointByteLength: (codePoint) => number
+  - function jsonStringSerializedByteLength: (value) => number
+  - function fitsDiagnosticBudget: (value, maxBytes, maxSerializedBytes) => boolean
+  - function projectDiagnosticText: (value, maxBytes, marker, maxSerializedBytes) => string
+  - const MAX_DIAGNOSTIC_REASON_BYTES
+  - const MAX_DIAGNOSTIC_SERIALIZED_BYTES
+  - _...1 more_
 - `packages/adapters/pi/src/child-doctor.ts`
   - function runChildDoctor: (input) => ResultAsync<PiDoctorResult, PiAdapterCommandPortError>
   - function createPiDoctorPort: (options) => void
@@ -229,6 +237,12 @@
   - interface PiInspectorViewState
   - interface PiInspectorView
   - _...7 more_
+- `packages/adapters/pi/src/child-lifecycle-settings.ts`
+  - function resolvePiChildLifecycleSettings: (config) => Result<
+  - interface PiChildLifecycleSettings
+  - interface PiChildLifecycleSettingsIssue
+  - const DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS
+  - const MAX_PI_CHILD_LIFECYCLE_SETTINGS
 - `packages/adapters/pi/src/child-metadata-cache.ts`
   - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
   - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
@@ -242,14 +256,30 @@
   - function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory
   - interface PiNativeTranscriptComponentDeps
   - const CHILD_COMPACT_NATIVE_RENDER_FAILED
-- `packages/adapters/pi/src/child-native-sessions.ts`
+- `packages/adapters/pi/src/child-native-results.ts`
+  - function readNativeResultGroup: (expected, entries) => PiNativeResultGroupState
+  - function planResultGroupWrite: (output) => Result<PiNativeResultWritePlan, PiNativeSessionError>
+  - function bindResultGroupWriteMeta: (plan, identity, leaf) => PiNativeResultGroupWriteMeta
+  - function appendResultGroup: (input) => ResultAsync<void, PiNativeSessionError>
+  - function prepareResultGroupRead: (options, expected, ref) => Result<PiNativeResultGroupReadPlan, PiNativeSessionError>
+  - function scanResultGroup: (source, expected, plan) => ResultAsync<PiNativeResultGroupRead, PiNativeSessionError>
+  - _...31 more_
+- `packages/adapters/pi/src/child-native-session-contracts.ts`
   - function describePiNativeSessionStorageUnavailable: (_reason) => string
   - function setPiNativeSessionMaxRangeLengthForTests: (length) => void
+  - function effectivePiNativeSessionMaxRangeLength: () => number
+  - function fromFsError: (error, ref) => PiNativeSessionError
+  - function encodeNativeSessionBase64Url: (bytes) => string
+  - function decodeNativeSessionBase64Url: (value) => Result<Uint8Array, undefined>
+  - _...20 more_
+- `packages/adapters/pi/src/child-native-sessions.ts`
   - function resolvePiNativeSessionRoot: (input) => ResultAsync<string, PiNativeSessionError>
   - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
-  - _...45 more_
+  - function nativeSessionDeletionToken: (ref) => string
+  - function readNativeThreadMetadata: (entries) => PiNativeThreadMetadata | undefined
+  - _...24 more_
 - `packages/adapters/pi/src/child-overlay-component.ts`
   - function formatChildOverlayTelemetryLine: (telemetry) => string
   - function compactChildOverlayEntryLine: (entry, width) => string
@@ -319,7 +349,7 @@
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
   - interface ChildOverlayConfig
-  - _...31 more_
+  - _...32 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
@@ -361,6 +391,7 @@
   - interface PiChildRecoveryHistory
   - interface PiChildRecoveryDescriptor
   - _...8 more_
+- `packages/adapters/pi/src/child-runtime-budget.ts` — function makeChildRuntimeExceededFailure: (childId, budgetMs) => PiAdapterFailure, class ChildRuntimeBudget
 - `packages/adapters/pi/src/child-runtime.ts`
   - function classifyChildAccess: (input) => PiChildAccessState
   - function authorizeChildAccess: (childId, state, operation) => Result<void, PiChildAccessDenial>
@@ -394,13 +425,13 @@
   - function readChildReconstruction: (cell, generationId, parentSessionId) => PiChildReconstructionSummary | undefined
   - _...15 more_
 - `packages/adapters/pi/src/child-session-refs.ts`
+  - function childRefTotalRuns: (record) => number
   - function createNativeChildRefSourceAuthority: (store) => PiChildRefSourceAuthority
   - function parseChildRefRecord: (value) => Result<PiChildRefRecord, PiChildRefError>
   - function parseChildRefEnvelope: (value) => Result<PiChildRefEnvelope, PiChildRefError>
   - function serializeChildRefEnvelope: (envelope) => string
   - function hasNoTranscriptFields: (serialized) => boolean
-  - class PiChildSessionRefStore
-  - _...29 more_
+  - _...31 more_
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
   - interface TimerHandle
@@ -408,7 +439,7 @@
   - const DEFAULT_HANDSHAKE_TIMEOUT_MS
   - const DEFAULT_REPLY_TIMEOUT_MS
   - const DEFAULT_SETTLEMENT_TIMEOUT_MS
-  - _...2 more_
+  - _...3 more_
 - `packages/adapters/pi/src/child-title.ts`
   - function durableChildTitleSuffix: (threadId) => string
   - function resolveDurableChildTitle: (input) => string
@@ -443,12 +474,12 @@
   - interface ChildTreeRenderOptions
 - `packages/adapters/pi/src/child-tree.ts`
   - function addUsage: (a, b) => PiChildUsageAggregate
+  - function truncateUtf8: (text, maxBytes) => string
+  - function truncateFinalOutput: (text) => string
   - function truncateLatestOutput: (text) => string
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
-  - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
-  - function applyTreeControlKey: (nodes, PiChildTreeNode>, selectedId, key) => PiTreeControlOutcome
-  - _...15 more_
+  - _...17 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -486,7 +517,7 @@
   - interface PiOverlayChildDescriptor
   - interface PiThreadRunAssignment
   - interface PiThreadRunRequest
-  - _...13 more_
+  - _...12 more_
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function formatDelegationAgentName: (agentName) => string
   - function renderDelegationCompactResult: (result, options, theme, context, onCompactRenderFailure?) => void
@@ -659,10 +690,10 @@
   - function authenticateRestoreStartupSuffix: (establishedLeafId, page) => Result<void, PiRestoreAuthenticationReason>
   - class PiRpcChild
   - interface PiRestoreContextMetadata
+  - interface PiChildPrivateOutputCapture
   - interface PiChildSessionObserver
   - interface PiRpcChildDeps
-  - interface PiRpcChildSpawnInput
-  - _...7 more_
+  - _...9 more_
 - `packages/adapters/pi/src/runtime-store-port.ts`
   - class SqliteRuntimeStoreFactory
   - class InMemoryRuntimeStoreFactory
@@ -746,12 +777,13 @@
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
 - `packages/cli/src/commands/adapter.ts`
+  - function decodeAdapterResultPage: (page) => Result<Uint8Array | undefined, string>
   - function renderAdapterHelp: (theme) => string
   - function runAdapter: (ctx) => Promise<Result<number, CliError>>
   - function resolveDeleteParentScope: (registry, workspaceKey, target, {...}) => Promise<
   - function parseAdapterTarget: (rest) => Result<AdapterCliTarget, CliError>
   - interface AdapterCommandContext
-  - type AdapterCliTarget
+  - _...1 more_
 - `packages/cli/src/commands/compose.ts`
   - function mapConfigLoadErrors: (path, errors) => CliError
   - function runCompose: (ctx) => Promise<Result<number, CliError>>
@@ -1665,20 +1697,20 @@
 
 - `packages/adapters/pi/src/types.ts` — imported by **44** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **28** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
-- `packages/adapters/pi/src/strict-json.ts` — imported by **26** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
+- `packages/adapters/pi/src/native-session-fs.ts` — imported by **20** files
+- `packages/adapters/pi/src/errors.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `packages/adapters/pi/src/errors.ts` — imported by **19** files
-- `packages/adapters/pi/src/native-session-fs.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `scripts/release/stable-train.ts` — imported by **16** files
+- `packages/adapters/pi/src/child-envelope.ts` — imported by **15** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
-- `packages/adapters/pi/src/child-envelope.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
 - `packages/engine/src/logger.ts` — imported by **13** files
@@ -1688,12 +1720,12 @@
 
 - `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +39 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
+- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts` +23 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
-- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts` +21 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
+- `packages/adapters/pi/src/native-session-fs.ts` ← `packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts`, `packages/adapters/pi/src/__tests__/adapter-cli-production-delete.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-bounded-reads.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-create.integration.test.ts` +15 more
+- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts` +15 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +15 more
-- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts` +14 more
-- `packages/adapters/pi/src/native-session-fs.ts` ← `packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts`, `packages/adapters/pi/src/__tests__/adapter-cli-production-delete.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-bounded-reads.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-create.integration.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 
@@ -1710,13 +1742,14 @@
 - `\x1b[1;2:1B` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
 - `\x1b[5~` [event] — `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`
 - `\x1b[6~` [event] — `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`
+- `session_start` [event] — `prototypes/weave-pi-tui-grilling.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 301 test files found
+> 307 test files found
 
 ---
 
