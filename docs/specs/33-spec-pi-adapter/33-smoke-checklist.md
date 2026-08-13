@@ -112,7 +112,7 @@ including their formerly passing mutation rows.
 | S048 | Picker lists all statuses with title precedence and active-first, newest-settled ordering | §8.2 | Pending | historical: [`33-task20-d-picker-navigation-proof.md`](33-proofs/33-task20-d-picker-navigation-proof.md) |
 | S049 | Named keys route correctly: `Alt+I`, `Alt+1..9`, sibling keys, empty `Backspace` parent-or-close | §8.1 | Pending | historical: [`33-task20-d-picker-navigation-proof.md`](33-proofs/33-task20-d-picker-navigation-proof.md), [`33-task20-m-pi-vim-coexistence-proof.md`](33-proofs/33-task20-m-pi-vim-coexistence-proof.md) |
 | S050 | Keybinding conflicts are reported and never overwrite user bindings | §8.1 | Pass | [`33-task20-m-pi-vim-coexistence-proof.md`](33-proofs/33-task20-m-pi-vim-coexistence-proof.md) |
-| S051 | `Escape` closes child inspection, never falls through to Pi, and leaves the child running | §7, §8.1 | Pending | superseded: [`33-task20-e-double-escape-cancel-proof.md`](33-proofs/33-task20-e-double-escape-cancel-proof.md) records the removed double-`Escape` rule only |
+| S051 | `Escape` closes child inspection, never falls through to Pi, and leaves the child running | §7, §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
 | S052 | Retry a retryable failed thread and a cancelled thread; new block per run, divider metadata recorded | §9 | Pending | historical: [`33-task20-f-retry-continue-frozen-block-proof.md`](33-proofs/33-task20-f-retry-continue-frozen-block-proof.md) |
 | S053 | Continue a completed thread with a required task; continue without a task is a validation error | §9 | Pending | historical: [`33-task20-f-retry-continue-frozen-block-proof.md`](33-proofs/33-task20-f-retry-continue-frozen-block-proof.md) |
 | S054 | Thread errors are structured: already-running, stale, integrity, not-retryable; capacity held while running and released on settlement | §9, §3 | Pending | not run in Task 20 |
@@ -126,19 +126,19 @@ including their formerly passing mutation rows.
 | S062 | Child sessions and cache use user-only permissions inside the contained root | §2, §5 | Pending | not run in Task 20 |
 | S063 | `/weave:history` returns a bounded first page; `/weave:doctor` returns a sanitized report with no raw prompt or transcript | §15.1, §15.4 | Pass | [`33-task21-final-head-fail-closed-proof.md`](33-proofs/33-task21-final-head-fail-closed-proof.md) |
 | S064 | `weave adapter pi children list/show` respect the 50/100+cursor bounds, stable JSON, and no paths by default | §15.3 | Pass | [`33-task21-final-head-fail-closed-proof.md`](33-proofs/33-task21-final-head-fail-closed-proof.md) |
-| S065 | `weave adapter pi children delete` requires confirmation, appends a tombstone, and leaves the child listed as a tombstone | §2, §15.3 | Pending | historical: [`33-task20-k-history-doctor-cli-proof.md`](33-proofs/33-task20-k-history-doctor-cli-proof.md) |
+| S065 | `weave adapter pi children delete` requires confirmation, appends a tombstone, and leaves the child listed as a tombstone | §2, §15.3 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
 | S066 | Deleting a parent leaves orphan children readable through history and doctor | §2 | Pending | historical: [`33-task20-k-history-doctor-cli-proof.md`](33-proofs/33-task20-k-history-doctor-cli-proof.md) |
 | S067 | Missing required capability enters health-only mode with capability, version, contract, probe, mode, and remediation | §16 | Pass | [`33-task21-final-head-fail-closed-proof.md`](33-proofs/33-task21-final-head-fail-closed-proof.md) |
 | S068 | Keep child content out of parent projections: bounded terminal output and numeric metadata only | §13 | Pending | not run in Task 20 |
 | S069 | Reject exact structured `ChildSettlementMissing` for valid bounded or transferred output | §1, §14 | Pending | not run in Task 20 |
-| S070 | All six scroll keys move the mounted overlay viewport live, in legacy, Kitty event-aware, and SS3 encodings, with no release repeats | §7 | Pending | not yet run |
-| S071 | Scroll keys still move the overlay when a foreign primary editor (pi-vim) is installed, and pi-vim keeps its modes after close | §7, §16 | Pending | not yet run |
-| S072 | `Escape` closes the overlay and the inspected child is still running afterwards | §7, §8.1 | Pending | not yet run |
-| S073 | Empty-draft `q` opens the cancel confirmation; **Cancel subtree** cancels, and dismissal or **Keep running** leaves the child running | §8.1 | Pending | not yet run |
-| S074 | Non-empty draft `q` types into the draft and opens no confirmation; a settled child reports no target | §8.1 | Pending | not yet run |
-| S075 | Header telemetry shows provider, model, context percent, and tokens on a reporting child, and `—` for every field the host did not report | §7 | Pending | not yet run |
-| S076 | `Ctrl+O` toggles compact and full view on live and historical children, preserving draft, search state, and viewport anchor | §7, §8.1 | Pending | not yet run |
-| S077 | A host that already owns `Ctrl+O` keeps it: the toggle is skipped, unadvertised, and reported once | §8.1 | Pending | not yet run |
+| S070 | All six scroll keys move the mounted overlay viewport live, in legacy, Kitty event-aware, and SS3 encodings, with no release repeats | §7 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
+| S071 | Scroll keys still move the overlay when a foreign primary editor (pi-vim) is installed, and pi-vim keeps its modes after close | §7, §16 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
+| S072 | `Escape` closes the overlay and the inspected child is still running afterwards | §7, §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
+| S073 | Empty-draft `q` opens the cancel confirmation; **Cancel subtree** cancels, and dismissal or **Keep running** leaves the child running | §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
+| S074 | Non-empty draft `q` types into the draft and opens no confirmation; a settled child reports no target | §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
+| S075 | Header telemetry shows provider, model, context percent, and tokens on a reporting child, and `—` for every field the host did not report | §7 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
+| S076 | `Ctrl+O` toggles compact and full view on live and historical children, preserving draft, search state, and viewport anchor | §7, §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
+| S077 | A host that already owns `Ctrl+O` keeps it: the toggle is skipped, unadvertised, and reported once | §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
 
 A passing report must record artifact SHA-256, subject SHA, exact host version,
 checklist version, run attempt, `childSettlementMissingCount: 0`, and, for each
@@ -149,9 +149,8 @@ pane. Every proof cited above records those fields.
 no live scenario for them, and their automated coverage alone cannot close a
 live row.
 
-`S051` and `S070`–`S077` stay `Pending` until the overlay UX live procedure
-above is recorded in `33-proofs/33-overlay-ux-live-proof.md`. Their unit and
-width coverage is green, but automated coverage alone cannot close a live row.
+`S051` and `S070`–`S077` cite the exact-subject evidence and the full overlay
+matrix in `33-proofs/33-overlay-ux-live-proof.md`.
 
 The rows marked `historical` stay `Pending` for a different reason: they need a
 persistent child spawn or a native session mutation, which Pi `0.83.0` fails

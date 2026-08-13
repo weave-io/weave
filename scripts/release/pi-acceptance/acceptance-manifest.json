@@ -5,15 +5,15 @@
     "package": "@earendil-works/pi-coding-agent",
     "supportedRange": ">=0.81.1",
     "floorVersion": "0.81.1",
-    "exactTestedVersion": "0.83.0"
+    "exactTestedVersion": "0.84.1"
   },
   "artifactBinding": {
     "packageVersion": "0.0.1",
-    "payloadArtifactId": "local-dev-pack",
-    "sha256": "426cf189e2ff44611e70b986205d5dccd51b7f4184aaf0ab7377f2913da5a739",
-    "subjectSha": "9a8c64683f3e159a587119ee045dc60ae5a62e86",
+    "payloadArtifactId": "weaveio-weave-adapter-pi-0.0.1-4082fe8-task14.tgz",
+    "sha256": "309fa5f876b5d39fd59897935b7b91dcfd6494ec8d9f6e25748f60b980b03ebc",
+    "subjectSha": "4082fe81ea11cbf9a7c89dc34a4279064c6462e2",
     "runAttempt": 1,
-    "checklistVersion": "3"
+    "checklistVersion": "6"
   },
   "requirements": [
     {
@@ -278,7 +278,7 @@
         ]
       },
       "result": "pending",
-      "notes": "Closed-set check verifies all 9 PI_CONTROL_KINDS private control envelope kinds appear across the referenced tests. Pi 0.83.0 lacks descriptor-relative-native-session-io (path-only-session-api), so persistent child spawn fails closed before any controller or child process call. S014 and S015 are historical checklist version 1 rows on Pi 0.81.1, and S056's PersistentParentSessionRequired path is superseded by the capability gate. No current live evidence supports delegation on this host."
+      "notes": "Closed-set check verifies all 9 PI_CONTROL_KINDS private control envelope kinds across the referenced tests. The earlier Pi 0.83 descriptor-only gate is superseded. Pi 0.84.1 Task 14 proves Pi-native persistent spawn; S014, S015, and S056 remain the acceptance blockers."
     },
     {
       "id": "PI-CMD",
@@ -335,7 +335,7 @@
         ]
       },
       "result": "pass",
-      "notes": "Closed-set check verifies all 9 WEAVE_COMMAND_NAMES and all 3 WEAVE_COMMAND_CLASSIFICATIONS (mutating, read-only, idempotent-cleanup — the invalid-state gating dimension in health-only mode) appear across the referenced tests. CLI children show pages through readSessionEntryPage only (max 100 + opaque cursor); delete resolves immutable origin parent scope without a synthetic current parent and without a published CLI→Pi runtime dependency."
+      "notes": "Closed-set check verifies all 9 WEAVE_COMMAND_NAMES and all 3 WEAVE_COMMAND_CLASSIFICATIONS (mutating, read-only, idempotent-cleanup \u2014 the invalid-state gating dimension in health-only mode) appear across the referenced tests. CLI children show pages through readSessionEntryPage only (max 100 + opaque cursor); delete resolves immutable origin parent scope without a synthetic current parent and without a published CLI\u2192Pi runtime dependency."
     },
     {
       "id": "PI-LIF",
@@ -647,7 +647,7 @@
         ]
       },
       "result": "pass",
-      "notes": "Closed-set check verifies all 20 ALL_CAPABILITY_IDS appear across the referenced tests."
+      "notes": "Closed-set check verifies all 20 ALL_CAPABILITY_IDS appear across the referenced tests. Pi 0.84.1 Task 14 live evidence proves Pi-native readiness on the exact artifact and the closed path-free failure reasons."
     },
     {
       "id": "PI-ERR",
@@ -697,7 +697,7 @@
         ]
       },
       "result": "pass",
-      "notes": "PiAdapterFailureCodeSchema closes the full failure-code taxonomy at the type level (errors.ts). Each code family has at least one named fail-closed test above. failure-taxonomy.test.ts additionally locks every one of the ~47 codes plus every impact/recovery value — a schema-drift lock, not a per-code behavioral guarantee."
+      "notes": "PiAdapterFailureCodeSchema closes the full failure-code taxonomy at the type level (errors.ts). Each code family has at least one named fail-closed test above. failure-taxonomy.test.ts additionally locks every one of the ~47 codes plus every impact/recovery value \u2014 a schema-drift lock, not a per-code behavioral guarantee."
     },
     {
       "id": "PI-PKG",
@@ -777,7 +777,7 @@
         ]
       },
       "result": "pass",
-      "notes": "Pi 0.83.0 reports descriptor-relative-native-session-io unavailable (path-only-session-api), so every generation enters health-only mode and fails closed for all persistent session mutation and child spawn. S067 and S057 were re-run live on the final fail-closed head 9a8c6468 in docs/specs/33-spec-pi-adapter/33-proofs/33-task21-final-head-fail-closed-proof.md: delegation unavailable with 0 children, $XDG_DATA_HOME/weave absent, no db, ref, lease, or child session. No mutation claim."
+      "notes": "The earlier Pi 0.83 descriptor-only readiness result is historical. Pi 0.84.1 Task 14 proves SessionManager create/open, the private root, native process launch, exact parent/thread identity, and live overlay inspection. Closed readiness reports only pi-session-api-unavailable, pi-session-root-unavailable, pi-session-root-unsafe, or pi-process-unavailable."
     },
     {
       "id": "PI-INS",
@@ -820,11 +820,15 @@
           "S045",
           "S046",
           "S047",
-          "S048"
+          "S048",
+          "S070",
+          "S071",
+          "S075",
+          "S076"
         ]
       },
       "result": "pending",
-      "notes": "Native child session paging proves bounded bidirectional reads without full materialization; multi-chunk backward assembly stays chronological. Every cited live row needs a spawned child or a session mutation, which Pi 0.83.0 fails closed for lack of descriptor-relative-native-session-io (path-only-session-api). The Task 20 proofs for those rows are historical pre-c24182f records, and S042 was never run live, so this row stays pending on automated coverage alone."
+      "notes": "Automated native child paging proves bounded bidirectional reads without full materialization and preserves chronological multi-chunk assembly. Pi 0.84.1 Task 14 proves the live overlay and fallback paths; S042 remains pending."
     },
     {
       "id": "PI-INT",
@@ -853,11 +857,15 @@
           "S051",
           "S052",
           "S053",
-          "S055"
+          "S055",
+          "S072",
+          "S073",
+          "S074",
+          "S077"
         ]
       },
       "result": "pending",
-      "notes": "Overlay steer, follow-up, retry, continue, and settlement all require a running persistent child. Pi 0.83.0 lacks descriptor-relative-native-session-io (path-only-session-api), so those routes fail closed before any child process starts. The Task 20 records for S044, S049, S051, S052, S053, and S055 are historical pre-c24182f proofs, not evidence for this head; only S050 still passes. Pending until a descriptor-safe host exists."
+      "notes": "Automated coverage exercises overlay steering, follow-up, retry, continue, settlement, key ownership, compact mode, and cancellation. Pi 0.84.1 Task 14 proves the live overlay interaction matrix, including exact-subject q-modal Escape dismissal; the other listed live rows remain acceptance requirements."
     },
     {
       "id": "PI-PRI",
@@ -895,7 +903,7 @@
         ]
       },
       "result": "pending",
-      "notes": "ADR 0014 replaces JSONL private-history migration with native Pi child sessions and an explicit no-migration decision. Every cited live row needs child sessions that Pi 0.83.0 cannot create: the host lacks descriptor-relative-native-session-io (path-only-session-api), so spawn fails closed. The Task 20 records for S059 and S061 are historical pre-c24182f proofs, and on-disk permission modes (S062) were never inspected, so this stays pending."
+      "notes": "ADR 0014 replaces JSONL private-history migration with native Pi child sessions and an explicit no-migration decision. Pi 0.84.1 Task 14 proves native session isolation, exact parent/thread identity, reopen, and 0600/0700 permissions; S062 remains pending."
     },
     {
       "id": "PI-BND",
@@ -987,7 +995,7 @@
         ]
       },
       "result": "pending",
-      "notes": "ADR 0014 removes byte quotas, trimming, and automatic pruning. `weave adapter pi children delete` is a persistent session mutation, so Pi 0.83.0 fails it closed for lack of descriptor-relative-native-session-io. 33-task21-final-head-fail-closed-proof.md observed RequiredCapabilityUnavailable before the children port through the production CLI, with list, show, and doctor leaving the roots empty, which is not the tombstone behaviour S065 and S066 need. Stays pending on automated coverage."
+      "notes": "ADR 0014 removes byte quotas, trimming, and automatic pruning. Pi 0.84.1 Task 14 proves terminal-only production children.delete with durable tombstones; S066 orphan evidence remains pending."
     },
     {
       "id": "PI-SET",

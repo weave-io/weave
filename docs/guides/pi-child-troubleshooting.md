@@ -86,7 +86,7 @@ weave overlay action <id> skipped key <key>: already bound to <owner>
 
 Rebind the action under `settings.adapters.pi.child_inspection.keys`, keyed by action id (`weave.child.picker.open`, `weave.child.slot.1` through `weave.child.slot.9`, `weave.child.sibling.previous`, `weave.child.sibling.next`). The map is strict: an unknown action id or malformed key is a validation error.
 
-If Escape appears to do nothing, remember it is a two-step control: press it twice within 750 ms to reach the confirmation, which defaults to `Keep running`.
+Press `Escape` once to close child inspection. This leaves the child running. To cancel a running child, clear the draft and press `q` or `Q`, then select `Cancel subtree`. The confirmation defaults to `Keep running`.
 
 ## Upgrading from the JSONL child-history store
 

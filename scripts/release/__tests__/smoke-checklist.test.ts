@@ -69,15 +69,31 @@ describe("parseSmokeChecklist", () => {
     const result = parseSmokeChecklist(read.value);
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
-    expect(result.value.version).toBe("3");
-    expect(result.value.items).toHaveLength(53);
-    expect(new Set(result.value.items.map((item) => item.id)).size).toBe(53);
+    expect(result.value.version).toBe("6");
+    expect(result.value.items).toHaveLength(61);
+    expect(new Set(result.value.items.map((item) => item.id)).size).toBe(61);
     const byId = new Map(
       result.value.items.map((item) => [item.id, item.result]),
     );
     for (const id of ["S010", "S011", "S012", "S013", "S040", "S049"])
       expect(byId.get(id)).toBe("Pending");
-    for (const id of ["S050", "S057", "S063", "S064", "S067"])
+    for (const id of [
+      "S050",
+      "S051",
+      "S057",
+      "S063",
+      "S064",
+      "S065",
+      "S067",
+      "S070",
+      "S071",
+      "S072",
+      "S073",
+      "S074",
+      "S075",
+      "S076",
+      "S077",
+    ])
       expect(byId.get(id)).toBe("Pass");
     for (const id of ["S042", "S054", "S060", "S062", "S068", "S069"])
       expect(byId.get(id)).toBe("Pending");

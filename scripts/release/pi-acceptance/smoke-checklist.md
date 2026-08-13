@@ -1,6 +1,6 @@
 # Stable TUI Smoke Checklist — Pi Adapter
 
-Checklist version: 3
+Checklist version: 6
 
 - Spec: [`33-spec-pi-adapter.md`](../../../docs/adapters/pi.md)
 - Manifest schema: [`acceptance-manifest.schema.json`](acceptance-manifest.schema.json)
@@ -88,6 +88,26 @@ host that proves `descriptor-relative-native-session-io`.
 The historical checklist version 1 rows `S014`, `S015`, and `S016` also
 exercised delegation and direct workflow dispatch on Pi `0.81.1`. They remain
 bound to that historical host and artifact and say nothing about Pi `0.83.0`.
+
+## Task 14 Pi 0.84.1 binding
+
+- Package: `@weaveio/weave-adapter-pi@0.0.1`, installed with strict `npm:` provenance
+- Exact source subject: `4082fe81ea11cbf9a7c89dc34a4279064c6462e2`
+- Exact host: `@earendil-works/pi-coding-agent@0.84.1`
+- Checklist version: `6`
+- Artifact: `weaveio-weave-adapter-pi-0.0.1-4082fe8-task14.tgz`
+- Artifact SHA-256: `309fa5f876b5d39fd59897935b7b91dcfd6494ec8d9f6e25748f60b980b03ebc`
+- `dist/extension.js` SHA-256: `5a205dd8cebc881f81fadd309144096e5049beb94f19d374160c8e7676ac2c6d`
+- `dist/index.js` SHA-256: `7a90296d4dc01a2d8655cfaf8407cec9e1d2aefcc891ff0146699f66bed7fada`
+- Run attempt: `1`
+- `childSettlementMissingCount`: `0`
+- No Herdr pane was created for this proof; therefore no created pane remained.
+- No process rooted at the isolated harness remained after cleanup.
+- Proof: [`33-overlay-ux-live-proof.md`](../../../docs/specs/33-spec-pi-adapter/33-proofs/33-overlay-ux-live-proof.md)
+
+This binding closes the Pi 0.84.1 overlay, Pi-native session, provider-error,
+and production deletion rows recorded by the Task 14 proof. Historical Pi 0.83
+rows remain historical where the Task 14 proof does not replace them.
 
 ## Binding rules
 
@@ -241,7 +261,7 @@ record and stay `Pending`.
 | S048 | Picker | The picker lists children of every status with title precedence and active-first, newest-settled ordering. | Pending |
 | S049 | Keys | Alt+I, Alt+1..9, sibling keys, and empty-Backspace parent-or-close behave as documented. | Pending |
 | S050 | Keys | Keybinding conflicts are reported and never overwrite the user's own bindings. | Pass |
-| S051 | Keys | A double Escape within 750ms opens the cancel-subtree confirmation defaulting to Keep running, and a single Escape never falls through. | Pending |
+| S051 | Keys | `Escape` closes child inspection, never falls through to Pi, and leaves the child running. | Pass |
 | S052 | Threads | Retry a retryable failed thread and a cancelled thread; each run gets a new block with divider metadata. | Pending |
 | S053 | Threads | Continue a completed thread with a task, and confirm wrong-state continue/retry fails closed with typed diagnostics. | Pending |
 | S054 | Threads | Structured thread errors cover already-running, stale, integrity, and not-retryable, and capacity is held while running and released on settlement. | Pending |
@@ -255,11 +275,19 @@ record and stay `Pending`.
 | S062 | Privacy | Child sessions and their cache use user-only permissions inside the contained root. | Pending |
 | S063 | Diagnostics | `/weave:history` returns a bounded first page and `/weave:doctor` a sanitized report with no raw prompt or transcript. | Pass |
 | S064 | CLI | `weave adapter pi children list/show` respect the 50/100 bounds and cursor, return stable JSON, and print no paths by default. | Pass |
-| S065 | CLI | `weave adapter pi children delete` requires confirmation, appends a tombstone, and the child stays listed as a tombstone. | Pending |
+| S065 | CLI | `weave adapter pi children delete` requires confirmation, appends a tombstone, and the child stays listed as a tombstone. | Pass |
 | S066 | CLI | Deleting a parent leaves orphan children readable through history and doctor. | Pending |
 | S067 | Mode | A missing required capability enters health-only mode reporting capability, version, contract, probe, mode, and remediation. | Pass |
 | S068 | Boundary | Parent projections carry only bounded terminal output and numeric metadata, never child content. | Pending |
 | S069 | Settlement | Valid bounded or transferred output never produces the exact structured `ChildSettlementMissing`. | Pending |
+| S070 | Overlay | All six scroll keys move the mounted overlay viewport live in legacy, Kitty event-aware, and SS3 encodings, with no release repeats. | Pass |
+| S071 | Overlay | Scroll keys work with pi-vim installed, and pi-vim keeps its modes after the overlay closes. | Pass |
+| S072 | Overlay | `Escape` closes the overlay and the inspected child remains running. | Pass |
+| S073 | Cancellation | Empty-draft `q` opens confirmation; explicit cancellation cancels, while dismissal or Keep running leaves the child running. | Pass |
+| S074 | Cancellation | Non-empty draft `q` edits the draft without confirmation; a settled child reports no cancellation target. | Pass |
+| S075 | Telemetry | The header shows authoritative provider, model, context, and tokens, and `—` for values the host did not report. | Pass |
+| S076 | Compact view | `Ctrl+O` toggles compact and full live/historical views while preserving draft, search state, and viewport anchor. | Pass |
+| S077 | Key ownership | A host-owned `Ctrl+O` remains host-owned; the toggle is skipped, unadvertised, and reported once. | Pass |
 
 ## Pass criteria
 

@@ -274,7 +274,7 @@ Normative docs: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` §7 (overl
     - Full/compact/historical/fallback tests show actionable safe details for 429/500/connection/timeout and honest generic copy otherwise; full Pi tests and typecheck pass.
     - Commit: `feat(pi): show sanitized provider errors in child views`.
 
-- [ ] 14. Update contracts, run gates, and prove real Pi behavior
+- [x] 14. Update contracts, run gates, and prove real Pi behavior
   - **What**: Update all affected contracts, run clean gates, prove native delegation plus overlay/error UX on real Pi 0.84.1, and complete the original live-proof objective.
   - **Files**: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md`, `33-smoke-checklist.md`, `33-path-session-conformance-design.md`, `33-proofs/33-overlay-ux-live-proof.md`, historical fail-closed proofs/acceptance manifest as superseded references, `docs/adapters/pi.md`, capability/ADR docs, and both plan checkboxes.
   - **Depends on**: Tasks 11 and 13.
