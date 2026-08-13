@@ -429,6 +429,7 @@ describe("PiPrimarySession committed-state isolation", () => {
       provider: "anthropic",
       id: "claude-sonnet-4-5",
       name: "Claude Sonnet 4.5",
+      api: "anthropic-messages",
     };
     const sourceInfo = {
       path: "/skills/tdd/SKILL.md",
@@ -494,6 +495,7 @@ describe("PiPrimarySession committed-state isolation", () => {
       provider: "mutated-provider",
       id: "mutated-model",
       name: "Mutated Model",
+      api: "mutated-api",
     });
     Object.assign(modelActivation, {
       intentEntry: "mutated-intent",
@@ -632,6 +634,7 @@ describe("PiPrimarySession committed-state isolation", () => {
         provider: "mutated-provider",
         id: "mutated-model",
         name: "Mutated Model",
+        api: "mutated-api",
       },
     );
     Object.assign(exposed.modelActivation, {
@@ -992,6 +995,241 @@ describe("PiPrimarySession fast intent and request snapshots", () => {
     expect(session.captureRequestSnapshot()?.selectedModel).toEqual(CATALOG[0]);
   });
 
+  it("commits the host-reported model api exactly and never infers it", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const catalogModel: PiModelInfo = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      api: "anthropic-messages",
+    };
+    const result = await session.activate(
+      descriptor(),
+      context({ availableModels: [catalogModel] }),
+    );
+    expect(result.isOk()).toBe(true);
+    const active = result._unsafeUnwrap();
+    expect(active.modelActivation).toMatchObject({
+      status: "applied",
+      model: {
+        provider: "anthropic",
+        id: "claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        api: "anthropic-messages",
+      },
+    });
+    expect(session.getCurrent()?.modelActivation).toMatchObject({
+      status: "applied",
+      model: { api: "anthropic-messages" },
+    });
+    expect(session.captureRequestSnapshot()?.selectedModel).toEqual({
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      api: "anthropic-messages",
+    });
+  });
+
+  it("omits api when the host catalog omits it and never infers it from ids", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor({
+        models: ["openai/gpt-5.6", "anthropic/claude-sonnet-4-5"],
+      }),
+      context({
+        availableModels: [
+          { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
+          {
+            provider: "anthropic",
+            id: "claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+          },
+        ],
+      }),
+    );
+    expect(result.isOk()).toBe(true);
+    const selected = result._unsafeUnwrap().modelActivation;
+    expect(selected).toMatchObject({
+      status: "applied",
+      model: { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
+    });
+    if (selected.status !== "applied") return;
+    expect(selected.model).not.toHaveProperty("api");
+    const currentActivation = session.getCurrent()?.modelActivation;
+    expect(currentActivation?.status).toBe("applied");
+    if (currentActivation?.status !== "applied") return;
+    expect(currentActivation.model).not.toHaveProperty("api");
+    expect(session.captureRequestSnapshot()?.selectedModel).not.toHaveProperty(
+      "api",
+    );
+  });
+
+  it("omits blank, whitespace, non-string, and oversized host api without failing activation", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    for (const api of ["", "   ", "x".repeat(129), 42, { family: "openai" }]) {
+      const result = await session.activate(
+        descriptor(),
+        context({
+          availableModels: [
+            {
+              provider: "anthropic",
+              id: "claude-sonnet-4-5",
+              name: "Claude Sonnet 4.5",
+              api,
+            } as unknown as PiModelInfo,
+          ],
+        }),
+      );
+      expect(result.isOk()).toBe(true);
+      const activation = result._unsafeUnwrap().modelActivation;
+      expect(activation.status).toBe("applied");
+      if (activation.status !== "applied") return;
+      expect(activation.model).not.toHaveProperty("api");
+      expect(
+        session.captureRequestSnapshot()?.selectedModel,
+      ).not.toHaveProperty("api");
+    }
+  });
+
+  it("isolates committed api from later source and output mutation", async () => {
+    const catalogModel: PiModelInfo = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      api: "anthropic-messages",
+    };
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const activated = await session.activate(
+      descriptor(),
+      context({ availableModels: [catalogModel] }),
+    );
+    expect(activated.isOk()).toBe(true);
+    (catalogModel as { api?: string }).api = "mutated-source-api";
+
+    const current = session.getCurrent();
+    expect(current?.modelActivation).toMatchObject({
+      status: "applied",
+      model: { api: "anthropic-messages" },
+    });
+    if (current?.modelActivation.status !== "applied") return;
+    (current.modelActivation.model as { api?: string }).api =
+      "mutated-current-api";
+    delete (current.modelActivation.model as { api?: string }).api;
+
+    const snapshot = session.captureRequestSnapshot();
+    expect(snapshot?.selectedModel).toEqual({
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      api: "anthropic-messages",
+    });
+    if (snapshot?.selectedModel === undefined) return;
+    expect(() => {
+      (snapshot.selectedModel as { api?: string }).api = "mutated-snapshot-api";
+    }).toThrow();
+    expect(session.captureRequestSnapshot()?.selectedModel?.api).toBe(
+      "anthropic-messages",
+    );
+    expect(session.getCurrent()?.modelActivation).toMatchObject({
+      status: "applied",
+      model: { api: "anthropic-messages" },
+    });
+  });
+
+  it("rejects forged, removed, added, and oversized api on exact snapshots", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const withApi = await session.activate(
+      descriptor(),
+      context({
+        availableModels: [
+          {
+            provider: "anthropic",
+            id: "claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+            api: "anthropic-messages",
+          },
+        ],
+      }),
+    );
+    expect(withApi.isOk()).toBe(true);
+    const snapshotWithApi = session.captureRequestSnapshot();
+    expect(snapshotWithApi?.selectedModel?.api).toBe("anthropic-messages");
+    if (
+      snapshotWithApi === undefined ||
+      snapshotWithApi.selectedModel === undefined
+    ) {
+      return;
+    }
+    const selectedWithApi = snapshotWithApi.selectedModel;
+    const { api: _omittedApi, ...withoutApi } = selectedWithApi;
+    for (const forgedSelectedModel of [
+      { ...selectedWithApi, api: "openai-responses" },
+      withoutApi,
+      { ...selectedWithApi, api: "x".repeat(129) },
+    ]) {
+      expect(
+        session
+          .resolveRequestSnapshot({
+            ...snapshotWithApi,
+            selectedModel: forgedSelectedModel,
+          })
+          .isErr(),
+      ).toBe(true);
+    }
+
+    const withoutHostApi = await session.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context({
+        availableModels: [
+          {
+            provider: "anthropic",
+            id: "claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+          },
+        ],
+      }),
+    );
+    expect(withoutHostApi.isOk()).toBe(true);
+    const snapshotWithoutApi = session.captureRequestSnapshot();
+    expect(snapshotWithoutApi?.selectedModel).not.toHaveProperty("api");
+    expect(session.resolveRequestSnapshot(snapshotWithApi).isErr()).toBe(true);
+    if (
+      snapshotWithoutApi === undefined ||
+      snapshotWithoutApi.selectedModel === undefined
+    ) {
+      return;
+    }
+    expect(
+      session
+        .resolveRequestSnapshot({
+          ...snapshotWithoutApi,
+          selectedModel: {
+            ...snapshotWithoutApi.selectedModel,
+            api: "anthropic-messages",
+          },
+        })
+        .isErr(),
+    ).toBe(true);
+    expect(session.resolveRequestSnapshot(snapshotWithoutApi).isOk()).toBe(
+      true,
+    );
+  });
+
   it("authenticates exact ordered model intent and selected model snapshots", async () => {
     const firstIntent = "anthropic/claude-sonnet-4-5#high";
     const secondIntent = "openai/gpt-5.6#medium";
@@ -1052,6 +1290,7 @@ describe("PiPrimarySession fast intent and request snapshots", () => {
       { ...selectedModel, provider: "forged-provider" },
       { ...selectedModel, id: "forged-model" },
       { ...selectedModel, name: "Forged model" },
+      { ...selectedModel, api: "openai-responses" },
       { ...selectedModel, forged: true },
     ]) {
       expect(

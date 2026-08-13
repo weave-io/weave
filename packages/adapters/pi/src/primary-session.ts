@@ -628,16 +628,34 @@ export type PiPrimarySnapshotStale = {
   readonly type: "StalePrimaryRequestSnapshot";
 };
 
+const MAX_MODEL_API_LENGTH = 128;
+
+/**
+ * Copy a host-reported API family only when it is a bounded nonblank string.
+ * Blank, oversized, and non-string values are omitted so ordinary catalog
+ * models without `api` keep activating.
+ */
+function copyOptionalBoundedApi(
+  api: unknown,
+): { readonly api: string } | Record<string, never> {
+  if (typeof api !== "string") return {};
+  if (api.length === 0 || api.length > MAX_MODEL_API_LENGTH) return {};
+  if (api.trim().length === 0) return {};
+  return { api };
+}
+
 /**
  * Copy the adapter-owned model identity. The Pi model catalog is supplied by
  * the host and its records remain mutable at runtime even though their
- * TypeScript fields are readonly.
+ * TypeScript fields are readonly. Host `api` is copied exactly when valid
+ * and never inferred from provider or model ids.
  */
 function copyModelInfo(model: PiModelInfo): PiModelInfo {
   return {
     provider: model.provider,
     id: model.id,
     ...(model.name === undefined ? {} : { name: model.name }),
+    ...copyOptionalBoundedApi(model.api),
   };
 }
 
@@ -974,7 +992,8 @@ function selectedModelsMatch(
   return (
     candidate.provider === committed.provider &&
     candidate.id === committed.id &&
-    candidate.name === committed.name
+    candidate.name === committed.name &&
+    candidate.api === committed.api
   );
 }
 
@@ -1010,6 +1029,7 @@ function copySelectedModel(model: PiModelInfo): PiModelInfo {
     provider: model.provider,
     id: model.id,
     ...(model.name === undefined ? {} : { name: model.name }),
+    ...copyOptionalBoundedApi(model.api),
   });
 }
 

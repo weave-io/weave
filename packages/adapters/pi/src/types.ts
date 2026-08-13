@@ -56,12 +56,14 @@ export interface PiCommandInfo {
 /**
  * One entry from Pi's authenticated model catalog
  * (`ctx.modelRegistry.getAvailable()`) or the currently active model
- * (`ctx.model`).
+ * (`ctx.model`). `api` is the host-reported Pi `Model.api` family when
+ * present; it is never inferred from provider or model ids.
  */
 export interface PiModelInfo {
   readonly provider: string;
   readonly id: string;
   readonly name?: string;
+  readonly api?: string;
 }
 
 /** Narrow projection of `ctx.modelRegistry`: authenticated-model discovery only. */
