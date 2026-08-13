@@ -102,7 +102,7 @@
     };
     var data = [
       ['01', 'agent', 'Agent definitions', 'Declare prompts, prompt files, model preference lists, modes, skills, triggers, and tool policy.'],
-      ['02', 'route', 'Category shuttles', 'A category with file patterns generates a specialized shuttle agent for that area of the codebase.'],
+      ['02', 'route', 'Category shuttles', 'A category generates a specialized shuttle agent, routed by its description and ordered trigger strings.'],
       ['03', 'flow', 'Ordered workflows', 'Define autonomous, interactive, and gate steps with explicit completion methods and review behavior.'],
       ['04', 'compose', 'Prompt composition', 'Merge built-ins, project config, prompt files, and Mustache context into inspectable prompts.'],
       ['05', 'skill', 'Runtime journal', 'Track execution state and journal entries in the Weave runtime store for inspection and recovery.'],
@@ -129,7 +129,7 @@
       ['flow', 'Workflow blocks', 'Ordered steps use completion methods like agent_signal, plan_created, and review_verdict.'],
       ['agent', 'Agent definitions', 'Agents can use prompt, prompt_file, prompt_append, models, skills, triggers, and tool_policy.'],
       ['model', 'Model lists', 'models ["claude-sonnet-4-5"] is adapter-facing preference, not a hard runtime selection.'],
-      ['cat', 'Categories', 'patterns plus prompt_append create focused shuttle variants for frontend, backend, docs, or other domains.']
+      ['cat', 'Categories', 'description, triggers, and prompt_append create focused shuttle variants for frontend, backend, docs, or other domains.']
     ];
     document.getElementById('dslNotes').innerHTML = data.map(function (d) {
       return '<div class="dsl-note"><span class="chip">' + S + ic[d[0]] + '</svg></span>' +

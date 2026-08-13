@@ -1,6 +1,6 @@
 {
   "id": "tcr-03-windows-paths",
-  "description": "Route this task to the correct category shuttle. The user is on Windows and has provided a file path using backslashes: `src\\4.Presentation\\DST.Client\\Pages\\Home.tsx`. The active Weave config declares `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }`. Should this backslash path still match the client-frontend category, and which shuttle agent should handle this work?",
+  "description": "Route this task to the correct category shuttle. The user is on Windows and has provided a file path using backslashes: `src\\4.Presentation\\DST.Client\\Pages\\Home.tsx`. The active Weave config declares `category client-frontend { description \"DST client web UI: React components, pages, and hooks\" triggers [\"Use for DST client web UI work\"] }`. Does the backslash path formatting change whether this is DST client web UI work, and which shuttle agent should handle it?",
   "suite": "tapestry-category-routing",
   "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "loom"],
   "allowed_models": [

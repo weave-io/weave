@@ -141,8 +141,9 @@ If you are editing prompt text or `prompt_file` / `prompt_append` values:
 - [ ] Read `docs/reference/prompts.md` for the supported Mustache template
       context and composition rules.
 - [ ] Use `{{#delegation.targets}}` to iterate over eligible delegation targets;
-      inside the loop, use fields such as `{{name}}`, `{{description}}`,
-      `{{domains}}`, and `{{#triggers}}`.
+      inside the loop, use fields such as `{{name}}` and `{{description}}`.
+- [ ] `{{#triggers}}` iterates a target's ordered trigger strings; render each
+      entry with `{{.}}`. There is no `domains` field.
 - [ ] `prompt` and `prompt_file` are mutually exclusive per agent.
 - [ ] `prompt_append` and `prompt_append_file` are mutually exclusive per agent.
 - [ ] Unsupported Mustache features (partials, helpers, lambdas) are rejected

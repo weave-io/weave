@@ -124,8 +124,9 @@ describe("renderSelfModifyPrompt — current prompt composition guidance", () =>
     expect(out).toContain("{{#delegation.targets}}");
     expect(out).toContain("{{name}}");
     expect(out).toContain("{{description}}");
-    expect(out).toContain("{{domains}}");
     expect(out).toContain("{{#triggers}}");
+    expect(out).toContain("{{.}}");
+    expect(out).not.toContain("{{domains}}");
     expect(out).not.toContain("delegation.section");
     expect(out).not.toContain("delegation.mermaid");
     expect(out).not.toContain("fallback suppression");

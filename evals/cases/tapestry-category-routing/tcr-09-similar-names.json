@@ -1,6 +1,6 @@
 {
   "id": "tcr-09-similar-names",
-  "description": "Route this task to the correct category shuttle when similar category names exist. The Weave config declares two categories with similar names: `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }` and `category client-mobile { patterns [\"src/4.Presentation/DST.Mobile/**\"] }`. The file being changed is `src/4.Presentation/DST.Client/Components/Header.tsx`. Which shuttle agent should handle this — `shuttle-client-frontend` or `shuttle-client-mobile`?",
+  "description": "Route this task to the correct category shuttle when similar category names exist. The Weave config declares two categories with similar names: `category client-frontend { description \"DST client web UI: React components, pages, and hooks\" triggers [\"Use for DST client web UI work\"] }` and `category client-mobile { description \"DST mobile app UI: React Native screens and navigation\" triggers [\"Use for DST mobile app work\"] }`. The file being changed is `src/4.Presentation/DST.Client/Components/Header.tsx`. Which shuttle agent should handle this — `shuttle-client-frontend` or `shuttle-client-mobile`?",
   "suite": "tapestry-category-routing",
   "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "shuttle-client-mobile", "loom"],
   "allowed_models": [
