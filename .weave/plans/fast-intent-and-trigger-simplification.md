@@ -255,7 +255,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - Run Weft after the slice.
     - Run Warp because provider request/header mutation and response input validation changed. Resolve every blocking finding before adapter-wide verification.
 
-- [ ] 10. Resolve OpenCode support through a proven seam or honest unsupported behavior
+- [x] 10. Resolve OpenCode support through a proven seam or honest unsupported behavior
   - **What**: Carry neutral intent through translation, but mutate requests and report application only if Task 1 proves both a supported OpenCode seam and response evidence.
   - **Files**: `packages/adapters/opencode/src/translate-agent.ts`, `packages/adapters/opencode/src/adapter.ts`, `packages/adapters/opencode/src/sdk-types.ts`, `packages/adapters/opencode/src/plugin.ts` if a proven hook belongs there, `packages/adapters/opencode/src/capability-declarations.ts`, `packages/adapters/opencode/src/__tests__/translate-agent.test.ts`, `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/plugin.test.ts`, `packages/adapters/opencode/src/__tests__/capability-declarations.test.ts`, `packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts`
   - **Depends on**: Tasks 1 and 6
