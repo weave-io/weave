@@ -140,6 +140,8 @@ agent invalid-aliases {
 
 There is no `false` form, unset operator, or alias. A higher-priority config layer can add `fast true`, but omission cannot cancel a lower-priority declaration. Adapters report acceleration separately as `declared`, `requested`, `applied`, `not-confirmed`, or `unsupported`; only exact provider response evidence permits `applied`. See the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#truthful-states-and-transitions).
 
+Today every shipped adapter — Pi, OpenCode, and Claude Code — reports `unsupported` and sends no provider control, because none of them can bind official response evidence to the request it made. Declaring `fast true` is safe and changes nothing about your requests; it is valid intent that a future adapter seam may act on. See [Adapter Capabilities](adapter-capabilities.md#current-provider-fast-support).
+
 ### Delegation triggers
 
 Triggers are portable text, not a structured routing language:

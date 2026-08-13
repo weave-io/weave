@@ -59,6 +59,16 @@ Alt+A cycles healthy `primary` and `all` descriptors in materialization order wh
 
 The badge tints the agent name with a stable background drawn only from theme background tokens Pi itself supports. The choice is deterministic: the normalized agent name (trimmed, whitespace-collapsed, case-folded) always selects the same token in every session and on every machine, with no stored assignment, so you learn one color per agent. Distinct agents may share a color; the same agent never changes color. The agent name keeps its accent foreground. If the active theme exposes no background helper, the badge renders foreground-only — accent, bold agent name, no tint — rather than substituting a different color.
 
+### Provider acceleration is unsupported
+
+A descriptor's `fast true` reaches Pi as neutral intent, and the adapter carries it on the active primary and inside authenticated ordinary and direct-step child bootstraps. It is never translated into a provider control.
+
+Pi's public extension contract exposes `before_provider_headers`, `before_provider_request`, and `after_provider_response`, but none of them binds the effective transport of one prepared request or that request's response body to the same attempt. `ctx.model.baseUrl` is declared configuration that auth resolution may replace, and `ctx.modelRegistry.getProviderAuth()` performs a fresh resolution rather than reporting the resolution the held request used. Without that proof an allowlist match would be a guess, so even `requested` would be untrue.
+
+The adapter therefore registers **no** provider request, header, or response handler. Every provider payload reference and header map is left exactly as other extensions left it; no `service_tier`, `speed`, or `anthropic-beta` value is ever written. The `provider-fast-activation` capability declares `unsupported` with runtime status `unsupported` and the bounded reason `harness-seam-unavailable`, reported once per session at settlement.
+
+This is an optional-capability gap. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or bootstrap. `/weave:status` may show `fast: unsupported (harness-seam-unavailable)`; it never says applied, active, or confirmed. Raising Pi above `unsupported` requires a documented host seam that reports the effective transport of one prepared request plus correlated official response-body evidence for that same request, proven in a fresh real harness under [Adapter Verification](../testing/adapter-verification.md). Unit confidence is not that proof.
+
 The registered `weave_delegate` schema is static because Pi requires it at registration time. Each invocation still resolves the live primary identity and that descriptor's current eligible targets, so switching primary agents cannot reuse stale authority.
 
 ## User surface

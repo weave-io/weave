@@ -77,7 +77,35 @@ converts to this DSL entry:
 triggers ["Use for pull request review"]
 ```
 
-If `routing_hint` is blank or absent, the converter uses `"Review code"`. It never retains `domain` as hidden metadata. See the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#breaking-dsl-merge-and-migration-contract) for the full cross-layer contract.
+If `routing_hint` is blank or absent, the converter uses `"Review code"`. It never retains `domain` as hidden metadata.
+
+A legacy category converts the same way. This input:
+
+```jsonc
+{ "description": "Backend APIs", "patterns": ["src/api/**"] }
+```
+
+produces this DSL block plus one dropped-pattern warning:
+
+```weave
+category backend {
+  description "Backend APIs"
+}
+```
+
+There is no replacement field. Route the category with `description` and `triggers [...]` instead:
+
+```weave
+category backend {
+  description "Backend APIs and persistence"
+  triggers ["Use for API contracts, services, and persistence"]
+  fast true
+}
+```
+
+A handwritten `.weave` file gets no such best-effort conversion: each old form is a hard validation error you must fix by hand.
+
+Declaring `fast true` is safe to migrate today. Every shipped adapter reports the `provider-fast-activation` capability as unsupported and sends no provider control, so the declaration changes nothing about your requests. See [Adapter Capabilities](adapter-capabilities.md#current-provider-fast-support) and the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#breaking-dsl-merge-and-migration-contract) for the full cross-layer contract.
 
 ## Harness adapter settings
 

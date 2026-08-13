@@ -33,6 +33,14 @@ bundled and are never consumer npm dependencies.
 
 The generated command files provide the plan-entry command only: `/weave:start`, with `/start-work` as a compatibility alias that behaves identically. Generated Claude Code markdown does not add a durable-workflow runtime surface, and it must not be read as one.
 
+## Provider acceleration is unsupported
+
+Claude Code has a native fast mode through `/fast`, Option/Alt+O, and the Agent SDK's `settings.fastMode`. None of those belongs to this adapter's static file-materialization surface: subagent frontmatter has no fast-mode field, and hooks cover tool, session, and subagent events rather than provider request mutation and provider response evidence.
+
+A descriptor's `fast true` therefore changes no generated file. The adapter encodes no frontmatter field, environment value, prompt instruction, or provider control, and generated agent or command markdown must not claim that acceleration was requested or applied. `provider-fast-activation` declares `unsupported` with runtime status `unsupported` and the bounded reason `harness-seam-unavailable`.
+
+This is an optional-capability gap. Agent and command materialization continues unchanged. Raising Claude Code above `unsupported` requires a runtime Agent SDK integration with per-attempt response proof, or a new official materialization field with equivalent proof, verified in a real harness under [Adapter Verification](../testing/adapter-verification.md).
+
 ## Consequences
 
 - Users must reload plugins or start a new session after generated files change.

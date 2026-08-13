@@ -95,13 +95,13 @@ The hooks also do not expose the response body or streamed usage event. Pi's pub
 
 **Outcome:** unsupported for this adapter. With neither an effective-transport proof nor a response proof bound to the same prepared request, any acceleration control the adapter sent would be a guess. The adapter therefore registers no provider request or header hook, leaves every provider payload and header exactly unchanged, and reports declared intent as terminal `unsupported` with the reason `harness-seam-unavailable`. Agent activation, prompts, models, tools, and delegation are unaffected. Supporting `requested` requires a documented seam that reports the effective transport of one prepared request; `applied` additionally requires correlated official response-body evidence for that same request.
 
-### OpenCode 1.18.9 — degraded
+### OpenCode 1.18.9 — unsupported for this adapter
 
 OpenCode's tagged [plugin hook types](https://github.com/anomalyco/opencode/blob/v1.18.9/packages/plugin/src/index.ts) expose `chat.params` and `chat.headers`. Current [LLM assembly source](https://github.com/anomalyco/opencode/blob/v1.18.9/packages/opencode/src/session/llm.ts) passes the mutated options as provider options and the mutated headers to the provider call. This is a request mutation seam.
 
 The public plugin event and assistant-message contracts do not expose OpenAI `service_tier` or Anthropic `usage.speed` for a successful call. Error response data, a successful status, or ordinary token usage does not prove acceleration. An authentication loader that replaces `fetch` would take ownership of provider authentication and transport and is not a safe general adapter seam.
 
-**Outcome:** degraded. OpenCode may reach `requested` only after an exact provider mapping is implemented. It cannot reach `applied` through the current plugin contract.
+**Outcome:** unsupported for this adapter. Because no correlated official response-body proof exists for a successful call, the adapter sends no acceleration control, mutates no request option or header, and reports declared intent as terminal `unsupported` with the reason `response-proof-unavailable`. Descriptor materialization and agent mapping are unaffected. Reaching `requested` requires an implemented exact provider mapping; `applied` additionally requires correlated official response-body evidence, which the current plugin contract cannot supply.
 
 ### Claude Code 2.1.220 — unsupported for the current adapter
 
@@ -251,8 +251,10 @@ Do not emit model prompts, completions, payload fragments, raw field values, ful
 
 No current Weave harness adapter has a complete request-plus-response seam that can prove `applied` under the official provider contracts:
 
-- Pi: unsupported; request hooks exist, but no seam binds an effective transport or a response proof to one prepared request.
-- OpenCode: degraded; request option/header hooks, no success evidence.
-- Claude Code materialization: unsupported; native fast controls exist outside the adapter's owned surface.
+- Pi: unsupported (`harness-seam-unavailable`); request hooks exist, but no seam binds an effective transport or a response proof to one prepared request.
+- OpenCode: unsupported (`response-proof-unavailable`); request option/header hooks exist, but no success evidence does.
+- Claude Code materialization: unsupported (`harness-seam-unavailable`); native fast controls exist outside the adapter's owned surface.
+
+All three adapters therefore ship with `provider-fast-activation` declared `unsupported`, send no acceleration control, and leave provider requests untouched. `fast true` remains inert neutral intent end to end.
 
 Later implementation must preserve these ceilings. It may implement `requested` where this note proves a safe request seam, but it must not raise any adapter to `applied` without a new official harness response seam and tests against the exact provider evidence contract.

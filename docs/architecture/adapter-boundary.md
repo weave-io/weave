@@ -29,7 +29,8 @@ If yes, it belongs in an adapter. Engine-to-adapter calls are fine when they exc
 | Prompts | Engine renders templates and delegation context | Delivers composed text through the harness's prompt surface |
 | Models | Engine resolves ordered intent against explicit candidates | Discovers candidates and selected model; activates the result |
 | Skills | Engine matches declared names, disables, and policy | Discovers, reads, and normalizes harness skill files |
-| Categories | Engine carries declared category metadata | Maps patterns into concrete harness routing, if supported |
+| Categories | Engine carries declared category metadata (name, description, ordered trigger strings) | Presents that metadata through the harness's own routing surface; there is no file-pattern field and no deterministic file routing |
+| Provider acceleration | Engine carries the neutral `fast?: true` intent only | Owns provider recognition, allowlists, request/header mutation, response interpretation, and bounded evidence |
 | Tool policy | Engine evaluates abstract capabilities | Maps real tool identities, inputs, interception, and approval UI |
 | Permissions | Engine owns requests, grants, challenges, permits, and coverage evaluation | Supplies tool inventory and enforces the returned decision |
 | Capabilities | Engine owns IDs, schemas, profile evaluation, and health reports | Declares static ceilings and supplies safe runtime probes |
@@ -124,6 +125,14 @@ Earlier designs placed `loadSkill()` and `registerHook()` on `HarnessAdapter`. T
 - Lifecycle registration is adapter-owned; adapters call typed engine lifecycle functions.
 
 Do not restore broad discovery or hook-registration methods merely because an adapter needs them internally.
+
+## Provider acceleration intent
+
+`fast true` is neutral user intent, not a provider control. Core parses it, config merges it, and the engine copies it onto the descriptor as the optional literal `fast?: true`. Those layers must never learn a provider name, request field, header, endpoint, credential, response body, or acceleration allowlist.
+
+An adapter owns everything concrete: whether its harness exposes a safe per-request seam, which provider and model entries are eligible, how the request is mutated, and what the provider's official response field proves. Only the adapter may report readiness, and it may report `applied` only from correlated official response evidence for the same attempt. Today every adapter reports `unsupported`; see [Adapter Capabilities](../reference/adapter-capabilities.md#current-provider-fast-support).
+
+Evidence crosses back as bounded, sanitized enum tokens — state, provider family, endpoint family, allowlist rule ID, evidence kind, evidence outcome, and a closed reason code. Raw payloads, headers, header values, credentials, URLs, transcripts, and harness objects never cross the boundary in either direction.
 
 ## Anti-patterns
 

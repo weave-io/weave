@@ -55,7 +55,8 @@ const MAX_COMPOSED_PROMPT_LENGTH = MAX_CONTROL_BODY_BYTES / 2;
 const NameSchema = z.string().min(1).max(MAX_NAME_LENGTH);
 const EmptyBodySchema = z.object({}).strict();
 
-const DelegationTriggerSchema = z
+/** One trigger is an exact, nonblank guidance string. There is no structure. */
+const TriggerTextSchema = z
   .string()
   .max(MAX_NAME_LENGTH)
   .refine((value) => value.trim().length > 0, "must not be blank");
@@ -64,7 +65,7 @@ const DelegationTargetBodySchema = z
   .object({
     name: NameSchema,
     description: z.string().max(1_024).optional(),
-    triggers: z.array(DelegationTriggerSchema).max(MAX_DELEGATION_TRIGGERS),
+    triggers: z.array(TriggerTextSchema).max(MAX_DELEGATION_TRIGGERS),
     isCategory: z.boolean(),
   })
   .strict();

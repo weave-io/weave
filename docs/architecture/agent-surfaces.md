@@ -61,7 +61,7 @@ Do not create fake UI affordances merely to resemble another harness.
 
 ### Keep generated shuttles ordinary
 
-Category shuttles are normalized descriptors. The adapter receives category metadata and chooses how to route by patterns. It does not regenerate or special-case the DSL definition.
+Category shuttles are normalized descriptors. The adapter receives category metadata — name, description, and the category's ordered trigger strings — and presents it through its own routing surface. Categories carry no file patterns, so no adapter performs deterministic file routing. The adapter does not regenerate or special-case the DSL definition.
 
 ### Make downgrades explicit
 
@@ -73,6 +73,7 @@ If a harness cannot support one surface directly, choose a documented downgrade:
 | Native subagents | Adapter-managed private workers, if safely emulatable |
 | Agent-specific tool policy | Native harness/tool-owner authorization with declared limitation |
 | Runtime callbacks | File materialization only; no lifecycle readiness claim |
+| Provider acceleration seam | Carry `fast true` as inert intent, declare the capability `unsupported`, and mutate no provider request |
 | Persistent workflow state | Explicit commands backed by the Runtime Store, or unsupported |
 | Agent UI | Commands or generated task templates |
 

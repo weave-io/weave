@@ -39,6 +39,18 @@ The closed ID vocabulary and current required/optional profile live in [`package
 
 `provider-fast-activation` is the optional provider-acceleration capability. When `runtimeStatus` is present, the exported contract accepts only the bounded evidence tokens from that module. Other capabilities keep sanitized freeform status strings. A descriptor without `fast true` does not require this capability and emits no requested or applied state.
 
+### Current provider-fast support
+
+No shipped adapter can prove that a provider applied acceleration, so every adapter declares `unsupported` and sends no acceleration control:
+
+| Adapter | Readiness | Runtime status | Missing seam |
+| --- | --- | --- | --- |
+| Pi | `unsupported` | `unsupported` (`harness-seam-unavailable`) | Pi's public extension contract cannot bind the effective transport or the response body of one prepared provider request, so the adapter registers no provider request or header hook. |
+| OpenCode | `unsupported` | `unsupported` (`response-proof-unavailable`) | OpenCode's plugin surface can mutate a request, but no correlated official response-body proof exists for the same attempt. |
+| Claude Code | `unsupported` | `unsupported` (`harness-seam-unavailable`) | Static file materialization owns no per-invocation request seam and no response evidence. Claude Code's own `/fast` and Agent SDK controls are outside the adapter's surface. |
+
+These are optional-capability gaps. They warn, and they never enter health-only mode, block descriptor materialization, agent activation, prompts, models, tools, or delegation. `fast true` still travels through the config, descriptor, and Pi child-bootstrap layers as neutral intent; it is simply never translated into a provider control. See the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#truthful-states-and-transitions) for the state vocabulary and the evidence threshold that `applied` requires.
+
 ## Effective evaluation
 
 A safe initializer supplies exactly one `CapabilityProbeResult` for every known capability. Evaluation:
