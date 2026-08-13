@@ -52,6 +52,7 @@ import {
 } from "./errors.js";
 import { type PiModelInfo, PiModelResolver } from "./model-resolution.js";
 import {
+  type PiChildPrivateOutputCapture,
   type PiChildSettlement,
   PiRpcChild,
   type PiRpcChildSpawnSession,
@@ -71,6 +72,10 @@ export interface PiDirectDispatchTransportDeps {
   readonly idGenerator: IdGenerator;
   readonly baseEnv?: Readonly<Record<string, string>>;
   readonly command?: readonly string[];
+  readonly handshakeTimeoutMs?: number;
+  readonly replyTimeoutMs?: number;
+  readonly settlementTimeoutMs?: number;
+  readonly runtimeBudgetMs?: number;
   /**
    * Optional shared registry (Pi adapter contract) letting the extension's
    * `/weave:abort` command and its Esc-at-root editor binding reach the one
@@ -119,12 +124,22 @@ export interface PiDirectDispatchTransportDeps {
    */
   readonly requireNativeSession?: () => boolean;
   readonly now?: () => number;
+  /** Required durable sink for complete direct-step output/candidates. */
+  readonly onPrivateOutput?: (
+    childId: string,
+    capture: PiChildPrivateOutputCapture,
+  ) => Result<void, PiAdapterFailure> | ResultAsync<void, PiAdapterFailure>;
 }
 
 /** A direct step's provisioned native session and its parent ref record. */
 interface ProvisionedDirectSession {
   readonly session: PiDirectRestoreSession;
   readonly record: PiNativeSessionRecord;
+  /**
+   * Opaque native-session ref used to persist complete private output onto the
+   * already-provisioned required session. Never a filesystem path.
+   */
+  readonly ref: string;
   /**
    * The durable running ref this step wrote before spawning. It is the record
    * the terminal lifecycle append must extend, so the child never stays
@@ -255,6 +270,15 @@ export function createDirectDispatchTransport(
     input: PiDirectDispatchInput,
   ): ResultAsync<DirectDispatchSettlement, PiAdapterFailure> => {
     const childId = `direct-${input.workflowInstanceId}-${input.stepName}-${deps.idGenerator.next()}`;
+    /**
+     * Complete private terminal output captured by `PiRpcChild` before the
+     * transport-level settlement can succeed, together with its provenance.
+     * The settlement's `assistantOutput` is a bounded projection and must
+     * never be persisted as the authoritative result, and neither may the
+     * observed terminal assistant prose a structured direct step happens to
+     * leave behind.
+     */
+    let capturedPrivateOutput: PiChildPrivateOutputCapture | undefined;
     let child: PiRpcChild;
     const respondToDelegation = (
       correlationId: string,
@@ -274,6 +298,10 @@ export function createDirectDispatchTransport(
         hmacPort: deps.hmacPort,
         logger: deps.logger,
         command: deps.command,
+        handshakeTimeoutMs: deps.handshakeTimeoutMs,
+        replyTimeoutMs: deps.replyTimeoutMs,
+        settlementTimeoutMs: deps.settlementTimeoutMs,
+        runtimeBudgetMs: deps.runtimeBudgetMs,
         baseEnv: deps.baseEnv,
         sessionObserver: {
           onEvent: (event) => {
@@ -289,6 +317,10 @@ export function createDirectDispatchTransport(
             () => undefined,
             () => undefined,
           );
+        },
+        onPrivateOutput: (capture) => {
+          capturedPrivateOutput = capture;
+          return deps.onPrivateOutput?.(childId, capture) ?? ok(undefined);
         },
         onDelegationRequest: (authenticatedChildId, correlationId, body) => {
           const relayDelegation = deps.relayDelegation;
@@ -350,7 +382,9 @@ export function createDirectDispatchTransport(
       agentName: input.agentName,
       composedPrompt: input.composedPrompt,
       models: input.models,
-      delegationTargets: input.delegationTargets,
+      // Large catalogs stay parent-authoritative instead of consuming one
+      // signed bootstrap envelope.
+      delegationTargets: [],
       workflowInstanceId: input.workflowInstanceId,
       leaseId: input.leaseId,
       stepName: input.stepName,
@@ -517,6 +551,7 @@ export function createDirectDispatchTransport(
                   >({
                     session: validated.value,
                     record,
+                    ref: record.ref,
                     refRecord,
                     parentSession,
                   });
@@ -606,6 +641,79 @@ export function createDirectDispatchTransport(
       return ok(undefined);
     };
 
+    /**
+     * Writes the direct step's verified completion candidate onto the
+     * already-provisioned required native session before a completed
+     * settlement can succeed.
+     *
+     * A direct step's authoritative result is its structured completion
+     * candidate - inline or transferred - and nothing else. A capture whose
+     * provenance is observed terminal prose, or one that disagrees with the
+     * settlement's own candidate, is refused rather than persisted, so the
+     * durable result can never be unrelated assistant text.
+     */
+    const persistCompletedOutput = async (
+      provisioned: ProvisionedDirectSession | undefined,
+      capture: PiChildPrivateOutputCapture | undefined,
+      settlementCandidate: string | undefined,
+    ): Promise<Result<undefined, PiAdapterFailure>> => {
+      if (provisioned === undefined) return ok(undefined);
+      if (capture === undefined) {
+        deps.logger.error(
+          { childId, agentName: input.agentName },
+          "direct-step result capture missing",
+        );
+        return err(makeChildRecoveryUnavailableFailure(childId));
+      }
+      if (
+        capture.source !== "inline-candidate" &&
+        capture.source !== "transferred-candidate"
+      ) {
+        deps.logger.error(
+          { childId, agentName: input.agentName, source: capture.source },
+          "direct-step result capture is not a completion candidate",
+        );
+        return err(makeChildRecoveryUnavailableFailure(childId));
+      }
+      if (
+        settlementCandidate === undefined ||
+        settlementCandidate !== capture.output
+      ) {
+        deps.logger.error(
+          { childId, agentName: input.agentName, source: capture.source },
+          "direct-step result capture does not match the settled candidate",
+        );
+        return err(makeChildRecoveryUnavailableFailure(childId));
+      }
+      const output = capture.output;
+      const sessions = deps.threadSessions?.();
+      const append = sessions?.appendResultOutput;
+      if (sessions === undefined || append === undefined) {
+        deps.logger.error(
+          { childId, agentName: input.agentName },
+          "direct-step result persist unavailable",
+        );
+        return err(makeChildRecoveryUnavailableFailure(childId));
+      }
+      const appended = await append.call(sessions, provisioned.ref, output, {
+        childId: provisioned.record.childId,
+        nativeSessionId: provisioned.record.sessionId,
+        parentSession: provisioned.parentSession,
+      });
+      if (appended.isErr()) {
+        deps.logger.error(
+          { childId, agentName: input.agentName },
+          "direct-step result persist failed",
+        );
+        return err(
+          appended.error.type === "SessionCorrupt"
+            ? makeChildRecordCorruptFailure(childId)
+            : makeChildRecoveryUnavailableFailure(childId),
+        );
+      }
+      return ok(undefined);
+    };
+
     const historyFailure = (failure: {
       readonly reason: "unavailable" | "corrupt" | "quota" | "invalid";
     }): PiAdapterFailure => {
@@ -652,9 +760,24 @@ export function createDirectDispatchTransport(
             // Cleanup is unconditional, including when history persistence fails.
             child.dispose();
             deps.registry?.setActive(undefined);
+            // The authoritative result is persisted *before* any terminal
+            // lifecycle record exists. A durable `completed` lifecycle is a
+            // claim that this step's result is retrievable, so it may never
+            // be written first and then contradicted: when persistence fails,
+            // the step settles at `failed` and the durable lifecycle says so.
+            const outputPersisted =
+              outcome.isOk() && outcome.value.outcome === "completed"
+                ? await persistCompletedOutput(
+                    provisioned,
+                    capturedPrivateOutput,
+                    outcome.value.completionCandidate,
+                  )
+                : ok<undefined, PiAdapterFailure>(undefined);
             const lifecycle = await appendTerminalLifecycle(
               provisioned,
-              terminalRefStatusFor(outcome),
+              outputPersisted.isErr()
+                ? "failed"
+                : terminalRefStatusFor(outcome),
             );
             if (persisted.isErr()) return err(historyFailure(persisted.error));
             if (outcome.isErr()) {
@@ -669,6 +792,8 @@ export function createDirectDispatchTransport(
               );
               return err(outcome.error);
             }
+            // A step whose result never landed is never reported completed.
+            if (outputPersisted.isErr()) return err(outputPersisted.error);
             // The primary transport/persistence facts above are reported
             // first; a lost lifecycle append surfaces only after nothing more
             // important remains to report.
@@ -680,12 +805,13 @@ export function createDirectDispatchTransport(
                 outcome: "failed",
                 reason: "cancelled",
               });
-            if (outcome.value.outcome === "completed")
+            if (outcome.value.outcome === "completed") {
               return ok<DirectDispatchSettlement, PiAdapterFailure>({
                 outcome: "completed",
                 completionCandidate: outcome.value.completionCandidate,
                 interventionCount: outcome.value.interventionCount ?? 0,
               });
+            }
             return ok<DirectDispatchSettlement, PiAdapterFailure>({
               outcome: "failed",
               reason: outcome.value.reason,

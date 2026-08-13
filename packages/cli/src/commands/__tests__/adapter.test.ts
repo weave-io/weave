@@ -4,19 +4,20 @@
 
 import { describe, expect, it } from "bun:test";
 import {
-  createOpenSessionMutationGate,
   createPiAdapterCommandRegistry,
   PI_ADAPTER_COMMAND_BOUNDS,
   type PiAdapterChildListItem,
   type PiAdapterChildrenPort,
 } from "@weaveio/weave-adapter-pi/cli";
 import { errAsync, okAsync } from "neverthrow";
+import { createOpenSessionMutationGate } from "../../../../adapters/pi/src/required-capability-gate.js";
 import { parseArgs } from "../../args.js";
 import { BufferTerminal } from "../../io/terminal.js";
 import { StaticPromptAdapter } from "../../prompt/index.js";
 import { ThemeManager } from "../../theme/colors.js";
 import {
   type AdapterCommandContext,
+  decodeAdapterResultPage,
   parseAdapterTarget,
   resolveDeleteParentScope,
   runAdapter,
@@ -94,6 +95,27 @@ function makeChildrenPort(options: {
               },
             }
           : {}),
+      });
+    },
+    result(input) {
+      const found = rows.find((row) => row.childId === input.childId);
+      if (found === undefined) {
+        return errAsync({
+          type: "NotFound" as const,
+          message: `child not found: ${input.childId}`,
+        });
+      }
+      // Byte-exact authoritative bytes, deliberately path-shaped so a
+      // sanitizing route would be visible in the rendered output.
+      return okAsync({
+        exact: true as const,
+        status: "complete" as const,
+        resultId: "11111111-1111-4111-8111-111111111111",
+        total: 1,
+        byteLength: 24,
+        digest: "a".repeat(64),
+        content: "wrote /etc/hosts\u0007 done",
+        contentByteOffset: 0,
       });
     },
     resolve(input) {
@@ -181,6 +203,18 @@ describe("parseAdapterTarget", () => {
     });
   });
 
+  it("parses children result", () => {
+    expect(
+      parseAdapterTarget(["pi", "children", "result", "c1"])._unsafeUnwrap(),
+    ).toEqual({ adapter: "pi", action: "children.result", childId: "c1" });
+    expect(
+      parseAdapterTarget(["pi", "children", "result"])._unsafeUnwrapErr(),
+    ).toEqual({
+      type: "InvalidArgs",
+      message: "children result requires a child id",
+    });
+  });
+
   it("does not invent a synthetic parentSessionId for delete", () => {
     const target = parseAdapterTarget([
       "pi",
@@ -230,12 +264,12 @@ describe("parseAdapterTarget", () => {
 describe("resolveDeleteParentScope", () => {
   it("resolves a unique origin parent via children.resolve", async () => {
     const registry = createPiAdapterCommandRegistry({
-      sessionMutationGate: createOpenSessionMutationGate(),
       children: makeChildrenPort({
         rows: [
           child({ childId: "child-1", originParentSessionId: "parent-a" }),
         ],
       }),
+      sessionMutationGate: createOpenSessionMutationGate(),
     });
     const resolved = await resolveDeleteParentScope(registry, "ws", {
       adapter: "pi",
@@ -362,6 +396,65 @@ describe("runAdapter", () => {
     expect(body.children).toHaveLength(50);
     expect(body.nextCursor).toBe("list-cursor");
     expect(body).toMatchSnapshot("adapter-pi-children-list-json");
+  });
+
+  it("returns byte-exact authoritative result content without sanitizing it", async () => {
+    const { terminal, ctx } = makeCtx({
+      target: {
+        adapter: "pi",
+        action: "children.result",
+        childId: "child-1",
+      },
+      json: true,
+      registry: createPiAdapterCommandRegistry({
+        children: makeChildrenPort({}),
+        sessionMutationGate: createOpenSessionMutationGate(),
+      }),
+    });
+
+    const code = await runAdapter(ctx);
+    const body = JSON.parse(terminal.out.join("\n"));
+
+    expect(code._unsafeUnwrap()).toBe(0);
+    // The path-like token and control byte survive verbatim: this route is
+    // authoritative data, not a sanitized display projection. The bytes ride
+    // as base64 so JSON escaping cannot inflate them past the command
+    // result envelope.
+    expect(body).toMatchObject({
+      kind: "children.result",
+      childId: "child-1",
+      exact: true,
+      status: "complete",
+      contentEncoding: "base64",
+    });
+    const decoded = decodeAdapterResultPage(body)._unsafeUnwrap();
+    expect(decoded).toBeDefined();
+    expect(new TextDecoder().decode(decoded)).toBe(
+      "wrote /etc/hosts\u0007 done",
+    );
+    expect(body.contentByteLength).toBe(
+      new TextEncoder().encode("wrote /etc/hosts\u0007 done").byteLength,
+    );
+  });
+
+  it("refuses a result page whose encoding it does not recognise", () => {
+    expect(
+      decodeAdapterResultPage({
+        contentEncoding: "utf-8",
+        content: "raw",
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      decodeAdapterResultPage({ content: "raw" })._unsafeUnwrapErr(),
+    ).toContain("(absent)");
+    expect(
+      decodeAdapterResultPage({
+        contentEncoding: "base64",
+        content: btoa("ab"),
+        contentByteLength: 99,
+      })._unsafeUnwrapErr(),
+    ).toContain("byte length mismatch");
+    expect(decodeAdapterResultPage({})._unsafeUnwrap()).toBeUndefined();
   });
 
   it("bounds show to 100 entries plus cursor and keeps default path-free", async () => {

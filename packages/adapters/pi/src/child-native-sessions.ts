@@ -31,12 +31,117 @@
 import { dirname, isAbsolute, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
+import type {
+  PiNativeResultAppendIdentity,
+  PiNativeResultGroupRead,
+  PiNativeResultGroupReadOptions,
+  PiNativeResultGroupReadPlan,
+  PiNativeResultReadIdentity,
+  PiNativeResultScanBudget,
+  PiNativeResultScanPage,
+  PiNativeResultScanSource,
+} from "./child-native-results.js";
+import {
+  appendResultGroup,
+  bindResultGroupWriteMeta,
+  exceedsResultScanBudget,
+  PI_NATIVE_RESULT_GROUP_BOUNDS,
+  planResultGroupWrite,
+  prepareResultGroupRead,
+  scanResultGroup,
+} from "./child-native-results.js";
+import type {
+  PiNativeSessionCorruption,
+  PiNativeSessionDirectory,
+  PiNativeSessionError,
+  PiNativeSessionFileHandle,
+  PiNativeSessionFileStat,
+  PiNativeSessionFsError,
+  PiNativeSessionFsPort,
+  PiNativeSessionHandle,
+  PiNativeSessionHeader,
+  PiNativeSessionHostPort,
+  PiNativeSessionLock,
+  PiNativeSessionRecord,
+} from "./child-native-session-contracts.js";
+import {
+  decodeNativeSessionBase64Url,
+  effectivePiNativeSessionMaxRangeLength,
+  encodeNativeSessionBase64Url,
+  fromFsError,
+  PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
+  PI_NATIVE_SESSION_MAX_FILE_BYTES,
+  PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+  PiNativeBoundedNameSchema,
+} from "./child-native-session-contracts.js";
 import { isLexicallyContained } from "./path-containment.js";
 import {
   createBunPiTrustedDataRootPort,
   type PiTrustedDataRootPort,
   type PiTrustedDataRootViolation,
 } from "./trusted-data-root.js";
+
+// The durable-result protocol lives in `child-native-results.ts`. Its public
+// surface is re-exported here so importers of the store keep one entry point.
+export type {
+  PiNativeResultAppendIdentity,
+  PiNativeResultChunk,
+  PiNativeResultCommit,
+  PiNativeResultCommitIdentity,
+  PiNativeResultGroupAcceptance,
+  PiNativeResultGroupIncompleteReason,
+  PiNativeResultGroupRead,
+  PiNativeResultGroupReadOptions,
+  PiNativeResultGroupState,
+  PiNativeResultGroupSummary,
+  PiNativeResultIdentity,
+  PiNativeResultLeafIdentity,
+  PiNativeResultReadIdentity,
+  PiNativeResultScanLine,
+  PiNativeResultScanPage,
+  PiNativeResultScanSource,
+} from "./child-native-results.js";
+export {
+  PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+  PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
+  PI_NATIVE_RESULT_GROUP_BOUNDS,
+  PI_NATIVE_RESULT_MAX_ENCODED_ENTRY_BYTES,
+  PI_NATIVE_RESULT_MAX_ENCODED_GROUP_BYTES,
+  PI_NATIVE_RESULT_SCHEMA_VERSION,
+  PiNativeResultChunkSchema,
+  PiNativeResultCommitIdentitySchema,
+  PiNativeResultCommitSchema,
+  readNativeResultGroup,
+  scanResultGroup,
+} from "./child-native-results.js";
+// The failure taxonomy, the no-follow filesystem boundary, the host session
+// boundary, and the read limits are declared once in the contracts module and
+// re-exported here so existing importers of this module keep working.
+export type {
+  PiNativeSessionCorruption,
+  PiNativeSessionDirectory,
+  PiNativeSessionError,
+  PiNativeSessionFileHandle,
+  PiNativeSessionFileRange,
+  PiNativeSessionFileStat,
+  PiNativeSessionFsError,
+  PiNativeSessionFsPort,
+  PiNativeSessionHandle,
+  PiNativeSessionHeader,
+  PiNativeSessionHostPort,
+  PiNativeSessionLock,
+  PiNativeSessionRecord,
+  PiNativeSessionRootViolation,
+  PiNativeSessionStorageUnavailable,
+  PiNativeSessionStorageUnavailableReason,
+} from "./child-native-session-contracts.js";
+export {
+  describePiNativeSessionStorageUnavailable,
+  PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
+  PI_NATIVE_SESSION_MAX_FILE_BYTES,
+  PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+  setPiNativeSessionMaxRangeLengthForTests,
+} from "./child-native-session-contracts.js";
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -61,359 +166,8 @@ const MAX_COMPONENT_LENGTH = 64;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: false });
 
-/**
- * Hard ceilings for one {@link PiNativeSessionStore.readSessionEntryPage}
- * call. Budgets are independent of total file size: a page never scans more
- * than these caps even when the transcript is much larger.
- */
-export const PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS = Object.freeze({
-  /** Hard ceiling on `limit` (and the default when omitted). */
-  maxLimit: 100,
-  /** Maximum bytes returned by `readFileRange` across one page call. */
-  maxBytesScanned: 1024 * 1024,
-  /** Maximum JSONL lines examined (including header skips and corrupt lines). */
-  maxLinesScanned: 4_096,
-  /**
-   * Single-line ceiling; a longer line fails closed as `line-too-long`.
-   * Kept below `maxBytesScanned` so an unterminated overlong line is
-   * discovered inside one page budget rather than silently truncated.
-   */
-  maxLineBytes: 512 * 1024,
-  /** Opaque cursor string ceiling. */
-  maxCursorLength: 512,
-});
-
 /** Schema version of {@link PiNativeSessionEntryCursor}. */
 export const PI_NATIVE_SESSION_ENTRY_CURSOR_VERSION = 1 as const;
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
-/** Why a path was refused before any session file was touched. */
-export type PiNativeSessionRootViolation =
-  | "empty-home"
-  | "relative-xdg-data-home"
-  /** The configured XDG base could not be canonicalized (loop/dangling/denied). */
-  | "unresolvable-data-root"
-  /** The canonical XDG base exists but is not a directory. */
-  | "non-directory-data-root"
-  /** The canonical XDG base is owned by another user. */
-  | "foreign-data-root"
-  /** The canonical XDG base is group- or world-writable. */
-  | "writable-data-root"
-  | "unsafe-component"
-  | "path-escape"
-  | "symlink-rejected";
-
-/** Why a session file could not be interpreted as a Weave child session. */
-export type PiNativeSessionCorruption =
-  | "unreadable"
-  | "missing-header"
-  | "unsupported-version"
-  | "parent-session-mismatch"
-  | "not-persisted"
-  | "invalid-cursor"
-  | "stale-cursor"
-  | "line-too-long"
-  /**
-   * The session file exceeds {@link PI_NATIVE_SESSION_MAX_FILE_BYTES}. Raised
-   * from the opened descriptor's own size before any body byte is allocated,
-   * or at the sentinel bound when metadata understated the real length.
-   */
-  | "file-too-large";
-
-/** Closed failure set for every fallible operation in this module. */
-export type PiNativeSessionError =
-  | {
-      readonly type: "SessionRootViolation";
-      readonly reason: PiNativeSessionRootViolation;
-    }
-  | { readonly type: "SessionMissing"; readonly ref: string }
-  | {
-      readonly type: "SessionCorrupt";
-      readonly ref: string;
-      readonly reason: PiNativeSessionCorruption;
-    }
-  | {
-      readonly type: "SessionPermissionError";
-      readonly kind: "directory" | "file";
-    }
-  | {
-      readonly type: "SessionCreateFailed";
-      readonly reason:
-        | "host-threw"
-        | "not-persisted"
-        | "io"
-        /**
-         * The generated session path was already occupied by bytes this store
-         * did not write, or a concurrent writer landed on it between the
-         * absence check and the exclusive create. Never repaired in place.
-         */
-        | "collision"
-        /**
-         * The host produced a header this store refuses to persist verbatim -
-         * a wrong entry type/version, or a missing host-generated timestamp.
-         * The store never fabricates header fields to work around this.
-         */
-        | "header-unusable";
-    }
-  | { readonly type: "SessionConfirmationRequired"; readonly ref: string }
-  | {
-      readonly type: "TombstoneAppendFailed";
-      readonly reason: "io" | "unavailable" | "permission";
-    }
-  | {
-      readonly type: "SessionUnlinkFailed";
-      readonly ref: string;
-      readonly reason: "io" | "unavailable" | "permission";
-    }
-  | {
-      readonly type: "SessionStorageUnavailable";
-      readonly reason: PiNativeSessionStorageUnavailableReason;
-    };
-
-/**
- * Why native session storage is unavailable. Bounded and path-free: a
- * diagnostic never carries a filesystem path, a prompt, or transcript bytes.
- */
-export type PiNativeSessionStorageUnavailableReason = "filesystem-unavailable";
-
-/** Human-readable, path-free description of a storage-unavailable reason. */
-export function describePiNativeSessionStorageUnavailable(
-  _reason: PiNativeSessionStorageUnavailableReason,
-): string {
-  return "native session storage is unavailable";
-}
-
-/** Storage-unavailable failure retained for typed filesystem boundaries. */
-export type PiNativeSessionStorageUnavailable = Extract<
-  PiNativeSessionError,
-  { readonly type: "SessionStorageUnavailable" }
->;
-
-// ---------------------------------------------------------------------------
-// Injected no-follow filesystem port
-// ---------------------------------------------------------------------------
-
-/**
- * Closed failure set for the injected no-follow filesystem. Structural only:
- * any port that returns these discriminants satisfies the store, including
- * an in-memory fake used by tests.
- */
-export type PiNativeSessionFsError =
-  | { readonly type: "relative-xdg-data-home" }
-  | { readonly type: "empty-home" }
-  | { readonly type: "unsafe-path" }
-  | {
-      readonly type: "unavailable";
-      readonly operation: "open" | "read" | "write" | "delete" | "quarantine";
-    }
-  | { readonly type: "missing" }
-  | { readonly type: "symlink-rejected" }
-  | { readonly type: "identity-changed" }
-  | { readonly type: "invalid-range" }
-  | { readonly type: "permissive-mode"; readonly kind: "directory" | "file" }
-  | { readonly type: "wrong-kind"; readonly kind: "directory" | "file" }
-  /**
-   * Exclusive create lost a race: the leaf appeared between the absence check
-   * and `O_EXCL`, or already occupied the name. Callers map this to collision.
-   */
-  | { readonly type: "already-exists" }
-  | { readonly type: "io" };
-
-/**
- * Maximum `readFileRange` length. Callers page through larger files with
- * repeated bounded reads; a single call never exceeds this budget.
- */
-export const PI_NATIVE_SESSION_MAX_RANGE_LENGTH = 64 * 1024;
-
-/**
- * Optional test-only ceiling used by paging scans. Production always uses
- * {@link PI_NATIVE_SESSION_MAX_RANGE_LENGTH}. Values above the production
- * ceiling are clamped; `undefined` clears the override.
- */
-let piNativeSessionMaxRangeLengthForTests: number | undefined;
-
-/** Sets or clears the test-only `readFileRange` chunk ceiling for paging. */
-export function setPiNativeSessionMaxRangeLengthForTests(
-  length: number | undefined,
-): void {
-  if (length === undefined) {
-    piNativeSessionMaxRangeLengthForTests = undefined;
-    return;
-  }
-  piNativeSessionMaxRangeLengthForTests = Math.max(
-    1,
-    Math.min(Math.floor(length), PI_NATIVE_SESSION_MAX_RANGE_LENGTH),
-  );
-}
-
-function effectiveMaxRangeLength(): number {
-  return (
-    piNativeSessionMaxRangeLengthForTests ?? PI_NATIVE_SESSION_MAX_RANGE_LENGTH
-  );
-}
-
-/**
- * Hard ceiling on the bytes one descriptor-safe whole-file session read may
- * allocate. Enforced against the opened descriptor's own size before any body
- * byte is read, and again as a sentinel bound while chunks accumulate, so a
- * hostile or corrupt file can never drive unbounded allocation.
- */
-export const PI_NATIVE_SESSION_MAX_FILE_BYTES = 8 * 1024 * 1024;
-
-/** Stable regular-file identity used by bounded range reads. */
-export interface PiNativeSessionFileStat {
-  readonly dev: number;
-  readonly ino: number;
-  readonly size: number;
-  /**
-   * Last-modification time in milliseconds when the platform exposes it.
-   * Compared alongside `{dev,ino,size}` so an in-place same-size rewrite
-   * during a read is still detected.
-   */
-  readonly mtimeMs?: number;
-}
-
-/** One exact positional chunk plus the identity observed for that read. */
-export interface PiNativeSessionFileRange {
-  readonly identity: PiNativeSessionFileStat;
-  readonly bytes: Uint8Array;
-  readonly offset: number;
-}
-
-/**
- * One open, identity-bound regular-file descriptor under a verified session
- * directory. The handle captures `{dev,ino,size,mtimeMs}` at open time; every
- * read re-verifies that identity against the same descriptor and fails closed
- * on growth, truncation, replacement, or in-place mutation.
- */
-export interface PiNativeSessionFileHandle {
-  /** Identity observed when the descriptor was opened. */
-  readonly identity: PiNativeSessionFileStat;
-  /** Current descriptor identity; diverging from {@link identity} fails closed. */
-  stat(): ResultAsync<PiNativeSessionFileStat, PiNativeSessionFsError>;
-  /**
-   * Positional read from the open descriptor. `offset`/`length` must be
-   * nonnegative safe integers with
-   * `length <= PI_NATIVE_SESSION_MAX_RANGE_LENGTH`. Performs at most one OS
-   * content read surrounded by held-fd and descriptor-relative leaf checks.
-   * Returns exact bytes (possibly short at EOF or when the OS short-reads)
-   * bound to the identity captured at open. Callers resume short reads with
-   * another `readRange` so every content read is fully re-checked.
-   */
-  readRange(
-    offset: number,
-    length: number,
-  ): ResultAsync<PiNativeSessionFileRange, PiNativeSessionFsError>;
-  close(): void;
-}
-
-/** One no-follow directory handle opened under the verified session root. */
-export interface PiNativeSessionLock {
-  release(): void;
-}
-
-export interface PiNativeSessionDirectory {
-  readonly path: string;
-  /**
-   * Opens one regular 0600 leaf through the held no-follow directory and
-   * returns a descriptor-bound handle. Every subsequent read comes from that
-   * open descriptor, so the validated file can never be reopened by name and
-   * a post-validation path swap cannot redirect reads. Missing leaves return
-   * `undefined`; symlinks and non-files fail closed.
-   */
-  openFile(
-    name: string,
-  ): ResultAsync<PiNativeSessionFileHandle | undefined, PiNativeSessionFsError>;
-  /**
-   * No-follow `fstat` of a regular 0600 leaf. Missing leaves return
-   * `undefined`; symlinks and non-files fail closed.
-   */
-  statFile(
-    name: string,
-  ): ResultAsync<PiNativeSessionFileStat | undefined, PiNativeSessionFsError>;
-  /**
-   * No-follow positional read via `pread`. `offset`/`length` must be
-   * nonnegative safe integers with `length <= PI_NATIVE_SESSION_MAX_RANGE_LENGTH`.
-   * Returns exact bytes (possibly short at EOF) bound to the observed
-   * `{dev,ino,size}` identity; mid-read replace/truncate fails closed.
-   */
-  readFileRange(
-    name: string,
-    offset: number,
-    length: number,
-  ): ResultAsync<PiNativeSessionFileRange | undefined, PiNativeSessionFsError>;
-  appendFile(
-    name: string,
-    bytes: Uint8Array,
-    mode: number,
-  ): ResultAsync<void, PiNativeSessionFsError>;
-  /** Flushes directory-entry changes made through this held descriptor. */
-  sync(): ResultAsync<void, PiNativeSessionFsError>;
-  /** Tries to acquire a process-shared advisory lock on a safe root leaf. */
-  tryExclusiveLock(
-    name: string,
-  ): ResultAsync<PiNativeSessionLock, PiNativeSessionFsError>;
-  /**
-   * Exclusive no-follow create of a new 0600 leaf. Fails with
-   * {@link PiNativeSessionFsError} `already-exists` when the name is taken;
-   * never truncates or appends to an existing leaf.
-   */
-  createExclusiveFile(
-    name: string,
-    bytes: Uint8Array,
-    mode: number,
-  ): ResultAsync<void, PiNativeSessionFsError>;
-  deleteFile(name: string): ResultAsync<void, PiNativeSessionFsError>;
-  close(): void;
-}
-
-/**
- * Injected no-follow filesystem boundary for the native session tree.
- * Production wires a libc `openat(O_NOFOLLOW)` implementation; tests supply
- * a structural in-memory fake.
- */
-export interface PiNativeSessionFsPort {
-  openDirectory(
-    path: string,
-    create: boolean,
-  ): ResultAsync<PiNativeSessionDirectory, PiNativeSessionFsError>;
-}
-
-function fromFsError(
-  error: PiNativeSessionFsError,
-  ref: string,
-): PiNativeSessionError {
-  switch (error.type) {
-    case "unsafe-path":
-      return { type: "SessionRootViolation", reason: "path-escape" };
-    case "symlink-rejected":
-      return { type: "SessionRootViolation", reason: "symlink-rejected" };
-    case "relative-xdg-data-home":
-      return { type: "SessionRootViolation", reason: "relative-xdg-data-home" };
-    case "empty-home":
-      return { type: "SessionRootViolation", reason: "empty-home" };
-    case "missing":
-      return { type: "SessionMissing", ref };
-    case "permissive-mode":
-      return { type: "SessionPermissionError", kind: error.kind };
-    case "wrong-kind":
-      return { type: "SessionCorrupt", ref, reason: "unreadable" };
-    case "identity-changed":
-      return { type: "SessionCorrupt", ref, reason: "unreadable" };
-    case "invalid-range":
-      return { type: "SessionCorrupt", ref, reason: "unreadable" };
-    case "unavailable":
-      return {
-        type: "SessionStorageUnavailable",
-        reason: "filesystem-unavailable",
-      };
-    default:
-      return { type: "SessionCorrupt", ref, reason: "unreadable" };
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Root resolution
@@ -557,79 +311,8 @@ export function verifyNativeSessionRef(
 }
 
 // ---------------------------------------------------------------------------
-// Host session port
-// ---------------------------------------------------------------------------
-
-/** Header fields this module reads from a native Pi v3 session. */
-export interface PiNativeSessionHeader {
-  readonly id: string;
-  readonly cwd: string;
-  /** Native entry discriminator; Pi always emits `"session"`. */
-  readonly type?: string;
-  readonly version?: number;
-  /** Host-generated ISO-8601 creation timestamp. Never synthesized here. */
-  readonly timestamp?: string;
-  readonly parentSession?: string;
-}
-
-/**
- * The narrow slice of Pi's `SessionManager` instance this module depends on.
- * Nothing here mutates a session; appends belong to the delegation runtime.
- */
-export interface PiNativeSessionHandle {
-  getSessionId(): string;
-  getSessionFile(): string | undefined;
-  getSessionDir(): string;
-  getHeader(): PiNativeSessionHeader | null;
-  getEntries(): readonly unknown[];
-  isPersisted(): boolean;
-  /**
-   * Current native leaf id, when the host exposes one. A session whose host
-   * cannot report a leaf can still be read; it simply cannot be reopened at a
-   * proven leaf, which the delegation runtime refuses rather than guesses.
-   */
-  getLeafId?(): string | null;
-  /**
-   * Appends one bounded, metadata-only custom entry and advances the leaf.
-   * Optional because reading a session never needs it; the thread runtime
-   * uses it once, at thread creation, to establish a real active leaf.
-   */
-  appendCustomEntry?(customType: string, data?: unknown): string;
-}
-
-/**
- * Host boundary over Pi's static session constructors. Production wires
- * `SessionManager.create(cwd, isolatedDir, options)` and
- * `SessionManager.open(path, sessionDir)`; tests script it.
- */
-export interface PiNativeSessionHostPort {
-  create(
-    cwd: string,
-    sessionDir: string,
-    options: { readonly parentSession?: string; readonly id?: string },
-  ): PiNativeSessionHandle;
-  open(path: string, sessionDir: string): PiNativeSessionHandle;
-}
-
-// ---------------------------------------------------------------------------
 // Records and states
 // ---------------------------------------------------------------------------
-
-/** One persisted child session, identified by its root-relative ref. */
-export interface PiNativeSessionRecord {
-  /** Opaque Weave child id supplied by the caller. */
-  readonly childId: string;
-  /** Native Pi session id from the session header. */
-  readonly sessionId: string;
-  /** Root-relative reference, always contained by the session root. */
-  readonly ref: string;
-  /** Absolute session file path. */
-  readonly path: string;
-  /** Immutable parent session link written into the session header. */
-  readonly parentSession: string;
-  /** Working directory recorded in the session header. */
-  readonly cwd: string;
-}
 
 /**
  * Validated session metadata plus host `getEntries()` output. Entries are
@@ -668,18 +351,26 @@ export type PiNativeSessionEntryCursor = z.infer<
 >;
 
 /** Page scan direction for {@link PiNativeSessionStore.readSessionEntryPage}. */
-export type PiNativeSessionEntryPageDirection = "newest" | "older" | "newer";
+export type PiNativeSessionEntryPageDirection =
+  | "newest"
+  | "older"
+  | "newer"
+  | "at";
 
 /** One parsed JSONL body line (header lines are never returned). */
 export type PiNativeSessionPagedEntry =
   | {
       readonly kind: "entry";
       readonly offset: number;
+      /** Stable opaque cursor anchored to this exact JSONL record. */
+      readonly cursor?: string;
       readonly value: unknown;
     }
   | {
       readonly kind: "corrupt";
       readonly offset: number;
+      /** Stable opaque cursor anchored to this exact JSONL record. */
+      readonly cursor?: string;
       readonly reason: "invalid-json" | "not-object" | "empty";
     };
 
@@ -772,11 +463,8 @@ export interface CreateNativeChildSessionInput {
 
 /** Custom entry type carrying one thread's rebuildable identity. */
 export const PI_NATIVE_THREAD_ENTRY_TYPE = "weave.child.thread";
-
 /** Schema version of {@link PiNativeThreadMetadata}. */
 export const PI_NATIVE_THREAD_SCHEMA_VERSION = 1;
-
-const BOUNDED_NAME = z.string().min(1).max(256);
 
 /**
  * The bounded, metadata-only state a thread must be able to rebuild from its
@@ -786,15 +474,15 @@ const BOUNDED_NAME = z.string().min(1).max(256);
 export const PiNativeThreadMetadataSchema = z
   .object({
     schemaVersion: z.literal(PI_NATIVE_THREAD_SCHEMA_VERSION),
-    threadId: BOUNDED_NAME,
-    agentName: BOUNDED_NAME,
-    parentId: BOUNDED_NAME,
-    parentAgentName: BOUNDED_NAME,
+    threadId: PiNativeBoundedNameSchema,
+    agentName: PiNativeBoundedNameSchema,
+    parentId: PiNativeBoundedNameSchema,
+    parentAgentName: PiNativeBoundedNameSchema,
     parentDepth: z.number().int().min(0).max(64),
-    ownerParentSessionId: BOUNDED_NAME,
+    ownerParentSessionId: PiNativeBoundedNameSchema,
     cwd: z.string().min(1).max(4_096),
-    model: BOUNDED_NAME.optional(),
-    reasoning: BOUNDED_NAME.optional(),
+    model: PiNativeBoundedNameSchema.optional(),
+    reasoning: PiNativeBoundedNameSchema.optional(),
     createdAt: z.number().int().min(0),
   })
   .strict();
@@ -859,33 +547,6 @@ function withDirectory<T>(
     );
 }
 
-function encodeBase64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/u, "");
-}
-
-function decodeBase64Url(value: string): Result<Uint8Array, undefined> {
-  return Result.fromThrowable(
-    () => {
-      const padded = value.replace(/-/g, "+").replace(/_/g, "/");
-      const padLength = (4 - (padded.length % 4)) % 4;
-      const binary = atob(padded + "=".repeat(padLength));
-      const bytes = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-      }
-      return bytes;
-    },
-    () => undefined,
-  )();
-}
-
 /** Encode a validated cursor payload as an opaque base64url string. */
 export function encodePiNativeSessionEntryCursor(
   cursor: PiNativeSessionEntryCursor,
@@ -898,7 +559,7 @@ export function encodePiNativeSessionEntryCursor(
       reason: "invalid-cursor",
     });
   }
-  const encoded = encodeBase64Url(
+  const encoded = encodeNativeSessionBase64Url(
     textEncoder.encode(JSON.stringify(parsed.data)),
   );
   if (encoded.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxCursorLength) {
@@ -922,7 +583,7 @@ export function decodePiNativeSessionEntryCursor(
   ) {
     return err({ type: "SessionCorrupt", ref, reason: "invalid-cursor" });
   }
-  const bytes = decodeBase64Url(cursor);
+  const bytes = decodeNativeSessionBase64Url(cursor);
   if (bytes.isErr()) {
     return err({ type: "SessionCorrupt", ref, reason: "invalid-cursor" });
   }
@@ -948,6 +609,14 @@ interface LocatedLine {
 interface PageScanState {
   bytesRead: number;
   linesScanned: number;
+}
+
+/** Where a validated session header ends, and the id it declares. */
+interface PiNativeSessionHeaderPosition {
+  /** First body byte offset: one past the header line's newline. */
+  readonly headerEnd: number;
+  /** Native session id from the header, absent when the header omits it. */
+  readonly sessionId?: string;
 }
 
 function clampEntryPageLimit(limit: number | undefined): number {
@@ -1030,7 +699,11 @@ function readRangeExact(
       reason: "unreadable",
     });
   }
-  const capped = Math.min(length, remaining, effectiveMaxRangeLength());
+  const capped = Math.min(
+    length,
+    remaining,
+    effectivePiNativeSessionMaxRangeLength(),
+  );
   const chunks: Uint8Array[] = [];
   let consumed = 0;
 
@@ -1120,7 +793,7 @@ function readLinesForward(
     }
 
     const want = Math.min(
-      effectiveMaxRangeLength(),
+      effectivePiNativeSessionMaxRangeLength(),
       endExclusive - cursor,
       PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned - state.bytesRead,
     );
@@ -1283,7 +956,7 @@ function readLinesBackward(
     }
 
     const want = Math.min(
-      effectiveMaxRangeLength(),
+      effectivePiNativeSessionMaxRangeLength(),
       pos - startFloor,
       PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned - state.bytesRead,
     );
@@ -1393,6 +1066,72 @@ function readLinesBackward(
   };
 
   return step(endExclusive, new Uint8Array(), endExclusive);
+}
+
+/** True when a read failed only because the whole-session ceiling was hit. */
+function isFileTooLarge(error: PiNativeSessionError): boolean {
+  return error.type === "SessionCorrupt" && error.reason === "file-too-large";
+}
+
+/**
+ * Reads and validates only the first (header) line of a session file through
+ * an already-open descriptor. Bounded by one line, so it works on sessions
+ * that are too large for a whole-session read.
+ */
+function readSessionHeaderLine(
+  handle: PiNativeSessionFileHandle,
+  ref: string,
+  expectedParentSession: string | undefined,
+): ResultAsync<PiNativeSessionHeader, PiNativeSessionError> {
+  const state: PageScanState = { bytesRead: 0, linesScanned: 0 };
+  return handle
+    .stat()
+    .mapErr((error) => fromFsError(error, ref))
+    .andThen((identity) => {
+      if (identity.size === 0) {
+        return errAsync<PiNativeSessionHeader, PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "missing-header",
+        });
+      }
+      return readLinesForward(
+        handle,
+        0,
+        Math.min(identity.size, PI_NATIVE_SESSION_MAX_RANGE_LENGTH),
+        ref,
+        state,
+        identity,
+        1,
+      ).andThen((lines) => {
+        const line = lines[0];
+        if (line === undefined) {
+          return errAsync<PiNativeSessionHeader, PiNativeSessionError>({
+            type: "SessionCorrupt",
+            ref,
+            reason: "missing-header",
+          });
+        }
+        const parsed = parseJsonlBodyLine(line.offset, line.bytes);
+        if (parsed.kind !== "entry" || !isSessionHeaderLine(parsed.value)) {
+          return errAsync<PiNativeSessionHeader, PiNativeSessionError>({
+            type: "SessionCorrupt",
+            ref,
+            reason: "missing-header",
+          });
+        }
+        const header = parsed.value as PiNativeSessionHeader;
+        const corruption = headerCorruption(header, expectedParentSession);
+        if (corruption !== undefined) {
+          return errAsync<PiNativeSessionHeader, PiNativeSessionError>({
+            type: "SessionCorrupt",
+            ref,
+            reason: corruption,
+          });
+        }
+        return okAsync<PiNativeSessionHeader, PiNativeSessionError>(header);
+      });
+    });
 }
 
 function headerCorruption(
@@ -1686,7 +1425,10 @@ function readBoundedFile(
   const readNext = (
     offset: number,
   ): ResultAsync<Uint8Array, PiNativeSessionError> => {
-    const want = Math.min(effectiveMaxRangeLength(), ceiling - total);
+    const want = Math.min(
+      effectivePiNativeSessionMaxRangeLength(),
+      ceiling - total,
+    );
     if (want <= 0) {
       return errAsync({
         type: "SessionCorrupt",
@@ -1774,6 +1516,16 @@ function sameFileIdentity(
   );
 }
 
+/** Leaf identity compared across the host-reopen window. mtime is excluded. */
+function sameValidatedLeafIdentity(
+  left: Pick<PiNativeSessionFileStat, "dev" | "ino" | "size">,
+  right: Pick<PiNativeSessionFileStat, "dev" | "ino" | "size">,
+): boolean {
+  return (
+    left.dev === right.dev && left.ino === right.ino && left.size === right.size
+  );
+}
+
 function concatChunks(
   chunks: readonly Uint8Array[],
   total: number,
@@ -1839,7 +1591,7 @@ function parseSessionFileContents(
   ): PiNativeSessionError => ({ type: "SessionCorrupt", ref, reason });
   if (bytes.length === 0) return err(corrupt("missing-header"));
 
-  const maxLine = effectiveMaxRangeLength();
+  const maxLine = effectivePiNativeSessionMaxRangeLength();
   const entries: unknown[] = [];
   let header: PiNativeSessionHeader | undefined;
   let start = 0;
@@ -1875,6 +1627,72 @@ function parseSessionFileContents(
   }
   if (header === undefined) return err(corrupt("missing-header"));
   return ok({ header, entries });
+}
+
+/**
+ * Wraps one already-authorized descriptor as the narrow line source a bounded
+ * result scan runs on.
+ *
+ * This is the whole storage half of a durable result read. The descriptor was
+ * resolved once through a held no-follow directory and its header identity was
+ * already proven, so every line the scan ever sees comes from that one leaf.
+ * The result protocol receives lines and offsets and nothing else: no path, no
+ * directory, no way to reopen anything.
+ *
+ * Each page gets its own {@link PageScanState}, which is what keeps the
+ * per-page ceilings in {@link PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS} per page
+ * while the caller charges its own per-pass budget from `bytesRead`.
+ */
+function resultScanSource(
+  handle: PiNativeSessionFileHandle,
+  ref: string,
+  identity: PiNativeSessionFileStat,
+  headerEnd: number,
+): PiNativeResultScanSource {
+  const page = (
+    located: readonly LocatedLine[],
+    state: PageScanState,
+  ): PiNativeResultScanPage => ({
+    bytesRead: state.bytesRead,
+    lines: located.map((line) => {
+      const parsed = parseJsonlBodyLine(line.offset, line.bytes);
+      return {
+        offset: line.offset,
+        endOffset: line.offset + line.bytes.length,
+        ...(parsed.kind === "entry" ? { entry: parsed.value } : {}),
+      };
+    }),
+  });
+  return {
+    ref,
+    size: identity.size,
+    headerEnd,
+    leaf: { dev: identity.dev, ino: identity.ino },
+    readBackward: (endExclusive, limit) => {
+      const state: PageScanState = { bytesRead: 0, linesScanned: 0 };
+      return readLinesBackward(
+        handle,
+        endExclusive,
+        headerEnd,
+        ref,
+        state,
+        identity,
+        limit,
+      ).map((located) => page(located, state));
+    },
+    readForward: (offset, limit) => {
+      const state: PageScanState = { bytesRead: 0, linesScanned: 0 };
+      return readLinesForward(
+        handle,
+        offset,
+        identity.size,
+        ref,
+        state,
+        identity,
+        limit,
+      ).map((located) => page(located, state));
+    },
+  };
 }
 
 /**
@@ -2075,9 +1893,60 @@ export class PiNativeSessionStore {
     ref: string,
     expectedParentSession?: string,
   ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError> {
-    return this.openDescriptor(ref, expectedParentSession).map(
-      ({ record }) => record,
-    );
+    return this.openDescriptor(ref, expectedParentSession)
+      .map(({ record }) => record)
+      .orElse((error) =>
+        // A session holding a retained result may legitimately exceed the
+        // whole-session read ceiling. Identity lives in the header line, so
+        // fall back to the bounded header read rather than reporting a
+        // healthy large session as corrupt.
+        isFileTooLarge(error)
+          ? this.readSessionRecordFromHeader(ref, expectedParentSession)
+          : errAsync(error),
+      );
+  }
+
+  /**
+   * Reads only the session header line through the bounded page reader and
+   * builds the same record `openSession` returns. Bounded by one line, so it
+   * stays available for sessions larger than the whole-session read ceiling.
+   */
+  private readSessionRecordFromHeader(
+    ref: string,
+    expectedParentSession: string | undefined,
+  ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError> {
+    const located = this.locate(ref);
+    if (located.isErr()) return errAsync(located.error);
+    const { component, fileName, childDir, path, verified } = located.value;
+    return withDirectory(this.fs, childDir, false, verified, (directory) =>
+      directory
+        .openFile(fileName)
+        .mapErr((error) => fromFsError(error, verified))
+        .andThen((handle) => {
+          if (handle === undefined) {
+            return errAsync<PiNativeSessionHeader, PiNativeSessionError>({
+              type: "SessionMissing",
+              ref: verified,
+            });
+          }
+          return readSessionHeaderLine(handle, verified, expectedParentSession)
+            .map((header) => {
+              handle.close();
+              return header;
+            })
+            .mapErr((error) => {
+              handle.close();
+              return error;
+            });
+        }),
+    ).map((header) => ({
+      childId: component,
+      sessionId: header.id,
+      ref: verified,
+      path,
+      parentSession: header.parentSession ?? "",
+      cwd: header.cwd,
+    }));
   }
 
   /**
@@ -2223,7 +2092,7 @@ export class PiNativeSessionStore {
           identity,
           state,
           expectedParentSession,
-        ).andThen((headerEnd) => {
+        ).andThen(({ headerEnd }) => {
           let decodedCursor: PiNativeSessionEntryCursor | undefined;
           if (cursorToken !== undefined && direction !== "newest") {
             const decoded = decodePiNativeSessionEntryCursor(cursorToken, ref);
@@ -2274,6 +2143,9 @@ export class PiNativeSessionStore {
               limit,
             );
           }
+          if (direction === "at") {
+            return this.pageAt(handle, ref, identity, state, decodedCursor);
+          }
           return this.pageNewer(
             handle,
             ref,
@@ -2292,7 +2164,7 @@ export class PiNativeSessionStore {
     identity: PiNativeSessionFileStat,
     state: PageScanState,
     expectedParentSession: string | undefined,
-  ): ResultAsync<number, PiNativeSessionError> {
+  ): ResultAsync<PiNativeSessionHeaderPosition, PiNativeSessionError> {
     if (identity.size === 0) {
       return errAsync({
         type: "SessionCorrupt",
@@ -2304,7 +2176,7 @@ export class PiNativeSessionStore {
       handle,
       0,
       // Header scan window stays at the production ceiling; only per-read
-      // chunking uses the test override via effectiveMaxRangeLength().
+      // chunking uses the test override via effectivePiNativeSessionMaxRangeLength().
       Math.min(identity.size, PI_NATIVE_SESSION_MAX_RANGE_LENGTH),
       ref,
       state,
@@ -2313,7 +2185,7 @@ export class PiNativeSessionStore {
     ).andThen((lines) => {
       const headerLine = lines[0];
       if (headerLine === undefined) {
-        return errAsync<number, PiNativeSessionError>({
+        return errAsync<PiNativeSessionHeaderPosition, PiNativeSessionError>({
           type: "SessionCorrupt",
           ref,
           reason: "missing-header",
@@ -2321,7 +2193,7 @@ export class PiNativeSessionStore {
       }
       const parsed = parseJsonlBodyLine(headerLine.offset, headerLine.bytes);
       if (parsed.kind !== "entry" || !isSessionHeaderLine(parsed.value)) {
-        return errAsync<number, PiNativeSessionError>({
+        return errAsync<PiNativeSessionHeaderPosition, PiNativeSessionError>({
           type: "SessionCorrupt",
           ref,
           reason: "missing-header",
@@ -2329,7 +2201,7 @@ export class PiNativeSessionStore {
       }
       const version = parsed.value.version;
       if (version !== undefined && version !== 3) {
-        return errAsync<number, PiNativeSessionError>({
+        return errAsync<PiNativeSessionHeaderPosition, PiNativeSessionError>({
           type: "SessionCorrupt",
           ref,
           reason: "unsupported-version",
@@ -2337,7 +2209,7 @@ export class PiNativeSessionStore {
       }
       const parent = parsed.value.parentSession;
       if (typeof parent !== "string" || parent.length === 0) {
-        return errAsync<number, PiNativeSessionError>({
+        return errAsync<PiNativeSessionHeaderPosition, PiNativeSessionError>({
           type: "SessionCorrupt",
           ref,
           reason: "parent-session-mismatch",
@@ -2347,7 +2219,7 @@ export class PiNativeSessionStore {
         expectedParentSession !== undefined &&
         parent !== expectedParentSession
       ) {
-        return errAsync<number, PiNativeSessionError>({
+        return errAsync<PiNativeSessionHeaderPosition, PiNativeSessionError>({
           type: "SessionCorrupt",
           ref,
           reason: "parent-session-mismatch",
@@ -2358,7 +2230,12 @@ export class PiNativeSessionStore {
         headerLine.offset +
         headerLine.bytes.length +
         (headerLine.offset + headerLine.bytes.length < identity.size ? 1 : 0);
-      return okAsync(headerEnd);
+      return okAsync({
+        headerEnd,
+        ...(typeof parsed.value.id === "string"
+          ? { sessionId: parsed.value.id }
+          : {}),
+      });
     });
   }
 
@@ -2370,8 +2247,21 @@ export class PiNativeSessionStore {
     hasOlder: boolean,
     hasNewer: boolean,
   ): Result<PiNativeSessionEntryPage, PiNativeSessionError> {
-    const oldest = entries[0];
-    const newest = entries[entries.length - 1];
+    const entriesWithCursors: PiNativeSessionPagedEntry[] = [];
+    for (const entry of entries) {
+      const encoded = encodePiNativeSessionEntryCursor({
+        version: PI_NATIVE_SESSION_ENTRY_CURSOR_VERSION,
+        dev: identity.dev,
+        ino: identity.ino,
+        size: identity.size,
+        offset: entry.offset,
+        anchor: "newer",
+      });
+      if (encoded.isErr()) return err(encoded.error);
+      entriesWithCursors.push({ ...entry, cursor: encoded.value });
+    }
+    const oldest = entriesWithCursors[0];
+    const newest = entriesWithCursors[entriesWithCursors.length - 1];
     let olderCursor: string | undefined;
     let newerCursor: string | undefined;
     if (hasOlder && oldest !== undefined) {
@@ -2399,7 +2289,7 @@ export class PiNativeSessionStore {
       newerCursor = encoded.value;
     }
     return ok({
-      entries,
+      entries: entriesWithCursors,
       ...(olderCursor === undefined ? {} : { olderCursor }),
       ...(newerCursor === undefined ? {} : { newerCursor }),
       bytesRead: state.bytesRead,
@@ -2426,9 +2316,13 @@ export class PiNativeSessionStore {
       limit + 1,
     ).andThen((linesNewestFirst) => {
       const body = linesNewestFirst.filter((line) => line.offset >= headerEnd);
-      const hasOlder = body.length > limit;
       const pageNewestFirst = body.slice(0, limit);
       const pageOldestFirst = [...pageNewestFirst].reverse();
+      // Older state is a fact about the file, not about why this page ended.
+      // Deriving it from the entry count alone would silently drop history
+      // whenever the byte budget - not `limit` - closed the scan, which is the
+      // normal case for large entries such as durable result chunks.
+      const hasOlder = (pageOldestFirst[0]?.offset ?? headerEnd) > headerEnd;
       const entries = pageOldestFirst.map((line) =>
         parseJsonlBodyLine(line.offset, line.bytes),
       );
@@ -2465,9 +2359,11 @@ export class PiNativeSessionStore {
       const body = linesNewestFirst.filter(
         (line) => line.offset >= headerEnd && line.offset < cursor.offset,
       );
-      const hasOlder = body.length > limit;
       const pageNewestFirst = body.slice(0, limit);
       const pageOldestFirst = [...pageNewestFirst].reverse();
+      // Same rule as `pageNewest`: a budget-closed page still has older
+      // entries, and must say so instead of ending the caller's walk.
+      const hasOlder = (pageOldestFirst[0]?.offset ?? headerEnd) > headerEnd;
       const entries = pageOldestFirst.map((line) =>
         parseJsonlBodyLine(line.offset, line.bytes),
       );
@@ -2477,6 +2373,40 @@ export class PiNativeSessionStore {
         entries,
         hasOlder,
         entries.length > 0,
+      ).asyncAndThen((page) => okAsync(page));
+    });
+  }
+
+  private pageAt(
+    handle: PiNativeSessionFileHandle,
+    ref: string,
+    identity: PiNativeSessionFileStat,
+    state: PageScanState,
+    cursor: PiNativeSessionEntryCursor,
+  ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
+    return readLinesForward(
+      handle,
+      cursor.offset,
+      identity.size,
+      ref,
+      state,
+      identity,
+      1,
+    ).andThen((lines) => {
+      const line = lines[0];
+      if (line === undefined || line.offset !== cursor.offset) {
+        return errAsync<PiNativeSessionEntryPage, PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "stale-cursor",
+        });
+      }
+      return this.buildPageResult(
+        identity,
+        state,
+        [parseJsonlBodyLine(line.offset, line.bytes)],
+        false,
+        false,
       ).asyncAndThen((page) => okAsync(page));
     });
   }
@@ -2686,6 +2616,323 @@ export class PiNativeSessionStore {
   }
 
   /**
+   * Appends complete terminal output to the authoritative native session in
+   * bounded UTF-8 chunks. The opaque session ref remains the retrieval key;
+   * raw output never enters Runtime Store, refs, logs, or telemetry.
+   *
+   * Identity, not just reachability, authorizes the write. The caller passes
+   * the immutable child component, native session id, and origin parent it
+   * provisioned, and every one of them must still hold on the reopened
+   * session. A different child under the same parent is therefore refused
+   * rather than silently given another child's authoritative result.
+   *
+   * Because the host append is path-backed, no check the writer performs can
+   * by itself cover the write. So the writer does not decide acceptance: the
+   * commit entry *carries* the identity it was authorized against, including
+   * the `{dev,ino}` of the exact leaf observed under the held no-follow
+   * directory before the first chunk landed, and every reader recomputes it.
+   * A commit that reached a different leaf therefore names a leaf it is not
+   * in, and no reader will ever accept that group.
+   *
+   * The write itself still fails closed as early as it can: all chunk
+   * entries, then a re-verification of the leaf `{dev,ino}` and the live
+   * session id, then the commit, then one final leaf check.
+   */
+  appendResultOutput(
+    ref: string,
+    output: string,
+    expected: PiNativeResultAppendIdentity,
+  ): ResultAsync<void, PiNativeSessionError> {
+    const plan = planResultGroupWrite(output);
+    if (plan.isErr()) return errAsync(plan.error);
+    const located = this.locate(ref);
+    if (located.isErr()) return errAsync(located.error);
+    const { component, fileName, childDir, path, verified } = located.value;
+    if (component !== expected.childId) {
+      return errAsync({
+        type: "SessionCorrupt",
+        ref: verified,
+        reason: "identity-mismatch",
+      });
+    }
+    return withDirectory(this.fs, childDir, false, verified, (directory) =>
+      this.statContainedLeaf(directory, fileName, verified).andThen(
+        (validated) => {
+          // The commit is bound to this exact leaf, observed under the held
+          // no-follow directory before anything is written.
+          const meta = bindResultGroupWriteMeta(plan.value, expected, {
+            dev: validated.dev,
+            ino: validated.ino,
+          });
+          return this.openHandle(
+            path,
+            childDir,
+            component,
+            verified,
+            expected.parentSession,
+          ).andThen(({ record, handle }) =>
+            appendResultGroup({
+              handle,
+              record,
+              expected,
+              chunks: plan.value.chunks,
+              meta,
+              ref: verified,
+              guards: {
+                beforeChunks: () =>
+                  this.requireUnchangedLeaf(
+                    directory,
+                    fileName,
+                    verified,
+                    validated,
+                  ),
+                // The chunks are on disk but not yet acceptable. Prove the
+                // same leaf before the commit makes them readable.
+                beforeCommit: () =>
+                  this.requireSameLeafIdentity(
+                    directory,
+                    fileName,
+                    verified,
+                    validated,
+                  ),
+                afterCommit: () =>
+                  this.requireSameLeafIdentity(
+                    directory,
+                    fileName,
+                    verified,
+                    validated,
+                  ),
+              },
+            }),
+          );
+        },
+      ),
+    );
+  }
+
+  /**
+   * Reads one durable result group through bounded pages.
+   *
+   * Never allocates the whole result: the group is streamed in ascending
+   * chunk order, hashed incrementally, and only the optionally requested exact
+   * content window is retained. A group is `complete` only after its chunk
+   * count, order, byte total, and digest all match the commit record, so this
+   * path can prove results up to the retained aggregate ceiling without any
+   * whole-session read.
+   *
+   * Identity, not reachability, authorizes the read, and the authorization
+   * covers every byte the read returns. The leaf is resolved by name exactly
+   * once, and the whole read - header validation, the backward anchor pass,
+   * and the forward verification pass - runs on that one open, identity-bound
+   * descriptor. There is no reopen between pages, so a replacement after
+   * authorization cannot redirect a later page: the held descriptor fails
+   * closed instead, typed and without content.
+   *
+   * `expected` is the exact child, native session, and origin parent whose
+   * result the caller asked for. All three are proven against the session's
+   * own header before any scan, and against the commit record itself before
+   * the group is accepted, together with the `{dev,ino}` of the authorized
+   * descriptor. A sibling child of the same parent therefore never yields a
+   * result, and a commit that reached some other leaf is never complete.
+   *
+   * The scan makes exactly {@link PI_NATIVE_RESULT_GROUP_BOUNDS.scanPasses}
+   * passes, each with its own fresh page/byte budget derived from what paging
+   * actually costs, so a group at the retained cap cannot exhaust a later
+   * pass with bytes an earlier pass already spent.
+   */
+  readResultGroup(
+    ref: string,
+    expected: PiNativeResultReadIdentity,
+    options: PiNativeResultGroupReadOptions = {},
+  ): ResultAsync<PiNativeResultGroupRead, PiNativeSessionError> {
+    const verified = verifyNativeSessionRef(ref);
+    if (verified.isErr()) return errAsync(verified.error);
+    const refValue = verified.value;
+    const plan = prepareResultGroupRead(options, expected, refValue);
+    if (plan.isErr()) return errAsync(plan.error);
+    const located = this.locate(refValue);
+    if (located.isErr()) return errAsync(located.error);
+    const { component, fileName, childDir } = located.value;
+    if (component !== expected.childId) {
+      return errAsync({
+        type: "SessionCorrupt",
+        ref: refValue,
+        reason: "identity-mismatch",
+      });
+    }
+    const readPlan = plan.value;
+    // One held no-follow directory, one name resolution, one descriptor. The
+    // authorized leaf is the descriptor itself, so nothing downstream can read
+    // a different file.
+    return withDirectory(this.fs, childDir, false, refValue, (directory) =>
+      directory
+        .openFile(fileName)
+        .mapErr((error) => fromFsError(error, refValue))
+        .andThen((handle) => {
+          if (handle === undefined) {
+            return errAsync<PiNativeResultGroupRead, PiNativeSessionError>({
+              type: "SessionMissing",
+              ref: refValue,
+            });
+          }
+          return this.readResultGroupFromHandle(
+            handle,
+            refValue,
+            expected,
+            readPlan,
+          )
+            .map((read) => {
+              handle.close();
+              return read;
+            })
+            .mapErr((error) => {
+              handle.close();
+              return error;
+            });
+        }),
+    );
+  }
+
+  /**
+   * Runs one whole bounded result read against a single authorized descriptor.
+   *
+   * The descriptor's own `{dev,ino}` *is* the authorization: it was resolved
+   * through the held no-follow directory, and the port re-verifies both the
+   * held descriptor and the directory leaf around every content read. Both
+   * scan passes therefore read the same proven leaf by construction, and the
+   * identity is checked once more after the scan, so a replacement anywhere
+   * in the read window ends the read typed rather than returning content.
+   *
+   * Storage stops here. Once the header proves this descriptor is the exact
+   * child, native session, and origin parent the caller asked for, the group
+   * itself is proven by the result protocol over the narrow line source below.
+   */
+  private readResultGroupFromHandle(
+    handle: PiNativeSessionFileHandle,
+    ref: string,
+    expected: PiNativeResultReadIdentity,
+    plan: PiNativeResultGroupReadPlan,
+  ): ResultAsync<PiNativeResultGroupRead, PiNativeSessionError> {
+    const identity = handle.identity;
+    const headerState: PageScanState = { bytesRead: 0, linesScanned: 0 };
+    return this.validateHeaderFromFile(
+      handle,
+      ref,
+      identity,
+      headerState,
+      expected.parentSession,
+    )
+      .andThen((header) =>
+        header.sessionId === expected.nativeSessionId
+          ? okAsync<PiNativeSessionHeaderPosition, PiNativeSessionError>(header)
+          : errAsync<PiNativeSessionHeaderPosition, PiNativeSessionError>({
+              type: "SessionCorrupt",
+              ref,
+              reason: "identity-mismatch",
+            }),
+      )
+      .andThen((header) =>
+        scanResultGroup(
+          resultScanSource(handle, ref, identity, header.headerEnd),
+          expected,
+          plan,
+        ),
+      )
+      .andThen((read) =>
+        this.requireUnchangedDescriptor(handle, ref, identity).map(() => read),
+      );
+  }
+
+  /**
+   * Proves the descriptor the whole read ran on is still the exact file it was
+   * authorized as. Metadata only; charges no scan budget.
+   */
+  private requireUnchangedDescriptor(
+    handle: PiNativeSessionFileHandle,
+    ref: string,
+    authorized: PiNativeSessionFileStat,
+  ): ResultAsync<void, PiNativeSessionError> {
+    return handle
+      .stat()
+      .mapErr((error) => fromFsError(error, ref))
+      .andThen((current) =>
+        sameFileIdentity(current, authorized)
+          ? okAsync<void, PiNativeSessionError>(undefined)
+          : errAsync<void, PiNativeSessionError>({
+              type: "SessionCorrupt",
+              ref,
+              reason: "identity-mismatch",
+            }),
+      );
+  }
+
+  /**
+   * Re-stats the same contained name and fails closed unless the leaf is
+   * still the same file. Size is allowed to grow, because an append-only
+   * write is exactly what happens between the two observations.
+   */
+  private requireSameLeafIdentity(
+    directory: PiNativeSessionDirectory,
+    fileName: string,
+    ref: string,
+    expected: PiNativeSessionFileStat,
+  ): ResultAsync<void, PiNativeSessionError> {
+    return this.statContainedLeaf(directory, fileName, ref).andThen(
+      (current) =>
+        current.dev === expected.dev &&
+        current.ino === expected.ino &&
+        current.size >= expected.size
+          ? okAsync<void, PiNativeSessionError>(undefined)
+          : errAsync<void, PiNativeSessionError>({
+              type: "SessionCorrupt",
+              ref,
+              reason: "identity-mismatch",
+            }),
+    );
+  }
+
+  /** No-follow leaf stat through the held directory. Missing leaves stay typed. */
+  private statContainedLeaf(
+    directory: PiNativeSessionDirectory,
+    fileName: string,
+    ref: string,
+  ): ResultAsync<PiNativeSessionFileStat, PiNativeSessionError> {
+    return directory
+      .statFile(fileName)
+      .mapErr((error) => fromFsError(error, ref))
+      .andThen((stat) =>
+        stat === undefined
+          ? errAsync<PiNativeSessionFileStat, PiNativeSessionError>({
+              type: "SessionMissing",
+              ref,
+            })
+          : okAsync<PiNativeSessionFileStat, PiNativeSessionError>(stat),
+      );
+  }
+
+  /**
+   * Re-stats the same contained name and fails closed unless `{dev,ino,size}`
+   * still match the identity captured before `host.open(path)`.
+   */
+  private requireUnchangedLeaf(
+    directory: PiNativeSessionDirectory,
+    fileName: string,
+    ref: string,
+    expected: PiNativeSessionFileStat,
+  ): ResultAsync<void, PiNativeSessionError> {
+    return this.statContainedLeaf(directory, fileName, ref).andThen(
+      (current) =>
+        sameValidatedLeafIdentity(current, expected)
+          ? okAsync<void, PiNativeSessionError>(undefined)
+          : errAsync<void, PiNativeSessionError>({
+              type: "SessionCorrupt",
+              ref,
+              reason: "unreadable",
+            }),
+    );
+  }
+
+  /**
    * Reads the thread metadata a session was opened with. This is the
    * authoritative source a later generation reconstructs a thread from when
    * the adapter holds no in-memory state for it. A session without valid
@@ -2695,8 +2942,8 @@ export class PiNativeSessionStore {
     ref: string,
     expectedParentSession?: string,
   ): ResultAsync<PiNativeThreadMetadata, PiNativeSessionError> {
-    return this.readSessionEntries(ref, expectedParentSession).andThen(
-      ({ record, entries }) => {
+    return this.readSessionEntries(ref, expectedParentSession)
+      .andThen(({ record, entries }) => {
         const metadata = readNativeThreadMetadata(entries);
         if (metadata === undefined) {
           return err<PiNativeThreadMetadata, PiNativeSessionError>({
@@ -2706,8 +2953,86 @@ export class PiNativeSessionStore {
           });
         }
         return ok<PiNativeThreadMetadata, PiNativeSessionError>(metadata);
-      },
-    );
+      })
+      .orElse((error) =>
+        // Restart recovery must still work for a session that retained a
+        // large result, so an oversized session is paged instead of read
+        // whole. Thread metadata is written once, near the oldest entries.
+        isFileTooLarge(error)
+          ? this.readThreadMetadataByPage(ref, expectedParentSession)
+          : errAsync(error),
+      );
+  }
+
+  /**
+   * One budgeted page of the generic entry pager. Used by scans that walk a
+   * session by opaque cursor rather than by a held descriptor; every page
+   * charges the caller's pass budget.
+   */
+  private readResultScanPage(
+    ref: string,
+    expectedParentSession: string | undefined,
+    options: PiNativeSessionEntryPageOptions,
+    budget: PiNativeResultScanBudget,
+  ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
+    budget.pages += 1;
+    return this.readSessionEntryPage(ref, expectedParentSession, {
+      ...options,
+      limit: PI_NATIVE_RESULT_GROUP_BOUNDS.scanPageSize,
+    }).map((page) => {
+      budget.bytes += page.bytesRead;
+      return page;
+    });
+  }
+
+  /**
+   * Bounded oldest-first scan for the newest thread metadata entry. Reads at
+   * most {@link PI_NATIVE_RESULT_GROUP_BOUNDS} pages/bytes and never holds
+   * more than one page.
+   */
+  private readThreadMetadataByPage(
+    ref: string,
+    expectedParentSession: string | undefined,
+  ): ResultAsync<PiNativeThreadMetadata, PiNativeSessionError> {
+    const budget: PiNativeResultScanBudget = { pages: 0, bytes: 0 };
+    const step = (
+      cursor: string | undefined,
+      found: PiNativeThreadMetadata | undefined,
+    ): ResultAsync<PiNativeThreadMetadata, PiNativeSessionError> => {
+      if (exceedsResultScanBudget(budget)) {
+        return found === undefined
+          ? errAsync<PiNativeThreadMetadata, PiNativeSessionError>({
+              type: "SessionCorrupt",
+              ref,
+              reason: "unreadable",
+            })
+          : okAsync(found);
+      }
+      return this.readResultScanPage(
+        ref,
+        expectedParentSession,
+        cursor === undefined
+          ? { direction: "newest" }
+          : { direction: "older", cursor },
+        budget,
+      ).andThen((page) => {
+        for (let index = page.entries.length - 1; index >= 0; index -= 1) {
+          const entry = page.entries[index];
+          if (entry === undefined || entry.kind !== "entry") continue;
+          const metadata = readNativeThreadMetadata([entry.value]);
+          if (metadata !== undefined) return okAsync(metadata);
+        }
+        if (page.olderCursor === undefined) {
+          return errAsync<PiNativeThreadMetadata, PiNativeSessionError>({
+            type: "SessionCorrupt",
+            ref,
+            reason: "unreadable",
+          });
+        }
+        return step(page.olderCursor, found);
+      });
+    };
+    return step(undefined, undefined);
   }
 
   /**

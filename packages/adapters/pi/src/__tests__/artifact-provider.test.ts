@@ -136,15 +136,15 @@ describe("PiSanitizedChildIndex", () => {
 
   it("truncates terminal output at a valid UTF-8 boundary", () => {
     const result = createPiSanitizedChildIndex([
-      child({ finalOutput: `${"a".repeat(4_095)}🙂` }),
+      child({ finalOutput: `${"a".repeat(65_535)}🙂` }),
     ]);
     expect(result.isOk()).toBe(true);
     if (result.isErr()) return;
     const output = result.value.children[0].finalOutput;
-    expect(output).toBe("a".repeat(4_095));
+    expect(output).toBe("a".repeat(65_535));
     expect(
       new TextEncoder().encode(output as string).byteLength,
-    ).toBeLessThanOrEqual(4_096);
+    ).toBeLessThanOrEqual(65_536);
     expect(output).not.toContain("�");
   });
 

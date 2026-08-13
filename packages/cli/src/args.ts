@@ -89,6 +89,10 @@ export interface ParsedArgs {
     bootstrapDir?: string;
     /** --diagnostic — include path-bearing diagnostic fields in adapter output */
     diagnostic?: boolean;
+    /** --content — include bounded child entry content in adapter show output */
+    content?: boolean;
+    /** --content-cursor <token> for paging one large child entry */
+    contentCursor?: string;
     /** --cursor <token> for adapter children show pagination */
     cursor?: string;
     /** --parent-session <id> for adapter children show/delete scope */
@@ -183,6 +187,22 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
     }
     if (arg === "--diagnostic") {
       flags.diagnostic = true;
+      continue;
+    }
+    if (arg === "--content") {
+      flags.content = true;
+      continue;
+    }
+    if (arg === "--content-cursor") {
+      const value = args[++i];
+      if (!value || value.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--content-cursor",
+          message: "--content-cursor requires an opaque cursor token",
+        });
+      }
+      flags.contentCursor = value;
       continue;
     }
     if (arg === "--cursor") {

@@ -3,6 +3,9 @@ import { err, ok } from "neverthrow";
 import {
   isDisjointFromDefaultSessionTree,
   nativeSessionDeletionToken,
+  PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+  PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
+  PI_NATIVE_RESULT_SCHEMA_VERSION as RESULT_SCHEMA_VERSION,
   PI_NATIVE_SESSION_LAYOUT,
   type PiNativeSessionFsPort,
   type PiNativeSessionHandle,
@@ -10,6 +13,7 @@ import {
   type PiNativeSessionHostPort,
   type PiNativeSessionRecord,
   PiNativeSessionStore,
+  readNativeResultGroup,
   resolvePiNativeSessionRoot,
   safeNativeSessionComponent,
   verifyNativeSessionRef,
@@ -23,6 +27,26 @@ import {
 const ROOT = "/data/weave/adapters/pi/sessions";
 const PARENT = "parent-session-1";
 const TIMESTAMP = "2026-01-01T00:00:00.000Z";
+
+/** Immutable identity every durable result append must be authorized against. */
+const APPEND_IDENTITY = {
+  childId: "child-1",
+  nativeSessionId: "native-session-1",
+  parentSession: PARENT,
+} as const;
+
+/** Storage identity the whole-array fixtures below claim to be read from. */
+const ACCEPTANCE_LEAF = { dev: 1, ino: 1 } as const;
+/** Identity an in-memory commit fixture is bound to. */
+const COMMIT_IDENTITY = {
+  ...APPEND_IDENTITY,
+  leafDev: ACCEPTANCE_LEAF.dev,
+  leafIno: ACCEPTANCE_LEAF.ino,
+} as const;
+const ACCEPTANCE = {
+  identity: APPEND_IDENTITY,
+  leaf: ACCEPTANCE_LEAF,
+} as const;
 
 const RECORD: PiNativeSessionRecord = {
   childId: "child-1",
@@ -66,6 +90,7 @@ function handleFor(
   persisted: boolean,
   entries: readonly unknown[] = [],
   entriesThrow = false,
+  onAppend?: (customType: string, data: unknown) => void,
 ): PiNativeSessionHandle {
   return {
     getSessionId: () => header?.id ?? "",
@@ -78,7 +103,10 @@ function handleFor(
     },
     isPersisted: () => persisted,
     getLeafId: () => null,
-    appendCustomEntry: () => "leaf-custom-1",
+    appendCustomEntry: (customType, data) => {
+      onAppend?.(customType, data);
+      return "leaf-custom-1";
+    },
   };
 }
 
@@ -87,6 +115,7 @@ function handleFor(
  * The store exclusive-creates the header when the generated path is absent.
  */
 class FakeHost implements PiNativeSessionHostPort {
+  readonly appended: { customType: string; data: unknown }[] = [];
   readonly created: {
     cwd: string;
     dir: string;
@@ -120,6 +149,7 @@ class FakeHost implements PiNativeSessionHostPort {
       persisted,
       this.options.entries ?? [],
       this.options.entriesThrow ?? false,
+      (customType, data) => this.appended.push({ customType, data }),
     );
   }
 
@@ -142,6 +172,7 @@ class FakeHost implements PiNativeSessionHostPort {
       true,
       this.options.entries ?? [],
       this.options.entriesThrow ?? false,
+      (customType, data) => this.appended.push({ customType, data }),
     );
   }
 }
@@ -445,6 +476,457 @@ describe("native session host independence", () => {
     expect(result._unsafeUnwrap().entries).toEqual([]);
     expect(host.createCalls).toBe(0);
     expect(host.openCalls).toBe(0);
+  });
+});
+
+describe("durable result output", () => {
+  test("writes reconstructable UTF-8-safe chunks through the verified session handle", async () => {
+    const { host, fs, create } = harness();
+    const record = (await create())._unsafeUnwrap();
+    host.appended.length = 0;
+    const store = new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host,
+    });
+    const output = `prefix ${"界".repeat(40_000)} suffix`;
+
+    const result = await store.appendResultOutput(record.ref, output, APPEND_IDENTITY);
+
+    expect(result.isOk()).toBe(true);
+    expect(host.appended.length).toBeGreaterThan(1);
+    const commit = host.appended[host.appended.length - 1];
+    expect(commit?.customType).toBe(PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE);
+    expect(
+      host.appended.slice(0, -1).every(
+        (entry) => entry.customType === PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+      ),
+    ).toBe(true);
+    const chunks = host.appended.slice(0, -1).map(
+      (entry) => (entry.data as { content: string }).content,
+    );
+    expect(chunks.join("")).toBe(output);
+    expect(
+      host.appended.slice(0, -1).map(
+        (entry) => (entry.data as { index: number }).index,
+      ),
+    ).toEqual(host.appended.slice(0, -1).map((_, index) => index));
+    const resultId = (commit?.data as { resultId: string }).resultId;
+    expect(resultId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    const digest = new Bun.CryptoHasher("sha256")
+      .update(new TextEncoder().encode(output))
+      .digest("hex");
+    expect(commit?.data).toEqual({
+      schemaVersion: RESULT_SCHEMA_VERSION,
+      resultId,
+      total: chunks.length,
+      byteLength: new TextEncoder().encode(output).byteLength,
+      digest,
+      identity: expect.objectContaining(APPEND_IDENTITY),
+    });
+    expect(
+      host.appended.slice(0, -1).every((entry) => {
+        const data = entry.data as {
+          resultId: string;
+          total: number;
+          byteLength: number;
+          digest: string;
+        };
+        return (
+          data.resultId === resultId &&
+          data.total === chunks.length &&
+          data.byteLength === new TextEncoder().encode(output).byteLength &&
+          data.digest === digest
+        );
+      }),
+    ).toBe(true);
+    // The commit is bound to the exact leaf the writer proved it was
+    // appending into, so any later reader can recompute that binding.
+    const directory = (
+      await fs.openDirectory(`${ROOT}/child-1`, false)
+    )._unsafeUnwrap();
+    const leaf = (await directory.statFile("session.jsonl"))._unsafeUnwrap();
+    directory.close();
+    expect((commit?.data as { identity: unknown }).identity).toEqual({
+      ...APPEND_IDENTITY,
+      leafDev: leaf?.dev,
+      leafIno: leaf?.ino,
+    });
+    expect(
+      readNativeResultGroup(
+        {
+          identity: APPEND_IDENTITY,
+          leaf: { dev: leaf?.dev ?? -1, ino: leaf?.ino ?? -1 },
+        },
+        host.appended.map((entry) => ({
+          type: "custom",
+          customType: entry.customType,
+          data: entry.data,
+        })),
+      ).status,
+    ).toBe("complete");
+  });
+
+  test("fails closed when the leaf identity is swapped before append", async () => {
+    const { host, fs, create } = harness();
+    const record = (await create())._unsafeUnwrap();
+    host.appended.length = 0;
+    const openedAfterCreate = host.opened.length;
+    const originalOpen = host.open.bind(host);
+    host.open = (path: string, sessionDir: string) => {
+      fs.simulateFileReplacement(sessionDir, "session.jsonl");
+      return originalOpen(path, sessionDir);
+    };
+    const store = new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host,
+    });
+
+    const result = await store.appendResultOutput(record.ref, "output", APPEND_IDENTITY);
+
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionCorrupt",
+      ref: record.ref,
+      reason: "unreadable",
+    });
+    expect(host.appended).toEqual([]);
+    expect(host.opened.length).toBeGreaterThan(openedAfterCreate);
+  });
+
+  test("refuses a sibling session under the same parent", async () => {
+    const { host, fs, create } = harness();
+    const record = (await create())._unsafeUnwrap();
+    host.appended.length = 0;
+    const store = new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host,
+    });
+
+    // Same parent, same reachable ref, different child and session identity:
+    // reachability alone must not authorize this write.
+    const wrongChild = await store.appendResultOutput(record.ref, "output", {
+      ...APPEND_IDENTITY,
+      childId: "child-2",
+    });
+    const wrongSession = await store.appendResultOutput(record.ref, "output", {
+      ...APPEND_IDENTITY,
+      nativeSessionId: "native-session-2",
+    });
+
+    expect({
+      wrongChild: wrongChild._unsafeUnwrapErr(),
+      wrongSession: wrongSession._unsafeUnwrapErr(),
+      appended: host.appended,
+    }).toEqual({
+      wrongChild: {
+        type: "SessionCorrupt",
+        ref: record.ref,
+        reason: "identity-mismatch",
+      },
+      wrongSession: {
+        type: "SessionCorrupt",
+        ref: record.ref,
+        reason: "identity-mismatch",
+      },
+      appended: [],
+    });
+  });
+
+  test("never commits a group when the leaf is replaced during the append", async () => {
+    const { host, fs, create } = harness();
+    const record = (await create())._unsafeUnwrap();
+    host.appended.length = 0;
+    const originalOpen = host.open.bind(host);
+    host.open = (path: string, sessionDir: string) => {
+      const handle = originalOpen(path, sessionDir);
+      const append = handle.appendCustomEntry?.bind(handle);
+      return {
+        ...handle,
+        appendCustomEntry: (customType: string, data?: unknown) => {
+          // The leaf is swapped after the append has already begun, which one
+          // pre-write check could never have caught.
+          fs.simulateFileReplacement(sessionDir, "session.jsonl");
+          return append?.(customType, data) ?? "leaf-1";
+        },
+      };
+    };
+    const store = new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host,
+    });
+
+    const result = await store.appendResultOutput(
+      record.ref,
+      "output",
+      APPEND_IDENTITY,
+    );
+
+    expect({
+      error: result._unsafeUnwrapErr(),
+      committed: host.appended.some(
+        (entry) => entry.customType === PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
+      ),
+      accepted: readNativeResultGroup(
+        ACCEPTANCE,
+        host.appended.map((entry) => ({
+          type: "custom",
+          customType: entry.customType,
+          data: entry.data,
+        })),
+      ).status,
+    }).toEqual({
+      // The held directory notices the swapped leaf first and reports it as
+      // an unreadable session; either way the write stops before the commit.
+      error: {
+        type: "SessionCorrupt",
+        ref: record.ref,
+        reason: "unreadable",
+      },
+      committed: false,
+      accepted: "incomplete",
+    });
+  });
+
+  test("never commits a group when the live session id changes during the append", async () => {
+    const { host, fs, create } = harness();
+    const record = (await create())._unsafeUnwrap();
+    host.appended.length = 0;
+    const originalOpen = host.open.bind(host);
+    host.open = (path: string, sessionDir: string) => {
+      const handle = originalOpen(path, sessionDir);
+      const append = handle.appendCustomEntry?.bind(handle);
+      let headerReads = 0;
+      return {
+        ...handle,
+        getHeader: () => {
+          headerReads += 1;
+          // The open-time read authorizes; a later read reports a different
+          // session behind the same path.
+          return headerReads === 1
+            ? defaultHeader("/repo")
+            : { ...defaultHeader("/repo"), id: "native-session-2" };
+        },
+        appendCustomEntry: (customType: string, data?: unknown) => {
+          return append?.(customType, data) ?? "leaf-1";
+        },
+      };
+    };
+    const store = new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host,
+    });
+
+    const result = await store.appendResultOutput(
+      record.ref,
+      "output",
+      APPEND_IDENTITY,
+    );
+
+    expect({
+      error: result._unsafeUnwrapErr(),
+      committed: host.appended.some(
+        (entry) => entry.customType === PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
+      ),
+    }).toEqual({
+      error: {
+        type: "SessionCorrupt",
+        ref: record.ref,
+        reason: "identity-mismatch",
+      },
+      committed: false,
+    });
+  });
+
+  test("does not report an interrupted chunk group as complete", () => {
+    const resultId = "11111111-1111-4111-8111-111111111111";
+    const digest = new Bun.CryptoHasher("sha256")
+      .update(new TextEncoder().encode("ab"))
+      .digest("hex");
+    const group = readNativeResultGroup(ACCEPTANCE, [
+      {
+        type: "custom",
+        customType: PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+        data: {
+          schemaVersion: RESULT_SCHEMA_VERSION,
+          resultId,
+          index: 0,
+          total: 2,
+          byteLength: 2,
+          digest,
+          content: "a",
+        },
+      },
+    ]);
+    expect(group).toEqual({
+      status: "incomplete",
+      reason: "missing-commit",
+    });
+  });
+
+  test("does not report a committed group with a missing chunk as complete", () => {
+    const resultId = "22222222-2222-4222-8222-222222222222";
+    const digest = new Bun.CryptoHasher("sha256")
+      .update(new TextEncoder().encode("ab"))
+      .digest("hex");
+    const group = readNativeResultGroup(ACCEPTANCE, [
+      {
+        type: "custom",
+        customType: PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+        data: {
+          schemaVersion: RESULT_SCHEMA_VERSION,
+          resultId,
+          index: 0,
+          total: 2,
+          byteLength: 2,
+          digest,
+          content: "a",
+        },
+      },
+      {
+        type: "custom",
+        customType: PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
+        data: {
+          schemaVersion: RESULT_SCHEMA_VERSION,
+          resultId,
+          total: 2,
+          byteLength: 2,
+          digest,
+          identity: COMMIT_IDENTITY,
+        },
+      },
+    ]);
+    expect(group).toEqual({
+      status: "incomplete",
+      resultId,
+      reason: "count-mismatch",
+    });
+  });
+
+  test("does not report a committed group with a digest mismatch as complete", () => {
+    const resultId = "33333333-3333-4333-8333-333333333333";
+    const group = readNativeResultGroup(ACCEPTANCE, [
+      {
+        type: "custom",
+        customType: PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+        data: {
+          schemaVersion: RESULT_SCHEMA_VERSION,
+          resultId,
+          index: 0,
+          total: 1,
+          byteLength: 1,
+          digest: "0".repeat(64),
+          content: "a",
+        },
+      },
+      {
+        type: "custom",
+        customType: PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
+        data: {
+          schemaVersion: RESULT_SCHEMA_VERSION,
+          resultId,
+          total: 1,
+          byteLength: 1,
+          digest: "0".repeat(64),
+          identity: COMMIT_IDENTITY,
+        },
+      },
+    ]);
+    expect(group).toEqual({
+      status: "incomplete",
+      resultId,
+      reason: "digest-mismatch",
+    });
+  });
+
+  test("does not report a committed group with a gap or byte mismatch as complete", () => {
+    const resultId = "55555555-5555-4555-8555-555555555555";
+    const digest = new Bun.CryptoHasher("sha256")
+      .update(new TextEncoder().encode("ac"))
+      .digest("hex");
+    const gapped = readNativeResultGroup(ACCEPTANCE, [
+      {
+        type: "custom",
+        customType: PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+        data: {
+          schemaVersion: RESULT_SCHEMA_VERSION,
+          resultId,
+          index: 0,
+          total: 2,
+          byteLength: 2,
+          digest,
+          content: "a",
+        },
+      },
+      {
+        type: "custom",
+        customType: PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+        data: {
+          schemaVersion: RESULT_SCHEMA_VERSION,
+          resultId,
+          index: 2,
+          total: 2,
+          byteLength: 2,
+          digest,
+          content: "c",
+        },
+      },
+      {
+        type: "custom",
+        customType: PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
+        data: {
+          schemaVersion: RESULT_SCHEMA_VERSION,
+          resultId,
+          total: 2,
+          byteLength: 2,
+          digest,
+          identity: COMMIT_IDENTITY,
+        },
+      },
+    ]);
+    expect(gapped).toEqual({
+      status: "incomplete",
+      resultId,
+      reason: "out-of-order",
+    });
+
+    const bytes = readNativeResultGroup(ACCEPTANCE, [
+      {
+        type: "custom",
+        customType: PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+        data: {
+          schemaVersion: RESULT_SCHEMA_VERSION,
+          resultId,
+          index: 0,
+          total: 1,
+          byteLength: 2,
+          digest,
+          content: "a",
+        },
+      },
+      {
+        type: "custom",
+        customType: PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
+        data: {
+          schemaVersion: RESULT_SCHEMA_VERSION,
+          resultId,
+          total: 1,
+          byteLength: 2,
+          digest,
+          identity: COMMIT_IDENTITY,
+        },
+      },
+    ]);
+    expect(bytes).toEqual({
+      status: "incomplete",
+      resultId,
+      reason: "byte-mismatch",
+    });
   });
 });
 

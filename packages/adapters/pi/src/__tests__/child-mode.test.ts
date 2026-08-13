@@ -358,7 +358,14 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       fakeCtx(),
     );
     expect(outcome).toBeUndefined();
-    expect(host.registerToolCalls).toHaveLength(0);
+    expect(
+      host.registerToolCalls.some(
+        (tool) => tool.name === WEAVE_COMPLETE_STEP_TOOL_NAME,
+      ),
+    ).toBe(false);
+    expect(host.registerToolCalls.map((tool) => tool.name)).toEqual([
+      "weave_delegate",
+    ]);
   });
 
   it("reports settlement exactly once via an authenticated envelope on agent_settled", async () => {
@@ -533,7 +540,7 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     ).toBeLessThanOrEqual(PI_TRANSPORT_LIMITS.parentProjectionBytes);
   });
 
-  it("degrades a failed output transfer to bounded inline settlement after one retry", async () => {
+  it("fails settlement when complete output transfer fails after one retry", async () => {
     const { host, output } = await buildChildExtension();
     const fullOutput = "z".repeat(12_000);
     await host.fire(
@@ -559,11 +566,11 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(output.writeAttempts - attemptsBeforeTransfer).toBe(3);
     const settled = output.lines.find((line) => line.kind === "settled");
     const body = settled?.body as Record<string, unknown>;
+    expect(body.outcome).toBe("failed");
+    expect(body.reason).toBe("output-transfer:EnvelopeSignFailed");
     expect(body.outputTransferId).toBeUndefined();
-    expect(body.outputByteLength).toBe(12_000);
-    expect(
-      new TextEncoder().encode(String(body.assistantOutput)).byteLength,
-    ).toBeLessThanOrEqual(PI_TRANSPORT_LIMITS.parentProjectionBytes);
+    expect(body.outputByteLength).toBeUndefined();
+    expect(body.assistantOutput).toBeUndefined();
   });
 
   it("omits assistantOutput when a completed turn has no terminal assistant message", async () => {

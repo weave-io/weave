@@ -5,6 +5,10 @@ import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { WEAVE_CHILD_ID_ENV, WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
+import type {
+  PiNativeSessionError,
+  PiNativeSessionRecord,
+} from "../child-native-sessions.js";
 import type { PiChildRecoveryRecord } from "../child-recovery.js";
 import { SystemTimerPort } from "../child-timer.js";
 import {
@@ -16,6 +20,7 @@ import {
 import {
   PiDelegationController,
   type PiDelegationRequest,
+  type PiThreadSessionPort,
 } from "../delegation-controller.js";
 import {
   FakeChildProcessPort,
@@ -704,6 +709,169 @@ describe("PiDelegationController", () => {
     await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
     const second = await secondPromise;
     expect(second.isOk()).toBe(true);
+  });
+
+  it("reserves all child limits while native provisioning is unresolved", async () => {
+    const port = new FakeChildProcessPort();
+    let provisioningCalls = 0;
+    let resolveProvisioning: (() => void) | undefined;
+    const provisioningGate = new Promise<void>((resolve) => {
+      resolveProvisioning = resolve;
+    });
+    const sessions = recoverySessions()() as PiThreadSessionPort;
+    const controller = makeController(
+      config(
+        limitsSource({
+          maxChildren: 1,
+          maxConcurrency: 1,
+          maxDepth: 3,
+          maxProcesses: 1,
+        }),
+      ),
+      port,
+      {
+        threadSessions: () => ({
+          ...sessions,
+          createChildSession: (input) => {
+            provisioningCalls += 1;
+            const record: PiNativeSessionRecord = {
+              childId: input.childId,
+              sessionId: `native-${input.childId}`,
+              ref: `children/${input.childId}/session.jsonl`,
+              path: `/history/children/${input.childId}/session.jsonl`,
+              parentSession: input.parentSession,
+              cwd: input.cwd,
+            };
+            return new ResultAsync(provisioningGate.then(() => ok(record)));
+          },
+        }),
+        threadRefs: recoveryRefs(),
+      },
+    );
+
+    const firstPromise = controller.delegate(request());
+    await flush();
+    expect(provisioningCalls).toBe(1);
+    expect(port.spawnedProcesses).toHaveLength(0);
+
+    const second = await controller.delegate(request());
+    expect(second.isErr()).toBe(true);
+    expect(second._unsafeUnwrapErr().code).toBe("ChildCapacityExceeded");
+    expect(second._unsafeUnwrapErr().correlation?.reason).toBe("max_children");
+    expect(provisioningCalls).toBe(1);
+    expect(port.spawnedProcesses).toHaveLength(0);
+
+    resolveProvisioning?.();
+    await flush();
+    expect(provisioningCalls).toBe(1);
+    expect(port.spawnedProcesses).toHaveLength(1);
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    expect((await firstPromise).isOk()).toBe(true);
+  });
+
+  it("releases reserved child limits when native provisioning fails", async () => {
+    const port = new FakeChildProcessPort();
+    let provisioningCalls = 0;
+    let rejectFirstProvisioning: (() => void) | undefined;
+    const firstProvisioningGate = new Promise<void>((resolve) => {
+      rejectFirstProvisioning = resolve;
+    });
+    const sessions = recoverySessions()() as PiThreadSessionPort;
+    const controller = makeController(
+      config(
+        limitsSource({
+          maxChildren: 1,
+          maxConcurrency: 1,
+          maxDepth: 3,
+          maxProcesses: 1,
+        }),
+      ),
+      port,
+      {
+        threadSessions: () => ({
+          ...sessions,
+          createChildSession: (input) => {
+            provisioningCalls += 1;
+            if (provisioningCalls === 1) {
+              const failure: PiNativeSessionError = {
+                type: "SessionCorrupt",
+                ref: "first",
+                reason: "unreadable",
+              };
+              return new ResultAsync(
+                firstProvisioningGate.then(() =>
+                  err<PiNativeSessionRecord, PiNativeSessionError>(failure),
+                ),
+              );
+            }
+            const record: PiNativeSessionRecord = {
+              childId: input.childId,
+              sessionId: `native-${input.childId}`,
+              ref: `children/${input.childId}/session.jsonl`,
+              path: `/history/children/${input.childId}/session.jsonl`,
+              parentSession: input.parentSession,
+              cwd: input.cwd,
+            };
+            return okAsync(record);
+          },
+        }),
+        threadRefs: recoveryRefs(),
+      },
+    );
+
+    const firstPromise = controller.delegate(request());
+    await flush();
+    expect(provisioningCalls).toBe(1);
+    expect(port.spawnedProcesses).toHaveLength(0);
+
+    const denied = await controller.delegate(request());
+    expect(denied.isErr()).toBe(true);
+    expect(denied._unsafeUnwrapErr().correlation?.reason).toBe("max_children");
+    expect(provisioningCalls).toBe(1);
+
+    rejectFirstProvisioning?.();
+    const failed = await firstPromise;
+    expect(failed.isErr()).toBe(true);
+    expect(failed._unsafeUnwrapErr().code).toBe("ChildSpawnFailed");
+    expect(port.spawnedProcesses).toHaveLength(0);
+
+    const retryPromise = controller.delegate(request());
+    await flush();
+    expect(provisioningCalls).toBe(2);
+    expect(port.spawnedProcesses).toHaveLength(1);
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    expect((await retryPromise).isOk()).toBe(true);
+  });
+
+  it("fails a saturated queue before spawning or admitting another request", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = makeController(
+      config(
+        limitsSource({
+          maxChildren: 9,
+          maxConcurrency: 9,
+          maxDepth: 3,
+          maxProcesses: 1,
+        }),
+      ),
+      port,
+    );
+    const first = controller.delegate(request());
+    await flush();
+    const second = controller.delegate(request());
+    await flush();
+
+    const third = await controller.delegate(request());
+    expect(third.isErr()).toBe(true);
+    expect(third._unsafeUnwrapErr().code).toBe("ChildCapacityExceeded");
+    expect(third._unsafeUnwrapErr().correlation?.reason).toBe("queue_capacity");
+    expect(port.spawnedProcesses).toHaveLength(1);
+
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    expect((await first).isOk()).toBe(true);
+    await flush();
+    await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
+    expect((await second).isOk()).toBe(true);
   });
 
   it("queues once the global max_processes budget is reached, even for a different parent", async () => {

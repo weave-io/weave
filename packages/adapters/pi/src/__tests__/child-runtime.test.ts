@@ -535,6 +535,21 @@ describe("PiChildRuntime.reportSettled / reportCancelled", () => {
     expect(settled.sequence).toBe(2);
   });
 
+  it("truncates oversized failure diagnostics without failing settlement", async () => {
+    const { runtime, output } = await buildActivatedRuntime();
+    const result = await runtime.reportSettled("failed", {
+      reason: "界".repeat(20_000),
+    });
+    expect(result.isOk()).toBe(true);
+    const settled = output.lines.at(-1) as {
+      body: { reason: string };
+    };
+    expect(new TextEncoder().encode(settled.body.reason).byteLength).toBeLessThanOrEqual(
+      32 * 1_024,
+    );
+    expect(settled.body.reason).toEndWith("… [diagnostic truncated]");
+  });
+
   it("writes a cancelled envelope", async () => {
     const { runtime, output } = await buildActivatedRuntime();
     const result = await runtime.reportCancelled();

@@ -150,6 +150,25 @@ export async function run(
       let resolved = target.value;
       if (
         resolved.action === "children.show" &&
+        (flags.cursor !== undefined ||
+          flags.parentSession !== undefined ||
+          flags.content === true ||
+          flags.contentCursor !== undefined)
+      ) {
+        resolved = {
+          ...resolved,
+          ...(flags.cursor === undefined ? {} : { cursor: flags.cursor }),
+          ...(flags.content === true ? { content: true } : {}),
+          ...(flags.contentCursor === undefined
+            ? {}
+            : { contentCursor: flags.contentCursor }),
+          ...(flags.parentSession === undefined
+            ? {}
+            : { parentSessionId: flags.parentSession }),
+        };
+      }
+      if (
+        resolved.action === "children.result" &&
         (flags.cursor !== undefined || flags.parentSession !== undefined)
       ) {
         resolved = {

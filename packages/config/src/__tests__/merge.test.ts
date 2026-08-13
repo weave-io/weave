@@ -786,10 +786,18 @@ describe("mergeConfigsResult", () => {
   });
 
   it("validates effective delegation limits for a single config", () => {
-    const a = cfg(`
+    const parsed = parseConfig(`
       settings { delegation { max_children 4 } }
       agent loom { delegation { max_children 4 max_concurrency 4 } }
     `);
+    if (parsed.isErr()) throw new Error(JSON.stringify(parsed.error));
+    const a: WeaveConfig = {
+      ...parsed.value,
+      settings: {
+        ...parsed.value.settings,
+        delegation: { max_children: 4, max_concurrency: 2 },
+      },
+    };
     const result = mergeConfigsResult(a);
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr()).toEqual([

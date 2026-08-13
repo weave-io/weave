@@ -44,6 +44,8 @@ See [`packages/config/src/merge.ts`](../../packages/config/src/merge.ts) for the
 
 For the Pi-specific `child_inspection` block, link to the canonical [Spec 33 settings contract](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings) rather than duplicating defaults or bounds. The block is strict: an unknown field is a validation error, not a silently ignored one. It now carries only `recovery_enabled`, `recovery_countdown_seconds`, and the optional `keys` overlay key map. The former history-store fields `persist_history`, `max_bytes_per_child`, `max_bytes_total`, and `orphan_retention_days` were removed with the adapter's JSONL child-history store; a config that still sets them fails validation and must drop them. The Pi adapter applies these settings only in its local native child-session storage; they do not change engine Runtime Store retention or telemetry.
 
+Pi also owns a strict `settings.adapters.pi.child_lifecycle` block. Its positive integer millisecond fields are `handshake_timeout_ms` (default 30,000; maximum 300,000), `reply_timeout_ms` (default 60,000; maximum 900,000), `settlement_inactivity_timeout_ms` (default 3,600,000; maximum 86,400,000), and `absolute_runtime_budget_ms` (default 21,600,000; maximum 604,800,000). The inactivity budget renews only on authenticated control messages or parser-approved session activity. The absolute runtime budget never renews.
+
 ---
 
 ## Workflow Extension

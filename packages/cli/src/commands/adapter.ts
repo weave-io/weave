@@ -32,6 +32,7 @@ const PI_COMMANDS = {
   childrenList: "children.list",
   childrenShow: "children.show",
   childrenResolve: "children.resolve",
+  childrenResult: "children.result",
   childrenDelete: "children.delete",
   doctor: "doctor",
 } as const;
@@ -48,6 +49,15 @@ export type AdapterCliTarget =
   | {
       readonly adapter: "pi";
       readonly action: "children.show";
+      readonly childId: string;
+      readonly cursor?: string;
+      readonly parentSessionId?: string;
+      readonly content?: boolean;
+      readonly contentCursor?: string;
+    }
+  | {
+      readonly adapter: "pi";
+      readonly action: "children.result";
       readonly childId: string;
       readonly cursor?: string;
       readonly parentSessionId?: string;
@@ -99,6 +109,10 @@ interface AdapterChildrenShowResult {
     readonly index: number;
     readonly id: string;
     readonly type: string;
+    readonly content?: string;
+    readonly contentComplete?: boolean;
+    readonly contentByteLength?: number;
+    readonly contentCursor?: string;
   }[];
   readonly nextCursor?: string;
   readonly diagnostics?: {
@@ -107,6 +121,75 @@ interface AdapterChildrenShowResult {
     readonly sessionHeader: string;
     readonly sessionHealth: string;
   };
+  readonly complete?: boolean;
+  readonly contentIncluded?: boolean;
+}
+
+/**
+ * Byte-exact authoritative result page. Unlike `children show --content`,
+ * nothing here is sanitized or rewritten, and `exact` says so on the wire.
+ *
+ * `content` is base64, never the child's raw text. Raw text would be
+ * JSON-escaped into the opaque result envelope, and escaping has no bounded
+ * expansion factor: one page of C0 control bytes costs six characters per
+ * byte and overruns the envelope. Base64 costs a fixed `4 * ceil(n / 3)` for
+ * any bytes at all, and it is byte-preserving, so nothing has to be sanitized
+ * to make it fit.
+ */
+interface AdapterChildrenResultResult {
+  readonly childId: string;
+  readonly exact: true;
+  readonly status: "complete" | "incomplete";
+  readonly reason?: string;
+  readonly total?: number;
+  readonly byteLength?: number;
+  readonly digest?: string;
+  readonly contentEncoding?: "base64";
+  readonly content?: string;
+  readonly contentByteOffset?: number;
+  readonly contentByteLength?: number;
+  readonly contentDigest?: string;
+  readonly nextCursor?: string;
+}
+
+/**
+ * Decodes one base64 result page back to its exact bytes.
+ *
+ * Refuses any page whose encoding it does not recognise rather than guessing:
+ * an unknown encoding is never rendered as if it were the child's own text.
+ */
+export function decodeAdapterResultPage(page: {
+  readonly contentEncoding?: string;
+  readonly content?: string;
+  readonly contentByteLength?: number;
+}): Result<Uint8Array | undefined, string> {
+  if (page.content === undefined) return ok(undefined);
+  if (page.contentEncoding !== "base64") {
+    return err(
+      `unsupported result content encoding: ${page.contentEncoding ?? "(absent)"}`,
+    );
+  }
+  const decoded: Result<Uint8Array, string> = Result.fromThrowable(
+    () => {
+      const binary = atob(page.content as string);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes;
+    },
+    () => "result page content is not valid base64",
+  )();
+  if (decoded.isErr()) return decoded;
+  if (
+    page.contentByteLength !== undefined &&
+    decoded.value.byteLength !== page.contentByteLength
+  ) {
+    return err(
+      `result page byte length mismatch: declared ${page.contentByteLength}, decoded ${decoded.value.byteLength}`,
+    );
+  }
+  return ok(decoded.value);
 }
 
 interface AdapterChildrenDeleteResult {
@@ -133,7 +216,8 @@ export function renderAdapterHelp(theme: ThemeColors): string {
     `${theme.boldYellow("Usage:")} weave adapter <adapter> <command>`,
     "",
     `  ${theme.cyan("weave adapter pi children list")} ${theme.dim("[--json] [--diagnostic]")}`,
-    `  ${theme.cyan("weave adapter pi children show <id>")} ${theme.dim("[--json] [--diagnostic] [--cursor <c>] [--parent-session <id>]")}`,
+    `  ${theme.cyan("weave adapter pi children show <id>")} ${theme.dim("[--json] [--content] [--content-cursor <c>] [--diagnostic] [--cursor <c>] [--parent-session <id>]")}`,
+    `  ${theme.cyan("weave adapter pi children result <id>")} ${theme.dim("[--json] [--cursor <c>] [--parent-session <id>]")}`,
     `  ${theme.cyan("weave adapter pi children delete <id>")} ${theme.dim("[--yes] [--json] [--parent-session <id>]")}`,
     `  ${theme.cyan("weave adapter pi doctor")} ${theme.dim("[--json] [--diagnostic]")}`,
     "",
@@ -142,6 +226,9 @@ export function renderAdapterHelp(theme: ThemeColors): string {
     "  Delete resolves the child's immutable origin parent via children.resolve;",
     "  pass --parent-session when the same child id exists under two parents.",
     "  Delete requires interactive confirmation or --yes and appends a tombstone.",
+    "  Show --content returns a sanitized display projection, never exact bytes.",
+    "  Result returns the byte-exact authoritative child result in bounded pages.",
+    "  Result --json carries each page as base64 under contentEncoding: base64.",
     "  Show --diagnostic adds path-free session identity, lineage, and health.",
   ].join("\n");
 }
@@ -366,7 +453,24 @@ function buildRequest(
             ? {}
             : { parentSessionId: target.parentSessionId }),
           ...(target.cursor === undefined ? {} : { cursor: target.cursor }),
+          ...(target.content === true ? { content: true } : {}),
+          ...(target.contentCursor === undefined
+            ? {}
+            : { contentCursor: target.contentCursor }),
           ...(ctx.diagnostic ? { diagnostic: true } : {}),
+        }),
+      };
+    case "children.result":
+      return {
+        adapter: PI_ADAPTER,
+        command: PI_COMMANDS.childrenResult,
+        payloadJson: JSON.stringify({
+          workspaceKey,
+          childId: target.childId,
+          ...(target.parentSessionId === undefined
+            ? {}
+            : { parentSessionId: target.parentSessionId }),
+          ...(target.cursor === undefined ? {} : { cursor: target.cursor }),
         }),
       };
     case "children.delete":
@@ -404,6 +508,7 @@ function renderHuman(
   const parsed = JSON.parse(resultJson) as
     | AdapterChildrenListResult
     | AdapterChildrenShowResult
+    | AdapterChildrenResultResult
     | AdapterChildrenDeleteResult
     | AdapterDoctorResult;
 
@@ -428,9 +533,12 @@ function renderHuman(
         `${theme.bold(body.child.childId)}  ${body.child.status}`,
         theme.dim(body.child.title),
       ];
-      const entryLines = body.entries.map(
-        (entry) => `  [${entry.index}] ${entry.type} ${theme.dim(entry.id)}`,
-      );
+      const entryLines = body.entries.flatMap((entry) => {
+        const line = `  [${entry.index}] ${entry.type} ${theme.dim(entry.id)}`;
+        if (entry.content === undefined) return [line];
+        const suffix = entry.contentComplete === false ? " [truncated]" : "";
+        return [line, `${entry.content}${suffix}`];
+      });
       if (body.nextCursor !== undefined) {
         entryLines.push(theme.dim(`next cursor: ${body.nextCursor}`));
       }
@@ -453,6 +561,28 @@ function renderHuman(
         }
       }
       return [...header, ...entryLines].join("\n");
+    }
+    case "children.result": {
+      const body = parsed as AdapterChildrenResultResult;
+      if (body.status !== "complete") {
+        return `No verified result for child ${theme.cyan(body.childId)} (${body.reason ?? "unknown"}).`;
+      }
+      const decoded = decodeAdapterResultPage(body);
+      if (decoded.isErr()) {
+        return `Could not read the exact result page for child ${theme.cyan(body.childId)}: ${decoded.error}`;
+      }
+      const lines = [
+        theme.dim(
+          `exact result: ${body.byteLength ?? 0} bytes  sha256 ${body.digest ?? ""}`,
+        ),
+        decoded.value === undefined
+          ? ""
+          : new TextDecoder().decode(decoded.value),
+      ];
+      if (body.nextCursor !== undefined) {
+        lines.push(theme.dim(`next cursor: ${body.nextCursor}`));
+      }
+      return lines.join("\n");
     }
     case "children.delete": {
       const body = parsed as AdapterChildrenDeleteResult;
@@ -526,6 +656,15 @@ export function parseAdapterTarget(
     }
     return ok({ adapter: "pi", action: "children.show", childId: id });
   }
+  if (group === "children" && verb === "result") {
+    if (id === undefined || id.length === 0) {
+      return err({
+        type: "InvalidArgs",
+        message: "children result requires a child id",
+      });
+    }
+    return ok({ adapter: "pi", action: "children.result", childId: id });
+  }
   if (group === "children" && verb === "delete") {
     if (id === undefined || id.length === 0) {
       return err({
@@ -542,6 +681,6 @@ export function parseAdapterTarget(
   return err({
     type: "InvalidArgs",
     message:
-      "Unknown adapter command. Try: weave adapter pi children list|show|delete or weave adapter pi doctor",
+      "Unknown adapter command. Try: weave adapter pi children list|show|result|delete or weave adapter pi doctor",
   });
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { MAX_CONTROL_BODY_BYTES } from "../child-envelope.js";
 import { MAX_NATIVE_RECORD_BYTES } from "../child-framing.js";
-import { MAX_LATEST_OUTPUT_BYTES } from "../child-tree.js";
+import { MAX_FINAL_OUTPUT_BYTES } from "../child-tree.js";
 import {
   makeChildCheckpointInvalidFailure,
   makeChildControlEnvelopeTooLargeFailure,
@@ -69,6 +69,7 @@ const FROZEN_FAILURE_CODES = [
   "ChildReplyLate",
   "ChildExitedUnexpectedly",
   "ChildSettlementMissing",
+  "ChildRuntimeExceeded",
   "ChildResponseMissing",
   "ChildAbortFailed",
   "ChildTransferTimedOut",
@@ -195,7 +196,7 @@ describe("PI_TRANSPORT_LIMITS frozen transport constants (Pi adapter contract)",
       maxConcurrentTransfers: 32,
       transferAckTimeoutMs: 10_000,
       transferMaxRetries: 1,
-      parentProjectionBytes: 4 * 1024,
+      parentProjectionBytes: 64 * 1024,
     });
   });
 
@@ -213,7 +214,7 @@ describe("PI_TRANSPORT_LIMITS frozen transport constants (Pi adapter contract)",
     expect(MAX_CONTROL_BODY_BYTES).toBe(
       PI_TRANSPORT_LIMITS.signedControlBodyBytes,
     );
-    expect(MAX_LATEST_OUTPUT_BYTES).toBe(
+    expect(MAX_FINAL_OUTPUT_BYTES).toBe(
       PI_TRANSPORT_LIMITS.parentProjectionBytes,
     );
   });

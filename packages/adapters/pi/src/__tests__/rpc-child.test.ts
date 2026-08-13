@@ -3042,8 +3042,8 @@ describe("PiRpcChild", () => {
       if (result.value.outcome === "completed") {
         expect(
           new TextEncoder().encode(result.value.assistantOutput).byteLength,
-        ).toBe(4096);
-        expect(result.value.assistantOutput).toBe("a".repeat(4096));
+        ).toBe(65_536);
+        expect(result.value.assistantOutput).toBe("a".repeat(65_536));
         expect(JSON.stringify(result.value)).not.toContain(payload);
       }
     }
@@ -3295,7 +3295,11 @@ describe("PiRpcChild", () => {
     ];
     const terminalSentinel = "OBSERVED_TERMINAL_SENTINEL";
     const fullOutput = `${"x".repeat(1_100_000)}${privateMarkers.join("|")}`;
-    const captures: Array<{ output: string; byteLength: number }> = [];
+    const captures: Array<{
+      output: string;
+      byteLength: number;
+      source: string;
+    }> = [];
     const running = await startRunningChild({
       onPrivateOutput: (capture) => {
         captures.push(capture);
@@ -3343,6 +3347,7 @@ describe("PiRpcChild", () => {
       {
         output: fullOutput,
         byteLength: new TextEncoder().encode(fullOutput).byteLength,
+        source: "transferred-output",
       },
     ]);
     if (result.value.outcome !== "completed") return;
@@ -3360,7 +3365,11 @@ describe("PiRpcChild", () => {
   });
 
   it("degrades a missing output transfer to bounded inline settlement", async () => {
-    const captures: Array<{ output: string; byteLength: number }> = [];
+    const captures: Array<{
+      output: string;
+      byteLength: number;
+      source: string;
+    }> = [];
     const running = await startRunningChild({
       onPrivateOutput: (capture) => {
         captures.push(capture);
@@ -3389,7 +3398,9 @@ describe("PiRpcChild", () => {
         interventionCount: 0,
       }),
     );
-    expect(captures).toEqual([{ output: "final answer", byteLength: 12 }]);
+    expect(captures).toEqual([
+      { output: "final answer", byteLength: 12, source: "observed-terminal" },
+    ]);
     expect(running.spawned.forceKilled).toBe(true);
   });
 

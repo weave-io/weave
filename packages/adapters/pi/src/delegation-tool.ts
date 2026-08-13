@@ -22,13 +22,15 @@ import {
 } from "./child-native-components.js";
 import type { PiChildRuntime, PiChildRuntimeError } from "./child-runtime.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
-import { truncateLatestOutput } from "./child-tree.js";
+import {
+  MAX_FINAL_OUTPUT_BYTES,
+  truncateFinalOutput,
+} from "./child-tree.js";
 import type {
   PiDelegationController,
   PiDelegationRequest,
   PiThreadRunOutcome,
 } from "./delegation-controller.js";
-import { PI_THREAD_LIMITS } from "./delegation-controller.js";
 import {
   makeChildAbortFailedFailure,
   type PiAdapterFailure,
@@ -65,21 +67,29 @@ export const WEAVE_DELEGATION_TOOL_NAME = "weave_delegate";
  * validates tool arguments against, using `@earendil-works/pi-ai`'s
  * `StringEnum` helper so the `agent` enum stays compatible with providers
  * (e.g. Google) that reject `anyOf`/`const`-shaped unions. `task` is a
- * bounded (never unlimited) string, never a bare unconstrained JSON-schema
- * object literal.
+ * non-empty string, never a bare unconstrained JSON-schema object literal.
  */
-function buildDelegationParameters(allowedNames: ReadonlySet<string>) {
+function buildDelegationParameters(
+  allowedNames: ReadonlySet<string>,
+  acceptParentAuthorizedName = false,
+) {
   return Type.Object({
     agent: Type.Optional(
-      StringEnum(Array.from(allowedNames), {
-        description:
-          "Exact normalized subagent name from this agent's eligible delegation targets. Required to start a new thread; omitted when retrying or continuing one.",
-      }),
+      acceptParentAuthorizedName
+        ? Type.String({
+            minLength: 1,
+            maxLength: 256,
+            description:
+              "Normalized subagent name. The authenticated parent validates eligibility.",
+          })
+        : StringEnum(Array.from(allowedNames), {
+            description:
+              "Exact normalized subagent name from this agent's eligible delegation targets. Required to start a new thread; omitted when retrying or continuing one.",
+          }),
     ),
     task: Type.Optional(
       Type.String({
         minLength: 1,
-        maxLength: PI_THREAD_LIMITS.maxInstructionLength,
         description:
           "The task description. Required to start a new thread and to continue a completed one.",
       }),
@@ -101,7 +111,6 @@ function buildDelegationParameters(allowedNames: ReadonlySet<string>) {
     instruction: Type.Optional(
       Type.String({
         minLength: 1,
-        maxLength: PI_THREAD_LIMITS.maxInstructionLength,
         description:
           "Optional extra guidance for a `retry`. Never used by `start` or `continue`.",
       }),
@@ -281,17 +290,39 @@ function normalizePublicInterventionCount(value: unknown): number {
     : 0;
 }
 
+function outputProjection(value: string): {
+  readonly text: string;
+  readonly complete: boolean;
+  readonly byteLength: number;
+} {
+  const byteLength = new TextEncoder().encode(value).byteLength;
+  return {
+    text: truncateFinalOutput(value),
+    complete: byteLength <= MAX_FINAL_OUTPUT_BYTES,
+    byteLength,
+  };
+}
+
 function parentVisibleSettlement(
   settlement: PiChildSettlement,
 ): Record<string, unknown> {
   if (settlement.outcome === "completed") {
-    const output =
+    const output = outputProjection(
       typeof settlement.assistantOutput === "string"
-        ? truncateLatestOutput(settlement.assistantOutput)
-        : "";
+        ? settlement.assistantOutput
+        : "",
+    );
     return {
       outcome: "completed",
-      ...(output.length > 0 ? { finalOutput: output } : {}),
+      ...(output.text.length > 0 ? { finalOutput: output.text } : {}),
+      ...(!output.complete
+        ? {
+            output: {
+              complete: false,
+              byteLength: output.byteLength,
+            },
+          }
+        : {}),
       interventionCount: normalizePublicInterventionCount(
         settlement.interventionCount,
       ),
@@ -313,11 +344,19 @@ function parentVisibleSettlement(
 function successResult(
   settlement: PiChildSettlement,
   compact?: PiDelegationCompactDetails,
+  threadId?: string,
 ): PiToolResult {
   return toolResult(
     JSON.stringify({
       ok: true,
       settlement: parentVisibleSettlement(settlement),
+      ...(threadId !== undefined &&
+      settlement.outcome === "completed" &&
+      typeof settlement.assistantOutput === "string" &&
+      new TextEncoder().encode(settlement.assistantOutput).byteLength >
+        MAX_FINAL_OUTPUT_BYTES
+        ? { thread: threadId }
+        : {}),
     }),
     compact,
   );
@@ -335,10 +374,11 @@ function threadResult(
 ): PiToolResult {
   const settlement = outcome.settlement;
   const status = settlement.outcome;
-  const response =
+  const output = outputProjection(
     status === "completed" && typeof settlement.assistantOutput === "string"
-      ? truncateLatestOutput(settlement.assistantOutput)
-      : "";
+      ? settlement.assistantOutput
+      : "",
+  );
   return toolResult(
     JSON.stringify({
       ok: true,
@@ -348,7 +388,15 @@ function threadResult(
       // A completed run is finished work, not something to repeat; only a
       // failed or cancelled one invites another run.
       retryable: status !== "completed",
-      ...(response.length > 0 ? { response } : {}),
+      ...(output.text.length > 0 ? { response: output.text } : {}),
+      ...(!output.complete
+        ? {
+            output: {
+              complete: false,
+              byteLength: output.byteLength,
+            },
+          }
+        : {}),
     }),
     compact,
   );
@@ -719,7 +767,6 @@ type PiDelegationCall =
 function boundedText(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   if (value.trim().length === 0) return undefined;
-  if (value.length > PI_THREAD_LIMITS.maxInstructionLength) return undefined;
   return value;
 }
 
@@ -957,7 +1004,7 @@ export function buildDelegationToolRegistration(
             1,
             "start",
           );
-          return successResult(value, compact);
+          return successResult(value, compact, childId);
         },
         (failure) => startFailureResult(controller, childId, failure),
       );
@@ -1022,9 +1069,11 @@ export function buildRelayedDelegationToolRegistration(
     label: "Delegate to a Weave agent",
     description:
       "Delegates one task to a single eligible Weave agent, run as a private ephemeral child of this session, and returns its structured result. Never advances or creates workflow state.",
-    parameters: buildDelegationParameters(allowedNames),
+    parameters: buildDelegationParameters(allowedNames, deps.targets.length === 0),
     promptGuidelines: [
-      "Use only an `agent` name listed as an eligible delegation target for this session.",
+      deps.targets.length === 0
+        ? "Pass a normalized agent name; the authenticated parent validates eligibility."
+        : "Use only an `agent` name listed as an eligible delegation target for this session.",
     ],
     renderResult: (result, options, theme, context) =>
       renderDelegationCompactResult(
@@ -1042,7 +1091,7 @@ export function buildRelayedDelegationToolRegistration(
       if (
         parsed === undefined ||
         parsed.kind !== "start" ||
-        !allowedNames.has(parsed.agent)
+        (allowedNames.size > 0 && !allowedNames.has(parsed.agent))
       ) {
         return {
           content: [

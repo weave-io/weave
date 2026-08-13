@@ -13,6 +13,10 @@ import {
   type PiChildInspectionSettingsResolution,
 } from "./child-inspection-settings.js";
 import {
+  resolvePiChildLifecycleSettings,
+  type PiChildLifecycleSettings,
+} from "./child-lifecycle-settings.js";
+import {
   makeActivationFailedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
@@ -123,6 +127,7 @@ export interface PiConfigActivationResult {
   readonly trust: PiTrustState;
   /** Pi validates this local block without rejecting unrelated adapter blocks. */
   readonly childInspectionSettings: PiChildInspectionSettingsResolution;
+  readonly childLifecycleSettings: PiChildLifecycleSettings;
 }
 
 /**
@@ -231,16 +236,30 @@ export class PiConfigActivator {
           () => materializer.materialize(config),
           (): PiAdapterFailure =>
             makeActivationFailedFailure("materialize-threw"),
-        ).map((plan) => ({
-          config,
-          plan,
-          descriptors: buildDescriptorCatalog(plan),
-          trust: input.trust,
-          childInspectionSettings: resolvePiChildInspectionSettings(config).match(
-            (resolution) => resolution,
-            (issues) => ({ status: "invalid" as const, issues }),
-          ),
-        })),
+        ).andThen((plan) => {
+          const childLifecycle = resolvePiChildLifecycleSettings(config);
+          if (childLifecycle.isErr()) {
+            return errAsync(
+              makeActivationFailedFailure(
+                `child-lifecycle-settings-invalid:${childLifecycle.error.length}`,
+              ),
+            );
+          }
+          return ResultAsync.fromSafePromise(
+            Promise.resolve({
+              config,
+              plan,
+              descriptors: buildDescriptorCatalog(plan),
+              trust: input.trust,
+              childInspectionSettings:
+                resolvePiChildInspectionSettings(config).match(
+                  (resolution) => resolution,
+                  (issues) => ({ status: "invalid" as const, issues }),
+                ),
+              childLifecycleSettings: childLifecycle.value,
+            }),
+          );
+        }),
       );
   }
 }

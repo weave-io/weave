@@ -5,12 +5,15 @@ import type {
   PiNativeSessionRecord,
   PiNativeSessionTombstone,
 } from "../child-native-sessions.js";
+import { CHILD_OVERLAY_BOUNDS } from "../child-overlay-types.js";
 import {
   type AppendNewChildRefInput,
+  childRefTotalRuns,
   createNativeChildRefSourceAuthority,
   hasNoTranscriptFields,
   PI_CHILD_REF_BOUNDS,
   PI_CHILD_REF_ENTRY_TYPE,
+  PI_CHILD_REF_ORDER,
   PI_CHILD_REF_SCHEMA_VERSION,
   type PiChildRefAppendPort,
   type PiChildRefEntryReadPort,
@@ -27,6 +30,13 @@ import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 const PARENT = "parent-session-1";
 const OTHER_PARENT = "parent-session-2";
 const SESSION_REF = "child-1/session.jsonl";
+
+/**
+ * The pre-remediation ceiling that the run ordinal and the envelope ordering
+ * clock used to share. Kept only as a test landmark: crossing it must now be
+ * unremarkable.
+ */
+const OLD_RUN_CEILING = 1_000_000;
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -200,7 +210,7 @@ describe("child ref schema", () => {
     }
   });
 
-  test("rejects an unbounded run list", () => {
+  test("rejects an unbounded run window", () => {
     const runs = Array.from(
       { length: PI_CHILD_REF_BOUNDS.maxRuns + 1 },
       () => ({
@@ -293,11 +303,15 @@ describe("append APIs", () => {
       expect(parsed.value.record.originParentSessionId).toBe(PARENT);
       expect(parsed.value.record.originEntryId).toBe("entry-1");
     }
+    // Sequences are an ordering clock, not the run count, so only the order
+    // is contractual.
     const sequences = session.appended.flatMap((entry) => {
       const parsed = parseChildRefEnvelope(entry.data);
       return parsed.isOk() ? [parsed.value.sequence] : [];
     });
-    expect(sequences).toEqual([1, 2, 3]);
+    expect(sequences).toHaveLength(3);
+    expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
+    expect(new Set(sequences).size).toBe(3);
   });
 
   test("repeated lifecycle updates keep strictly increasing sequences", async () => {
@@ -314,7 +328,13 @@ describe("append APIs", () => {
       const parsed = parseChildRefEnvelope(entry.data);
       return parsed.isOk() ? [parsed.value.sequence] : [];
     });
-    expect(sequences).toEqual([1, 2, 3, 4]);
+    expect(sequences).toHaveLength(4);
+    expect(
+      sequences.every(
+        (value, index) => index === 0 || value > (sequences[index - 1] ?? 0),
+      ),
+    ).toBe(true);
+    expect(new Set(sequences).size).toBe(4);
   });
 
   test("never appends for a child whose recorded origin differs", async () => {
@@ -460,6 +480,430 @@ describe("append APIs", () => {
     }
     expect(sourceChecks).toBe(0);
     expect(session.appended).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cumulative runs beyond the retained window
+// ---------------------------------------------------------------------------
+
+describe("cumulative run history", () => {
+  async function runTimes(
+    store: PiChildSessionRefStore,
+    seed: PiChildRefRecord,
+    times: number,
+  ): Promise<PiChildRefRecord> {
+    let current = seed;
+    for (let index = 0; index < times; index += 1) {
+      const next = await store.appendRunDivider(current, { action: "retry" });
+      if (!next.isOk()) {
+        throw new Error(
+          `run ${index + 1} rejected: ${JSON.stringify(next.error)}`,
+        );
+      }
+      current = next.value;
+    }
+    return current;
+  }
+
+  test("appends run 65, past the retained window, without failing", async () => {
+    const { store } = harness();
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+
+    const atWindow = await runTimes(
+      store,
+      created.value,
+      PI_CHILD_REF_BOUNDS.maxRuns,
+    );
+    expect(atWindow.runs).toHaveLength(PI_CHILD_REF_BOUNDS.maxRuns);
+    expect(childRefTotalRuns(atWindow)).toBe(PI_CHILD_REF_BOUNDS.maxRuns);
+
+    const past = await store.appendRunDivider(atWindow, { action: "retry" });
+    expect(past.isOk()).toBe(true);
+    if (!past.isOk()) return;
+    expect(past.value.runs.at(-1)?.run).toBe(65);
+    expect(childRefTotalRuns(past.value)).toBe(65);
+    // The window stays bounded; the oldest entry is the one that left.
+    expect(past.value.runs).toHaveLength(PI_CHILD_REF_BOUNDS.maxRuns);
+    expect(past.value.runs[0]?.run).toBe(2);
+  });
+
+  test("appends past run 1,000 and keeps the record bounded", async () => {
+    const { session, store } = harness();
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+
+    const late = await runTimes(store, created.value, 1_001);
+    expect(childRefTotalRuns(late)).toBe(1_001);
+    expect(late.runs.at(-1)?.run).toBe(1_001);
+    expect(late.runs).toHaveLength(PI_CHILD_REF_BOUNDS.maxRuns);
+
+    // Every appended envelope stayed valid, so nothing was written that a
+    // restart could not decode.
+    const newest = session.appended.at(-1);
+    const parsed = parseChildRefEnvelope(newest?.data);
+    expect(parsed.isOk()).toBe(true);
+    if (!parsed.isOk()) return;
+    expect(childRefTotalRuns(parsed.value.record)).toBe(1_001);
+    expect(parsed.value.record.runs.length).toBeLessThanOrEqual(
+      PI_CHILD_REF_BOUNDS.maxRuns,
+    );
+  });
+
+  test("a restarted store reads back the run-1,001 ref and continues its ordinals", async () => {
+    const { session, store } = harness();
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+    await runTimes(store, created.value, 1_001);
+
+    // Fresh store over the same parent entries: nothing in memory carries over.
+    const restarted = new PiChildSessionRefStore({
+      parentSessionId: PARENT,
+      append: session,
+      read: session,
+      authority: fixedAuthority("available"),
+    });
+    const scan = await restarted.readRefs();
+    expect(scan.isOk()).toBe(true);
+    if (!scan.isOk()) return;
+    const [ref] = scan.value.refs;
+    expect(ref).toBeDefined();
+    if (ref === undefined) return;
+    expect(childRefTotalRuns(ref)).toBe(1_001);
+
+    const resumed = await restarted.appendRunDivider(ref, { action: "retry" });
+    expect(resumed.isOk()).toBe(true);
+    if (!resumed.isOk()) return;
+    expect(resumed.value.runs.at(-1)?.run).toBe(1_002);
+    expect(childRefTotalRuns(resumed.value)).toBe(1_002);
+  });
+
+  test("a legacy ref without totalRuns counts its window as the history", () => {
+    const legacy = parseChildRefRecord(
+      validRecord({
+        runs: [
+          { run: 1, action: "start", startedAt: 1_000 },
+          { run: 2, action: "retry", startedAt: 1_010 },
+        ],
+      }),
+    );
+    expect(legacy.isOk()).toBe(true);
+    if (!legacy.isOk()) return;
+    expect(legacy.value.totalRuns).toBeUndefined();
+    expect(childRefTotalRuns(legacy.value)).toBe(2);
+  });
+
+  test("keeps the record bounds strict: ordinal ceiling and window size", () => {
+    expect(
+      parseChildRefRecord(
+        validRecord({
+          runs: [
+            {
+              run: PI_CHILD_REF_BOUNDS.maxRunOrdinal + 1,
+              action: "start",
+              startedAt: 1_000,
+            },
+          ],
+        }),
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      parseChildRefRecord(
+        validRecord({
+          runs: [{ run: 5, action: "start", startedAt: 1_000 }],
+          totalRuns: 4,
+        }),
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      parseChildRefRecord(
+        validRecord({
+          totalRuns: PI_CHILD_REF_BOUNDS.maxRunOrdinal + 1,
+        }),
+      ).isErr(),
+    ).toBe(true);
+  });
+
+  test("appends run 1,000,001, past the old cumulative ceiling", async () => {
+    const { session, store } = harness();
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+
+    // A thread that has already run a million times, with only the bounded
+    // newest-last window retained. This was the exact point where the old
+    // shared run/sequence ceiling refused a healthy append.
+    const atOldCeiling: PiChildRefRecord = {
+      ...created.value,
+      runs: [{ run: OLD_RUN_CEILING, action: "retry", startedAt: 1_000 }],
+      totalRuns: OLD_RUN_CEILING,
+    };
+    expect(parseChildRefRecord(atOldCeiling).isOk()).toBe(true);
+
+    const past = await store.appendRunDivider(atOldCeiling, {
+      action: "retry",
+    });
+    expect(past.isOk()).toBe(true);
+    if (!past.isOk()) return;
+    expect(past.value.runs.at(-1)?.run).toBe(OLD_RUN_CEILING + 1);
+    expect(childRefTotalRuns(past.value)).toBe(OLD_RUN_CEILING + 1);
+    expect(past.value.runs.length).toBeLessThanOrEqual(
+      PI_CHILD_REF_BOUNDS.maxRuns,
+    );
+
+    // What was written is decodable, so a restart sees the same run 1,000,001.
+    const parsed = parseChildRefEnvelope(session.appended.at(-1)?.data);
+    expect(parsed.isOk()).toBe(true);
+    if (!parsed.isOk()) return;
+    expect(childRefTotalRuns(parsed.value.record)).toBe(OLD_RUN_CEILING + 1);
+  });
+
+  test("keeps appending run dividers well past the old cumulative ceiling", async () => {
+    const { store } = harness();
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+    let current: PiChildRefRecord = {
+      ...created.value,
+      runs: [{ run: OLD_RUN_CEILING, action: "retry", startedAt: 1_000 }],
+      totalRuns: OLD_RUN_CEILING,
+    };
+    for (let index = 1; index <= 8; index += 1) {
+      const next = await store.appendRunDivider(current, { action: "retry" });
+      expect(next.isOk()).toBe(true);
+      if (!next.isOk()) return;
+      expect(childRefTotalRuns(next.value)).toBe(OLD_RUN_CEILING + index);
+      current = next.value;
+    }
+  });
+
+  test("refuses one append past the finite ordinal ceiling", async () => {
+    const { store } = harness();
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+    const atCeiling: PiChildRefRecord = {
+      ...created.value,
+      totalRuns: PI_CHILD_REF_BOUNDS.maxRunOrdinal,
+    };
+    const result = await store.appendRunDivider(atCeiling, {
+      action: "retry",
+    });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error).toEqual({
+      type: "ChildRefInvalid",
+      issues: ["totalRuns"],
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ordering identity, separate from the run ordinal
+// ---------------------------------------------------------------------------
+
+/** Sequences of every envelope appended, in write order. */
+function writtenSequences(session: FakeParentSession): readonly number[] {
+  return session.appended.map((entry) => {
+    const parsed = parseChildRefEnvelope(entry.data);
+    if (!parsed.isOk()) throw new Error("an invalid envelope was appended");
+    return parsed.value.sequence;
+  });
+}
+
+function strictlyIncreasing(values: readonly number[]): boolean {
+  return values.every(
+    (value, index) => index === 0 || value > (values[index - 1] ?? 0),
+  );
+}
+
+describe("envelope ordering identity", () => {
+  test("the ordinal ceiling is the ordering-clock ceiling, not a second limit", () => {
+    expect(PI_CHILD_REF_BOUNDS.maxRunOrdinal).toBe(
+      PI_CHILD_REF_ORDER.maxSequence,
+    );
+    // The overlay restates the ordinal ceiling to stay acyclic; drift there
+    // would reject exactly the long-lived threads this remediation unblocked.
+    expect(CHILD_OVERLAY_BOUNDS.maxRunOrdinal).toBe(
+      PI_CHILD_REF_BOUNDS.maxRunOrdinal,
+    );
+    // Both sit far above the old shared ceiling.
+    expect(PI_CHILD_REF_ORDER.maxSequence).toBeGreaterThan(OLD_RUN_CEILING);
+  });
+
+  test("mixed run and lifecycle appends never reuse a sequence", async () => {
+    const { session, store } = harness();
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+    let current = created.value;
+    for (let index = 0; index < 12; index += 1) {
+      const run = await store.appendRunDivider(current, { action: "retry" });
+      if (!run.isOk()) throw new Error("run divider rejected");
+      const settled = await store.appendLifecycle(run.value, {
+        status: "completed",
+      });
+      if (!settled.isOk()) throw new Error("lifecycle rejected");
+      current = settled.value;
+    }
+
+    const sequences = writtenSequences(session);
+    expect(sequences).toHaveLength(25);
+    expect(strictlyIncreasing(sequences)).toBe(true);
+    expect(new Set(sequences).size).toBe(sequences.length);
+    // Ordering is independent of the run count: there are more envelopes than
+    // runs, and the newest sequence is not the run ordinal.
+    expect(sequences.length).toBeGreaterThan(childRefTotalRuns(current));
+  });
+
+  test("repeated lifecycle appends at the old ceiling stay ordered and newest wins", async () => {
+    const { session, store } = harness();
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+    let current: PiChildRefRecord = {
+      ...created.value,
+      runs: [{ run: OLD_RUN_CEILING, action: "retry", startedAt: 1_000 }],
+      totalRuns: OLD_RUN_CEILING,
+    };
+
+    const statuses = [
+      "running",
+      "queued",
+      "running",
+      "failed",
+      "running",
+      "completed",
+    ] as const;
+    for (const status of statuses) {
+      const next = await store.appendLifecycle(current, { status });
+      expect(next.isOk()).toBe(true);
+      if (!next.isOk()) return;
+      current = next.value;
+    }
+
+    const sequences = writtenSequences(session);
+    expect(strictlyIncreasing(sequences)).toBe(true);
+    expect(new Set(sequences).size).toBe(sequences.length);
+
+    const scan = await store.readRefs();
+    expect(scan.isOk()).toBe(true);
+    if (!scan.isOk()) return;
+    // No duplicate sequence was emitted, so nothing was reported as a
+    // duplicate entry and the last write is the one that wins.
+    expect(scan.value.counts.duplicateEntries).toBe(0);
+    expect(scan.value.refs[0]?.status).toBe("completed");
+    expect(childRefTotalRuns(scan.value.refs[0] as PiChildRefRecord)).toBe(
+      OLD_RUN_CEILING,
+    );
+  });
+
+  test("the clock does not saturate at the wall-clock ceiling", async () => {
+    // A store pinned to the last schema-valid instant: the clock can only
+    // advance by its own counter from here, which is exactly the case where a
+    // clamped sequence would start repeating.
+    const { session, store } = harness({
+      now: () => PI_CHILD_REF_ORDER.maxTimestamp,
+    });
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+    let current = created.value;
+    for (let index = 0; index < 40; index += 1) {
+      const next = await store.appendLifecycle(current, { status: "running" });
+      expect(next.isOk()).toBe(true);
+      if (!next.isOk()) return;
+      current = next.value;
+    }
+
+    const sequences = writtenSequences(session);
+    expect(sequences).toHaveLength(41);
+    expect(strictlyIncreasing(sequences)).toBe(true);
+    expect(sequences[0]).toBe(PI_CHILD_REF_ORDER.maxTimestamp);
+    expect(sequences.at(-1)).toBe(PI_CHILD_REF_ORDER.maxTimestamp + 40);
+    for (const sequence of sequences) {
+      expect(sequence).toBeLessThanOrEqual(PI_CHILD_REF_ORDER.maxSequence);
+    }
+  });
+
+  test("a restarted store resumes the order past the old ceiling", async () => {
+    const { session, store } = harness();
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+    const seeded: PiChildRefRecord = {
+      ...created.value,
+      runs: [{ run: OLD_RUN_CEILING, action: "retry", startedAt: 1_000 }],
+      totalRuns: OLD_RUN_CEILING,
+    };
+    const before = await store.appendRunDivider(seeded, { action: "retry" });
+    if (!before.isOk()) throw new Error("setup failed");
+    const beforeRestart = writtenSequences(session).at(-1) ?? 0;
+
+    // Fresh store over the same parent entries: nothing in memory carries over.
+    const restarted = new PiChildSessionRefStore({
+      parentSessionId: PARENT,
+      append: session,
+      read: session,
+      authority: fixedAuthority("available"),
+    });
+    const scan = await restarted.readRefs();
+    expect(scan.isOk()).toBe(true);
+    if (!scan.isOk()) return;
+    const ref = scan.value.refs[0];
+    expect(ref).toBeDefined();
+    if (ref === undefined) return;
+    expect(childRefTotalRuns(ref)).toBe(OLD_RUN_CEILING + 1);
+
+    const resumedRun = await restarted.appendRunDivider(ref, {
+      action: "retry",
+    });
+    expect(resumedRun.isOk()).toBe(true);
+    if (!resumedRun.isOk()) return;
+    expect(childRefTotalRuns(resumedRun.value)).toBe(OLD_RUN_CEILING + 2);
+    const resumedLifecycle = await restarted.appendLifecycle(resumedRun.value, {
+      status: "completed",
+    });
+    expect(resumedLifecycle.isOk()).toBe(true);
+
+    const sequences = writtenSequences(session);
+    expect(strictlyIncreasing(sequences)).toBe(true);
+    expect(new Set(sequences).size).toBe(sequences.length);
+    expect(sequences.at(-1)).toBeGreaterThan(beforeRestart);
+
+    const after = await restarted.readRefs();
+    expect(after.isOk()).toBe(true);
+    if (!after.isOk()) return;
+    expect(after.value.counts.duplicateEntries).toBe(0);
+    expect(after.value.refs[0]?.status).toBe("completed");
+  });
+
+  test("a legacy small sequence is outranked by every new append", async () => {
+    const { session, store } = harness();
+    const created = await store.appendNewChild(NEW_CHILD);
+    if (!created.isOk()) throw new Error("setup failed");
+
+    // A ref written before the ordering clock existed: its sequence came from
+    // the run counter and is therefore small.
+    const legacy = {
+      ...envelopeOf({ ...created.value, status: "queued" as const }, 3),
+      kind: "lifecycle" as const,
+    };
+    session.seedRaw(customEntry(legacy));
+
+    const live = new PiChildSessionRefStore({
+      parentSessionId: PARENT,
+      append: session,
+      read: session,
+      authority: fixedAuthority("available"),
+    });
+    const settled = await live.appendLifecycle(created.value, {
+      status: "completed",
+    });
+    expect(settled.isOk()).toBe(true);
+
+    const sequences = writtenSequences(session);
+    expect(sequences.at(-1)).toBeGreaterThan(3);
+
+    const scan = await live.readRefs();
+    expect(scan.isOk()).toBe(true);
+    if (!scan.isOk()) return;
+    expect(scan.value.counts.duplicateEntries).toBe(0);
+    expect(scan.value.refs[0]?.status).toBe("completed");
   });
 });
 
@@ -914,6 +1358,7 @@ describe("serialization carries metadata only", () => {
       "threadId",
       "title",
       "titleProvenance",
+      "totalRuns",
       "updatedAt",
     ]);
     expect(serializeChildRefEnvelope(parsed.value)).toBe(

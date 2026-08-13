@@ -27,6 +27,7 @@ import {
   setPiNativeSessionMaxRangeLengthForTests,
 } from "../child-native-sessions.js";
 import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
+import { seedResultGroupSession } from "./fakes/result-group-fixture.js";
 
 const ROOT = "/data/weave/adapters/pi/sessions";
 const PARENT = "parent-session-1";
@@ -152,6 +153,123 @@ function storeFor(fs: PiNativeSessionFsPort): PiNativeSessionStore {
 
 afterEach(() => {
   setPiNativeSessionMaxRangeLengthForTests(undefined);
+});
+
+/**
+ * A retained result may legitimately be larger than one whole-session read is
+ * ever allowed to allocate. Recovery must therefore reconstruct identity,
+ * thread metadata, and the result itself through bounded pages, without ever
+ * claiming a healthy large session is corrupt and without allocating it.
+ */
+describe("recovery past the whole-session read ceiling", () => {
+  const RESULT_ID = "66666666-6666-4666-8666-666666666666";
+  const IDENTITY = {
+    childId: "child-1",
+    nativeSessionId: "native-session-1",
+    parentSession: PARENT,
+  } as const;
+
+  function threadEntryLine(): string {
+    return JSON.stringify({
+      type: "custom",
+      customType: "weave.child.thread",
+      data: {
+        schemaVersion: 1,
+        threadId: "thread-1",
+        agentName: "shuttle",
+        parentId: "parent-1",
+        parentAgentName: "loom",
+        parentDepth: 0,
+        ownerParentSessionId: PARENT,
+        cwd: "/repo",
+        createdAt: 1_000,
+      },
+    });
+  }
+
+  /** Seeds a session whose retained result alone exceeds the read ceiling. */
+  async function seedOversizedResultSession(
+    memory: MemoryPiNativeSessionFs,
+    output: string,
+  ): Promise<void> {
+    await seedResultGroupSession({
+      fs: memory,
+      directory: DIR,
+      fileName: FILE,
+      headerLine: headerLine(),
+      identity: IDENTITY,
+      output,
+      leadingLines: [threadEntryLine()],
+      options: { resultId: RESULT_ID },
+    });
+  }
+
+  test("validates identity, metadata, and a result larger than the whole-session ceiling", async () => {
+    const output = "R".repeat(PI_NATIVE_SESSION_MAX_FILE_BYTES + 512 * 1_024);
+    const memory = new MemoryPiNativeSessionFs();
+    await seedOversizedResultSession(memory, output);
+    const store = storeFor(memory);
+
+    // The whole-session read still refuses to allocate this file.
+    const whole = await store.readSessionEntries(REF, PARENT);
+    // Identity and thread metadata still recover through bounded pages.
+    const record = await store.openSession(REF, PARENT);
+    const metadata = await store.readThreadMetadata(REF, PARENT);
+    const group = (await store.readResultGroup(REF, IDENTITY))._unsafeUnwrap();
+
+    expect({
+      wholeSession: whole._unsafeUnwrapErr(),
+      sessionId: record._unsafeUnwrap().sessionId,
+      threadId: metadata._unsafeUnwrap().threadId,
+      status: group.status,
+      byteLength: group.status === "complete" ? group.summary.byteLength : 0,
+    }).toEqual({
+      wholeSession: {
+        type: "SessionCorrupt",
+        ref: REF,
+        reason: "file-too-large",
+      },
+      sessionId: "native-session-1",
+      threadId: "thread-1",
+      status: "complete",
+      byteLength: textEncoder.encode(output).byteLength,
+    });
+  });
+
+  test("returns exact bytes for an oversized result in bounded windows", async () => {
+    const output = `HEAD${"R".repeat(PI_NATIVE_SESSION_MAX_FILE_BYTES)}TAIL`;
+    const memory = new MemoryPiNativeSessionFs();
+    await seedOversizedResultSession(memory, output);
+    const recording = new RecordingFs(memory);
+    const store = storeFor(recording);
+
+    let cursor: string | undefined;
+    let reconstructed = "";
+    let pages = 0;
+    for (;;) {
+      const page = (
+        await store.readResultGroup(REF, IDENTITY, {
+          content: true,
+          maxContentBytes: 256 * 1_024,
+          ...(cursor === undefined ? {} : { cursor }),
+        })
+      )._unsafeUnwrap();
+      if (page.status !== "complete") throw new Error(page.reason);
+      reconstructed += page.content ?? "";
+      pages += 1;
+      cursor = page.nextCursor;
+      if (cursor === undefined) break;
+      if (pages > 200) throw new Error("unbounded paging");
+    }
+
+    expect({
+      exact: reconstructed === output,
+      pages: pages > 1,
+      boundedReads: recording.requestedLengths.every(
+        (length) => length <= PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+      ),
+    }).toEqual({ exact: true, pages: true, boundedReads: true });
+  });
 });
 
 describe("descriptor-native bounded whole-session reads", () => {

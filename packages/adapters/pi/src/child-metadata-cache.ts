@@ -46,10 +46,12 @@ import { isAbsolute, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import { verifyNativeSessionRef } from "./child-native-sessions.js";
-import type {
-  PiChildRefRecord,
-  PiChildRefSourceAuthority,
-  PiChildRefSourceState,
+import {
+  childRefTotalRuns,
+  PI_CHILD_REF_BOUNDS,
+  type PiChildRefRecord,
+  type PiChildRefSourceAuthority,
+  type PiChildRefSourceState,
 } from "./child-session-refs.js";
 import {
   enforceDurableChildTitle,
@@ -104,8 +106,15 @@ export const PI_CHILD_METADATA_CACHE_BOUNDS = Object.freeze({
   maxTitleLength: 200,
   /** Ceiling on stored run labels. */
   maxLabelLength: 128,
-  /** Ceiling on the stored run count. */
-  maxRuns: 64,
+  /**
+   * Ceiling on the *cumulative* stored run count.
+   *
+   * Bound directly to the ref store's clock-derived ordinal ceiling rather
+   * than restated: the cache is a projection of a ref, so any run count a ref
+   * can hold must round-trip here. A separate, lower literal would reintroduce
+   * a cumulative failure point the ref store no longer has.
+   */
+  maxRuns: PI_CHILD_REF_BOUNDS.maxRunOrdinal,
   /** Ceiling on an opaque cursor, in characters. */
   maxCursorLength: 512,
 });
@@ -411,7 +420,7 @@ export function childMetadataRecordFromRef(input: {
     createdAt: ref.createdAt,
     updatedAt: ref.updatedAt,
     ...(ref.settledAt === undefined ? {} : { settledAt: ref.settledAt }),
-    runCount: ref.runs.length,
+    runCount: childRefTotalRuns(ref),
     ...(latest === undefined
       ? {}
       : {

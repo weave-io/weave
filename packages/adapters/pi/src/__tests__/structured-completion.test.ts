@@ -36,6 +36,23 @@ describe("parseStructuredCompletionCandidate", () => {
     if (result.isOk()) expect(result.value.artifacts).toHaveLength(1);
   });
 
+  it("preserves artifact catalogs larger than the former 32-entry cap", () => {
+    const artifacts = Array.from({ length: 128 }, (_, index) => ({
+      name: `artifact-${index}`,
+      path: `artifacts/${index}.json`,
+    }));
+    const result = parseStructuredCompletionCandidate(
+      { outcome: "success", artifacts },
+      "implement",
+    );
+    expect(result.isOk()).toBe(true);
+    const candidate = result._unsafeUnwrap();
+    expect(candidate.artifacts).toEqual(artifacts);
+    expect(
+      tryParseCompletionCandidateJson(serializeCompletionCandidate(candidate)),
+    ).toEqual(candidate);
+  });
+
   it("rejects an unclosed outcome value as malformed", () => {
     const result = parseStructuredCompletionCandidate(
       { outcome: "yolo" },
@@ -125,12 +142,17 @@ describe("parseStructuredCompletionCandidate", () => {
     expect(serialized).not.toContain("PRIVATE-CANARY");
   });
 
-  it("rejects an oversized message", () => {
+  it("safely projects an oversized completion diagnostic", () => {
     const result = parseStructuredCompletionCandidate(
-      { outcome: "success", message: "x".repeat(5000) },
+      { outcome: "success", message: "界".repeat(20_000) },
       "implement",
     );
-    expect(result.isErr()).toBe(true);
+    expect(result.isOk()).toBe(true);
+    const message = result._unsafeUnwrap().message ?? "";
+    expect(new TextEncoder().encode(message).byteLength).toBeLessThanOrEqual(
+      32 * 1_024,
+    );
+    expect(message).toEndWith("… [completion diagnostic truncated]");
   });
 });
 

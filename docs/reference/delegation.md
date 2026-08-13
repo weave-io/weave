@@ -9,7 +9,7 @@ Portable delegation limits bound fan-out, concurrency, depth, and live work acro
 ```weave
 settings {
   delegation {
-    max_children 9
+    max_children 32
     max_concurrency 3
     max_depth 3
     max_processes 9
@@ -24,9 +24,9 @@ agent tapestry {
 }
 ```
 
-Project fields are optional. Omitted fields inherit lower config layers; after merge, unresolved fields use defaults `9`, `3`, `3`, and `9` respectively. Agent blocks may set only `max_children` and `max_concurrency`, and only to values at or below the merged project caps.
+Project fields are optional. Omitted fields inherit lower config layers; after merge, unresolved fields use defaults `32`, `8`, `8`, and `32` respectively. Agent blocks may set only `max_children` and `max_concurrency`, and only to values at or below the merged project caps.
 
-All values are positive safe integers. `max_children` is limited to `1..9` and is a hard cap on active direct children running in parallel; settled or disposed children release that capacity. Effective concurrency must not exceed the child cap. When an agent narrows `max_children` without setting concurrency, effective concurrency is clamped to the narrower child cap.
+All values are positive safe integers. `max_children` is limited to `1..256`, `max_concurrency` to `1..64`, `max_depth` to `1..32`, and `max_processes` to `1..128`. `max_children` and is a hard cap on active direct children running in parallel; settled or disposed children release that capacity. Effective concurrency must not exceed the child cap. When an agent narrows `max_children` without setting concurrency, effective concurrency is clamped to the narrower child cap.
 
 ## Merge behavior
 

@@ -1,9 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import {
+  makeCancelBody,
+  makeErrorBody,
   MAX_SETTLEMENT_OUTPUT_BYTES,
   parseControlBody,
   toModelIdentityBody,
 } from "../child-control-bodies.js";
+import {
+  DIAGNOSTIC_TRUNCATION_MARKER,
+  fitsDiagnosticBudget,
+  MAX_DIAGNOSTIC_REASON_BYTES,
+  projectDiagnosticText,
+} from "../child-diagnostic-projection.js";
 import { MAX_CONTROL_BODY_BYTES } from "../child-envelope.js";
 
 // Half of the envelope's own 64KiB control-body byte cap - see the
@@ -308,5 +316,77 @@ describe("toModelIdentityBody", () => {
       resolvedModel: hostModel,
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("shared diagnostic projection policy", () => {
+  const OVERSIZED = MAX_DIAGNOSTIC_REASON_BYTES + 4_096;
+
+  it("accepts ordinary 2,001-character cancel and error reasons", () => {
+    // The old cap was 2,000 UTF-16 characters, so this exact input was
+    // rejected before any projection could shorten it.
+    const reason = "x".repeat(2_001);
+    expect(parseControlBody("cancel", { reason }).ok).toBe(true);
+    expect(parseControlBody("error", { reason }).ok).toBe(true);
+  });
+
+  it("accepts cancel and error reasons at the exact byte boundary and refuses one byte past it", () => {
+    const exact = "a".repeat(MAX_DIAGNOSTIC_REASON_BYTES);
+    for (const kind of ["cancel", "error"] as const) {
+      expect(parseControlBody(kind, { reason: exact }).ok).toBe(true);
+      expect(parseControlBody(kind, { reason: `${exact}a` }).ok).toBe(false);
+    }
+  });
+
+  it("measures multibyte reasons in UTF-8 bytes, not UTF-16 units", () => {
+    // 8,192 code points, 32,768 UTF-8 bytes: exactly the budget.
+    const exact = "🙂".repeat(MAX_DIAGNOSTIC_REASON_BYTES / 4);
+    expect(exact.length).toBeLessThan(MAX_DIAGNOSTIC_REASON_BYTES);
+    expect(parseControlBody("cancel", { reason: exact }).ok).toBe(true);
+    expect(parseControlBody("error", { reason: `${exact}🙂` }).ok).toBe(false);
+  });
+
+  it("projects oversized cancel and error reasons into a body the schema accepts", () => {
+    const body = makeCancelBody("é".repeat(OVERSIZED));
+    expect(parseControlBody("cancel", body).ok).toBe(true);
+    expect(body.reason).toEndWith(DIAGNOSTIC_TRUNCATION_MARKER);
+    const errorBody = makeErrorBody("é".repeat(OVERSIZED));
+    expect(parseControlBody("error", errorBody).ok).toBe(true);
+    expect(errorBody.reason).toEndWith(DIAGNOSTIC_TRUNCATION_MARKER);
+  });
+
+  it("never splits a multibyte code point and never overflows the budget", () => {
+    // 3-byte and 4-byte code points, so a naive byte cut lands mid-character
+    // at nearly every offset.
+    for (const glyph of ["🙂", "→", "é"]) {
+      const projected = projectDiagnosticText(glyph.repeat(OVERSIZED));
+      const bytes = new TextEncoder().encode(projected);
+      expect(bytes.byteLength).toBeLessThanOrEqual(
+        MAX_DIAGNOSTIC_REASON_BYTES,
+      );
+      expect(projected).not.toInclude("\uFFFD");
+      expect(projected).toEndWith(DIAGNOSTIC_TRUNCATION_MARKER);
+      // The kept prefix is a whole number of the original code points.
+      const kept = projected.slice(0, -DIAGNOSTIC_TRUNCATION_MARKER.length);
+      expect(kept).toBe(glyph.repeat([...kept].length));
+    }
+  });
+
+  it("returns input unchanged when it already fits, at the exact boundary", () => {
+    const exact = "🙂".repeat(MAX_DIAGNOSTIC_REASON_BYTES / 4);
+    expect(projectDiagnosticText(exact)).toBe(exact);
+    expect(fitsDiagnosticBudget(exact)).toBe(true);
+    expect(fitsDiagnosticBudget(`${exact}🙂`)).toBe(false);
+    expect(projectDiagnosticText(`${exact}🙂`)).not.toBe(`${exact}🙂`);
+  });
+
+  it("preserves the typed failure code when settlement prose is oversized", () => {
+    const parsed = parseControlBody("settled", {
+      outcome: "failed",
+      reason: projectDiagnosticText("🙂".repeat(OVERSIZED)),
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.outcome).toBe("failed");
   });
 });

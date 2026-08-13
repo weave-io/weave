@@ -20,10 +20,10 @@ import type { JsonValue } from "./strict-json.js";
 export const ROOT_NODE_ID = "root";
 
 /**
- * Byte bound on any child final output that crosses back into the parent.
- * Owned here because both the artifact provider and recovery clamp to it.
+ * Byte bound on the inline child result projected into the parent model.
+ * Complete output remains authoritative in the Pi-native child session.
  */
-export const MAX_FINAL_OUTPUT_BYTES = 4_096;
+export const MAX_FINAL_OUTPUT_BYTES = 64 * 1_024;
 
 /**
  * Shared per-generation child registry. Execution owners keep their own
@@ -415,16 +415,23 @@ export interface PiChildTreeNode {
 
 export const MAX_LATEST_OUTPUT_BYTES = 4 * 1024;
 
-/** Truncates `text` to at most 4 KiB of UTF-8 bytes, never splitting a multi-byte code point. */
-export function truncateLatestOutput(text: string): string {
+/** Truncates UTF-8 at a code-point boundary. */
+export function truncateUtf8(text: string, maxBytes: number): string {
   const bytes = new TextEncoder().encode(text);
-  if (bytes.byteLength <= MAX_LATEST_OUTPUT_BYTES) return text;
-  let end = MAX_LATEST_OUTPUT_BYTES;
-  // Back off while the cut point lands on a UTF-8 continuation byte (10xxxxxx).
-  // `end` is always a valid index here (0 <= end < bytes.length), so `?? 0`
-  // only satisfies the type checker and never changes the comparison.
+  if (bytes.byteLength <= maxBytes) return text;
+  let end = maxBytes;
   while (end > 0 && ((bytes[end] ?? 0) & 0b1100_0000) === 0b1000_0000) end -= 1;
   return new TextDecoder("utf-8", { fatal: false }).decode(bytes.slice(0, end));
+}
+
+/** Truncates `text` to the parent-result projection budget. */
+export function truncateFinalOutput(text: string): string {
+  return truncateUtf8(text, MAX_FINAL_OUTPUT_BYTES);
+}
+
+/** Truncates `text` to the 4 KiB transient UI preview budget. */
+export function truncateLatestOutput(text: string): string {
+  return truncateUtf8(text, MAX_LATEST_OUTPUT_BYTES);
 }
 
 /**

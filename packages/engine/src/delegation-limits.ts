@@ -1,5 +1,6 @@
 import {
   DEFAULT_DELEGATION_LIMITS,
+  MAX_DELEGATION_LIMITS,
   type WeaveConfig,
 } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
@@ -45,6 +46,16 @@ export type DelegationAuthorizationError = {
   reason: string;
 };
 
+const MAX_EFFECTIVE_DELEGATION_LIMITS: Record<
+  keyof EffectiveDelegationLimits,
+  number
+> = {
+  maxChildren: MAX_DELEGATION_LIMITS.max_children,
+  maxConcurrency: MAX_DELEGATION_LIMITS.max_concurrency,
+  maxDepth: MAX_DELEGATION_LIMITS.max_depth,
+  maxProcesses: MAX_DELEGATION_LIMITS.max_processes,
+};
+
 function validateLimit(
   field: keyof EffectiveDelegationLimits,
   value: number,
@@ -57,12 +68,13 @@ function validateLimit(
       reason: "delegation limits must be positive safe integers",
     });
   }
-  if (field === "maxChildren" && value > 9) {
+  const maximum = MAX_EFFECTIVE_DELEGATION_LIMITS[field];
+  if (value > maximum) {
     return err({
       type: "InvalidDelegationLimits",
       field,
       value,
-      reason: "maxChildren must be between 1 and 9",
+      reason: `${field} must not exceed ${maximum}`,
     });
   }
   return ok(value);

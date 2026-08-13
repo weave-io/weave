@@ -211,6 +211,11 @@ function unavailableChildrenPort(message: string): PiAdapterChildrenPort {
         type: "Unavailable" as const,
         message,
       }),
+    result: () =>
+      errAsync({
+        type: "Unavailable" as const,
+        message,
+      }),
     resolve: () =>
       errAsync({
         type: "Unavailable" as const,

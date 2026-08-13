@@ -17,6 +17,8 @@ import type { PiChildMetadataRecord } from "../child-metadata-cache.js";
 import {
   decodePiNativeSessionEntryCursor,
   nativeSessionDeletionToken,
+  PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+  PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
   PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
   type PiNativeSessionFsPort,
   type PiNativeSessionHandle,
@@ -25,6 +27,10 @@ import {
 } from "../child-native-sessions.js";
 import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 import { createOpenSessionMutationGate } from "../required-capability-gate.js";
+import {
+  type ResultGroupFixtureOptions,
+  seedResultGroupSession,
+} from "./fakes/result-group-fixture.js";
 
 const child = (
   overrides: Partial<PiAdapterChildListItem> = {},
@@ -90,6 +96,12 @@ function fakeChildren(options: {
               },
             }
           : {}),
+      });
+    },
+    result() {
+      return errAsync({
+        type: "Unavailable" as const,
+        message: "result retrieval unavailable",
       });
     },
     resolve(input) {
@@ -302,8 +314,6 @@ describe("Pi adapter-cli-commands", () => {
     const port = fakeChildren({});
     const handlers = createPiAdapterCommandHandlers({
       children: port,
-      // Model a descriptor-safe host so the confirmation contract below is
-      // still exercised; the fail-closed path has its own test.
       sessionMutationGate: createOpenSessionMutationGate(),
     });
     const refused = await handlers[PI_ADAPTER_COMMAND_NAMES.childrenDelete]!(
@@ -393,22 +403,53 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     });
   }
 
-  function entryLine(index: number): string {
+  function entryLine(index: number, content = `n=${index}`): string {
     return JSON.stringify({
       type: "message",
       id: `entry-${index}`,
       parentId: index === 0 ? null : `entry-${index - 1}`,
       timestamp: "2026-01-01T00:00:00.000Z",
-      message: { role: "assistant", content: `n=${index}` },
+      message: { role: "assistant", content },
     });
   }
 
-  async function seed(entryCount: number): Promise<PiNativeSessionStore> {
-    const fs = new MemoryPiNativeSessionFs();
+  async function seed(
+    entryCount: number,
+    content?: (index: number) => string,
+    fs = new MemoryPiNativeSessionFs(),
+  ): Promise<PiNativeSessionStore> {
     const lines = [headerLine()];
     for (let index = 0; index < entryCount; index += 1) {
-      lines.push(entryLine(index));
+      lines.push(entryLine(index, content?.(index)));
     }
+    const directory = (await fs.openDirectory(DIR, true))._unsafeUnwrap();
+    (
+      await directory.appendFile(
+        FILE,
+        textEncoder.encode(`${lines.join("\n")}\n`),
+        0o600,
+      )
+    )._unsafeUnwrap();
+    directory.close();
+    return new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host: {
+        create(): PiNativeSessionHandle {
+          throw new Error("host.create unused");
+        },
+        open(): PiNativeSessionHandle {
+          throw new Error("host.open unused by paged show");
+        },
+      } satisfies PiNativeSessionHostPort,
+    });
+  }
+
+  async function seedCustom(
+    entries: readonly unknown[],
+    fs = new MemoryPiNativeSessionFs(),
+  ): Promise<PiNativeSessionStore> {
+    const lines = [headerLine(), ...entries.map((entry) => JSON.stringify(entry))];
     const directory = (await fs.openDirectory(DIR, true))._unsafeUnwrap();
     (
       await directory.appendFile(
@@ -461,6 +502,131 @@ describe("createPiChildrenCommandPort children.show paging", () => {
         err({ type: "CacheUnavailable" as const, reason: "io" as const }),
     };
   }
+
+  function contentCursor(entry: string, offset = 0): string {
+    return btoa(JSON.stringify({ v: 1, entry, offset }))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/u, "");
+  }
+
+  it("rejects malformed and stale native cursors inside valid content cursors without restarting paging", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const store = await seed(5, undefined, fs);
+    const newest = (
+      await store.readSessionEntryPage(REF, PARENT, {
+        direction: "newest",
+        limit: 1,
+      })
+    )._unsafeUnwrap();
+    const staleNativeCursor = newest.olderCursor ?? "";
+    expect(staleNativeCursor).not.toBe("");
+    fs.simulateFileTruncate(DIR, FILE, headerLine().length + 1);
+
+    const readOptions: Array<
+      Parameters<PiNativeSessionStore["readSessionEntryPage"]>[2]
+    > = [];
+    let newestReads = 0;
+    const sessions = {
+      openSession: () => {
+        throw new Error("show must not open or restart the session");
+      },
+      readSessionEntryPage: (
+        ref: string,
+        parent: string | undefined,
+        options: Parameters<PiNativeSessionStore["readSessionEntryPage"]>[2],
+      ) => {
+        readOptions.push(options);
+        if (options.direction === "newest") newestReads += 1;
+        return store.readSessionEntryPage(ref, parent, options);
+      },
+      deleteSession: () =>
+        errAsync({ type: "SessionConfirmationRequired" as const, ref: REF }),
+    };
+    const port = createPiChildrenCommandPort({
+      cache: fakeCache(metadataRecord()),
+      sessions,
+    });
+
+    const malformedNativeCursor = "syntactically-valid-outer-payload";
+    const malformed = await port.show({
+      workspaceKey: "ws",
+      childId: "child-1",
+      parentSessionId: PARENT,
+      content: true,
+      contentCursor: contentCursor(malformedNativeCursor),
+    });
+    expect(malformed._unsafeUnwrapErr()).toEqual({
+      type: "InvalidPayload",
+      message: "invalid content cursor",
+    });
+
+    const stale = await port.show({
+      workspaceKey: "ws",
+      childId: "child-1",
+      parentSessionId: PARENT,
+      content: true,
+      contentCursor: contentCursor(staleNativeCursor),
+    });
+    expect(stale._unsafeUnwrapErr()).toEqual({
+      type: "Conflict",
+      message: "stale content cursor",
+    });
+    expect(readOptions).toEqual([
+      { direction: "at", cursor: malformedNativeCursor, limit: 3 },
+      { direction: "at", cursor: staleNativeCursor, limit: 3 },
+    ]);
+    expect(newestReads).toBe(0);
+  });
+
+  it("pages one large entry without losing content and redacts embedded paths", async () => {
+    const source = `path=/home/user/secret ${"界".repeat(30_000)}`;
+    const store = await seed(1, () => source);
+    const sessions = {
+      openSession: (ref: string, parent?: string) =>
+        store.openSession(ref, parent),
+      readSessionEntryPage: (
+        ref: string,
+        parent: string | undefined,
+        options: Parameters<PiNativeSessionStore["readSessionEntryPage"]>[2],
+      ) => store.readSessionEntryPage(ref, parent, options),
+      deleteSession: () =>
+        errAsync({ type: "SessionConfirmationRequired" as const, ref: REF }),
+    };
+    const port = createPiChildrenCommandPort({
+      cache: fakeCache(metadataRecord()),
+      sessions,
+    });
+
+    const first = (
+      await port.show({
+        workspaceKey: "ws",
+        childId: "child-1",
+        parentSessionId: PARENT,
+        content: true,
+      })
+    )._unsafeUnwrap();
+    expect(first.entries).toHaveLength(1);
+    expect(first.entries[0]?.content).not.toContain("/home/user/secret");
+    expect(first.entries[0]?.contentComplete).toBe(false);
+    expect(first.entries[0]?.contentByteLength).toBeGreaterThan(65_536);
+    expect(first.entries[0]?.contentCursor).toBeDefined();
+
+    const second = (
+      await port.show({
+        workspaceKey: "ws",
+        childId: "child-1",
+        parentSessionId: PARENT,
+        content: true,
+        contentCursor: first.entries[0]?.contentCursor,
+      })
+    )._unsafeUnwrap();
+    expect(second.entries[0]?.contentComplete).toBe(true);
+    expect(second.entries[0]?.contentCursor).toBeUndefined();
+    expect(
+      `${first.entries[0]?.content ?? ""}${second.entries[0]?.content ?? ""}`,
+    ).toBe(source.replace("/home/user/secret", "[path]"));
+  });
 
   it("pages >10k entries through readSessionEntryPage only with opaque cursors", async () => {
     const entryCount = 10_500;
@@ -624,6 +790,316 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     });
     expect(JSON.stringify(diagnostic)).not.toContain(ROOT);
     expect(JSON.stringify(diagnostic)).not.toContain(REF);
+  });
+
+  /** The exact identity every seeded result group in this suite is bound to. */
+  const RESULT_IDENTITY = {
+    childId: "child-1",
+    nativeSessionId: "native-session-1",
+    parentSession: PARENT,
+  } as const;
+
+  /**
+   * Seeds one durable result group exactly as `appendResultOutput` writes it:
+   * 48 KiB UTF-8-safe chunks, then a commit bound to the child identity and
+   * to the storage leaf the chunks actually landed in.
+   */
+  async function seedResultStore(
+    output: string,
+    options: ResultGroupFixtureOptions = {},
+  ): Promise<PiNativeSessionStore> {
+    const fs = new MemoryPiNativeSessionFs();
+    await seedResultGroupSession({
+      fs,
+      directory: DIR,
+      fileName: "session.jsonl",
+      headerLine: headerLine(),
+      identity: RESULT_IDENTITY,
+      output,
+      options,
+    });
+    return new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host: {
+        create(): PiNativeSessionHandle {
+          throw new Error("host.create unused");
+        },
+        open(): PiNativeSessionHandle {
+          throw new Error("host.open unused by paged reads");
+        },
+      } satisfies PiNativeSessionHostPort,
+    });
+  }
+
+  function resultPort(
+    store: PiNativeSessionStore,
+    record: PiChildMetadataRecord = metadataRecord(),
+  ) {
+    return createPiChildrenCommandPort({
+      cache: fakeCache(record),
+      sessions: {
+        openSession: (ref: string, parent?: string) =>
+          store.openSession(ref, parent),
+        readSessionEntryPage: (
+          ref: string,
+          parent: string | undefined,
+          options: Parameters<PiNativeSessionStore["readSessionEntryPage"]>[2],
+        ) => store.readSessionEntryPage(ref, parent, options),
+        readResultGroup: (
+          ref: string,
+          expected: Parameters<PiNativeSessionStore["readResultGroup"]>[1],
+          options?: Parameters<PiNativeSessionStore["readResultGroup"]>[2],
+        ) => store.readResultGroup(ref, expected, options),
+        deleteSession: () =>
+          errAsync({ type: "SessionConfirmationRequired" as const, ref: REF }),
+      },
+    });
+  }
+
+  it("reconstructs a result larger than two chunks exactly across bounded pages", async () => {
+    // Five 48 KiB chunks: far more than any single history page can hold, and
+    // more than the two chunks a page-local group check could ever prove.
+    const output = `HEAD ${"界".repeat(80_000)} TAIL`;
+    const store = await seedResultStore(output);
+    const port = resultPort(store);
+
+    let cursor: string | undefined;
+    let reconstructed = "";
+    let pages = 0;
+    let total = 0;
+    let byteLength = 0;
+    for (;;) {
+      const page = (
+        await port.result({
+          workspaceKey: "ws",
+          childId: "child-1",
+          parentSessionId: PARENT,
+          ...(cursor === undefined ? {} : { cursor }),
+        })
+      )._unsafeUnwrap();
+      expect(page.status).toBe("complete");
+      if (page.status !== "complete") return;
+      expect(page.exact).toBe(true);
+      expect(page.contentByteOffset).toBe(
+        textEncoder.encode(reconstructed).byteLength,
+      );
+      reconstructed += page.content ?? "";
+      total = page.total ?? 0;
+      byteLength = page.byteLength ?? 0;
+      pages += 1;
+      cursor = page.nextCursor;
+      if (cursor === undefined) break;
+      expect(pages).toBeLessThan(20);
+    }
+
+    expect({
+      chunks: total,
+      byteLength,
+      exactRoundTrip: reconstructed === output,
+      multiplePages: pages > 1,
+    }).toEqual({
+      chunks: 5,
+      byteLength: textEncoder.encode(output).byteLength,
+      exactRoundTrip: true,
+      multiplePages: true,
+    });
+  });
+
+  it("returns authoritative bytes verbatim while show only projects sanitized text", async () => {
+    // Control sequences and path-like tokens are exactly what the display
+    // projection rewrites. The authoritative result must keep them.
+    const output = "wrote /home/user/secret.txt\u001b[31m done";
+    const store = await seedResultStore(output);
+    const port = resultPort(store);
+
+    const exact = (
+      await port.result({
+        workspaceKey: "ws",
+        childId: "child-1",
+        parentSessionId: PARENT,
+      })
+    )._unsafeUnwrap();
+    const projected = (
+      await port.show({
+        workspaceKey: "ws",
+        childId: "child-1",
+        parentSessionId: PARENT,
+        content: true,
+      })
+    )._unsafeUnwrap();
+    const chunkEntry = projected.entries.find(
+      (entry) => entry.type === PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+    );
+
+    expect(exact.status).toBe("complete");
+    if (exact.status !== "complete") return;
+    expect(exact.content).toBe(output);
+    expect(exact.digest).toBe(
+      new Bun.CryptoHasher("sha256")
+        .update(textEncoder.encode(output))
+        .digest("hex"),
+    );
+    expect(chunkEntry?.contentKind).toBe("sanitized-projection");
+    expect(chunkEntry?.content).not.toBe(output);
+    expect(chunkEntry?.content).not.toContain("/home/user/secret.txt");
+  });
+
+  it("refuses to return content for an interrupted or corrupt result group", async () => {
+    const interrupted = resultPort(
+      await seedResultStore("ab", { omitCommit: true }),
+    );
+    const corrupt = resultPort(
+      await seedResultStore("ab", { digest: "0".repeat(64) }),
+    );
+
+    const interruptedResult = (
+      await interrupted.result({
+        workspaceKey: "ws",
+        childId: "child-1",
+        parentSessionId: PARENT,
+      })
+    )._unsafeUnwrap();
+    const corruptResult = (
+      await corrupt.result({
+        workspaceKey: "ws",
+        childId: "child-1",
+        parentSessionId: PARENT,
+      })
+    )._unsafeUnwrap();
+
+    expect({
+      interrupted: {
+        status: interruptedResult.status,
+        reason:
+          interruptedResult.status === "incomplete"
+            ? interruptedResult.reason
+            : "",
+        content: interruptedResult.content,
+      },
+      corrupt: {
+        status: corruptResult.status,
+        reason:
+          corruptResult.status === "incomplete" ? corruptResult.reason : "",
+        content: corruptResult.content,
+      },
+    }).toEqual({
+      interrupted: {
+        status: "incomplete",
+        reason: "missing-commit",
+        content: undefined,
+      },
+      corrupt: {
+        status: "incomplete",
+        reason: "digest-mismatch",
+        content: undefined,
+      },
+    });
+  });
+
+  /** Encodes an opaque result cursor the way the store does. */
+  function encodeCursor(value: Record<string, unknown>): string {
+    return btoa(JSON.stringify(value))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/u, "");
+  }
+
+  it("rejects a cursor minted for a different result group", async () => {
+    const store = await seedResultStore("ab");
+    const foreignCursor = encodeCursor({
+      v: 2,
+      ...RESULT_IDENTITY,
+      resultId: "55555555-5555-4555-8555-555555555555",
+      digest: "0".repeat(64),
+      chunkIndex: 0,
+    });
+
+    const stale = await resultPort(store).result({
+      workspaceKey: "ws",
+      childId: "child-1",
+      parentSessionId: PARENT,
+      cursor: foreignCursor,
+    });
+
+    expect(stale._unsafeUnwrapErr()).toEqual({
+      type: "Conflict",
+      message: "stale result cursor",
+    });
+  });
+
+  it("rejects a cursor minted for another child under the same parent", async () => {
+    const store = await seedResultStore("ab");
+    const commit = new Bun.CryptoHasher("sha256")
+      .update(textEncoder.encode("ab"))
+      .digest("hex");
+
+    const siblingChild = await resultPort(store).result({
+      workspaceKey: "ws",
+      childId: "child-1",
+      parentSessionId: PARENT,
+      cursor: encodeCursor({
+        v: 2,
+        ...RESULT_IDENTITY,
+        childId: "child-2",
+        resultId: "44444444-4444-4444-8444-444444444444",
+        digest: commit,
+        chunkIndex: 0,
+      }),
+    });
+    const otherSession = await resultPort(store).result({
+      workspaceKey: "ws",
+      childId: "child-1",
+      parentSessionId: PARENT,
+      cursor: encodeCursor({
+        v: 2,
+        ...RESULT_IDENTITY,
+        nativeSessionId: "native-session-2",
+        resultId: "44444444-4444-4444-8444-444444444444",
+        digest: commit,
+        chunkIndex: 0,
+      }),
+    });
+
+    expect({
+      siblingChild: siblingChild._unsafeUnwrapErr(),
+      otherSession: otherSession._unsafeUnwrapErr(),
+    }).toEqual({
+      siblingChild: { type: "Conflict", message: "result identity mismatch" },
+      otherSession: { type: "Conflict", message: "result identity mismatch" },
+    });
+  });
+
+  it("refuses to serve one child's result to a sibling row of the same parent", async () => {
+    // The seeded group belongs to `child-1`. A cache row that reaches the
+    // same ref while naming a different child or native session must not be
+    // handed this result: reachability is not authority.
+    const store = await seedResultStore("ab");
+
+    const siblingChild = await resultPort(store, {
+      ...metadataRecord(),
+      childId: "child-2",
+    }).result({
+      workspaceKey: "ws",
+      childId: "child-2",
+      parentSessionId: PARENT,
+    });
+    const siblingSession = await resultPort(store, {
+      ...metadataRecord(),
+      nativeSessionId: "native-session-2",
+    }).result({
+      workspaceKey: "ws",
+      childId: "child-1",
+      parentSessionId: PARENT,
+    });
+
+    expect({
+      siblingChild: siblingChild._unsafeUnwrapErr(),
+      siblingSession: siblingSession._unsafeUnwrapErr(),
+    }).toEqual({
+      siblingChild: { type: "Conflict", message: "result identity mismatch" },
+      siblingSession: { type: "Conflict", message: "result identity mismatch" },
+    });
   });
 });
 

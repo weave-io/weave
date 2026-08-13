@@ -13,10 +13,10 @@ function config(source: string) {
 }
 
 const limits: EffectiveDelegationLimits = {
-  maxChildren: 9,
-  maxConcurrency: 3,
-  maxDepth: 3,
-  maxProcesses: 9,
+  maxChildren: 32,
+  maxConcurrency: 8,
+  maxDepth: 8,
+  maxProcesses: 32,
 };
 
 describe("resolveEffectiveDelegationLimits", () => {
@@ -73,13 +73,13 @@ describe("resolveEffectiveDelegationLimits", () => {
 
   it("rejects malformed project limits before agent overrides", () => {
     const base = config(
-      `agent tapestry { delegation { max_children 9 max_concurrency 9 } }`,
+      `agent tapestry { delegation { max_children 64 max_concurrency 32 } }`,
     );
     const malformed: WeaveConfig = {
       ...base,
       settings: {
         ...base.settings,
-        delegation: { max_children: 10, max_concurrency: 9 },
+        delegation: { max_children: 257, max_concurrency: 64 },
       },
     };
     const result = resolveEffectiveDelegationLimits(malformed, "tapestry");
@@ -156,7 +156,7 @@ describe("authorizeDelegation", () => {
       limits,
       directChildren: 0,
       activeChildren: 0,
-      childDepth: 4,
+      childDepth: 9,
       liveProcesses: 0,
     });
     expect(result._unsafeUnwrap()).toEqual({
@@ -168,10 +168,10 @@ describe("authorizeDelegation", () => {
   it("denies when active child capacity is exhausted", () => {
     const result = authorizeDelegation({
       limits,
-      directChildren: 9,
-      activeChildren: 9,
+      directChildren: 32,
+      activeChildren: 32,
       childDepth: 1,
-      liveProcesses: 9,
+      liveProcesses: 32,
     });
     expect(result._unsafeUnwrap()).toEqual({
       outcome: "denied",
@@ -182,7 +182,7 @@ describe("authorizeDelegation", () => {
   it("does not consume max_children capacity after direct children settle", () => {
     const result = authorizeDelegation({
       limits,
-      directChildren: 9,
+      directChildren: 32,
       activeChildren: 0,
       childDepth: 1,
       liveProcesses: 0,
@@ -193,10 +193,10 @@ describe("authorizeDelegation", () => {
   it("queues when parent concurrency is exhausted", () => {
     const result = authorizeDelegation({
       limits,
-      directChildren: 3,
-      activeChildren: 3,
+      directChildren: 8,
+      activeChildren: 8,
       childDepth: 1,
-      liveProcesses: 3,
+      liveProcesses: 8,
     });
     expect(result._unsafeUnwrap()).toEqual({
       outcome: "queued",
@@ -207,10 +207,10 @@ describe("authorizeDelegation", () => {
   it("queues when global process capacity is exhausted", () => {
     const result = authorizeDelegation({
       limits,
-      directChildren: 3,
+      directChildren: 8,
       activeChildren: 1,
       childDepth: 1,
-      liveProcesses: 9,
+      liveProcesses: 32,
     });
     expect(result._unsafeUnwrap()).toEqual({
       outcome: "queued",
@@ -221,10 +221,10 @@ describe("authorizeDelegation", () => {
   it("prioritizes permanent denials over queue reasons", () => {
     const result = authorizeDelegation({
       limits,
-      directChildren: 9,
-      activeChildren: 3,
-      childDepth: 4,
-      liveProcesses: 9,
+      directChildren: 32,
+      activeChildren: 8,
+      childDepth: 9,
+      liveProcesses: 32,
     });
     expect(result._unsafeUnwrap()).toEqual({
       outcome: "denied",
@@ -280,7 +280,7 @@ describe("authorizeDelegation", () => {
 
   it("rejects malformed effective limits defensively", () => {
     const result = authorizeDelegation({
-      limits: { ...limits, maxConcurrency: 10 },
+      limits: { ...limits, maxConcurrency: 65 },
       directChildren: 0,
       activeChildren: 0,
       childDepth: 1,

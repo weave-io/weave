@@ -372,11 +372,19 @@ settings {
 
   adapters {
     # Harness names and values are opaque to core.
-    pi { child_inspection { recovery_enabled true } }
+    pi {
+      child_inspection { recovery_enabled true }
+      child_lifecycle {
+        handshake_timeout_ms 30000
+        reply_timeout_ms 60000
+        settlement_inactivity_timeout_ms 3600000
+        absolute_runtime_budget_ms 21600000
+      }
+    }
   }
 
   delegation {
-    max_children 9
+    max_children 32
     max_concurrency 3
     max_depth 3
     max_processes 9
@@ -431,10 +439,10 @@ analytics {
 | `log_level` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | Runtime log level |
 | `enforce_permissions` | boolean | Enforce adapter tool policies through the Weave permission system. Default `true`; adapters that support opt-out preserve native/tool-owner behavior when `false`. |
 | `adapters.<harness>` | JSON-like value | Opaque adapter settings: strings, finite numbers, booleans, `null`, arrays, and objects. Each harness block allows nesting depth 4 and at most 64 KiB of canonical UTF-8 JSON. Source layers are validated before merge and the effective merged config is validated again; objects deep-merge, arrays union-merge, and scalars (including `null`) override. Duplicate keys and non-JSON identifiers are rejected. Core does not interpret harness names or adapter fields; each adapter owns its block's schema and behavior. See the [Pi private-child contract](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings). |
-| `delegation.max_children` | integer `1..9` | Hard cap on active direct children running in parallel per parent; settled or disposed children release capacity. Default `9`. |
-| `delegation.max_concurrency` | integer `1..max_children` | Maximum concurrent children per parent before additional requests queue. Default `3`. |
-| `delegation.max_depth` | positive integer | Maximum delegation depth below root. Default `3`. |
-| `delegation.max_processes` | positive integer | Maximum live delegated work units across the adapter. Default `9`. |
+| `delegation.max_children` | integer `1..256` | Hard cap on active direct children running in parallel per parent; settled or disposed children release capacity. Default `32`. |
+| `delegation.max_concurrency` | integer `1..min(max_children, 64)` | Maximum concurrent children per parent before additional requests queue. Default `8`. |
+| `delegation.max_depth` | integer `1..32` | Maximum delegation depth below root. Default `8`. |
+| `delegation.max_processes` | integer `1..128` | Maximum live delegated work units across the adapter. Default `32`. |
 | `runtime.journal.strict` | boolean | Make a correlated transaction fail when its journal write fails. Default `false`. |
 | `runtime.journal.retention_days` | integer `1..3650` | Maximum age of detailed journal entries. Default `30`. |
 | `runtime.journal.max_entries` | integer `1..10000000` | Maximum retained detailed journal entries. Default `10000`. |
@@ -443,7 +451,7 @@ analytics {
 | `runtime.log.max_segment_bytes` | integer `65536..1073741824` | Rotating runtime log segment size. Default `5242880`. |
 | `runtime.log.max_segments` | integer `1..100` | Number of runtime log segments to keep. Default `3`. |
 
-Adapter blocks are optional. An unknown or invalid field is an adapter validation error, not a core DSL error; the adapter must fail closed without invalidating unrelated adapter blocks. For Pi, `settings.adapters.pi.child_inspection` is defined by [Spec 33 §7.1](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings), including its defaults, bounds, and invalid-settings recovery choice.
+Adapter blocks are optional. An unknown or invalid field is an adapter validation error, not a core DSL error; the adapter must fail closed without invalidating unrelated adapter blocks. For Pi, `settings.adapters.pi.child_inspection` is defined by [Spec 33 §7.1](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings), including its defaults, bounds, and invalid-settings recovery choice. Pi also accepts a strict `child_lifecycle` block with positive integer millisecond fields: `handshake_timeout_ms` (default 30,000; maximum 300,000), `reply_timeout_ms` (default 60,000; maximum 900,000), `settlement_inactivity_timeout_ms` (default 3,600,000; maximum 86,400,000), and `absolute_runtime_budget_ms` (default 21,600,000; maximum 604,800,000).
 
 An agent `delegation` block may set only `max_children` and `max_concurrency`; each value may narrow but never raise the merged project setting. `max_children` limits active parallel direct children, not the lifetime number of children ever executed. Settled or disposed children release that capacity. If the project omits `max_concurrency`, effective project concurrency is clamped to `max_children`; likewise, if an agent narrows `max_children` without setting concurrency, its effective concurrency is clamped to that child cap. Omitted project fields remain absent through per-scope parsing so higher layers do not overwrite lower-layer values with defaults; unresolved values receive defaults only during engine resolution. See [Delegation Limits](delegation.md), [ADR 0008](../adr/0008-portable-delegation-budgets.md), and [Pi adapter contract](../adapters/pi.md).
 

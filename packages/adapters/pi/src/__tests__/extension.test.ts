@@ -54,6 +54,7 @@ import {
   readOverlaySessionEntryPage,
   resolveDirectStepBadgeAgent,
 } from "../extension.js";
+import { MAX_FINAL_OUTPUT_BYTES } from "../child-tree.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
 import {
@@ -3464,7 +3465,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(sent.message.content).toContain("Interventions: 7");
     expect(
       new TextEncoder().encode(sent.message.content).byteLength,
-    ).toBeLessThanOrEqual(16_384 + 32);
+    ).toBeLessThanOrEqual(MAX_FINAL_OUTPUT_BYTES + 32);
     expect(sent.options).toEqual({ triggerTurn: false });
     expect(host.sentUserMessages).toHaveLength(0);
     expect(host.generatedTurnCount).toBe(0);

@@ -8,9 +8,11 @@ import {
 } from "../child-crypto.js";
 import { WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
+import { encodeTransferChunks } from "../child-transfer.js";
 import type {
   CreateNativeChildSessionInput,
   PiNativeSessionRecord,
+  PiNativeResultAppendIdentity,
   PiNativeThreadMetadataInput,
 } from "../child-native-sessions.js";
 import type {
@@ -834,6 +836,8 @@ class LifecycleRefPort implements PiThreadRefPort {
   readonly lifecycles: AppendChildRefLifecycleInput[] = [];
   failNewChild = false;
   failLifecycle = false;
+  /** Observes when a durable lifecycle append actually happens. */
+  onLifecycle: (() => void) | undefined;
 
   liveParentSessionId(): string {
     return "parent-session-1";
@@ -869,6 +873,7 @@ class LifecycleRefPort implements PiThreadRefPort {
     if (this.failLifecycle) {
       return errAsync({ type: "RefWriteFailed", reason: "io" } as never);
     }
+    this.onLifecycle?.();
     this.lifecycles.push(input);
     return okAsync({ ...record, status: input.status } as PiChildRefRecord);
   }
@@ -876,6 +881,15 @@ class LifecycleRefPort implements PiThreadRefPort {
 
 /** A session port that provisions an in-memory, validly shaped native session. */
 class LifecycleSessionPort implements PiThreadSessionPort {
+  readonly resultOutputs: Array<{
+    readonly ref: string;
+    readonly output: string;
+    readonly expected: PiNativeResultAppendIdentity;
+  }> = [];
+  failResultOutput = false;
+  /** Observes when a durable result persist actually happens. */
+  onResultOutput: (() => void) | undefined;
+
   createChildSession(input: CreateNativeChildSessionInput) {
     return okAsync({
       childId: input.childId,
@@ -885,6 +899,22 @@ class LifecycleSessionPort implements PiThreadSessionPort {
       parentSession: input.parentSession,
       cwd: input.cwd,
     } as never);
+  }
+
+  appendResultOutput(
+    ref: string,
+    output: string,
+    expected: PiNativeResultAppendIdentity,
+  ) {
+    if (this.failResultOutput) {
+      return errAsync({
+        type: "SessionCreateFailed" as const,
+        reason: "io" as const,
+      });
+    }
+    this.onResultOutput?.();
+    this.resultOutputs.push({ ref, output, expected });
+    return okAsync(undefined);
   }
 
   establishThreadLeaf(
@@ -1192,6 +1222,290 @@ describe("direct workflow steps persist a terminal child lifecycle", () => {
       runningRefs: 0,
       lifecycleAppends: 0,
       spawns: 0,
+    });
+  });
+});
+
+/**
+ * Complete private output must land on the already-provisioned native session
+ * before a completed direct-step settlement can succeed. The write uses the
+ * provisioned opaque ref and expected parent; a store failure is typed and
+ * fail-closed. Native ref/lifecycle and the optional observer stay intact.
+ */
+describe("direct workflow steps persist complete private output", () => {
+  it("writes captured output to the provisioned native session before completed settlement", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    const sessions = new LifecycleSessionPort();
+    const observed: Array<{
+      output: string;
+      byteLength: number;
+      source: string;
+    }> = [];
+    // A direct step's authoritative result is its structured completion
+    // candidate. Above the inline cap the child transfers that candidate, so
+    // the transferred bytes and the settled candidate are the same value.
+    const completeOutput = serializeCompletionCandidate({
+      outcome: "success",
+      message: `COMPLETE_PRIVATE_OUTPUT ${"界".repeat(80)}`,
+    });
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator: new FakeIdGenerator(),
+        availableModels: AVAILABLE_MODELS,
+        threadSessions: () => sessions,
+        threadRefs: () => refs,
+        requireNativeSession: () => true,
+        now: () => 1_700_000_000_000,
+        onPrivateOutput: (_childId, capture) => {
+          observed.push(capture);
+          return okAsync(undefined);
+        },
+      },
+      "gen-1",
+    );
+    const settlementPromise = transport(baseInput());
+    const { spawned, responder, secretBytes } =
+      await driveToRunning(processPort);
+    const transferId = "direct-complete-output";
+    const chunks = encodeTransferChunks(completeOutput, transferId);
+    expect(chunks.isOk()).toBe(true);
+    if (chunks.isErr()) return;
+    for (const chunk of chunks.value) {
+      await responder.send(
+        "transfer-chunk",
+        transferId,
+        { channel: "output", ...chunk },
+        secretBytes,
+      );
+    }
+    spawned.emitLine(terminalAssistantMessage());
+    await responder.send(
+      "settled",
+      LIFECYCLE_CHILD_ID,
+      {
+        outcome: "completed",
+        completionCandidateTransferred: true,
+        outputTransferId: transferId,
+        outputByteLength: new TextEncoder().encode(completeOutput).byteLength,
+      },
+      secretBytes,
+    );
+    const settlement = await settlementPromise;
+
+    expect({
+      settled: settlement.isOk(),
+      outcome: settlement.isOk() ? settlement.value.outcome : "",
+      persisted: sessions.resultOutputs,
+      observer: observed,
+      lifecycleAppends: refs.lifecycles.length,
+      status: refs.lifecycles[0]?.status ?? "",
+    }).toEqual({
+      settled: true,
+      outcome: "completed",
+      persisted: [
+        {
+          ref: "child/session.jsonl",
+          output: completeOutput,
+          expected: {
+            childId: LIFECYCLE_CHILD_ID,
+            nativeSessionId: "native-lifecycle-1",
+            parentSession: "parent-session-1",
+          },
+        },
+      ],
+      observer: [
+        {
+          output: completeOutput,
+          byteLength: new TextEncoder().encode(completeOutput).byteLength,
+          source: "transferred-candidate",
+        },
+      ],
+      lifecycleAppends: 1,
+      status: "completed",
+    });
+  });
+
+  it("persists the inline completion candidate, never the terminal assistant prose", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    const sessions = new LifecycleSessionPort();
+    const captures: Array<{ output: string; source: string }> = [];
+    const candidate = serializeCompletionCandidate({
+      outcome: "success",
+      message: "STRUCTURED_CANDIDATE_MESSAGE",
+    });
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator: new FakeIdGenerator(),
+        availableModels: AVAILABLE_MODELS,
+        threadSessions: () => sessions,
+        threadRefs: () => refs,
+        requireNativeSession: () => true,
+        now: () => 1_700_000_000_000,
+        onPrivateOutput: (_childId, capture) => {
+          captures.push({ output: capture.output, source: capture.source });
+          return okAsync(undefined);
+        },
+      },
+      "gen-1",
+    );
+    const settlementPromise = transport(baseInput());
+    const { spawned, responder, secretBytes } =
+      await driveToRunning(processPort);
+    // A structured direct step still leaves ordinary terminal prose behind.
+    // That prose is not its result and must never be persisted as one.
+    spawned.emitLine(terminalAssistantMessage("UNRELATED_TERMINAL_PROSE"));
+    await responder.send(
+      "settled",
+      LIFECYCLE_CHILD_ID,
+      { outcome: "completed", completionCandidate: candidate },
+      secretBytes,
+    );
+    const settlement = await settlementPromise;
+
+    expect({
+      settled: settlement.isOk(),
+      persistedOutputs: sessions.resultOutputs.map((entry) => entry.output),
+      captureSources: captures.map((entry) => entry.source),
+      persistedProse: sessions.resultOutputs.some((entry) =>
+        entry.output.includes("UNRELATED_TERMINAL_PROSE"),
+      ),
+    }).toEqual({
+      settled: true,
+      persistedOutputs: [candidate],
+      captureSources: ["inline-candidate"],
+      persistedProse: false,
+    });
+  });
+
+  it("refuses to persist a completed direct step that produced no candidate", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    const sessions = new LifecycleSessionPort();
+    const settlementPromise = lifecycleTransport({
+      processPort,
+      refs,
+      sessions,
+    })(baseInput());
+    const { spawned, responder, secretBytes } =
+      await driveToRunning(processPort);
+    spawned.emitLine(terminalAssistantMessage("UNRELATED_TERMINAL_PROSE"));
+    // A completed settlement carrying only prose is not a direct-step result.
+    await responder.send(
+      "settled",
+      LIFECYCLE_CHILD_ID,
+      { outcome: "completed", assistantOutput: "UNRELATED_TERMINAL_PROSE" },
+      secretBytes,
+    );
+    const settlement = await settlementPromise;
+
+    expect({
+      failed: settlement.isErr(),
+      persisted: sessions.resultOutputs,
+      rendered: JSON.stringify(
+        settlement.isErr() ? settlement.error : {},
+      ).includes("UNRELATED_TERMINAL_PROSE"),
+    }).toEqual({ failed: true, persisted: [], rendered: false });
+  });
+
+  it("fails closed with a typed path-free error when native result persist fails", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    const sessions = new LifecycleSessionPort();
+    sessions.failResultOutput = true;
+    const settlementPromise = lifecycleTransport({
+      processPort,
+      refs,
+      sessions,
+    })(baseInput());
+    const { spawned, responder, secretBytes } =
+      await driveToRunning(processPort);
+    spawned.emitLine(terminalAssistantMessage());
+    await responder.send(
+      "settled",
+      LIFECYCLE_CHILD_ID,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
+      },
+      secretBytes,
+    );
+    const settlement = await settlementPromise;
+    const rendered = JSON.stringify(settlement.isErr() ? settlement.error : {});
+
+    expect({
+      failed: settlement.isErr(),
+      code: settlement.isErr() ? settlement.error.code : "",
+      persisted: sessions.resultOutputs.length,
+      lifecycleAppends: refs.lifecycles.length,
+      status: refs.lifecycles[0]?.status ?? "",
+      leakedStoreError: rendered.includes("SessionCreateFailed"),
+      leakedPath: rendered.includes(LIFECYCLE_SESSION_PATH),
+    }).toEqual({
+      failed: true,
+      code: "ChildRecoveryUnavailable",
+      persisted: 0,
+      lifecycleAppends: 1,
+      // A durable `completed` lifecycle asserts a retrievable result. The
+      // authoritative result never landed, so the one terminal record this
+      // step is allowed to write must say `failed` instead.
+      status: "failed",
+      leakedStoreError: false,
+      leakedPath: false,
+    });
+  });
+
+  it("persists the authoritative result before it writes a completed lifecycle", async () => {
+    const processPort = new FakeChildProcessPort();
+    const refs = new LifecycleRefPort();
+    const sessions = new LifecycleSessionPort();
+    const order: string[] = [];
+    // Both durable writes record their arrival order, so the ordering claim
+    // is observed rather than inferred from the settlement value.
+    sessions.onResultOutput = () => order.push("result");
+    refs.onLifecycle = () => order.push("lifecycle");
+    const settlementPromise = lifecycleTransport({
+      processPort,
+      refs,
+      sessions,
+    })(baseInput());
+    const { spawned, responder, secretBytes } =
+      await driveToRunning(processPort);
+    spawned.emitLine(terminalAssistantMessage());
+    await responder.send(
+      "settled",
+      LIFECYCLE_CHILD_ID,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
+      },
+      secretBytes,
+    );
+    const settlement = await settlementPromise;
+
+    expect({
+      completed: settlement.isOk(),
+      order,
+      status: refs.lifecycles[0]?.status ?? "",
+      persisted: sessions.resultOutputs.length,
+    }).toEqual({
+      completed: true,
+      order: ["result", "lifecycle"],
+      status: "completed",
+      persisted: 1,
     });
   });
 });

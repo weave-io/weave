@@ -148,7 +148,7 @@ retain partial-write suffixes and await flush.
 
 Malformed, unauthenticated, replayed, or out-of-sequence input fails closed and disposes the runtime. Outbound control writes are serialized, and a failed settlement write is retried once without consuming its authenticated sequence number. Every secret is zeroed and every resource released exactly once.
 
-A child may request nested delegation only to its own declared targets. Canceling a node cancels queued and live descendants. Live children get a bounded cooperative grace period before force termination. The 15-minute settlement budget is an inactivity timeout: each parser-approved session event or authenticated control envelope renews it, while a silent child still fails with `ChildSettlementMissing`.
+A child may request nested delegation only to its own declared targets. Canceling a node cancels queued and live descendants. Live children get a bounded cooperative grace period before force termination. The 60-minute settlement budget is an inactivity timeout: each parser-approved session event or authenticated control envelope renews it, while a silent child still fails with `ChildSettlementMissing`. A separate six-hour absolute runtime budget starts at the spawn boundary and is never renewed by activity; it covers the spawn itself and the post-settlement response drain, so a process that finishes spawning after the budget expired is force-killed and never installed as a live child. When it expires the child is force-killed and the run fails with `ChildRuntimeExceeded`. The failure is retryable and leaves the child's thread and native session intact for explicit recovery.
 
 Children are inspectable and cancellable through the TUI tree, not steerable. Public user-started RPC mode does not activate this private path.
 
@@ -205,6 +205,8 @@ run 2 · editing
 Line one names the child, its concrete model, and its reasoning level. Line two is the latest whitespace-normalized activity, bounded to 240 code points; expanding the entry reveals the current item up to 4 KiB. Line three names the run number and the current action, so a retried or continued thread shows which run you are watching.
 
 The block is fail-closed: invalid state or a render failure produces a degraded three-line block rather than a partial or missing entry. Chrome lines never echo opaque thread ids, session paths, or native session ids. The reducer keeps at most 64 runs per thread and 128 items per run; older runs stay frozen exactly as they last rendered.
+
+Every 64-run bound in the adapter — the compact reducer, the overlay descriptor, and the parent child ref — is a bounded newest-last **window**, not a ceiling on how many times a thread may run. A ref carries the cumulative `totalRuns` alongside its window, so run 65 and run 1,001 append normally, the run ordinal keeps counting after a restart, and only the finite one-million ordinal ceiling can refuse an append.
 
 #### True child overlay
 
@@ -326,11 +328,81 @@ Pi's `agent_settled` event has no payload. The adapter derives `failed` from the
 Completed settlement fields have one meaning each: `assistantOutput` is the
 bounded parent projection, `completionCandidate` is direct-step structured JSON,
 `outputTransferId` references an ACKed private transfer, and
-`outputByteLength` is numeric metadata. Output above the 4 KiB projection cap is
+`outputByteLength` is numeric metadata. Output above the 64 KiB projection cap is
 transferred before settlement. A failed output transfer still produces one
 bounded inline settlement. The inspector/history sink receives full output;
 controller, delegation-tool, and workflow results receive only the bounded
 projection plus numeric metadata.
+
+Diagnostic prose follows one shared projection policy: 32 KiB of UTF-8, an
+explicit truncation marker, and a cut that never splits a code point. It covers
+the settlement failure reason and the protocol `cancel` and `error` reasons
+alike. Producers project before signing and the schemas admit the projected
+value, because rejecting a body over its display text would discard the typed
+code that body carries.
+
+The private output capture carries its own provenance, because the four
+possible sources are not interchangeable. `transferred-candidate` and
+`inline-candidate` are the child's verified structured completion candidate,
+`transferred-output` is its complete free-text terminal output, and
+`observed-terminal` is only the last terminal assistant message the parent
+happened to observe. A direct workflow step persists a candidate source and
+nothing else: a capture whose provenance is observed prose, or one that
+disagrees with the settled candidate, fails closed instead of durably storing
+unrelated assistant text as the step's result.
+
+### Durable results
+
+Complete authoritative output is appended to the child's own native session as
+a group of 48 KiB UTF-8 chunks followed by one commit record holding the chunk
+count, exact byte total, and SHA-256 digest. Nothing accepts a result before
+that commit exists, so an interrupted or refused append leaves no partially
+accepted output.
+
+Appends are authorized by immutable identity, not reachability. The caller
+supplies the child component, native session id, and origin parent it
+provisioned, and all three must still hold on the reopened session, so a
+sibling child of the same parent is refused.
+
+Because the host append is path-backed, no check the writer performs can cover
+the write itself, so the writer does not decide acceptance. The commit record
+*carries* the identity it was authorized against: the child component, native
+session id, origin parent, and the `{dev,ino}` of the exact leaf observed under
+the held no-follow directory before the first chunk landed. Every reader
+recomputes all five. A commit that reached a replaced leaf therefore names a
+file it is not in, and no reader accepts that group — a replacement during the
+commit leaves no readable committed result, whatever the writer returned. The
+write still fails closed as early as it can: chunks, then a re-proof of the
+leaf and the live session id, then the commit, then a final leaf check.
+
+Reading is authorized by the same identity. A caller states the exact child,
+native session, and origin parent whose result it wants; all three are proven
+against the session header before any scan and against the commit before the
+group is accepted. Continuation cursors are bound to that identity and to the
+exact commit (result id and digest), so a cursor from another child, another
+session, or a changed commit fails typed instead of paging unrelated bytes.
+
+Reading is also bounded and paged. Verification makes two passes — one backward
+pass that locates the newest commit and its first chunk, one forward pass that
+streams chunks in ascending order and hashes incrementally — retaining at most
+one requested content window. Each pass gets its own page and byte budget,
+derived from the *encoded* maximum: a full 48 KiB chunk where every byte takes
+its worst-case six-byte JSON escape, times the chunk count a 64 MiB result can
+reach, plus the commit line and a fixed slack. Budgets are per pass because a
+shared total would have to be split among the passes, and a group at the
+retained cap would exhaust it before the last pass finished.
+
+This is why the 64 MiB result ceiling does not contradict the 8 MiB
+whole-session read ceiling: results are never read whole. When a session grows
+past that read ceiling, session identity falls back to a bounded header-line
+read and thread metadata falls back to bounded pages, so restart recovery keeps
+working instead of reporting a healthy large session as corrupt.
+
+A direct workflow step persists its authoritative result *before* it writes any
+terminal lifecycle record. A durable `completed` lifecycle asserts that the
+step's result is retrievable, so it is never written first and then
+contradicted: when persistence fails, the step settles failed and the single
+terminal lifecycle record says `failed`.
 
 ## Plans, artifacts, and recovery
 

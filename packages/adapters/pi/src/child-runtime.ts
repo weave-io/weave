@@ -26,6 +26,7 @@ import {
   type PiTransferResultBody,
   parseControlBody,
 } from "./child-control-bodies.js";
+import { projectDiagnosticText } from "./child-diagnostic-projection.js";
 import {
   generateNonceHex,
   type HmacPort,
@@ -420,6 +421,7 @@ export class PiChildRuntime {
     detail: {
       assistantOutput?: string;
       completionCandidate?: string;
+      completionCandidateTransferred?: boolean;
       outputTransferId?: string;
       outputByteLength?: number;
       interventionCount?: number;
@@ -441,6 +443,9 @@ export class PiChildRuntime {
       ...(detail.completionCandidate !== undefined
         ? { completionCandidate: detail.completionCandidate }
         : {}),
+      ...(detail.completionCandidateTransferred === true
+        ? { completionCandidateTransferred: true }
+        : {}),
       ...(detail.outputTransferId !== undefined
         ? { outputTransferId: detail.outputTransferId }
         : {}),
@@ -450,7 +455,9 @@ export class PiChildRuntime {
       ...(detail.interventionCount !== undefined
         ? { interventionCount: detail.interventionCount }
         : {}),
-      ...(detail.reason !== undefined ? { reason: detail.reason } : {}),
+      ...(detail.reason !== undefined
+        ? { reason: projectDiagnosticText(detail.reason) }
+        : {}),
     };
     return this.sendControl("settled", this.childId, body)
       .map(() => {

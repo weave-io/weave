@@ -51,10 +51,3 @@ export {
   openProductionPiAdapterCommandPorts,
   resolveProductionAdapterCliRegistry,
 } from "./adapter-cli-production.js";
-export type { PiSessionMutationGate } from "./required-capability-gate.js";
-export {
-  createBlockedSessionMutationGate,
-  createOpenSessionMutationGate,
-  createSessionMutationGate,
-  SESSION_MUTATION_REQUIRED_CAPABILITY,
-} from "./required-capability-gate.js";

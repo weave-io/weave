@@ -11,6 +11,12 @@
 import { ThinkingLevelSchema } from "@weaveio/weave-core";
 import { z } from "zod";
 import {
+  fitsDiagnosticBudget,
+  MAX_DIAGNOSTIC_REASON_BYTES,
+  MAX_DIAGNOSTIC_SERIALIZED_BYTES,
+  projectDiagnosticText,
+} from "./child-diagnostic-projection.js";
+import {
   MAX_CONTROL_BODY_BYTES,
   type PiControlKind,
 } from "./child-envelope.js";
@@ -18,9 +24,44 @@ import type { JsonValue } from "./strict-json.js";
 import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
 
 export const MAX_NAME_LENGTH = 256;
-const MAX_SUMMARY_LENGTH = 8_192;
+/**
+ * The inline diagnostic prose budget, re-exported under its historical name.
+ * The policy itself lives in `child-diagnostic-projection.ts`, which every
+ * diagnostic producer shares.
+ */
+export const MAX_FAILURE_REASON_BYTES = MAX_DIAGNOSTIC_REASON_BYTES;
+/**
+ * The serialized half of the same policy, re-exported for callers that need
+ * to reason about how much of the 64 KiB control body a reason can consume.
+ */
+export const MAX_FAILURE_REASON_SERIALIZED_BYTES =
+  MAX_DIAGNOSTIC_SERIALIZED_BYTES;
 export const MAX_SETTLEMENT_OUTPUT_BYTES = 4_096;
-const MAX_REASON_LENGTH = 2_000;
+
+/**
+ * Diagnostic prose on the wire. Producers project first, so this admits the
+ * projected value instead of rejecting a body over its display text - which
+ * would discard the typed code the body carries.
+ *
+ * Applies to the settlement failure reason and to the protocol `cancel` and
+ * `error` reasons alike. Those two were capped at 2,000 UTF-16 characters,
+ * which rejected ordinary prose outright instead of shortening it, and which
+ * counted characters where the framing ceilings count bytes.
+ *
+ * Both halves of the shared policy are enforced here. The source cap alone
+ * is not enough: a 32 KiB reason of C0 control bytes canonicalizes to 192 KiB
+ * of `\u00XX` escapes, so a body that passed a source-only check would still
+ * fail closed at signing time with `BodyTooLarge` and destroy the typed code
+ * it was carrying.
+ */
+const boundedDiagnosticReason = z
+  .string()
+  .refine(
+    (value) => fitsDiagnosticBudget(value),
+    `must be at most ${MAX_DIAGNOSTIC_REASON_BYTES} source UTF-8 bytes and ${MAX_DIAGNOSTIC_SERIALIZED_BYTES} JSON-serialized UTF-8 bytes`,
+  );
+const boundedFailureReason = boundedDiagnosticReason;
+const boundedProtocolReason = boundedDiagnosticReason;
 const boundedSettlementOutput = z
   .string()
   .refine(
@@ -29,7 +70,7 @@ const boundedSettlementOutput = z
     `must be at most ${MAX_SETTLEMENT_OUTPUT_BYTES} UTF-8 bytes`,
   );
 const MAX_MODELS = 32;
-const MAX_DELEGATION_TARGETS = 9;
+export const MAX_DELEGATION_TARGETS = 64;
 /** Bounds the bootstrap `context.cwd` field - a real filesystem path, not name-length text. */
 export const MAX_CWD_LENGTH = 4_096;
 /** Bounds `context.parentDepth` - mirrors Pi adapter contract's own depth-limit universe generously; a value outside this is always malformed, never a legitimate deep tree. */
@@ -152,10 +193,8 @@ const BootstrapCommonShape = {
   agentName: NameSchema,
   composedPrompt: z.string().max(MAX_COMPOSED_PROMPT_LENGTH),
   models: z.array(z.string().max(MAX_NAME_LENGTH)).max(MAX_MODELS),
-  delegationTargets: z
-    .array(DelegationTargetBodySchema)
-    .max(MAX_DELEGATION_TARGETS)
-    .optional(),
+  /** Legacy bounded hint. The authenticated parent remains target authority. */
+  delegationTargets: z.array(DelegationTargetBodySchema).max(64).optional(),
   /** The task/child correlation id (Pi adapter contract) - the child must reject bootstrap whose `correlationId` does not match its own env-derived child id. */
   correlationId: NameSchema,
   context: TaskContextBodySchema,
@@ -213,9 +252,7 @@ const BootstrapAckBodySchema = z
   })
   .strict();
 
-const CancelBodySchema = z
-  .object({ reason: z.string().max(MAX_REASON_LENGTH) })
-  .strict();
+const CancelBodySchema = z.object({ reason: boundedProtocolReason }).strict();
 
 const SettledBodySchema = z.discriminatedUnion("outcome", [
   z
@@ -223,6 +260,7 @@ const SettledBodySchema = z.discriminatedUnion("outcome", [
       outcome: z.literal("completed"),
       assistantOutput: boundedSettlementOutput.optional(),
       completionCandidate: boundedSettlementOutput.optional(),
+      completionCandidateTransferred: z.boolean().optional(),
       outputTransferId: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
       outputByteLength: z
         .number()
@@ -242,14 +280,22 @@ const SettledBodySchema = z.discriminatedUnion("outcome", [
   z
     .object({
       outcome: z.literal("failed"),
-      reason: z.string().max(MAX_SUMMARY_LENGTH).optional(),
+      reason: boundedFailureReason.optional(),
     })
     .strict(),
 ]);
 
-const ErrorBodySchema = z
-  .object({ reason: z.string().max(MAX_REASON_LENGTH) })
-  .strict();
+const ErrorBodySchema = z.object({ reason: boundedProtocolReason }).strict();
+
+/** Builds a `cancel` body whose reason already fits the shared policy. */
+export function makeCancelBody(reason: string): { readonly reason: string } {
+  return { reason: projectDiagnosticText(reason) };
+}
+
+/** Builds an `error` body whose reason already fits the shared policy. */
+export function makeErrorBody(reason: string): { readonly reason: string } {
+  return { reason: projectDiagnosticText(reason) };
+}
 
 const DelegateRequestBodySchema = z
   .object({
@@ -277,6 +323,7 @@ const DelegateResponseSettlementSchema = z.discriminatedUnion("outcome", [
       outcome: z.literal("completed"),
       assistantOutput: boundedSettlementOutput.optional(),
       completionCandidate: boundedSettlementOutput.optional(),
+      completionCandidateTransferred: z.boolean().optional(),
       outputTransferId: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
       outputByteLength: z
         .number()
@@ -295,7 +342,7 @@ const DelegateResponseSettlementSchema = z.discriminatedUnion("outcome", [
   z
     .object({
       outcome: z.literal("failed"),
-      reason: z.string().max(MAX_SUMMARY_LENGTH),
+      reason: boundedFailureReason,
     })
     .strict(),
 ]);

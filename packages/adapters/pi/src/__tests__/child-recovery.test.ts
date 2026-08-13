@@ -127,7 +127,7 @@ describe("PiChildRecoveryCoordinator", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.triggerTurn).toBe(false);
     expect(new TextEncoder().encode(calls[0]?.content).byteLength).toBeLessThan(
-      4_200,
+      65_800,
     );
     expect(calls[0]?.content).toContain("Interventions: 9");
   });
@@ -598,7 +598,7 @@ describe("PiChildRecoveryCoordinator", () => {
     expect(injected[0]).toContain("Interventions: 12|false");
     expect(
       new TextEncoder().encode(injected[0] ?? "").byteLength,
-    ).toBeLessThanOrEqual(4_200);
+    ).toBeLessThanOrEqual(65_800);
     expect(updates).toEqual(["running", "completed"]);
     expect(injected[0]).not.toContain("transcript");
   });

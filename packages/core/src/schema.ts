@@ -73,10 +73,17 @@ export const ToolPolicySchema = z
   .strict();
 
 export const DEFAULT_DELEGATION_LIMITS = {
-  max_children: 9,
-  max_concurrency: 3,
-  max_depth: 3,
-  max_processes: 9,
+  max_children: 32,
+  max_concurrency: 8,
+  max_depth: 8,
+  max_processes: 32,
+} as const;
+
+export const MAX_DELEGATION_LIMITS = {
+  max_children: 256,
+  max_concurrency: 64,
+  max_depth: 32,
+  max_processes: 128,
 } as const;
 
 const PositiveSafeIntegerSchema = z
@@ -87,10 +94,18 @@ const PositiveSafeIntegerSchema = z
 
 export const DelegationSettingsSchema = z
   .object({
-    max_children: PositiveSafeIntegerSchema.max(9).optional(),
-    max_concurrency: PositiveSafeIntegerSchema.max(9).optional(),
-    max_depth: PositiveSafeIntegerSchema.optional(),
-    max_processes: PositiveSafeIntegerSchema.optional(),
+    max_children: PositiveSafeIntegerSchema.max(
+      MAX_DELEGATION_LIMITS.max_children,
+    ).optional(),
+    max_concurrency: PositiveSafeIntegerSchema.max(
+      MAX_DELEGATION_LIMITS.max_concurrency,
+    ).optional(),
+    max_depth: PositiveSafeIntegerSchema.max(
+      MAX_DELEGATION_LIMITS.max_depth,
+    ).optional(),
+    max_processes: PositiveSafeIntegerSchema.max(
+      MAX_DELEGATION_LIMITS.max_processes,
+    ).optional(),
   })
   .strict()
   .refine(
@@ -106,8 +121,12 @@ export const DelegationSettingsSchema = z
 
 export const AgentDelegationConfigSchema = z
   .object({
-    max_children: PositiveSafeIntegerSchema.max(9).optional(),
-    max_concurrency: PositiveSafeIntegerSchema.max(9).optional(),
+    max_children: PositiveSafeIntegerSchema.max(
+      MAX_DELEGATION_LIMITS.max_children,
+    ).optional(),
+    max_concurrency: PositiveSafeIntegerSchema.max(
+      MAX_DELEGATION_LIMITS.max_concurrency,
+    ).optional(),
   })
   .strict()
   .refine(

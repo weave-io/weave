@@ -163,6 +163,37 @@ describe("PiConfigActivator (unit, fake ports)", () => {
     expect(result._unsafeUnwrap().config).toBe(config);
   });
 
+  it("fails closed on invalid child lifecycle settings", async () => {
+    const config = {
+      agents: {},
+      disabled: { agents: [], skills: [] },
+      settings: {
+        adapters: {
+          pi: {
+            child_lifecycle: {
+              absolute_runtime_budget_ms: 604_800_001,
+            },
+          },
+        },
+      },
+    } as unknown as WeaveConfig;
+    const activator = new PiConfigActivator({
+      configLoader: { load: () => okAsync(config) },
+      materializer: { materialize: () => okAsync({ agents: [], errors: [] }) },
+    });
+
+    const result = await activator.activate({
+      projectRoot: PROJECT_ROOT,
+      trust: "trusted",
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("ActivationFailed");
+    expect(result._unsafeUnwrapErr().correlation?.reason).toBe(
+      "child-lifecycle-settings-invalid:1",
+    );
+  });
+
   it("maps a config load failure into an ActivationFailed PiAdapterFailure", async () => {
     const activator = new PiConfigActivator({
       configLoader: {

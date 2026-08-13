@@ -26,6 +26,10 @@ import {
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type {
   CreateNativeChildSessionInput,
+  PiNativeResultAppendIdentity,
+  PiNativeResultGroupRead,
+  PiNativeResultGroupReadOptions,
+  PiNativeResultReadIdentity,
   PiNativeSessionEntries,
   PiNativeSessionEntryPage,
   PiNativeSessionEntryPageOptions,
@@ -41,14 +45,15 @@ import type {
   PiChildRecoverySpawnInput,
 } from "./child-recovery.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
-import type {
-  AppendChildRefLifecycleInput,
-  AppendChildRefRunInput,
-  AppendNewChildRefInput,
-  PiChildRefError,
-  PiChildRefRecord,
-  PiChildRefScan,
-  PiChildRefStatus,
+import {
+  type AppendChildRefLifecycleInput,
+  type AppendChildRefRunInput,
+  type AppendNewChildRefInput,
+  childRefTotalRuns,
+  type PiChildRefError,
+  type PiChildRefRecord,
+  type PiChildRefScan,
+  type PiChildRefStatus,
 } from "./child-session-refs.js";
 import {
   SystemTimerPort,
@@ -90,6 +95,7 @@ import {
 import type { PathContainmentPort } from "./path-containment.js";
 import { isLexicallyContained } from "./path-containment.js";
 import {
+  type PiChildPrivateOutputCapture,
   type PiChildSessionObserverResult,
   type PiChildSettlement,
   PiRpcChild,
@@ -115,6 +121,10 @@ export interface PiDelegationControllerDeps {
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly timerPort?: TimerPort;
+  readonly handshakeTimeoutMs?: number;
+  readonly replyTimeoutMs?: number;
+  readonly settlementTimeoutMs?: number;
+  readonly runtimeBudgetMs?: number;
   readonly cancelGraceMs?: number;
   /** Bounded post-settlement drain window for the child result contract. */
   readonly responseDrainMs?: number;
@@ -176,7 +186,7 @@ export interface PiDelegationControllerDeps {
   /** Private inspector/history sink. Full output never enters settlements. */
   readonly onPrivateOutput?: (
     childId: string,
-    capture: { readonly output: string; readonly byteLength: number },
+    capture: PiChildPrivateOutputCapture,
   ) => PiChildSessionObserverResult;
   /**
    * Invoked after parser-approved inspection checkpointing for every live
@@ -220,14 +230,6 @@ export interface PiDelegationControllerDeps {
 // ---------------------------------------------------------------------------
 // Thread lifecycle (Pi adapter contract §9: start / retry / continue)
 // ---------------------------------------------------------------------------
-
-/** Bounds on the caller-supplied text a retry or continue run may carry. */
-export const PI_THREAD_LIMITS = Object.freeze({
-  /** Largest bounded retry instruction or continue task. */
-  maxInstructionLength: 8_192,
-  /** Largest run number one thread may reach. */
-  maxRuns: 1_000,
-});
 
 /** The default bounded continuation instruction used by a retry without one. */
 export const DEFAULT_THREAD_RETRY_INSTRUCTION =
@@ -344,6 +346,21 @@ export interface PiThreadSessionPort {
     { readonly record: PiNativeSessionRecord; readonly leafId: string },
     PiNativeSessionError
   >;
+  appendResultOutput?(
+    ref: string,
+    output: string,
+    expected: PiNativeResultAppendIdentity,
+  ): ResultAsync<void, PiNativeSessionError>;
+  /**
+   * Bounded, paged verification and exact retrieval of a durable result. The
+   * caller proves the exact child identity it is asking for, so a sibling of
+   * the same parent can never be served another child's result.
+   */
+  readResultGroup?(
+    ref: string,
+    expected: PiNativeResultReadIdentity,
+    options?: PiNativeResultGroupReadOptions,
+  ): ResultAsync<PiNativeResultGroupRead, PiNativeSessionError>;
   appendTombstone(
     record: PiNativeSessionRecord,
   ): ResultAsync<PiNativeSessionTombstone, PiNativeSessionError>;
@@ -558,6 +575,15 @@ type PiChildRestoreFailure =
 export class PiDelegationController {
   private readonly children = new Map<string, PiRpcChild>();
   private readonly queue: QueuedDelegation[] = [];
+  /** Slots reserved by queued requests while durable session provisioning runs. */
+  private queueReservations = 0;
+  /**
+   * Authorized starts that have not yet registered a live child. JavaScript can
+   * interleave async provisioning and inspection registration, so these slots
+   * close the gap between authorization and `children.set`.
+   */
+  private readonly dispatchReservations = new Map<string, number>();
+  private dispatchProcessReservations = 0;
   private disposedAll = false;
   private treeRefreshTimer: TimerHandle | undefined;
   private readonly restoreReservations = new Set<string>();
@@ -752,12 +778,38 @@ export class PiDelegationController {
       );
     }
     const queued = decision.value.outcome !== "authorized";
+    let queueReserved = false;
+    let dispatchReserved = false;
+    if (queued) {
+      const limits = resolveEffectiveDelegationLimits(
+        this.deps.config,
+        request.parentAgentName,
+      );
+      if (
+        limits.isErr() ||
+        this.queue.length + this.queueReservations >= limits.value.maxProcesses
+      ) {
+        return errAsync(
+          makeChildCapacityExceededFailure(childId, "queue_capacity"),
+        );
+      }
+      this.queueReservations += 1;
+      queueReserved = true;
+    } else {
+      this.reserveDispatch(request.parentId);
+      dispatchReserved = true;
+    }
+    const releaseDispatch = (): void => {
+      if (!dispatchReserved) return;
+      this.releaseDispatch(request.parentId);
+      dispatchReserved = false;
+    };
     // The authoritative native session and its parent ref are created here,
     // strictly before any process or lease exists. A provisioning failure
     // therefore leaves no child process, no lease, no thread, and no
     // half-written authority behind - the run simply never started.
-    return this.provisionThreadSource(childId, request).andThen(
-      (provisioned) => {
+    return this.provisionThreadSource(childId, request)
+      .andThen((provisioned) => {
         // Every start opens a logical thread whose id is this first run's
         // child id. Later runs of the same thread mint their own child ids and
         // never reuse, reopen, or rewrite this one.
@@ -766,9 +818,13 @@ export class PiDelegationController {
           provisioned === undefined
             ? request
             : { ...request, session: provisioned.session };
+        if (queueReserved) {
+          this.queueReservations -= 1;
+          queueReserved = false;
+        }
         const dispatched = queued
           ? this.enqueue(childId, runRequest)
-          : this.spawnNow(childId, runRequest);
+          : this.spawnNow(childId, runRequest, releaseDispatch);
         return new ResultAsync<PiChildSettlement, PiAdapterFailure>(
           (async () => {
             const settled = await dispatched;
@@ -782,8 +838,15 @@ export class PiDelegationController {
             return settled;
           })(),
         );
-      },
-    );
+      })
+      .orElse((failure) => {
+        if (queueReserved) {
+          this.queueReservations -= 1;
+          queueReserved = false;
+        }
+        releaseDispatch();
+        return errAsync(failure);
+      });
   }
 
   /**
@@ -1003,7 +1066,7 @@ export class PiDelegationController {
    * settled/disposed children never consume `max_children`.
    */
   private countDirectChildren(parentId: string): number {
-    let count = 0;
+    let count = this.dispatchReservations.get(parentId) ?? 0;
     for (const child of this.children.values())
       if (child.getParentId() === parentId) count += 1;
     for (const queued of this.queue)
@@ -1013,7 +1076,7 @@ export class PiDelegationController {
 
   /** Counts direct children that are still occupying execution capacity. */
   private countActiveChildren(parentId: string): number {
-    let count = 0;
+    let count = this.dispatchReservations.get(parentId) ?? 0;
     for (const child of this.children.values()) {
       if (child.getParentId() === parentId && !this.isTerminal(child))
         count += 1;
@@ -1023,11 +1086,27 @@ export class PiDelegationController {
   }
 
   private countLiveProcesses(): number {
-    let count = 0;
+    let count = this.dispatchProcessReservations;
     for (const child of this.children.values())
       if (!this.isTerminal(child)) count += 1;
     count += this.restoreReservations.size;
     return count;
+  }
+
+  private reserveDispatch(parentId: string): void {
+    this.dispatchReservations.set(
+      parentId,
+      (this.dispatchReservations.get(parentId) ?? 0) + 1,
+    );
+    this.dispatchProcessReservations += 1;
+  }
+
+  private releaseDispatch(parentId: string): void {
+    const reserved = this.dispatchReservations.get(parentId) ?? 0;
+    if (reserved <= 1) this.dispatchReservations.delete(parentId);
+    else this.dispatchReservations.set(parentId, reserved - 1);
+    if (this.dispatchProcessReservations > 0)
+      this.dispatchProcessReservations -= 1;
   }
 
   private isTerminal(child: PiRpcChild): boolean {
@@ -1154,10 +1233,44 @@ export class PiDelegationController {
       });
   }
 
+  private persistPrivateOutput(
+    childId: string,
+    capture: PiChildPrivateOutputCapture,
+  ): PiChildSessionObserverResult {
+    const external = this.deps.onPrivateOutput?.(childId, capture);
+    const sessions = this.deps.threadSessions?.();
+    const thread = this.findLiveThreadState(childId);
+    const record =
+      this.threadRecords.get(thread?.threadId ?? childId) ??
+      this.threadRecords.get(childId);
+    const append = sessions?.appendResultOutput;
+    if (record === undefined || append === undefined) {
+      return external ?? ok(undefined);
+    }
+    const persisted = append
+      .call(sessions, record.sessionRef, capture.output, {
+        childId: record.childId,
+        nativeSessionId: record.nativeSessionId,
+        parentSession: record.originParentSessionId,
+      })
+      .mapErr(() => makeChildRecoveryUnavailableFailure(childId));
+    if (external === undefined) return persisted;
+    return persisted.andThen(() => external);
+  }
+
   private enqueue(
     childId: string,
     request: PiDelegationRequest,
   ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
+    const limits = resolveEffectiveDelegationLimits(
+      this.deps.config,
+      request.parentAgentName,
+    );
+    if (limits.isErr() || this.queue.length >= limits.value.maxProcesses) {
+      return errAsync(
+        makeChildCapacityExceededFailure(childId, "queue_capacity"),
+      );
+    }
     return new ResultAsync(
       new Promise((resolve) => {
         this.queue.push({ childId, request, resolve });
@@ -1535,7 +1648,9 @@ export class PiDelegationController {
     ) {
       return err(makeThreadIntegrityFailure(threadId, "session-corrupt"));
     }
-    const runs = record.runs.length;
+    // Cumulative, not the retained window: a reconstructed thread must resume
+    // its real run ordinal even after the window dropped its oldest entries.
+    const runs = childRefTotalRuns(record);
     if (runs < 1) {
       // A thread with no recorded run has no proven prior outcome to resume.
       return err(makeThreadIntegrityFailure(threadId, "session-corrupt"));
@@ -1564,11 +1679,7 @@ export class PiDelegationController {
     request: PiThreadRunRequest,
   ): Result<string, PiAdapterFailure> {
     const supplied = request.instruction;
-    if (
-      supplied !== undefined &&
-      (supplied.trim().length === 0 ||
-        supplied.length > PI_THREAD_LIMITS.maxInstructionLength)
-    ) {
+    if (supplied !== undefined && supplied.trim().length === 0) {
       return err(
         makeThreadResumeUnavailableFailure(
           request.threadId,
@@ -1635,11 +1746,6 @@ export class PiDelegationController {
     state: PiThreadState,
     action: PiThreadAction,
   ): Result<void, PiAdapterFailure> {
-    if (state.runs >= PI_THREAD_LIMITS.maxRuns) {
-      return err(
-        makeThreadNotResumableFailure(state.threadId, "run-limit-reached"),
-      );
-    }
     if (state.status === "running" || state.status === "queued") {
       return err(makeThreadAlreadyRunningFailure(state.threadId));
     }
@@ -2093,6 +2199,7 @@ export class PiDelegationController {
   private spawnNow(
     childId: string,
     request: PiDelegationRequest,
+    onRegistered?: () => void,
   ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     const depth = request.parentDepth + 1;
     const child = new PiRpcChild(
@@ -2106,6 +2213,10 @@ export class PiDelegationController {
         randomPort: this.deps.randomPort,
         hmacPort: this.deps.hmacPort,
         timerPort: this.deps.timerPort,
+        handshakeTimeoutMs: this.deps.handshakeTimeoutMs,
+        replyTimeoutMs: this.deps.replyTimeoutMs,
+        settlementTimeoutMs: this.deps.settlementTimeoutMs,
+        runtimeBudgetMs: this.deps.runtimeBudgetMs,
         cancelGraceMs: this.deps.cancelGraceMs,
         responseDrainMs: this.deps.responseDrainMs,
         baseEnv: this.deps.baseEnv,
@@ -2156,7 +2267,7 @@ export class PiDelegationController {
           this.notifyTreeChanged();
         },
         onPrivateOutput: (capture) =>
-          this.deps.onPrivateOutput?.(childId, capture) ?? ok(undefined),
+          this.persistPrivateOutput(childId, capture),
       },
     );
     const registration =
@@ -2180,6 +2291,7 @@ export class PiDelegationController {
       })
       .andThen(() => {
         this.children.set(childId, child);
+        onRegistered?.();
         this.notifyTreeChanged();
         this.ensureTreeRefreshTimer();
         const spawnInput = {
@@ -2311,9 +2423,22 @@ export class PiDelegationController {
         if (decision.isErr() || decision.value.outcome !== "authorized")
           continue;
         this.queue.splice(i, 1);
-        void this.spawnNow(entry.childId, entry.request).match(
-          (settlement) => entry.resolve(ok(settlement)),
-          (failure) => entry.resolve(err(failure)),
+        this.reserveDispatch(entry.request.parentId);
+        let reserved = true;
+        const release = (): void => {
+          if (!reserved) return;
+          this.releaseDispatch(entry.request.parentId);
+          reserved = false;
+        };
+        void this.spawnNow(entry.childId, entry.request, release).match(
+          (settlement) => {
+            release();
+            entry.resolve(ok(settlement));
+          },
+          (failure) => {
+            release();
+            entry.resolve(err(failure));
+          },
         );
         progressed = true;
         break;
@@ -2758,6 +2883,10 @@ export class PiDelegationController {
             randomPort: this.deps.randomPort,
             hmacPort: this.deps.hmacPort,
             timerPort: this.deps.timerPort,
+            handshakeTimeoutMs: this.deps.handshakeTimeoutMs,
+            replyTimeoutMs: this.deps.replyTimeoutMs,
+            settlementTimeoutMs: this.deps.settlementTimeoutMs,
+            runtimeBudgetMs: this.deps.runtimeBudgetMs,
             cancelGraceMs: this.deps.cancelGraceMs,
             responseDrainMs: this.deps.responseDrainMs,
             baseEnv: this.deps.baseEnv,
@@ -2791,7 +2920,7 @@ export class PiDelegationController {
               this.notifyTreeChanged();
             },
             onPrivateOutput: (capture) =>
-              this.deps.onPrivateOutput?.(childId, capture) ?? ok(undefined),
+              this.persistPrivateOutput(childId, capture),
             sessionObserver: {
               onEvent: (event) => {
                 this.deps.inspectionRegistry

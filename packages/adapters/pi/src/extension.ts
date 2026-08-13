@@ -52,6 +52,7 @@ import {
   WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
 } from "./capability-prober.js";
 import {
+  MAX_SETTLEMENT_OUTPUT_BYTES,
   parseControlBody,
   toModelIdentityBody,
 } from "./child-control-bodies.js";
@@ -281,6 +282,7 @@ import {
   type PiRecoveryPointerStore,
 } from "./recovery-pointer.js";
 import { findSessionMutationGap } from "./required-capability-gate.js";
+import type { PiChildPrivateOutputCapture } from "./rpc-child.js";
 import {
   type PiRuntimeStoreFactory,
   SqliteRuntimeStoreFactory,
@@ -561,7 +563,7 @@ export interface PiExtensionDeps {
   /** Optional private inspector/history sink for complete child output. */
   readonly onChildPrivateOutput?: (
     childId: string,
-    capture: { readonly output: string; readonly byteLength: number },
+    capture: PiChildPrivateOutputCapture,
   ) => Result<void, PiAdapterFailure> | ResultAsync<void, PiAdapterFailure>;
   /**
    * Opens the engine's Runtime Store (Pi adapter contract) - injected so no test
@@ -1130,7 +1132,10 @@ export function buildChildBootstrapBody(
         ? ""
         : (prepareComposedPrompt?.(full) ?? full.composedPrompt),
     models: full?.models ?? [],
-    delegationTargets: full?.delegationTargets ?? [],
+    // Target catalogs can exceed one authenticated control body. The child
+    // uses a generic relay tool; the parent authorizes every requested name
+    // against this descriptor's full catalog.
+    delegationTargets: [],
     correlationId: childId,
     context,
     ...(resolvedModel === undefined ? {} : { resolvedModel }),
@@ -1251,6 +1256,7 @@ function reportChildSettlement(
   detail: {
     assistantOutput?: string;
     completionCandidate?: string;
+    completionCandidateTransferred?: boolean;
     outputTransferId?: string;
     outputByteLength?: number;
     reason?: string;
@@ -1317,28 +1323,20 @@ async function applyChildBootstrap(
   // registration closure below can capture it regardless of `parsed.mode`;
   // only ever consulted when `parsed.mode === "direct-step"`.
   const directStepRecorder = new SingleCompletionCandidateRecorder();
-  // A bootstrapped child with its own declared delegation targets gets its
-  // own weave_delegate tool, relayed through this exact child's own
-  // authenticated runtime rather than an independent budget.
+  // The child relay uses the authenticated parent as target authority. This
+  // avoids forcing a potentially large target catalog through one envelope.
   const toolRegistrations = [
-    ...(parsed.delegationTargets.length === 0
-      ? []
-      : [
-          buildRelayedDelegationToolRegistration({
-            targets: parsed.delegationTargets,
-            // A relayed child cannot observe the host's session-I/O contract
-            // itself. Its parent already passed the gate before this child
-            // existed, and the parent authorizes every relayed delegation
-            // request, so the relay does not re-gate here.
-            getRuntime: () => state.runtime,
-            onCompactRenderFailure: (code) => {
-              deps.logger.warn(
-                { code },
-                "weave_delegate compact render failed",
-              );
-            },
-          }),
-        ]),
+    buildRelayedDelegationToolRegistration({
+      targets: parsed.delegationTargets,
+      // A relayed child cannot observe the host's session-I/O contract
+      // itself. Its parent already passed the gate before this child
+      // existed, and the parent authorizes every relayed delegation
+      // request, so the relay does not re-gate here.
+      getRuntime: () => state.runtime,
+      onCompactRenderFailure: (code) => {
+        deps.logger.warn({ code }, "weave_delegate compact render failed");
+      },
+    }),
     // Only a direct-step child (Pi adapter contract) ever receives
     // `weave_complete_step`; nested helpers it may itself spawn always use
     // the ordinary path above and never get this registration, so
@@ -1520,6 +1518,7 @@ async function activateChildModeIfApplicable(
     detail: {
       assistantOutput?: string;
       completionCandidate?: string;
+      completionCandidateTransferred?: boolean;
       outputTransferId?: string;
       outputByteLength?: number;
       reason?: string;
@@ -1688,8 +1687,25 @@ async function activateChildModeIfApplicable(
       // prose is never success.
       const candidate = state.directStep.recorder.take();
       if (candidate !== undefined) {
+        const serialized = serializeCompletionCandidate(candidate);
+        const candidateBytes = new TextEncoder().encode(serialized).byteLength;
+        if (candidateBytes > MAX_SETTLEMENT_OUTPUT_BYTES) {
+          const transferred = await runtime.transferOutput(serialized);
+          if (transferred.isErr()) {
+            await reportSettlement("failed", {
+              reason: `completion-transfer:${transferred.error.type}`,
+            });
+            return;
+          }
+          await reportSettlement("completed", {
+            completionCandidateTransferred: true,
+            outputTransferId: transferred.value.transferId,
+            outputByteLength: transferred.value.byteLength,
+          });
+          return;
+        }
         await reportSettlement("completed", {
-          completionCandidate: serializeCompletionCandidate(candidate),
+          completionCandidate: serialized,
         });
         return;
       }
@@ -1726,12 +1742,10 @@ async function activateChildModeIfApplicable(
         });
         return;
       }
-      // Output transfer failure must still settle exactly once. The bounded
-      // projection and byte count name the degradation without exposing the
-      // private full output to the parent model.
-      await reportSettlement("completed", {
-        assistantOutput: projection,
-        outputByteLength: byteLength,
+      // The bounded projection is not an authoritative result. Fail closed so
+      // the parent never persists or reports a partial result as complete.
+      await reportSettlement("failed", {
+        reason: `output-transfer:${transferred.error.type}`,
       });
       return;
     }
@@ -2285,6 +2299,11 @@ export function createPiExtension(
   const unavailableChildrenPort: PiAdapterChildrenPort = {
     list: () => okAsync({ children: [] }),
     show: () =>
+      errAsync({
+        type: "Unavailable",
+        message: "native child stores are not ready",
+      }),
+    result: () =>
       errAsync({
         type: "Unavailable",
         message: "native child stores are not ready",
@@ -3951,10 +3970,6 @@ export function createPiExtension(
           healthOnly,
           hasActiveInstance: active !== undefined,
           hasPendingArtifact,
-          unavailableCapability: findSessionMutationGap(
-            controller.getCurrentGeneration()?.preflight
-              .requiredCapabilityGaps ?? [],
-          )?.capabilityId,
         });
         const visible = actions.filter((action) => action.visible);
         if (visible.length === 0) {
@@ -4578,6 +4593,15 @@ export function createPiExtension(
             processPort: deps.processPort,
             randomPort: deps.randomPort,
             hmacPort: deps.hmacPort,
+            handshakeTimeoutMs:
+              configActivation.childLifecycleSettings.handshakeTimeoutMs,
+            replyTimeoutMs:
+              configActivation.childLifecycleSettings.replyTimeoutMs,
+            settlementTimeoutMs:
+              configActivation.childLifecycleSettings
+                .settlementInactivityTimeoutMs,
+            runtimeBudgetMs:
+              configActivation.childLifecycleSettings.absoluteRuntimeBudgetMs,
             ...(deps.childResponseDrainMs === undefined
               ? {}
               : { responseDrainMs: deps.childResponseDrainMs }),
@@ -4967,6 +4991,16 @@ export function createPiExtension(
                   randomPort: deps.randomPort,
                   hmacPort: deps.hmacPort,
                   logger: deps.logger,
+                  handshakeTimeoutMs:
+                    configActivation.childLifecycleSettings.handshakeTimeoutMs,
+                  replyTimeoutMs:
+                    configActivation.childLifecycleSettings.replyTimeoutMs,
+                  settlementTimeoutMs:
+                    configActivation.childLifecycleSettings
+                      .settlementInactivityTimeoutMs,
+                  runtimeBudgetMs:
+                    configActivation.childLifecycleSettings
+                      .absoluteRuntimeBudgetMs,
                   idGenerator: deps.idGenerator,
                   // The exact executable that launched this host, never a
                   // bare "pi" a spawner would have to re-resolve via `PATH`
@@ -4998,6 +5032,9 @@ export function createPiExtension(
                           directStepDelegationController.delegateFromAuthenticatedParent(
                             request,
                           ),
+                  onPrivateOutput: (childId, capture) =>
+                    deps.onChildPrivateOutput?.(childId, capture) ??
+                    ok(undefined),
                 },
                 generation.id,
               ),

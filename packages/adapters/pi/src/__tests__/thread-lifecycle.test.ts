@@ -911,15 +911,16 @@ describe("thread lifecycle: retry", () => {
     expect((await run).isOk()).toBe(true);
   });
 
-  it("refuses an over-long instruction before touching the thread", async () => {
+  it("starts a retry with a multibyte instruction larger than the former character cap", async () => {
     const h = harness();
     await startThread(h, "failed");
-    const result = await h.controller.resumeThread(
-      resume({ instruction: "x".repeat(8_193) }),
-    );
-    expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().code).toBe("ThreadResumeUnavailable");
-    expect(h.port.spawnedProcesses).toHaveLength(1);
+    const instruction = "界".repeat(8_193);
+    const run = h.controller.resumeThread(resume({ instruction }));
+    await flush();
+    const resumed = spawnedAt(h.port, 1);
+    expect(h.port.spawnedProcesses).toHaveLength(2);
+    await settleChild(resumed, h.port, "completed");
+    expect((await run).isOk()).toBe(true);
   });
 
   it("refuses a completed thread", async () => {

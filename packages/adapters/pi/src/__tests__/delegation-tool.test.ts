@@ -269,6 +269,43 @@ describe("buildDelegationToolRegistration", () => {
     expect(capturedRequest?.cwd).toBe("/project");
   });
 
+  it("execute: returns an opaque retrieval thread for an incomplete projection", async () => {
+    const output = "界".repeat(30_000);
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getController: () =>
+          fakeController(() =>
+            okAsync({
+              outcome: "completed",
+              assistantOutput: output,
+            } as PiChildSettlement),
+          ),
+      }),
+    );
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    const value = JSON.parse((result.content[0] as { text: string }).text) as {
+      thread: string;
+      settlement: {
+        finalOutput: string;
+        output: { complete: false; byteLength: number };
+      };
+    };
+    expect(value.thread).toBe("child-1");
+    expect(value.settlement.output.complete).toBe(false);
+    expect(value.settlement.output.byteLength).toBe(
+      new TextEncoder().encode(output).byteLength,
+    );
+    expect(
+      new TextEncoder().encode(value.settlement.finalOutput).byteLength,
+    ).toBeLessThanOrEqual(64 * 1_024);
+  });
+
   it("execute: pushes compact live updates from session events, not tree snapshots", async () => {
     let capturedRequest: PiDelegationRequest | undefined;
     const updates: PiToolResult[] = [];
@@ -1194,10 +1231,11 @@ describe("weave_delegate thread lifecycle", () => {
     });
   });
 
-  it("passes a bounded retry instruction through untouched", async () => {
+  it("passes a retry instruction larger than the former character cap untouched", async () => {
     let seen: PiThreadRunRequest | undefined;
+    const instruction = "界".repeat(8_193);
     await run(
-      { action: "retry", thread: "thread-1", instruction: "fix the test" },
+      { action: "retry", thread: "thread-1", instruction },
       threadController((request) => {
         seen = request;
         return okAsync({
@@ -1207,7 +1245,7 @@ describe("weave_delegate thread lifecycle", () => {
         });
       }),
     );
-    expect(seen?.instruction).toBe("fix the test");
+    expect(seen?.instruction).toBe(instruction);
   });
 
   it("reports a cancelled thread run as retryable", async () => {
@@ -1230,10 +1268,11 @@ describe("weave_delegate thread lifecycle", () => {
     });
   });
 
-  it("continues a thread with the caller's task", async () => {
+  it("continues a thread with a large caller task unchanged", async () => {
     let seen: PiThreadRunRequest | undefined;
+    const task = "x".repeat(8_193);
     await run(
-      { action: "continue", thread: "thread-1", task: "now write docs" },
+      { action: "continue", thread: "thread-1", task },
       threadController((request) => {
         seen = request;
         return okAsync({
@@ -1247,7 +1286,7 @@ describe("weave_delegate thread lifecycle", () => {
       }),
     );
     expect(seen?.action).toBe("continue");
-    expect(seen?.instruction).toBe("now write docs");
+    expect(seen?.instruction).toBe(task);
   });
 
   it("refuses a continue without a task rather than inventing one", async () => {
@@ -1272,7 +1311,6 @@ describe("weave_delegate thread lifecycle", () => {
       { action: "continue", thread: "thread-1", task: "x", instruction: "y" },
       { action: "retry", thread: "thread-1", agent: "shuttle" },
       { action: "retry", thread: "thread-1", instruction: "   " },
-      { action: "retry", thread: "thread-1", instruction: "x".repeat(8_193) },
       { agent: "shuttle", task: "do it", instruction: "extra" },
     ];
     for (const args of rejected) {

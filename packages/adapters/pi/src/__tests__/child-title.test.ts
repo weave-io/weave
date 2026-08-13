@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 import {
   createPiAdapterCommandHandlers,
   PI_ADAPTER_COMMAND_NAMES,
@@ -326,6 +326,11 @@ describe("durable child titles", () => {
             { index: 0, id: "entry-privacy-42", type: "weave.child.thread" },
           ],
           sessionRef: ref.sessionRef,
+        }),
+      result: () =>
+        errAsync({
+          type: "Unavailable" as const,
+          message: "no result",
         }),
       resolve: () => okAsync({ matches: [cliChild] }),
       delete: () =>

@@ -56,14 +56,68 @@ export const PI_CHILD_REF_SCHEMA_VERSION = 1 as const;
 /** Custom entry type appended into the parent session. */
 export const PI_CHILD_REF_ENTRY_TYPE = "weave.child-ref.v1" as const;
 
+/**
+ * Persisted **ordering identity** for ref envelopes.
+ *
+ * Ordering is deliberately *not* the run count. A run ordinal is a display
+ * fact about how many times a thread has been asked to work; envelope
+ * ordering is a write-order fact about which persisted record is newest. The
+ * two were the same number before, which meant the retained-window ceiling,
+ * the cumulative-run ceiling, and the newest-wins tiebreak all shared one
+ * saturating counter: past it, appends failed and repeated writes reused a
+ * sequence, so a stale record could win a read.
+ *
+ * The ordering clock is a hybrid logical clock: each append takes
+ * `max(previousSequence + 1, wallClockMillis)`. That is strictly monotonic
+ * per child (so no value is ever reused), independent of run count (so
+ * lifecycle appends never collide with run dividers), and anchored to real
+ * time (so a restarted store that has read nothing still outranks every
+ * earlier append).
+ *
+ * `maxSequence` is derived rather than chosen. The clock only exceeds wall
+ * time by the number of appends made faster than the clock ticks, and
+ * `appendedAt` itself stops being schema-valid past `maxTimestamp`. Doubling
+ * the wall-clock ceiling therefore leaves about 4.1e12 spare counter ticks
+ * beyond any schema-valid instant: exhausting them needs ~4.1e12 further
+ * appends inside a single millisecond, each of which is a separately
+ * persisted parent entry. No schema-valid thread lifetime can reach it, so
+ * the ceiling exists only to keep the field finite. It still fails closed if
+ * it is somehow reached, because emitting a duplicate sequence would silently
+ * corrupt newest-wins resolution.
+ */
+export const PI_CHILD_REF_ORDER = Object.freeze({
+  /** Latest schema-valid wall-clock instant carried by a ref (year 2100). */
+  maxTimestamp: 4_102_444_800_000,
+  /** Derived ceiling on the ordering clock: wall-clock ceiling plus slack. */
+  maxSequence: 8_204_889_600_000,
+});
+
 /** Hard bounds applied to every string, array, and number in a ref. */
 export const PI_CHILD_REF_BOUNDS = Object.freeze({
   maxIdLength: 256,
   maxRefLength: 1_024,
   maxTitleLength: 200,
   maxLabelLength: 128,
+  /**
+   * Run entries *retained in one ref record*. This is a bounded, newest-last
+   * window over the run history, not a ceiling on how many runs a thread may
+   * have: `appendRunDivider` trims the oldest entries out of the window and
+   * keeps appending. The authoritative count lives in `totalRuns`.
+   */
   maxRuns: 64,
-  maxTimestamp: 4_102_444_800_000,
+  /**
+   * Ceiling on a run *ordinal* and on `totalRuns`.
+   *
+   * Derived from the ordering clock, not chosen: every run divider is one
+   * append, and every append advances the clock by at least one, so
+   * `run <= totalRuns <= sequence <= PI_CHILD_REF_ORDER.maxSequence` holds for
+   * any record this store can write. Bounding the ordinal by the clock
+   * ceiling therefore keeps the field finite without introducing a *second*,
+   * lower ceiling that a healthy long-lived thread could hit first. Run
+   * 1,000,001 is an ordinary value.
+   */
+  maxRunOrdinal: PI_CHILD_REF_ORDER.maxSequence,
+  maxTimestamp: PI_CHILD_REF_ORDER.maxTimestamp,
   /** Parent entries inspected in one scan, independent of caller input. */
   maxScannedEntries: 4_096,
   /** Refs returned by one read, independent of caller input. */
@@ -126,7 +180,7 @@ export type PiChildRefRunAction = z.infer<typeof PiChildRefRunActionSchema>;
  */
 export const PiChildRefRunSchema = z
   .object({
-    run: z.number().int().min(1).max(PI_CHILD_REF_BOUNDS.maxRuns),
+    run: z.number().int().min(1).max(PI_CHILD_REF_BOUNDS.maxRunOrdinal),
     action: PiChildRefRunActionSchema,
     startedAt: timestampSchema,
     priorOutcome: PiChildRefStatusSchema.optional(),
@@ -165,10 +219,51 @@ export const PiChildRefRecordSchema = z
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
     settledAt: timestampSchema.optional(),
+    /**
+     * Bounded newest-last *window* over the run history. It is a projection,
+     * never the authority on how many runs happened: entries older than
+     * `maxRuns` are dropped from the record so the parent entry stays small.
+     */
     runs: z.array(PiChildRefRunSchema).max(PI_CHILD_REF_BOUNDS.maxRuns),
+    /**
+     * Authoritative cumulative run count. Optional so refs written before the
+     * field existed still parse; absent means the window *is* the whole
+     * history, which was true while the window could not overflow.
+     */
+    totalRuns: z
+      .number()
+      .int()
+      .min(0)
+      .max(PI_CHILD_REF_BOUNDS.maxRunOrdinal)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (record) =>
+      record.totalRuns === undefined ||
+      (record.totalRuns >= record.runs.length &&
+        record.totalRuns >= (record.runs.at(-1)?.run ?? 0)),
+    {
+      error: "totalRuns must cover the retained run window",
+      path: ["totalRuns"],
+    },
+  );
 export type PiChildRefRecord = z.infer<typeof PiChildRefRecordSchema>;
+
+/**
+ * Cumulative runs a thread has had, independent of the retained window.
+ *
+ * Older refs carry no `totalRuns`, and for those the window is the history.
+ * Newer refs may have dropped the oldest entries, so the stored count and the
+ * newest retained ordinal both outrank `runs.length`.
+ */
+export function childRefTotalRuns(record: PiChildRefRecord): number {
+  return Math.max(
+    record.totalRuns ?? 0,
+    record.runs.at(-1)?.run ?? 0,
+    record.runs.length,
+  );
+}
 
 export const PiChildRefEntryKindSchema = z.enum([
   "new-child",
@@ -183,8 +278,11 @@ export const PiChildRefEnvelopeSchema = z
     schemaVersion: z.literal(PI_CHILD_REF_SCHEMA_VERSION),
     entryType: z.literal(PI_CHILD_REF_ENTRY_TYPE),
     kind: PiChildRefEntryKindSchema,
-    /** Monotonic per-child ordinal; higher wins on read. */
-    sequence: z.number().int().min(1).max(1_000_000),
+    /**
+     * Monotonic per-child ordering clock; higher wins on read. Independent of
+     * the run ordinal: see `PI_CHILD_REF_ORDER`.
+     */
+    sequence: z.number().int().min(1).max(PI_CHILD_REF_ORDER.maxSequence),
     appendedAt: timestampSchema,
     record: PiChildRefRecordSchema,
   })
@@ -505,7 +603,7 @@ export class PiChildSessionRefStore {
   private readonly authority: PiChildRefSourceAuthority;
   private readonly now: () => number;
   private readonly newEntryId: () => string;
-  /** Highest sequence observed or written per child, seeded by reads. */
+  /** Highest ordering clock observed or written per child, seeded by reads. */
   private readonly sequences = new Map<string, number>();
 
   constructor(options: PiChildSessionRefStoreOptions) {
@@ -557,6 +655,7 @@ export class PiChildSessionRefStore {
       createdAt: at,
       updatedAt: at,
       runs,
+      totalRuns: runs.length,
     };
     return parseChildRefRecord(candidate).asyncAndThen((record) =>
       this.write("new-child", record).map(() => record),
@@ -574,11 +673,17 @@ export class PiChildSessionRefStore {
   ): ResultAsync<PiChildRefRecord, PiChildRefError> {
     return this.guardOrigin(record).asyncAndThen(() => {
       const at = this.now();
-      const nextRun = record.runs.length + 1;
-      if (nextRun > PI_CHILD_REF_BOUNDS.maxRuns) {
+      // The run *ordinal* continues past the retained window: dropping old
+      // window entries is a projection concern, and a thread that has already
+      // run `maxRuns` times must still be able to run again. The ordinal is
+      // also not the envelope ordering identity, so it never has to leave room
+      // for lifecycle appends. Only the clock-derived ceiling - unreachable in
+      // any schema-valid lifetime - can refuse an append.
+      const nextRun = childRefTotalRuns(record) + 1;
+      if (nextRun > PI_CHILD_REF_BOUNDS.maxRunOrdinal) {
         return errAsync<PiChildRefRecord, PiChildRefError>({
           type: "ChildRefInvalid",
-          issues: ["runs"],
+          issues: ["totalRuns"],
         });
       }
       const run: PiChildRefRun = {
@@ -600,7 +705,9 @@ export class PiChildSessionRefStore {
         ...record,
         status: input.status ?? "running",
         updatedAt: at,
-        runs: [...record.runs, run],
+        // Newest-last window: the oldest entries fall out, the count does not.
+        runs: [...record.runs, run].slice(-PI_CHILD_REF_BOUNDS.maxRuns),
+        totalRuns: nextRun,
       };
       return parseChildRefRecord(candidate).asyncAndThen((next) =>
         this.write("run-divider", next).map(() => next),
@@ -678,15 +785,32 @@ export class PiChildSessionRefStore {
   }
 
   /**
-   * Next per-child sequence. Monotonic within this store and seeded from the
-   * highest sequence seen in the parent session during a read, so repeated
-   * lifecycle updates can never collide.
+   * Next per-child ordering clock value.
+   *
+   * Hybrid logical clock: `max(previousSequence + 1, wallClockMillis)`. It is
+   * strictly increasing per child, so no value is ever reused and a duplicate
+   * can never be emitted; it is seeded from the highest sequence seen in the
+   * parent session during a read, so a restarted store continues the same
+   * order; and it is anchored to wall time, so even an unseeded store
+   * outranks earlier appends. It never derives from the run count, so run
+   * dividers and lifecycle updates share one order without colliding.
+   *
+   * Fails closed rather than clamping: a clamped clock would reuse a value
+   * and let a stale record win newest-wins resolution.
    */
-  private nextSequence(record: PiChildRefRecord): number {
-    const known = this.sequences.get(record.childId) ?? record.runs.length;
-    const next = Math.min(known + 1, 1_000_000);
-    this.sequences.set(record.childId, next);
-    return next;
+  private nextSequence(childId: string): Result<number, PiChildRefError> {
+    const previous = this.sequences.get(childId) ?? 0;
+    const raw = this.now();
+    const wall =
+      Number.isSafeInteger(raw) && raw > 0
+        ? Math.min(raw, PI_CHILD_REF_ORDER.maxTimestamp)
+        : 0;
+    const next = Math.max(previous + 1, wall);
+    if (next > PI_CHILD_REF_ORDER.maxSequence) {
+      return err({ type: "ChildRefInvalid", issues: ["sequence"] });
+    }
+    this.sequences.set(childId, next);
+    return ok(next);
   }
 
   private write(
@@ -703,11 +827,14 @@ export class PiChildSessionRefStore {
             state,
           });
         }
+        const sequence = this.nextSequence(record.childId);
+        if (sequence.isErr())
+          return errAsync<void, PiChildRefError>(sequence.error);
         const envelope: PiChildRefEnvelope = {
           schemaVersion: PI_CHILD_REF_SCHEMA_VERSION,
           entryType: PI_CHILD_REF_ENTRY_TYPE,
           kind,
-          sequence: this.nextSequence(record),
+          sequence: sequence.value,
           appendedAt: this.now(),
           record,
         };

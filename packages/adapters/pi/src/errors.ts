@@ -42,6 +42,7 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "ChildReplyLate",
   "ChildExitedUnexpectedly",
   "ChildSettlementMissing",
+  "ChildRuntimeExceeded",
   "ChildResponseMissing",
   "ChildAbortFailed",
   // transfer (chunked payload delivery in either direction)
@@ -163,8 +164,8 @@ export const PI_TRANSPORT_LIMITS = {
   transferAckTimeoutMs: 10_000,
   /** Retries after a failed or timed-out transfer, before a typed failure. */
   transferMaxRetries: 1,
-  /** Cap on output projected to the parent model. Mirrors `MAX_LATEST_OUTPUT_BYTES`. */
-  parentProjectionBytes: 4 * 1024,
+  /** Cap on inline output projected to the parent model. Mirrors `MAX_FINAL_OUTPUT_BYTES`. */
+  parentProjectionBytes: 64 * 1024,
 } as const;
 
 /** Names the logical channel a transfer failure belongs to, for correlation only. */
@@ -391,7 +392,7 @@ function childScope(childId: string): PiAdapterFailureScope {
  */
 export function makeChildCapacityExceededFailure(
   childId: string,
-  reason: "max_children" | "max_depth",
+  reason: "max_children" | "max_depth" | "queue_capacity",
 ): PiAdapterFailure {
   return {
     code: "ChildCapacityExceeded",
@@ -940,9 +941,7 @@ export type PiThreadNotRetryableReason =
   | "retryability-unknown"
   | "status-not-failed-or-cancelled";
 
-export type PiThreadNotResumableReason =
-  | "status-not-completed"
-  | "run-limit-reached";
+export type PiThreadNotResumableReason = "status-not-completed";
 
 export type PiThreadResumeUnavailableReason =
   | "lifecycle-unavailable"

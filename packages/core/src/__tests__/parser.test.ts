@@ -716,17 +716,17 @@ describe("Parser — delegation limits", () => {
   it("parses project and agent delegation blocks", () => {
     const source = `settings {
   delegation {
-    max_children 9
-    max_concurrency 9
-    max_depth 3
-    max_processes 9
+    max_children 256
+    max_concurrency 64
+    max_depth 32
+    max_processes 128
   }
 }
 
 agent tapestry {
   delegation {
-    max_children 3
-    max_concurrency 2
+    max_children 64
+    max_concurrency 32
   }
 }`;
     const result = parseSource(source);
@@ -747,7 +747,7 @@ agent tapestry {
       delegation.properties.find(
         (property) => property.key === "max_concurrency",
       )?.value,
-    ).toMatchObject({ kind: "number", value: 9 });
+    ).toMatchObject({ kind: "number", value: 64 });
 
     const agent = nodes[1] as AgentBlock;
     const agentDelegation = agent.properties.find(
@@ -755,7 +755,7 @@ agent tapestry {
     )?.value as BlockValue;
     expect(agentDelegation.properties[0]?.value).toMatchObject({
       kind: "number",
-      value: 3,
+      value: 64,
     });
   });
 

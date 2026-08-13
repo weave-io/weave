@@ -21,6 +21,7 @@ The `weave` CLI validates and inspects configuration, initializes harness integr
 | `weave runtime journal` | Read recent sanitized journal entries |
 | `weave adapter pi children list` | List locally recorded Pi child sessions for a workspace |
 | `weave adapter pi children show <id>` | Read one child's bounded metadata and native entry index |
+| `weave adapter pi children result <id>` | Read one child's byte-exact durable result in bounded pages |
 | `weave adapter pi children delete <id>` | Append a tombstone for one child session |
 | `weave adapter pi doctor` | Run bounded Pi child-storage diagnostics |
 | `weave eval run` | Run registered text-only agent evals |
@@ -125,7 +126,8 @@ See [Runtime Store](runtime.md) and [`commands/runtime.ts`](../../packages/cli/s
 
 ```bash
 weave adapter pi children list [--json] [--diagnostic]
-weave adapter pi children show <id> [--json] [--diagnostic] [--cursor <c>] [--parent-session <id>]
+weave adapter pi children show <id> [--json] [--content] [--diagnostic] [--cursor <c>] [--parent-session <id>]
+weave adapter pi children result <id> [--json] [--cursor <c>] [--parent-session <id>]
 weave adapter pi children delete <id> [--yes] [--json] [--parent-session <id>]
 weave adapter pi doctor [--json] [--diagnostic]
 ```
@@ -133,7 +135,8 @@ weave adapter pi doctor [--json] [--diagnostic]
 The workspace defaults to the current working directory.
 
 - `children list` returns the newest 50 children for the workspace, including tombstoned rows, each with child id, thread id, bounded title, status, timestamps, origin parent session, and the `tombstoned` and `stale` flags.
-- `children show` returns the child plus the newest 100 native entry descriptors (`index`, `id`, `type`) and a `nextCursor` when more remain. Pass `--cursor <c>` to page backward through older entries.
+- `children show` returns the child plus the newest 100 native entry descriptors (`index`, `id`, `type`) and a `nextCursor` when more remain. Pass `--content` to include a **sanitized display projection** of the entry text. A projection is never authoritative: control sequences and path-like tokens are rewritten, and each entry carries `contentKind: "sanitized-projection"` so it cannot be mistaken for stored bytes. Use `children result` for exact result data. Each projection page is limited to 64 KiB of UTF-8 and reports `contentComplete` plus an exact `contentByteLength` when measurable. When one entry is larger, pass its `contentCursor` back with `--content-cursor <c>` until `contentComplete` is true. Pass `--cursor <c>` to page backward through older entries. Content retrieval never copies transcripts into Runtime Store and never exposes native session paths or refs unless `--diagnostic` is also set.
+- `children result` returns the child's **byte-exact** durable result. Nothing on this route is sanitized, rewritten, or truncated mid-result: `exact` is always `true`, and `content` is the child's own UTF-8 bytes carried as base64 under `contentEncoding: "base64"`, with `contentByteOffset`, `contentByteLength`, and a per-page `contentDigest` describing the decoded window. Base64 is used because it is byte-preserving and costs a fixed `4 * ceil(n / 3)` characters, whereas raw JSON escaping has no bounded expansion: one page of control bytes would cost six characters per byte and overrun the command result envelope. A result is returned only after the stored group verifies against its commit record — matching chunk count, order, byte total, SHA-256 digest, and the immutable identity the commit was bound to (child, native session, origin parent, and storage leaf) — so an interrupted, corrupt, or misdirected group reports `status: "incomplete"` with a typed `reason` and no content at all. Reachability is not authority: a request that names a different child or native session than the stored result is refused rather than served. Cursors are bound to that identity and to the exact commit, so a cursor from another child or a changed result is rejected rather than resumed. Each page returns at most 128 KiB of decoded bytes, plus a `nextCursor` while bytes remain; decoding each page and concatenating in order reproduces the result exactly. Verification and retrieval page the native session, so a result far larger than one whole-session read may be proven and retrieved without allocating it.
 - `children delete` appends a tombstone; it never rewrites or truncates stored session data. It resolves the child's immutable origin parent from list metadata and never invents a synthetic parent such as `current`. When the same child id exists under two parents, pass `--parent-session <id>`; a forged or mismatched parent scope is rejected. Without `--yes` it prompts `Delete child <id> and append a tombstone?`, defaulting to no. Declining prints `Delete cancelled.` and exits `0`. A non-interactive terminal without `--yes` exits with `Interactive mode is unavailable. Re-run with --yes to delete without a prompt.`
 - `doctor` runs the seven bounded storage checks and reports `ok`, `degraded`, `unavailable`, or `not_implemented`.
 

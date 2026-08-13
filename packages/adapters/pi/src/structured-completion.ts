@@ -13,6 +13,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { StepCompletionSignal } from "@weaveio/weave-engine";
 import { err, ok, Result } from "neverthrow";
 import { Type } from "typebox";
+import { projectDiagnosticText } from "./child-diagnostic-projection.js";
 import {
   makeCompletionSignalMalformedFailure,
   makeCompletionSignalMissingFailure,
@@ -22,10 +23,20 @@ import type { PiToolRegistration } from "./types.js";
 
 export const WEAVE_COMPLETE_STEP_TOOL_NAME = "weave_complete_step";
 
-/** Pi adapter contract: bounded message, closed enums, no raw content. */
-const MAX_MESSAGE_LENGTH = 4096;
-const MAX_NEXT_STEP_HINT_LENGTH = 256;
-const MAX_ARTIFACT_REFS = 32;
+/** Pi adapter contract: bounded diagnostic projections, closed enums. */
+const MAX_MESSAGE_LENGTH = 32 * 1_024;
+const MAX_NEXT_STEP_HINT_LENGTH = 4_096;
+const MAX_COMPLETION_CANDIDATE_BYTES = 64 * 1_024 * 1_024;
+const MAX_ARTIFACT_FIELD_BYTES = 64 * 1_024;
+
+/** The shared diagnostic projection with this module's own marker text. */
+function truncateCompletionText(value: string, maxBytes: number): string {
+  return projectDiagnosticText(
+    value,
+    maxBytes,
+    "\n… [completion diagnostic truncated]",
+  );
+}
 
 const COMPLETION_OUTCOMES = new Set(["success", "blocked", "failed", "paused"]);
 const COMPLETION_METHODS = new Set([
@@ -65,21 +76,29 @@ function parseArtifactRefs(
       ),
     );
   }
-  if (raw.length > MAX_ARTIFACT_REFS) {
-    return err(
-      makeCompletionSignalMalformedFailure(
-        stepName,
-        "too many declared artifacts",
-      ),
-    );
-  }
   const parsed: Array<{
     name: string;
     path: string;
     mimeType?: string;
     description?: string;
   }> = [];
-  for (const entry of raw) {
+  const encoder = new TextEncoder();
+  let aggregateBytes = 2;
+  for (let index = 0; index < raw.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(raw, String(index));
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true
+    ) {
+      return err(
+        makeCompletionSignalMalformedFailure(
+          stepName,
+          "artifact entries must be enumerable data properties",
+        ),
+      );
+    }
+    const entry = descriptor.value;
     if (!isPlainRecord(entry)) {
       return err(
         makeCompletionSignalMalformedFailure(
@@ -124,6 +143,30 @@ function parseArtifactRefs(
         makeCompletionSignalMalformedFailure(
           stepName,
           "artifact description must be a string",
+        ),
+      );
+    }
+    const fields = [
+      candidate.name,
+      candidate.path,
+      candidate.mimeType,
+      candidate.description,
+    ].filter((value): value is string => typeof value === "string");
+    const fieldBytes = fields.map((value) => encoder.encode(value).byteLength);
+    if (fieldBytes.some((bytes) => bytes > MAX_ARTIFACT_FIELD_BYTES)) {
+      return err(
+        makeCompletionSignalMalformedFailure(
+          stepName,
+          "artifact field exceeds the 64 KiB UTF-8 limit",
+        ),
+      );
+    }
+    aggregateBytes += fieldBytes.reduce((total, bytes) => total + bytes, 0) + 32;
+    if (aggregateBytes > MAX_COMPLETION_CANDIDATE_BYTES) {
+      return err(
+        makeCompletionSignalMalformedFailure(
+          stepName,
+          "artifact catalog exceeds the 64 MiB aggregate limit",
         ),
       );
     }
@@ -204,14 +247,7 @@ export function parseStructuredCompletionCandidate(
         ),
       );
     }
-    if (message.length > MAX_MESSAGE_LENGTH) {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "message exceeds bounded length",
-        ),
-      );
-    }
+
   }
   const nextStepHint = raw.nextStepHint;
   if (nextStepHint !== undefined) {
@@ -223,14 +259,7 @@ export function parseStructuredCompletionCandidate(
         ),
       );
     }
-    if (nextStepHint.length > MAX_NEXT_STEP_HINT_LENGTH) {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "nextStepHint exceeds bounded length",
-        ),
-      );
-    }
+
   }
   const artifactsResult = parseArtifactRefs(raw.artifacts, stepName);
   if (artifactsResult.isErr()) return err(artifactsResult.error);
@@ -241,12 +270,32 @@ export function parseStructuredCompletionCandidate(
       ? { method: method as StepCompletionSignal["method"] }
       : {}),
     ...(approved !== undefined ? { approved } : {}),
-    ...(message !== undefined ? { message } : {}),
-    ...(nextStepHint !== undefined ? { nextStepHint } : {}),
+    ...(message !== undefined
+      ? { message: truncateCompletionText(message, MAX_MESSAGE_LENGTH) }
+      : {}),
+    ...(nextStepHint !== undefined
+      ? {
+          nextStepHint: truncateCompletionText(
+            nextStepHint,
+            MAX_NEXT_STEP_HINT_LENGTH,
+          ),
+        }
+      : {}),
     ...(artifactsResult.value !== undefined
       ? { artifacts: artifactsResult.value }
       : {}),
   };
+  const serializedBytes = new TextEncoder().encode(
+    serializeCompletionCandidate(signal),
+  ).byteLength;
+  if (serializedBytes > MAX_COMPLETION_CANDIDATE_BYTES) {
+    return err(
+      makeCompletionSignalMalformedFailure(
+        stepName,
+        "completion candidate exceeds the 64 MiB serialized limit",
+      ),
+    );
+  }
   return ok(signal);
 }
 
@@ -295,7 +344,12 @@ export function serializeCompletionCandidate(candidate: object): string {
  * anything that isn't valid, bounded JSON - never throws.
  */
 export function tryParseCompletionCandidateJson(raw: string): unknown {
-  if (raw.length === 0 || raw.length > MAX_MESSAGE_LENGTH * 4) return undefined;
+  if (
+    raw.length === 0 ||
+    new TextEncoder().encode(raw).byteLength > MAX_COMPLETION_CANDIDATE_BYTES
+  ) {
+    return undefined;
+  }
   const parsed = Result.fromThrowable(
     () => JSON.parse(raw) as unknown,
     () => undefined,
@@ -358,25 +412,32 @@ export function buildWeaveCompleteStepParameters() {
     ),
     message: Type.Optional(
       Type.String({
-        maxLength: MAX_MESSAGE_LENGTH,
-        description: "A bounded human-readable completion message.",
+        description:
+          "A human-readable completion message. Oversized prose is safely projected.",
       }),
     ),
     nextStepHint: Type.Optional(
       Type.String({
-        maxLength: MAX_NEXT_STEP_HINT_LENGTH,
-        description: "An optional bounded hint for the next step.",
+        description:
+          "An optional next-step hint. Oversized prose is safely projected.",
       }),
     ),
     artifacts: Type.Optional(
       Type.Array(
         Type.Object({
-          name: Type.String({ minLength: 1 }),
-          path: Type.String({ minLength: 1 }),
-          mimeType: Type.Optional(Type.String()),
-          description: Type.Optional(Type.String()),
+          name: Type.String({ minLength: 1, maxLength: MAX_ARTIFACT_FIELD_BYTES }),
+          path: Type.String({ minLength: 1, maxLength: MAX_ARTIFACT_FIELD_BYTES }),
+          mimeType: Type.Optional(
+            Type.String({ maxLength: MAX_ARTIFACT_FIELD_BYTES }),
+          ),
+          description: Type.Optional(
+            Type.String({ maxLength: MAX_ARTIFACT_FIELD_BYTES }),
+          ),
         }),
-        { maxItems: MAX_ARTIFACT_REFS },
+        {
+          description:
+            "Declared artifact references. Large catalogs use bounded output transfer.",
+        },
       ),
     ),
   });

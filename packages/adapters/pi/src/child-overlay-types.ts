@@ -68,6 +68,18 @@ export const CHILD_OVERLAY_BOUNDS = Object.freeze({
   maxTitleLength: 200,
   /** Ceiling on run dividers retained per child descriptor. */
   maxRuns: 64,
+  /**
+   * Ceiling on a run *ordinal*. The overlay retains a bounded newest-last
+   * window of dividers, so run 65, run 1,001, and run 1,000,001 are ordinary
+   * values inside a 64-entry window; capping the ordinal at the window size,
+   * or at any cumulative count a healthy thread can reach, rejected long-lived
+   * threads outright.
+   *
+   * Restated rather than imported because this module is the acyclic root of
+   * the overlay runtime and must not depend on the ref store. Equality with
+   * `PI_CHILD_REF_BOUNDS.maxRunOrdinal` is pinned by test.
+   */
+  maxRunOrdinal: 8_204_889_600_000,
   /** Ceiling on nested hierarchy depth reported in descriptors. */
   maxHierarchyDepth: 16,
   /** Ceiling on content blocks read from one native message entry. */
@@ -114,9 +126,16 @@ export const OverlayTextSchema = z
 
 export const RunActionSchema = z.enum(["start", "retry", "continue"]);
 
+/** One run ordinal. Bounded by the ordinal ceiling, not the window size. */
+export const ChildOverlayRunOrdinalSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(CHILD_OVERLAY_BOUNDS.maxRunOrdinal);
+
 export const ChildOverlayRunDividerSchema = z
   .object({
-    run: z.number().int().min(1).max(CHILD_OVERLAY_BOUNDS.maxRuns),
+    run: ChildOverlayRunOrdinalSchema,
     action: RunActionSchema,
     startedAt: z.number().int().nonnegative().optional(),
     priorOutcome: z

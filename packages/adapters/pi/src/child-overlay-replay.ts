@@ -18,6 +18,7 @@ import {
   type ChildOverlayEntryKind,
   type ChildOverlayMappingError,
   type ChildOverlayReplayStep,
+  ChildOverlayRunOrdinalSchema,
   OpaqueIdSchema,
   RunActionSchema,
 } from "./child-overlay-types.js";
@@ -57,14 +58,9 @@ const NativeCustomSchema = z.looseObject({
 });
 
 const RunDividerDataSchema = z.looseObject({
-  run: z.number().int().min(1).max(CHILD_OVERLAY_BOUNDS.maxRuns).optional(),
+  run: ChildOverlayRunOrdinalSchema.optional(),
   action: RunActionSchema.optional(),
-  runNumber: z
-    .number()
-    .int()
-    .min(1)
-    .max(CHILD_OVERLAY_BOUNDS.maxRuns)
-    .optional(),
+  runNumber: ChildOverlayRunOrdinalSchema.optional(),
 });
 
 /** C0 except TAB/LF/CR, DEL, and C1 U+0080–U+009F — String.raw for Biome. */

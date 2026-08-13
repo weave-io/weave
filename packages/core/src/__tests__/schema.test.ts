@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
+  DEFAULT_DELEGATION_LIMITS,
+  MAX_DELEGATION_LIMITS,
   parseModelIntentEntry,
   THINKING_LEVEL_VALUES,
   ThinkingLevelSchema,
@@ -1894,50 +1896,80 @@ describe("AgentConfigSchema — review_models field", () => {
 });
 
 describe("delegation limit schemas", () => {
+  it("uses the approved defaults", () => {
+    expect(DEFAULT_DELEGATION_LIMITS).toEqual({
+      max_children: 32,
+      max_concurrency: 8,
+      max_depth: 8,
+      max_processes: 32,
+    });
+  });
+
   it("accepts portable project and agent delegation limits", () => {
     expect(
       DelegationSettingsSchema.safeParse({
-        max_children: 9,
-        max_concurrency: 3,
-        max_depth: 3,
-        max_processes: 9,
+        max_children: 256,
+        max_concurrency: 64,
+        max_depth: 32,
+        max_processes: 128,
       }).success,
     ).toBe(true);
     expect(
       AgentDelegationConfigSchema.safeParse({
-        max_children: 2,
-        max_concurrency: 1,
+        max_children: 64,
+        max_concurrency: 32,
       }).success,
     ).toBe(true);
   });
 
-  it("accepts max_concurrency 9 and rejects 10", () => {
+  it("accepts max_concurrency 64 and rejects 65", () => {
     expect(
-      DelegationSettingsSchema.safeParse({ max_concurrency: 9 }).success,
+      DelegationSettingsSchema.safeParse({ max_concurrency: 64 }).success,
     ).toBe(true);
     expect(
-      DelegationSettingsSchema.safeParse({ max_concurrency: 10 }).success,
+      DelegationSettingsSchema.safeParse({ max_concurrency: 65 }).success,
     ).toBe(false);
     expect(
-      AgentConfigSchema.safeParse({ delegation: { max_concurrency: 9 } })
+      AgentConfigSchema.safeParse({ delegation: { max_concurrency: 64 } })
         .success,
     ).toBe(true);
     expect(
-      AgentConfigSchema.safeParse({ delegation: { max_concurrency: 10 } })
+      AgentConfigSchema.safeParse({ delegation: { max_concurrency: 65 } })
         .success,
     ).toBe(false);
   });
 
-  it("rejects non-positive, fractional, and oversized child limits", () => {
+  it("accepts each hard maximum and rejects values above it", () => {
+    expect(
+      DelegationSettingsSchema.safeParse(MAX_DELEGATION_LIMITS).success,
+    ).toBe(true);
+    expect(
+      DelegationSettingsSchema.safeParse({ max_children: 257 }).success,
+    ).toBe(false);
+    expect(
+      DelegationSettingsSchema.safeParse({ max_concurrency: 65 }).success,
+    ).toBe(false);
+    expect(
+      DelegationSettingsSchema.safeParse({ max_depth: 33 }).success,
+    ).toBe(false);
+    expect(
+      DelegationSettingsSchema.safeParse({ max_processes: 129 }).success,
+    ).toBe(false);
+    expect(
+      AgentDelegationConfigSchema.safeParse({ max_children: 257 }).success,
+    ).toBe(false);
+    expect(
+      AgentDelegationConfigSchema.safeParse({ max_concurrency: 65 }).success,
+    ).toBe(false);
+  });
+
+  it("rejects non-positive and fractional limits", () => {
     expect(
       DelegationSettingsSchema.safeParse({ max_children: 0 }).success,
     ).toBe(false);
     expect(DelegationSettingsSchema.safeParse({ max_depth: 1.5 }).success).toBe(
       false,
     );
-    expect(
-      DelegationSettingsSchema.safeParse({ max_children: 10 }).success,
-    ).toBe(false);
   });
 
   it("accepts project max_children without max_concurrency and preserves omission", () => {

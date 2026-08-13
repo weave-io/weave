@@ -25,6 +25,7 @@ import { basename, dirname, isAbsolute } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
+  makeCancelBody,
   type PiBootstrapAckBody,
   type PiBootstrapBody,
   type PiDelegateRequestBody,
@@ -63,12 +64,17 @@ import type {
   PiSpawnedChildProcess,
 } from "./child-process-port.js";
 import {
+  ChildRuntimeBudget,
+  makeChildRuntimeExceededFailure,
+} from "./child-runtime-budget.js";
+import {
   type PiChildSessionEvent,
   PiExtensionUiResponseSchema,
   parsePiChildSessionEvent,
 } from "./child-session-events.js";
 import {
   DEFAULT_CANCEL_GRACE_MS,
+  DEFAULT_CHILD_RUNTIME_BUDGET_MS,
   DEFAULT_HANDSHAKE_TIMEOUT_MS,
   DEFAULT_REPLY_TIMEOUT_MS,
   DEFAULT_RESPONSE_DRAIN_MS,
@@ -86,6 +92,7 @@ import {
   type PiChildStatus,
   type PiChildTreeNode,
   type PiChildUsageAggregate,
+  truncateFinalOutput,
   truncateLatestOutput,
 } from "./child-tree.js";
 import { DelegateRequestAssembler } from "./delegate-request-chunking.js";
@@ -133,6 +140,29 @@ export interface PiRestoreContextMetadata {
   readonly checkpointCursor?: number;
 }
 
+/**
+ * Where the captured private terminal output actually came from.
+ *
+ * A caller that must persist an authoritative result cannot treat these as
+ * equivalent. `transferred-candidate` and `inline-candidate` are the child's
+ * verified structured completion candidate; `transferred-output` is its
+ * complete free-text terminal output; `observed-terminal` is only the last
+ * parser-approved terminal assistant message the parent happened to observe,
+ * which is unrelated prose for a structured direct step.
+ */
+export type PiChildPrivateOutputSource =
+  | "transferred-candidate"
+  | "inline-candidate"
+  | "transferred-output"
+  | "observed-terminal";
+
+/** One complete private terminal output capture and its provenance. */
+export interface PiChildPrivateOutputCapture {
+  readonly output: string;
+  readonly byteLength: number;
+  readonly source: PiChildPrivateOutputSource;
+}
+
 /** Receives validated, bounded events without owning child persistence. */
 export interface PiChildSessionObserver {
   readonly onEvent: (
@@ -151,6 +181,12 @@ export interface PiRpcChildDeps {
   readonly replyTimeoutMs?: number;
   /** Maximum silence while awaiting settlement; valid child activity renews it. */
   readonly settlementTimeoutMs?: number;
+  /**
+   * Absolute wall-clock budget for this child's whole lifetime, measured from
+   * the spawn boundary and never renewed by activity. Defaults to
+   * Defaults to the adapter child-runtime budget; tests inject a small value.
+   */
+  readonly runtimeBudgetMs?: number;
   /**
    * Bounded window kept open after a `completed` settlement that has not yet
    * satisfied the child result contract, so final in-flight session events are
@@ -208,10 +244,9 @@ export interface PiRpcChildDeps {
   /** Receives each validated bounded child-session event. */
   readonly sessionObserver?: PiChildSessionObserver;
   /** Receives the full private terminal output; never projected to the model. */
-  readonly onPrivateOutput?: (capture: {
-    readonly output: string;
-    readonly byteLength: number;
-  }) => PiChildSessionObserverResult;
+  readonly onPrivateOutput?: (
+    capture: PiChildPrivateOutputCapture,
+  ) => PiChildSessionObserverResult;
   /**
    * Receives bounded restore metadata only after the authenticated child
    * confirms the stored active leaf. It never receives entries or sessionPath.
@@ -252,6 +287,7 @@ export type PiChildSettlement =
       readonly outcome: "completed";
       readonly assistantOutput?: string;
       readonly completionCandidate?: string;
+      readonly completionCandidateTransferred?: boolean;
       readonly outputByteLength?: number;
       /** Present on settlements produced by PiRpcChild; optional for legacy callers. */
       readonly interventionCount?: number;
@@ -275,7 +311,7 @@ const MAX_LIVE_RPC_MESSAGE_LENGTH = 64 * 1024;
 const MAX_GET_ENTRIES = 256;
 const MAX_GET_ENTRIES_BYTES = 512 * 1024;
 const MAX_LIVE_JSON_DEPTH = 8;
-
+/** Safe regular `.jsonl` basename (same character class as native session components). */
 const SAFE_SPAWN_SESSION_BASENAME = /^[A-Za-z0-9._-]+\.jsonl$/;
 const PI_CODING_AGENT_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 
@@ -674,6 +710,7 @@ export class PiRpcChild {
   private readonly command: readonly string[];
   private readonly handshakeTimeoutMs: number;
   private readonly settlementTimeoutMs: number;
+  private readonly runtimeBudget: ChildRuntimeBudget;
   private readonly responseDrainMs: number;
   private readonly now: () => number;
   private readonly onDelegationRequest:
@@ -698,10 +735,7 @@ export class PiRpcChild {
     | undefined;
   private readonly sessionObserver: PiChildSessionObserver | undefined;
   private readonly onPrivateOutput:
-    | ((capture: {
-        readonly output: string;
-        readonly byteLength: number;
-      }) => PiChildSessionObserverResult)
+    | ((capture: PiChildPrivateOutputCapture) => PiChildSessionObserverResult)
     | undefined;
   private readonly onRestoreContextVerified:
     | ((metadata: PiRestoreContextMetadata) => PiChildSessionObserverResult)
@@ -719,6 +753,12 @@ export class PiRpcChild {
   private readonly outputTransferAssembler = new ChunkTransferAssembler();
   private readonly completedOutputTransfers = new Map<string, string>();
   private disposed = false;
+  /**
+   * The first terminal failure this child observed, kept so a `spawn` that
+   * resolves after the child was already concluded can be rejected with the
+   * real cause rather than a fabricated one.
+   */
+  private terminalFailure: PiAdapterFailure | undefined;
   private startedAtMs = 0;
 
   private status: PiChildStatus = "queued";
@@ -785,6 +825,27 @@ export class PiRpcChild {
    * still a duplicate reply.
    */
   private settlementDraining = false;
+  /**
+   * Reserves terminal authority for the first authenticated settlement while
+   * its private-output observer is pending. A second settlement is a protocol
+   * duplicate even though the first has not reached the drain or settled state.
+   */
+  private settlementCapturePending = false;
+  /**
+   * Monotonic lifecycle epoch for asynchronous settlement work.
+   *
+   * An authenticated `settled` envelope may hand the private output to an
+   * observer that answers asynchronously. While that capture is pending the
+   * child can still be concluded terminally by a path that owes nothing to the
+   * capture - absolute runtime-budget expiry, cancellation, or disposal. The
+   * capture's continuation is already queued at that point and cannot be
+   * unsubscribed, so it is fenced instead: the epoch is read *before* the async
+   * call, every terminal path bumps it, and a continuation whose token no
+   * longer matches is inert. That is what stops a late success from calling
+   * `settleUnderResultContract()` and overwriting `ChildRuntimeExceeded` or
+   * installing a response-drain timer on an already-disposed child.
+   */
+  private settlementCaptureEpoch = 0;
   private drainCorrelationId = "";
   private responseDrainTimer: TimerHandle | undefined;
   private finishSettlement: (() => void) | undefined;
@@ -820,6 +881,10 @@ export class PiRpcChild {
       deps.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
     this.settlementTimeoutMs =
       deps.settlementTimeoutMs ?? DEFAULT_SETTLEMENT_TIMEOUT_MS;
+    this.runtimeBudget = new ChildRuntimeBudget(
+      this.timerPort,
+      deps.runtimeBudgetMs ?? DEFAULT_CHILD_RUNTIME_BUDGET_MS,
+    );
     this.responseDrainMs = deps.responseDrainMs ?? DEFAULT_RESPONSE_DRAIN_MS;
     this.replyTimeoutMs = deps.replyTimeoutMs ?? DEFAULT_REPLY_TIMEOUT_MS;
     this.cancelGraceMs = deps.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS;
@@ -890,6 +955,18 @@ export class PiRpcChild {
     this.restoreSession =
       input.session?.mode === "restore" ? { ...input.session } : undefined;
     this.startedAtMs = this.now();
+    // The absolute budget covers the child's entire wall-clock lifetime,
+    // including the pre-handshake window, and is armed exactly once here.
+    this.runtimeBudget.start(() => this.handleRuntimeBudgetExpiry());
+    if (this.disposed || this.terminalFailure !== undefined) {
+      return errAsync(
+        this.terminalFailure ??
+          makeChildSpawnFailedFailure(
+            this.childId,
+            "child terminated before spawn started",
+          ),
+      );
+    }
     this.status = "spawning";
     this.onStreamingUpdate?.(this.snapshot());
     this.cwd = input.cwd;
@@ -923,6 +1000,23 @@ export class PiRpcChild {
         makeChildSpawnFailedFailure(this.childId, spawnError.reason),
       )
       .andThen((spawned) => {
+        if (this.disposed) {
+          // The child was concluded terminally (absolute runtime budget
+          // expiry, cancellation, disposal) while `spawn` was still pending,
+          // so this process was never covered by any live cleanup path. It is
+          // force-killed here and never installed as `this.process`, never
+          // wired to the transport, and never given a handshake waiter -
+          // otherwise a post-terminal child would keep running with a timer
+          // and a resolver nobody can ever reject.
+          spawned.forceKill();
+          return errAsync(
+            this.terminalFailure ??
+              makeChildSpawnFailedFailure(
+                this.childId,
+                "child terminated before spawn completed",
+              ),
+          );
+        }
         this.process = spawned;
         this.status = "handshaking";
         this.onStreamingUpdate?.(this.snapshot());
@@ -1741,7 +1835,11 @@ export class PiRpcChild {
   }
 
   private completeSettlement(envelope: PiControlEnvelope): void {
-    if (this.settled || this.settlementDraining) {
+    if (
+      this.settled ||
+      this.settlementDraining ||
+      this.settlementCapturePending
+    ) {
       this.failOutstanding(makeChildReplyDuplicateFailure(this.childId));
       return;
     }
@@ -1755,12 +1853,14 @@ export class PiRpcChild {
     const completed =
       parsed.value.outcome === "completed" ? parsed.value : undefined;
     let privateOutput = "";
+    let privateOutputSource: PiChildPrivateOutputSource = "observed-terminal";
     // A private output transfer is an optimisation, not the settlement
     // authority. If it is missing or corrupt, retain the bounded inline
     // projection and settle normally; otherwise a delivery hiccup would
     // incorrectly turn a completed child into ChildDeliveryFailed.
     let outputTransferUsable = true;
     if (completed !== undefined) {
+      let transferredOutput: string | undefined;
       if (completed.outputTransferId !== undefined) {
         const transferred = this.completedOutputTransfers.get(
           completed.outputTransferId,
@@ -1769,25 +1869,39 @@ export class PiRpcChild {
           outputTransferUsable = false;
         } else {
           this.completedOutputTransfers.delete(completed.outputTransferId);
-          privateOutput = transferred;
+          transferredOutput = transferred;
         }
       }
-      if (privateOutput === "") {
-        // The private callback may fall back to the bounded observed terminal
-        // projection when no transfer arrived. This value is never used as
-        // the parent-visible settlement output below.
-        privateOutput = this.latestCompletedAssistantOutput;
-      }
-      const actualByteLength = new TextEncoder().encode(
-        privateOutput,
-      ).byteLength;
       if (
         outputTransferUsable &&
+        transferredOutput !== undefined &&
         completed.outputByteLength !== undefined &&
-        completed.outputByteLength !== actualByteLength
+        completed.outputByteLength !==
+          new TextEncoder().encode(transferredOutput).byteLength
       ) {
         outputTransferUsable = false;
+        transferredOutput = undefined;
+      }
+      // Selection order follows authority, not availability. A structured
+      // completion candidate - transferred or inline - is the child's actual
+      // verified result, so it outranks free-text output. Only when no
+      // candidate exists at all does the capture fall back to observed
+      // terminal prose, and it says so through its source.
+      if (
+        transferredOutput !== undefined &&
+        completed.completionCandidateTransferred === true
+      ) {
+        privateOutput = transferredOutput;
+        privateOutputSource = "transferred-candidate";
+      } else if (completed.completionCandidate !== undefined) {
+        privateOutput = completed.completionCandidate;
+        privateOutputSource = "inline-candidate";
+      } else if (transferredOutput !== undefined) {
+        privateOutput = transferredOutput;
+        privateOutputSource = "transferred-output";
+      } else {
         privateOutput = this.latestCompletedAssistantOutput;
+        privateOutputSource = "observed-terminal";
       }
     }
 
@@ -1805,13 +1919,17 @@ export class PiRpcChild {
               // one supplied by a child, is never parent-projection authority.
               ...(this.latestCompletedAssistantOutput.length > 0
                 ? {
-                    assistantOutput: truncateLatestOutput(
+                    assistantOutput: truncateFinalOutput(
                       this.latestCompletedAssistantOutput,
                     ),
                   }
                 : {}),
               ...(parsed.value.completionCandidate !== undefined
                 ? { completionCandidate: parsed.value.completionCandidate }
+                : {}),
+              ...(parsed.value.completionCandidateTransferred === true &&
+              outputTransferUsable
+                ? { completionCandidate: privateOutput }
                 : {}),
               ...(outputTransferUsable &&
               parsed.value.outputByteLength !== undefined
@@ -1866,29 +1984,56 @@ export class PiRpcChild {
       settleUnderResultContract();
       return;
     }
+    // Reserve terminal authority before the observer runs. Its callback can
+    // resolve synchronously through an arbitrary Result implementation, so no
+    // second settlement may enter once this flag is visible.
+    this.settlementCapturePending = true;
+    // Minted before the observer is called, so it names *this* capture. Any
+    // terminal conclusion reached while the capture is pending bumps the epoch
+    // and strands the continuation below.
+    const captureToken = this.settlementCaptureEpoch;
     const invoked = Result.fromThrowable(
       () =>
         capture({
           output: privateOutput,
           byteLength: new TextEncoder().encode(privateOutput).byteLength,
+          source: privateOutputSource,
         }),
       () => makeChildInteractionUnavailableFailure(this.childId),
     )();
+    // The observer may synchronously re-enter the child and conclude it before
+    // returning. Recheck the epoch before inspecting or acting on its result.
+    if (!this.isSettlementCaptureLive(captureToken)) return;
     if (invoked.isErr()) {
+      if (!this.isSettlementCaptureLive(captureToken)) return;
       this.failOutstanding(invoked.error);
       return;
     }
     if (invoked.value instanceof ResultAsync) {
       void invoked.value.match(
-        () => settleUnderResultContract(),
-        (failure) => this.failOutstanding(failure),
+        () => {
+          // A stale continuation is an inert handled value: it must not throw
+          // (that would surface as an unhandled rejection) and must not settle
+          // or install a drain timer on a child that already concluded.
+          if (!this.isSettlementCaptureLive(captureToken)) return;
+          this.settlementCapturePending = false;
+          settleUnderResultContract();
+        },
+        (failure) => {
+          if (!this.isSettlementCaptureLive(captureToken)) return;
+          this.settlementCapturePending = false;
+          this.failOutstanding(failure);
+        },
       );
       return;
     }
     if (invoked.value.isErr()) {
+      if (!this.isSettlementCaptureLive(captureToken)) return;
       this.failOutstanding(invoked.value.error);
       return;
     }
+    if (!this.isSettlementCaptureLive(captureToken)) return;
+    this.settlementCapturePending = false;
     settleUnderResultContract();
   }
 
@@ -2605,6 +2750,74 @@ export class PiRpcChild {
   }
 
   /**
+   * The absolute wall-clock cap expired (Pi adapter contract). Unlike the
+   * renewable inactivity budget this can fire while the child is perfectly
+   * busy, so it fails closed: every outstanding waiter is rejected with the
+   * distinct `ChildRuntimeExceeded` failure and `failOutstanding` force-kills
+   * the process and erases the secret. The child's thread and native session
+   * are left untouched, so the run stays explicitly recoverable.
+   *
+   * The cap stays authoritative over the post-settlement response drain: the
+   * drain window keeps a settlement waiter outstanding, so deferring to it
+   * would let the absolute budget be silently ignored at the exact moment the
+   * parent is still blocked. `failOutstanding` rejects that waiter and
+   * `terminateResources` cancels the drain timer and clears
+   * `settlementDraining`, so `concludeResponseDrain` /
+   * `maybeFinishDrainedSettlement` can no longer settle the child a second
+   * time.
+   *
+   * Work that is already finished is never retroactively failed: a disposed or
+   * settled child, and a cancellation already in progress (itself bounded by
+   * the cancel grace timer), ignore the cap and let their own terminal path
+   * run. The timer is cleared first on every path, so it never outlives this
+   * call.
+   */
+  private handleRuntimeBudgetExpiry(): void {
+    this.runtimeBudget.clear();
+    if (this.disposed || this.settled || this.status === "cancelling") {
+      return;
+    }
+    this.logger.warn(
+      { childId: this.childId, budgetMs: this.runtimeBudget.getBudgetMs() },
+      "child exceeded its absolute runtime budget; force-killing",
+    );
+    this.failOutstanding(
+      makeChildRuntimeExceededFailure(
+        this.childId,
+        this.runtimeBudget.getBudgetMs(),
+      ),
+    );
+  }
+
+  /**
+   * Invalidates any settlement capture still in flight. Called by every
+   * terminal path before it mutates status or resolvers, so a continuation
+   * queued earlier can no longer act on this child.
+   */
+  private invalidateSettlementCapture(): void {
+    this.settlementCaptureEpoch += 1;
+    this.settlementCapturePending = false;
+  }
+
+  /**
+   * True only when `token` is still the live capture *and* the child has not
+   * reached any terminal state. Both halves matter: the epoch catches the
+   * ordering the token was minted for, and the terminal-state checks catch a
+   * conclusion that (today or after a future edit) forgets to bump it.
+   */
+  private isSettlementCaptureLive(token: number): boolean {
+    return (
+      token === this.settlementCaptureEpoch &&
+      !this.disposed &&
+      !this.settled &&
+      this.terminalFailure === undefined &&
+      this.status !== "failed" &&
+      this.status !== "cancelled" &&
+      this.status !== "cancelling"
+    );
+  }
+
+  /**
    * The single terminal-failure path: rejects every outstanding waiter
    * with `failure`, then kills the process and erases the secret. Safe to
    * call more than once (idempotent via the same `disposed` guard as
@@ -2613,6 +2826,12 @@ export class PiRpcChild {
    */
   private failOutstanding(failure: PiAdapterFailure): void {
     if (this.disposed) return;
+    // Fences any settlement capture still in flight before status changes, so
+    // its continuation cannot re-enter and rewrite this terminal cause.
+    this.invalidateSettlementCapture();
+    // Recorded before cleanup so a spawn still in flight can be rejected with
+    // the real terminal cause instead of inventing a second one.
+    this.terminalFailure ??= failure;
     this.status = "failed";
     this.rejectOutstanding(failure);
     this.terminateResources();
@@ -2649,8 +2868,13 @@ export class PiRpcChild {
    * grace, never actually reaped).
    */
   private terminateResources(): void {
+    // Terminal cleanup always invalidates a pending capture, even on the paths
+    // that reach here without going through `failOutstanding` (settlement's
+    // own `finish()`, `dispose()`, completed cancellation).
+    this.invalidateSettlementCapture();
     this.outstandingExtensionUiRequestIds.clear();
     this.clearResponseDrainTimer();
+    this.runtimeBudget.clear();
     this.settlementDraining = false;
     this.finishSettlement = undefined;
     if (this.disposed) return;
@@ -2697,9 +2921,11 @@ export class PiRpcChild {
       return new ResultAsync(Promise.resolve(ok(undefined)));
     this.status = "cancelling";
     let deliveryFailed = false;
-    return this.sendControl("cancel", this.childId, {
-      reason: "cancelled-by-parent",
-    })
+    return this.sendControl(
+      "cancel",
+      this.childId,
+      makeCancelBody("cancelled-by-parent"),
+    )
       .orElse((failure) => {
         deliveryFailed = true;
         this.logger.warn(
@@ -2773,6 +2999,7 @@ export class PiRpcChild {
   /** Idempotent terminal cleanup: kills the process if still alive and zeroes the secret. Safe to call more than once. Never overwrites a status already made terminal by `failOutstanding`/settlement. */
   dispose(): void {
     if (this.disposed) return;
+    this.invalidateSettlementCapture();
     this.delegateRequestAssembler.clear();
     if (this.status !== "completed" && this.status !== "failed") {
       this.status = "cancelled";
