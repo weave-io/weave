@@ -58,3 +58,7 @@
 - `projectPiProviderEvent` copies only hook name and integer response status. Payload, headers, and response bodies stay behind this projection. Task 9 owns mutation and evidence.
 - Failed `activate()` still returns typed `NotEligiblePrimary` and leaves `getCurrent()` unchanged. Health-only, unsupported, and failed boot paths have no snapshot. Task 8 still owns authenticated child bootstrap trigger conversion; that remains the known Pi typecheck failure.
 - Provider events now fail closed from own safe data descriptors without executing accessors.
+
+## Task 7 snapshot authentication remediation
+
+- Pi request snapshot resolution now authenticates exact generation, primary identity, fast presence/value, ordered model intent, and selected model. Forged, omitted, extra, reordered, or mutated model fields return the typed stale result; capture and resolve return normalized copies.

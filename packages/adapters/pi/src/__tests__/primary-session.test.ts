@@ -44,6 +44,15 @@ const CATALOG: PiModelInfo[] = [
   { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
 ];
 
+const SNAPSHOT_CATALOG: PiModelInfo[] = [
+  {
+    provider: "anthropic",
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+  },
+  { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
+];
+
 interface FakeApplier extends PiModelApplyPort {
   readonly calls: PiModelInfo[];
 }
@@ -573,6 +582,92 @@ describe("PiPrimarySession fast intent and request snapshots", () => {
       "claude-sonnet-4-5",
     ]);
     expect(session.captureRequestSnapshot()?.selectedModel).toEqual(CATALOG[0]);
+  });
+
+  it("authenticates exact ordered model intent and selected model snapshots", async () => {
+    const firstIntent = "anthropic/claude-sonnet-4-5#high";
+    const secondIntent = "openai/gpt-5.6#medium";
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const activated = await session.activate(
+      descriptor({ models: [firstIntent, secondIntent] }),
+      context({ availableModels: SNAPSHOT_CATALOG }),
+    );
+    expect(activated.isOk()).toBe(true);
+
+    const snapshot = session.captureRequestSnapshot();
+    expect(snapshot).toBeDefined();
+    if (snapshot === undefined || snapshot.selectedModel === undefined) return;
+
+    const resolved = session.resolveRequestSnapshot(snapshot);
+    expect(resolved.isOk()).toBe(true);
+    if (resolved.isErr()) return;
+    expect(resolved.value).toEqual(snapshot);
+    expect(resolved.value).not.toBe(snapshot);
+    expect(resolved.value.modelIntent).not.toBe(snapshot.modelIntent);
+    expect(resolved.value.selectedModel).not.toBe(snapshot.selectedModel);
+    expect(() => {
+      (resolved.value.modelIntent as string[]).push("mutated-resolve-output");
+    }).toThrow();
+    expect(() => {
+      (resolved.value.selectedModel as { id: string }).id =
+        "mutated-resolve-output";
+    }).toThrow();
+    expect(session.captureRequestSnapshot()).toEqual(snapshot);
+
+    const rejectedIntents = [
+      ["openai/claude-sonnet-4-5#high", secondIntent],
+      ["anthropic/forged-model#high", secondIntent],
+      ["anthropic/claude-sonnet-4-5#low", secondIntent],
+      [secondIntent, firstIntent],
+      [firstIntent],
+      [firstIntent, secondIntent, firstIntent],
+    ];
+    for (const modelIntent of rejectedIntents) {
+      expect(
+        session.resolveRequestSnapshot({ ...snapshot, modelIntent }).isErr(),
+      ).toBe(true);
+    }
+
+    const { modelIntent: _omittedModelIntent, ...withoutModelIntent } =
+      snapshot;
+    expect(
+      session
+        .resolveRequestSnapshot(withoutModelIntent as typeof snapshot)
+        .isErr(),
+    ).toBe(true);
+
+    const selectedModel = snapshot.selectedModel;
+    for (const forgedSelectedModel of [
+      { ...selectedModel, provider: "forged-provider" },
+      { ...selectedModel, id: "forged-model" },
+      { ...selectedModel, name: "Forged model" },
+      { ...selectedModel, forged: true },
+    ]) {
+      expect(
+        session
+          .resolveRequestSnapshot({
+            ...snapshot,
+            selectedModel: forgedSelectedModel,
+          })
+          .isErr(),
+      ).toBe(true);
+    }
+
+    expect(
+      session
+        .resolveRequestSnapshot({ ...snapshot, selectedModel: undefined })
+        .isErr(),
+    ).toBe(true);
+    const { selectedModel: _omittedSelectedModel, ...withoutSelectedModel } =
+      snapshot;
+    expect(
+      session
+        .resolveRequestSnapshot(withoutSelectedModel as typeof snapshot)
+        .isErr(),
+    ).toBe(true);
   });
 
   it("re-probes the parent session on restart without leaking the prior snapshot", async () => {

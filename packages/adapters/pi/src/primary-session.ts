@@ -390,22 +390,26 @@ export class PiPrimarySession {
   }
 
   /**
-   * Accepts a previously captured snapshot only when it still matches this
-   * instance's committed generation, primary identity, and fast intent.
+   * Accepts a previously captured snapshot only when every request-scoped
+   * field still matches this instance's committed state.
    */
   resolveRequestSnapshot(
     snapshot: PiPrimaryRequestSnapshot,
   ): Result<PiPrimaryRequestSnapshot, PiPrimarySnapshotStale> {
     const current = this.current;
-    if (
-      current === undefined ||
-      snapshot.generation !== current.generation ||
-      snapshot.primaryName !== current.descriptor.name ||
-      snapshot.fast !== current.fast
-    ) {
+    if (current === undefined) {
       return err({ type: "StalePrimaryRequestSnapshot" });
     }
-    return ok(copyRequestSnapshot(current));
+
+    const currentSnapshot = copyRequestSnapshot(current);
+    const matches = Result.fromThrowable(
+      () => requestSnapshotsMatch(snapshot, currentSnapshot),
+      () => false,
+    )();
+    if (matches.isErr() || !matches.value) {
+      return err({ type: "StalePrimaryRequestSnapshot" });
+    }
+    return ok(currentSnapshot);
   }
 
   /** The last host-probed parent session identity and persistence. */
@@ -652,6 +656,94 @@ function selectedModelFromActivation(
   return modelActivation.currentModel;
 }
 
+function isObjectRecord(value: unknown): value is Record<PropertyKey, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function hasOwn(value: object, key: PropertyKey): boolean {
+  return Object.hasOwn(value, key);
+}
+
+function hasSameOwnKeys(left: object, right: object): boolean {
+  const leftKeys = Reflect.ownKeys(left);
+  const rightKeys = Reflect.ownKeys(right);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => rightKeys.includes(key))
+  );
+}
+
+function modelIntentsMatch(
+  candidate: unknown,
+  committed: readonly string[],
+): boolean {
+  if (
+    !Array.isArray(candidate) ||
+    !hasSameOwnKeys(candidate, committed) ||
+    candidate.length !== committed.length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < committed.length; index += 1) {
+    if (!hasOwn(candidate, index) || candidate[index] !== committed[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function selectedModelsMatch(
+  candidate: unknown,
+  committed: PiModelInfo | undefined,
+): boolean {
+  if (candidate === undefined || committed === undefined) {
+    return candidate === committed;
+  }
+  if (!isObjectRecord(candidate) || !hasSameOwnKeys(candidate, committed)) {
+    return false;
+  }
+  return (
+    candidate.provider === committed.provider &&
+    candidate.id === committed.id &&
+    candidate.name === committed.name
+  );
+}
+
+function requestSnapshotsMatch(
+  candidate: unknown,
+  committed: PiPrimaryRequestSnapshot,
+): boolean {
+  if (!isObjectRecord(candidate) || !hasSameOwnKeys(candidate, committed)) {
+    return false;
+  }
+  for (const key of [
+    "generation",
+    "primaryName",
+    "modelIntent",
+    "selectedModel",
+  ]) {
+    if (!hasOwn(candidate, key)) return false;
+  }
+  const candidateFastPresent = hasOwn(candidate, "fast");
+  const committedFastPresent = hasOwn(committed, "fast");
+  return (
+    candidate.generation === committed.generation &&
+    candidate.primaryName === committed.primaryName &&
+    modelIntentsMatch(candidate.modelIntent, committed.modelIntent) &&
+    selectedModelsMatch(candidate.selectedModel, committed.selectedModel) &&
+    candidateFastPresent === committedFastPresent &&
+    (!candidateFastPresent || candidate.fast === committed.fast)
+  );
+}
+
+function copySelectedModel(model: PiModelInfo): PiModelInfo {
+  return Object.freeze({
+    provider: model.provider,
+    id: model.id,
+    ...(model.name === undefined ? {} : { name: model.name }),
+  });
+}
+
 function copyRequestSnapshot(
   current: PiActivePrimary,
 ): PiPrimaryRequestSnapshot {
@@ -663,7 +755,7 @@ function copyRequestSnapshot(
     selectedModel:
       selectedModel === undefined
         ? undefined
-        : Object.freeze({ ...selectedModel }),
+        : copySelectedModel(selectedModel),
     ...(current.fast === true ? { fast: true as const } : {}),
   });
 }
