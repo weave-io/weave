@@ -289,7 +289,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - [repo: packages/adapters/claude-code/src/capability-declarations.ts] Unsupported invocation controls follow the existing thinking-capability precedent.
   - **Review gate**: Run Weft; also run Warp if this task adds request/header mutation or response parsing.
 
-- [ ] 12. Complete breaking migration docs, adapter docs, examples, and release metadata
+- [x] 12. Complete breaking migration docs, adapter docs, examples, and release metadata
   - **What**: Remove every old pattern/structured-trigger claim, document fast support and truthful evidence per adapter, and declare the public breaking release impact.
   - **Files**: `docs/reference/dsl.md`, `docs/reference/configuration.md`, `docs/reference/prompts.md`, `docs/reference/models.md`, `docs/reference/adapter-capabilities.md`, `docs/architecture/adapter-boundary.md`, `docs/architecture/agent-surfaces.md`, `docs/architecture/system-overview.md`, `docs/architecture/product-vision.md`, `docs/contributing/builtin-prompts.md`, `docs/adapters/pi.md`, `docs/adapters/opencode.md`, `docs/adapters/claude-code.md`, `packages/docs/src/content/docs/docs/agents-and-categories.mdx`, `packages/docs/src/content/docs/docs/reference/dsl/index.mdx`, `packages/docs/src/pages/design-system.astro`, `.changeset/fast-intent-and-trigger-simplification.md` (create), other references returned by final `rg`
   - **Depends on**: Tasks 3–11
