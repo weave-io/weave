@@ -30,6 +30,7 @@ import {
   type PiNativeSessionEntryPage,
   type PiNativeSessionPagedEntry,
   type PiNativeSessionStore,
+  verifyNativeSessionRef,
 } from "./child-native-sessions.js";
 import { enforceDurableChildTitle } from "./child-title.js";
 import {
@@ -355,6 +356,48 @@ export function looksLikeFilesystemPath(value: string): boolean {
  * Drops absolute filesystem paths from a JSON-compatible value unless
  * `diagnostic` is true. Used as a last-line defense for CLI/extension output.
  */
+/**
+ * Ceiling on a diagnostic session ref, matching the ref bound the metadata
+ * cache and the result schema already enforce.
+ */
+const MAX_DIAGNOSTIC_SESSION_REF_LENGTH = 1_024;
+
+/**
+ * Narrows an untrusted candidate to the one bounded, contained, root-relative
+ * opaque ref grammar the native session store itself enforces, or drops it.
+ *
+ * `stripPathsUnlessDiagnostic` deliberately returns diagnostic output
+ * untouched, so a `sessionRef` that reached this module from a corrupted
+ * cache row, a hostile port implementation, or a future caller would be
+ * serialized verbatim - including an absolute path, a `..` traversal, or a
+ * backslash/NUL-bearing string. A ref is only ever a short root-relative
+ * `<component>/<file>` token, so anything else is omitted rather than
+ * printed: the CLI has no reason to disclose a filesystem path, and an
+ * unusable ref is not worth one.
+ */
+export function safeDiagnosticSessionRef(
+  candidate: unknown,
+): string | undefined {
+  if (typeof candidate !== "string") return undefined;
+  if (candidate.length === 0) return undefined;
+  if (candidate.length > MAX_DIAGNOSTIC_SESSION_REF_LENGTH) return undefined;
+  if (candidate.includes("\0")) return undefined;
+  if (candidate.includes("\\")) return undefined;
+  if (candidate.startsWith("/")) return undefined;
+  // The same grammar the store applies before it will touch a session:
+  // relative, no `..`, no empty segment, safe component characters only.
+  if (verifyNativeSessionRef(candidate).isErr()) return undefined;
+  // A ref always names a file inside a child component directory.
+  const separator = candidate.lastIndexOf("/");
+  if (separator <= 0 || separator === candidate.length - 1) return undefined;
+  return candidate;
+}
+
+/** `{ sessionRef }` when the ref survived validation, `{}` otherwise. */
+function refField(ref: string | undefined): { readonly sessionRef?: string } {
+  return ref === undefined ? {} : { sessionRef: ref };
+}
+
 export function stripPathsUnlessDiagnostic<T>(
   value: T,
   diagnostic: boolean,
@@ -813,8 +856,11 @@ export function createPiAdapterCommandHandlers(
         ...(page.nextCursor === undefined
           ? {}
           : { nextCursor: page.nextCursor }),
-        ...(diagnostic && page.sessionRef !== undefined
-          ? { sessionRef: page.sessionRef }
+        // Validated against the ref grammar immediately before
+        // serialization; a hostile or malformed ref is omitted, never
+        // printed, so no filesystem path can leave this route.
+        ...(diagnostic
+          ? refField(safeDiagnosticSessionRef(page.sessionRef))
           : {}),
       })),
       diagnostic,
