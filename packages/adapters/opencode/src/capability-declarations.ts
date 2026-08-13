@@ -23,12 +23,12 @@ export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
     {
       id: "provider-fast-activation",
       description: "Request provider acceleration and report bounded evidence",
-      readiness: "degraded",
-      runtimeStatus: "not-confirmed",
+      readiness: "unsupported",
+      runtimeStatus: "unsupported",
       notes:
-        "OpenCode can mutate an allowlisted provider request, but the public plugin surface does not expose response-body proof. The ceiling is request-capable and cannot claim applied or native.",
+        "OpenCode's plugin surface can mutate a provider request but exposes no correlated official response-body proof, so the adapter sends no acceleration control and cannot claim applied or native. Materialized agent config alone is not evidence of acceleration; declared intent is reported as unsupported and agents still materialize.",
       remediationHint:
-        "Keep reporting not-confirmed until the plugin contract exposes correlated official response-body evidence.",
+        "Keep reporting unsupported until the plugin contract exposes correlated official response-body evidence for the same attempt; only then implement the allowlisted request mutation.",
     },
   ],
 };

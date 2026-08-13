@@ -14,12 +14,27 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { AgentDescriptor, EffectiveToolPolicy } from "@weaveio/weave-engine";
-import { translateAgent } from "../translate-agent.js";
+import type {
+  AgentDescriptor,
+  EffectiveToolPolicy,
+} from "@weaveio/weave-engine";
+import { describeFastActivation, translateAgent } from "../translate-agent.js";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
 // ---------------------------------------------------------------------------
+
+/** Fields an OpenCode agent config may never gain from `fast true` intent. */
+const FORBIDDEN_ACCELERATION_FIELDS = [
+  "fast",
+  "speed",
+  "service_tier",
+  "serviceTier",
+  "priority",
+  "variant",
+  "service_class",
+  "headers",
+];
 
 const DEFAULT_TOOL_POLICY: EffectiveToolPolicy = {
   read: "allow",
@@ -238,6 +253,20 @@ describe("translateAgent — full descriptor round-trip", () => {
     }
   });
 
+  it("produces the same config with and without fast intent", () => {
+    const plain = translateAgent(makeDescriptor(), "claude-sonnet-4-5");
+    const fast = translateAgent(
+      makeDescriptor({ fast: true }),
+      "claude-sonnet-4-5",
+    );
+
+    expect(plain.isOk()).toBe(true);
+    expect(fast.isOk()).toBe(true);
+    if (plain.isOk() && fast.isOk()) {
+      expect(fast.value).toEqual(plain.value);
+    }
+  });
+
   it("produces a minimal config from a minimal descriptor", () => {
     const descriptor = makeDescriptor({
       composedPrompt: "Minimal prompt.",
@@ -258,5 +287,114 @@ describe("translateAgent — full descriptor round-trip", () => {
       expect(config.description).toBeUndefined();
       expect(config.model).toBeUndefined();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: provider acceleration (`fast true`) intent
+// ---------------------------------------------------------------------------
+
+describe("translateAgent — fast intent is never encoded in the config", () => {
+  it("omits every acceleration-shaped field when fast is declared", () => {
+    const descriptor = makeDescriptor({ fast: true });
+
+    const result = translateAgent(descriptor, "claude-opus-5");
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const config = result.value as Record<string, unknown>;
+      for (const field of FORBIDDEN_ACCELERATION_FIELDS) {
+        expect(Object.hasOwn(config, field)).toBe(false);
+      }
+    }
+  });
+
+  it("keeps model, temperature, description, permission, and mode intact", () => {
+    const descriptor = makeDescriptor({
+      fast: true,
+      mode: "subagent",
+      temperature: 0.7,
+      description: "Fast-declaring agent",
+    });
+
+    const result = translateAgent(descriptor, "openai/gpt-5.6-sol");
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const config = result.value;
+      expect(config.model).toBe("openai/gpt-5.6-sol");
+      expect(config.temperature).toBe(0.7);
+      expect(config.description).toBe("Fast-declaring agent");
+      expect(config.mode).toBe("subagent");
+      expect(config.permission?.doom_loop).toBe("deny");
+      expect(config.permission?.webfetch).toBe("ask");
+    }
+  });
+
+  it("never serializes an applied or requested claim", () => {
+    const result = translateAgent(makeDescriptor({ fast: true }));
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const serialized = JSON.stringify(result.value);
+      expect(serialized).not.toContain("applied");
+      expect(serialized).not.toContain("requested");
+      expect(serialized).not.toContain("service_tier");
+      expect(serialized).not.toContain("anthropic-beta");
+    }
+  });
+});
+
+describe("describeFastActivation", () => {
+  it("returns undefined when no fast intent is declared", () => {
+    expect(describeFastActivation(makeDescriptor())).toBeUndefined();
+  });
+
+  it("returns undefined for a non-literal-true value", () => {
+    const hostile = { fast: "true" } as unknown as { fast?: true };
+    expect(describeFastActivation(hostile)).toBeUndefined();
+  });
+
+  it("reports unsupported with a bounded reason for declared intent", () => {
+    const report = describeFastActivation(makeDescriptor({ fast: true }));
+
+    expect(report).toEqual({
+      capability: "provider-fast-activation",
+      state: "unsupported",
+      reason: "response-proof-unavailable",
+      evidenceKind: "none",
+      evidenceOutcome: "inaccessible",
+    });
+  });
+
+  it("never reports declared, requested, or applied", () => {
+    const report = describeFastActivation(makeDescriptor({ fast: true }));
+    const serialized = JSON.stringify(report);
+
+    expect(report?.state).not.toBe("applied");
+    expect(report?.state).not.toBe("requested");
+    expect(report?.state).not.toBe("declared");
+    expect(serialized).not.toContain("applied");
+    expect(serialized).not.toContain("requested");
+  });
+
+  it("returns a frozen report that callers cannot mutate", () => {
+    const report = describeFastActivation(makeDescriptor({ fast: true }));
+    expect(Object.isFrozen(report)).toBe(true);
+
+    const second = describeFastActivation(makeDescriptor({ fast: true }));
+    expect(second?.state).toBe("unsupported");
+  });
+
+  it("carries no provider, model, header, or credential text", () => {
+    const report = describeFastActivation(
+      makeDescriptor({ fast: true, models: ["openai/gpt-5.6-sol"] }),
+    );
+    const serialized = JSON.stringify(report);
+
+    expect(serialized).not.toContain("gpt-5.6-sol");
+    expect(serialized).not.toContain("openai");
+    expect(serialized).not.toContain("Authorization");
+    expect(serialized).not.toContain("anthropic-beta");
   });
 });

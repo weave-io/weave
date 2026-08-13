@@ -7,6 +7,11 @@
  *
  * Only types that the adapter actively uses are re-exported here. Unused SDK
  * types are intentionally omitted to keep the surface minimal.
+ *
+ * The SDK exposes no provider-acceleration field for agent configuration and
+ * no official response-evidence field (`service_tier` or `usage.speed`) on a
+ * successful call. Nothing acceleration-related is re-exported here, so the
+ * adapter cannot encode a guessed control or read a false application proof.
  */
 
 export type {

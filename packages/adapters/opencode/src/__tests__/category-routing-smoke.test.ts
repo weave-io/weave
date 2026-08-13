@@ -22,7 +22,7 @@
 
 import { describe, expect, it } from "bun:test";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
-import { translateAgent } from "../translate-agent.js";
+import { describeFastActivation, translateAgent } from "../translate-agent.js";
 
 // ---------------------------------------------------------------------------
 // Fixture: shuttle-client-frontend AgentDescriptor
@@ -215,5 +215,47 @@ describe("category-routing smoke — fixture sanity (always runs)", () => {
 
   it("translateAgent is importable and is a function", () => {
     expect(typeof translateAgent).toBe("function");
+  });
+
+  it("category descriptor keeps string triggers and no patterns", () => {
+    const withTriggers: AgentDescriptor = {
+      ...descriptor,
+      delegationTargets: [
+        {
+          name: "shuttle-client-frontend",
+          description: "Client-facing UI, components, and styling",
+          triggers: ["review the design system", "fix a component"],
+          isCategory: true,
+        },
+      ],
+    };
+
+    const target = withTriggers.delegationTargets[0];
+    expect(target?.triggers).toEqual([
+      "review the design system",
+      "fix a component",
+    ]);
+    expect("patterns" in (target ?? {})).toBe(false);
+
+    const result = translateAgent(withTriggers);
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("emits no acceleration state without fast intent", () => {
+    expect(describeFastActivation(descriptor)).toBeUndefined();
+  });
+
+  it("reports unsupported and translates unchanged with fast intent", () => {
+    const fastDescriptor: AgentDescriptor = { ...descriptor, fast: true };
+
+    expect(describeFastActivation(fastDescriptor)?.state).toBe("unsupported");
+
+    const plain = translateAgent(descriptor, "anthropic/claude-opus-5");
+    const fast = translateAgent(fastDescriptor, "anthropic/claude-opus-5");
+    expect(plain.isOk()).toBe(true);
+    expect(fast.isOk()).toBe(true);
+    if (plain.isOk() && fast.isOk()) {
+      expect(fast.value).toEqual(plain.value);
+    }
   });
 });

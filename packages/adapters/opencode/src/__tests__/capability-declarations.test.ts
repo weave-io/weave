@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { AdapterCapabilityContractSchema } from "@weaveio/weave-engine";
+import {
+  AdapterCapabilityContractSchema,
+  OPTIONAL_CAPABILITIES,
+  type ProviderFastActivationStatus,
+  REQUIRED_CAPABILITIES,
+  readinessForProviderFastStatus,
+} from "@weaveio/weave-engine";
 import { OPENCODE_ADAPTER_CAPABILITY_CONTRACT } from "../capability-declarations.js";
 
 describe("OpenCode adapter capability contract", () => {
@@ -32,20 +38,36 @@ describe("OpenCode adapter capability contract", () => {
     expect(capability?.notes).toContain("no status surface");
   });
 
-  it("declares provider-fast-activation as degraded request-capable, not applied or native", () => {
+  it("declares provider-fast-activation as unsupported without an applied claim", () => {
     const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
       (entry) => entry.id === "provider-fast-activation",
     );
     const serialized = JSON.stringify(capability);
 
-    expect(capability?.readiness).toBe("degraded");
-    expect(capability?.runtimeStatus).toBe("not-confirmed");
-    expect(capability?.notes).toContain("request");
-    expect(capability?.notes).toContain("response-body proof");
+    expect(capability?.readiness).toBe("unsupported");
+    expect(capability?.runtimeStatus).toBe("unsupported");
+    expect(capability?.notes).toContain("no correlated official response-body");
     expect(capability?.notes).toContain("cannot claim applied or native");
+    expect(capability?.notes).toContain("agents still materialize");
+    expect(capability?.remediationHint).toContain("unsupported");
     expect(capability?.readiness).not.toBe("native");
+    expect(capability?.readiness).not.toBe("emulated");
     expect(serialized).not.toContain("service_tier");
     expect(serialized).not.toContain("anthropic-beta");
     expect(serialized).not.toContain("Authorization");
+  });
+
+  it("keeps provider-fast-activation optional so materialization is unaffected", () => {
+    const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+      (entry) => entry.id === "provider-fast-activation",
+    );
+
+    expect(OPTIONAL_CAPABILITIES).toContain("provider-fast-activation");
+    expect(REQUIRED_CAPABILITIES).not.toContain("provider-fast-activation");
+    expect(
+      readinessForProviderFastStatus(
+        capability?.runtimeStatus as ProviderFastActivationStatus,
+      ),
+    ).toBe("unsupported");
   });
 });

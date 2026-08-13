@@ -1095,3 +1095,101 @@ describe("WeavePlugin — automatic file-backed logging", () => {
     expect(parsed["config-silent-startup-sentinel"]).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: provider acceleration (`fast true`) intent
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a temp project whose single agent declares `fast true`.
+ */
+async function makeTempFastProject(agentName: string): Promise<string> {
+  const root = join(
+    tmpdir(),
+    `weave-plugin-fast-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  await Bun.write(
+    join(root, ".weave", "config.weave"),
+    [
+      `agent ${agentName} {`,
+      `  prompt "You are a fast-declaring test agent."`,
+      `  models ["claude-opus-5"]`,
+      `  mode subagent`,
+      `  fast true`,
+      `}`,
+      "",
+    ].join("\n"),
+  );
+  return root;
+}
+
+describe("WeavePlugin — fast intent registers no provider hook", () => {
+  it("registers no chat request-mutation hook", async () => {
+    const root = await makeTempFastProject("fast-hook-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const hooks = await plugin(makeMockPluginInput(root, client));
+    const hookNames = Object.keys(hooks as Record<string, unknown>);
+
+    expect(hookNames).not.toContain("chat.params");
+    expect(hookNames).not.toContain("chat.headers");
+    expect(hookNames).not.toContain("chat.message");
+  });
+
+  it("injects the fast-declaring agent without any acceleration field", async () => {
+    const agentName = "fast-config-agent";
+    const root = await makeTempFastProject(agentName);
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const hooks = await plugin(makeMockPluginInput(root, client));
+
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config?.(cfg as never);
+
+    const injected = cfg.agent?.[agentName] as Record<string, unknown>;
+    expect(injected).toBeDefined();
+    expect(typeof injected.prompt).toBe("string");
+    expect(injected.mode).toBe("subagent");
+    for (const field of ["fast", "speed", "service_tier", "priority"]) {
+      expect(Object.hasOwn(injected, field)).toBe(false);
+    }
+
+    const serialized = JSON.stringify(cfg);
+    expect(serialized).not.toContain("service_tier");
+    expect(serialized).not.toContain("anthropic-beta");
+  });
+
+  it("handles session.created without sending an acceleration control", async () => {
+    const root = await makeTempFastProject("fast-session-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const hooks = await plugin(makeMockPluginInput(root, client));
+
+    await expect(triggerSessionCreated(hooks)).resolves.toBeUndefined();
+
+    const sentConfigs = [
+      ...client.createAgentCalls,
+      ...client.updateAgentCalls,
+    ].map((call) => call.config as Record<string, unknown>);
+    for (const sent of sentConfigs) {
+      for (const field of ["fast", "speed", "service_tier", "priority"]) {
+        expect(Object.hasOwn(sent, field)).toBe(false);
+      }
+    }
+  });
+});
