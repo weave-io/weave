@@ -148,6 +148,39 @@ workflow gated-flow {
   } as unknown as WeaveConfig;
 })();
 
+const QUICK_FIX_REGRESSION_CONFIG = (() => {
+  const parsed = parseConfig(`
+workflow quick-fix-regression {
+  description "Fix then review"
+  version 1
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix the issue"
+    completion agent_signal
+  }
+
+  step review {
+    name "Review"
+    type gate
+    agent weft
+    prompt "Review the fix"
+    completion review_verdict
+    on_reject pause
+  }
+}
+`);
+  if (parsed.isErr()) throw new Error(JSON.stringify(parsed.error));
+  return {
+    ...EMPTY_CONFIG,
+    agents: { loom: {}, shuttle: {}, weft: {} },
+    workflows: parsed.value.workflows,
+    settings: {},
+  } as unknown as WeaveConfig;
+})();
+
 /** The two-agent materialization plan the recovery race tests install. */
 function recoveryRacePlan(): MaterializationPlan {
   return {
@@ -542,6 +575,28 @@ async function completeDirectChild(
     // assistant prose. The structured completion candidate is metadata and
     // cannot stand in for that response.
     assistantOutput: "GENERATION_LIFECYCLE_PAUSED",
+  });
+}
+
+async function completeDirectChildWithCandidate(
+  processPort: FakeChildProcessPort,
+  process: FakeSpawnedProcess,
+  completionCandidate: object,
+  assistantOutput: string,
+): Promise<void> {
+  const send = await authenticateDirectChild(processPort, process);
+  process.emitLine({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: assistantOutput }],
+    },
+  });
+  await send("settled", {
+    outcome: "completed",
+    completionCandidate: serializeCompletionCandidate(completionCandidate),
+    interventionCount: 0,
+    assistantOutput,
   });
 }
 
@@ -5969,6 +6024,99 @@ describe("strict generation ownership and stale async cleanup", () => {
     await flushBackgroundWork();
 
     expect(usageObservations).toHaveLength(1);
+  });
+
+  it("publishes an in-flight workflow and permits abort after a typed review projection failure", async () => {
+    const processPort = new FakeChildProcessPort();
+    const runtimeStore = createInMemoryRuntimeStore();
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      systemPromptSkills: [],
+    });
+    const plan: MaterializationPlan = {
+      agents: [
+        { agentName: "loom", source: "explicit", descriptor: loomDescriptor() },
+        {
+          agentName: "shuttle",
+          source: "explicit",
+          descriptor: tapestryDescriptor({ name: "shuttle" }),
+        },
+        {
+          agentName: "weft",
+          source: "explicit",
+          descriptor: tapestryDescriptor({ name: "weft" }),
+        },
+      ],
+      errors: [],
+    };
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator(plan, QUICK_FIX_REGRESSION_CONFIG),
+      runtimeStoreFactory: { open: () => okAsync(runtimeStore) },
+      processPort,
+      childCommand: ["/fake/pi"],
+      telemetryJournal: { write: (_entry: unknown) => okAsync(undefined) },
+      telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+    });
+
+    await host.triggerSessionStart();
+    host.scriptConfirm(true);
+    const execution = host.invokeCommand("weave:run", "quick-fix-regression");
+    await flushBackgroundWork();
+
+    await completeDirectChildWithCandidate(
+      processPort,
+      await processPort.spawnCalled,
+      { outcome: "success", method: "agent_signal" },
+      "fix completed",
+    );
+    const reviewProcess = await processPort.spawnPromises[1];
+
+    const instancesAtReview = await runtimeStore.instances.list({
+      status: "running",
+    });
+    expect(instancesAtReview.isOk()).toBe(true);
+    if (!instancesAtReview.isOk()) return;
+    expect(instancesAtReview.value).toHaveLength(1);
+    expect(instancesAtReview.value[0]?.currentStepName).toBe("review");
+    const leaseAtReview = await runtimeStore.leases.findActive();
+    expect(leaseAtReview.isOk()).toBe(true);
+    if (!leaseAtReview.isOk()) return;
+    expect(leaseAtReview.value).not.toBeNull();
+
+    await host.invokeCommand("weave:abort");
+    expect(host.notifyCalls.at(-1)?.message).toBe("Abort cancelled.");
+
+    // Review requires review_verdict. A typed projection failure must leave
+    // the durable execution tracked so the user can still cancel it.
+    await completeDirectChildWithCandidate(
+      processPort,
+      reviewProcess,
+      { outcome: "success", method: "agent_signal" },
+      "review completed with the wrong method",
+    );
+    await execution;
+    await flushBackgroundWork();
+    expect(host.notifyCalls.at(-1)?.message).toBe(
+      "Could not run workflow: Weave could not project the requested lifecycle operation.",
+    );
+
+    host.scriptConfirm(true);
+    await host.invokeCommand("weave:abort");
+    expect(host.notifyCalls.at(-1)?.message).toBe("Execution cancelled.");
+    const cancelledInstances = await runtimeStore.instances.list({
+      status: "cancelled",
+    });
+    expect(cancelledInstances.isOk()).toBe(true);
+    if (cancelledInstances.isOk()) {
+      expect(cancelledInstances.value).toHaveLength(1);
+    }
+    const leaseAfterAbort = await runtimeStore.leases.findActive();
+    expect(leaseAfterAbort.isOk()).toBe(true);
+    if (leaseAfterAbort.isOk()) {
+      expect(leaseAfterAbort.value).toBeNull();
+    }
   });
 
   it("opens, scrolls, and cancels the Alt+T plan list for the current plan", async () => {

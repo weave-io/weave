@@ -80,9 +80,9 @@ import {
   makeCompletionRejectedFailure,
   makeInvariantViolationFailure,
   makeLeaseLostFailure,
-  makeRuntimeStoreWriteFailedFailure,
   makeLifecycleEffectFailedFailure,
   makeLifecycleProjectionFailedFailure,
+  makeRuntimeStoreWriteFailedFailure,
   mapPlanStateErrorToPiFailure,
   type PiAdapterFailure,
 } from "./errors.js";
@@ -285,6 +285,14 @@ export interface PiStartWorkflowInput {
   readonly workflowInstanceId: string;
   readonly context: WorkflowExecutionContext;
   readonly metadata?: Record<string, string | number | boolean>;
+  /**
+   * Publishes the durable execution identity as soon as the engine acquires
+   * its lease, before observation or direct-step dispatch can block.
+   */
+  readonly onExecutionStarted?: (active: {
+    readonly workflowInstanceId: string;
+    readonly leaseId: string;
+  }) => void;
 }
 
 export interface PiResumeWorkflowInput {
@@ -439,23 +447,28 @@ export class PiWorkflowController {
           cause,
         ),
       )
-      .andThen((output) =>
-        this.observeBestEffort({
+      .andThen((output) => {
+        const leaseId = String(output.leaseId);
+        input.onExecutionStarted?.({
           workflowInstanceId: input.workflowInstanceId,
-          leaseId: String(output.leaseId),
+          leaseId,
+        });
+        return this.observeBestEffort({
+          workflowInstanceId: input.workflowInstanceId,
+          leaseId,
           agentName: input.context.workflowName,
           sessionStatus: "active",
         }).andThen(() =>
           this.runDispatchLoop(
             input.workflowInstanceId,
-            String(output.leaseId),
+            leaseId,
             input.context,
           ).map((result) => {
             this.notifyPlanChanged(input.workflowInstanceId);
             return result;
           }),
-        ),
-      );
+        );
+      });
   }
 
   /** Lifecycle op 3: explicit-resume only - requires {@link AuthorizedByUser}; rebinds a fresh lease. */
@@ -563,8 +576,7 @@ export class PiWorkflowController {
               workflowInstanceId: input.workflowInstanceId,
               leaseId: input.leaseId,
               agentName: "workflow-controller",
-              sessionStatus:
-                input.signal === "cancel" ? "terminated" : "idle",
+              sessionStatus: input.signal === "cancel" ? "terminated" : "idle",
             }),
           )
           .andThen(() =>

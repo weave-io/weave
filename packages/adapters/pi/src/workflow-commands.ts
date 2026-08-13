@@ -207,15 +207,23 @@ export async function handleWeaveRun(
   }
   const instanceId = `${workflowName}-${Date.now()}`;
   const result = await controller.startExecution(
-    { workflowInstanceId: instanceId, context },
+    {
+      workflowInstanceId: instanceId,
+      context,
+      onExecutionStarted: (active) => tracker.setActiveInstance(active),
+    },
     authorization.value,
   );
   result.match(
     (started) => {
-      tracker.setActiveInstance({
-        workflowInstanceId: started.workflowInstanceId,
-        leaseId: started.leaseId,
-      });
+      tracker.setActiveInstance(
+        started.finalStatus === "running" || started.finalStatus === "paused"
+          ? {
+              workflowInstanceId: started.workflowInstanceId,
+              leaseId: started.leaseId,
+            }
+          : undefined,
+      );
       ui.notify(describeRunResult(started), "info");
     },
     (failure) =>
