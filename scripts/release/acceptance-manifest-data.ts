@@ -515,12 +515,16 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
           file: "packages/adapters/pi/src/__tests__/capability-prober.test.ts",
           name: "handles every anomaly kind at once and still returns exactly 20 fail-closed rows",
         },
+        T004: {
+          file: "packages/adapters/pi/src/__tests__/capability-declarations.test.ts",
+          name: "declares provider-fast-activation as unsupported, never requested or applied",
+        },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S004"] },
       result: "pass",
       notes:
-        "Closed-set check verifies all 20 ALL_CAPABILITY_IDS appear across the referenced tests.",
+        "Closed-set check verifies every ALL_CAPABILITY_IDS member appears across the referenced tests, including the optional provider-fast-activation capability.",
     },
     {
       id: "PI-ERR",
