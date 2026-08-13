@@ -24,7 +24,10 @@ import {
   CC_START_WORK_COMMAND,
   CC_WEAVE_START_COMMAND,
 } from "./command-templates.js";
-import { buildClaudeCodeModelInput } from "./model-resolution.js";
+import {
+  buildClaudeCodeModelInput,
+  describeClaudeCodeFastActivation,
+} from "./model-resolution.js";
 import { discoverClaudeCodeSkills } from "./skill-discovery.js";
 import {
   CLAUDE_CODE_TOOL_IDS,
@@ -162,6 +165,23 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
   // ---------------------------------------------------------------------------
 
   private translateDescriptor(descriptor: AgentDescriptor): string {
+    // Provider acceleration is an unsupported invocation control here, exactly
+    // like thinking levels: report the bounded gap and continue materializing.
+    const fastDiagnostic = describeClaudeCodeFastActivation(descriptor);
+    if (fastDiagnostic) {
+      log.warn(
+        {
+          agent: descriptor.name,
+          capability: fastDiagnostic.capabilityId,
+          state: fastDiagnostic.state,
+          evidenceKind: fastDiagnostic.evidenceKind,
+          evidenceOutcome: fastDiagnostic.evidenceOutcome,
+          reason: fastDiagnostic.reason,
+        },
+        "Provider acceleration intent is unsupported by Claude Code static materialization",
+      );
+    }
+
     const modelInput = buildClaudeCodeModelInput(descriptor);
     const modelResult = resolveAdapterModelIntent(modelInput);
     const resolvedModel = modelResult.model;

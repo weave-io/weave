@@ -152,6 +152,33 @@ describe("ClaudeCodeAdapter", () => {
     expect(agent).toContain("You are a test agent.");
   });
 
+  it("materializes a fast-declaring agent with unchanged model and permission output", async () => {
+    const baselineFiles: Record<string, string> = {};
+    const baselineAdapter = makeAdapter(baselineFiles, []);
+    await baselineAdapter.spawnSubagent(makeDescriptor({ name: "shuttle" }));
+    await baselineAdapter.flush();
+
+    const fastFiles: Record<string, string> = {};
+    const fastAdapter = makeAdapter(fastFiles, []);
+    const spawnResult = await fastAdapter.spawnSubagent(
+      makeDescriptor({ name: "shuttle", fast: true }),
+    );
+    await fastAdapter.flush();
+
+    expect(spawnResult.isOk()).toBe(true);
+    expect(fastFiles).toEqual(baselineFiles);
+
+    const agentPath = Object.keys(fastFiles).find(
+      (k) => k.includes("agents") && k.endsWith("shuttle.md"),
+    );
+    expect(agentPath).toBeDefined();
+    const agent = agentPath ? (fastFiles[agentPath] ?? "") : "";
+    expect(agent).toContain("model: sonnet");
+    expect(agent).toContain("- Read");
+    expect(agent).not.toContain("- Task");
+    expect(agent).not.toContain("fast");
+  });
+
   it("flush writes settings.json when loom agent is present", async () => {
     const written: Record<string, string> = {};
     const adapter = makeAdapter(written, []);
