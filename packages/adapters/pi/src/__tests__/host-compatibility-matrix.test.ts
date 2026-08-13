@@ -14,7 +14,7 @@ describe("PI_HOST_COMPATIBILITY_MATRIX", () => {
     expect(PI_HOST_COMPATIBILITY_MATRIX.package).toBe(HOST_PACKAGE_NAME);
     expect(PI_HOST_COMPATIBILITY_MATRIX.supportedRange).toBe(">=0.81.1");
     expect(PI_HOST_COMPATIBILITY_MATRIX.floorVersion).toBe(HOST_VERSION_FLOOR);
-    expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).toBe("0.83.0");
+    expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).toBe("0.84.1");
     expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).toBe(
       EXACT_TESTED_HOST_VERSION,
     );
@@ -143,10 +143,10 @@ describe("validateHostCompatibilityMatrix", () => {
     }
   });
 
-  it("accepts the stable release-tested version 0.83.0", () => {
+  it("accepts the stable release-tested version 0.84.1", () => {
     const result = validateHostCompatibilityMatrix({
       ...PI_HOST_COMPATIBILITY_MATRIX,
-      exactTestedVersion: "0.83.0",
+      exactTestedVersion: "0.84.1",
     });
     expect(result.isOk()).toBe(true);
   });

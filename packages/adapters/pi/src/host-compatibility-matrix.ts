@@ -102,7 +102,7 @@ const overlayOnly = (
  * to the floor's minor line: the floor states what the adapter supports, while
  * this states what was proved (Spec 33 §16).
  */
-export const EXACT_TESTED_HOST_VERSION = "0.83.0";
+export const EXACT_TESTED_HOST_VERSION = "0.84.1";
 
 export interface PiHostCompatibilityMatrix {
   readonly package: string;
