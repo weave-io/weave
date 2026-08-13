@@ -124,7 +124,7 @@
   - class DefaultPiCapabilityProber
   - interface PiCandidatePlanContext
   - interface PiPreflightContext
-  - _...5 more_
+  - _...6 more_
 - `packages/adapters/pi/src/child-compact-render.ts`
   - function createChildCompactState: (threadId) => ChildCompactState
   - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
@@ -248,7 +248,7 @@
   - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
-  - _...42 more_
+  - _...43 more_
 - `packages/adapters/pi/src/child-overlay-component.ts`
   - function formatChildOverlayTelemetryLine: (telemetry) => string
   - function compactChildOverlayEntryLine: (entry, width) => string
@@ -367,6 +367,14 @@
   - interface PiChildUsageReport
   - interface PiAssistantUsageFacts
   - _...11 more_
+- `packages/adapters/pi/src/child-session-launch.ts`
+  - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
+  - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority
+  - function mintPiChildSessionLaunchGrant: (authority, details) => Result<PiChildSessionLaunchGrant, PiChildSessionLaunchRejection>
+  - function redeemPiChildSessionLaunchGrant: (grant, expected) => Result<PiChildSessionLaunchDetails, PiChildSessionLaunchRejection>
+  - function describePiChildSessionLaunchRejection: (rejection) => string
+  - interface PiChildSessionLaunchGrant
+  - _...3 more_
 - `packages/adapters/pi/src/child-session-reconstruction.ts`
   - function describeChildReconstructionError: (error) => string
   - function reconstructParentLocalChildren: (input) => ResultAsync<PiChildReconstructionSummary, PiChildReconstructionError>
@@ -384,11 +392,13 @@
   - class PiChildSessionRefStore
   - _...29 more_
 - `packages/adapters/pi/src/child-session-storage-authority.ts`
+  - function classifyPiChildSessionRootFailure: (violation) => PiChildSessionRootResolution
   - function createPiChildSessionStorageAuthority: (input) => PiChildSessionStorageAuthority
   - function describeChildSessionStorageUnavailable: (failure) => string
+  - function resolvePiChildSessionRoot: (input) => ResultAsync<PiChildSessionRootResolution, never>
   - interface PiChildSessionStorageAuthority
   - interface PiChildSessionStorageAuthorityInput
-  - const CHILD_SESSION_STORAGE_UNAVAILABLE_REASON
+  - _...3 more_
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
   - interface TimerHandle

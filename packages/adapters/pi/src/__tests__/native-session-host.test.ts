@@ -73,7 +73,7 @@ describe("createPiNativeSessionHost", () => {
     expect(opened.getSessionId()).toBe(HEADER.id);
   });
 
-  test("preserves Pi's exact header field order and drops unknown fields", () => {
+  test("refuses a header carrying an unknown field instead of dropping it", () => {
     const sessionManager: PiSessionManagerStatic = {
       create: (_cwd, sessionDir) => ({
         ...handle(`${sessionDir ?? ""}/pi-generated.jsonl`, sessionDir ?? ""),
@@ -91,7 +91,7 @@ describe("createPiNativeSessionHost", () => {
       .create("/repo", "/data/weave/sessions/child-1", {})
       .getHeader();
 
-    expect(JSON.stringify(header)).toBe(JSON.stringify(HEADER));
+    expect(header).toBeNull();
   });
 
   test("recognizes only a host with both public constructors", () => {
