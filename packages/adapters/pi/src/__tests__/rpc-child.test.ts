@@ -163,6 +163,45 @@ class DelayedSignHmacPort implements HmacPort {
   }
 }
 
+/**
+ * Wraps a real `HmacPort` and holds every *incoming* verification until the
+ * test releases it, so a test can decide the order in which back-to-back
+ * control lines finish verifying. Outbound signing is untouched.
+ */
+class HeldVerifyHmacPort implements HmacPort {
+  private held: Array<() => void> = [];
+
+  constructor(private readonly inner: HmacPort) {}
+
+  signHex(key: Uint8Array, data: Uint8Array): ResultAsync<string, HmacError> {
+    return this.inner.signHex(key, data);
+  }
+
+  verifyHex(
+    key: Uint8Array,
+    data: Uint8Array,
+    expectedMacHex: string,
+  ): ResultAsync<boolean, HmacError> {
+    return new ResultAsync(
+      new Promise((resolve) => {
+        this.held.push(() => {
+          void this.inner.verifyHex(key, data, expectedMacHex).then(resolve);
+        });
+      }),
+    );
+  }
+
+  get heldCount(): number {
+    return this.held.length;
+  }
+
+  release(order: "arrival" | "reversed"): void {
+    const queued = order === "reversed" ? [...this.held].reverse() : this.held;
+    this.held = [];
+    for (const run of queued) run();
+  }
+}
+
 /** Fires only live-reply timers synchronously, exposing map-install races. */
 class ImmediateReplyTimerPort {
   schedule(callback: () => void, delayMs: number) {
@@ -3561,5 +3600,121 @@ describe("PiRpcChild", () => {
     spawned.failStdoutRead("child-process-read-failed");
     expect(child.snapshot().status).toBe("failed");
     expect(child.isDisposed()).toBe(true);
+  });
+
+  /**
+   * Regression: a multi-chunk output transfer emits several control lines
+   * back to back. `verifyEnvelope` is asynchronous, so if verification is not
+   * serialized, the parent admits envelopes in verification-completion order
+   * and rejects a perfectly well-behaved child with `SequenceMismatch`. This
+   * was observed live on a 178,927-byte authoritative result.
+   */
+  it("admits back-to-back control envelopes in arrival order even when verification finishes out of order", async () => {
+    const heldHmac = new HeldVerifyHmacPort(hmacPort);
+    const processPort = new FakeChildProcessPort();
+    const captures: string[] = [];
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort: heldHmac,
+      logger: noopLogger(),
+      onPrivateOutput: (capture) => {
+        captures.push(capture.source);
+        return ok(undefined);
+      },
+    });
+
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    if (spawned === undefined) throw new Error("test setup: child not spawned");
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await waitFor(() => heldHmac.heldCount > 0, 4_000, "handshake verify held");
+    heldHmac.release("arrival");
+    expect((await spawnPromise).isOk()).toBe(true);
+
+    const runPromise = child.runTask(baseSpawnInput(), validBootstrap());
+    await flush();
+    await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+    await waitFor(() => heldHmac.heldCount > 0, 4_000, "ack verify held");
+    heldHmac.release("arrival");
+    await waitFor(
+      () => child.snapshot().status === "running",
+      4_000,
+      `child running (status ${child.snapshot().status})`,
+    );
+
+    // A real large authoritative result: several transfer chunks followed by
+    // the settlement, all written by the child without waiting for us.
+    const fullOutput = "T13-".repeat(30_000);
+    const transferId = "reorder-output-transfer";
+    const chunks = encodeTransferChunks(fullOutput, transferId);
+    expect(chunks.isOk()).toBe(true);
+    if (chunks.isErr()) return;
+    expect(chunks.value.length).toBeGreaterThan(1);
+
+    spawned.emitLine(terminalAssistantMessage("reordered terminal"));
+
+    let sequence = 3;
+    const lines: unknown[] = [];
+    for (const chunk of chunks.value) {
+      const envelope = await signEnvelope(
+        {
+          childId: "child-1",
+          generationId: "gen-1",
+          direction: "child-to-parent",
+          sequence: sequence++,
+          nonce: generateNonceHex(randomPort),
+          correlationId: transferId,
+          kind: "transfer-chunk",
+          body: { channel: "output", ...chunk },
+        },
+        secretBytes,
+        hmacPort,
+      );
+      if (envelope.isErr()) throw new Error("test setup failed to sign");
+      lines.push(envelope.value);
+    }
+    const settled = await signEnvelope(
+      {
+        childId: "child-1",
+        generationId: "gen-1",
+        direction: "child-to-parent",
+        sequence: sequence++,
+        nonce: generateNonceHex(randomPort),
+        correlationId: "child-1",
+        kind: "settled",
+        body: {
+          outcome: "completed",
+          assistantOutput: "bounded projection",
+          outputTransferId: transferId,
+          outputByteLength: new TextEncoder().encode(fullOutput).byteLength,
+        },
+      },
+      secretBytes,
+      hmacPort,
+    );
+    if (settled.isErr()) throw new Error("test setup failed to sign");
+    lines.push(settled.value);
+
+    // Arrive back to back. Whatever is pending verification is then always
+    // released newest-first: with serialized admission exactly one envelope
+    // is ever in flight, so newest-first *is* arrival order and the child
+    // settles; without it, all six are in flight together and the reversed
+    // release admits them out of order.
+    for (const line of lines) spawned.emitLine(line);
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      await flush();
+      if (heldHmac.heldCount > 0) heldHmac.release("reversed");
+    }
+
+    const result = await runPromise;
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+    expect(result.value.outcome).toBe("completed");
+    expect(captures).toEqual(["transferred-output"]);
   });
 });

@@ -747,6 +747,12 @@ export class PiRpcChild {
 
   private secret: ErasableSecret | undefined;
   private authState: PiChildAuthState | undefined;
+  /**
+   * Serializes asynchronous control-envelope verification so envelopes are
+   * admitted in the order they arrived, not the order their HMAC checks
+   * happen to finish.
+   */
+  private controlAdmitTail: Promise<void> = Promise.resolve();
   private process: PiSpawnedChildProcess | undefined;
   private readonly framer = new PiLineFramer();
   private readonly delegateRequestAssembler = new DelegateRequestAssembler();
@@ -1101,9 +1107,7 @@ export class PiRpcChild {
 
   private handleControlLine(json: JsonValue): void {
     if (this.disposed) return;
-    const secretBytes = this.secret?.peek();
-    const authState = this.authState;
-    if (secretBytes === undefined || authState === undefined) {
+    if (this.secret?.peek() === undefined || this.authState === undefined) {
       // Never silently ignore an incoming control line just because our
       // own activation state is missing - fail closed rather than leave
       // the caller waiting on a resolver that can now never be satisfied.
@@ -1112,7 +1116,30 @@ export class PiRpcChild {
       );
       return;
     }
-    void verifyEnvelope(json, secretBytes, this.hmacPort).match(
+    // `admitIncoming` enforces a strict per-child sequence, so admission
+    // order *is* arrival order. `verifyEnvelope` is asynchronous (HMAC runs
+    // off-thread), so two control lines read back to back - which is exactly
+    // what a multi-chunk output transfer produces - can otherwise finish
+    // verifying in the opposite order and be admitted as a `SequenceMismatch`
+    // against a child that did nothing wrong. Serializing verification keeps
+    // admission in arrival order; every fail-closed check below is unchanged.
+    this.controlAdmitTail = this.controlAdmitTail.then(
+      () => this.verifyAndAdmitControlLine(json),
+      () => this.verifyAndAdmitControlLine(json),
+    );
+  }
+
+  private async verifyAndAdmitControlLine(json: JsonValue): Promise<void> {
+    if (this.disposed) return;
+    const secretBytes = this.secret?.peek();
+    const authState = this.authState;
+    if (secretBytes === undefined || authState === undefined) {
+      this.failOutstanding(
+        makeChildAuthenticationFailedFailure(this.childId, "not-activated"),
+      );
+      return;
+    }
+    await verifyEnvelope(json, secretBytes, this.hmacPort).match(
       (envelope) => this.admitControlEnvelope(envelope, authState),
       (envelopeError) => {
         this.logger.warn(
