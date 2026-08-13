@@ -50,3 +50,10 @@
 - Task 1 ceilings: Pi and OpenCode are `degraded`/`not-confirmed` (request-capable, not applied/native). Claude Code static materialization is `unsupported`. Optional gaps do not enter health-only mode.
 - Immediate leftover type consumers needed count updates (`ALL_CAPABILITY_IDS.length` is 22) and leftover `patterns` fixture deletions. Root typecheck still fails in `packages/adapters/pi/src/extension.ts` `parseChildBootstrapBody` because Task 8 still owns converting authenticated child bootstrap triggers from objects to `string[]`.
 - Exported `CapabilityEntrySchema` must discriminate `provider-fast-activation` and reuse `ProviderFastActivationStatusSchema` for present `runtimeStatus`. A standalone status enum is not an enforcement boundary; `applied-with-secret-payload` parsed until the exported contract reused that enum.
+
+## Task 7 primary activation boundary
+
+- Pi primary activation now copies `fast?: true` onto `PiActivePrimary` with identity, prompt, model, and skills. Omission means no intent. Never store `false`, and never infer from model or provider IDs.
+- Request snapshots are instance-owned and frozen. They carry activation `generation`, primary name, copied model intent, selected model when available, and `fast?: true`. A later successful `activate()` increments generation, so a stale snapshot cannot describe the later primary.
+- `projectPiProviderEvent` copies only hook name and integer response status. Payload, headers, and response bodies stay behind this projection. Task 9 owns mutation and evidence.
+- Failed `activate()` still returns typed `NotEligiblePrimary` and leaves `getCurrent()` unchanged. Health-only, unsupported, and failed boot paths have no snapshot. Task 8 still owns authenticated child bootstrap trigger conversion; that remains the known Pi typecheck failure.

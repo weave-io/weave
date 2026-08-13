@@ -287,7 +287,7 @@ export interface PiPrimaryCapabilityWarning {
 /**
  * The atomically-activated primary descriptor and every piece of state that
  * must change together with it (Pi adapter contract): descriptor identity, prompt
- * source, applied model, and resolved skills.
+ * source, applied model, resolved skills, and optional `fast?: true`.
  *
  * Registered tools and recovery correlation are not tracked here.
  */
@@ -299,12 +299,32 @@ export type PiPrimaryModelActivationOutcome =
       readonly reason: "user-selected";
     };
 
+/**
+ * Neutral fast intent committed with one primary activation.
+ * Present only as `true`. Omission means no fast intent.
+ */
+export type PiPrimaryFastIntent = true;
+
+/**
+ * Request-scoped copy of the committed primary. A later `activate()` bumps
+ * `generation`, so a stale token cannot describe the later primary.
+ */
+export interface PiPrimaryRequestSnapshot {
+  readonly generation: number;
+  readonly primaryName: string;
+  readonly modelIntent: readonly string[];
+  readonly selectedModel: PiModelInfo | undefined;
+  readonly fast?: PiPrimaryFastIntent;
+}
+
 export interface PiActivePrimary {
   readonly descriptor: AgentDescriptor;
   readonly promptBlock: string;
   readonly modelActivation: PiPrimaryModelActivationOutcome;
   readonly resolvedSkills: readonly ResolvedSkill[];
   readonly temperatureDegraded: boolean;
+  readonly fast?: PiPrimaryFastIntent;
+  readonly generation: number;
 }
 
 export interface PiPrimaryActivationContext {
@@ -342,6 +362,7 @@ export class PiPrimarySession {
   private readonly modelActivator: PiModelActivator;
   private current: PiActivePrimary | undefined;
   private previousDescriptorName: string | undefined;
+  private activationGeneration = 0;
   private readonly warnedKeys = new Set<string>();
   private readonly warnings: PiPrimaryCapabilityWarning[] = [];
   private parentSession: PiParentSessionState = UNKNOWN_PARENT_SESSION;
@@ -355,6 +376,36 @@ export class PiPrimarySession {
 
   getCurrent(): PiActivePrimary | undefined {
     return this.current;
+  }
+
+  /**
+   * Immutable copy of the committed primary for one later request.
+   * Returns `undefined` before the first successful activation. A later
+   * successful `activate()` increments `generation`, so this token cannot
+   * describe that later primary.
+   */
+  captureRequestSnapshot(): PiPrimaryRequestSnapshot | undefined {
+    if (this.current === undefined) return undefined;
+    return copyRequestSnapshot(this.current);
+  }
+
+  /**
+   * Accepts a previously captured snapshot only when it still matches this
+   * instance's committed generation, primary identity, and fast intent.
+   */
+  resolveRequestSnapshot(
+    snapshot: PiPrimaryRequestSnapshot,
+  ): Result<PiPrimaryRequestSnapshot, PiPrimarySnapshotStale> {
+    const current = this.current;
+    if (
+      current === undefined ||
+      snapshot.generation !== current.generation ||
+      snapshot.primaryName !== current.descriptor.name ||
+      snapshot.fast !== current.fast
+    ) {
+      return err({ type: "StalePrimaryRequestSnapshot" });
+    }
+    return ok(copyRequestSnapshot(current));
   }
 
   /** The last host-probed parent session identity and persistence. */
@@ -508,15 +559,48 @@ export class PiPrimarySession {
         });
       }
 
-      const activePrimary: PiActivePrimary = {
-        descriptor,
-        promptBlock: renderWeavePromptBlock(descriptor, resolvedSkills),
+      const committedDescriptor: AgentDescriptor = {
+        name: descriptor.name,
+        composedPrompt: descriptor.composedPrompt,
+        models: [...descriptor.models],
+        mode: descriptor.mode,
+        effectiveToolPolicy: descriptor.effectiveToolPolicy,
+        rawToolPolicy: descriptor.rawToolPolicy,
+        delegationTargets: descriptor.delegationTargets.map((target) => ({
+          ...target,
+          triggers: [...target.triggers],
+        })),
+        skills: [...descriptor.skills],
+      };
+      if (descriptor.displayName !== undefined) {
+        committedDescriptor.displayName = descriptor.displayName;
+      }
+      if (descriptor.description !== undefined) {
+        committedDescriptor.description = descriptor.description;
+      }
+      if (descriptor.category !== undefined) {
+        committedDescriptor.category = { ...descriptor.category };
+      }
+      if (descriptor.temperature !== undefined) {
+        committedDescriptor.temperature = descriptor.temperature;
+      }
+      if (descriptor.fast === true) committedDescriptor.fast = true;
+
+      const activePrimary: PiActivePrimary = Object.freeze({
+        descriptor: committedDescriptor,
+        promptBlock: renderWeavePromptBlock(
+          committedDescriptor,
+          resolvedSkills,
+        ),
         modelActivation,
         resolvedSkills,
         temperatureDegraded: temperatureDeclared,
-      };
+        generation: this.activationGeneration + 1,
+        ...(committedDescriptor.fast === true ? { fast: true as const } : {}),
+      });
 
       this.previousDescriptorName = this.current?.descriptor.name;
+      this.activationGeneration = activePrimary.generation;
       this.current = activePrimary;
       return activePrimary;
     });
@@ -555,6 +639,33 @@ export class PiPrimarySession {
       this.current.resolvedSkills,
     );
   }
+}
+
+export type PiPrimarySnapshotStale = {
+  readonly type: "StalePrimaryRequestSnapshot";
+};
+
+function selectedModelFromActivation(
+  modelActivation: PiPrimaryModelActivationOutcome,
+): PiModelInfo | undefined {
+  if (modelActivation.status === "applied") return modelActivation.model;
+  return modelActivation.currentModel;
+}
+
+function copyRequestSnapshot(
+  current: PiActivePrimary,
+): PiPrimaryRequestSnapshot {
+  const selectedModel = selectedModelFromActivation(current.modelActivation);
+  return Object.freeze({
+    generation: current.generation,
+    primaryName: current.descriptor.name,
+    modelIntent: Object.freeze([...current.descriptor.models]),
+    selectedModel:
+      selectedModel === undefined
+        ? undefined
+        : Object.freeze({ ...selectedModel }),
+    ...(current.fast === true ? { fast: true as const } : {}),
+  });
 }
 
 function errAsyncActivation(

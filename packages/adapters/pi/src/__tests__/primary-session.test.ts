@@ -15,7 +15,7 @@ import {
   UNKNOWN_PARENT_SESSION,
 } from "../primary-session.js";
 import { PiSkillCatalog } from "../skill-catalog.js";
-import type { PiModelInfo } from "../types.js";
+import { type PiModelInfo, projectPiProviderEvent } from "../types.js";
 import { RecordingLogger } from "./fakes/fake-pi-host.js";
 
 const POLICY: EffectiveToolPolicy = {
@@ -387,6 +387,252 @@ describe("PiPrimarySession.activate", () => {
   });
 });
 
+describe("PiPrimarySession fast intent and request snapshots", () => {
+  it("has no committed state or snapshot before activation", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    expect(session.getCurrent()).toBeUndefined();
+    expect(session.captureRequestSnapshot()).toBeUndefined();
+    expect(
+      session
+        .resolveRequestSnapshot({
+          generation: 1,
+          primaryName: "loom",
+          modelIntent: ["claude-sonnet-4-5"],
+          selectedModel: CATALOG[0],
+          fast: true,
+        })
+        .isErr(),
+    ).toBe(true);
+  });
+
+  it("commits fast true atomically with identity, prompt, model, and skills", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([{ name: "tdd" }]),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor({ fast: true, skills: ["tdd"] }),
+      context(),
+    );
+    expect(result.isOk()).toBe(true);
+    const active = result._unsafeUnwrap();
+    expect(active.fast).toBe(true);
+    expect(active.descriptor.name).toBe("loom");
+    expect(active.resolvedSkills.map((skill) => skill.name)).toEqual(["tdd"]);
+    expect(active.modelActivation).toMatchObject({
+      status: "applied",
+      model: CATALOG[0],
+    });
+    expect(session.getCurrent()?.fast).toBe(true);
+    expect(session.captureRequestSnapshot()).toMatchObject({
+      generation: 1,
+      primaryName: "loom",
+      fast: true,
+      selectedModel: CATALOG[0],
+    });
+    expect(active).not.toHaveProperty("fast", false);
+  });
+
+  it("omits fast on a non-fast primary and never infers it from model ids", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor({
+        models: ["openai/gpt-fast", "cursor/grok-4.5:fast#high"],
+      }),
+      context({
+        availableModels: [
+          { provider: "openai", id: "gpt-fast" },
+          { provider: "cursor", id: "grok-4.5:fast" },
+        ],
+      }),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().fast).toBeUndefined();
+    expect(session.getCurrent()).not.toHaveProperty("fast");
+    expect(session.captureRequestSnapshot()).not.toHaveProperty("fast");
+  });
+
+  it("switches fast to absent and absent to fast without leftover intent", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const fast = await session.activate(descriptor({ fast: true }), context());
+    expect(fast._unsafeUnwrap().fast).toBe(true);
+    const absent = await session.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context(),
+    );
+    expect(absent._unsafeUnwrap().fast).toBeUndefined();
+    expect(session.getCurrent()?.fast).toBeUndefined();
+    expect(session.captureRequestSnapshot()).toMatchObject({
+      primaryName: "tapestry",
+      generation: 2,
+    });
+    expect(session.captureRequestSnapshot()).not.toHaveProperty("fast");
+
+    const restoredFast = await session.activate(
+      descriptor({ name: "loom-fast", fast: true }),
+      context(),
+    );
+    expect(restoredFast._unsafeUnwrap().fast).toBe(true);
+    expect(session.captureRequestSnapshot()).toMatchObject({
+      primaryName: "loom-fast",
+      generation: 3,
+      fast: true,
+    });
+  });
+
+  it("rolls back a failed fast-to-absent switch and an absent-to-fast switch", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await session.activate(descriptor({ fast: true }), context());
+    const failedAbsent = await session.activate(
+      descriptor({ name: "shuttle", mode: "subagent" }),
+      context(),
+    );
+    expect(failedAbsent.isErr()).toBe(true);
+    expect(session.getCurrent()?.fast).toBe(true);
+    expect(session.getCurrent()?.descriptor.name).toBe("loom");
+    expect(session.captureRequestSnapshot()?.fast).toBe(true);
+
+    await session.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context(),
+    );
+    const failedFast = await session.activate(
+      descriptor({ name: "shuttle-fast", mode: "subagent", fast: true }),
+      context(),
+    );
+    expect(failedFast.isErr()).toBe(true);
+    expect(session.getCurrent()?.fast).toBeUndefined();
+    expect(session.getCurrent()?.descriptor.name).toBe("tapestry");
+    expect(session.captureRequestSnapshot()).not.toHaveProperty("fast");
+  });
+
+  it("rejects a stale or mutated snapshot after a later activation", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await session.activate(descriptor({ fast: true }), context());
+    const stale = session.captureRequestSnapshot();
+    expect(stale).toBeDefined();
+    if (stale === undefined) return;
+
+    await session.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context(),
+    );
+    expect(session.resolveRequestSnapshot(stale).isErr()).toBe(true);
+    expect(session.captureRequestSnapshot()?.generation).toBe(2);
+
+    const current = session.captureRequestSnapshot();
+    expect(current).toBeDefined();
+    if (current === undefined) return;
+    const forged: typeof current = {
+      ...current,
+      fast: true,
+    };
+    expect(session.resolveRequestSnapshot(forged).isErr()).toBe(true);
+  });
+
+  it("keeps request snapshots isolated from later input and output mutation", async () => {
+    const models = ["claude-sonnet-4-5"];
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor({ models, fast: true }),
+      context(),
+    );
+    expect(result.isOk()).toBe(true);
+    models.push("mutated-after-activate");
+    const snapshot = session.captureRequestSnapshot();
+    expect(snapshot?.modelIntent).toEqual(["claude-sonnet-4-5"]);
+    if (snapshot === undefined) return;
+    const mutableIntent = snapshot.modelIntent as string[];
+    expect(() => {
+      mutableIntent.push("mutated-snapshot");
+    }).toThrow();
+    if (snapshot.selectedModel !== undefined) {
+      expect(() => {
+        (snapshot.selectedModel as { id: string }).id = "mutated-model";
+      }).toThrow();
+    }
+    expect(session.captureRequestSnapshot()?.modelIntent).toEqual([
+      "claude-sonnet-4-5",
+    ]);
+    expect(session.captureRequestSnapshot()?.selectedModel).toEqual(CATALOG[0]);
+  });
+
+  it("re-probes the parent session on restart without leaking the prior snapshot", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+      parentSessionProbe: {
+        isPersisted: () => true,
+        getSessionFile: () => "/sessions/a.jsonl",
+        getSessionId: () => "runtime-1",
+        getHeader: () => ({ type: "session", id: "session-a" }),
+      },
+    });
+    await session.activate(descriptor({ fast: true }), context());
+    const first = session.captureRequestSnapshot();
+    expect(session.getParentSession()).toMatchObject({
+      persistence: "persistent",
+      sessionId: "session-a",
+    });
+    session.refreshParentSession({
+      isPersisted: () => true,
+      getSessionFile: () => "/sessions/a.jsonl",
+      getSessionId: () => "runtime-2",
+      getHeader: () => ({ type: "session", id: "session-a" }),
+    });
+    await session.activate(descriptor({ fast: true }), context());
+    const second = session.captureRequestSnapshot();
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (first === undefined || second === undefined) return;
+    expect(session.resolveRequestSnapshot(first).isErr()).toBe(true);
+    expect(second.generation).toBe(2);
+    expect(second.fast).toBe(true);
+  });
+
+  it("does not leak committed state or snapshots across session instances", async () => {
+    const first = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const second = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await first.activate(descriptor({ fast: true }), context());
+    expect(second.getCurrent()).toBeUndefined();
+    expect(second.captureRequestSnapshot()).toBeUndefined();
+    const firstSnapshot = first.captureRequestSnapshot();
+    expect(firstSnapshot).toBeDefined();
+    if (firstSnapshot === undefined) return;
+    expect(second.resolveRequestSnapshot(firstSnapshot).isErr()).toBe(true);
+    await second.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context(),
+    );
+    expect(second.captureRequestSnapshot()).not.toHaveProperty("fast");
+    expect(first.captureRequestSnapshot()?.fast).toBe(true);
+  });
+});
+
 describe("PiPrimarySession.restorePrevious", () => {
   it("re-activates the descriptor active before the current one", async () => {
     const session = new PiPrimarySession({
@@ -702,5 +948,61 @@ describe("parent session persistence", () => {
     expect(
       session.requirePersistentParent("retry")._unsafeUnwrapErr().correlation,
     ).toMatchObject({ reason: "no-probe" });
+  });
+});
+
+describe("projectPiProviderEvent", () => {
+  it("projects only the hook name and integer status, never payload or headers", () => {
+    const payload = { secret: "do-not-copy" };
+    const headers = { authorization: "secret-token" };
+    const request = projectPiProviderEvent({
+      type: "before_provider_request",
+      payload,
+    });
+    const headerEvent = projectPiProviderEvent({
+      type: "before_provider_headers",
+      headers,
+    });
+    const response = projectPiProviderEvent({
+      type: "after_provider_response",
+      status: 200,
+      headers,
+      body: "do-not-copy",
+    });
+    expect(request._unsafeUnwrap()).toEqual({
+      type: "before_provider_request",
+    });
+    expect(headerEvent._unsafeUnwrap()).toEqual({
+      type: "before_provider_headers",
+    });
+    expect(response._unsafeUnwrap()).toEqual({
+      type: "after_provider_response",
+      status: 200,
+    });
+    expect(JSON.stringify(request._unsafeUnwrap())).not.toContain("secret");
+    expect(JSON.stringify(headerEvent._unsafeUnwrap())).not.toContain(
+      "authorization",
+    );
+    expect(JSON.stringify(response._unsafeUnwrap())).not.toContain(
+      "do-not-copy",
+    );
+    payload.secret = "mutated";
+    headers.authorization = "mutated";
+    expect(request._unsafeUnwrap()).toEqual({
+      type: "before_provider_request",
+    });
+  });
+
+  it("rejects unknown or malformed provider events without throwing", () => {
+    expect(projectPiProviderEvent(null).isErr()).toBe(true);
+    expect(projectPiProviderEvent({ type: "session_start" }).isErr()).toBe(
+      true,
+    );
+    expect(
+      projectPiProviderEvent({
+        type: "after_provider_response",
+        status: "200",
+      }).isErr(),
+    ).toBe(true);
   });
 });

@@ -13,6 +13,8 @@
  * @see docs/adapters/pi.md (Pi adapter contract)
  */
 
+import { err, ok, type Result } from "neverthrow";
+
 export type {
   PiChildSessionEvent,
   PiExtensionUiResponse,
@@ -87,6 +89,71 @@ export interface PiBuildSystemPromptOptions {
 export interface PiBeforeAgentStartEvent {
   readonly systemPrompt?: string;
   readonly systemPromptOptions?: PiBuildSystemPromptOptions;
+}
+
+/**
+ * Narrow projections of Pi's provider hooks for eventual request mapping.
+ * These types deliberately omit payload, header maps, response bodies, and
+ * other harness objects. Task 9 owns any later mutation or evidence read.
+ */
+export type PiProviderHookName =
+  | "before_provider_request"
+  | "before_provider_headers"
+  | "after_provider_response";
+
+export interface PiBeforeProviderRequestEvent {
+  readonly type: "before_provider_request";
+}
+
+export interface PiBeforeProviderHeadersEvent {
+  readonly type: "before_provider_headers";
+}
+
+export interface PiAfterProviderResponseEvent {
+  readonly type: "after_provider_response";
+  readonly status: number;
+}
+
+export type PiProviderEventProjection =
+  | PiBeforeProviderRequestEvent
+  | PiBeforeProviderHeadersEvent
+  | PiAfterProviderResponseEvent;
+
+export type PiProviderEventProjectionError = {
+  readonly type: "UnsupportedProviderEvent";
+};
+
+/**
+ * Project a host provider hook into the adapter-owned shape. Copies only the
+ * event name and, for responses, the integer status. Payload, headers, and
+ * other harness fields stay behind this boundary.
+ */
+export function projectPiProviderEvent(
+  event: unknown,
+): Result<PiProviderEventProjection, PiProviderEventProjectionError> {
+  if (typeof event !== "object" || event === null) {
+    return err({ type: "UnsupportedProviderEvent" });
+  }
+  if (!("type" in event) || typeof event.type !== "string") {
+    return err({ type: "UnsupportedProviderEvent" });
+  }
+  if (event.type === "before_provider_request") {
+    return ok({ type: "before_provider_request" });
+  }
+  if (event.type === "before_provider_headers") {
+    return ok({ type: "before_provider_headers" });
+  }
+  if (event.type === "after_provider_response") {
+    if (
+      !("status" in event) ||
+      typeof event.status !== "number" ||
+      !Number.isInteger(event.status)
+    ) {
+      return err({ type: "UnsupportedProviderEvent" });
+    }
+    return ok({ type: "after_provider_response", status: event.status });
+  }
+  return err({ type: "UnsupportedProviderEvent" });
 }
 
 /** Notification severity accepted by `ctx.ui.notify`. */

@@ -1073,6 +1073,15 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     const ctx = await host.invokeCommand("weave:start");
     expect(host.notifyCalls.at(-1)?.message).toContain("health-only mode");
     expect(ctx.mode).toBe("tui");
+    const turn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(turn.systemPrompt).toBe("native");
+    expect(
+      host.statusCalls.filter(
+        (call) => call.key === "weave-agent" && call.value === "◆ WEAVE · LOOM",
+      ),
+    ).toHaveLength(0);
   });
 
   it("still allows weave:health and weave:status and weave:abort while in health-only mode", async () => {
@@ -1355,6 +1364,50 @@ describe("strict boot primary activation", () => {
     expect(
       host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
     ).toEqual(committedBadge);
+  });
+
+  it("appends the committed prompt for a fast primary without changing UI or activation", async () => {
+    const catalogModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+    };
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [catalogModel],
+    });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({
+              models: ["anthropic/claude-sonnet-4-5#high"],
+              fast: true,
+            }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+
+    await host.triggerSessionStart();
+    const turn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+
+    expect(turn.systemPrompt).toContain("You are Loom, the main orchestrator.");
+    expect(host.activationCalls).toEqual([
+      { kind: "model", model: catalogModel },
+      { kind: "thinking", level: "high" },
+    ]);
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+    expect(host.statusCalls).toContainEqual({ key: "weave", value: "ready" });
   });
 
   it("reads the boot skill catalog from the session context and resolves skills before the first turn", async () => {
@@ -2302,6 +2355,80 @@ describe("createPiExtension: config activation, materialization consumption, pri
 
     await host.invokeShortcut("alt+a");
 
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+  });
+
+  it("keeps the committed prompt after a failed Alt+A switch in both fast directions", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({ fast: true }),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor({ mode: "subagent" }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+    await host.invokeShortcut("alt+a");
+    const afterFailedFastSwitch = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(afterFailedFastSwitch.systemPrompt).toContain(
+      "You are Loom, the main orchestrator.",
+    );
+    expect(afterFailedFastSwitch.systemPrompt).not.toContain(
+      "You are Tapestry, the workflow orchestrator.",
+    );
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+  });
+
+  it("keeps the committed non-fast prompt after a failed switch to a fast ineligible agent", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor({ mode: "subagent", fast: true }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+    await host.invokeShortcut("alt+a");
+    const afterFailedAbsentSwitch = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(afterFailedAbsentSwitch.systemPrompt).toContain(
+      "You are Loom, the main orchestrator.",
+    );
+    expect(afterFailedAbsentSwitch.systemPrompt).not.toContain(
+      "You are Tapestry, the workflow orchestrator.",
+    );
     expect(host.statusCalls.at(-1)).toEqual({
       key: "weave-agent",
       value: "◆ WEAVE · LOOM",
@@ -4651,6 +4778,44 @@ describe("createPiExtension: persistent-parent guard on production weave_delegat
     expect(headerReads).toBeGreaterThan(0);
     expect(opened).toEqual(["header-stable"]);
     expect(opened).not.toContain("runtime-boot-2");
+  });
+});
+
+describe("createPiExtension: restart and resume read committed fast intent", () => {
+  it("re-activates a fast primary from the persisted header session after restart", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: {
+        getSessionId: () => "runtime-boot-2",
+        getSessionFile: () => "/sessions/a.jsonl",
+        isPersisted: () => true,
+        getHeader: () => ({ type: "session", id: "header-stable" }),
+      },
+    });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({ fast: true }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+    const turn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(turn.systemPrompt).toContain("You are Loom, the main orchestrator.");
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+    expect(host.statusCalls).toContainEqual({ key: "weave", value: "ready" });
   });
 });
 

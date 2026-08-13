@@ -753,7 +753,10 @@ export type {
   PiPrimaryActivationContext,
   PiPrimaryActivationError,
   PiPrimaryCapabilityWarning,
+  PiPrimaryFastIntent,
+  PiPrimaryRequestSnapshot,
   PiPrimarySessionDeps,
+  PiPrimarySnapshotStale,
 } from "./primary-session.js";
 export {
   appendWeaveBlockOnce,
@@ -873,7 +876,10 @@ export type {
   Clock,
   IdGenerator,
   PiAdapterLogger,
+  PiAfterProviderResponseEvent,
   PiBeforeAgentStartEvent,
+  PiBeforeProviderHeadersEvent,
+  PiBeforeProviderRequestEvent,
   PiBuildSystemPromptOptions,
   PiCommandHandler,
   PiCommandInfo,
@@ -882,6 +888,9 @@ export type {
   PiExtensionApi,
   PiMode,
   PiModelRegistry,
+  PiProviderEventProjection,
+  PiProviderEventProjectionError,
+  PiProviderHookName,
   PiResourceOrigin,
   PiResourceScope,
   PiSessionContext,
@@ -896,3 +905,4 @@ export type {
   PiUiNotifyLevel,
   PiUiPort,
 } from "./types.js";
+export { projectPiProviderEvent } from "./types.js";

@@ -5661,7 +5661,11 @@ export function createPiExtension(
         undefined,
         session.generationId,
       );
-      if (session.primarySession.getCurrent() === undefined) return undefined;
+      // Prompt append, badge, and later request mapping all read the same
+      // committed snapshot. A pending or failed switch has no snapshot.
+      if (session.primarySession.captureRequestSnapshot() === undefined) {
+        return undefined;
+      }
 
       return {
         systemPrompt: session.primarySession.appendToSystemPrompt(
