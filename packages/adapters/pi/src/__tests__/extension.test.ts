@@ -8951,6 +8951,7 @@ describe("createPiExtension: provider fast hooks", () => {
         readonly model: typeof openaiModel;
         readonly fast?: true;
       };
+      readonly overrides?: Partial<PiExtensionDeps>;
     } = {},
   ): PiExtensionInstance {
     const model = extras.model ?? openaiModel;
@@ -8982,6 +8983,7 @@ describe("createPiExtension: provider fast hooks", () => {
         agents,
         errors: [],
       }),
+      ...extras.overrides,
     });
   }
 
@@ -9331,5 +9333,208 @@ describe("createPiExtension: provider fast hooks", () => {
     expect(JSON.stringify(extension.providerFastLatestForTest())).not.toContain(
       PROVIDER_FAST_SECRET,
     );
+  });
+
+  it("omits the status fast line when there is no intent", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    installFastPrimary(host);
+    await host.triggerSessionStart();
+    await host.triggerBeforeProviderHeaders({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+    });
+    await host.invokeCommand("weave:status");
+    const message = host.notifyCalls.at(-1)?.message ?? "";
+    expect(message).toContain("health-only: false");
+    expect(message).not.toContain("fast:");
+    expect(message).not.toContain("applied");
+    expect(message).not.toContain(PROVIDER_FAST_SECRET);
+  });
+
+  it("shows requested, not-confirmed, and unsupported status lines without applied text", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const extension = installFastPrimary(host, { fast: true });
+    await host.triggerSessionStart();
+    await host.triggerBeforeProviderHeaders({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+    });
+    await host.invokeCommand("weave:status");
+    expect(host.notifyCalls.at(-1)?.message).toContain("fast: declared");
+
+    await host.triggerBeforeProviderRequest({ model: "gpt-5.6-sol" });
+    await host.invokeCommand("weave:status");
+    expect(host.notifyCalls.at(-1)?.message).toContain("fast: requested");
+    expect(host.notifyCalls.at(-1)?.message).not.toContain("applied");
+
+    await host.triggerAfterProviderResponse(200, {});
+    await host.invokeCommand("weave:status");
+    const notConfirmed = host.notifyCalls.at(-1)?.message ?? "";
+    expect(notConfirmed).toContain("fast: not-confirmed");
+    expect(notConfirmed).not.toContain("applied");
+    expect(notConfirmed).not.toContain("active");
+    expect(notConfirmed).not.toMatch(/(?<!not-)confirmed/);
+    expect(notConfirmed).not.toContain(PROVIDER_FAST_SECRET);
+    expect(notConfirmed).not.toContain("gpt-5.6-sol");
+    expect(extension.providerFastLatestForTest().state).toBe("not-confirmed");
+
+    const unsupportedHost = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [
+        { provider: "openai", id: "gpt-4.1", api: "openai-responses" },
+      ],
+    });
+    installFastPrimary(unsupportedHost, {
+      model: { provider: "openai", id: "gpt-4.1", api: "openai-responses" },
+      fast: true,
+    });
+    await unsupportedHost.triggerSessionStart();
+    await unsupportedHost.triggerBeforeProviderHeaders({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+    });
+    await unsupportedHost.invokeCommand("weave:status");
+    expect(unsupportedHost.notifyCalls.at(-1)?.message).toContain(
+      "fast: unsupported (model-not-allowed)",
+    );
+  });
+
+  it("records sanitized transitions, ignores no-intent, and degrades journal failure", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const store = createInMemoryRuntimeStore();
+    installFastPrimary(host, {
+      fast: true,
+      overrides: {
+        runtimeStoreFactory: { open: () => okAsync(store) },
+        telemetryJournal: {
+          write: (entry) => {
+            journalEntries.push(entry);
+            return okAsync(undefined);
+          },
+        },
+        telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+      },
+    });
+    await host.triggerSessionStart();
+    await host.triggerBeforeProviderHeaders({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+    });
+    await host.triggerBeforeProviderRequest({ model: "gpt-5.6-sol" });
+    await host.triggerAfterProviderResponse(200, {});
+    await flushBackgroundWork();
+    const events = journalEntries
+      .map((entry) =>
+        typeof entry === "object" && entry !== null && "eventType" in entry
+          ? String((entry as { eventType?: unknown }).eventType)
+          : "",
+      )
+      .filter((eventType) => eventType.startsWith("provider-fast."));
+    expect(events).toEqual([
+      "provider-fast.declared",
+      "provider-fast.requested",
+      "provider-fast.not-confirmed",
+    ]);
+    expect(JSON.stringify(journalEntries)).not.toContain(PROVIDER_FAST_SECRET);
+    expect(JSON.stringify(journalEntries)).not.toContain("Authorization");
+    expect(JSON.stringify(journalEntries)).not.toContain("applied");
+
+    const noIntentHost = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const noIntentEntries: unknown[] = [];
+    installFastPrimary(noIntentHost, {
+      overrides: {
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+        telemetryJournal: {
+          write: (entry) => {
+            noIntentEntries.push(entry);
+            return okAsync(undefined);
+          },
+        },
+        telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+      },
+    });
+    await noIntentHost.triggerSessionStart();
+    await noIntentHost.triggerBeforeProviderHeaders({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+    });
+    await noIntentHost.triggerBeforeProviderRequest({ model: "gpt-5.6-sol" });
+    await flushBackgroundWork();
+    expect(
+      noIntentEntries.some(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          String((entry as { eventType?: unknown }).eventType ?? "").startsWith(
+            "provider-fast.",
+          ),
+      ),
+    ).toBe(false);
+
+    const failingHost = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const failingExtension = installFastPrimary(failingHost, {
+      fast: true,
+      overrides: {
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+        telemetryJournal: {
+          write: (entry) => {
+            const eventType =
+              typeof entry === "object" &&
+              entry !== null &&
+              "eventType" in entry
+                ? String((entry as { eventType?: unknown }).eventType)
+                : "";
+            if (eventType.startsWith("provider-fast.")) {
+              return errAsync({
+                type: "journal_write",
+                message: PROVIDER_FAST_SECRET,
+              } as RuntimeStoreError);
+            }
+            return okAsync(undefined);
+          },
+        },
+        telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+      },
+    });
+    await failingHost.triggerSessionStart();
+    const headers = { Authorization: PROVIDER_FAST_AUTHORIZATION };
+    await failingHost.triggerBeforeProviderHeaders(headers);
+    const replaced = await failingHost.triggerBeforeProviderRequest({
+      model: "gpt-5.6-sol",
+    });
+    expect(replaced).toEqual({
+      model: "gpt-5.6-sol",
+      service_tier: "fast",
+    });
+    await failingHost.triggerAfterProviderResponse(200, {});
+    await flushBackgroundWork();
+    expect(failingExtension.providerFastLatestForTest().state).toBe(
+      "not-confirmed",
+    );
+    expect(JSON.stringify(failingHost.notifyCalls)).not.toContain(
+      PROVIDER_FAST_SECRET,
+    );
+    expect(JSON.stringify(failingHost.notifyCalls)).not.toContain("applied");
   });
 });

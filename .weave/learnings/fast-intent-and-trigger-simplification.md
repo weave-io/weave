@@ -69,3 +69,9 @@
 - Pi ordinary and direct-step bootstraps carry optional literal `fast: true` and ordered `DelegationTarget.triggers: string[]`; direct dispatch forwards the selected descriptor intent, copies nested model/target data, and omits absent fast to preserve provider defaults.
 - `parseControlBody` copies hostile graphs through a descriptor-only bounded copier before canonicalization and Zod: depth 64, 4,096 nodes, 4,096 aggregate properties, 512 properties per object, 256 KiB string budget, and 512-element arrays. It rejects cycles, accessors, symbols, callables, unsafe prototypes, and sparse arrays without executing getters; bootstrap canonical bytes remain capped at 64 KiB.
 - Child fast and delegation state commits only after required bootstrap application and before acknowledgement. Signed body construction omits undefined optional keys.
+
+## Task 9 slice D sanitized telemetry and status
+
+- The `provider-fast` journal family accepts only the public tracker snapshot: provider family, API family, rule ID, bounded sequence/pending count, collision, state, evidence kind/outcome, and a fixed reason. Extra keys, raw model/provider strings, payloads, headers, credentials, prompts, URLs, paths, and stacks are rejected at the projection boundary.
+- Lifecycle events persist once per sequence/state (`declared`, `requested`, `not-confirmed`, `unsupported`). No-intent never writes. Session replacement clears in-memory reporting dedupe only. Telemetry write failure degrades through the existing journal path and does not change request mutation.
+- `/weave:status` may add one concise line: `fast: requested`, `fast: not-confirmed`, `fast: unsupported (<fixed reason>)`, or `fast: declared`. It never says applied/active/confirmed. HTTP 2xx remains not-confirmed.

@@ -131,7 +131,7 @@
   - type PiBootstrapBody
   - type PiOrdinaryBootstrapBody
   - type PiDirectStepBootstrapBody
-  - _...16 more_
+  - _...17 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -240,7 +240,14 @@
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
   - _...42 more_
-- `packages/adapters/pi/src/child-overlay-component.ts` — function createChildOverlayCustomComponent: (tui) => void },, interface PiChildOverlayCustomComponent
+- `packages/adapters/pi/src/child-overlay-component.ts`
+  - function formatChildOverlayTelemetryLine: (telemetry) => string
+  - function compactChildOverlayEntryLine: (entry, width) => string
+  - function compactChildOverlayLines: (entries, width) => readonly string[]
+  - function spansFromRows: (rows) => readonly OverlayLayoutSpan[]
+  - function overlayUsableRows: (tui) => number
+  - function toChildOverlayEditorTheme: (theme) => EditorTheme
+  - _...7 more_
 - `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
@@ -257,7 +264,7 @@
   - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
-  - _...45 more_
+  - _...52 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
@@ -265,19 +272,20 @@
   - function nonEmptyString: (value) => string | undefined
   - function boundLabel: (value) => string
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
-  - _...6 more_
+  - _...11 more_
 - `packages/adapters/pi/src/child-overlay-scroll.ts`
+  - function setLayoutSpans: (state, spans) => void
+  - function captureViewportAnchor: (state) => ChildOverlayAnchor | undefined
+  - function captureViewportForLayoutChange: (state) => void
+  - function applyViewportAnchor: (state, anchor) => void
   - function markTailGrowth: (state) => void
   - function clearTailGrowth: (state) => void
-  - function applyMeasuredExtent: (state, extent) => void
-  - function maxScrollRows: (state) => number
-  - function anchorFromScroll: (state) => ChildOverlayAnchor | undefined
-  - function restoreScrollAnchor: (state, anchor) => void
-  - _...2 more_
+  - _...9 more_
 - `packages/adapters/pi/src/child-overlay-search.ts`
   - function stripPathLike: (value) => string
   - function matchingEntryIds: (entries, needle) => string[]
   - function mergeMatchIds: (older, newer) => string[]
+- `packages/adapters/pi/src/child-overlay-telemetry.ts` — function latestUsageInWindow: (entries) => PiChildUsageReport | undefined, function deriveChildOverlayTelemetry: (usage, child) => ChildOverlayTelemetry | undefined
 - `packages/adapters/pi/src/child-overlay-terminal-input.ts`
   - function normalizeChildOverlayScrollFrame: (data) => string | undefined
   - function isChildOverlayScrollFrame: (data) => boolean
@@ -293,7 +301,7 @@
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
   - interface ChildOverlayConfig
-  - _...26 more_
+  - _...31 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
@@ -343,13 +351,13 @@
   - type PiChildSessionCheckpoint
   - _...4 more_
 - `packages/adapters/pi/src/child-session-events.ts`
+  - function parsePiChildUsageReport: (event) => Result<PiChildUsageReport, PiChildUsageError>
+  - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
   - function parsePiChildSessionEvent
-  - type PiChildSessionEvent
-  - type PiChildEventType
-  - type PiExtensionUiResponse
-  - const MAX_CHILD_EVENT_STRING
-  - _...4 more_
+  - interface PiChildUsageReport
+  - interface PiAssistantUsageFacts
+  - _...11 more_
 - `packages/adapters/pi/src/child-session-reconstruction.ts`
   - function describeChildReconstructionError: (error) => string
   - function reconstructParentLocalChildren: (input) => ResultAsync<PiChildReconstructionSummary, PiChildReconstructionError>
@@ -493,7 +501,7 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
-  - _...10 more_
+  - _...11 more_
 - `packages/adapters/pi/src/generation-resources.ts`
   - function createGenerationSessionCtxCell: () => PiGenerationSessionCtxCell
   - function readSessionManagerEntries: (ctx, report) => void
@@ -575,7 +583,7 @@
   - function probeParentSession: (probe) => PiParentSessionState
   - function requirePersistentParentSession: (state, operation) => Result<PiParentSessionState, PiAdapterFailure>
   - function isReadOnlyChildAccessAllowed: (_state) => boolean
-  - _...12 more_
+  - _...15 more_
 - `packages/adapters/pi/src/prompt-chunking.ts`
   - function promptTransferNackReason: (error) => PromptTransferNackReason
   - function encodePromptChunksBounded: (task, transferId) => Result<readonly PromptChunk[], PromptChunkError>
@@ -584,6 +592,14 @@
   - class PromptChunkAssembler
   - interface PromptChunk
   - _...4 more_
+- `packages/adapters/pi/src/provider-fast-activation.ts`
+  - function classifyProviderFastActivation: (input) => Result<ProviderFastActivationSuccess, ProviderFastUnsupported>
+  - function applyOpenAiProviderFastPayload: (classification, payload) => Result<unknown, ProviderFastMutationUnsupported>
+  - function applyAnthropicProviderFastPayload: (classification, payload) => Result<unknown, ProviderFastMutationUnsupported>
+  - function planAnthropicProviderFastHeaders: (classification, headers) => Result<ProviderFastHeaderPlan, ProviderFastMutationUnsupported>
+  - function applyAnthropicProviderFastHeaders: (classification, headers) => Result<object, ProviderFastMutationUnsupported>
+  - class ProviderFastAttemptTracker
+  - _...61 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -593,10 +609,13 @@
   - class InMemoryRecoveryPointerStore
   - _...9 more_
 - `packages/adapters/pi/src/render-width.ts`
+  - function overlayFrameGeometry: (outerWidth) => OverlayFrameGeometry
+  - function frameLinesToWidth: (lines, outerWidth) => string[]
   - function fitLineToWidth: (line, width) => string
   - function fitLineWithSuffix: (head, suffix, width) => string
   - function fitLinesToWidth: (lines, width) => string[]
   - function fitRuleToWidth: (rule, width, cap) => string
+  - _...2 more_
 - `packages/adapters/pi/src/repeated-settlement-validator.ts`
   - function validateRepeatedSettlements: (options) => ResultAsync<
   - interface PiSettlementValidationRun
@@ -654,13 +673,13 @@
   - function buildWeaveCompleteStepToolRegistration: (deps) => void
   - _...4 more_
 - `packages/adapters/pi/src/telemetry.ts`
+  - function projectProviderFastJournalData: (snapshot) => Result<PiProviderFastJournalData, PiAdapterFailure>
+  - function renderProviderFastStatusLine: (snapshot) => Result<string | undefined, PiAdapterFailure>
   - function sanitizeDiagnosticValue: (value) => unknown
   - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
   - function createPiTelemetryLogger: (options) => ResultAsync<
   - function createPiTelemetry: (options) => ResultAsync<
-  - class PiTelemetry
-  - interface PiJournalEventInput
-  - _...12 more_
+  - _...20 more_
 - `packages/adapters/pi/src/thread-sources.ts`
   - function openPiThreadSources: (input) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>
   - function createProductionPiThreadSourceFactory: (options) => PiThreadSourceFactory
@@ -675,6 +694,14 @@
   - class FakePiTrustedDataRootPort
   - interface PiTrustedDataRootPort
   - type PiTrustedDataRootViolation
+- `packages/adapters/pi/src/types.ts`
+  - function projectPiProviderEvent: (event) => Result<PiProviderEventProjection, PiProviderEventProjectionError>
+  - function extractPiProviderEventField: (event, field) => Result<unknown, PiProviderEventFieldError>
+  - interface PiSourceInfo
+  - interface PiCommandInfo
+  - interface PiModelInfo
+  - interface PiModelRegistry
+  - _...39 more_
 - `packages/adapters/pi/src/workflow-commands.ts`
   - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
   - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>
@@ -995,7 +1022,32 @@
   - class BufferTerminal
   - interface TerminalIO
 - `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
-- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/legacy-conversion-diagnostics.ts`
+  - function primitiveCategory: (value) => PrimitiveTypeCategory
+  - function reasonWithType: (reason, value) => string
+  - function joinPath: (parts) => string
+  - function boundWarning: (warning) => ConversionWarning
+  - function pushWarning: (warnings, field, reason) => void
+  - function absorbWarnings: (warnings, extra) => void
+  - _...12 more_
+- `packages/cli/src/migration/legacy-dsl-identifiers.ts`
+  - function isDangerousDslName: (name) => boolean
+  - function isDslIdentifierShape: (name) => boolean
+  - function classifyDslName: (name) => DslNameClassification
+  - function isEmittableDslName: (name) => boolean
+  - type DslNameClassification
+  - const DANGEROUS_DSL_NAMES
+  - _...1 more_
+- `packages/cli/src/migration/legacy-graph-copy.ts`
+  - function copyLegacyGraph: (value) => Result<unknown, LegacyGraphCopyError>
+  - type LegacyGraphCopyError
+  - const UNSAFE_LEGACY_GRAPH_MESSAGE
+  - const LEGACY_GRAPH_TOO_LARGE_MESSAGE
+  - const MAX_LEGACY_GRAPH_NODES
+  - const MAX_LEGACY_GRAPH_DEPTH
+  - _...4 more_
+- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function convertLegacyValue: (value) => ConversionResult, function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/legacy-jsonc-inspect.ts` — function inspectLegacyJsonc: (source) => Result<void, LegacyJsoncInspectError>, type LegacyJsoncInspectError
 - `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
@@ -1049,6 +1101,14 @@
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
 - `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
+- `packages/core/src/config-error-policy.ts`
+  - function boundConfigErrors: (errors, truncationMarker) => void
+  - const MAX_CONFIG_ERROR_ISSUES
+  - const MAX_CONFIG_ERROR_PATH_LENGTH
+  - const MAX_CONFIG_ERROR_FIELD_LENGTH
+  - const MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE
+  - const CONFIG_ERRORS_TRUNCATED
+  - _...1 more_
 - `packages/core/src/errors.ts`
   - function formatError: (error) => string
   - type LexError
@@ -1068,7 +1128,18 @@
   - function refinePromptAppendExclusive: () => [
   - function refinePromptExclusive: () => [
   - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
-- `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
+- `packages/core/src/safe-graph-copy.ts`
+  - function copySafeGraph: (value) => Result<unknown, SafeGraphCopyError>
+  - type SafeGraphCopyError
+  - const UNSAFE_GRAPH_MESSAGE
+- `packages/core/src/safe-schema-input.ts` — function safeSchemaInput: (schema) => z.ZodType<z.output<T>, z.input<T>>
+- `packages/core/src/validate.ts`
+  - function validate: (ast) => Result<WeaveConfig, ValidationError[]>
+  - const MAX_VALIDATION_ISSUES
+  - const MAX_VALIDATION_PATH_LENGTH
+  - const MAX_VALIDATION_MESSAGE_LENGTH
+  - const MAX_VALIDATION_DIAGNOSTIC_SIZE
+  - const VALIDATION_DIAGNOSTICS_TRUNCATED
 - `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
 - `packages/engine/src/adapter-command.ts`
   - function createAdapterCommandRegistry: (adapters, Readonly<Record<string, AdapterCommandHandler>>>
@@ -1080,13 +1151,13 @@
   - type AdapterCommandError
   - _...4 more_
 - `packages/engine/src/capability-contract.ts`
+  - function readinessForProviderFastStatus: (status) => CapabilityReadiness
+  - function providerFastActivationState: (input) => ProviderFastActivationStatus | undefined
+  - function effectiveProviderFastReadiness: (declared, status) => CapabilityReadiness
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
   - function lowerReadinessByProbe: (declared, resolution) => CapabilityReadiness
   - function evaluateEffectiveCapabilities: (contract, probeResults) => EffectiveCapabilityEvaluation
-  - function buildAdapterHealthReport: (input) => AdapterHealthReport
-  - function buildHumanRows: (report) => HumanReadinessRow[]
-  - function buildToonRows: (report) => ToonReadinessRow[]
-  - _...23 more_
+  - _...30 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>

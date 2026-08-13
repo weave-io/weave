@@ -8,18 +8,23 @@ import {
 } from "@weaveio/weave-engine";
 import { errAsync, okAsync } from "neverthrow";
 import type { PiAdapterFailure } from "../errors.js";
+import { makeChildCapacityExceededFailure } from "../errors.js";
+import type { ProviderFastAttemptPublicSnapshot } from "../provider-fast-activation.js";
 import {
   createPiTelemetry,
   createPiTelemetryLogger,
   extractAssistantUsageFromMessage,
   PI_JOURNAL_FAMILIES,
+  PI_PROVIDER_FAST_JOURNAL_DATA_KEYS,
   type PiJournalPort,
+  type PiProviderFastJournalData,
   type PiRetentionPort,
   PiTelemetry,
   type PiTelemetryUiPort,
   type PiUsagePort,
+  projectProviderFastJournalData,
+  renderProviderFastStatusLine,
 } from "../telemetry.js";
-import { makeChildCapacityExceededFailure } from "../errors.js";
 import type { Clock, PiAdapterLogger } from "../types.js";
 
 function fakeClock(startMs = 1_700_000_000_000): Clock {
@@ -159,10 +164,7 @@ describe("PiTelemetry — TUI diagnostics dedupe (Pi adapter contract)", () => {
     const privateCanary = "PRIVATE-DIAGNOSTIC-CANARY";
     telemetry.notifyFailureOnce(
       ui,
-      makeChildCapacityExceededFailure(
-        privateCanary,
-        "max_children",
-      ),
+      makeChildCapacityExceededFailure(privateCanary, "max_children"),
     );
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.message).toBe(
@@ -265,6 +267,7 @@ describe("PiTelemetry — data ban (Pi adapter contract)", () => {
       "usage",
       "retention",
       "telemetry-degradation",
+      "provider-fast",
     ]);
   });
 
@@ -601,6 +604,426 @@ describe("PiTelemetry — activation and cleanup (Pi adapter contract)", () => {
       const shutdown = await created.value.telemetry.shutdown();
       expect(shutdown.isOk()).toBe(true);
       expect(stopped.length).toBe(1);
+    }
+  });
+});
+
+const PROVIDER_FAST_SECRET = "sk-proj-fast-secret-value-DO-NOT-ECHO-9f3c2a1b";
+
+function providerFastSnapshot(
+  overrides: Partial<ProviderFastAttemptPublicSnapshot> = {},
+): ProviderFastAttemptPublicSnapshot {
+  return {
+    sequence: 1,
+    pendingCount: 1,
+    providerFamily: "openai",
+    apiFamily: "openai-responses",
+    allowlistRuleId: "openai-gpt-5-6-sol",
+    collision: false,
+    state: "declared",
+    evidenceKind: "none",
+    evidenceOutcome: "none",
+    reason: "none",
+    ...overrides,
+  };
+}
+
+function expectOkValue<T>(result: {
+  match: (ok: (value: T) => T, err: () => never) => T;
+}): T {
+  return result.match(
+    (value) => value,
+    () => {
+      throw new Error("expected Ok");
+    },
+  );
+}
+
+function expectExactJournalData(
+  data: unknown,
+  expected: PiProviderFastJournalData,
+): void {
+  expect(data).toEqual(expected);
+  expect(Object.keys(data as object).sort()).toEqual(
+    [...PI_PROVIDER_FAST_JOURNAL_DATA_KEYS].sort(),
+  );
+  expect(typeof (data as PiProviderFastJournalData).providerFamily).toBe(
+    "string",
+  );
+  expect(typeof (data as PiProviderFastJournalData).apiFamily).toBe("string");
+  expect(typeof (data as PiProviderFastJournalData).allowlistRuleId).toBe(
+    "string",
+  );
+  expect(typeof (data as PiProviderFastJournalData).sequence).toBe("number");
+  expect(typeof (data as PiProviderFastJournalData).pendingCount).toBe(
+    "number",
+  );
+  expect(typeof (data as PiProviderFastJournalData).collision).toBe("boolean");
+  expect(typeof (data as PiProviderFastJournalData).state).toBe("string");
+  expect(typeof (data as PiProviderFastJournalData).evidenceKind).toBe(
+    "string",
+  );
+  expect(typeof (data as PiProviderFastJournalData).evidenceOutcome).toBe(
+    "string",
+  );
+  expect(typeof (data as PiProviderFastJournalData).reason).toBe("string");
+}
+
+describe("PiTelemetry — provider-fast journal family", () => {
+  it("projects only closed sanitized keys and types", () => {
+    const projected = projectProviderFastJournalData(providerFastSnapshot());
+    expect(projected.isOk()).toBe(true);
+    if (projected.isErr()) {
+      return;
+    }
+    expectExactJournalData(projected.value, {
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      sequence: 1,
+      pendingCount: 1,
+      collision: false,
+      state: "declared",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "none",
+    });
+  });
+
+  it("rejects extra, raw, and secret-shaped fields at the projection boundary", () => {
+    const extra = {
+      ...providerFastSnapshot(),
+      model: "gpt-5.6-sol",
+      prompt: PROVIDER_FAST_SECRET,
+      authorization: `Bearer ${PROVIDER_FAST_SECRET}`,
+    };
+    const missing = {
+      sequence: 1,
+      state: "declared",
+    };
+    const rawReason = {
+      ...providerFastSnapshot(),
+      reason: PROVIDER_FAST_SECRET,
+    };
+    expect(projectProviderFastJournalData(extra).isErr()).toBe(true);
+    expect(
+      projectProviderFastJournalData(
+        missing as unknown as ProviderFastAttemptPublicSnapshot,
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      projectProviderFastJournalData(
+        rawReason as unknown as ProviderFastAttemptPublicSnapshot,
+      ).isErr(),
+    ).toBe(true);
+  });
+
+  it("does not persist no-intent idle snapshots", async () => {
+    const store = createInMemoryRuntimeStore();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+    });
+    const recorded = await telemetry.recordProviderFastTransition(
+      providerFastSnapshot({
+        sequence: 0,
+        pendingCount: 0,
+        providerFamily: "none",
+        apiFamily: "none",
+        allowlistRuleId: "none",
+        state: "unsupported",
+      }),
+    );
+    expect(recorded.isOk() && recorded.value).toBe("duplicate");
+    const entries = [...store.journal.snapshot().values()].filter((entry) =>
+      entry.eventType.startsWith("provider-fast."),
+    );
+    expect(entries).toHaveLength(0);
+  });
+
+  it("records each lifecycle state once and deduplicates repeats", async () => {
+    const store = createInMemoryRuntimeStore();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+    });
+    const declared = providerFastSnapshot();
+    const requested = providerFastSnapshot({
+      state: "requested",
+      pendingCount: 1,
+    });
+    const confirmed = providerFastSnapshot({
+      state: "not-confirmed",
+      pendingCount: 0,
+      evidenceKind: "response-status",
+      evidenceOutcome: "unavailable",
+      reason: "response-body-evidence-unavailable",
+    });
+    const unsupported = providerFastSnapshot({
+      sequence: 2,
+      pendingCount: 0,
+      providerFamily: "none",
+      allowlistRuleId: "none",
+      state: "unsupported",
+      reason: "model-not-allowed",
+    });
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(declared)),
+    ).toBe("recorded");
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(declared)),
+    ).toBe("duplicate");
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(requested)),
+    ).toBe("recorded");
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(confirmed)),
+    ).toBe("recorded");
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(unsupported)),
+    ).toBe("recorded");
+
+    const entries = [...store.journal.snapshot().values()]
+      .filter((entry) => entry.eventType.startsWith("provider-fast."))
+      .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+    expect(entries.map((entry) => entry.eventType)).toEqual([
+      "provider-fast.declared",
+      "provider-fast.requested",
+      "provider-fast.not-confirmed",
+      "provider-fast.unsupported",
+    ]);
+    expectExactJournalData(entries[0]?.data, {
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      sequence: 1,
+      pendingCount: 1,
+      collision: false,
+      state: "declared",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "none",
+    });
+    expectExactJournalData(entries[1]?.data, {
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      sequence: 1,
+      pendingCount: 1,
+      collision: false,
+      state: "requested",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "none",
+    });
+    expectExactJournalData(entries[2]?.data, {
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      sequence: 1,
+      pendingCount: 0,
+      collision: false,
+      state: "not-confirmed",
+      evidenceKind: "response-status",
+      evidenceOutcome: "unavailable",
+      reason: "response-body-evidence-unavailable",
+    });
+    expectExactJournalData(entries[3]?.data, {
+      providerFamily: "none",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "none",
+      sequence: 2,
+      pendingCount: 0,
+      collision: false,
+      state: "unsupported",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "model-not-allowed",
+    });
+  });
+
+  it("records retries as a later sequence without collapsing prior events", async () => {
+    const store = createInMemoryRuntimeStore();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+    });
+    const first = providerFastSnapshot({ sequence: 1, state: "requested" });
+    const retry = providerFastSnapshot({ sequence: 2, state: "requested" });
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(first)),
+    ).toBe("recorded");
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(retry)),
+    ).toBe("recorded");
+    const entries = [...store.journal.snapshot().values()].filter((entry) =>
+      entry.eventType.startsWith("provider-fast."),
+    );
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.data.sequence)).toEqual([1, 2]);
+  });
+
+  it("degrades through the typed journal path when persistence fails", async () => {
+    const failingJournal: PiJournalPort = {
+      write: () =>
+        errAsync({
+          type: "journal_write",
+          message: "disk full",
+        } as RuntimeStoreError),
+    };
+    const telemetry = buildTelemetry({ journal: failingJournal });
+    const result = await telemetry.recordProviderFastTransition(
+      providerFastSnapshot(),
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.code).toBe("JournalWriteFailed");
+      expect(result.error.safeMessage).toBe(
+        "Weave could not write a Runtime Journal entry.",
+      );
+      expect(JSON.stringify(result.error)).not.toContain(PROVIDER_FAST_SECRET);
+    }
+  });
+
+  it("renders concise status lines for every public state and omits no-intent", () => {
+    expect(
+      expectOkValue(renderProviderFastStatusLine(undefined)),
+    ).toBeUndefined();
+    expect(
+      expectOkValue(
+        renderProviderFastStatusLine(
+          providerFastSnapshot({
+            sequence: 0,
+            pendingCount: 0,
+            providerFamily: "none",
+            apiFamily: "none",
+            allowlistRuleId: "none",
+            state: "unsupported",
+          }),
+        ),
+      ),
+    ).toBeUndefined();
+    expect(
+      expectOkValue(renderProviderFastStatusLine(providerFastSnapshot())),
+    ).toBe("fast: declared");
+    expect(
+      expectOkValue(
+        renderProviderFastStatusLine(
+          providerFastSnapshot({ state: "requested" }),
+        ),
+      ),
+    ).toBe("fast: requested");
+    expect(
+      expectOkValue(
+        renderProviderFastStatusLine(
+          providerFastSnapshot({
+            state: "not-confirmed",
+            evidenceKind: "response-status",
+            evidenceOutcome: "unavailable",
+            reason: "response-body-evidence-unavailable",
+          }),
+        ),
+      ),
+    ).toBe("fast: not-confirmed");
+    expect(
+      expectOkValue(
+        renderProviderFastStatusLine(
+          providerFastSnapshot({
+            state: "unsupported",
+            reason: "model-not-allowed",
+          }),
+        ),
+      ),
+    ).toBe("fast: unsupported (model-not-allowed)");
+    expect(
+      expectOkValue(
+        renderProviderFastStatusLine(
+          providerFastSnapshot({
+            state: "unsupported",
+            reason: "expired",
+          }),
+        ),
+      ),
+    ).toBe("fast: unsupported (expired)");
+    const rendered = [
+      expectOkValue(renderProviderFastStatusLine(providerFastSnapshot())),
+      expectOkValue(
+        renderProviderFastStatusLine(
+          providerFastSnapshot({ state: "requested" }),
+        ),
+      ),
+      expectOkValue(
+        renderProviderFastStatusLine(
+          providerFastSnapshot({
+            state: "not-confirmed",
+            reason: "response-body-evidence-unavailable",
+          }),
+        ),
+      ),
+    ].join("\n");
+    expect(rendered).not.toContain("applied");
+    expect(rendered).not.toContain("active");
+    expect(rendered).not.toMatch(/(?<!not-)confirmed/);
+  });
+
+  it("clears in-memory reporting dedupe on session reset without rewriting durable events", async () => {
+    const store = createInMemoryRuntimeStore();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+    });
+    const snapshot = providerFastSnapshot();
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
+    ).toBe("recorded");
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
+    ).toBe("duplicate");
+    telemetry.resetProviderFastReporting();
+    expect(
+      expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
+    ).toBe("recorded");
+    const entries = [...store.journal.snapshot().values()].filter((entry) =>
+      entry.eventType.startsWith("provider-fast."),
+    );
+    expect(entries).toHaveLength(2);
+    expect(
+      entries.every((entry) => entry.eventType === "provider-fast.declared"),
+    ).toBe(true);
+  });
+
+  it("keeps secret-shaped values out of projected data, status, and logs", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { logger, logs } = fakeLogger();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+      logger,
+    });
+    const recorded = await telemetry.recordProviderFastTransition(
+      providerFastSnapshot({
+        state: "not-confirmed",
+        evidenceKind: "response-status",
+        evidenceOutcome: "unavailable",
+        reason: "response-body-evidence-unavailable",
+      }),
+    );
+    expect(recorded.isOk()).toBe(true);
+    const status = renderProviderFastStatusLine(
+      providerFastSnapshot({
+        state: "not-confirmed",
+        evidenceKind: "response-status",
+        evidenceOutcome: "unavailable",
+        reason: "response-body-evidence-unavailable",
+      }),
+    );
+    const sinks = [
+      JSON.stringify(store.journal.snapshot()),
+      JSON.stringify(logs),
+      JSON.stringify(recorded),
+      JSON.stringify(status),
+    ];
+    for (const sink of sinks) {
+      expect(sink).not.toContain(PROVIDER_FAST_SECRET);
+      expect(sink).not.toContain("sk-proj");
+      expect(sink).not.toContain("Authorization");
+      expect(sink).not.toContain("applied");
+      expect(sink).not.toContain("gpt-5.6-sol");
     }
   });
 });

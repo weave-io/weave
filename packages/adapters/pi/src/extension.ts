@@ -314,6 +314,7 @@ import {
   type PiTelemetry,
   type PiTelemetryUiPort,
   type PiUsagePort,
+  renderProviderFastStatusLine,
 } from "./telemetry.js";
 import {
   createProductionPiThreadSourceFactory,
@@ -1916,6 +1917,7 @@ function renderStatusMessage(
   _activeSession: PiActiveSession | undefined,
   delegationController?: PiDelegationController,
   reconstructed?: PiChildReconstructionSummary | undefined,
+  providerFastLatest?: ProviderFastAttemptPublicSnapshot,
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
@@ -1927,6 +1929,10 @@ function renderStatusMessage(
     `mode: ${generation.preflight.mode}`,
     `health-only: ${effectiveHealthOnly(generation)}`,
   ];
+  const fastLine = renderProviderFastStatusLine(providerFastLatest);
+  if (fastLine.isOk() && fastLine.value !== undefined) {
+    lines.push(fastLine.value);
+  }
   const tree = delegationController?.snapshotTree() ?? [];
   // A returning source parent has an empty live tree but may still own
   // settled children in its own authoritative refs. Counting both is what
@@ -2478,6 +2484,23 @@ export function createPiExtension(
     providerFastActiveToken = undefined;
     providerFastActiveGeneration = undefined;
     providerFastActivePrimaryName = undefined;
+    telemetryCell.telemetry?.resetProviderFastReporting();
+  };
+
+  const recordProviderFastTransitionSafely = (
+    snapshot: ProviderFastAttemptPublicSnapshot | undefined,
+  ): void => {
+    if (snapshot === undefined || snapshot.sequence < 1) {
+      return;
+    }
+    const telemetry = telemetryCell.telemetry;
+    if (telemetry === undefined) {
+      return;
+    }
+    void telemetry.recordProviderFastTransition(snapshot).orElse((failure) => {
+      telemetry.recordDegradation(failure);
+      return okAsync(undefined);
+    });
   };
 
   const toProviderFastCoordinatorSnapshot = (
@@ -2560,9 +2583,13 @@ export function createPiExtension(
           providerFastActiveToken = undefined;
           providerFastActiveGeneration = undefined;
           providerFastActivePrimaryName = undefined;
+          if (begun.isOk() && begun.value.kind === "unsupported") {
+            recordProviderFastTransitionSafely(begun.value.snapshot);
+          }
           return undefined;
         }
         rememberProviderFastToken(begun.value.token, snapshot);
+        recordProviderFastTransitionSafely(begun.value.snapshot);
         return undefined;
       },
       () => undefined,
@@ -2596,10 +2623,14 @@ export function createPiExtension(
             providerFastActiveToken = undefined;
             providerFastActiveGeneration = undefined;
             providerFastActivePrimaryName = undefined;
+            if (retry.isOk() && retry.value.kind === "unsupported") {
+              recordProviderFastTransitionSafely(retry.value.snapshot);
+            }
             return undefined;
           }
           token = retry.value.token;
           rememberProviderFastToken(token, snapshot);
+          recordProviderFastTransitionSafely(retry.value.snapshot);
         } else if (
           snapshot.generation !== providerFastActiveGeneration ||
           snapshot.primaryName !== providerFastActivePrimaryName
@@ -2618,6 +2649,7 @@ export function createPiExtension(
           providerFastActivePrimaryName = undefined;
           return undefined;
         }
+        recordProviderFastTransitionSafely(applied.value.snapshot);
         if (Object.is(applied.value.payload, payloadField.value)) {
           return undefined;
         }
@@ -2663,7 +2695,9 @@ export function createPiExtension(
         if (observed.isErr()) {
           providerFastActiveGeneration = undefined;
           providerFastActivePrimaryName = undefined;
+          return undefined;
         }
+        recordProviderFastTransitionSafely(observed.value);
         return undefined;
       },
       () => undefined,
@@ -3270,6 +3304,7 @@ export function createPiExtension(
           activeSession,
           delegationControllerCell.controller,
           currentChildReconstruction(),
+          providerFastCoordinator.latest(),
         ),
         "info",
       );
