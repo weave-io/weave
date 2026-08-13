@@ -1,14 +1,15 @@
 import { err, ok, Result } from "neverthrow";
 
 /**
- * Exact allowlist classifier, stateless request mutation, and an
- * instance-owned attempt tracker for Pi provider-fast activation.
+ * Exact allowlist classifier, stateless request mutation, an instance-owned
+ * attempt tracker, and a one-sequence coordinator for Pi provider-fast hooks.
  *
  * Classification never copies caller strings. Mutation copies only a bounded
  * own-data payload graph, or applies one planned Anthropic header write after
  * the full map validates. The tracker correlates request attempts with opaque
- * tokens and never reports `applied`. Diagnostics carry closed reason codes
- * only.
+ * tokens and never reports `applied`. The coordinator maps host API strings
+ * by a literal table, owns one active sequence, and exposes only sanitized
+ * diagnostics.
  */
 
 export const PROVIDER_FAST_INPUT_MAX_LENGTH = 128;
@@ -237,7 +238,7 @@ export type ProviderFastAttemptClassification =
 
 export type ProviderFastAttemptBeginInput = {
   readonly snapshot: ProviderFastAttemptRequestSnapshot;
-  readonly apiFamily: ProviderFastApiFamily;
+  readonly apiFamily: ProviderFastApiFamily | "none";
   readonly classification: ProviderFastAttemptClassification;
 };
 
@@ -1044,6 +1045,12 @@ function isExactApiFamily(value: unknown): value is ProviderFastApiFamily {
   );
 }
 
+function isBeginApiFamily(
+  value: unknown,
+): value is ProviderFastApiFamily | "none" {
+  return value === "none" || isExactApiFamily(value);
+}
+
 function isCollisionReason(reason: string): boolean {
   return reason === "request-collision";
 }
@@ -1112,7 +1119,7 @@ type InspectedBeginInput = {
     readonly model: string;
     readonly fast: true | undefined;
   };
-  readonly apiFamily: ProviderFastApiFamily;
+  readonly apiFamily: ProviderFastApiFamily | "none";
   readonly classification: ProviderFastAttemptClassification;
 };
 
@@ -1126,7 +1133,7 @@ function readBeginInput(
   const snapshotValue = Reflect.get(input, "snapshot");
   const apiFamilyValue = Reflect.get(input, "apiFamily");
   const classificationValue = Reflect.get(input, "classification");
-  if (!isExactApiFamily(apiFamilyValue)) {
+  if (!isBeginApiFamily(apiFamilyValue)) {
     return err(attemptError("InvalidAttemptInput", "invalid-input"));
   }
   if (
@@ -1340,6 +1347,11 @@ export class ProviderFastAttemptTracker {
       );
     }
 
+    if (!isExactApiFamily(apiFamily)) {
+      this.nextSequence -= 1;
+      return err(attemptError("InvalidAttemptInput", "invalid-input"));
+    }
+
     if (this.pending.size >= this.pendingLimit) {
       this.nextSequence -= 1;
       return err(
@@ -1522,5 +1534,482 @@ export class ProviderFastAttemptTracker {
       ...snapshot,
       pendingCount: this.pending.size,
     });
+  }
+}
+
+export const PROVIDER_FAST_HOST_API_TABLE = Object.freeze({
+  "openai-responses": "openai-responses",
+  "openai-completions": "openai-completions",
+  "anthropic-messages": "anthropic-messages",
+} as const);
+
+export type ProviderFastHostApi = keyof typeof PROVIDER_FAST_HOST_API_TABLE;
+
+export type ProviderFastCoordinatorSnapshot = {
+  readonly generation: number;
+  readonly primaryName: string;
+  readonly selectedModel?:
+    | {
+        readonly provider: string;
+        readonly id: string;
+        readonly name?: string;
+        readonly api?: string;
+      }
+    | undefined;
+  readonly fast?: true;
+};
+
+export type ProviderFastCoordinatorError =
+  | ProviderFastAttemptError
+  | {
+      readonly type: "AmbiguousFastAttempt";
+      readonly reason: "out-of-order";
+    };
+
+export type ProviderFastCoordinatorHeadersResult =
+  | {
+      readonly kind: "no-state";
+    }
+  | {
+      readonly kind: "unsupported";
+      readonly snapshot: ProviderFastAttemptPublicSnapshot;
+    }
+  | {
+      readonly kind: "pending";
+      readonly token: ProviderFastAttemptToken;
+      readonly snapshot: ProviderFastAttemptPublicSnapshot;
+    };
+
+export type ProviderFastCoordinatorRequestResult = {
+  readonly payload: unknown;
+  readonly snapshot: ProviderFastAttemptPublicSnapshot;
+};
+
+type ActiveCoordinatorAttempt = {
+  readonly token: ProviderFastAttemptToken;
+  readonly snapshot: ProviderFastCoordinatorSnapshot;
+};
+
+const EMPTY_COORDINATOR_SNAPSHOT: ProviderFastAttemptPublicSnapshot =
+  Object.freeze({
+    sequence: 0,
+    pendingCount: 0,
+    providerFamily: "none",
+    apiFamily: "none",
+    allowlistRuleId: "none",
+    collision: false,
+    state: "unsupported",
+    evidenceKind: "none",
+    evidenceOutcome: "none",
+    reason: "none",
+  });
+
+function coordinatorError(
+  type: ProviderFastCoordinatorError["type"],
+  reason: ProviderFastCoordinatorError["reason"],
+): ProviderFastCoordinatorError {
+  return Object.freeze({ type, reason }) as ProviderFastCoordinatorError;
+}
+
+function mapHostApiFamily(api: unknown): ProviderFastApiFamily | "none" {
+  if (typeof api !== "string") {
+    return "none";
+  }
+  if (Object.hasOwn(PROVIDER_FAST_HOST_API_TABLE, api)) {
+    return PROVIDER_FAST_HOST_API_TABLE[api as ProviderFastHostApi];
+  }
+  return "none";
+}
+
+function copyCoordinatorSnapshot(
+  snapshot: ProviderFastCoordinatorSnapshot,
+): Result<ProviderFastCoordinatorSnapshot, ProviderFastCoordinatorError> {
+  if (
+    typeof snapshot !== "object" ||
+    snapshot === null ||
+    Array.isArray(snapshot)
+  ) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  const generation = Reflect.get(snapshot, "generation");
+  const primaryName = Reflect.get(snapshot, "primaryName");
+  if (!isSafeInteger(generation) || generation < 1) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  if (typeof primaryName !== "string" || primaryName.length === 0) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  const fast = Object.hasOwn(snapshot, "fast")
+    ? Reflect.get(snapshot, "fast")
+    : undefined;
+  if (fast !== undefined && fast !== true) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+
+  const selectedModel = Object.hasOwn(snapshot, "selectedModel")
+    ? Reflect.get(snapshot, "selectedModel")
+    : undefined;
+  if (selectedModel === undefined) {
+    return ok(
+      Object.freeze({
+        generation,
+        primaryName,
+        ...(fast === true ? { fast: true as const } : {}),
+      }),
+    );
+  }
+  if (
+    typeof selectedModel !== "object" ||
+    selectedModel === null ||
+    Array.isArray(selectedModel)
+  ) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  const provider = Reflect.get(selectedModel, "provider");
+  const id = Reflect.get(selectedModel, "id");
+  if (typeof provider !== "string" || provider.length === 0) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  if (typeof id !== "string" || id.length === 0) {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  const name = Object.hasOwn(selectedModel, "name")
+    ? Reflect.get(selectedModel, "name")
+    : undefined;
+  if (name !== undefined && typeof name !== "string") {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  const api = Object.hasOwn(selectedModel, "api")
+    ? Reflect.get(selectedModel, "api")
+    : undefined;
+  if (api !== undefined && typeof api !== "string") {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
+  return ok(
+    Object.freeze({
+      generation,
+      primaryName,
+      selectedModel: Object.freeze({
+        provider,
+        id,
+        ...(name === undefined ? {} : { name }),
+        ...(api === undefined ? {} : { api }),
+      }),
+      ...(fast === true ? { fast: true as const } : {}),
+    }),
+  );
+}
+
+const inspectCoordinatorSnapshot = Result.fromThrowable(
+  (snapshot: unknown) =>
+    copyCoordinatorSnapshot(snapshot as ProviderFastCoordinatorSnapshot),
+  () => attemptError("InvalidAttemptInput", "invalid-input"),
+);
+
+function coordinatorSnapshotsMatch(
+  left: ProviderFastCoordinatorSnapshot,
+  right: ProviderFastCoordinatorSnapshot,
+): boolean {
+  if (
+    left.generation !== right.generation ||
+    left.primaryName !== right.primaryName ||
+    left.fast !== right.fast
+  ) {
+    return false;
+  }
+  const leftModel = left.selectedModel;
+  const rightModel = right.selectedModel;
+  if (leftModel === undefined || rightModel === undefined) {
+    return leftModel === rightModel;
+  }
+  return (
+    leftModel.provider === rightModel.provider &&
+    leftModel.id === rightModel.id &&
+    leftModel.name === rightModel.name &&
+    leftModel.api === rightModel.api
+  );
+}
+
+function classifyCoordinatorSnapshot(
+  snapshot: ProviderFastCoordinatorSnapshot,
+): Result<ProviderFastActivationSuccess, ProviderFastUnsupported> {
+  if (snapshot.fast !== true) {
+    return ok(NO_INTENT);
+  }
+  const selectedModel = snapshot.selectedModel;
+  const apiFamily = mapHostApiFamily(selectedModel?.api);
+  if (apiFamily === "none") {
+    return err(unsupported("endpoint-not-allowed"));
+  }
+  return classifyProviderFastActivation({
+    fast: true,
+    provider: selectedModel?.provider ?? "",
+    apiFamily,
+    model: selectedModel?.id ?? "",
+  });
+}
+
+function classificationFromResult(
+  result: Result<ProviderFastActivationSuccess, ProviderFastUnsupported>,
+): ProviderFastActivationClassification {
+  return result.match(
+    (value) => value,
+    (error) => error,
+  );
+}
+
+function toTrackerSnapshot(
+  snapshot: ProviderFastCoordinatorSnapshot,
+): ProviderFastAttemptRequestSnapshot {
+  return {
+    generation: snapshot.generation,
+    primaryName: snapshot.primaryName,
+    ...(snapshot.selectedModel === undefined
+      ? {}
+      : {
+          selectedModel: {
+            provider: snapshot.selectedModel.provider,
+            id: snapshot.selectedModel.id,
+            ...(snapshot.selectedModel.name === undefined
+              ? {}
+              : { name: snapshot.selectedModel.name }),
+          },
+        }),
+    ...(snapshot.fast === true ? { fast: true as const } : {}),
+  };
+}
+
+function applyCoordinatorHeaders(
+  classification: ProviderFastActivationClassification,
+  headers: object,
+): Result<object, ProviderFastMutationUnsupported> {
+  return applyAnthropicProviderFastHeaders(classification, headers);
+}
+
+function applyCoordinatorPayload(
+  classification: ProviderFastActivationClassification,
+  payload: unknown,
+): Result<unknown, ProviderFastMutationUnsupported> {
+  if (shouldLeaveRequestUnchanged(classification)) {
+    return ok(payload);
+  }
+  if (isSupportedFamily(classification, "openai")) {
+    return applyOpenAiProviderFastPayload(classification, payload);
+  }
+  if (isSupportedFamily(classification, "anthropic")) {
+    return applyAnthropicProviderFastPayload(classification, payload);
+  }
+  return err(mutationUnsupported("payload-malformed"));
+}
+
+function beginClassificationForTracker(
+  classification: ProviderFastActivationClassification,
+  mutation?: ProviderFastMutationUnsupported,
+): ProviderFastAttemptClassification {
+  if (mutation !== undefined) {
+    return mutation;
+  }
+  return classification;
+}
+
+/**
+ * Instance-owned three-phase coordinator for one Pi session. Pi has no
+ * request ID, so only one sequence may be active. Overlap, token mismatch,
+ * snapshot mismatch, and generation/primary switches fail closed.
+ */
+export class ProviderFastCoordinator {
+  private readonly tracker = new ProviderFastAttemptTracker({
+    pendingLimit: 1,
+  });
+  private active: ActiveCoordinatorAttempt | undefined;
+  private latestSnapshot: ProviderFastAttemptPublicSnapshot =
+    EMPTY_COORDINATOR_SNAPSHOT;
+
+  beginHeaders(
+    snapshot: ProviderFastCoordinatorSnapshot,
+    headers: object,
+  ): Result<
+    ProviderFastCoordinatorHeadersResult,
+    ProviderFastCoordinatorError
+  > {
+    const inspected = inspectCoordinatorSnapshot(snapshot);
+    if (inspected.isErr()) {
+      return this.failClosed(inspected.error);
+    }
+    if (inspected.value.isErr()) {
+      return this.failClosed(inspected.value.error);
+    }
+    const copied = inspected.value.value;
+    if (this.active !== undefined) {
+      return this.failClosed(
+        coordinatorError("AmbiguousFastAttempt", "out-of-order"),
+      );
+    }
+
+    const classified = classifyCoordinatorSnapshot(copied);
+    const classification = classificationFromResult(classified);
+    const headerResult = applyCoordinatorHeaders(classification, headers);
+    const trackerClassification = beginClassificationForTracker(
+      classification,
+      headerResult.isErr() ? headerResult.error : undefined,
+    );
+    const begun = this.tracker.begin({
+      snapshot: toTrackerSnapshot(copied),
+      apiFamily: mapHostApiFamily(copied.selectedModel?.api),
+      classification: trackerClassification,
+    });
+    if (begun.isErr()) {
+      return this.failClosed(begun.error);
+    }
+    if (begun.value.kind === "no-state") {
+      return ok(Object.freeze({ kind: "no-state" }));
+    }
+    if (begun.value.kind === "unsupported") {
+      this.latestSnapshot = begun.value.snapshot;
+      return ok(
+        Object.freeze({
+          kind: "unsupported",
+          snapshot: begun.value.snapshot,
+        }),
+      );
+    }
+    this.active = {
+      token: begun.value.token,
+      snapshot: copied,
+    };
+    this.latestSnapshot = begun.value.snapshot;
+    return ok(
+      Object.freeze({
+        kind: "pending",
+        token: begun.value.token,
+        snapshot: begun.value.snapshot,
+      }),
+    );
+  }
+
+  applyRequest(
+    snapshot: ProviderFastCoordinatorSnapshot,
+    token: ProviderFastAttemptToken,
+    payload: unknown,
+  ): Result<
+    ProviderFastCoordinatorRequestResult,
+    ProviderFastCoordinatorError
+  > {
+    const inspected = inspectCoordinatorSnapshot(snapshot);
+    if (inspected.isErr()) {
+      return this.failClosed(inspected.error);
+    }
+    if (inspected.value.isErr()) {
+      return this.failClosed(inspected.value.error);
+    }
+    const copied = inspected.value.value;
+    const active = this.active;
+    if (active === undefined) {
+      return this.failClosed(
+        coordinatorError("AmbiguousFastAttempt", "out-of-order"),
+      );
+    }
+    const sequence = inspectAttemptToken(token);
+    if (sequence.isErr()) {
+      return this.failClosed(sequence.error);
+    }
+    if (sequence.value.isErr()) {
+      return this.failClosed(sequence.value.error);
+    }
+    if (sequence.value.value !== active.token.sequence) {
+      return this.failClosed(
+        sequence.value.value > active.token.sequence
+          ? attemptError("InvalidAttemptToken", "forged-token")
+          : attemptError("StaleAttemptToken", "stale-token"),
+      );
+    }
+    if (!coordinatorSnapshotsMatch(copied, active.snapshot)) {
+      let expireReason: ProviderFastAttemptExpireReason | undefined;
+      if (copied.generation !== active.snapshot.generation) {
+        expireReason = "generation-superseded";
+      } else if (copied.primaryName !== active.snapshot.primaryName) {
+        expireReason = "primary-switched";
+      }
+      if (expireReason !== undefined) {
+        this.tracker.expire(active.token, expireReason);
+      }
+      return this.failClosed(
+        coordinatorError("AmbiguousFastAttempt", "out-of-order"),
+      );
+    }
+
+    const classified = classifyCoordinatorSnapshot(copied);
+    const classification = classificationFromResult(classified);
+    const mutated = applyCoordinatorPayload(classification, payload);
+    if (mutated.isErr()) {
+      this.tracker.expire(active.token, "cancelled");
+      return this.failClosed(
+        coordinatorError("AmbiguousFastAttempt", "out-of-order"),
+      );
+    }
+    const requested = this.tracker.markRequested(active.token);
+    if (requested.isErr()) {
+      return this.failClosed(requested.error);
+    }
+    this.latestSnapshot = requested.value;
+    return ok(
+      Object.freeze({
+        payload: mutated.value,
+        snapshot: requested.value,
+      }),
+    );
+  }
+
+  observeResponse(
+    token: ProviderFastAttemptToken,
+    status: number,
+  ): Result<ProviderFastAttemptPublicSnapshot, ProviderFastCoordinatorError> {
+    const active = this.active;
+    if (active === undefined) {
+      return this.failClosed(
+        coordinatorError("AmbiguousFastAttempt", "out-of-order"),
+      );
+    }
+    const sequence = inspectAttemptToken(token);
+    if (sequence.isErr()) {
+      return this.failClosed(sequence.error);
+    }
+    if (sequence.value.isErr()) {
+      return this.failClosed(sequence.value.error);
+    }
+    if (sequence.value.value !== active.token.sequence) {
+      return this.failClosed(
+        sequence.value.value > active.token.sequence
+          ? attemptError("InvalidAttemptToken", "forged-token")
+          : attemptError("StaleAttemptToken", "stale-token"),
+      );
+    }
+    const observed = this.tracker.observeResponse(token, { status });
+    if (observed.isErr()) {
+      return this.failClosed(observed.error);
+    }
+    this.active = undefined;
+    this.latestSnapshot = observed.value;
+    return ok(observed.value);
+  }
+
+  reset(): Result<{ readonly expiredCount: number }, never> {
+    const reset = this.tracker.reset();
+    this.active = undefined;
+    this.latestSnapshot = EMPTY_COORDINATOR_SNAPSHOT;
+    return reset;
+  }
+
+  latest(): ProviderFastAttemptPublicSnapshot {
+    return copyPublicSnapshot(this.latestSnapshot);
+  }
+
+  private failClosed(
+    error: ProviderFastCoordinatorError,
+  ): Result<never, ProviderFastCoordinatorError> {
+    this.tracker.reset();
+    this.active = undefined;
+    this.latestSnapshot = EMPTY_COORDINATOR_SNAPSHOT;
+    return err(error);
   }
 }

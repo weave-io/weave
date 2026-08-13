@@ -21,7 +21,11 @@ import {
   type ProviderFastAttemptBeginInput,
   type ProviderFastAttemptError,
   type ProviderFastAttemptPublicSnapshot,
+  type ProviderFastAttemptToken,
   ProviderFastAttemptTracker,
+  ProviderFastCoordinator,
+  type ProviderFastCoordinatorError,
+  type ProviderFastCoordinatorSnapshot,
   type ProviderFastMutationReason,
   type ProviderFastUnsupportedReason,
   planAnthropicProviderFastHeaders,
@@ -1488,5 +1492,642 @@ describe("ProviderFastAttemptTracker", () => {
     expect(serialized).not.toContain("loom");
     expect(serialized).not.toContain("gpt-5.6");
     expect(serialized).not.toContain("applied");
+  });
+});
+
+function coordinatorSnapshot(
+  overrides: Partial<ProviderFastCoordinatorSnapshot> = {},
+): ProviderFastCoordinatorSnapshot {
+  return {
+    generation: 1,
+    primaryName: "loom",
+    selectedModel: {
+      provider: "openai",
+      id: "gpt-5.6-sol",
+      api: "openai-responses",
+    },
+    fast: true,
+    ...overrides,
+  };
+}
+
+function expectCoordinatorError(
+  result: {
+    isOk(): boolean;
+    isErr(): boolean;
+    error?: ProviderFastCoordinatorError;
+  },
+  error: ProviderFastCoordinatorError,
+): void {
+  expect(result.isErr()).toBe(true);
+  if (result.isOk()) {
+    return;
+  }
+  expect(result.error).toEqual(error);
+}
+
+function expectIdleLatest(coordinator: ProviderFastCoordinator): void {
+  expectSanitizedSnapshot(coordinator.latest(), {
+    sequence: 0,
+    pendingCount: 0,
+    providerFamily: "none",
+    apiFamily: "none",
+    allowlistRuleId: "none",
+    collision: false,
+    state: "unsupported",
+    evidenceKind: "none",
+    evidenceOutcome: "none",
+    reason: "none",
+  });
+}
+
+describe("ProviderFastCoordinator", () => {
+  it("runs the exact OpenAI sequence and never serializes applied", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot();
+    const headers = { Authorization: SECRET_AUTHORIZATION };
+    const payload = {
+      model: "gpt-5.6-sol",
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const originalPayload = clonePlain(payload);
+
+    const begun = coordinator.beginHeaders(snapshot, headers);
+    expect(begun.isOk()).toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    expect(headers).toEqual({ Authorization: SECRET_AUTHORIZATION });
+    expectSanitizedSnapshot(begun.value.snapshot, {
+      sequence: 1,
+      pendingCount: 1,
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      collision: false,
+      state: "declared",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "none",
+    });
+
+    const requested = coordinator.applyRequest(
+      snapshot,
+      begun.value.token,
+      payload,
+    );
+    expect(requested.isOk()).toBe(true);
+    if (requested.isErr()) {
+      return;
+    }
+    expect(payload).toEqual(originalPayload);
+    expect(requested.value.payload).not.toBe(payload);
+    expect(requested.value.payload).toEqual({
+      ...originalPayload,
+      service_tier: "fast",
+    });
+    expectSanitizedSnapshot(requested.value.snapshot, {
+      sequence: 1,
+      pendingCount: 1,
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      collision: false,
+      state: "requested",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "none",
+    });
+
+    const observed = coordinator.observeResponse(begun.value.token, 200);
+    expect(observed.isOk()).toBe(true);
+    if (observed.isErr()) {
+      return;
+    }
+    expectSanitizedSnapshot(observed.value, {
+      sequence: 1,
+      pendingCount: 0,
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      collision: false,
+      state: "not-confirmed",
+      evidenceKind: "response-status",
+      evidenceOutcome: "unavailable",
+      reason: "response-body-evidence-unavailable",
+    });
+    expect(observed.value).not.toHaveProperty("applied");
+    expect(serializedAttempt(coordinator.latest())).not.toContain("applied");
+    expect(serializedAttempt(coordinator.latest())).not.toContain(
+      SECRET_AUTHORIZATION,
+    );
+  });
+
+  it("runs the exact Anthropic sequence and mutates only the beta header", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot({
+      selectedModel: {
+        provider: "anthropic",
+        id: "claude-opus-5",
+        api: "anthropic-messages",
+      },
+    });
+    const headers: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+      "x-request-id": "req-1",
+    };
+    const payload = {
+      model: "claude-opus-5",
+      max_tokens: 32,
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const originalPayload = clonePlain(payload);
+
+    const begun = coordinator.beginHeaders(snapshot, headers);
+    expect(begun.isOk()).toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    expect(headers).toEqual({
+      Authorization: SECRET_AUTHORIZATION,
+      "x-request-id": "req-1",
+      "anthropic-beta": PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
+    });
+    expectSanitizedSnapshot(begun.value.snapshot, {
+      sequence: 1,
+      pendingCount: 1,
+      providerFamily: "anthropic",
+      apiFamily: "anthropic-messages",
+      allowlistRuleId: "anthropic-claude-opus-5",
+      collision: false,
+      state: "declared",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "none",
+    });
+
+    const requested = coordinator.applyRequest(
+      snapshot,
+      begun.value.token,
+      payload,
+    );
+    expect(requested.isOk()).toBe(true);
+    if (requested.isErr()) {
+      return;
+    }
+    expect(payload).toEqual(originalPayload);
+    expect(requested.value.payload).toEqual({
+      ...originalPayload,
+      speed: "fast",
+    });
+
+    const observed = coordinator.observeResponse(begun.value.token, 529);
+    expect(observed.isOk()).toBe(true);
+    if (observed.isErr()) {
+      return;
+    }
+    expect(observed.value.state).toBe("not-confirmed");
+    expect(observed.value.reason).toBe("response-body-evidence-unavailable");
+  });
+
+  it("is an exact no-op for no-intent and omitted fast", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const headers = { Authorization: SECRET_AUTHORIZATION };
+    const payload = { model: "gpt-5.6-sol" };
+    const noIntent = coordinator.beginHeaders(
+      coordinatorSnapshot({ fast: undefined }),
+      headers,
+    );
+    expect(noIntent.isOk()).toBe(true);
+    if (noIntent.isErr()) {
+      return;
+    }
+    expect(noIntent.value).toEqual({ kind: "no-state" });
+    expect(headers).toEqual({ Authorization: SECRET_AUTHORIZATION });
+    expectIdleLatest(coordinator);
+
+    const omitted = coordinator.beginHeaders(
+      {
+        generation: 1,
+        primaryName: "loom",
+        selectedModel: {
+          provider: "openai",
+          id: "gpt-5.6-sol",
+          api: "openai-responses",
+        },
+      },
+      headers,
+    );
+    expect(omitted.isOk()).toBe(true);
+    if (omitted.isErr()) {
+      return;
+    }
+    expect(omitted.value).toEqual({ kind: "no-state" });
+    expect(payload).toEqual({ model: "gpt-5.6-sol" });
+    expectIdleLatest(coordinator);
+  });
+
+  it("sanitizes unsupported host APIs and unknown models", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const headers = { Authorization: SECRET_AUTHORIZATION };
+    const result = coordinator.beginHeaders(
+      coordinatorSnapshot({
+        primaryName: SECRET_PRIMARY,
+        selectedModel: {
+          provider: SECRET_PROVIDER,
+          id: SECRET_MODEL,
+          api: "openai-compatible",
+        },
+      }),
+      headers,
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isErr() || result.value.kind !== "unsupported") {
+      return;
+    }
+    expect(headers).toEqual({ Authorization: SECRET_AUTHORIZATION });
+    expectSanitizedSnapshot(result.value.snapshot, {
+      sequence: 1,
+      pendingCount: 0,
+      providerFamily: "none",
+      apiFamily: "none",
+      allowlistRuleId: "none",
+      collision: false,
+      state: "unsupported",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "endpoint-not-allowed",
+    });
+    expect(serializedAttempt(result.value.snapshot)).not.toContain(
+      "openai-compatible",
+    );
+
+    const unknownModel = coordinator.beginHeaders(
+      coordinatorSnapshot({
+        selectedModel: {
+          provider: "openai",
+          id: "gpt-5.6",
+          api: "openai-responses",
+        },
+      }),
+      headers,
+    );
+    expect(unknownModel.isOk()).toBe(true);
+    if (unknownModel.isErr() || unknownModel.value.kind !== "unsupported") {
+      return;
+    }
+    expect(unknownModel.value.snapshot.reason).toBe("model-not-allowed");
+    expect(unknownModel.value.snapshot.apiFamily).toBe("openai-responses");
+  });
+
+  it("records collision as sanitized unsupported and leaves the original request", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const headers = {
+      Authorization: SECRET_AUTHORIZATION,
+      "anthropic-beta": "fast-mode-2099-01-01",
+    };
+    const original = clonePlain(headers);
+    const result = coordinator.beginHeaders(
+      coordinatorSnapshot({
+        selectedModel: {
+          provider: "anthropic",
+          id: "claude-opus-5",
+          api: "anthropic-messages",
+        },
+      }),
+      headers,
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isErr() || result.value.kind !== "unsupported") {
+      return;
+    }
+    expect(headers).toEqual(original);
+    expectSanitizedSnapshot(result.value.snapshot, {
+      sequence: 1,
+      pendingCount: 0,
+      providerFamily: "none",
+      apiFamily: "anthropic-messages",
+      allowlistRuleId: "none",
+      collision: true,
+      state: "unsupported",
+      evidenceKind: "none",
+      evidenceOutcome: "none",
+      reason: "request-collision",
+    });
+
+    const payloadCoordinator = new ProviderFastCoordinator();
+    const payloadSnapshot = coordinatorSnapshot();
+    const begun = payloadCoordinator.beginHeaders(payloadSnapshot, {});
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    const collidingPayload = { service_tier: "priority" };
+    const originalPayload = clonePlain(collidingPayload);
+    expectCoordinatorError(
+      payloadCoordinator.applyRequest(
+        payloadSnapshot,
+        begun.value.token,
+        collidingPayload,
+      ),
+      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+    );
+    expect(collidingPayload).toEqual(originalPayload);
+    expectIdleLatest(payloadCoordinator);
+  });
+
+  it("fails closed on overlap, order, token, snapshot, generation, and reset", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot();
+    const first = coordinator.beginHeaders(snapshot, {});
+    expect(first.isOk() && first.value.kind === "pending").toBe(true);
+    if (first.isErr() || first.value.kind !== "pending") {
+      return;
+    }
+
+    expectCoordinatorError(coordinator.beginHeaders(snapshot, {}), {
+      type: "AmbiguousFastAttempt",
+      reason: "out-of-order",
+    });
+    expectIdleLatest(coordinator);
+
+    const restarted = coordinator.beginHeaders(snapshot, {});
+    expect(restarted.isOk() && restarted.value.kind === "pending").toBe(true);
+    if (restarted.isErr() || restarted.value.kind !== "pending") {
+      return;
+    }
+    const token: ProviderFastAttemptToken = restarted.value.token;
+    const originalPayload = { model: "gpt-5.6-sol" };
+    const payload = clonePlain(originalPayload);
+
+    expectCoordinatorError(
+      coordinator.applyRequest(snapshot, { sequence: 99 }, payload),
+      { type: "InvalidAttemptToken", reason: "forged-token" },
+    );
+    expect(payload).toEqual(originalPayload);
+    expectIdleLatest(coordinator);
+
+    const afterForged = coordinator.beginHeaders(snapshot, {});
+    expect(afterForged.isOk() && afterForged.value.kind === "pending").toBe(
+      true,
+    );
+    if (afterForged.isErr() || afterForged.value.kind !== "pending") {
+      return;
+    }
+    expectCoordinatorError(
+      coordinator.applyRequest(
+        coordinatorSnapshot({ generation: 2 }),
+        afterForged.value.token,
+        payload,
+      ),
+      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+    );
+    expect(payload).toEqual(originalPayload);
+    expectIdleLatest(coordinator);
+
+    const afterGeneration = coordinator.beginHeaders(snapshot, {});
+    expect(
+      afterGeneration.isOk() && afterGeneration.value.kind === "pending",
+    ).toBe(true);
+    if (afterGeneration.isErr() || afterGeneration.value.kind !== "pending") {
+      return;
+    }
+    expectCoordinatorError(
+      coordinator.applyRequest(
+        coordinatorSnapshot({ primaryName: "tapestry" }),
+        afterGeneration.value.token,
+        payload,
+      ),
+      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+    );
+    expectIdleLatest(coordinator);
+
+    const afterPrimary = coordinator.beginHeaders(snapshot, {});
+    expect(afterPrimary.isOk() && afterPrimary.value.kind === "pending").toBe(
+      true,
+    );
+    if (afterPrimary.isErr() || afterPrimary.value.kind !== "pending") {
+      return;
+    }
+    expectCoordinatorError(
+      coordinator.applyRequest(
+        coordinatorSnapshot({
+          selectedModel: {
+            provider: "openai",
+            id: "gpt-5.6-terra",
+            api: "openai-responses",
+          },
+        }),
+        afterPrimary.value.token,
+        payload,
+      ),
+      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+    );
+    expect(payload).toEqual(originalPayload);
+    expectIdleLatest(coordinator);
+
+    const afterModel = coordinator.beginHeaders(snapshot, {});
+    expect(afterModel.isOk() && afterModel.value.kind === "pending").toBe(true);
+    if (afterModel.isErr() || afterModel.value.kind !== "pending") {
+      return;
+    }
+    const requested = coordinator.applyRequest(
+      snapshot,
+      afterModel.value.token,
+      payload,
+    );
+    expect(requested.isOk()).toBe(true);
+    expectCoordinatorError(
+      coordinator.applyRequest(snapshot, afterModel.value.token, payload),
+      { type: "DuplicateAttemptToken", reason: "duplicate-token" },
+    );
+    expectIdleLatest(coordinator);
+
+    const afterDuplicate = coordinator.beginHeaders(snapshot, {});
+    expect(
+      afterDuplicate.isOk() && afterDuplicate.value.kind === "pending",
+    ).toBe(true);
+    if (afterDuplicate.isErr() || afterDuplicate.value.kind !== "pending") {
+      return;
+    }
+    expectCoordinatorError(
+      coordinator.observeResponse(afterDuplicate.value.token, 200),
+      { type: "OutOfOrderAttempt", reason: "out-of-order" },
+    );
+    expectIdleLatest(coordinator);
+
+    const afterOrder = coordinator.beginHeaders(snapshot, {});
+    expect(afterOrder.isOk() && afterOrder.value.kind === "pending").toBe(true);
+    if (afterOrder.isErr() || afterOrder.value.kind !== "pending") {
+      return;
+    }
+    expect(
+      coordinator
+        .applyRequest(snapshot, afterOrder.value.token, payload)
+        .isOk(),
+    ).toBe(true);
+    const reset = coordinator.reset();
+    expect(reset.isOk()).toBe(true);
+    if (reset.isErr()) {
+      return;
+    }
+    expect(reset.value).toEqual({ expiredCount: 1 });
+    expectIdleLatest(coordinator);
+    expectCoordinatorError(
+      coordinator.observeResponse(afterOrder.value.token, 200),
+      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+    );
+    expect(token.sequence).toBe(2);
+  });
+
+  it("treats retries after settlement as a new sequence", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot({
+      selectedModel: {
+        provider: "openai",
+        id: "gpt-5.6-luna",
+        api: "openai-completions",
+      },
+    });
+    const first = coordinator.beginHeaders(snapshot, {});
+    expect(first.isOk() && first.value.kind === "pending").toBe(true);
+    if (first.isErr() || first.value.kind !== "pending") {
+      return;
+    }
+    expect(
+      coordinator
+        .applyRequest(snapshot, first.value.token, { model: "gpt-5.6-luna" })
+        .isOk(),
+    ).toBe(true);
+    const firstObserved = coordinator.observeResponse(first.value.token, 429);
+    expect(firstObserved.isOk()).toBe(true);
+    if (firstObserved.isErr()) {
+      return;
+    }
+    expect(firstObserved.value.sequence).toBe(1);
+    expect(firstObserved.value.state).toBe("not-confirmed");
+    expect(firstObserved.value.apiFamily).toBe("openai-completions");
+
+    const retry = coordinator.beginHeaders(snapshot, {});
+    expect(retry.isOk() && retry.value.kind === "pending").toBe(true);
+    if (retry.isErr() || retry.value.kind !== "pending") {
+      return;
+    }
+    expect(retry.value.token.sequence).toBe(2);
+    expect(
+      coordinator
+        .applyRequest(snapshot, retry.value.token, { model: "gpt-5.6-luna" })
+        .isOk(),
+    ).toBe(true);
+    const retryObserved = coordinator.observeResponse(retry.value.token, 200);
+    expect(retryObserved.isOk()).toBe(true);
+    if (retryObserved.isErr()) {
+      return;
+    }
+    expect(retryObserved.value.sequence).toBe(2);
+    expect(retryObserved.value.state).toBe("not-confirmed");
+    expectCoordinatorError(
+      coordinator.observeResponse(first.value.token, 200),
+      { type: "AmbiguousFastAttempt", reason: "out-of-order" },
+    );
+  });
+
+  it("settles every integer status as not-confirmed and rejects headers or bodies", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot();
+    const statuses = [0, 200, 201, 204, 400, 401, 403, 429, 500, -1];
+    for (const [index, status] of statuses.entries()) {
+      const begun = coordinator.beginHeaders(snapshot, {});
+      expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+      if (begun.isErr() || begun.value.kind !== "pending") {
+        return;
+      }
+      expect(
+        coordinator
+          .applyRequest(snapshot, begun.value.token, { model: "gpt-5.6-sol" })
+          .isOk(),
+      ).toBe(true);
+      const observed = coordinator.observeResponse(begun.value.token, status);
+      expect(observed.isOk()).toBe(true);
+      if (observed.isErr()) {
+        return;
+      }
+      expect(observed.value.state).toBe("not-confirmed");
+      expect(observed.value.sequence).toBe(index + 1);
+      expect(serializedAttempt(observed.value)).not.toContain("applied");
+    }
+
+    const next = coordinator.beginHeaders(snapshot, {});
+    expect(next.isOk() && next.value.kind === "pending").toBe(true);
+    if (next.isErr() || next.value.kind !== "pending") {
+      return;
+    }
+    expect(
+      coordinator
+        .applyRequest(snapshot, next.value.token, { model: "gpt-5.6-sol" })
+        .isOk(),
+    ).toBe(true);
+    expectCoordinatorError(
+      coordinator.observeResponse(next.value.token, Number.NaN),
+      { type: "InvalidResponseStatus", reason: "invalid-status" },
+    );
+    expectIdleLatest(coordinator);
+    expect(
+      (
+        coordinator.observeResponse as unknown as (
+          token: ProviderFastAttemptToken,
+          observation: unknown,
+        ) => unknown
+      ).length,
+    ).toBe(2);
+  });
+
+  it("keeps secret-shaped snapshot and header values out of latest()", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const secretSnapshot = coordinatorSnapshot({
+      primaryName: SECRET_PRIMARY,
+      selectedModel: {
+        provider: "openai",
+        id: "gpt-5.6-sol",
+        name: SECRET_SHAPED_INPUT,
+        api: "openai-responses",
+      },
+    });
+    const begun = coordinator.beginHeaders(secretSnapshot, {
+      Authorization: SECRET_AUTHORIZATION,
+    });
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    const requested = coordinator.applyRequest(
+      secretSnapshot,
+      begun.value.token,
+      { prompt: SECRET_SHAPED_INPUT },
+    );
+    const observed = coordinator.observeResponse(begun.value.token, 200);
+    const serialized = serializedAttempt({
+      begun: begun.value,
+      requested: requested.match(
+        (value) => value.snapshot,
+        (error) => error,
+      ),
+      observed: observed.match(
+        (value) => value,
+        (error) => error,
+      ),
+      latest: coordinator.latest(),
+    });
+    expect(serialized).not.toContain(SECRET_PRIMARY);
+    expect(serialized).not.toContain(SECRET_PROVIDER);
+    expect(serialized).not.toContain(SECRET_MODEL);
+    expect(serialized).not.toContain(SECRET_SHAPED_INPUT);
+    expect(serialized).not.toContain(SECRET_AUTHORIZATION);
+    expect(serialized).not.toContain("sk-proj");
+    expect(serialized).not.toContain("loom");
+    expect(serialized).not.toContain("gpt-5.6");
+    expect(serialized).not.toContain("applied");
+    expect(serialized).not.toContain("service_tier");
+    expect(serialized).not.toContain("Authorization");
   });
 });
