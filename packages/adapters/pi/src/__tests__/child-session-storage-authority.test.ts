@@ -4,19 +4,19 @@ import {
   createPiChildSessionStorageAuthority,
   describeChildSessionStorageUnavailable,
 } from "../child-session-storage-authority.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 describe("child session storage authority", () => {
-  test("production authority refuses with the exact bounded path-only reason", () => {
+  test("refuses with the exact bounded reason when no Pi session API exists", () => {
     const result =
-      createPiChildSessionStorageAuthority().requireDescriptorSafeSessionIo();
+      createPiChildSessionStorageAuthority().requireNativeSessionAuthority();
 
     result.match(
       (value) => expect(value).toBeUndefined(),
       (failure) => {
         expect(failure).toEqual({
           type: "SessionStorageUnavailable",
-          reason: "path-only-session-api",
+          reason: "pi-session-api-unavailable",
         });
         expect(describeChildSessionStorageUnavailable(failure)).toBe(
           CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
@@ -26,14 +26,38 @@ describe("child session storage authority", () => {
         );
         expect(
           JSON.stringify(describeChildSessionStorageUnavailable(failure)),
-        ).toBe('"session-storage-unavailable:path-only-session-api"');
+        ).toBe('"session-storage-unavailable:pi-session-api-unavailable"');
       },
     );
   });
 
-  test("descriptor-safe authority is an explicit test-only opt-in", () => {
+  test("refuses a host whose SessionManager is not the public constructor pair", () => {
+    for (const candidate of [
+      undefined,
+      null,
+      "SessionManager",
+      {},
+      { create: () => undefined },
+      { open: () => undefined },
+    ]) {
+      const result = createPiChildSessionStorageAuthority({
+        SessionManager: candidate,
+      }).requireNativeSessionAuthority();
+      expect(result.isErr()).toBe(true);
+    }
+  });
+
+  test("grants only for a host exposing public create and open", () => {
+    const result = createPiChildSessionStorageAuthority({
+      SessionManager: { create: () => undefined, open: () => undefined },
+    }).requireNativeSessionAuthority();
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  test("granted authority without a host is an explicit test-only opt-in", () => {
     const result =
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY.requireDescriptorSafeSessionIo();
+      TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY.requireNativeSessionAuthority();
 
     expect(result.isOk()).toBe(true);
   });

@@ -169,7 +169,7 @@ export function createDirectDispatchTransport(
     // object exists, before the bootstrap or model resolution is computed,
     // before the inspection registry is written, and before any spawn. The
     // dispatch input is not read at all until this passes.
-    const authority = sessionStorageAuthority.requireDescriptorSafeSessionIo();
+    const authority = sessionStorageAuthority.requireNativeSessionAuthority();
     if (authority.isErr()) {
       return errAsync(
         makeChildSpawnFailedFailure(

@@ -46,6 +46,7 @@ import {
   resolvePiNativeSessionRoot,
 } from "./child-native-sessions.js";
 import { createNativeChildRefSourceAuthority } from "./child-session-refs.js";
+import { createPiChildSessionStorageAuthority } from "./child-session-storage-authority.js";
 import {
   makeRequiredCapabilityUnavailableFailure,
   type PiAdapterFailure,
@@ -156,11 +157,11 @@ function resolveHost(
 /**
  * Capability gate for health-only `children delete`.
  *
- * Runs against the production path-only host preflight and returns
- * `RequiredCapabilityUnavailable` with
- * `descriptor-relative-native-session-io` / `path-only-session-api` on Pi
- * 0.83. Callers must invoke this **before** {@link createProductionPorts}
- * so delete never opens a cache, ref store, or session root.
+ * Delete performs a persistent session mutation, so it runs only on a host
+ * that exposes the real Pi session create/open API. Otherwise it returns
+ * `RequiredCapabilityUnavailable` with `pi-session-api-unavailable`. Callers
+ * must invoke this **before** {@link createProductionPorts} so delete never
+ * opens a cache, ref store, or session root.
  */
 export function evaluateProductionChildrenDeleteGate(
   options: Pick<
@@ -168,21 +169,17 @@ export function evaluateProductionChildrenDeleteGate(
     "SessionManager"
   > = {},
 ): Result<void, PiAdapterFailure> {
-  const host = resolveHost(options);
-  if (host.isErr()) {
+  const candidate =
+    options.SessionManager ??
+    (PiPublicExports as { SessionManager?: unknown }).SessionManager;
+  const authority = createPiChildSessionStorageAuthority({
+    SessionManager: candidate,
+  }).requireNativeSessionAuthority();
+  if (authority.isErr()) {
     return err(
       makeRequiredCapabilityUnavailableFailure(
         SESSION_MUTATION_REQUIRED_CAPABILITY,
-        host.error.reason,
-      ),
-    );
-  }
-  const preflight = host.value.requireDescriptorSafeSessionIo();
-  if (preflight.isErr()) {
-    return err(
-      makeRequiredCapabilityUnavailableFailure(
-        SESSION_MUTATION_REQUIRED_CAPABILITY,
-        preflight.error.reason,
+        authority.error.reason,
       ),
     );
   }
@@ -365,7 +362,7 @@ export function createProductionPiAdapterCommandRegistry(
   // gate from a descriptor-safe host.
   const sessionMutationGate =
     accessMode === "read"
-      ? createBlockedSessionMutationGate("path-only-session-api")
+      ? createBlockedSessionMutationGate("pi-session-api-unavailable")
       : undefined;
   return createProductionPorts(options).map((ports) =>
     createPiAdapterCommandRegistry({

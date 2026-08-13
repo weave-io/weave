@@ -235,7 +235,7 @@ export type PiChildRefError =
        * store may not append, update, or tombstone a durable ref (Task 21
        * remediation B). Carries the same typed reason as the
        * {@link PiNativeSessionStorageUnavailable} it maps from, so
-       * `path-only-session-api` survives to the operator surface.
+       * `pi-session-api-unavailable` survives to the operator surface.
        */
       readonly type: "ChildRefStorageUnavailable";
       readonly reason: PiNativeSessionStorageUnavailable["reason"];
@@ -704,10 +704,10 @@ export class PiChildSessionRefStore {
    */
   private requireMutationAuthority(): Result<void, PiChildRefError> {
     const asked = Result.fromThrowable(
-      () => this.storage.requireDescriptorSafeSessionIo(),
+      () => this.storage.requireNativeSessionAuthority(),
       (): PiChildRefError => ({
         type: "ChildRefStorageUnavailable",
-        reason: "path-only-session-api",
+        reason: "pi-session-api-unavailable",
       }),
     )();
     if (asked.isErr()) return err(asked.error);

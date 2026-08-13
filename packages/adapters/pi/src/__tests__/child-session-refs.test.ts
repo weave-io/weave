@@ -27,7 +27,7 @@ import {
   type PiChildSessionStorageAuthority,
 } from "../child-session-storage-authority.js";
 import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PARENT = "parent-session-1";
 const OTHER_PARENT = "parent-session-2";
@@ -99,8 +99,7 @@ function harness(options: HarnessOptions = {}) {
   const ids: string[] = [];
   let idCounter = 0;
   const store = new PiChildSessionRefStore({
-    storage:
-      options.storage ?? TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+    storage: options.storage ?? TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     parentSessionId: options.parentSessionId ?? PARENT,
     append: session,
     read: session,
@@ -388,7 +387,7 @@ describe("append APIs", () => {
     expect(session.appended).toHaveLength(0);
   });
 
-  test("refuses public mutations when session storage is path-only", async () => {
+  test("refuses public mutations when the Pi session API is unavailable", async () => {
     const { session, store } = harness({
       storage: createPiChildSessionStorageAuthority(),
     });
@@ -397,7 +396,7 @@ describe("append APIs", () => {
     if (created.isErr()) {
       expect(created.error).toEqual({
         type: "ChildRefStorageUnavailable",
-        reason: "path-only-session-api",
+        reason: "pi-session-api-unavailable",
       });
     }
     expect(session.appended).toHaveLength(0);
@@ -829,7 +828,7 @@ describe("native source authority adapter", () => {
       {
         error: {
           type: "SessionStorageUnavailable",
-          reason: "path-only-session-api",
+          reason: "pi-session-api-unavailable",
         },
         expected: "unavailable",
       },

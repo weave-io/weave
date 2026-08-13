@@ -1,28 +1,30 @@
 /**
- * Storage authority for private RPC child launches (Pi adapter contract).
+ * Native-session authority for private RPC child launches (Pi adapter
+ * contract).
  *
- * A persistent or restored child is started by handing `pi` a caller-supplied
- * `--session-dir` / `--session` filesystem path. Pi 0.83 exposes no
- * descriptor-relative session API, so the adapter cannot prove that the bytes
- * such a child writes land in the descriptor-verified, Weave-owned session
- * tree. The child transport therefore refuses to interpret any session path,
- * build any argument vector, take any lease, open any control channel, or
- * spawn any process until an injected authority proves descriptor-safe
- * session I/O.
+ * A persistent or restored child is started by handing `pi` an adapter-owned
+ * `--session-dir` / `--session` path pair that Pi's own `SessionManager`
+ * minted. That mint is the only way the adapter can prove a child writes into
+ * the validated Weave session tree, so the child transport refuses to
+ * interpret any session path, build any argument vector, take any lease, open
+ * any control channel, or spawn any process until this authority proves the
+ * real Pi session API is present.
  *
- * This authority is deliberately independent of the top-level capability gate
- * added in phase A and of the native-session host preflight: a caller that
- * reaches `PiRpcChild` directly, bypassing both, still fails closed here.
+ * The authority is deliberately independent of the top-level capability gate:
+ * a caller that reaches `PiRpcChild` directly, bypassing readiness, still
+ * fails closed here.
  *
- * The production implementation always refuses. There is no option,
- * environment variable, configuration key, or flag that enables it. Only a
- * test-only double, which lives under `__tests__/` and is never exported from
- * the package entry point, may report descriptor-safe storage.
+ * The production implementation reads no environment variable, configuration
+ * key, or flag. It answers `ok` only for a host that exposes the public
+ * `SessionManager.create` / `SessionManager.open` constructors. A test-only
+ * double, which lives under `__tests__/` and is never exported from the
+ * package entry point, may answer `ok` without a host.
  */
 
-import { err, type Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 
 import type { PiNativeSessionStorageUnavailable } from "./child-native-sessions.js";
+import { isPiSessionManagerStatic } from "./native-session-host.js";
 
 /**
  * The one question a child launch asks before it does anything observable:
@@ -31,19 +33,19 @@ import type { PiNativeSessionStorageUnavailable } from "./child-native-sessions.
  */
 export interface PiChildSessionStorageAuthority {
   /**
-   * `ok` only when session I/O is descriptor-safe. The production
-   * implementation always fails with `path-only-session-api`.
+   * `ok` only when the installed Pi host exposes the public session
+   * create/open constructors the adapter mints child sessions through.
    */
-  requireDescriptorSafeSessionIo(): Result<
+  requireNativeSessionAuthority(): Result<
     void,
     PiNativeSessionStorageUnavailable
   >;
 }
 
 /** The single production refusal, shared by every production authority. */
-const PATH_ONLY_UNAVAILABLE: PiNativeSessionStorageUnavailable = {
+const SESSION_API_UNAVAILABLE: PiNativeSessionStorageUnavailable = {
   type: "SessionStorageUnavailable",
-  reason: "path-only-session-api",
+  reason: "pi-session-api-unavailable",
 };
 
 /**
@@ -53,21 +55,31 @@ const PATH_ONLY_UNAVAILABLE: PiNativeSessionStorageUnavailable = {
  * filesystem path, a prompt, or transcript bytes.
  */
 export const CHILD_SESSION_STORAGE_UNAVAILABLE_REASON =
-  "session-storage-unavailable:path-only-session-api";
+  "session-storage-unavailable:pi-session-api-unavailable";
+
+/** What the production authority inspects. Never an environment or config. */
+export interface PiChildSessionStorageAuthorityInput {
+  /** Pi's public `SessionManager` export, as the extension received it. */
+  readonly SessionManager?: unknown;
+}
 
 /**
- * Builds the production authority. It takes no arguments, reads no
- * environment, and consults no configuration: it always refuses, because the
- * exact tested host (Pi 0.83.0) addresses sessions only by caller-supplied
- * filesystem path.
+ * Builds the production authority over the installed Pi host.
+ *
+ * It performs one real readiness check — the public `SessionManager`
+ * create/open constructors are callable — and never returns an unconditional
+ * `ok`. A caller that supplies no host gets a refusal.
  */
-export function createPiChildSessionStorageAuthority(): PiChildSessionStorageAuthority {
+export function createPiChildSessionStorageAuthority(
+  input: PiChildSessionStorageAuthorityInput = {},
+): PiChildSessionStorageAuthority {
+  const available = isPiSessionManagerStatic(input.SessionManager);
   return {
-    requireDescriptorSafeSessionIo(): Result<
+    requireNativeSessionAuthority(): Result<
       void,
       PiNativeSessionStorageUnavailable
     > {
-      return err(PATH_ONLY_UNAVAILABLE);
+      return available ? ok(undefined) : err(SESSION_API_UNAVAILABLE);
     },
   };
 }
@@ -80,7 +92,7 @@ export function createPiChildSessionStorageAuthority(): PiChildSessionStorageAut
 export function describeChildSessionStorageUnavailable(
   failure: PiNativeSessionStorageUnavailable,
 ): string {
-  return failure.reason === "path-only-session-api"
+  return failure.reason === "pi-session-api-unavailable"
     ? CHILD_SESSION_STORAGE_UNAVAILABLE_REASON
     : "session-storage-unavailable:filesystem-unavailable";
 }

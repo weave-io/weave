@@ -13,7 +13,7 @@ import {
 import { PiSkillCatalog } from "../skill-catalog.js";
 import type { PiSessionManagerPort } from "../types.js";
 import { RecordingLogger } from "./fakes/fake-pi-host.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 // ---------------------------------------------------------------------------
 // Durable session-file fixture
@@ -137,7 +137,7 @@ function refStoreFor(
     throw new Error(`expected persistent parent, got ${parent.persistence}`);
   }
   return new PiChildSessionRefStore({
-    storage: TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+    storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     parentSessionId: parent.sessionId,
     append: runtime.append,
     read: runtime.read,

@@ -98,7 +98,7 @@ import {
   removeRealTempRoot,
   reserveRealTempPath,
 } from "./fakes/real-temp-root.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const EMPTY_CONFIG = {
   agents: {},
@@ -678,8 +678,7 @@ function installExtension(
     // lose its deep-module coverage. Tests that assert real host-surface
     // behaviour override this.
     hostSurfaceReader: hostSurfaceReader(),
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     ...overrides,
   });
   factory(host.api);
@@ -788,8 +787,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
         version: "0.81.1",
       }),
       capabilityProber: allOkCapabilityProber(),
-      sessionStorageAuthority:
-        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       idGenerator: new FakeIdGenerator(),
       clock: new FakeClock(),
       logger: new RecordingLogger(),
@@ -3405,12 +3403,10 @@ describe("createPiExtension: config activation, materialization consumption, pri
       return originalTombstone(record);
     }) as typeof sessions.appendTombstone;
     const storage = createPiChildSessionStorageAuthority();
-    expect(storage.requireDescriptorSafeSessionIo()._unsafeUnwrapErr()).toEqual(
-      {
-        type: "SessionStorageUnavailable",
-        reason: "path-only-session-api",
-      },
-    );
+    expect(storage.requireNativeSessionAuthority()._unsafeUnwrapErr()).toEqual({
+      type: "SessionStorageUnavailable",
+      reason: "pi-session-api-unavailable",
+    });
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     host.scriptSelect("Recover now");
     installRecoveryExtension(
@@ -3478,11 +3474,11 @@ describe("createPiExtension: config activation, materialization consumption, pri
       return originalUpsert(ref, workspaceKey);
     }) as typeof cache.upsertRef;
     const storage = {
-      requireDescriptorSafeSessionIo: () => {
+      requireNativeSessionAuthority: () => {
         order.push("authority");
         return err({
           type: "SessionStorageUnavailable" as const,
-          reason: "path-only-session-api" as const,
+          reason: "pi-session-api-unavailable" as const,
         });
       },
     };
@@ -3551,7 +3547,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       return originalUpsert(ref, workspaceKey);
     }) as typeof cache.upsertRef;
     const storage = {
-      requireDescriptorSafeSessionIo: () => {
+      requireNativeSessionAuthority: () => {
         order.push("authority");
         return ok(undefined);
       },
@@ -3613,11 +3609,11 @@ describe("createPiExtension: config activation, materialization consumption, pri
     };
     const order: string[] = [];
     const storage = {
-      requireDescriptorSafeSessionIo: () => {
+      requireNativeSessionAuthority: () => {
         order.push("authority");
         return err({
           type: "SessionStorageUnavailable" as const,
-          reason: "path-only-session-api" as const,
+          reason: "pi-session-api-unavailable" as const,
         });
       },
     };
@@ -3640,10 +3636,8 @@ describe("createPiExtension: config activation, materialization consumption, pri
     };
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host, "0.81.1", {
-      // Pi 0.83 health-only: required descriptor-relative session I/O is absent.
-      hostSurfaceReader: hostSurfaceReader([
-        "descriptor-relative-native-session-io",
-      ]),
+      // Health-only: the required Pi session surface is absent.
+      hostSurfaceReader: hostSurfaceReader(["session-restore"]),
       envPort,
       sessionStorageAuthority: storage,
       threadSourceFactory: factory,

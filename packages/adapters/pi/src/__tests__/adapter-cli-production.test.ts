@@ -18,6 +18,11 @@ import {
 } from "../index.js";
 import type { PiSessionManagerStatic } from "../native-session-host.js";
 
+/** A host object that does not expose Pi's public create/open constructors. */
+function sessionManagerWithoutPublicApi(): PiSessionManagerStatic {
+  return {} as unknown as PiSessionManagerStatic;
+}
+
 function fakeSessionManager(): PiSessionManagerStatic {
   return {
     create() {
@@ -143,14 +148,14 @@ describe("health-only CLI production dispatch — non-creating reads", () => {
     await Promise.all(dirs.splice(0).map((dir) => removeScratchFiles(dir)));
   });
 
-  it("gates children.delete before createProductionPorts with path-only-session-api", async () => {
+  it("gates children.delete before createProductionPorts when Pi has no session API", async () => {
     const xdg = await tempXdg();
     dirs.push(xdg);
     const before = await listRelativePaths(xdg);
     expect(before).toEqual([]);
 
     const gated = evaluateProductionChildrenDeleteGate({
-      SessionManager: fakeSessionManager(),
+      SessionManager: sessionManagerWithoutPublicApi(),
     });
     expect(gated.isErr()).toBe(true);
     if (gated.isOk()) return;
@@ -158,26 +163,34 @@ describe("health-only CLI production dispatch — non-creating reads", () => {
     expect(gated.error.correlation?.capabilityId).toBe(
       SESSION_MUTATION_REQUIRED_CAPABILITY,
     );
-    expect(gated.error.correlation?.reason).toBe("path-only-session-api");
+    expect(gated.error.correlation?.reason).toBe("pi-session-api-unavailable");
 
     const opened = await resolveProductionAdapterCliRegistry({
       action: "children.delete",
       workspaceKey: "/tmp/weave-workspace",
       env: { XDG_DATA_HOME: xdg, HOME: xdg },
-      SessionManager: fakeSessionManager(),
+      SessionManager: sessionManagerWithoutPublicApi(),
     });
     expect(opened.isErr()).toBe(true);
     if (opened.isOk()) return;
     expect(opened.error).toEqual({
       type: "RequiredCapabilityUnavailable",
       capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
-      reason: "path-only-session-api",
+      reason: "pi-session-api-unavailable",
     });
 
     const after = await listRelativePaths(xdg);
     expect(after).toEqual([]);
     // createProductionPorts is the CLI factory name; delete must not reach it.
     expect(typeof createProductionPorts).toBe("function");
+  });
+
+  it("permits children.delete once the real Pi session API is present", () => {
+    expect(
+      evaluateProductionChildrenDeleteGate({
+        SessionManager: fakeSessionManager(),
+      }).isOk(),
+    ).toBe(true);
   });
 
   it("list/show/doctor on a pristine root leave the root absent", async () => {

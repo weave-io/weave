@@ -556,16 +556,19 @@ log file.
 
 - Host version floor stays `0.81.1`, with no maximum.
 - Required probes: persistent RPC session and restore, `appendEntry`,
-  `get_entries`/`get_tree`, custom session directory support, and
-  descriptor-relative native session I/O.
-- Descriptor-relative native session I/O means every native session read and
-  write is addressed by an opaque, host-owned session descriptor rather than by
-  a caller-supplied filesystem path. Pi 0.83 exposes a path-only session API, so
-  this probe reports `unavailable` with reason `path-only-session-api` and the
-  adapter runs in health-only mode on that host. The probe is not overridable:
-  session restore, custom session directories, and RPC method presence do not
-  raise it, and no environment variable or configuration setting enables it.
-- While that capability is unavailable, every persistent session mutation —
+  `get_entries`/`get_tree`, and custom session directory support.
+- Pi addresses native sessions by filesystem path. Containment is proven by the
+  adapter, not by the host: the adapter owns the session root, hands Pi the exact
+  child directory, and accepts only a canonical immediate child of it. There is
+  no descriptor-relative host capability.
+- Delegation readiness is `delegated-specialist-execution`. A required
+  host-surface gap reports exactly one closed, path-free reason:
+  `pi-session-api-unavailable`, `pi-session-root-unavailable`,
+  `pi-session-root-unsafe`, or `pi-process-unavailable`. Raw host messages,
+  causes, paths, and method names never reach a public surface, and no
+  environment variable or configuration setting raises readiness.
+- While that capability is unavailable for one of those reasons, every
+  persistent session mutation —
   delegation, direct workflow dispatch, retry, continue, steering, follow-up,
   cancellation, clear, recovery, and adapter CLI delete — fails with a typed
   `RequiredCapabilityUnavailable` result before any controller, session service,

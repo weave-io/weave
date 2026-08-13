@@ -620,7 +620,7 @@ export class PiDelegationController {
     childId: string,
   ): Result<void, PiAdapterFailure> {
     return this.sessionStorageAuthority
-      .requireDescriptorSafeSessionIo()
+      .requireNativeSessionAuthority()
       .mapErr((failure) =>
         makeChildSpawnFailedFailure(
           childId,

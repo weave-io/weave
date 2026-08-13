@@ -33,7 +33,7 @@ The report status is `ok` when nothing fails, `degraded` when any check fails, a
 | Code | Cause | What to do |
 | --- | --- | --- |
 | `RequiredCapabilityUnavailable` | The host lacks a `required-for-delegation` surface | Upgrade Pi to at least `0.81.1` and re-check `/weave:health` |
-| `RequiredCapabilityUnavailable` with reason `path-only-session-api` | Pi's native session API is addressed by filesystem path, so `descriptor-relative-native-session-io` cannot be proved. Pi 0.83 always reports this | Expected on Pi 0.83. Every persistent session mutation is refused before it starts; read-only status, health, history, inspection, doctor, list, and show still work |
+| `RequiredCapabilityUnavailable` with reason `pi-session-api-unavailable` | The installed Pi host does not expose the public `SessionManager` create/open constructors the adapter mints child sessions through | Install a supported Pi host. Until then every persistent session mutation is refused before it starts; read-only status, health, history, inspection, doctor, list, and show still work |
 | `PersistentParentSessionRequired` | The parent Pi session is not persistent, typically `--no-session` | Restart Pi with a persistent session; child surfaces stay read-only until then |
 | `ChildSessionRootViolation` | `XDG_DATA_HOME` is relative or empty, or a path component is unsafe | Set `XDG_DATA_HOME` to an absolute path, or unset it to use `~/.local/share` |
 | `ChildSessionPermissionError` | A storage directory or file has permissive modes | Restore `0700` on directories and `0600` on files under the storage roots |

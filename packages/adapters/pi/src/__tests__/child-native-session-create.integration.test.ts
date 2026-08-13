@@ -11,11 +11,11 @@ import {
   PiNativeSessionStore,
 } from "../child-native-sessions.js";
 import { createBunPiNativeSessionFs } from "../native-session-fs.js";
+import { createPiNativeSessionHost } from "../native-session-host.js";
 import {
   makeRealTempRoot,
   removeRealTempRoot,
 } from "./fakes/real-temp-root.js";
-import { createTestOnlyDescriptorSafeNativeSessionHost } from "./fakes/test-only-descriptor-safe-host.js";
 
 const PARENT = "parent-session-integration-1";
 
@@ -32,7 +32,7 @@ describe("PiNativeSessionStore.createChildSession — Pi 0.83 SessionManager", (
 
   test("persists host header, reopens, and appends thread metadata durably", async () => {
     const fs = createBunPiNativeSessionFs();
-    const host = createTestOnlyDescriptorSafeNativeSessionHost(SessionManager);
+    const host = createPiNativeSessionHost(SessionManager);
     const store = new PiNativeSessionStore({ root, fs, host });
 
     const created = await store.createChildSession({
@@ -120,7 +120,7 @@ describe("PiNativeSessionStore.createChildSession — Pi 0.83 SessionManager", (
     expect(await Bun.file(path as string).exists()).toBe(false);
 
     const fs = createBunPiNativeSessionFs();
-    const host = createTestOnlyDescriptorSafeNativeSessionHost(SessionManager);
+    const host = createPiNativeSessionHost(SessionManager);
     const store = new PiNativeSessionStore({
       root,
       fs,

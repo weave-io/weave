@@ -57,7 +57,7 @@ import {
   RecordingFakePiHost,
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 /**
  * A hypothetical descriptor-safe host. The production reader can never report
@@ -169,8 +169,7 @@ function installTransitionExtension(
       open: () => okAsync(createInMemoryRuntimeStore()),
     },
     processPort,
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     childCommand: ["/fake/bin/pi"],
     // Fakes never emit cancelled acks or settlement drains; keep transition
     // tests under Bun's default 5s timeout without changing production.
@@ -301,8 +300,7 @@ function makeController(
     idGenerator: new FakeIdGenerator(),
     logger: new RecordingLogger(),
     processPort,
-    sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     randomPort: new WebCryptoRandomPort(),
     hmacPort: new WebCryptoHmacPort(),
     cancelGraceMs: 1,

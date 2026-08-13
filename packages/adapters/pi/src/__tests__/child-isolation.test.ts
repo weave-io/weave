@@ -7,7 +7,7 @@ import {
   PiChildSessionRefStore,
 } from "../child-session-refs.js";
 import { PersistentFakeNativeSessionStore } from "./fakes/fake-pi-host.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PARENT = "parent-session";
 
@@ -42,7 +42,7 @@ function store(
 ): PiChildSessionRefStore {
   let entryId = 0;
   return new PiChildSessionRefStore({
-    storage: TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+    storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     parentSessionId: PARENT,
     append: parent,
     read: parent,
@@ -93,7 +93,7 @@ describe("native child isolation", () => {
     ).toEqual(["child-a/nested", "child-b", "child-a"]);
 
     const foreignParent = new PiChildSessionRefStore({
-      storage: TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+      storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       parentSessionId: "other-parent",
       append: parent,
       read: parent,

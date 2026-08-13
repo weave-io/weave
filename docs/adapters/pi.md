@@ -362,7 +362,7 @@ The adapter never logs prompts, responses, transcripts, raw RPC, tool input/outp
 
 Beyond the engine's closed capability IDs, the adapter declares the concrete Pi host surfaces it needs, each with a severity. The compatibility floor is Pi `0.81.1`.
 
-- `required-for-delegation` — a gap puts the generation into health-only mode. Native child sessions add `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, `custom-session-directory`, and `descriptor-relative-native-session-io` to this set, alongside the existing editor, RPC, and session-restore surfaces.
+- `required-for-delegation` — a gap puts the generation into health-only mode. Native child sessions add `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` to this set, alongside the existing editor, RPC, and session-restore surfaces.
 - `overlay-only` — a gap selects the custom-editor fallback and never triggers health-only mode. `child-overlay-lifecycle` is the only such surface. Session reads are deliberately not overlay-only.
 - `rendering-fallback` — a gap uses Pi's default rendering.
 
@@ -374,20 +374,28 @@ Static capability declarations are ceilings. Activation probes every closed capa
 
 Health-only mode exposes health and safe diagnostics but blocks materialization, workflow mutation, and delegation. Pi/tool-owner authorization remains in force regardless of mode.
 
-## Path-only session API on Pi 0.83
+## Pi-native path sessions
 
-Pi 0.83 addresses native sessions by caller-supplied filesystem path. The adapter therefore cannot prove that a session write lands inside host-owned storage, so the required capability `descriptor-relative-native-session-io` probes `unavailable` with reason `path-only-session-api` and every generation on this host enters health-only mode.
+Pi addresses native sessions by filesystem path. Containment is therefore proven by the adapter, not claimed from the host:
 
-The probe is not overridable. Session restore, custom session directories, and the presence of any `SessionManager` method do not raise it, and there is no environment variable or configuration setting that enables it. Only a test double may model a descriptor-safe host.
+1. The adapter resolves its fixed session root under the trusted XDG data base, creates a private `0700` child directory, and hands that exact directory to `SessionManager.create`.
+2. It validates Pi's generated leaf as a canonical immediate child of that directory, never a path prefix, and validates the generated v3 header, session ID, parent link, and `cwd`.
+3. Because Pi defers the first write, the adapter exclusively creates the absent `0600` leaf with Pi's exact generated header bytes plus a newline. It never invents, alters, or reorders a header field.
+4. It reopens the leaf through `SessionManager.open` and revalidates path, directory, header, session ID, parent, `cwd`, and persistence before any spawn.
+5. The RPC child receives both `--session <validated file>` and `--session-dir <validated directory>`, and the launch environment drops any inherited `PI_CODING_AGENT_SESSION_DIR` so the explicit argument stays the sole authority.
 
-While the capability is unavailable, the adapter fails every persistent session mutation with a typed `RequiredCapabilityUnavailable` result before it reaches a controller, session service, filesystem, metadata cache, execution lease, or child process:
+Callers, models, and the engine never supply a path, and no path crosses the adapter boundary into Results, logs, health, status, doctor, CLI output, lifecycle metadata, or model content.
+
+Delegation readiness is reported through the required `delegated-specialist-execution` capability. When the real Pi session or process surfaces do not probe ready, the generation stays health-only before spawn and reports exactly one closed, path-free reason: `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, or `pi-process-unavailable`. No environment variable or configuration setting can raise it.
+
+While the capability is unavailable for one of those reasons, the adapter fails every persistent session mutation with a typed `RequiredCapabilityUnavailable` result before it reaches a controller, session service, filesystem, metadata cache, execution lease, or child process:
 
 - `weave_delegate` (start, retry, continue, steer, follow-up) and relayed child delegation;
 - direct workflow dispatch, `/weave:start`, `/weave:run`, `/weave:advance`, `/weave:resume`, `/weave:artifact`;
 - cancellation and cleanup: `/weave:abort`, `/weave:clear-children`, `/weave:recover-children`;
 - the adapter CLI `children delete` command.
 
-`/weave:status`, `/weave:health`, `/weave:plan`, `/weave:inspect`, `/weave:history`, `/weave:doctor`, and the CLI `list`, `show`, and `doctor` commands stay available and perform no mutation. `/weave:health` and the status line name the unsupported capability and its reason without printing a path or a prompt.
+`/weave:status`, `/weave:health`, `/weave:plan`, `/weave:inspect`, `/weave:history`, `/weave:doctor`, and the CLI `list`, `show`, and `doctor` commands stay available and perform no mutation. `/weave:health` and the status line name the unavailable capability and its reason without printing a path or a prompt.
 
 ## Verification
 

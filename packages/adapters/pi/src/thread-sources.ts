@@ -106,8 +106,9 @@ export interface PiThreadSourceFactoryInput {
   readonly SessionManager?: PiSessionManagerStatic;
   /**
    * Test seam for the native-session mutation authority handed to the ref
-   * store. Production omits it and gets the always-refusing authority, so a
-   * path-only host can never append, update, or tombstone a durable ref.
+   * store. Production omits it and gets an authority bound to the installed
+   * Pi host, so a host without the public session API can never append,
+   * update, or tombstone a durable ref.
    */
   readonly storageAuthority?: PiChildSessionStorageAuthority;
   /**
@@ -229,7 +230,13 @@ function openWithSessionRoot(
     append: input.append,
     read: input.read,
     authority,
-    storage: input.storageAuthority ?? createPiChildSessionStorageAuthority(),
+    storage:
+      input.storageAuthority ??
+      createPiChildSessionStorageAuthority({
+        SessionManager:
+          input.SessionManager ??
+          (PiPublicExports as { SessionManager?: unknown }).SessionManager,
+      }),
     ...(now === undefined ? {} : { now }),
   });
 

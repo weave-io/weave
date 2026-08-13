@@ -4514,26 +4514,29 @@ export function createPiExtension(
         };
         let allowDelegationController = !effectiveHealthOnly(generation);
         const parentForSources = session.primarySession.getParentSession();
-        // Task 21 remediation E: descriptor-safe session I/O authority is
-        // checked before mutation-capable thread sources, cache create/open,
-        // reconstruction, recovery prompting, or upsert. Pi 0.83 refuses with
-        // `path-only-session-api` (`descriptor-relative-native-session-io`);
-        // health-only / path-only generations open non-creating read-only
+        // The native-session authority is checked before mutation-capable
+        // thread sources, cache create/open, reconstruction, recovery
+        // prompting, or upsert. A host without the public session
+        // create/open API refuses with `pi-session-api-unavailable`;
+        // health-only and refused generations open non-creating read-only
         // sources only and skip every write path.
         const sessionStorage =
           deps.sessionStorageAuthority ??
-          createPiChildSessionStorageAuthority();
+          createPiChildSessionStorageAuthority({
+            SessionManager: (PiPublicExports as { SessionManager?: unknown })
+              .SessionManager,
+          });
         const sessionStorageDecision = Result.fromThrowable(
-          () => sessionStorage.requireDescriptorSafeSessionIo(),
+          () => sessionStorage.requireNativeSessionAuthority(),
           () => ({
             type: "SessionStorageUnavailable" as const,
-            reason: "path-only-session-api" as const,
+            reason: "pi-session-api-unavailable" as const,
           }),
         )();
-        const descriptorSafeSessionIo =
+        const nativeSessionAuthorityGranted =
           sessionStorageDecision.isOk() && sessionStorageDecision.value.isOk();
         const useReadOnlyThreadSources =
-          !descriptorSafeSessionIo || effectiveHealthOnly(generation);
+          !nativeSessionAuthorityGranted || effectiveHealthOnly(generation);
         if (
           deps.threadSourceFactory !== undefined &&
           parentForSources.persistence === "persistent"
@@ -4949,16 +4952,16 @@ export function createPiExtension(
         // child-ref ledger is open, then prompt exactly once for this stable
         // parent session.
         //
-        // Task 21 remediation B/E: recovery mutates the child-ref ledger and
-        // spawns a restored child, so it requires the same descriptor-safe
-        // session I/O authority already checked before source construction.
-        // Path-only / health-only generations skip without prompting. Lower
+        // Recovery mutates the child-ref ledger and spawns a restored child,
+        // so it requires the same native-session authority already checked
+        // before source construction. Refused and health-only generations
+        // skip without prompting. Lower
         // ref-mutation checks stay independent, and ref reads stay ungated.
         const recoveryRefs = threadSourcesCell.refs;
         if (
           recoveryRefs !== undefined &&
           !useReadOnlyThreadSources &&
-          descriptorSafeSessionIo
+          nativeSessionAuthorityGranted
         ) {
           const historyPort = {
             list: () => recoveryRefs.readRefs().map((scan) => scan.refs),

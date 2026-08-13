@@ -46,7 +46,7 @@ import {
   RecordingFakePiHost,
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PARENT = "parent-session-live-mgr-1";
 const CHILD = "live-mgr-child-1";
@@ -228,7 +228,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
 
     const parentEntries: { type: string; data: unknown }[] = [];
     const seedRefs = new PiChildSessionRefStore({
-      storage: TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+      storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       parentSessionId: PARENT,
       append: {
         appendEntry: (type, data) => {
@@ -273,8 +273,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
         name: HOST_PACKAGE_NAME,
         version: "0.83.0",
       }),
-      sessionStorageAuthority:
-        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       capabilityProber: {
         probe: () =>
           ALL_CAPABILITY_IDS.map((capabilityId) => ({

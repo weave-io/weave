@@ -53,7 +53,7 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const GENERATION = "gen-1";
 const OWNER_SESSION = "parent-session-1";
@@ -121,12 +121,12 @@ function switchableSessionStorageAuthority(): PiChildSessionStorageAuthority & {
     deny: () => {
       available = false;
     },
-    requireDescriptorSafeSessionIo: () =>
+    requireNativeSessionAuthority: () =>
       available
         ? ok(undefined)
         : err({
             type: "SessionStorageUnavailable" as const,
-            reason: "path-only-session-api" as const,
+            reason: "pi-session-api-unavailable" as const,
           }),
   };
 }
@@ -621,7 +621,7 @@ function harness(
     processPort: port,
     sessionStorageAuthority:
       overrides.sessionStorageAuthority ??
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+      TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     randomPort: new WebCryptoRandomPort(),
     hmacPort: new WebCryptoHmacPort(),
     timerPort: new SystemTimerPort(),
@@ -1176,8 +1176,7 @@ describe("thread lifecycle: source integrity", () => {
       idGenerator: new SequentialIdGenerator(),
       logger: noopLogger,
       processPort: new FakeChildProcessPort(),
-      sessionStorageAuthority:
-        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       randomPort: new WebCryptoRandomPort(),
       hmacPort: new WebCryptoHmacPort(),
     });

@@ -31,7 +31,7 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const randomPort = new WebCryptoRandomPort();
 const hmacPort = new WebCryptoHmacPort();
@@ -53,7 +53,7 @@ class PiRpcChild extends ProductionPiRpcChild {
       ...deps,
       sessionStorageAuthority:
         deps.sessionStorageAuthority ??
-        TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+        TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     });
   }
 }

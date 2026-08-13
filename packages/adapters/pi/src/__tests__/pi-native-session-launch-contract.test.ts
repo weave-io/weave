@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { PiRpcChild, type PiRpcChildSpawnInput } from "../rpc-child.js";
 import { FakeChildProcessPort } from "./fakes/fake-child-process-port.js";
-import { TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const SESSION_DIR = "/data/weave/adapters/pi/sessions/child-1";
 const SESSION_FILE = `${SESSION_DIR}/pi-generated.jsonl`;
@@ -32,7 +32,7 @@ function makeChild(processPort: FakeChildProcessPort): PiRpcChild {
   return new PiRpcChild("child-1", "root", "generation-1", "shuttle", 1, {
     processPort,
     sessionStorageAuthority:
-      TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+      TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     randomPort: new WebCryptoRandomPort(),
     hmacPort: new WebCryptoHmacPort(),
     logger: noopLogger(),
