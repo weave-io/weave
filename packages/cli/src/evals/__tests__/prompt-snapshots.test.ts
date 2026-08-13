@@ -25,7 +25,9 @@
  *     length, and structure assertions are made.
  */
 
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   composeAgentSnapshots,
   composeSnapshot,
@@ -399,6 +401,20 @@ describe("composeSnapshot — error paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("composeAgentSnapshots — integration with builtin config", () => {
+  // `composeAgentSnapshots()` loads config from disk, and config discovery
+  // reads `$HOME/.weave` before the project scope. Point HOME at a directory
+  // that cannot exist so these tests compose builtin plus project config only,
+  // exactly as the isolation note above promises, whatever the developer's
+  // own global config happens to contain.
+  const originalHome = process.env.HOME;
+  beforeAll(() => {
+    process.env.HOME = join(tmpdir(), `weave-no-global-${crypto.randomUUID()}`);
+  });
+  afterAll(() => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  });
+
   it("default snapshot coverage stays aligned with the shared eval registry", () => {
     // DEFAULT_SNAPSHOT_AGENTS is the deduplicated set of short-agent filters.
     // EVAL_SHORT_AGENT_FILTERS may contain duplicates (e.g. 'tapestry' backing
