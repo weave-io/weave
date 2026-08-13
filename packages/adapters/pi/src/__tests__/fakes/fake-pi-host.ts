@@ -916,6 +916,70 @@ export class RecordingFakePiHost {
     return ctx;
   }
 
+  /**
+   * Mirrors Pi: header handlers mutate the same map in place and the return
+   * value is ignored.
+   */
+  async triggerBeforeProviderHeaders(
+    headers: Record<string, string | null>,
+    extras: Record<string, unknown> = {},
+  ): Promise<Record<string, string | null>> {
+    const event = Object.assign(Object.create(null), {
+      type: "before_provider_headers",
+      headers,
+      ...extras,
+    });
+    const ctx = this.createSessionContext();
+    for (const handler of this.handlers.get("before_provider_headers") ?? []) {
+      await handler(event, ctx);
+    }
+    return headers;
+  }
+
+  /**
+   * Mirrors Pi: request handlers run in registration order and a returned
+   * replacement becomes the next payload.
+   */
+  async triggerBeforeProviderRequest(
+    payload: unknown,
+    extras: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    let currentPayload = payload;
+    const ctx = this.createSessionContext();
+    for (const handler of this.handlers.get("before_provider_request") ?? []) {
+      const event = Object.assign(Object.create(null), {
+        type: "before_provider_request",
+        payload: currentPayload,
+        ...extras,
+      });
+      const replacement = await handler(event, ctx);
+      if (replacement !== undefined) {
+        currentPayload = replacement;
+      }
+    }
+    return currentPayload;
+  }
+
+  /**
+   * Mirrors Pi: response handlers observe integer status plus headers.
+   */
+  async triggerAfterProviderResponse(
+    status: number,
+    headers: Record<string, string> = {},
+    extras: Record<string, unknown> = {},
+  ): Promise<void> {
+    const event = Object.assign(Object.create(null), {
+      type: "after_provider_response",
+      status,
+      headers,
+      ...extras,
+    });
+    const ctx = this.createSessionContext();
+    for (const handler of this.handlers.get("after_provider_response") ?? []) {
+      await handler(event, ctx);
+    }
+  }
+
   /** Fires every registered `session_start` handler against a fresh context, returning it. */
   async triggerSessionStart(): Promise<PiSessionContext> {
     const ctx = this.createSessionContext();

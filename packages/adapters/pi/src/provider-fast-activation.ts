@@ -1887,6 +1887,66 @@ export class ProviderFastCoordinator {
     );
   }
 
+  /**
+   * Start a later attempt after a settled response without rewriting headers.
+   * Pi retries reuse the first header map and do not re-fire that hook.
+   */
+  beginSettledRetry(
+    snapshot: ProviderFastCoordinatorSnapshot,
+  ): Result<
+    ProviderFastCoordinatorHeadersResult,
+    ProviderFastCoordinatorError
+  > {
+    const inspected = inspectCoordinatorSnapshot(snapshot);
+    if (inspected.isErr()) {
+      return this.failClosed(inspected.error);
+    }
+    if (inspected.value.isErr()) {
+      return this.failClosed(inspected.value.error);
+    }
+    const copied = inspected.value.value;
+    if (this.active !== undefined) {
+      return this.failClosed(
+        coordinatorError("AmbiguousFastAttempt", "out-of-order"),
+      );
+    }
+
+    const classified = classifyCoordinatorSnapshot(copied);
+    const classification = classificationFromResult(classified);
+    const begun = this.tracker.begin({
+      snapshot: toTrackerSnapshot(copied),
+      apiFamily: mapHostApiFamily(copied.selectedModel?.api),
+      classification: beginClassificationForTracker(classification),
+    });
+    if (begun.isErr()) {
+      return this.failClosed(begun.error);
+    }
+    if (begun.value.kind === "no-state") {
+      return ok(Object.freeze({ kind: "no-state" }));
+    }
+    if (begun.value.kind === "unsupported") {
+      this.latestSnapshot = begun.value.snapshot;
+      return ok(
+        Object.freeze({
+          kind: "unsupported",
+          snapshot: begun.value.snapshot,
+        }),
+      );
+    }
+    this.active = {
+      token: begun.value.token,
+      snapshot: copied,
+    };
+    this.latestSnapshot = begun.value.snapshot;
+    return ok(
+      Object.freeze({
+        kind: "pending",
+        token: begun.value.token,
+        snapshot: begun.value.snapshot,
+      }),
+    );
+  }
+
   applyRequest(
     snapshot: ProviderFastCoordinatorSnapshot,
     token: ProviderFastAttemptToken,

@@ -191,6 +191,50 @@ export function projectPiProviderEvent(
   return projected.andThen((result) => result);
 }
 
+export type PiProviderEventFieldError = {
+  readonly type: "UnsafeProviderEventField";
+};
+
+function readOwnDataField(
+  event: object,
+  field: string,
+): Result<unknown, PiProviderEventFieldError> {
+  return Result.fromThrowable(
+    () => {
+      const ownKeys = Reflect.ownKeys(event);
+      if (!ownKeys.includes(field)) {
+        return err({ type: "UnsafeProviderEventField" } as const);
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(event, field);
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        descriptor.enumerable !== true ||
+        descriptor.writable !== true ||
+        descriptor.configurable !== true
+      ) {
+        return err({ type: "UnsafeProviderEventField" } as const);
+      }
+      return ok(descriptor.value);
+    },
+    () => ({ type: "UnsafeProviderEventField" }) as const,
+  )().andThen((result) => result);
+}
+
+/**
+ * Read a raw host `headers` or `payload` field through its own writable,
+ * configurable, enumerable data descriptor. Getters are never invoked.
+ */
+export function extractPiProviderEventField(
+  event: unknown,
+  field: "headers" | "payload",
+): Result<unknown, PiProviderEventFieldError> {
+  if (typeof event !== "object" || event === null) {
+    return err({ type: "UnsafeProviderEventField" });
+  }
+  return readOwnDataField(event, field);
+}
+
 /** Notification severity accepted by `ctx.ui.notify`. */
 export type PiUiNotifyLevel = "info" | "warning" | "error";
 

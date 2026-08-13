@@ -2032,6 +2032,41 @@ describe("ProviderFastCoordinator", () => {
     );
   });
 
+  it("starts a settled retry without rewriting headers", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot();
+    const headers = { Authorization: SECRET_AUTHORIZATION };
+    const begun = coordinator.beginHeaders(snapshot, headers);
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    expect(
+      coordinator
+        .applyRequest(snapshot, begun.value.token, { model: "gpt-5.6-sol" })
+        .isOk(),
+    ).toBe(true);
+    expect(coordinator.observeResponse(begun.value.token, 429).isOk()).toBe(
+      true,
+    );
+    const retry = coordinator.beginSettledRetry(snapshot);
+    expect(retry.isOk() && retry.value.kind === "pending").toBe(true);
+    if (retry.isErr() || retry.value.kind !== "pending") {
+      return;
+    }
+    expect(retry.value.token.sequence).toBe(2);
+    expect(headers).toEqual({ Authorization: SECRET_AUTHORIZATION });
+    expect(
+      coordinator
+        .applyRequest(snapshot, retry.value.token, { model: "gpt-5.6-sol" })
+        .isOk(),
+    ).toBe(true);
+    expectCoordinatorError(coordinator.beginSettledRetry(snapshot), {
+      type: "AmbiguousFastAttempt",
+      reason: "out-of-order",
+    });
+  });
+
   it("settles every integer status as not-confirmed and rejects headers or bodies", () => {
     const coordinator = new ProviderFastCoordinator();
     const snapshot = coordinatorSnapshot();

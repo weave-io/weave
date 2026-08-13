@@ -260,6 +260,7 @@ import { safelyListAvailableModels } from "./port-safety.js";
 import {
   DEFAULT_PRIMARY_AGENT_NAME,
   type PiPrimaryActivationError,
+  type PiPrimaryRequestSnapshot,
   PiPrimarySession,
   UNKNOWN_PARENT_SESSION,
 } from "./primary-session.js";
@@ -269,6 +270,12 @@ import {
   parsePromptChunk,
   promptTransferNackReason,
 } from "./prompt-chunking.js";
+import {
+  type ProviderFastAttemptPublicSnapshot,
+  type ProviderFastAttemptToken,
+  ProviderFastCoordinator,
+  type ProviderFastCoordinatorSnapshot,
+} from "./provider-fast-activation.js";
 import {
   activeInstanceFromRecoveryPointer,
   BunJsonlRecoveryPointerStore,
@@ -312,15 +319,17 @@ import {
   createProductionPiThreadSourceFactory,
   type PiThreadSourceFactory,
 } from "./thread-sources.js";
-import type {
-  Clock,
-  IdGenerator,
-  PiAdapterLogger,
-  PiEnvPort,
-  PiExtensionApi,
-  PiModelInfo,
-  PiSessionContext,
-  PiSkillInfo,
+import {
+  type Clock,
+  extractPiProviderEventField,
+  type IdGenerator,
+  type PiAdapterLogger,
+  type PiEnvPort,
+  type PiExtensionApi,
+  type PiModelInfo,
+  type PiSessionContext,
+  type PiSkillInfo,
+  projectPiProviderEvent,
 } from "./types.js";
 import {
   buildPaletteActions,
@@ -2211,9 +2220,13 @@ class WeaveChildTreeEditor extends CustomEditor {
  * returns. It never loads project config, opens the Runtime Store, starts a
  * timer, or launches a child process at factory time.
  */
+export type PiExtensionInstance = ((pi: PiExtensionApi) => void) & {
+  readonly providerFastLatestForTest: () => ProviderFastAttemptPublicSnapshot;
+};
+
 export function createPiExtension(
   overrides: Partial<PiExtensionDeps> = {},
-): (pi: PiExtensionApi) => void {
+): PiExtensionInstance {
   const defaults = createDefaultPiExtensionDeps();
   const deps: PiExtensionDeps = {
     ...defaults,
@@ -2455,6 +2468,209 @@ export function createPiExtension(
    * naming a target's model needs a context the extension already holds.
    */
   let latestSessionCtx: PiSessionContext | undefined;
+  const providerFastCoordinator = new ProviderFastCoordinator();
+  let providerFastActiveToken: ProviderFastAttemptToken | undefined;
+  let providerFastActiveGeneration: number | undefined;
+  let providerFastActivePrimaryName: string | undefined;
+
+  const resetProviderFastCoordinator = (): void => {
+    providerFastCoordinator.reset();
+    providerFastActiveToken = undefined;
+    providerFastActiveGeneration = undefined;
+    providerFastActivePrimaryName = undefined;
+  };
+
+  const toProviderFastCoordinatorSnapshot = (
+    snapshot: PiPrimaryRequestSnapshot,
+  ): ProviderFastCoordinatorSnapshot => ({
+    generation: snapshot.generation,
+    primaryName: snapshot.primaryName,
+    ...(snapshot.selectedModel === undefined
+      ? {}
+      : { selectedModel: snapshot.selectedModel }),
+    ...(snapshot.fast === true ? { fast: true as const } : {}),
+  });
+
+  const resolveActiveProviderFastSnapshot = ():
+    | ProviderFastCoordinatorSnapshot
+    | undefined => {
+    const session = activeSession;
+    const generation = controller.getCurrentGeneration();
+    if (
+      session === undefined ||
+      generation === undefined ||
+      session.generationId !== generation.id ||
+      childModeState.active ||
+      effectiveHealthOnly(generation)
+    ) {
+      return undefined;
+    }
+    const captured = session.primarySession.captureRequestSnapshot();
+    if (captured === undefined) {
+      return undefined;
+    }
+    const resolved = session.primarySession.resolveRequestSnapshot(captured);
+    if (resolved.isErr()) {
+      return undefined;
+    }
+    return toProviderFastCoordinatorSnapshot(resolved.value);
+  };
+
+  const rememberProviderFastToken = (
+    token: ProviderFastAttemptToken,
+    snapshot: ProviderFastCoordinatorSnapshot,
+  ): void => {
+    providerFastActiveToken = token;
+    providerFastActiveGeneration = snapshot.generation;
+    providerFastActivePrimaryName = snapshot.primaryName;
+  };
+
+  const handleProviderFastHeaders = (event: unknown): undefined => {
+    const run = Result.fromThrowable(
+      (): undefined => {
+        const snapshot = resolveActiveProviderFastSnapshot();
+        if (snapshot === undefined) {
+          resetProviderFastCoordinator();
+          return undefined;
+        }
+        if (
+          providerFastActiveToken !== undefined &&
+          (snapshot.generation !== providerFastActiveGeneration ||
+            snapshot.primaryName !== providerFastActivePrimaryName)
+        ) {
+          resetProviderFastCoordinator();
+          return undefined;
+        }
+        const headersField = extractPiProviderEventField(event, "headers");
+        if (headersField.isErr()) {
+          resetProviderFastCoordinator();
+          return undefined;
+        }
+        const headers = headersField.value;
+        if (
+          headers === null ||
+          typeof headers !== "object" ||
+          Array.isArray(headers)
+        ) {
+          resetProviderFastCoordinator();
+          return undefined;
+        }
+        const begun = providerFastCoordinator.beginHeaders(snapshot, headers);
+        if (begun.isErr() || begun.value.kind !== "pending") {
+          providerFastActiveToken = undefined;
+          providerFastActiveGeneration = undefined;
+          providerFastActivePrimaryName = undefined;
+          return undefined;
+        }
+        rememberProviderFastToken(begun.value.token, snapshot);
+        return undefined;
+      },
+      () => undefined,
+    );
+    run();
+    return undefined;
+  };
+
+  const handleProviderFastRequest = (
+    event: unknown,
+  ): { readonly payload: unknown } | undefined => {
+    const run = Result.fromThrowable(
+      (): { readonly payload: unknown } | undefined => {
+        const snapshot = resolveActiveProviderFastSnapshot();
+        if (snapshot === undefined) {
+          resetProviderFastCoordinator();
+          return undefined;
+        }
+        const payloadField = extractPiProviderEventField(event, "payload");
+        if (payloadField.isErr()) {
+          resetProviderFastCoordinator();
+          return undefined;
+        }
+        let token = providerFastActiveToken;
+        if (token === undefined) {
+          if (providerFastCoordinator.latest().state !== "not-confirmed") {
+            return undefined;
+          }
+          const retry = providerFastCoordinator.beginSettledRetry(snapshot);
+          if (retry.isErr() || retry.value.kind !== "pending") {
+            providerFastActiveToken = undefined;
+            providerFastActiveGeneration = undefined;
+            providerFastActivePrimaryName = undefined;
+            return undefined;
+          }
+          token = retry.value.token;
+          rememberProviderFastToken(token, snapshot);
+        } else if (
+          snapshot.generation !== providerFastActiveGeneration ||
+          snapshot.primaryName !== providerFastActivePrimaryName
+        ) {
+          resetProviderFastCoordinator();
+          return undefined;
+        }
+        const applied = providerFastCoordinator.applyRequest(
+          snapshot,
+          token,
+          payloadField.value,
+        );
+        if (applied.isErr()) {
+          providerFastActiveToken = undefined;
+          providerFastActiveGeneration = undefined;
+          providerFastActivePrimaryName = undefined;
+          return undefined;
+        }
+        if (Object.is(applied.value.payload, payloadField.value)) {
+          return undefined;
+        }
+        return { payload: applied.value.payload };
+      },
+      () => undefined,
+    );
+    return run().unwrapOr(undefined);
+  };
+
+  const handleProviderFastResponse = (event: unknown): undefined => {
+    const run = Result.fromThrowable(
+      (): undefined => {
+        const projected = projectPiProviderEvent(event);
+        if (
+          projected.isErr() ||
+          projected.value.type !== "after_provider_response"
+        ) {
+          resetProviderFastCoordinator();
+          return undefined;
+        }
+        const snapshot = resolveActiveProviderFastSnapshot();
+        if (snapshot === undefined) {
+          resetProviderFastCoordinator();
+          return undefined;
+        }
+        const token = providerFastActiveToken;
+        if (token === undefined) {
+          return undefined;
+        }
+        if (
+          snapshot.generation !== providerFastActiveGeneration ||
+          snapshot.primaryName !== providerFastActivePrimaryName
+        ) {
+          resetProviderFastCoordinator();
+          return undefined;
+        }
+        const observed = providerFastCoordinator.observeResponse(
+          token,
+          projected.value.status,
+        );
+        providerFastActiveToken = undefined;
+        if (observed.isErr()) {
+          providerFastActiveGeneration = undefined;
+          providerFastActivePrimaryName = undefined;
+        }
+        return undefined;
+      },
+      () => undefined,
+    );
+    run();
+    return undefined;
+  };
   /**
    * The most recent session context *per generation*. Pi replaces
    * `ctx.sessionManager` across a session load, so a context captured at
@@ -3469,6 +3685,7 @@ export function createPiExtension(
           session.pendingPrimaryName = descriptor.name;
           session.primaryActivationAttempted = true;
           session.primaryActivationFailure = undefined;
+          resetProviderFastCoordinator();
           setActiveAgentStatus(ctx, descriptor.name);
           return undefined;
         })
@@ -3877,6 +4094,7 @@ export function createPiExtension(
     },
     closePlanTaskOverlay,
     shutdownExtensionController: () => {
+      resetProviderFastCoordinator();
       controller.shutdown();
     },
     clearBootActivationFailure: () => {
@@ -3920,7 +4138,9 @@ export function createPiExtension(
     },
   });
 
-  return function piAdapterExtension(pi: PiExtensionApi): void {
+  const piAdapterExtension = function piAdapterExtension(
+    pi: PiExtensionApi,
+  ): void {
     pi.registerShortcut?.(PI_PRIMARY_AGENT_CYCLE_SHORTCUT, {
       description: "Cycle Weave primary agent",
       handler: async (ctx: PiSessionContext) => {
@@ -4010,6 +4230,17 @@ export function createPiExtension(
     // confirmed pause cancels the direct-step subtree and lets the prompt
     // continue to Loom - a reject leaves the workflow running untouched and
     // never submits the prompt.
+    pi.on("before_provider_headers", (event) => {
+      handleProviderFastHeaders(event);
+    });
+    pi.on("before_provider_request", (event) => {
+      const replacement = handleProviderFastRequest(event);
+      return replacement?.payload;
+    });
+    pi.on("after_provider_response", (event) => {
+      handleProviderFastResponse(event);
+    });
+
     pi.on("input", async (_event, ctx: PiSessionContext) => {
       if (childModeState.active) return { action: "continue" };
       if (!directStepChildRegistry.isActive()) return { action: "continue" };
@@ -4054,6 +4285,7 @@ export function createPiExtension(
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
       latestSessionCtx = ctx;
+      resetProviderFastCoordinator();
       // Revoke the prior generation synchronously, before the first await.
       // Overlays settle first, then the startup sequence bumps, then every
       // live authority cell is dropped so a retained tool registration or
@@ -4282,6 +4514,7 @@ export function createPiExtension(
             return;
           }
           lastBootActivationFailure = booted.error;
+          resetProviderFastCoordinator();
           activeSession = undefined;
           controller.shutdown();
           clearThreadSources(threadSourcesCell);
@@ -4325,6 +4558,7 @@ export function createPiExtension(
             error instanceof Error ? error : new Error(String(error)),
         );
         if (registerTools().isErr()) {
+          resetProviderFastCoordinator();
           activeSession = undefined;
           controller.shutdown();
           clearThreadSources(threadSourcesCell);
@@ -5775,6 +6009,9 @@ export function createPiExtension(
       await sessionTransitionRuntime.runBoundedShutdown(ctx);
     });
   };
+  piAdapterExtension.providerFastLatestForTest = () =>
+    providerFastCoordinator.latest();
+  return piAdapterExtension;
 }
 
 export default createPiExtension();
