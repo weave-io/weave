@@ -382,11 +382,16 @@ Pi addresses native sessions by filesystem path. Containment is therefore proven
 2. It validates Pi's generated leaf as a canonical immediate child of that directory, never a path prefix, and validates the generated v3 header, session ID, parent link, and `cwd`.
 3. Because Pi defers the first write, the adapter exclusively creates the absent `0600` leaf with Pi's exact generated header bytes plus a newline. It never invents, alters, or reorders a header field.
 4. It reopens the leaf through `SessionManager.open` and revalidates path, directory, header, session ID, parent, `cwd`, and persistence before any spawn.
-5. The RPC child receives both `--session <validated file>` and `--session-dir <validated directory>`, and the launch environment drops any inherited `PI_CODING_AGENT_SESSION_DIR` so the explicit argument stays the sole authority.
+5. The session store mints an opaque launch grant for that validated session and for the exact child that will start. The grant is the only launch authority: it is bound to the generation's validated root, the validated child directory, the validated session file, and the session identity.
+6. The RPC child redeems the grant, then receives both `--session <validated file>` and `--session-dir <validated directory>`. The launch environment drops any inherited `PI_CODING_AGENT_SESSION_DIR` so the explicit argument stays the sole authority.
+
+There is no path-carrying spawn mode. A caller that presents an absolute path, a hand-built grant look-alike, a grant minted by another generation, or a grant naming another child is refused before the argument vector exists and before any process starts.
+
+The v3 header the adapter persists is validated as a whole: an unknown, inherited, accessor, symbol-keyed, or wrongly typed field fails the session closed instead of being dropped, so the persisted bytes are always exactly the header Pi generated.
 
 Callers, models, and the engine never supply a path, and no path crosses the adapter boundary into Results, logs, health, status, doctor, CLI output, lifecycle metadata, or model content.
 
-Delegation readiness is reported through the required `delegated-specialist-execution` capability. When the real Pi session or process surfaces do not probe ready, the generation stays health-only before spawn and reports exactly one closed, path-free reason: `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, or `pi-process-unavailable`. No environment variable or configuration setting can raise it.
+Delegation readiness is reported through the required `delegated-specialist-execution` capability. One generation-scoped authority proves three facts - Pi's public session API, the resolved and safe session root, and the child process launch surface - and that same object feeds capability probing, the session sources, the session store that mints grants, the delegation controller, direct dispatch, and every child launch. Readiness therefore cannot disagree with launch: a ready generation holds the authority its spawns consume. When any fact is missing, the generation stays health-only before spawn and reports exactly one closed, path-free reason: `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, or `pi-process-unavailable`. No environment variable or configuration setting can raise it.
 
 While the capability is unavailable for one of those reasons, the adapter fails every persistent session mutation with a typed `RequiredCapabilityUnavailable` result before it reaches a controller, session service, filesystem, metadata cache, execution lease, or child process:
 
