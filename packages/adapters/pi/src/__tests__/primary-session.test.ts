@@ -4,7 +4,11 @@ import type {
   EffectiveToolPolicy,
 } from "@weaveio/weave-engine";
 import { errAsync, okAsync } from "neverthrow";
-import type { PiModelApplyPort } from "../model-resolution.js";
+import {
+  type PiModelActivationOutcome,
+  PiModelActivator,
+  type PiModelApplyPort,
+} from "../model-resolution.js";
 import {
   appendWeaveBlockOnce,
   isReadOnlyChildAccessAllowed,
@@ -15,7 +19,11 @@ import {
   UNKNOWN_PARENT_SESSION,
 } from "../primary-session.js";
 import { PiSkillCatalog } from "../skill-catalog.js";
-import { type PiModelInfo, projectPiProviderEvent } from "../types.js";
+import {
+  type PiModelInfo,
+  type PiSourceInfo,
+  projectPiProviderEvent,
+} from "../types.js";
 import { RecordingLogger } from "./fakes/fake-pi-host.js";
 
 const POLICY: EffectiveToolPolicy = {
@@ -393,6 +401,406 @@ describe("PiPrimarySession.activate", () => {
         .getCapabilityWarnings()
         .filter((w) => w.capability === "temperature"),
     ).toHaveLength(1);
+  });
+});
+
+describe("PiPrimarySession committed-state isolation", () => {
+  it("copies mutable activation inputs before committing them", async () => {
+    const reviewModelIntent = "openai/review-model";
+    const models = ["anthropic/claude-sonnet-4-5", reviewModelIntent];
+    const skills = ["tdd"];
+    const effectiveToolPolicy: EffectiveToolPolicy = { ...POLICY };
+    const rawToolPolicy: AgentDescriptor["rawToolPolicy"] = {
+      read: "allow",
+      write: "ask",
+    };
+    const triggers = ["typescript", "review"];
+    const target: AgentDescriptor["delegationTargets"][number] = {
+      name: "shuttle",
+      description: "Implementation worker",
+      triggers,
+      isCategory: false,
+    };
+    const category: NonNullable<AgentDescriptor["category"]> = {
+      name: "tests",
+      description: "Test work",
+    };
+    const model = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+    };
+    const sourceInfo = {
+      path: "/skills/tdd/SKILL.md",
+      source: "skill",
+      scope: "project",
+      origin: "top-level",
+      baseDir: "/skills/tdd",
+    } satisfies PiSourceInfo;
+    const skillCatalog = new PiSkillCatalog([
+      { name: "tdd", filePath: sourceInfo.path, sourceInfo },
+    ]);
+    const modelActivation: PiModelActivationOutcome = {
+      status: "applied",
+      model,
+      intentEntry: models[0] ?? "",
+      source: "canonical",
+      thinkingLevel: "high",
+      thinkingApplied: true,
+    };
+    const modelActivator = new PiModelActivator();
+    modelActivator.activate = () => okAsync(modelActivation);
+    const session = new PiPrimarySession({
+      skillCatalog,
+      modelActivator,
+      logger: new RecordingLogger(),
+    });
+
+    const activated = await session.activate(
+      descriptor({
+        models,
+        skills,
+        effectiveToolPolicy,
+        rawToolPolicy,
+        delegationTargets: [target],
+        category,
+        fast: true,
+      }),
+      context(),
+    );
+    expect(activated.isOk()).toBe(true);
+    const expected = structuredClone(session.getCurrent());
+    expect(expected?.descriptor.models).toEqual([
+      "anthropic/claude-sonnet-4-5",
+      reviewModelIntent,
+    ]);
+
+    models.splice(0, models.length, "mutated-primary", "mutated-review");
+    skills.splice(0, skills.length, "mutated-skill");
+    Object.assign(effectiveToolPolicy, {
+      read: "deny",
+      write: "deny",
+      execute: "deny",
+      delegate: "deny",
+      network: "deny",
+    });
+    Object.assign(rawToolPolicy, { read: "deny", write: "deny" });
+    target.name = "mutated-target";
+    target.description = "mutated description";
+    triggers.splice(0, triggers.length, "mutated-trigger");
+    category.name = "mutated-category";
+    category.description = "mutated category description";
+    Object.assign(model, {
+      provider: "mutated-provider",
+      id: "mutated-model",
+      name: "Mutated Model",
+    });
+    Object.assign(modelActivation, {
+      intentEntry: "mutated-intent",
+      source: "human-name",
+      thinkingLevel: "low",
+      thinkingApplied: false,
+    });
+    const catalogMetadata = skillCatalog.getAvailableSkills()[0]?.metadata as {
+      filePath?: string;
+      sourceInfo?: {
+        path: string;
+        source: string;
+        scope: string;
+        origin: string;
+        baseDir?: string;
+      };
+    };
+    catalogMetadata.filePath = "/mutated/SKILL.md";
+    Object.assign(catalogMetadata.sourceInfo ?? {}, {
+      path: "/mutated/source",
+      source: "mutated-source",
+      scope: "temporary",
+      origin: "package",
+      baseDir: "/mutated",
+    });
+
+    expect(session.getCurrent()).toEqual(expected);
+  });
+
+  it("isolates later reads and request behavior from getCurrent mutation", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([
+        {
+          name: "tdd",
+          filePath: "/skills/tdd/SKILL.md",
+          sourceInfo: {
+            path: "/skills/tdd/SKILL.md",
+            source: "skill",
+            scope: "project",
+            origin: "top-level",
+          },
+        },
+      ]),
+      logger: new RecordingLogger(),
+    });
+    const modelIntent = "anthropic/claude-sonnet-4-5#high";
+    const activated = await session.activate(
+      descriptor({
+        displayName: "Loom",
+        description: "Primary orchestrator",
+        models: [modelIntent, "openai/review-model"],
+        skills: ["tdd"],
+        rawToolPolicy: { read: "allow", write: "ask" },
+        delegationTargets: [
+          {
+            name: "shuttle",
+            description: "Implementation worker",
+            triggers: ["typescript", "review"],
+            isCategory: false,
+          },
+        ],
+        category: { name: "tests", description: "Test work" },
+        fast: true,
+      }),
+      context({
+        availableModels: [
+          {
+            provider: "anthropic",
+            id: "claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+          },
+        ],
+        thinkingApplier: { applyThinkingLevel: () => okAsync(undefined) },
+      }),
+    );
+    expect(activated.isOk()).toBe(true);
+
+    const exposed = session.getCurrent();
+    expect(exposed).toBeDefined();
+    if (exposed === undefined) return;
+    const expectedCurrent = structuredClone(exposed);
+    const expectedPrompt = session.appendToSystemPrompt("base");
+    const expectedSnapshot = session.captureRequestSnapshot();
+
+    Object.assign(exposed.descriptor, {
+      name: "mutated-name",
+      displayName: "Mutated Name",
+      description: "mutated description",
+      composedPrompt: "mutated prompt",
+      temperature: 1,
+    });
+    exposed.descriptor.models.splice(
+      0,
+      exposed.descriptor.models.length,
+      "mutated-model",
+    );
+    exposed.descriptor.skills.splice(
+      0,
+      exposed.descriptor.skills.length,
+      "mutated-skill",
+    );
+    Object.assign(exposed.descriptor.effectiveToolPolicy, {
+      read: "deny",
+      write: "deny",
+      execute: "deny",
+      delegate: "deny",
+      network: "deny",
+    });
+    Object.assign(exposed.descriptor.rawToolPolicy ?? {}, {
+      read: "deny",
+      write: "deny",
+    });
+    Object.assign(exposed.descriptor.category ?? {}, {
+      name: "mutated-category",
+      description: "mutated category description",
+    });
+    const exposedTarget = exposed.descriptor.delegationTargets[0];
+    expect(exposedTarget).toBeDefined();
+    if (exposedTarget === undefined) return;
+    Object.assign(exposedTarget, {
+      name: "mutated-target",
+      description: "mutated target description",
+      isCategory: true,
+    });
+    exposedTarget.triggers.splice(
+      0,
+      exposedTarget.triggers.length,
+      "mutated-trigger",
+    );
+
+    expect(exposed.modelActivation.status).toBe("applied");
+    if (exposed.modelActivation.status !== "applied") return;
+    Object.assign(
+      exposed.modelActivation.model as unknown as Record<string, unknown>,
+      {
+        provider: "mutated-provider",
+        id: "mutated-model",
+        name: "Mutated Model",
+      },
+    );
+    Object.assign(exposed.modelActivation, {
+      intentEntry: "mutated-intent",
+      source: "human-name",
+      thinkingLevel: "low",
+      thinkingApplied: false,
+    });
+
+    const exposedSkill = exposed.resolvedSkills[0] as
+      | {
+          name: string;
+          skillInfo: {
+            name: string;
+            metadata?: {
+              filePath?: string;
+              sourceInfo?: { path: string; source: string };
+            };
+          };
+        }
+      | undefined;
+    expect(exposedSkill).toBeDefined();
+    if (exposedSkill === undefined) return;
+    exposedSkill.name = "mutated-skill";
+    exposedSkill.skillInfo.name = "mutated-skill-info";
+    if (exposedSkill.skillInfo.metadata !== undefined) {
+      exposedSkill.skillInfo.metadata.filePath = "/mutated/SKILL.md";
+      Object.assign(exposedSkill.skillInfo.metadata.sourceInfo ?? {}, {
+        path: "/mutated/source",
+        source: "mutated-source",
+      });
+    }
+    (exposed.resolvedSkills as unknown[]).push({
+      name: "injected",
+      skillInfo: { name: "injected" },
+    });
+    Object.assign(
+      exposed as {
+        promptBlock: string;
+        temperatureDegraded: boolean;
+        generation: number;
+        fast?: true;
+      },
+      {
+        promptBlock: "mutated prompt block",
+        temperatureDegraded: true,
+        generation: 999,
+      },
+    );
+    delete (exposed as { fast?: true }).fast;
+
+    expect(session.getCurrent()).toEqual(expectedCurrent);
+    expect(session.appendToSystemPrompt("base")).toBe(expectedPrompt);
+    expect(session.captureRequestSnapshot()).toEqual(expectedSnapshot);
+  });
+
+  it("copies repeated arrays and records independently for sibling fields", async () => {
+    const repeatedRecord = { value: "record" };
+    const repeatedArray = [{ value: "array" }];
+    const sourceInfo = {
+      path: "/skills/tdd/SKILL.md",
+      source: "skill",
+      scope: "project",
+      origin: "top-level",
+      firstRecord: repeatedRecord,
+      secondRecord: repeatedRecord,
+      firstArray: repeatedArray,
+      secondArray: repeatedArray,
+    } as unknown as PiSourceInfo;
+    const repeatedTriggers = ["shared-trigger"];
+    const repeatedTarget: AgentDescriptor["delegationTargets"][number] = {
+      name: "shuttle",
+      triggers: repeatedTriggers,
+      isCategory: false,
+    };
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([
+        { name: "tdd", filePath: sourceInfo.path, sourceInfo },
+      ]),
+      logger: new RecordingLogger(),
+    });
+
+    const activated = await session.activate(
+      descriptor({
+        skills: ["tdd"],
+        delegationTargets: [repeatedTarget, repeatedTarget],
+      }),
+      context(),
+    );
+    expect(activated.isOk()).toBe(true);
+    const current = session.getCurrent();
+    expect(current).toBeDefined();
+    if (current === undefined) return;
+
+    const firstTarget = current.descriptor.delegationTargets[0];
+    const secondTarget = current.descriptor.delegationTargets[1];
+    expect(firstTarget).not.toBe(secondTarget);
+    expect(firstTarget?.triggers).not.toBe(secondTarget?.triggers);
+    if (firstTarget === undefined || secondTarget === undefined) return;
+    firstTarget.triggers[0] = "mutated-trigger";
+    expect(secondTarget.triggers).toEqual(["shared-trigger"]);
+
+    const metadata = current.resolvedSkills[0]?.skillInfo.metadata as {
+      sourceInfo: {
+        firstRecord: { value: string };
+        secondRecord: { value: string };
+        firstArray: Array<{ value: string }>;
+        secondArray: Array<{ value: string }>;
+      };
+    };
+    expect(metadata.sourceInfo.firstRecord).not.toBe(
+      metadata.sourceInfo.secondRecord,
+    );
+    expect(metadata.sourceInfo.firstArray).not.toBe(
+      metadata.sourceInfo.secondArray,
+    );
+    metadata.sourceInfo.firstRecord.value = "mutated-record";
+    const firstArrayValue = metadata.sourceInfo.firstArray[0];
+    expect(firstArrayValue).toBeDefined();
+    if (firstArrayValue === undefined) return;
+    firstArrayValue.value = "mutated-array";
+    expect(metadata.sourceInfo.secondRecord.value).toBe("record");
+    expect(metadata.sourceInfo.secondArray).toEqual([{ value: "array" }]);
+  });
+
+  it("omits hostile skill metadata accessors and cycles without reading them", async () => {
+    let getterReads = 0;
+    const sourceInfo: Record<string, unknown> = {
+      source: "skill",
+      scope: "project",
+      origin: "top-level",
+      safe: "kept",
+    };
+    Object.defineProperty(sourceInfo, "path", {
+      enumerable: true,
+      get: () => {
+        getterReads += 1;
+        return "/hostile/SKILL.md";
+      },
+    });
+    sourceInfo.cycle = sourceInfo;
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([
+        {
+          name: "hostile",
+          filePath: "/safe/SKILL.md",
+          sourceInfo: sourceInfo as unknown as PiSourceInfo,
+        },
+      ]),
+      logger: new RecordingLogger(),
+    });
+
+    const activated = await session.activate(
+      descriptor({ skills: ["hostile"] }),
+      context(),
+    );
+    expect(activated.isOk()).toBe(true);
+    const metadata = session.getCurrent()?.resolvedSkills[0]?.skillInfo
+      .metadata as {
+      filePath: string;
+      sourceInfo: Record<string, unknown>;
+    };
+
+    expect(getterReads).toBe(0);
+    expect(metadata.filePath).toBe("/safe/SKILL.md");
+    expect(metadata.sourceInfo.safe).toBe("kept");
+    expect(Object.hasOwn(metadata.sourceInfo, "path")).toBe(false);
+    expect(Object.hasOwn(metadata.sourceInfo, "cycle")).toBe(false);
+    expect(() => JSON.stringify(metadata)).not.toThrow();
   });
 });
 

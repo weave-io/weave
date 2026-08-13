@@ -375,7 +375,9 @@ export class PiPrimarySession {
   }
 
   getCurrent(): PiActivePrimary | undefined {
-    return this.current;
+    return this.current === undefined
+      ? undefined
+      : copyActivePrimary(this.current);
   }
 
   /**
@@ -448,7 +450,7 @@ export class PiPrimarySession {
 
   /** Every deduplicated temperature/model capability warning raised so far this session. */
   getCapabilityWarnings(): readonly PiPrimaryCapabilityWarning[] {
-    return this.warnings;
+    return this.warnings.map((warning) => ({ ...warning }));
   }
 
   private recordWarning(warning: PiPrimaryCapabilityWarning): void {
@@ -563,41 +565,18 @@ export class PiPrimarySession {
         });
       }
 
-      const committedDescriptor: AgentDescriptor = {
-        name: descriptor.name,
-        composedPrompt: descriptor.composedPrompt,
-        models: [...descriptor.models],
-        mode: descriptor.mode,
-        effectiveToolPolicy: descriptor.effectiveToolPolicy,
-        rawToolPolicy: descriptor.rawToolPolicy,
-        delegationTargets: descriptor.delegationTargets.map((target) => ({
-          ...target,
-          triggers: [...target.triggers],
-        })),
-        skills: [...descriptor.skills],
-      };
-      if (descriptor.displayName !== undefined) {
-        committedDescriptor.displayName = descriptor.displayName;
-      }
-      if (descriptor.description !== undefined) {
-        committedDescriptor.description = descriptor.description;
-      }
-      if (descriptor.category !== undefined) {
-        committedDescriptor.category = { ...descriptor.category };
-      }
-      if (descriptor.temperature !== undefined) {
-        committedDescriptor.temperature = descriptor.temperature;
-      }
-      if (descriptor.fast === true) committedDescriptor.fast = true;
-
+      const committedDescriptor = copyAgentDescriptor(descriptor);
+      const committedResolvedSkills = copyResolvedSkills(resolvedSkills);
+      const committedModelActivation =
+        copyPrimaryModelActivationOutcome(modelActivation);
       const activePrimary: PiActivePrimary = Object.freeze({
         descriptor: committedDescriptor,
         promptBlock: renderWeavePromptBlock(
           committedDescriptor,
-          resolvedSkills,
+          committedResolvedSkills,
         ),
-        modelActivation,
-        resolvedSkills,
+        modelActivation: committedModelActivation,
+        resolvedSkills: committedResolvedSkills,
         temperatureDegraded: temperatureDeclared,
         generation: this.activationGeneration + 1,
         ...(committedDescriptor.fast === true ? { fast: true as const } : {}),
@@ -606,7 +585,7 @@ export class PiPrimarySession {
       this.previousDescriptorName = this.current?.descriptor.name;
       this.activationGeneration = activePrimary.generation;
       this.current = activePrimary;
-      return activePrimary;
+      return copyActivePrimary(activePrimary);
     });
   }
 
@@ -648,6 +627,296 @@ export class PiPrimarySession {
 export type PiPrimarySnapshotStale = {
   readonly type: "StalePrimaryRequestSnapshot";
 };
+
+/**
+ * Copy the adapter-owned model identity. The Pi model catalog is supplied by
+ * the host and its records remain mutable at runtime even though their
+ * TypeScript fields are readonly.
+ */
+function copyModelInfo(model: PiModelInfo): PiModelInfo {
+  return {
+    provider: model.provider,
+    id: model.id,
+    ...(model.name === undefined ? {} : { name: model.name }),
+  };
+}
+
+function copyOptionalModelInfo(
+  model: PiModelInfo | undefined,
+): PiModelInfo | undefined {
+  return model === undefined ? undefined : copyModelInfo(model);
+}
+
+function copyEffectiveToolPolicy(
+  policy: AgentDescriptor["effectiveToolPolicy"],
+): AgentDescriptor["effectiveToolPolicy"] {
+  return {
+    read: policy.read,
+    write: policy.write,
+    execute: policy.execute,
+    delegate: policy.delegate,
+    network: policy.network,
+  };
+}
+
+function copyRawToolPolicy(
+  policy: AgentDescriptor["rawToolPolicy"],
+): AgentDescriptor["rawToolPolicy"] {
+  if (policy === undefined) return undefined;
+  return {
+    ...(policy.read === undefined ? {} : { read: policy.read }),
+    ...(policy.write === undefined ? {} : { write: policy.write }),
+    ...(policy.execute === undefined ? {} : { execute: policy.execute }),
+    ...(policy.delegate === undefined ? {} : { delegate: policy.delegate }),
+    ...(policy.network === undefined ? {} : { network: policy.network }),
+  };
+}
+
+function copyCategory(
+  category: AgentDescriptor["category"],
+): AgentDescriptor["category"] {
+  return category === undefined
+    ? undefined
+    : { name: category.name, description: category.description };
+}
+
+function copyDelegationTarget(
+  target: AgentDescriptor["delegationTargets"][number],
+): AgentDescriptor["delegationTargets"][number] {
+  return {
+    name: target.name,
+    ...(target.description === undefined
+      ? {}
+      : { description: target.description }),
+    triggers: [...target.triggers],
+    isCategory: target.isCategory,
+  };
+}
+
+const MAX_SKILL_METADATA_DEPTH = 8;
+const MAX_SKILL_METADATA_NODES = 128;
+const MAX_SKILL_METADATA_PROPERTIES = 64;
+const OMIT_NESTED_VALUE = Symbol("omit-nested-value");
+
+type NestedCopyResult = unknown | typeof OMIT_NESTED_VALUE;
+
+interface NestedCopyContext {
+  readonly ancestors: WeakSet<object>;
+  nodes: number;
+}
+
+function readOwnDataProperty(
+  value: object,
+  key: PropertyKey,
+): PropertyDescriptor | undefined {
+  const result = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(value, key),
+    () => undefined,
+  )();
+  if (result.isErr() || result.value === undefined) return undefined;
+  return "value" in result.value ? result.value : undefined;
+}
+
+function copyNestedValue(
+  value: unknown,
+): { readonly value: unknown } | undefined {
+  const copied = copyNestedValueAt(value, 0, {
+    ancestors: new WeakSet<object>(),
+    nodes: 0,
+  });
+  return copied === OMIT_NESTED_VALUE ? undefined : { value: copied };
+}
+
+function copyNestedValueAt(
+  value: unknown,
+  depth: number,
+  context: NestedCopyContext,
+): NestedCopyResult {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "undefined"
+  ) {
+    return value;
+  }
+  if (typeof value !== "object") return OMIT_NESTED_VALUE;
+  if (depth >= MAX_SKILL_METADATA_DEPTH) return OMIT_NESTED_VALUE;
+  if (context.nodes >= MAX_SKILL_METADATA_NODES) return OMIT_NESTED_VALUE;
+  if (context.ancestors.has(value)) return OMIT_NESTED_VALUE;
+
+  context.nodes += 1;
+  context.ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return copyNestedArray(value, depth, context);
+    }
+
+    const prototype = Result.fromThrowable(
+      () => Object.getPrototypeOf(value),
+      () => undefined,
+    )().unwrapOr(undefined);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return OMIT_NESTED_VALUE;
+    }
+
+    const keys = Result.fromThrowable(
+      () => Reflect.ownKeys(value),
+      () => undefined,
+    )().unwrapOr(undefined);
+    if (keys === undefined) return OMIT_NESTED_VALUE;
+
+    const copy: Record<string, unknown> = {};
+    let inspectedProperties = 0;
+    for (const key of keys) {
+      if (inspectedProperties >= MAX_SKILL_METADATA_PROPERTIES) break;
+      inspectedProperties += 1;
+      if (typeof key !== "string") continue;
+
+      const property = readOwnDataProperty(value, key);
+      if (property === undefined || !property.enumerable) continue;
+      const child = copyNestedValueAt(property.value, depth + 1, context);
+      if (child === OMIT_NESTED_VALUE) continue;
+      Object.defineProperty(copy, key, {
+        configurable: true,
+        enumerable: true,
+        value: child,
+        writable: true,
+      });
+    }
+    return copy;
+  } finally {
+    context.ancestors.delete(value);
+  }
+}
+
+function copyNestedArray(
+  value: object,
+  depth: number,
+  context: NestedCopyContext,
+): NestedCopyResult {
+  const lengthProperty = readOwnDataProperty(value, "length");
+  if (
+    lengthProperty === undefined ||
+    !Number.isSafeInteger(lengthProperty.value) ||
+    (lengthProperty.value as number) > MAX_SKILL_METADATA_PROPERTIES
+  ) {
+    return OMIT_NESTED_VALUE;
+  }
+
+  const length = lengthProperty.value as number;
+  const copy: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const property = readOwnDataProperty(value, String(index));
+    if (property === undefined || !property.enumerable) {
+      return OMIT_NESTED_VALUE;
+    }
+    const child = copyNestedValueAt(property.value, depth + 1, context);
+    if (child === OMIT_NESTED_VALUE) continue;
+    Object.defineProperty(copy, String(index), {
+      configurable: true,
+      enumerable: true,
+      value: child,
+      writable: true,
+    });
+  }
+  copy.length = length;
+  return copy;
+}
+
+function copyResolvedSkill(skill: ResolvedSkill): ResolvedSkill {
+  const skillName = readOwnDataProperty(skill, "name")?.value;
+  const skillInfoValue = readOwnDataProperty(skill, "skillInfo")?.value;
+  const safeSkillName = typeof skillName === "string" ? skillName : "";
+  if (!isObjectRecord(skillInfoValue)) {
+    return { name: safeSkillName, skillInfo: { name: safeSkillName } };
+  }
+
+  const skillInfoName = readOwnDataProperty(skillInfoValue, "name")?.value;
+  const skillInfo: { name: string; metadata?: unknown } = {
+    name: typeof skillInfoName === "string" ? skillInfoName : safeSkillName,
+  };
+  const metadataProperty = readOwnDataProperty(skillInfoValue, "metadata");
+  if (metadataProperty !== undefined) {
+    const metadata = copyNestedValue(metadataProperty.value);
+    if (metadata !== undefined) skillInfo.metadata = metadata.value;
+  }
+  return { name: safeSkillName, skillInfo };
+}
+
+function copyResolvedSkills(skills: readonly ResolvedSkill[]): ResolvedSkill[] {
+  return skills.map(copyResolvedSkill);
+}
+
+function copyAgentDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
+  const copy: AgentDescriptor = {
+    name: descriptor.name,
+    composedPrompt: descriptor.composedPrompt,
+    models: [...descriptor.models],
+    mode: descriptor.mode,
+    effectiveToolPolicy: copyEffectiveToolPolicy(
+      descriptor.effectiveToolPolicy,
+    ),
+    rawToolPolicy: copyRawToolPolicy(descriptor.rawToolPolicy),
+    delegationTargets: descriptor.delegationTargets.map(copyDelegationTarget),
+    skills: [...descriptor.skills],
+  };
+
+  if (descriptor.displayName !== undefined)
+    copy.displayName = descriptor.displayName;
+  if (descriptor.description !== undefined)
+    copy.description = descriptor.description;
+  if (descriptor.category !== undefined)
+    copy.category = copyCategory(descriptor.category);
+  if (descriptor.temperature !== undefined)
+    copy.temperature = descriptor.temperature;
+  if (descriptor.fast === true) copy.fast = true;
+  return copy;
+}
+
+function copyPrimaryModelActivationOutcome(
+  outcome: PiPrimaryModelActivationOutcome,
+): PiPrimaryModelActivationOutcome {
+  if (outcome.status === "preserved") {
+    return {
+      status: "preserved",
+      currentModel: copyOptionalModelInfo(outcome.currentModel),
+      reason: outcome.reason,
+    };
+  }
+  if (outcome.status === "degraded") {
+    return {
+      status: "degraded",
+      reason: outcome.reason,
+      currentModel: copyOptionalModelInfo(outcome.currentModel),
+    };
+  }
+  return {
+    status: "applied",
+    model: copyModelInfo(outcome.model),
+    intentEntry: outcome.intentEntry,
+    source: outcome.source,
+    ...(outcome.thinkingLevel === undefined
+      ? {}
+      : { thinkingLevel: outcome.thinkingLevel }),
+    ...(outcome.thinkingApplied === undefined
+      ? {}
+      : { thinkingApplied: outcome.thinkingApplied }),
+  };
+}
+
+function copyActivePrimary(active: PiActivePrimary): PiActivePrimary {
+  return {
+    descriptor: copyAgentDescriptor(active.descriptor),
+    promptBlock: active.promptBlock,
+    modelActivation: copyPrimaryModelActivationOutcome(active.modelActivation),
+    resolvedSkills: copyResolvedSkills(active.resolvedSkills),
+    temperatureDegraded: active.temperatureDegraded,
+    generation: active.generation,
+    ...(active.fast === true ? { fast: true as const } : {}),
+  };
+}
 
 function selectedModelFromActivation(
   modelActivation: PiPrimaryModelActivationOutcome,

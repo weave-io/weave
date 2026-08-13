@@ -62,3 +62,4 @@
 ## Task 7 snapshot authentication remediation
 
 - Pi request snapshot resolution now authenticates exact generation, primary identity, fast presence/value, ordered model intent, and selected model. Forged, omitted, extra, reordered, or mutated model fields return the typed stale result; capture and resolve return normalized copies.
+- Committed active-primary state uses bounded descriptor-safe copy-on-commit and copy-on-read; hostile skill metadata accessors and cycles are omitted without execution, so source mutation and reads cannot alter the prompt, snapshot, or state.
