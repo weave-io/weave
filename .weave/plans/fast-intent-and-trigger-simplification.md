@@ -211,7 +211,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - [proposed] Provider events use a request-scoped snapshot tied to the active agent/model. This controls state leakage during switching.
   - **Review gate**: Run Weft after the slice and resolve blocking findings.
 
-- [ ] 8. Propagate and validate fast intent through ordinary and direct Pi children
+- [x] 8. Propagate and validate fast intent through ordinary and direct Pi children
   - **What**: Carry the same neutral intent through strict authenticated child bootstraps and direct-step dispatch without weakening fail-closed controls.
   - **Files**: `packages/adapters/pi/src/child-control-bodies.ts`, `packages/adapters/pi/src/extension.ts`, `packages/adapters/pi/src/direct-dispatch.ts`, `packages/adapters/pi/src/direct-dispatch-transport.ts`, `packages/adapters/pi/src/workflow-controller.ts`, `packages/adapters/pi/src/__tests__/child-control-bodies.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/direct-dispatch.test.ts`, `packages/adapters/pi/src/__tests__/direct-dispatch-transport.test.ts`, `packages/adapters/pi/src/__tests__/workflow-controller.test.ts`
   - **Depends on**: Task 7
