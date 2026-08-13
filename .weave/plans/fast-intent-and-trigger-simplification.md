@@ -193,7 +193,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - [proposed] A descriptor with no fast intent does not require the optional capability and does not emit applied/requested state. This preserves provider defaults and avoids noisy degradation.
   - **Review gate**: Run Weft after the slice and resolve blocking findings.
 
-- [ ] 7. Add fast intent to Pi primary activation state
+- [x] 7. Add fast intent to Pi primary activation state
   - **What**: Make the active primary descriptor's fast intent available to provider hooks with atomic activation/switching and no cross-agent leakage.
   - **Files**: `packages/adapters/pi/src/types.ts`, `packages/adapters/pi/src/primary-session.ts`, `packages/adapters/pi/src/extension.ts`, `packages/adapters/pi/src/__tests__/primary-session.test.ts`, `packages/adapters/pi/src/__tests__/config-activator.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`
   - **Depends on**: Task 6
