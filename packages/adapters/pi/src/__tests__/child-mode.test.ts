@@ -212,7 +212,13 @@ function fakeCtx(overrides: Partial<PiSessionContext> = {}): PiSessionContext {
     },
     hasUI: true,
     model: undefined,
-    modelRegistry: { getAvailable: () => [] },
+    // The documented provider-auth seam, resolving no base-URL override: Pi
+    // then keeps the declared model URL, which proves the effective
+    // transport for these cases.
+    modelRegistry: {
+      getAvailable: () => [],
+      getProviderAuth: async () => ({ auth: { apiKey: "sk-proj-fake" } }),
+    },
     ...overrides,
   };
 }
@@ -1082,6 +1088,48 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       service_tier: "fast",
     });
     expect(headers).toEqual({ Authorization: "Bearer child-secret-value" });
+  });
+
+  it("never applies child fast controls through an auth-resolved gateway", async () => {
+    const model = {
+      provider: "openai",
+      id: "gpt-5.6-sol",
+      api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+    };
+    // The child's declared model URL is first-party, but Pi rebuilds the
+    // request model from `resolution.auth.baseUrl`, so the request really
+    // leaves through a gateway and carries no control.
+    const ctx = fakeCtx({
+      model,
+      modelRegistry: {
+        getAvailable: () => [],
+        getProviderAuth: async () => ({
+          auth: { baseUrl: "https://gateway.example.com/openai" },
+        }),
+      },
+    });
+    const { host, secretBytes } = await buildChildExtension(ctx);
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, { fast: true }),
+      ctx,
+    );
+    await flush();
+
+    const payload = { model: "gpt-5.6-sol" };
+    await host.fire(
+      "before_provider_headers",
+      { type: "before_provider_headers", headers: {} },
+      ctx,
+    );
+    const replaced = await host.fire(
+      "before_provider_request",
+      { type: "before_provider_request", payload },
+      ctx,
+    );
+    expect(replaced).toBeUndefined();
+    expect(payload).toEqual({ model: "gpt-5.6-sol" });
   });
 
   it.each([

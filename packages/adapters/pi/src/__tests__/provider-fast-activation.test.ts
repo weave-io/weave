@@ -97,7 +97,7 @@ const SUPPORTED_CASES: readonly SupportedCase[] = [
 ];
 
 function intent(
-  input: Omit<ProviderFastActivationInput, "fast" | "baseUrl"> & {
+  input: Omit<ProviderFastActivationInput, "fast" | "effectiveBaseUrl"> & {
     readonly baseUrl?: string;
   },
 ): ProviderFastActivationInput {
@@ -106,7 +106,7 @@ function intent(
     provider: input.provider,
     apiFamily: input.apiFamily,
     model: input.model,
-    baseUrl: input.baseUrl ?? defaultBaseUrl(input.provider),
+    effectiveBaseUrl: input.baseUrl ?? defaultBaseUrl(input.provider),
   };
 }
 
@@ -135,7 +135,7 @@ describe("classifyProviderFastActivation", () => {
       provider: "openai",
       apiFamily: "openai-responses",
       model: "gpt-5.6-sol",
-      baseUrl: OPENAI_BASE_URL,
+      effectiveBaseUrl: OPENAI_BASE_URL,
     });
     expect(result.isOk()).toBe(true);
     if (result.isErr()) {
@@ -417,7 +417,7 @@ describe("classifyProviderFastActivation", () => {
         provider: "anthropic",
         apiFamily: "anthropic-messages",
         model: "claude-opus-5",
-        baseUrl: ANTHROPIC_BASE_URL,
+        effectiveBaseUrl: ANTHROPIC_BASE_URL,
       }),
     ).toBe('{"kind":"no-intent"}');
   });
@@ -1742,10 +1742,16 @@ describe("ProviderFastAttemptTracker", () => {
   });
 });
 
+/**
+ * A snapshot whose transport the host already proved. Unless a case says
+ * otherwise, auth resolution left the declared URL in place, so the proven
+ * effective origin mirrors it. Cases that need the two to diverge set
+ * `effectiveBaseUrl` explicitly.
+ */
 function coordinatorSnapshot(
   overrides: Partial<ProviderFastCoordinatorSnapshot> = {},
 ): ProviderFastCoordinatorSnapshot {
-  return {
+  const merged: ProviderFastCoordinatorSnapshot = {
     generation: 1,
     primaryName: "loom",
     liveModel: {
@@ -1756,6 +1762,18 @@ function coordinatorSnapshot(
     },
     fast: true,
     ...overrides,
+  };
+  const liveModel = merged.liveModel;
+  if (
+    liveModel === undefined ||
+    liveModel.baseUrl === undefined ||
+    liveModel.effectiveBaseUrl !== undefined
+  ) {
+    return merged;
+  }
+  return {
+    ...merged,
+    liveModel: { ...liveModel, effectiveBaseUrl: liveModel.baseUrl },
   };
 }
 
@@ -2198,6 +2216,211 @@ describe("ProviderFastCoordinator", () => {
     expect(switched.value.kind).toBe("settled");
     expect(switched.value.snapshot.state).toBe("declared");
     expect(switched.value.snapshot.reason).toBe("model-switched");
+    expect(headers).toEqual({ Authorization: SECRET_AUTHORIZATION });
+  });
+
+  it("rolls back its own beta header on every pre-request exit", () => {
+    const anthropic = coordinatorSnapshot({
+      liveModel: {
+        provider: "anthropic",
+        id: "claude-opus-5",
+        api: "anthropic-messages",
+        baseUrl: ANTHROPIC_BASE_URL,
+      },
+    });
+    const untouched = { Authorization: SECRET_AUTHORIZATION };
+
+    // Cancellation: the turn ended before the payload hook ever ran.
+    const cancelling = new ProviderFastCoordinator();
+    const cancelHeaders: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+    };
+    expect(
+      cancelling.beginHeaders(anthropic, cancelHeaders).isOk() &&
+        cancelHeaders["anthropic-beta"] === PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
+    ).toBe(true);
+    expect(cancelling.cancelActive("cancelled").isOk()).toBe(true);
+    expect(cancelHeaders).toEqual(untouched);
+
+    // Reset: session replacement drops the attempt entirely.
+    const resetting = new ProviderFastCoordinator();
+    const resetHeaders: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+    };
+    expect(resetting.beginHeaders(anthropic, resetHeaders).isOk()).toBe(true);
+    expect(resetHeaders["anthropic-beta"]).toBe(
+      PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
+    );
+    expect(resetting.reset().isOk()).toBe(true);
+    expect(resetHeaders).toEqual(untouched);
+
+    // Overlap: a second header hook with no response fails closed, and the
+    // abandoned first attempt's write goes with it.
+    const overlapping = new ProviderFastCoordinator();
+    const overlapHeaders: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+    };
+    expect(overlapping.beginHeaders(anthropic, overlapHeaders).isOk()).toBe(
+      true,
+    );
+    expect(overlapHeaders["anthropic-beta"]).toBe(
+      PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
+    );
+    expectCoordinatorError(overlapping.beginHeaders(anthropic, {}), {
+      type: "AmbiguousFastAttempt",
+      reason: "out-of-order",
+    });
+    expect(overlapHeaders).toEqual(untouched);
+
+    // Stale token: an out-of-order payload hook fails closed.
+    const stale = new ProviderFastCoordinator();
+    const staleHeaders: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+    };
+    const begun = stale.beginHeaders(anthropic, staleHeaders);
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    expect(staleHeaders["anthropic-beta"]).toBe(
+      PROVIDER_FAST_ANTHROPIC_BETA_TOKEN,
+    );
+    expectCoordinatorError(
+      stale.applyRequest(anthropic, { sequence: 99 }, { model: "x" }),
+      { type: "InvalidAttemptToken", reason: "forged-token" },
+    );
+    expect(staleHeaders).toEqual(untouched);
+
+    // Generation change: the live owner moved on before the payload hook.
+    const superseded = new ProviderFastCoordinator();
+    const supersededHeaders: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+    };
+    const pending = superseded.beginHeaders(anthropic, supersededHeaders);
+    expect(pending.isOk() && pending.value.kind === "pending").toBe(true);
+    if (pending.isErr() || pending.value.kind !== "pending") {
+      return;
+    }
+    const settled = superseded.applyRequest(
+      { ...anthropic, generation: 2 },
+      pending.value.token,
+      { model: "claude-opus-5" },
+    );
+    expect(settled.isOk() && settled.value.kind === "settled").toBe(true);
+    expect(supersededHeaders).toEqual(untouched);
+  });
+
+  it("never rolls back a header once the request carried the payload control", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot({
+      liveModel: {
+        provider: "anthropic",
+        id: "claude-opus-5",
+        api: "anthropic-messages",
+        baseUrl: ANTHROPIC_BASE_URL,
+      },
+    });
+    const headers: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+    };
+    const begun = coordinator.beginHeaders(snapshot, headers);
+    expect(begun.isOk() && begun.value.kind === "pending").toBe(true);
+    if (begun.isErr() || begun.value.kind !== "pending") {
+      return;
+    }
+    const applied = coordinator.applyRequest(snapshot, begun.value.token, {
+      model: "claude-opus-5",
+    });
+    expect(applied.isOk() && applied.value.kind === "applied").toBe(true);
+
+    // The request was patched and sent. Cancelling the abandoned attempt, and
+    // the modelled transport retry that reuses this same header map, must
+    // leave the beta header exactly as the provider received it.
+    expect(coordinator.cancelActive("expired").isOk()).toBe(true);
+    expect(headers["anthropic-beta"]).toBe(PROVIDER_FAST_ANTHROPIC_BETA_TOKEN);
+
+    const retry = coordinator.beginSettledRetry(snapshot);
+    expect(retry.isOk() && retry.value.kind === "pending").toBe(true);
+    expect(coordinator.reset().isOk()).toBe(true);
+    expect(headers["anthropic-beta"]).toBe(PROVIDER_FAST_ANTHROPIC_BETA_TOKEN);
+  });
+
+  it("claims no write and rolls nothing back for a malformed header map", () => {
+    const coordinator = new ProviderFastCoordinator();
+    const snapshot = coordinatorSnapshot({
+      liveModel: {
+        provider: "anthropic",
+        id: "claude-opus-5",
+        api: "anthropic-messages",
+        baseUrl: ANTHROPIC_BASE_URL,
+      },
+    });
+    const frozen = Object.freeze({ Authorization: SECRET_AUTHORIZATION });
+    const result = coordinator.beginHeaders(snapshot, frozen);
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) {
+      return;
+    }
+    expect(result.value.kind).toBe("unsupported");
+    if (result.value.kind !== "unsupported") {
+      return;
+    }
+    expect(result.value.snapshot.reason).toBe("header-unsafe");
+    expect(frozen).toEqual({ Authorization: SECRET_AUTHORIZATION });
+    // A later exit must not invent a rollback for a write that never landed.
+    expect(coordinator.cancelActive("cancelled")._unsafeUnwrap().kind).toBe(
+      "no-state",
+    );
+    expect(frozen).toEqual({ Authorization: SECRET_AUTHORIZATION });
+  });
+
+  it("fails closed when the effective transport is unproven or resolved elsewhere", () => {
+    const unproven = new ProviderFastCoordinator();
+    const declaredOnly = unproven.beginHeaders(
+      {
+        generation: 1,
+        primaryName: "loom",
+        liveModel: {
+          provider: "openai",
+          id: "gpt-5.6-sol",
+          api: "openai-responses",
+          baseUrl: OPENAI_BASE_URL,
+        },
+        fast: true,
+      },
+      {},
+    );
+    expect(declaredOnly.isOk()).toBe(true);
+    if (declaredOnly.isErr() || declaredOnly.value.kind !== "unsupported") {
+      return;
+    }
+    expect(declaredOnly.value.snapshot.reason).toBe(
+      "transport-not-first-party",
+    );
+
+    // Declared first-party, but auth resolution sends the request through a
+    // gateway. The proven origin decides, so no control is applied.
+    const proxied = new ProviderFastCoordinator();
+    const headers: Record<string, string> = {
+      Authorization: SECRET_AUTHORIZATION,
+    };
+    const gateway = proxied.beginHeaders(
+      coordinatorSnapshot({
+        liveModel: {
+          provider: "anthropic",
+          id: "claude-opus-5",
+          api: "anthropic-messages",
+          baseUrl: ANTHROPIC_BASE_URL,
+          effectiveBaseUrl: "https://gateway.example.com/anthropic",
+        },
+      }),
+      headers,
+    );
+    expect(gateway.isOk()).toBe(true);
+    if (gateway.isErr() || gateway.value.kind !== "unsupported") {
+      return;
+    }
+    expect(gateway.value.snapshot.reason).toBe("transport-not-first-party");
     expect(headers).toEqual({ Authorization: SECRET_AUTHORIZATION });
   });
 

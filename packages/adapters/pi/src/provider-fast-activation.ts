@@ -74,10 +74,13 @@ export type ProviderFastActivationInput = {
   readonly apiFamily: ProviderFastApiFamily;
   readonly model: string;
   /**
-   * The live model's transport base URL. Only an exact first-party provider
-   * origin can carry fast controls; proxies and gateways are unsupported.
+   * The *proven* final transport base URL for this request, after the host's
+   * own auth resolution. A declared model URL is not enough: Pi replaces it
+   * with `resolution.auth.baseUrl` when auth resolution supplies one. Callers
+   * that cannot prove the final origin must pass an empty string, which is
+   * classified as `transport-not-first-party`.
    */
-  readonly baseUrl: string;
+  readonly effectiveBaseUrl: string;
 };
 
 export type ProviderFastNoIntent = {
@@ -394,9 +397,10 @@ const parseTransportUrl = Result.fromThrowable(
 );
 
 /**
- * Prove the request goes to the provider's own documented API host. This
- * reads only the model's declared transport; it never touches credentials,
- * authentication headers, or environment values.
+ * Prove the request goes to the provider's own documented API host. The input
+ * is the effective transport the host resolved for this request, never a
+ * declarative model URL; an unproven origin arrives blank and fails closed.
+ * No credential, authentication header, or environment value is read.
  */
 function classifyFirstPartyTransport(
   providerFamily: ProviderFastProviderFamily,
@@ -471,7 +475,10 @@ export function classifyProviderFastActivation(
     if (allowlistRuleId === undefined) {
       return err(unsupported("model-not-allowed"));
     }
-    const transport = classifyFirstPartyTransport("openai", input.baseUrl);
+    const transport = classifyFirstPartyTransport(
+      "openai",
+      input.effectiveBaseUrl,
+    );
     if (transport.isErr()) {
       return err(transport.error);
     }
@@ -486,7 +493,10 @@ export function classifyProviderFastActivation(
     if (allowlistRuleId === undefined) {
       return err(unsupported("model-not-allowed"));
     }
-    const transport = classifyFirstPartyTransport("anthropic", input.baseUrl);
+    const transport = classifyFirstPartyTransport(
+      "anthropic",
+      input.effectiveBaseUrl,
+    );
     if (transport.isErr()) {
       return err(transport.error);
     }
@@ -1501,7 +1511,14 @@ export type ProviderFastCoordinatorSnapshot = {
         readonly provider: string;
         readonly id: string;
         readonly api?: string;
+        /** Declared configuration only; it identifies the model, never the wire. */
         readonly baseUrl?: string;
+        /**
+         * The origin the host proved this request will use, after its own auth
+         * resolution. Absent means the caller could not prove it, which fails
+         * closed as `transport-not-first-party`.
+         */
+        readonly effectiveBaseUrl?: string;
       }
     | undefined;
   readonly fast?: true;
@@ -1552,13 +1569,28 @@ export type ProviderFastCoordinatorCancelResult =
       readonly snapshot: ProviderFastAttemptPublicSnapshot;
     };
 
+/** One beta-header write this adapter made into a caller-owned header map. */
+type OwnedHeaderWrite = {
+  readonly headers: object;
+  readonly write: ProviderFastHeaderWrite;
+};
+
+/**
+ * Undo one adapter-owned write while it still holds exactly the value Weave
+ * wrote. A later extension's edit, a deletion, or a missing write is left
+ * alone.
+ */
+function revertOwnedHeaderWrite(owned: OwnedHeaderWrite | undefined): void {
+  if (owned === undefined) {
+    return;
+  }
+  void revertAnthropicProviderFastHeaderWrite(owned.headers, owned.write);
+}
+
 type ActiveCoordinatorAttempt = {
   readonly token: ProviderFastAttemptToken;
   readonly snapshot: ProviderFastCoordinatorSnapshot;
-  readonly headerWrite?: {
-    readonly headers: object;
-    readonly write: ProviderFastHeaderWrite;
-  };
+  readonly headerWrite?: OwnedHeaderWrite;
 };
 
 const EMPTY_COORDINATOR_SNAPSHOT: ProviderFastAttemptPublicSnapshot =
@@ -1656,6 +1688,12 @@ function copyCoordinatorSnapshot(
   if (baseUrl !== undefined && typeof baseUrl !== "string") {
     return err(attemptError("InvalidAttemptInput", "invalid-input"));
   }
+  const effectiveBaseUrl = Object.hasOwn(selectedModel, "effectiveBaseUrl")
+    ? Reflect.get(selectedModel, "effectiveBaseUrl")
+    : undefined;
+  if (effectiveBaseUrl !== undefined && typeof effectiveBaseUrl !== "string") {
+    return err(attemptError("InvalidAttemptInput", "invalid-input"));
+  }
   return ok(
     Object.freeze({
       generation,
@@ -1665,6 +1703,7 @@ function copyCoordinatorSnapshot(
         id,
         ...(api === undefined ? {} : { api }),
         ...(baseUrl === undefined ? {} : { baseUrl }),
+        ...(effectiveBaseUrl === undefined ? {} : { effectiveBaseUrl }),
       }),
       ...(fast === true ? { fast: true as const } : {}),
     }),
@@ -1697,7 +1736,8 @@ function coordinatorSnapshotsMatch(
     leftModel.provider === rightModel.provider &&
     leftModel.id === rightModel.id &&
     leftModel.api === rightModel.api &&
-    leftModel.baseUrl === rightModel.baseUrl
+    leftModel.baseUrl === rightModel.baseUrl &&
+    leftModel.effectiveBaseUrl === rightModel.effectiveBaseUrl
   );
 }
 
@@ -1734,7 +1774,10 @@ function classifyCoordinatorSnapshot(
     provider: liveModel?.provider ?? "",
     apiFamily,
     model: liveModel?.id ?? "",
-    baseUrl: liveModel?.baseUrl ?? "",
+    // Only a proven effective origin may carry controls. A snapshot whose
+    // caller could not prove the final transport arrives without one and is
+    // classified as `transport-not-first-party`.
+    effectiveBaseUrl: liveModel?.effectiveBaseUrl ?? "",
   });
 }
 
@@ -1835,6 +1878,12 @@ export class ProviderFastCoordinator {
     const classified = classifyCoordinatorSnapshot(copied);
     const classification = classificationFromResult(classified);
     const headerResult = applyCoordinatorHeaders(classification, headers);
+    // Own only a write this call actually made, so every exit below can undo
+    // exactly that one edit and nothing a later extension owns.
+    const owned: OwnedHeaderWrite | undefined =
+      headerResult.isOk() && headerResult.value.action === "write"
+        ? { headers, write: headerResult.value }
+        : undefined;
     const trackerClassification = beginClassificationForTracker(
       classification,
       headerResult.isErr() ? headerResult.error : undefined,
@@ -1845,12 +1894,15 @@ export class ProviderFastCoordinator {
       classification: trackerClassification,
     });
     if (begun.isErr()) {
+      revertOwnedHeaderWrite(owned);
       return this.failClosed(begun.error);
     }
     if (begun.value.kind === "no-state") {
+      revertOwnedHeaderWrite(owned);
       return ok(Object.freeze({ kind: "no-state" }));
     }
     if (begun.value.kind === "unsupported") {
+      revertOwnedHeaderWrite(owned);
       this.latestSnapshot = begun.value.snapshot;
       return ok(
         Object.freeze({
@@ -1862,9 +1914,7 @@ export class ProviderFastCoordinator {
     this.active = {
       token: begun.value.token,
       snapshot: copied,
-      ...(headerResult.isOk() && headerResult.value.action === "write"
-        ? { headerWrite: { headers, write: headerResult.value } }
-        : {}),
+      ...(owned === undefined ? {} : { headerWrite: owned }),
     };
     this.latestSnapshot = begun.value.snapshot;
     return ok(
@@ -2010,6 +2060,12 @@ export class ProviderFastCoordinator {
     if (requested.isErr()) {
       return this.failClosed(requested.error);
     }
+    // The request now carries the matching payload control, so the header
+    // belongs to a request that is really going out. Release ownership of the
+    // write here: no later cancellation, reset, or fail-closed exit may strip
+    // a header from a request Weave already patched, and the modelled
+    // transport retry deliberately reuses this same header map.
+    this.active = { token: active.token, snapshot: active.snapshot };
     this.latestSnapshot = requested.value;
     return ok(
       Object.freeze({
@@ -2022,15 +2078,13 @@ export class ProviderFastCoordinator {
 
   /**
    * Undo only this adapter's own beta-header write. Payload and headers are
-   * separate Pi hooks, so a failed payload edit must not leave a fast beta
-   * header on a request that carries no fast field.
+   * separate Pi hooks, so an attempt that ends before its request is patched
+   * must not leave a fast beta header on a request that carries no fast
+   * field. Ownership is dropped once the payload is patched, so this is a
+   * no-op for a request that really went out.
    */
   private rollbackHeaderWrite(active: ActiveCoordinatorAttempt): void {
-    const owned = active.headerWrite;
-    if (owned === undefined) {
-      return;
-    }
-    void revertAnthropicProviderFastHeaderWrite(owned.headers, owned.write);
+    revertOwnedHeaderWrite(active.headerWrite);
   }
 
   observeResponse(
@@ -2080,6 +2134,7 @@ export class ProviderFastCoordinator {
       return ok(Object.freeze({ kind: "no-state" }));
     }
     const expired = this.tracker.expire(active.token, reason);
+    this.rollbackHeaderWrite(active);
     this.active = undefined;
     if (expired.isErr()) {
       return this.failClosed(expired.error);
@@ -2095,6 +2150,9 @@ export class ProviderFastCoordinator {
 
   reset(): Result<{ readonly expiredCount: number }, never> {
     const reset = this.tracker.reset();
+    if (this.active !== undefined) {
+      this.rollbackHeaderWrite(this.active);
+    }
     this.active = undefined;
     this.latestSnapshot = EMPTY_COORDINATOR_SNAPSHOT;
     return reset;
@@ -2108,6 +2166,9 @@ export class ProviderFastCoordinator {
     error: ProviderFastCoordinatorError,
   ): Result<never, ProviderFastCoordinatorError> {
     this.tracker.reset();
+    if (this.active !== undefined) {
+      this.rollbackHeaderWrite(this.active);
+    }
     this.active = undefined;
     this.latestSnapshot = EMPTY_COORDINATOR_SNAPSHOT;
     return err(error);

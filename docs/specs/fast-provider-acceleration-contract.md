@@ -87,6 +87,8 @@ Pi's [extension documentation at tag v0.84.1](https://github.com/earendil-works/
 - `before_provider_headers` mutates assembled request headers. It runs once for the provider operation; Pi retries reuse the result.
 - `after_provider_response` exposes HTTP status and normalized response headers before stream consumption.
 
+The hook context's `ctx.model.baseUrl` is declared configuration, not the request transport. Pi prepares each request as `resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model`, so auth resolution can replace a first-party declaration with a gateway. An adapter must therefore prove the final origin through the documented `ctx.modelRegistry.getProviderAuth(provider)` seam, reading only its resolved base URL, and must classify `transport-not-first-party` whenever that origin cannot be proven.
+
 These hooks prove request mutation. They do not expose the response body or streamed usage event. Pi's public finalized-message type does not expose OpenAI `service_tier` or Anthropic `usage.speed`. Response status and Anthropic limit headers are not positive application proof. Custom provider transports can also omit these callbacks.
 
 **Outcome:** degraded. Pi may reach `requested`, but it must not report `applied` with the current public seam. A later task may implement request mutation, but capability state must remain no higher than `not-confirmed` until Pi exposes documented response-body evidence correlated to the attempt. Header-only evidence does not meet the provider contracts.

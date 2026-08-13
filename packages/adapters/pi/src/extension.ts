@@ -330,10 +330,12 @@ import {
   type PiExtensionApi,
   type PiModelInfo,
   type PiProviderHookModel,
+  type PiResolvedTransport,
   type PiSessionContext,
   type PiSkillInfo,
   projectPiHookModel,
   projectPiProviderEvent,
+  projectPiResolvedTransport,
 } from "./types.js";
 import {
   buildPaletteActions,
@@ -2575,13 +2577,77 @@ export function createPiExtension(
   });
 
   /**
+   * Prove where this request will really go.
+   *
+   * `ctx.model.baseUrl` is declared configuration: Pi rebuilds the request
+   * model as `resolution.auth.baseUrl ? { ...model, baseUrl: <resolved> } :
+   * model` during request preparation, so an auth-resolved gateway can
+   * silently replace a first-party declaration. This consults the documented
+   * `ctx.modelRegistry.getProviderAuth(provider)` seam and reads only the
+   * resolved base URL from its result - never the API key, headers, or
+   * environment. A host without the seam, a rejected resolution, an
+   * unconfigured provider, or an unrecognized shape leaves the final origin
+   * unproven, and the caller then classifies as `transport-not-first-party`.
+   */
+  const resolveEffectiveTransport = async (
+    ctx: PiSessionContext | undefined,
+    liveModel: PiProviderHookModel,
+  ): Promise<PiResolvedTransport> => {
+    const registry = ctx?.modelRegistry;
+    if (registry === undefined || typeof registry !== "object") {
+      return { kind: "unprovable" };
+    }
+    const resolve = Reflect.get(registry, "getProviderAuth");
+    if (typeof resolve !== "function") {
+      return { kind: "unprovable" };
+    }
+    const resolved = await ResultAsync.fromThrowable(
+      async (): Promise<unknown> =>
+        await (registry.getProviderAuth?.(liveModel.provider) ?? undefined),
+      () => undefined,
+    )();
+    if (resolved.isErr()) {
+      return { kind: "unprovable" };
+    }
+    return projectPiResolvedTransport(resolved.value, liveModel.baseUrl);
+  };
+
+  /**
+   * Attach the proven transport to a snapshot that actually declares intent.
+   * A snapshot without `fast true` never reaches the allowlist, so it never
+   * pays for auth resolution.
+   */
+  const withProvenTransport = async (
+    ctx: PiSessionContext | undefined,
+    snapshot: ProviderFastCoordinatorSnapshot,
+  ): Promise<ProviderFastCoordinatorSnapshot> => {
+    const liveModel = snapshot.liveModel;
+    if (snapshot.fast !== true || liveModel === undefined) {
+      return snapshot;
+    }
+    const transport = await resolveEffectiveTransport(ctx, {
+      provider: liveModel.provider,
+      id: liveModel.id,
+      api: liveModel.api ?? "",
+      baseUrl: liveModel.baseUrl ?? "",
+    });
+    if (transport.kind !== "proved") {
+      return snapshot;
+    }
+    return {
+      ...snapshot,
+      liveModel: { ...liveModel, effectiveBaseUrl: transport.baseUrl },
+    };
+  };
+
+  /**
    * The intent owner for this request plus the model the hook itself
    * reports. Ordinary and direct-step children own their authenticated
    * bootstrap intent; the parent owns its committed primary. Activation-time
    * model state is never used, so `/model` and model cycling cannot leave a
    * request classified against a model it no longer uses.
    */
-  const resolveActiveProviderFastSnapshot = (
+  const resolveDeclaredProviderFastSnapshot = (
     ctx: PiSessionContext | undefined,
   ): ProviderFastCoordinatorSnapshot | undefined => {
     const liveModel = projectPiHookModel(ctx?.model);
@@ -2621,6 +2687,21 @@ export function createPiExtension(
     return toProviderFastCoordinatorSnapshot(resolved.value, liveModel);
   };
 
+  /**
+   * The declared request owner plus the transport the host proved for it.
+   * Every provider hook resolves both, so a mid-request transport change is
+   * a correlation mismatch rather than a silently inherited decision.
+   */
+  const resolveActiveProviderFastSnapshot = async (
+    ctx: PiSessionContext | undefined,
+  ): Promise<ProviderFastCoordinatorSnapshot | undefined> => {
+    const declared = resolveDeclaredProviderFastSnapshot(ctx);
+    if (declared === undefined) {
+      return undefined;
+    }
+    return await withProvenTransport(ctx, declared);
+  };
+
   const providerFastModelKey = (
     snapshot: ProviderFastCoordinatorSnapshot,
   ): string =>
@@ -2631,6 +2712,7 @@ export function createPiExtension(
           snapshot.liveModel.id,
           snapshot.liveModel.api,
           snapshot.liveModel.baseUrl,
+          snapshot.liveModel.effectiveBaseUrl ?? null,
         ]);
 
   const rememberProviderFastToken = (
@@ -2667,13 +2749,13 @@ export function createPiExtension(
     return "model-switched";
   };
 
-  const handleProviderFastHeaders = (
+  const handleProviderFastHeaders = async (
     event: unknown,
     ctx: PiSessionContext | undefined,
-  ): undefined => {
-    const run = Result.fromThrowable(
-      (): undefined => {
-        const snapshot = resolveActiveProviderFastSnapshot(ctx);
+  ): Promise<undefined> => {
+    const run = ResultAsync.fromThrowable(
+      async (): Promise<undefined> => {
+        const snapshot = await resolveActiveProviderFastSnapshot(ctx);
         if (snapshot === undefined) {
           resetProviderFastCoordinator();
           return undefined;
@@ -2713,17 +2795,17 @@ export function createPiExtension(
       },
       () => undefined,
     );
-    run();
+    await run();
     return undefined;
   };
 
-  const handleProviderFastRequest = (
+  const handleProviderFastRequest = async (
     event: unknown,
     ctx: PiSessionContext | undefined,
-  ): { readonly payload: unknown } | undefined => {
-    const run = Result.fromThrowable(
-      (): { readonly payload: unknown } | undefined => {
-        const snapshot = resolveActiveProviderFastSnapshot(ctx);
+  ): Promise<{ readonly payload: unknown } | undefined> => {
+    const run = ResultAsync.fromThrowable(
+      async (): Promise<{ readonly payload: unknown } | undefined> => {
+        const snapshot = await resolveActiveProviderFastSnapshot(ctx);
         if (snapshot === undefined) {
           resetProviderFastCoordinator();
           return undefined;
@@ -2788,15 +2870,15 @@ export function createPiExtension(
       },
       () => undefined,
     );
-    return run().unwrapOr(undefined);
+    return (await run()).unwrapOr(undefined);
   };
 
-  const handleProviderFastResponse = (
+  const handleProviderFastResponse = async (
     event: unknown,
     ctx: PiSessionContext | undefined,
-  ): undefined => {
-    const run = Result.fromThrowable(
-      (): undefined => {
+  ): Promise<undefined> => {
+    const run = ResultAsync.fromThrowable(
+      async (): Promise<undefined> => {
         const projected = projectPiProviderEvent(event);
         if (
           projected.isErr() ||
@@ -2805,7 +2887,7 @@ export function createPiExtension(
           resetProviderFastCoordinator();
           return undefined;
         }
-        const snapshot = resolveActiveProviderFastSnapshot(ctx);
+        const snapshot = await resolveActiveProviderFastSnapshot(ctx);
         if (snapshot === undefined) {
           resetProviderFastCoordinator();
           return undefined;
@@ -2835,7 +2917,7 @@ export function createPiExtension(
       },
       () => undefined,
     );
-    run();
+    await run();
     return undefined;
   };
   /**
@@ -4398,15 +4480,15 @@ export function createPiExtension(
     // confirmed pause cancels the direct-step subtree and lets the prompt
     // continue to Loom - a reject leaves the workflow running untouched and
     // never submits the prompt.
-    pi.on("before_provider_headers", (event, ctx: PiSessionContext) => {
-      handleProviderFastHeaders(event, ctx);
+    pi.on("before_provider_headers", async (event, ctx: PiSessionContext) => {
+      await handleProviderFastHeaders(event, ctx);
     });
-    pi.on("before_provider_request", (event, ctx: PiSessionContext) => {
-      const replacement = handleProviderFastRequest(event, ctx);
+    pi.on("before_provider_request", async (event, ctx: PiSessionContext) => {
+      const replacement = await handleProviderFastRequest(event, ctx);
       return replacement?.payload;
     });
-    pi.on("after_provider_response", (event, ctx: PiSessionContext) => {
-      handleProviderFastResponse(event, ctx);
+    pi.on("after_provider_response", async (event, ctx: PiSessionContext) => {
+      await handleProviderFastResponse(event, ctx);
     });
     // `/model`, model cycling, and session restore replace the model an
     // in-flight attempt was classified against. That attempt can no longer

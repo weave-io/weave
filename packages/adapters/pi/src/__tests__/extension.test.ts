@@ -9236,6 +9236,117 @@ describe("createPiExtension: provider fast hooks", () => {
     );
   });
 
+  it("reports an auth-resolved gateway as unsupported despite a first-party model URL", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [anthropicModel],
+    });
+    // `ctx.model.baseUrl` still declares api.anthropic.com, but Pi rebuilds
+    // the request model from `resolution.auth.baseUrl`, so this request
+    // really leaves through a gateway.
+    host.setProviderAuth(async () => ({
+      auth: {
+        apiKey: "sk-proj-resolved",
+        baseUrl: "https://gateway.example.com/anthropic",
+      },
+    }));
+    const extension = installFastPrimary(host, {
+      model: anthropicModel,
+      fast: true,
+    });
+    await host.triggerSessionStart();
+    const headers = { Authorization: PROVIDER_FAST_AUTHORIZATION };
+    await host.triggerBeforeProviderHeaders(headers);
+    const payload = { model: "claude-opus-5" };
+    const replaced = await host.triggerBeforeProviderRequest(payload);
+    expect(headers).toEqual({ Authorization: PROVIDER_FAST_AUTHORIZATION });
+    expect(replaced).toBe(payload);
+    expect(extension.providerFastLatestForTest().reason).toBe(
+      "transport-not-first-party",
+    );
+  });
+
+  it("fails closed when the host cannot prove the final transport", async () => {
+    const missingSeam = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    missingSeam.removeProviderAuthSeam();
+    const missingSeamExtension = installFastPrimary(missingSeam, {
+      fast: true,
+    });
+    await missingSeam.triggerSessionStart();
+    await missingSeam.triggerBeforeProviderHeaders({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+    });
+    const missingPayload = { model: "gpt-5.6-sol" };
+    expect(await missingSeam.triggerBeforeProviderRequest(missingPayload)).toBe(
+      missingPayload,
+    );
+    expect(missingSeamExtension.providerFastLatestForTest().reason).toBe(
+      "transport-not-first-party",
+    );
+
+    const rejecting = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    rejecting.setProviderAuth(async () => {
+      throw new Error("leaked: token=sk-super-secret-123");
+    });
+    const rejectingExtension = installFastPrimary(rejecting, { fast: true });
+    await rejecting.triggerSessionStart();
+    await rejecting.triggerBeforeProviderHeaders({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+    });
+    const rejectedPayload = { model: "gpt-5.6-sol" };
+    expect(await rejecting.triggerBeforeProviderRequest(rejectedPayload)).toBe(
+      rejectedPayload,
+    );
+    const snapshot = rejectingExtension.providerFastLatestForTest();
+    expect(snapshot.reason).toBe("transport-not-first-party");
+    expect(JSON.stringify(snapshot)).not.toContain("sk-super-secret-123");
+  });
+
+  it("applies controls when auth resolution proves the first-party origin", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    // Auth resolution overrides the declared URL with the provider's own
+    // documented host, which is proof enough to carry the control.
+    host.setProviderAuth(async () => ({
+      auth: { apiKey: "sk-proj-resolved", baseUrl: "https://api.openai.com" },
+    }));
+    const extension = installFastPrimary(host, { fast: true });
+    await host.triggerSessionStart();
+    await host.triggerBeforeProviderHeaders({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+    });
+    const payload = { model: "gpt-5.6-sol" };
+    expect(await host.triggerBeforeProviderRequest(payload)).toEqual({
+      model: "gpt-5.6-sol",
+      service_tier: "fast",
+    });
+    await host.triggerAfterProviderResponse(200, {});
+    expectSanitizedProviderFast(extension.providerFastLatestForTest(), {
+      sequence: 1,
+      pendingCount: 0,
+      providerFamily: "openai",
+      apiFamily: "openai-responses",
+      allowlistRuleId: "openai-gpt-5-6-sol",
+      collision: false,
+      state: "not-confirmed",
+      evidenceKind: "response-status",
+      evidenceOutcome: "unavailable",
+      reason: "response-body-evidence-unavailable",
+    });
+  });
+
   it("classifies each request from the live hook model, not activation state", async () => {
     const unlistedModel = {
       provider: "openai",

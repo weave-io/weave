@@ -64,13 +64,31 @@ export interface PiModelInfo {
   readonly id: string;
   readonly name?: string;
   readonly api?: string;
-  /** The model's declared transport base URL, when the host reports one. */
+  /**
+   * The model's *declared* transport base URL, when the host reports one.
+   * This is configuration, not proof of where the request goes: Pi replaces
+   * it with `resolution.auth.baseUrl` during request preparation whenever
+   * auth resolution supplies one. Never classify a transport from this field
+   * alone; resolve the effective origin through `getProviderAuth` first.
+   */
   readonly baseUrl?: string;
 }
 
-/** Narrow projection of `ctx.modelRegistry`: authenticated-model discovery only. */
+/**
+ * Narrow projection of `ctx.modelRegistry`: authenticated-model discovery,
+ * plus the documented provider-auth seam that reports the base URL Pi will
+ * actually use for the next request. `getProviderAuth` is optional because a
+ * host that does not expose it leaves the final transport unprovable.
+ */
 export interface PiModelRegistry {
   getAvailable(): readonly PiModelInfo[];
+  /**
+   * `ctx.modelRegistry.getProviderAuth(provider)`. Documented to resolve the
+   * provider's current API key, headers, base URL, and environment. Only the
+   * resolved base URL is ever read from the result; credentials, headers, and
+   * environment values are never inspected.
+   */
+  getProviderAuth?(provider: string): Promise<unknown>;
 }
 
 /**
@@ -202,7 +220,100 @@ export interface PiProviderHookModel {
   readonly provider: string;
   readonly id: string;
   readonly api: string;
+  /**
+   * The declared transport base URL only. Pi may replace it through auth
+   * resolution before the request leaves, so this field identifies the model
+   * for correlation and must never decide first-party eligibility.
+   */
   readonly baseUrl: string;
+}
+
+/**
+ * The proven final transport origin for the next provider request, or an
+ * explicit statement that the host did not let the adapter prove it.
+ */
+export type PiResolvedTransport =
+  | { readonly kind: "proved"; readonly baseUrl: string }
+  | { readonly kind: "unprovable" };
+
+const PI_RESOLVED_TRANSPORT: PiResolvedTransport = Object.freeze({
+  kind: "unprovable",
+});
+
+function readOwnObjectField(
+  container: object,
+  field: string,
+): object | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(container, field);
+  if (descriptor === undefined || !("value" in descriptor)) {
+    return undefined;
+  }
+  const value = descriptor.value;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  return value;
+}
+
+/**
+ * Project one `AuthResult` into the base URL Pi will actually send to.
+ *
+ * Pi composes the request model as `resolution.auth.baseUrl ? { ...model,
+ * baseUrl: resolution.auth.baseUrl } : model`. An own string `auth.baseUrl`
+ * therefore *is* the final origin; an absent `auth.baseUrl` proves the
+ * declared model URL survives unreplaced. Anything else - a missing result, a
+ * non-object `auth`, an accessor, or a non-string override - leaves the final
+ * origin unproven, and the caller must fail closed rather than trust the
+ * declaration. Only `auth.baseUrl` is read; `auth.apiKey`, `auth.headers`,
+ * and `env` are never touched.
+ */
+export function projectPiResolvedTransport(
+  resolved: unknown,
+  declaredBaseUrl: string,
+): PiResolvedTransport {
+  return Result.fromThrowable(
+    (): PiResolvedTransport => {
+      if (
+        typeof resolved !== "object" ||
+        resolved === null ||
+        Array.isArray(resolved)
+      ) {
+        return PI_RESOLVED_TRANSPORT;
+      }
+      const auth = readOwnObjectField(resolved, "auth");
+      if (auth === undefined) {
+        return PI_RESOLVED_TRANSPORT;
+      }
+      if (!Object.hasOwn(auth, "baseUrl")) {
+        return Object.freeze({
+          kind: "proved" as const,
+          baseUrl: declaredBaseUrl,
+        });
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(auth, "baseUrl");
+      if (descriptor === undefined || !("value" in descriptor)) {
+        return PI_RESOLVED_TRANSPORT;
+      }
+      // Pi treats a falsy `auth.baseUrl` as "no override", so an absent or
+      // empty value proves the declared URL survives. A present non-string is
+      // a shape this adapter does not understand, so it stays unprovable.
+      const override = descriptor.value;
+      if (override === undefined || override === "") {
+        return Object.freeze({
+          kind: "proved" as const,
+          baseUrl: declaredBaseUrl,
+        });
+      }
+      if (
+        typeof override !== "string" ||
+        override.length > PI_HOOK_MODEL_FIELD_MAX_LENGTH
+      ) {
+        return PI_RESOLVED_TRANSPORT;
+      }
+      return Object.freeze({ kind: "proved" as const, baseUrl: override });
+    },
+    () => PI_RESOLVED_TRANSPORT,
+  )().unwrapOr(PI_RESOLVED_TRANSPORT);
 }
 
 const PI_HOOK_MODEL_FIELD_MAX_LENGTH = 512;
