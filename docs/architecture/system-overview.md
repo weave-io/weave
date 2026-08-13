@@ -76,7 +76,7 @@ flowchart TD
 Configuration is where users declare what they want the agent system to be:
 
 - agents and their roles
-- categories and routing hints
+- categories with their descriptions and exact trigger strings
 - workflows and gates
 - prompt text or prompt references
 - model preferences

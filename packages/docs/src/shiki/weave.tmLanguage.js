@@ -61,7 +61,7 @@ export default {
         {
           name: 'keyword.control.weave',
           match:
-            '\\b(description|prompt|prompt_file|prompt_append|prompt_append_file|models|mode|temperature|skills|triggers|routing|delegation_exclude|tool_policy|patterns|version|name|type|agent|completion|inputs|outputs|on_reject|extension_points|role|disable|settings|runtime|journal|strict|extend|before-plan)\\b',
+            '\\b(description|prompt|prompt_file|prompt_append|prompt_append_file|models|mode|temperature|skills|triggers|fast|routing|delegation_exclude|tool_policy|version|name|type|agent|completion|inputs|outputs|on_reject|extension_points|role|disable|settings|runtime|journal|strict|extend|before-plan)\\b',
         },
       ],
     },
