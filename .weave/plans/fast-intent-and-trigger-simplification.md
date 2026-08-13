@@ -273,7 +273,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - [proposed] Unsupported fast intent does not prevent unrelated agents from materializing. This keeps an optional capability gap from becoming a startup failure.
   - **Review gate**: Run Weft; also run Warp if this task adds any request/header mutation or parses response evidence.
 
-- [ ] 11. Resolve Claude Code support through a proven seam or honest unsupported behavior
+- [x] 11. Resolve Claude Code support through a proven seam or honest unsupported behavior
   - **What**: Remove old type fallout and either implement an officially proven invocation/evidence seam or report fast activation as unsupported without encoding false metadata in generated agents.
   - **Files**: `packages/adapters/claude-code/src/model-resolution.ts`, `packages/adapters/claude-code/src/agent-translation.ts`, `packages/adapters/claude-code/src/adapter.ts`, `packages/adapters/claude-code/src/capability-declarations.ts`, `packages/adapters/claude-code/src/__tests__/model-resolution.test.ts`, `packages/adapters/claude-code/src/__tests__/agent-translation.test.ts`, `packages/adapters/claude-code/src/__tests__/adapter.test.ts`, `packages/adapters/claude-code/src/__tests__/integration.test.ts`, `packages/adapters/claude-code/src/__tests__/capability-declarations.test.ts`
   - **Depends on**: Tasks 1 and 6
