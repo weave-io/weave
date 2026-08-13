@@ -341,6 +341,62 @@ describe("PiWorkflowController — startExecution drives the full lifecycle", ()
 });
 
 describe("PiWorkflowController — direct dispatch vs ordinary delegation", () => {
+  it("copies the selected descriptor's fast intent and ordered triggers into direct dispatch", async () => {
+    const sourceModels = ["openai/gpt-5.6-sol#high"];
+    const sourceTriggers = ["implement", "test in order"];
+    const sourceTargets = [
+      {
+        name: "shuttle-mini",
+        description: "Bounded implementation",
+        triggers: sourceTriggers,
+        isCategory: true,
+      },
+    ];
+    const { store, directDispatch, controller } = buildHarness({
+      resolveAgentDescriptor: (agentName) => ({
+        name: agentName,
+        composedPrompt: `You are ${agentName}.`,
+        models: sourceModels,
+        fast: true,
+        mode: "subagent",
+        effectiveToolPolicy: {
+          read: "allow",
+          write: "allow",
+          execute: "allow",
+          delegate: "deny",
+          network: "deny",
+        },
+        rawToolPolicy: undefined,
+        delegationTargets: sourceTargets,
+        skills: [],
+      }),
+    });
+    const workflowInstanceId = await createInstance(store);
+    directDispatch.enqueue(okAsync(successCandidate()) as never);
+    directDispatch.enqueue(okAsync(successCandidate()) as never);
+
+    const auth = authorizeByExplicitUser(true);
+    if (!auth.isOk()) throw new Error("unexpected");
+    await controller.startExecution(
+      { workflowInstanceId, context: buildContext() },
+      auth.value,
+    );
+
+    expect(directDispatch.calls).toHaveLength(2);
+    for (const call of directDispatch.calls) {
+      expect(call.models).toEqual(["openai/gpt-5.6-sol#high"]);
+      expect(call.delegationTargets).toEqual([
+        {
+          name: "shuttle-mini",
+          description: "Bounded implementation",
+          triggers: ["implement", "test in order"],
+          isCategory: true,
+        },
+      ]);
+      expect(call.fast).toBe(true);
+    }
+  });
+
   it("carries workflow instance/lease/step correlation on every direct-dispatch call", async () => {
     const { store, directDispatch, controller } = buildHarness();
     const workflowInstanceId = await createInstance(store);

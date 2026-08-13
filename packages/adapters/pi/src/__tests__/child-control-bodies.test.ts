@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  MAX_DELEGATION_TRIGGERS,
   MAX_SETTLEMENT_OUTPUT_BYTES,
   parseControlBody,
   toModelIdentityBody,
@@ -91,7 +92,32 @@ describe("settled control body strict boundaries", () => {
   });
 });
 
-describe("BootstrapBodySchema composedPrompt bound", () => {
+function bootstrapBodyWithCanonicalByteLength(target: number) {
+  const base = {
+    agentName: "shuttle",
+    composedPrompt: "",
+    models: [],
+    delegationTargets: Array.from({ length: 9 }, (_, index) => ({
+      name: `target-${index}`,
+      description: "x".repeat(256),
+      triggers: Array.from(
+        { length: 16 },
+        (_unused, triggerIndex) =>
+          `trigger-${index}-${triggerIndex}-${"x".repeat(230)}`,
+      ),
+      isCategory: false,
+    })),
+    ...REQUIRED_BOOTSTRAP_FIELDS,
+  };
+  const byteLength = new TextEncoder().encode(JSON.stringify(base)).byteLength;
+  const delta = target - byteLength;
+  if (delta < 0 || delta > MAX_COMPOSED_PROMPT_LENGTH) {
+    throw new Error("test setup: canonical bootstrap target is unreachable");
+  }
+  return { ...base, composedPrompt: "x".repeat(delta) };
+}
+
+describe("BootstrapBodySchema composedPrompt and canonical body bounds", () => {
   it("accepts a composedPrompt exactly at the max bound", () => {
     const result = parseControlBody("bootstrap", {
       agentName: "shuttle",
@@ -128,11 +154,27 @@ describe("BootstrapBodySchema composedPrompt bound", () => {
     });
     expect(result.ok).toBe(false);
   });
+
+  it("accepts exactly the canonical body byte bound and rejects one byte over it", () => {
+    const exact = bootstrapBodyWithCanonicalByteLength(MAX_CONTROL_BODY_BYTES);
+    const oversized = bootstrapBodyWithCanonicalByteLength(
+      MAX_CONTROL_BODY_BYTES + 1,
+    );
+
+    expect(new TextEncoder().encode(JSON.stringify(exact))).toHaveLength(
+      MAX_CONTROL_BODY_BYTES,
+    );
+    expect(parseControlBody("bootstrap", exact).ok).toBe(true);
+    expect(new TextEncoder().encode(JSON.stringify(oversized))).toHaveLength(
+      MAX_CONTROL_BODY_BYTES + 1,
+    );
+    expect(parseControlBody("bootstrap", oversized).ok).toBe(false);
+  });
 });
 
-describe("BootstrapBodySchema delegation trigger metadata", () => {
-  it("accepts the engine's optional routing_hint on a delegation target trigger", () => {
-    const result = parseControlBody("bootstrap", {
+describe("BootstrapBodySchema delegation triggers", () => {
+  function bootstrapWithTriggers(triggers: unknown) {
+    return {
       agentName: "tapestry",
       composedPrompt: "Delegate every implementation task.",
       models: [],
@@ -140,42 +182,154 @@ describe("BootstrapBodySchema delegation trigger metadata", () => {
         {
           name: "shuttle",
           description: "Shuttle (Domain Specialist)",
-          triggers: [
-            {
-              domain: "Implementation",
-              trigger: "Bounded coding tasks",
-              routing_hint: "Use for clearly scoped implementation tasks",
-            },
-          ],
+          triggers,
           isCategory: false,
         },
       ],
       ...REQUIRED_BOOTSTRAP_FIELDS,
-    });
+    };
+  }
+
+  it("accepts ordered nonblank string triggers at their entry and count bounds", () => {
+    const triggers = [
+      "Plan work",
+      "a".repeat(256),
+      ...Array.from(
+        { length: MAX_DELEGATION_TRIGGERS - 2 },
+        (_, index) => `bounded-${index}`,
+      ),
+    ];
+    const result = parseControlBody(
+      "bootstrap",
+      bootstrapWithTriggers(triggers),
+    );
+
     expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.delegationTargets?.[0]?.triggers).toEqual(triggers);
+    }
   });
 
-  it("rejects a routing_hint over the private-control bound", () => {
-    const result = parseControlBody("bootstrap", {
-      agentName: "tapestry",
-      composedPrompt: "Delegate every implementation task.",
+  it.each([
+    [
+      "legacy structured trigger",
+      [{ domain: "Implementation", trigger: "Code" }],
+    ],
+    ["empty trigger", [""]],
+    ["blank trigger", [" \t\n"]],
+    ["oversized trigger", ["x".repeat(257)]],
+    [
+      "too many triggers",
+      Array.from(
+        { length: MAX_DELEGATION_TRIGGERS + 1 },
+        (_, index) => `trigger-${index}`,
+      ),
+    ],
+  ])("rejects %s", (_label, triggers) => {
+    expect(
+      parseControlBody("bootstrap", bootstrapWithTriggers(triggers)).ok,
+    ).toBe(false);
+  });
+});
+
+describe("BootstrapBodySchema literal fast intent", () => {
+  function ordinary(overrides: Record<string, unknown> = {}) {
+    return {
+      agentName: "shuttle",
+      composedPrompt: "Do the work.",
       models: [],
-      delegationTargets: [
-        {
-          name: "shuttle",
-          triggers: [
-            {
-              domain: "Implementation",
-              trigger: "Bounded coding tasks",
-              routing_hint: "x".repeat(1_025),
-            },
-          ],
-          isCategory: false,
-        },
-      ],
+      ...REQUIRED_BOOTSTRAP_FIELDS,
+      ...overrides,
+    };
+  }
+
+  function directStep(overrides: Record<string, unknown> = {}) {
+    return {
+      ...ordinary({ mode: "direct-step" }),
+      workflowInstanceId: "workflow-1",
+      leaseId: "lease-1",
+      stepName: "implement",
+      completionTool: "weave_complete_step",
+      ...overrides,
+    };
+  }
+
+  it.each([
+    ["ordinary true", ordinary({ fast: true })],
+    ["ordinary omission", ordinary()],
+    ["direct-step true", directStep({ fast: true })],
+    ["direct-step omission", directStep()],
+  ])("accepts %s", (_label, body) => {
+    expect(parseControlBody("bootstrap", body).ok).toBe(true);
+  });
+
+  it.each([
+    ["ordinary false", ordinary({ fast: false })],
+    ["ordinary string", ordinary({ fast: "true" })],
+    ["ordinary numeric", ordinary({ fast: 1 })],
+    ["ordinary service_class alias", ordinary({ service_class: "priority" })],
+    ["ordinary speed alias", ordinary({ speed: true })],
+    ["ordinary variant alias", ordinary({ variant: "fast" })],
+    ["ordinary priority alias", ordinary({ priority: true })],
+    ["ordinary unknown key", ordinary({ unexpected: true })],
+    ["direct-step false", directStep({ fast: false })],
+    ["direct-step string", directStep({ fast: "true" })],
+    ["direct-step numeric", directStep({ fast: 1 })],
+    [
+      "direct-step service_class alias",
+      directStep({ service_class: "priority" }),
+    ],
+    ["direct-step speed alias", directStep({ speed: true })],
+    ["direct-step variant alias", directStep({ variant: "fast" })],
+    ["direct-step priority alias", directStep({ priority: true })],
+    ["direct-step unknown key", directStep({ unexpected: true })],
+  ])("rejects %s", (_label, body) => {
+    expect(parseControlBody("bootstrap", body).ok).toBe(false);
+  });
+});
+
+describe("parseControlBody hostile bootstrap inputs", () => {
+  it("rejects inherited, accessor, and callable data without executing getters", () => {
+    let getterExecutions = 0;
+    const inherited = Object.create({ fast: true }) as Record<string, unknown>;
+    Object.assign(inherited, {
+      agentName: "shuttle",
+      composedPrompt: "Do the work.",
+      models: [],
       ...REQUIRED_BOOTSTRAP_FIELDS,
     });
-    expect(result.ok).toBe(false);
+
+    const accessor: Record<string, unknown> = {
+      agentName: "shuttle",
+      composedPrompt: "Do the work.",
+      models: [],
+      ...REQUIRED_BOOTSTRAP_FIELDS,
+    };
+    Object.defineProperty(accessor, "fast", {
+      enumerable: true,
+      get() {
+        getterExecutions += 1;
+        return true;
+      },
+    });
+
+    const callable = Object.assign(() => undefined, {
+      agentName: "shuttle",
+      composedPrompt: "Do the work.",
+      models: [],
+      ...REQUIRED_BOOTSTRAP_FIELDS,
+    });
+
+    for (const candidate of [inherited, accessor, callable]) {
+      expect(() => parseControlBody("bootstrap", candidate)).not.toThrow();
+      const result = parseControlBody("bootstrap", candidate);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.issueCount).toBeGreaterThan(0);
+        expect(result.issueCount).toBeLessThanOrEqual(64);
+      }
+    }
+    expect(getterExecutions).toBe(0);
   });
 });
 

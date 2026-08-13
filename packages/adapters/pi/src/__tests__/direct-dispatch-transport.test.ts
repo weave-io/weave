@@ -123,6 +123,9 @@ interface ParsedControlEnvelope {
     readonly correlationId?: string;
     readonly resolvedModel?: unknown;
     readonly thinkingLevel?: string;
+    readonly fast?: unknown;
+    readonly models?: unknown;
+    readonly delegationTargets?: unknown;
   };
 }
 
@@ -270,6 +273,152 @@ function baseInput(
 const AVAILABLE_MODELS = [{ provider: "anthropic", id: "claude-sonnet-5" }];
 
 describe("createDirectDispatchTransport (Pi adapter contract)", () => {
+  it("copies fast intent and ordered trigger arrays into the direct bootstrap without source aliasing", async () => {
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new FakeIdGenerator();
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        sessionStorageAuthority:
+          TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator,
+        availableModels: AVAILABLE_MODELS,
+      },
+      "gen-1",
+    );
+    const models = ["anthropic/claude-sonnet-5#high"];
+    const triggers = ["implement", "test in order"];
+    const delegationTargets = [
+      {
+        name: "shuttle-mini",
+        description: "Bounded implementation",
+        triggers,
+        isCategory: true,
+      },
+    ];
+
+    const resultPromise = transport(
+      baseInput({ models, delegationTargets, fast: true }),
+    );
+    const spawned = await awaitSpawnedChild(processPort);
+    models[0] = "mutated/model";
+    triggers[0] = "mutated trigger";
+    const firstTarget = delegationTargets[0];
+    if (firstTarget === undefined)
+      throw new Error("test setup: missing target");
+    firstTarget.name = "mutated-target";
+    delegationTargets.push({
+      name: "late-target",
+      description: "Added after dispatch",
+      triggers: ["late trigger"],
+      isCategory: false,
+    });
+
+    const expectedChildId = "direct-wf-1-verify-generation-1";
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(
+      spawned,
+      expectedChildId,
+      "gen-1",
+    );
+    await responder.send("handshake", expectedChildId, {}, secretBytes);
+    const bootstrapEnvelope = await waitForBootstrapEnvelope(
+      spawned,
+      expectedChildId,
+    );
+    expect(bootstrapEnvelope.body.fast).toBe(true);
+    expect(bootstrapEnvelope.body.models).toEqual([
+      "anthropic/claude-sonnet-5#high",
+    ]);
+    expect(bootstrapEnvelope.body.delegationTargets).toEqual([
+      {
+        name: "shuttle-mini",
+        description: "Bounded implementation",
+        triggers: ["implement", "test in order"],
+        isCategory: true,
+      },
+    ]);
+
+    await responder.send(
+      "bootstrap-ack",
+      expectedChildId,
+      { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
+      secretBytes,
+    );
+    await waitForTaskPrompt(spawned);
+    spawned.emitLine(terminalAssistantMessage());
+    await responder.send(
+      "settled",
+      expectedChildId,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
+      },
+      secretBytes,
+    );
+    expect((await resultPromise).isOk()).toBe(true);
+  });
+
+  it("preserves fast omission in the direct bootstrap", async () => {
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new FakeIdGenerator();
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        sessionStorageAuthority:
+          TEST_ONLY_DESCRIPTOR_SAFE_SESSION_STORAGE_AUTHORITY,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator,
+        availableModels: AVAILABLE_MODELS,
+      },
+      "gen-1",
+    );
+
+    const resultPromise = transport(baseInput());
+    const spawned = await awaitSpawnedChild(processPort);
+    const expectedChildId = "direct-wf-1-verify-generation-1";
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(
+      spawned,
+      expectedChildId,
+      "gen-1",
+    );
+    await responder.send("handshake", expectedChildId, {}, secretBytes);
+    const bootstrapEnvelope = await waitForBootstrapEnvelope(
+      spawned,
+      expectedChildId,
+    );
+    expect(Object.hasOwn(bootstrapEnvelope.body, "fast")).toBe(false);
+
+    await responder.send(
+      "bootstrap-ack",
+      expectedChildId,
+      { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
+      secretBytes,
+    );
+    await waitForTaskPrompt(spawned);
+    spawned.emitLine(terminalAssistantMessage());
+    await responder.send(
+      "settled",
+      expectedChildId,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
+      },
+      secretBytes,
+    );
+    expect((await resultPromise).isOk()).toBe(true);
+  });
+
   it("bootstraps the direct-step child using its own generated childId as the control-envelope correlationId, never the caller's unrelated engine-level correlationId", async () => {
     const processPort = new FakeChildProcessPort();
     const idGenerator = new FakeIdGenerator();

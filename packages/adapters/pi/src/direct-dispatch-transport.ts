@@ -136,6 +136,8 @@ export interface PiDirectStepBootstrap {
   readonly composedPrompt: string;
   readonly models: readonly string[];
   readonly delegationTargets: readonly DelegationTarget[];
+  /** Literal provider-acceleration intent. Omission preserves the provider default. */
+  readonly fast?: true;
   readonly workflowInstanceId: string;
   readonly leaseId: string;
   readonly stepName: string;
@@ -273,8 +275,15 @@ export function createDirectDispatchTransport(
       mode: "direct-step",
       agentName: input.agentName,
       composedPrompt: input.composedPrompt,
-      models: input.models,
-      delegationTargets: input.delegationTargets,
+      models: [...input.models],
+      delegationTargets: input.delegationTargets.map((target) => ({
+        name: target.name,
+        ...(target.description === undefined
+          ? {}
+          : { description: target.description }),
+        triggers: [...target.triggers],
+        isCategory: target.isCategory,
+      })),
       workflowInstanceId: input.workflowInstanceId,
       leaseId: input.leaseId,
       stepName: input.stepName,
@@ -296,6 +305,7 @@ export function createDirectDispatchTransport(
         cwd: input.cwd,
       },
       ...(resolvedModel === undefined ? {} : { resolvedModel }),
+      ...(input.fast === true ? { fast: true as const } : {}),
       ...(resolution.resolved && resolution.thinkingLevel !== undefined
         ? { thinkingLevel: resolution.thinkingLevel }
         : {}),

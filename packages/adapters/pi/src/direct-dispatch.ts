@@ -55,6 +55,8 @@ export interface PiDirectDispatchInput {
    */
   readonly models: readonly string[];
   readonly delegationTargets: readonly DelegationTarget[];
+  /** Literal provider-acceleration intent. Omission preserves the provider default. */
+  readonly fast?: true;
 }
 
 export interface PiDirectDispatchCandidate {

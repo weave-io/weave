@@ -1022,6 +1022,7 @@ export class PiWorkflowController {
           taskPrompt: stepPromptText ?? DEFAULT_DIRECT_STEP_TASK_PROMPT,
           models: realDescriptor.models,
           delegationTargets: realDescriptor.delegationTargets,
+          ...(realDescriptor.fast === true ? { fast: true as const } : {}),
           cwd: this.deps.projectRoot,
           correlationId:
             dispatchEffect.runAgent.correlationId ??

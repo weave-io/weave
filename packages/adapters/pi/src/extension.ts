@@ -811,6 +811,8 @@ interface PiChildBootstrapCommon {
   readonly context: PiDelegationContext;
   /** Present only when the parent itself resolved a concrete model identity (root-level delegation, live `ctx.modelRegistry`); absent means this child must resolve against its own authenticated catalog (Pi adapter contract). */
   readonly resolvedModel?: PiModelInfo;
+  /** Literal provider-acceleration intent. Omission preserves the provider default. */
+  readonly fast?: true;
   /** Core-owned thinking intent selected alongside the transport model identity. */
   readonly thinkingLevel?: ThinkingLevelDecl;
 }
@@ -1080,6 +1082,23 @@ export function readOverlaySessionEntryPage(
     );
 }
 
+function copyDelegationTargets(
+  targets: readonly DelegationTarget[],
+): DelegationTarget[] {
+  return targets.map((target) => ({
+    name: target.name,
+    ...(target.description === undefined
+      ? {}
+      : { description: target.description }),
+    triggers: [...target.triggers],
+    isCategory: target.isCategory,
+  }));
+}
+
+function copyBootstrapModels(models: readonly string[]): string[] {
+  return [...models];
+}
+
 export function buildChildBootstrapBody(
   descriptorsByName: ReadonlyMap<string, AgentDescriptor>,
   target: DelegationTarget,
@@ -1115,11 +1134,12 @@ export function buildChildBootstrapBody(
       full === undefined
         ? ""
         : (prepareComposedPrompt?.(full) ?? full.composedPrompt),
-    models: full?.models ?? [],
-    delegationTargets: full?.delegationTargets ?? [],
+    models: copyBootstrapModels(full?.models ?? []),
+    delegationTargets: copyDelegationTargets(full?.delegationTargets ?? []),
     correlationId: childId,
     context,
     ...(resolvedModel === undefined ? {} : { resolvedModel }),
+    ...(full?.fast === true ? { fast: true as const } : {}),
     ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
   };
   return bootstrap as unknown as JsonValue;
@@ -1141,12 +1161,19 @@ function parseChildBootstrapBody(
   const common = {
     agentName: parsed.value.agentName,
     composedPrompt: parsed.value.composedPrompt,
-    models: parsed.value.models,
-    delegationTargets: parsed.value.delegationTargets ?? [],
+    models: copyBootstrapModels(parsed.value.models),
+    delegationTargets: copyDelegationTargets(
+      parsed.value.delegationTargets ?? [],
+    ),
     correlationId: parsed.value.correlationId,
     context: parsed.value.context,
-    resolvedModel: parsed.value.resolvedModel,
-    thinkingLevel: parsed.value.thinkingLevel,
+    ...(parsed.value.resolvedModel === undefined
+      ? {}
+      : { resolvedModel: parsed.value.resolvedModel }),
+    ...(parsed.value.fast === true ? { fast: true as const } : {}),
+    ...(parsed.value.thinkingLevel === undefined
+      ? {}
+      : { thinkingLevel: parsed.value.thinkingLevel }),
   };
   if (parsed.value.mode === "direct-step") {
     return {
@@ -1173,6 +1200,10 @@ interface PiChildModeState {
   childId: string;
   agentName: string;
   composedPrompt: string;
+  /** Authenticated descriptor intent committed with the bootstrap state. */
+  fast: true | undefined;
+  /** Defensive copy of the authenticated delegation policy committed with the bootstrap state. */
+  delegationTargets: readonly DelegationTarget[];
   promptAppended: boolean;
   /** True only once the bootstrap descriptor and model have been applied and acked. */
   bootstrapApplied: boolean;
@@ -1218,6 +1249,8 @@ function createChildModeState(): PiChildModeState {
     childId: "",
     agentName: "",
     composedPrompt: "",
+    fast: undefined,
+    delegationTargets: [],
     promptAppended: false,
     bootstrapApplied: false,
     runtime: undefined,
@@ -1447,6 +1480,8 @@ async function applyChildBootstrap(
   // model applied - is bootstrap safe to acknowledge.
   state.agentName = parsed.agentName;
   state.composedPrompt = parsed.composedPrompt;
+  state.fast = parsed.fast === true ? true : undefined;
+  state.delegationTargets = copyDelegationTargets(parsed.delegationTargets);
   state.bootstrapApplied = true;
   state.directStep =
     parsed.mode === "direct-step"

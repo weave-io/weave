@@ -63,3 +63,9 @@
 
 - Pi request snapshot resolution now authenticates exact generation, primary identity, fast presence/value, ordered model intent, and selected model. Forged, omitted, extra, reordered, or mutated model fields return the typed stale result; capture and resolve return normalized copies.
 - Committed active-primary state uses bounded descriptor-safe copy-on-commit and copy-on-read; hostile skill metadata accessors and cycles are omitted without execution, so source mutation and reads cannot alter the prompt, snapshot, or state.
+
+## Task 8 child bootstrap fast and trigger boundary
+
+- Pi ordinary and direct-step bootstraps carry optional literal `fast: true` and ordered `DelegationTarget.triggers: string[]`; direct dispatch forwards the selected descriptor intent, copies nested model/target data, and omits absent fast to preserve provider defaults.
+- `parseControlBody` copies hostile graphs through a descriptor-only bounded copier before canonicalization and Zod: depth 64, 4,096 nodes, 4,096 aggregate properties, 512 properties per object, 256 KiB string budget, and 512-element arrays. It rejects cycles, accessors, symbols, callables, unsafe prototypes, and sparse arrays without executing getters; bootstrap canonical bytes remain capped at 64 KiB.
+- Child fast and delegation state commits only after required bootstrap application and before acknowledgement. Signed body construction omits undefined optional keys.

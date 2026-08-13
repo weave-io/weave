@@ -62,6 +62,7 @@ class FakeEnvPort implements PiEnvPort {
 
 class FakeOutputPort {
   readonly lines: Record<string, unknown>[] = [];
+  onLine: ((line: Record<string, unknown>) => void) | undefined;
   private nextError:
     | { type: "ChildOutputWriteFailed"; reason: string }
     | undefined;
@@ -86,7 +87,11 @@ class FakeOutputPort {
       return errAsync(error);
     }
     for (const line of new TextDecoder().decode(bytes).split("\n")) {
-      if (line.length > 0) this.lines.push(JSON.parse(line));
+      if (line.length > 0) {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        this.onLine?.(parsed);
+        this.lines.push(parsed);
+      }
     }
     return okAsync(undefined);
   }
@@ -833,6 +838,103 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     });
   });
 
+  it("copies ordinary fast intent and ordered triggers without source aliasing", () => {
+    const sourceModels = ["fake/model-x#high"];
+    const sourceTriggers = ["implement", "test in order"];
+    const sourceTargets = [
+      {
+        name: "shuttle-mini",
+        description: "Bounded implementation",
+        triggers: sourceTriggers,
+        isCategory: true,
+      },
+    ];
+    const targetDescriptor = {
+      name: "shuttle",
+      composedPrompt: "You are Shuttle, a delegated specialist.",
+      models: sourceModels,
+      fast: true as const,
+      mode: "subagent" as const,
+      effectiveToolPolicy: {
+        read: "allow" as const,
+        write: "allow" as const,
+        execute: "allow" as const,
+        delegate: "allow" as const,
+        network: "ask" as const,
+      },
+      rawToolPolicy: undefined,
+      delegationTargets: sourceTargets,
+      skills: [],
+    };
+
+    const bootstrap = buildChildBootstrapBody(
+      new Map([[targetDescriptor.name, targetDescriptor]]),
+      {
+        name: targetDescriptor.name,
+        description: "A delegated specialist.",
+        triggers: [],
+        isCategory: false,
+      },
+      "child-1",
+      { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
+    ) as unknown as Record<string, unknown>;
+    sourceModels[0] = "mutated/model";
+    sourceTriggers[0] = "mutated trigger";
+    const firstTarget = sourceTargets[0];
+    if (firstTarget === undefined)
+      throw new Error("test setup: missing target");
+    firstTarget.name = "mutated-target";
+    sourceTargets.push({
+      name: "late-target",
+      description: "Added after bootstrap construction",
+      triggers: ["late trigger"],
+      isCategory: false,
+    });
+
+    expect(bootstrap.fast).toBe(true);
+    expect(bootstrap.models).toEqual(["fake/model-x#high"]);
+    expect(bootstrap.delegationTargets).toEqual([
+      {
+        name: "shuttle-mini",
+        description: "Bounded implementation",
+        triggers: ["implement", "test in order"],
+        isCategory: true,
+      },
+    ]);
+  });
+
+  it("preserves fast omission in an ordinary bootstrap", () => {
+    const targetDescriptor = {
+      name: "shuttle",
+      composedPrompt: "You are Shuttle, a delegated specialist.",
+      models: [],
+      mode: "subagent" as const,
+      effectiveToolPolicy: {
+        read: "allow" as const,
+        write: "allow" as const,
+        execute: "allow" as const,
+        delegate: "allow" as const,
+        network: "ask" as const,
+      },
+      rawToolPolicy: undefined,
+      delegationTargets: [],
+      skills: [],
+    };
+    const bootstrap = buildChildBootstrapBody(
+      new Map([[targetDescriptor.name, targetDescriptor]]),
+      {
+        name: targetDescriptor.name,
+        description: "A delegated specialist.",
+        triggers: [],
+        isCategory: false,
+      },
+      "child-1",
+      { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
+    ) as unknown as Record<string, unknown>;
+
+    expect(Object.hasOwn(bootstrap, "fast")).toBe(false);
+  });
+
   it("uses the prepared required-skill prompt for an ordinary child", () => {
     const targetDescriptor = {
       name: "shuttle",
@@ -868,6 +970,66 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(bootstrapBody.composedPrompt).toBe(
       'Required skill names to load before work: ["tdd"]\nYou are Shuttle, a delegated specialist.',
     );
+  });
+
+  it.each([
+    ["ordinary", {}],
+    [
+      "direct-step",
+      {
+        mode: "direct-step",
+        workflowInstanceId: "workflow-1",
+        leaseId: "lease-1",
+        stepName: "review",
+        completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+      },
+    ],
+  ] as const)("applies a valid %s bootstrap before acknowledging fast intent and ordered triggers", async (_mode, modeFields) => {
+    const { host, output, secretBytes } = await buildChildExtension();
+    const envelope = await signedBootstrap(secretBytes, {
+      ...modeFields,
+      fast: true,
+      delegationTargets: [
+        {
+          name: "shuttle-mini",
+          description: "Bounded implementation",
+          triggers: ["implement", "test in order"],
+          isCategory: true,
+        },
+      ],
+    });
+    let appliedStateAtAck:
+      | {
+          delegationTool: boolean;
+          completionTool: boolean;
+        }
+      | undefined;
+    output.onLine = (line) => {
+      if (line.kind !== "bootstrap-ack") return;
+      appliedStateAtAck = {
+        delegationTool: host.registeredTool("weave_delegate") !== undefined,
+        completionTool:
+          host.registeredTool(WEAVE_COMPLETE_STEP_TOOL_NAME) !== undefined,
+      };
+    };
+
+    await deliverEnvelope(host, envelope);
+    await flush();
+
+    const delegationTool = host.registerToolCalls.find(
+      (tool) => tool.name === "weave_delegate",
+    );
+    const completionTool = host.registeredTool(WEAVE_COMPLETE_STEP_TOOL_NAME);
+    const ackIndex = output.lines.findIndex(
+      (line) => line.kind === "bootstrap-ack",
+    );
+    expect(delegationTool).toBeDefined();
+    expect(ackIndex).toBeGreaterThanOrEqual(0);
+    expect(completionTool === undefined).toBe(_mode === "ordinary");
+    expect(appliedStateAtAck).toEqual({
+      delegationTool: true,
+      completionTool: _mode === "direct-step",
+    });
   });
 
   it("applies transported thinking intent after ordinary child model activation", async () => {
