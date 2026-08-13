@@ -1531,10 +1531,19 @@ interface HostSessionIdentity {
 /**
  * Reads the complete identity of one host handle behind a throw boundary. A
  * getter that throws is a host failure, not a trusted answer, so it maps to a
- * typed path-free create failure instead of escaping the seam.
+ * typed path-free failure instead of escaping the seam.
+ *
+ * Every identity surface is read here - `getSessionFile`, `getSessionDir`,
+ * `getSessionId`, `getHeader`, and `isPersisted` - so no caller can read one
+ * of them outside the boundary, and so a host that answers one getter
+ * correctly and another one hostilely is refused as a whole.
  */
 function readHostSessionIdentity(
   handle: PiNativeSessionHandle,
+  onThrow: () => PiNativeSessionError = () => ({
+    type: "SessionCreateFailed",
+    reason: "host-threw",
+  }),
 ): Result<HostSessionIdentity, PiNativeSessionError> {
   return Result.fromThrowable(
     (): HostSessionIdentity => ({
@@ -1544,10 +1553,7 @@ function readHostSessionIdentity(
       header: handle.getHeader(),
       persisted: handle.isPersisted(),
     }),
-    (): PiNativeSessionError => ({
-      type: "SessionCreateFailed",
-      reason: "host-threw",
-    }),
+    onThrow,
   )();
 }
 
@@ -2925,32 +2931,54 @@ export class PiNativeSessionStore {
         reason: "unreadable",
       }),
     )().asyncAndThen((handle) => {
-      const header = Result.fromThrowable(
-        () => handle.getHeader(),
-        (): PiNativeSessionError => ({
-          type: "SessionCorrupt",
-          ref,
-          reason: "unreadable",
-        }),
-      )();
-      if (header.isErr()) return errAsync(header.error);
+      type Opened = {
+        readonly record: PiNativeSessionRecord;
+        readonly handle: PiNativeSessionHandle;
+      };
+      const corrupt = (
+        reason: PiNativeSessionCorruption,
+      ): PiNativeSessionError => ({ type: "SessionCorrupt", ref, reason });
+      const escaped: PiNativeSessionError = {
+        type: "SessionRootViolation",
+        reason: "path-escape",
+      };
+      // Every identity surface is read once, behind one throw boundary: a
+      // getter that throws is a host failure, never a trusted answer.
+      const identityResult = readHostSessionIdentity(handle, () =>
+        corrupt("unreadable"),
+      );
+      if (identityResult.isErr()) return errAsync(identityResult.error);
+      const identity = identityResult.value;
       // The reopen path validates the *complete* header contract, exactly as
       // create does: a host that reports a partial or exotic header on open
       // can never hand this store a record other code would then trust.
       const validated = validateChildSessionHeader(
-        header.value,
+        identity.header,
         expectedParentSession,
       );
       if (validated.isErr()) {
-        return errAsync<
-          {
-            readonly record: PiNativeSessionRecord;
-            readonly handle: PiNativeSessionHandle;
-          },
-          PiNativeSessionError
-        >({ type: "SessionCorrupt", ref, reason: validated.error });
+        return errAsync<Opened, PiNativeSessionError>(corrupt(validated.error));
       }
-      return okAsync({
+      // A host may not disagree with the identity this store already proved.
+      // The reopened handle must name exactly the validated leaf, inside the
+      // exact directory the ref resolved to, and report the same session id
+      // as the header it just handed back.
+      if (!identity.persisted) {
+        return errAsync<Opened, PiNativeSessionError>(corrupt("not-persisted"));
+      }
+      const hostFile = identity.sessionFile;
+      if (
+        hostFile === undefined ||
+        hostFile !== path ||
+        identity.sessionDir !== childDir ||
+        !isImmediateChildPath(childDir, hostFile)
+      ) {
+        return errAsync<Opened, PiNativeSessionError>(escaped);
+      }
+      if (identity.sessionId !== validated.value.id) {
+        return errAsync<Opened, PiNativeSessionError>(corrupt("unreadable"));
+      }
+      return okAsync<Opened, PiNativeSessionError>({
         record: this.rememberValidatedRecord(
           {
             childId: component,
