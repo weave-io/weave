@@ -42,7 +42,6 @@ const child = (
 function makeChildrenPort(options: {
   readonly rows?: PiAdapterChildListItem[];
   readonly entryCount?: number;
-  readonly sessionPath?: string;
 }): PiAdapterChildrenPort {
   const rows = [...(options.rows ?? [child()])];
   const entryCount = options.entryCount ?? 3;
@@ -86,12 +85,7 @@ function makeChildrenPort(options: {
           ? { nextCursor: "show-cursor" }
           : {}),
         ...(input.diagnostic === true
-          ? {
-              sessionPath:
-                options.sessionPath ??
-                "/Users/jose/.local/share/weave/adapters/pi/sessions/x.jsonl",
-              sessionRef: `${found.childId}/session.jsonl`,
-            }
+          ? { sessionRef: `${found.childId}/session.jsonl` }
           : {}),
       });
     },
@@ -374,7 +368,7 @@ describe("runAdapter", () => {
       },
       json: true,
       registry: createPiAdapterCommandRegistry({
-        children: makeChildrenPort({ entryCount: 130, sessionPath: path }),
+        children: makeChildrenPort({ entryCount: 130 }),
         sessionMutationGate: createOpenSessionMutationGate(),
       }),
     });
@@ -389,7 +383,7 @@ describe("runAdapter", () => {
     expect(body).toMatchSnapshot("adapter-pi-children-show-json");
   });
 
-  it("includes diagnostic path only when --diagnostic is set", async () => {
+  it("never prints an absolute session path, even with --diagnostic", async () => {
     const path =
       "/Users/jose/.local/share/weave/adapters/pi/sessions/child-1/session.jsonl";
     const { terminal, ctx } = makeCtx({
@@ -401,12 +395,16 @@ describe("runAdapter", () => {
       json: true,
       diagnostic: true,
       registry: createPiAdapterCommandRegistry({
-        children: makeChildrenPort({ sessionPath: path }),
+        children: makeChildrenPort({}),
         sessionMutationGate: createOpenSessionMutationGate(),
       }),
     });
     await runAdapter(ctx);
-    expect(terminal.out.join("\n")).toContain(path);
+    const out = terminal.out.join("\n");
+    expect(out).not.toContain(path);
+    expect(out).not.toContain("/Users/");
+    expect(out).not.toContain("sessionPath");
+    expect(out).toContain("child-1/session.jsonl");
   });
 
   it("requires confirmation for delete unless --yes, then tombstones", async () => {

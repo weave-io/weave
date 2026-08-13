@@ -42,7 +42,6 @@ const child = (
 function fakeChildren(options: {
   readonly list?: PiAdapterChildListItem[];
   readonly entries?: readonly { id: string; type: string }[];
-  readonly sessionPath?: string;
 }): PiAdapterChildrenPort {
   const rows = [...(options.list ?? [child()])];
   const entries = options.entries ?? [
@@ -81,12 +80,7 @@ function fakeChildren(options: {
           ? { nextCursor: "entry-cursor" }
           : {}),
         ...(input.diagnostic === true
-          ? {
-              sessionPath:
-                options.sessionPath ??
-                "/tmp/weave/adapters/pi/sessions/x.jsonl",
-              sessionRef: `${found.childId}/session.jsonl`,
-            }
+          ? { sessionRef: `${found.childId}/session.jsonl` }
           : {}),
       });
     },
@@ -177,10 +171,10 @@ describe("Pi adapter-cli-commands", () => {
     expect(body.sessionPath).toBeUndefined();
   });
 
-  it("omits filesystem paths by default and includes them with diagnostic", async () => {
+  it("never returns an absolute session path, with or without diagnostic", async () => {
     const path = "/Users/jose/.local/share/weave/adapters/pi/sessions/a.jsonl";
     const registry = createPiAdapterCommandRegistry({
-      children: fakeChildren({ sessionPath: path }),
+      children: fakeChildren({}),
     });
 
     const defaultShow = await dispatchAdapterCommand(registry, {
@@ -204,7 +198,14 @@ describe("Pi adapter-cli-commands", () => {
         diagnostic: true,
       }),
     });
-    expect(diagnosticShow._unsafeUnwrap().resultJson).toContain(path);
+    // Diagnostic mode disables path *stripping*, so this is the exact case
+    // where a leaked absolute path would reach the user. Only the bounded
+    // root-relative ref is ever produced.
+    const diagnosticBody = diagnosticShow._unsafeUnwrap().resultJson;
+    expect(diagnosticBody).not.toContain(path);
+    expect(diagnosticBody).not.toContain("/Users/");
+    expect(diagnosticBody).not.toContain("sessionPath");
+    expect(diagnosticBody).toContain("child-1/session.jsonl");
   });
 
   it("resolves a child older than the newest list page without paths", async () => {
@@ -500,7 +501,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
       `entry-${entryCount - 1}`,
     );
     expect(newest.nextCursor).toBeDefined();
-    expect(newest.sessionPath).toBeUndefined();
+    expect("sessionPath" in newest).toBe(false);
 
     const decoded = decodePiNativeSessionEntryCursor(
       newest.nextCursor ?? "",
@@ -552,7 +553,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     );
   });
 
-  it("exposes diagnostic sessionPath only via openSession, never full entry materialization", async () => {
+  it("exposes only the bounded session ref under diagnostic, never an absolute path", async () => {
     const store = await seed(20);
     let entryPageCalls = 0;
     let openCalls = 0;
@@ -589,7 +590,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
       childId: "child-1",
       parentSessionId: PARENT,
     });
-    expect(normal._unsafeUnwrap().sessionPath).toBeUndefined();
+    expect("sessionPath" in normal._unsafeUnwrap()).toBe(false);
     expect(entryPageCalls).toBe(1);
     expect(openCalls).toBe(0);
 
@@ -603,7 +604,10 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     )._unsafeUnwrap();
     expect(entryPageCalls).toBe(2);
     expect(openCalls).toBe(1);
-    expect(diagnostic.sessionPath).toBe(`${ROOT}/${REF}`);
+    // Even under --diagnostic the absolute session path is never returned;
+    // the bounded root-relative ref is the only correlation handle.
+    expect("sessionPath" in diagnostic).toBe(false);
+    expect(JSON.stringify(diagnostic)).not.toContain(ROOT);
     expect(diagnostic.sessionRef).toBe(REF);
   });
 });

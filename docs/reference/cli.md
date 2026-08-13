@@ -137,7 +137,7 @@ The workspace defaults to the current working directory.
 - `children delete` appends a tombstone; it never rewrites or truncates stored session data. It resolves the child's immutable origin parent from list metadata and never invents a synthetic parent such as `current`. When the same child id exists under two parents, pass `--parent-session <id>`; a forged or mismatched parent scope is rejected. Without `--yes` it prompts `Delete child <id> and append a tombstone?`, defaulting to no. Declining prints `Delete cancelled.` and exits `0`. A non-interactive terminal without `--yes` exits with `Interactive mode is unavailable. Re-run with --yes to delete without a prompt.`
 - `doctor` runs the seven bounded storage checks and reports `ok`, `degraded`, `unavailable`, or `not_implemented`.
 
-`--json` prints stable JSON and suppresses decorative output. `--diagnostic` is the only way to see filesystem paths: without it every absolute path is replaced with `[path omitted]` and the `sessionPath` field is dropped entirely. Both flags are local-only inspection; neither starts, resumes, or mutates work.
+`--json` prints stable JSON and suppresses decorative output. `--diagnostic` relaxes path stripping for other output, but no command ever reports a child's absolute session path: `children show --diagnostic` adds only the bounded root-relative `sessionRef`. Without `--diagnostic`, every absolute path is replaced with `[path omitted]`. Both flags are local-only inspection; neither starts, resumes, or mutates work.
 
 See [Pi Adapter](../adapters/pi.md#child-session-commands), [Pi child troubleshooting](../guides/pi-child-troubleshooting.md), and [`commands/adapter.ts`](../../packages/cli/src/commands/adapter.ts).
 

@@ -59,7 +59,7 @@ weave adapter pi children show <id> --cursor <c>
 
 `list` returns the newest 50 children for the workspace, including tombstoned rows. `show` returns bounded metadata plus the newest 100 native entry descriptors and a `nextCursor` for older pages.
 
-Add `--diagnostic` only when you need filesystem paths. Without it, absolute paths are replaced with `[path omitted]` and the `sessionPath` field is dropped. Add `--json` for stable machine output.
+Add `--diagnostic` only when you need the bounded root-relative session reference. No command prints a child's absolute session path; without `--diagnostic`, other absolute paths are replaced with `[path omitted]`. Add `--json` for stable machine output.
 
 ## Remove a child
 

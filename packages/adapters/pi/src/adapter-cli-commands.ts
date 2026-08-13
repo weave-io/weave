@@ -124,8 +124,12 @@ export const PiChildrenShowResultSchema = z
       .array(ChildEntrySummarySchema)
       .max(PI_ADAPTER_COMMAND_BOUNDS.showEntryPageSize),
     nextCursor: z.string().max(512).optional(),
-    /** Absolute or root-relative path — present only when diagnostic is on. */
-    sessionPath: z.string().max(2_048).optional(),
+    /**
+     * Bounded, root-relative opaque session reference — present only when
+     * diagnostic is on. The absolute session path is never returned by any
+     * diagnostic: a ref is enough to correlate, and a path is a filesystem
+     * disclosure the CLI has no reason to make.
+     */
     sessionRef: z.string().max(1_024).optional(),
   })
   .strict();
@@ -220,7 +224,7 @@ export interface PiAdapterChildrenPort {
       readonly child: PiAdapterChildListItem;
       readonly entries: readonly PiAdapterChildEntrySummary[];
       readonly nextCursor?: string;
-      readonly sessionPath?: string;
+      /** Bounded root-relative ref only; never an absolute path. */
       readonly sessionRef?: string;
     },
     PiAdapterCommandPortError
@@ -576,7 +580,6 @@ export function createPiChildrenCommandPort(
           readonly child: PiAdapterChildListItem;
           readonly entries: readonly PiAdapterChildEntrySummary[];
           readonly nextCursor?: string;
-          readonly sessionPath?: string;
           readonly sessionRef?: string;
         },
         PiAdapterCommandPortError
@@ -614,19 +617,22 @@ export function createPiChildrenCommandPort(
                 : { nextCursor: summarized.nextCursor }),
             };
             if (!diagnostic) return okAsync(base);
-            return options.sessions
-              .openSession(record.sessionRef, record.originParentSessionId)
-              .mapErr(
-                (error): PiAdapterCommandPortError => ({
-                  type: "Unavailable",
-                  message: error.type,
-                }),
-              )
-              .map((session) => ({
-                ...base,
-                sessionPath: session.path,
-                sessionRef: record.sessionRef,
-              }));
+            return (
+              options.sessions
+                .openSession(record.sessionRef, record.originParentSessionId)
+                .mapErr(
+                  (error): PiAdapterCommandPortError => ({
+                    type: "Unavailable",
+                    message: error.type,
+                  }),
+                )
+                // `openSession` proves the session is present, contained, and
+                // readable; only the bounded ref is reported back.
+                .map(() => ({
+                  ...base,
+                  sessionRef: record.sessionRef,
+                }))
+            );
           });
       }
     },
@@ -807,9 +813,6 @@ export function createPiAdapterCommandHandlers(
         ...(page.nextCursor === undefined
           ? {}
           : { nextCursor: page.nextCursor }),
-        ...(diagnostic && page.sessionPath !== undefined
-          ? { sessionPath: page.sessionPath }
-          : {}),
         ...(diagnostic && page.sessionRef !== undefined
           ? { sessionRef: page.sessionRef }
           : {}),
