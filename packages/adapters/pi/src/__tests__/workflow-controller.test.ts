@@ -17,6 +17,8 @@ import { FakePiArtifactProvider } from "../artifact-provider.js";
 import {
   FakeDirectDispatchPort,
   type PiDirectDispatchCandidate,
+  type PiDirectDispatchInput,
+  type PiDirectDispatchPort,
 } from "../direct-dispatch.js";
 import { makeControllerGenerationStaleFailure } from "../errors.js";
 import {
@@ -341,9 +343,13 @@ describe("PiWorkflowController — startExecution drives the full lifecycle", ()
 });
 
 describe("PiWorkflowController — direct dispatch vs ordinary delegation", () => {
-  it("copies the selected descriptor's fast intent and ordered triggers into direct dispatch", async () => {
-    const sourceModels = ["openai/gpt-5.6-sol#high"];
+  it("isolates selected descriptor intent from a retaining dispatch port", async () => {
+    const sourceModels = [
+      "openai/gpt-5.6-sol#high",
+      "cursor/grok-4.5:fast#high",
+    ];
     const sourceTriggers = ["implement", "test in order"];
+    const sourceSecondaryTriggers = ["review", "verify in order"];
     const sourceTargets = [
       {
         name: "shuttle-mini",
@@ -351,8 +357,49 @@ describe("PiWorkflowController — direct dispatch vs ordinary delegation", () =
         triggers: sourceTriggers,
         isCategory: true,
       },
+      {
+        name: "weft",
+        triggers: sourceSecondaryTriggers,
+        isCategory: false,
+      },
     ];
-    const { store, directDispatch, controller } = buildHarness({
+    const dispatchPort: PiDirectDispatchPort & {
+      readonly calls: PiDirectDispatchInput[];
+    } = {
+      calls: [],
+      dispatch(input: PiDirectDispatchInput) {
+        this.calls.push(input);
+        if (this.calls.length === 1) {
+          const mutableInput = input as unknown as {
+            models: string[];
+            delegationTargets: Array<{
+              name: string;
+              description?: string;
+              triggers: string[];
+              isCategory: boolean;
+            }>;
+          };
+          mutableInput.models.push("mutated-model");
+          for (const [
+            index,
+            target,
+          ] of mutableInput.delegationTargets.entries()) {
+            target.name = `mutated-target-${index}`;
+            target.description = `mutated-description-${index}`;
+            target.isCategory = !target.isCategory;
+            target.triggers.push(`mutated-trigger-${index}`);
+          }
+          mutableInput.delegationTargets.push({
+            name: "mutated-extra-target",
+            triggers: [],
+            isCategory: false,
+          });
+        }
+        return okAsync(successCandidate());
+      },
+    };
+    const { store, controller } = buildHarness({
+      directDispatch: dispatchPort,
       resolveAgentDescriptor: (agentName) => ({
         name: agentName,
         composedPrompt: `You are ${agentName}.`,
@@ -372,8 +419,6 @@ describe("PiWorkflowController — direct dispatch vs ordinary delegation", () =
       }),
     });
     const workflowInstanceId = await createInstance(store);
-    directDispatch.enqueue(okAsync(successCandidate()) as never);
-    directDispatch.enqueue(okAsync(successCandidate()) as never);
 
     const auth = authorizeByExplicitUser(true);
     if (!auth.isOk()) throw new Error("unexpected");
@@ -382,19 +427,69 @@ describe("PiWorkflowController — direct dispatch vs ordinary delegation", () =
       auth.value,
     );
 
-    expect(directDispatch.calls).toHaveLength(2);
-    for (const call of directDispatch.calls) {
-      expect(call.models).toEqual(["openai/gpt-5.6-sol#high"]);
-      expect(call.delegationTargets).toEqual([
-        {
-          name: "shuttle-mini",
-          description: "Bounded implementation",
-          triggers: ["implement", "test in order"],
-          isCategory: true,
-        },
-      ]);
-      expect(call.fast).toBe(true);
+    expect(dispatchPort.calls).toHaveLength(2);
+    const [firstCall, secondCall] = dispatchPort.calls;
+    if (firstCall === undefined || secondCall === undefined) {
+      throw new Error("expected two direct-dispatch calls");
     }
+
+    const expectedModels = [
+      "openai/gpt-5.6-sol#high",
+      "cursor/grok-4.5:fast#high",
+    ];
+    const expectedTargets = [
+      {
+        name: "shuttle-mini",
+        description: "Bounded implementation",
+        triggers: ["implement", "test in order"],
+        isCategory: true,
+      },
+      {
+        name: "weft",
+        triggers: ["review", "verify in order"],
+        isCategory: false,
+      },
+    ];
+
+    expect(sourceModels).toEqual(expectedModels);
+    expect(sourceTriggers).toEqual(expectedTargets[0]?.triggers);
+    expect(sourceSecondaryTriggers).toEqual(expectedTargets[1]?.triggers);
+    expect(sourceTargets).toEqual(expectedTargets);
+
+    expect(firstCall.models).not.toBe(sourceModels);
+    expect(secondCall.models).not.toBe(sourceModels);
+    expect(firstCall.models).not.toBe(secondCall.models);
+    expect(secondCall.models).toEqual(expectedModels);
+
+    expect(firstCall.delegationTargets).not.toBe(sourceTargets);
+    expect(secondCall.delegationTargets).not.toBe(sourceTargets);
+    expect(firstCall.delegationTargets).not.toBe(secondCall.delegationTargets);
+    expect(firstCall.delegationTargets).toHaveLength(
+      expectedTargets.length + 1,
+    );
+    expect(secondCall.delegationTargets).toEqual(expectedTargets);
+
+    for (const index of [0, 1]) {
+      const sourceTarget = sourceTargets[index];
+      const firstTarget = firstCall.delegationTargets[index];
+      const secondTarget = secondCall.delegationTargets[index];
+      if (
+        sourceTarget === undefined ||
+        firstTarget === undefined ||
+        secondTarget === undefined
+      ) {
+        throw new Error(`expected target at index ${index}`);
+      }
+      expect(firstTarget).not.toBe(sourceTarget);
+      expect(secondTarget).not.toBe(sourceTarget);
+      expect(firstTarget).not.toBe(secondTarget);
+      expect(firstTarget.triggers).not.toBe(sourceTarget.triggers);
+      expect(secondTarget.triggers).not.toBe(sourceTarget.triggers);
+      expect(firstTarget.triggers).not.toBe(secondTarget.triggers);
+    }
+
+    expect(firstCall.fast).toBe(true);
+    expect(secondCall.fast).toBe(true);
   });
 
   it("carries workflow instance/lease/step correlation on every direct-dispatch call", async () => {

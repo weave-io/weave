@@ -1001,6 +1001,18 @@ export class PiWorkflowController {
       );
     }
 
+    const models = [...realDescriptor.models];
+    const delegationTargets = realDescriptor.delegationTargets.map(
+      (target) => ({
+        name: target.name,
+        ...(target.description === undefined
+          ? {}
+          : { description: target.description }),
+        triggers: [...target.triggers],
+        isCategory: target.isCategory,
+      }),
+    );
+
     this.deps.onDirectStepActiveChange?.(true, realDescriptor.name);
     const settleActive = (): void =>
       this.deps.onDirectStepActiveChange?.(false, realDescriptor.name);
@@ -1020,8 +1032,8 @@ export class PiWorkflowController {
           agentName: dispatchEffect.runAgent.agentName,
           composedPrompt: realDescriptor.composedPrompt,
           taskPrompt: stepPromptText ?? DEFAULT_DIRECT_STEP_TASK_PROMPT,
-          models: realDescriptor.models,
-          delegationTargets: realDescriptor.delegationTargets,
+          models,
+          delegationTargets,
           ...(realDescriptor.fast === true ? { fast: true as const } : {}),
           cwd: this.deps.projectRoot,
           correlationId:
