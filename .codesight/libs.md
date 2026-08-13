@@ -118,13 +118,13 @@
   - interface PiArtifactDigest
   - _...9 more_
 - `packages/adapters/pi/src/capability-prober.ts`
+  - function describeDelegationReadinessGap: (requiredGaps) => PiDelegationReadinessReason
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
   - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
   - class DefaultPiCapabilityProber
   - interface PiCandidatePlanContext
   - interface PiPreflightContext
-  - interface PiCapabilityProbeSource
-  - _...3 more_
+  - _...5 more_
 - `packages/adapters/pi/src/child-compact-render.ts`
   - function createChildCompactState: (threadId) => ChildCompactState
   - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
@@ -384,9 +384,10 @@
   - class PiChildSessionRefStore
   - _...29 more_
 - `packages/adapters/pi/src/child-session-storage-authority.ts`
-  - function createPiChildSessionStorageAuthority: () => PiChildSessionStorageAuthority
+  - function createPiChildSessionStorageAuthority: (input) => PiChildSessionStorageAuthority
   - function describeChildSessionStorageUnavailable: (failure) => string
   - interface PiChildSessionStorageAuthority
+  - interface PiChildSessionStorageAuthorityInput
   - const CHILD_SESSION_STORAGE_UNAVAILABLE_REASON
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
@@ -602,13 +603,13 @@
   - interface PromptChunk
   - _...4 more_
 - `packages/adapters/pi/src/provider-fast-activation.ts`
-  - function classifyProviderFastActivation: (input) => Result<ProviderFastActivationSuccess, ProviderFastUnsupported>
-  - function applyOpenAiProviderFastPayload: (classification, payload) => Result<unknown, ProviderFastMutationUnsupported>
-  - function applyAnthropicProviderFastPayload: (classification, payload) => Result<unknown, ProviderFastMutationUnsupported>
-  - function planAnthropicProviderFastHeaders: (classification, headers) => Result<ProviderFastHeaderPlan, ProviderFastMutationUnsupported>
-  - function applyAnthropicProviderFastHeaders: (classification, headers) => Result<object, ProviderFastMutationUnsupported>
-  - class ProviderFastAttemptTracker
-  - _...62 more_
+  - function classifyProviderFastIntent: (intent) => ProviderFastClassification
+  - type ProviderFastUnsupportedReason
+  - type ProviderFastState
+  - type ProviderFastEvidenceKind
+  - type ProviderFastEvidenceOutcome
+  - type ProviderFastPublicSnapshot
+  - _...8 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -688,7 +689,7 @@
   - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
   - function createPiTelemetryLogger: (options) => ResultAsync<
   - function createPiTelemetry: (options) => ResultAsync<
-  - _...20 more_
+  - _...21 more_
 - `packages/adapters/pi/src/thread-sources.ts`
   - function openPiThreadSources: (input) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>
   - function createProductionPiThreadSourceFactory: (options) => PiThreadSourceFactory
@@ -705,12 +706,12 @@
   - type PiTrustedDataRootViolation
 - `packages/adapters/pi/src/types.ts`
   - function projectPiProviderEvent: (event) => Result<PiProviderEventProjection, PiProviderEventProjectionError>
-  - function extractPiProviderEventField: (event, field) => Result<unknown, PiProviderEventFieldError>
   - interface PiSourceInfo
   - interface PiCommandInfo
   - interface PiModelInfo
   - interface PiModelRegistry
-  - _...39 more_
+  - interface PiSkillInfo
+  - _...37 more_
 - `packages/adapters/pi/src/workflow-commands.ts`
   - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
   - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>

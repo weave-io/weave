@@ -3,7 +3,7 @@
  *
  * Covers:
  * - All 4 readiness levels are valid; no extra values accepted by schema.
- * - All 22 capability IDs are valid.
+ * - All 21 capability IDs are valid.
  * - CapabilityEntry accepts all readiness levels and required/optional fields.
  * - AdapterCapabilityContract structural assertions.
  * - Tool-policy capability references @weaveio/weave-core concepts (no duplication).
@@ -77,12 +77,12 @@ describe("CapabilityReadiness", () => {
 // ---------------------------------------------------------------------------
 
 describe("CapabilityId", () => {
-  it("has exactly 22 capability IDs", () => {
-    expect(ALL_CAPABILITY_IDS).toHaveLength(22);
+  it("has exactly 21 capability IDs", () => {
+    expect(ALL_CAPABILITY_IDS).toHaveLength(21);
   });
 
-  it("has exactly 13 required capability IDs", () => {
-    expect(REQUIRED_CAPABILITIES).toHaveLength(13);
+  it("has exactly 12 required capability IDs", () => {
+    expect(REQUIRED_CAPABILITIES).toHaveLength(12);
   });
 
   it("has exactly 9 optional capability IDs", () => {
@@ -97,7 +97,7 @@ describe("CapabilityId", () => {
     expect(OPTIONAL_CAPABILITIES).toContain("provider-fast-activation");
   });
 
-  it("accepts all 22 capability IDs via schema", () => {
+  it("accepts all 21 capability IDs via schema", () => {
     for (const id of ALL_CAPABILITY_IDS) {
       const result = CapabilityIdSchema.safeParse(id);
       expect(result.success).toBe(true);
@@ -140,7 +140,6 @@ describe("CapabilityId", () => {
     expect(required.has("command-entrypoints")).toBe(true);
     expect(required.has("event-logging")).toBe(true);
     expect(required.has("token-usage-reporting")).toBe(true);
-    expect(required.has("descriptor-relative-native-session-io")).toBe(true);
   });
 
   it("contains all optional capability IDs from the spec", () => {
@@ -305,7 +304,7 @@ describe("AdapterCapabilityContract", () => {
 
 describe("engine barrel re-exports", () => {
   it("exports REQUIRED_CAPABILITIES from @weaveio/weave-engine", () => {
-    expect(BARREL_REQUIRED).toHaveLength(13);
+    expect(BARREL_REQUIRED).toHaveLength(12);
     expect(BARREL_REQUIRED).toEqual(REQUIRED_CAPABILITIES);
   });
 
@@ -315,7 +314,7 @@ describe("engine barrel re-exports", () => {
   });
 
   it("exports ALL_CAPABILITY_IDS from @weaveio/weave-engine", () => {
-    expect(BARREL_ALL).toHaveLength(22);
+    expect(BARREL_ALL).toHaveLength(21);
   });
 
   it("exports evaluateCoreReadinessProfile from @weaveio/weave-engine", () => {

@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 282 lib files | 40 env vars | 10 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~30,200 tokens. Without it, AI exploration would cost ~92,000 tokens. **Saves ~61,800 tokens per conversation.**
-> **Last scanned:** 2026-08-13 18:08 — re-run after significant changes
+> **Token savings:** this file is ~30,100 tokens. Without it, AI exploration would cost ~92,000 tokens. **Saves ~61,900 tokens per conversation.**
+> **Last scanned:** 2026-08-13 21:15 — re-run after significant changes
 
 ---
 
@@ -129,13 +129,13 @@
   - interface PiArtifactDigest
   - _...9 more_
 - `packages/adapters/pi/src/capability-prober.ts`
+  - function describeDelegationReadinessGap: (requiredGaps) => PiDelegationReadinessReason
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
   - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
   - class DefaultPiCapabilityProber
   - interface PiCandidatePlanContext
   - interface PiPreflightContext
-  - interface PiCapabilityProbeSource
-  - _...3 more_
+  - _...5 more_
 - `packages/adapters/pi/src/child-compact-render.ts`
   - function createChildCompactState: (threadId) => ChildCompactState
   - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
@@ -395,9 +395,10 @@
   - class PiChildSessionRefStore
   - _...29 more_
 - `packages/adapters/pi/src/child-session-storage-authority.ts`
-  - function createPiChildSessionStorageAuthority: () => PiChildSessionStorageAuthority
+  - function createPiChildSessionStorageAuthority: (input) => PiChildSessionStorageAuthority
   - function describeChildSessionStorageUnavailable: (failure) => string
   - interface PiChildSessionStorageAuthority
+  - interface PiChildSessionStorageAuthorityInput
   - const CHILD_SESSION_STORAGE_UNAVAILABLE_REASON
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
@@ -613,13 +614,13 @@
   - interface PromptChunk
   - _...4 more_
 - `packages/adapters/pi/src/provider-fast-activation.ts`
-  - function classifyProviderFastActivation: (input) => Result<ProviderFastActivationSuccess, ProviderFastUnsupported>
-  - function applyOpenAiProviderFastPayload: (classification, payload) => Result<unknown, ProviderFastMutationUnsupported>
-  - function applyAnthropicProviderFastPayload: (classification, payload) => Result<unknown, ProviderFastMutationUnsupported>
-  - function planAnthropicProviderFastHeaders: (classification, headers) => Result<ProviderFastHeaderPlan, ProviderFastMutationUnsupported>
-  - function applyAnthropicProviderFastHeaders: (classification, headers) => Result<object, ProviderFastMutationUnsupported>
-  - class ProviderFastAttemptTracker
-  - _...62 more_
+  - function classifyProviderFastIntent: (intent) => ProviderFastClassification
+  - type ProviderFastUnsupportedReason
+  - type ProviderFastState
+  - type ProviderFastEvidenceKind
+  - type ProviderFastEvidenceOutcome
+  - type ProviderFastPublicSnapshot
+  - _...8 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -699,7 +700,7 @@
   - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
   - function createPiTelemetryLogger: (options) => ResultAsync<
   - function createPiTelemetry: (options) => ResultAsync<
-  - _...20 more_
+  - _...21 more_
 - `packages/adapters/pi/src/thread-sources.ts`
   - function openPiThreadSources: (input) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>
   - function createProductionPiThreadSourceFactory: (options) => PiThreadSourceFactory
@@ -716,12 +717,12 @@
   - type PiTrustedDataRootViolation
 - `packages/adapters/pi/src/types.ts`
   - function projectPiProviderEvent: (event) => Result<PiProviderEventProjection, PiProviderEventProjectionError>
-  - function extractPiProviderEventField: (event, field) => Result<unknown, PiProviderEventFieldError>
   - interface PiSourceInfo
   - interface PiCommandInfo
   - interface PiModelInfo
   - interface PiModelRegistry
-  - _...39 more_
+  - interface PiSkillInfo
+  - _...37 more_
 - `packages/adapters/pi/src/workflow-commands.ts`
   - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
   - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>
@@ -1716,9 +1717,9 @@
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
 - `packages/adapters/pi/src/strict-json.ts` — imported by **26** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
+- `packages/adapters/pi/src/errors.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
 - `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **19** files
-- `packages/adapters/pi/src/errors.ts` — imported by **19** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `scripts/release/stable-train.ts` — imported by **16** files
@@ -1739,9 +1740,9 @@
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts` +21 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
+- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts` +15 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +15 more
 - `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` ← `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts`, `packages/adapters/pi/src/__tests__/child-isolation.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +14 more
-- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts` +14 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 
@@ -1764,7 +1765,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 304 test files found
+> 303 test files found
 
 ---
 

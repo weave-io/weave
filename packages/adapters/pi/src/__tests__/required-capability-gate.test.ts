@@ -1,15 +1,15 @@
 /**
- * Task 21 phase A: the required `descriptor-relative-native-session-io`
- * capability and the top-level fail-closed boundary it enforces.
+ * The required `delegated-specialist-execution` capability and the top-level
+ * fail-closed boundary it enforces.
  *
  * These tests prove three things:
  *
- * 1. The capability is declared required and is answered only by the host
- *    surface inventory. The exact tested Pi host reports it unsupported with
- *    reason `path-only-session-api`, and no method presence, environment
- *    variable, or configuration can raise it.
+ * 1. The capability is declared required and is answered by the real host
+ *    surface inventory. A host that cannot prove Pi's session API reports it
+ *    unavailable with the closed reason `pi-session-api-unavailable`, and no
+ *    environment variable or configuration can raise it.
  * 2. Activation against that host enters health-only mode and names the
- *    unsupported capability without leaking a path or a prompt.
+ *    unavailable capability without leaking a path or a prompt.
  * 3. Every mutating adapter route fails with a typed
  *    `RequiredCapabilityUnavailable` **before** it calls a controller,
  *    session service, filesystem, cache, lease, or child process, while the
@@ -68,8 +68,10 @@ import {
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
 
-const CAPABILITY = "descriptor-relative-native-session-io" as const;
-const PATH_ONLY = "path-only-session-api";
+const CAPABILITY = "delegated-specialist-execution" as const;
+const PATH_ONLY = "pi-session-api-unavailable";
+/** The required host surface that carries Pi's native session API. */
+const SESSION_SURFACE = "session-restore" as const;
 
 const ALL_OWNED_COMMANDS: PiCommandInfo[] = WEAVE_COMMAND_NAMES.map((name) => ({
   name,
@@ -105,7 +107,7 @@ function trustedTuiSession() {
   };
 }
 
-/** A host surface report that models a hypothetical descriptor-safe host. */
+/** A host surface report where every required surface is proven. */
 function descriptorSafeReport(): PiHostSurfaceReport {
   return readHostSurfaceReport(
     PI_HOST_SURFACE_IDS.map((surfaceId) => ({
@@ -116,12 +118,16 @@ function descriptorSafeReport(): PiHostSurfaceReport {
   );
 }
 
-/** The report the exact tested Pi host produces: one path-only session gap. */
+/** The report a host without a usable Pi session API produces. */
 function pathOnlyReport(): PiHostSurfaceReport {
   return readHostSurfaceReport(
     PI_HOST_SURFACE_IDS.map((surfaceId) =>
-      surfaceId === CAPABILITY
-        ? { surfaceId, status: "unavailable" as const, details: PATH_ONLY }
+      surfaceId === SESSION_SURFACE
+        ? {
+            surfaceId,
+            status: "unavailable" as const,
+            details: "required-surface-missing",
+          }
         : { surfaceId, status: "native" as const, details: "test-controlled" },
     ),
   );
@@ -186,8 +192,8 @@ function controllerWith(hostSurface: PiHostSurfaceReport) {
     .map(() => controller);
 }
 
-describe("descriptor-relative-native-session-io: declaration", () => {
-  it("is a required capability owned by the host, declared once in the closed set", () => {
+describe("delegated-specialist-execution: declaration", () => {
+  it("is a required capability declared once in the closed set", () => {
     expect(SESSION_MUTATION_REQUIRED_CAPABILITY).toBe(CAPABILITY);
     expect(REQUIRED_CAPABILITIES).toContain(CAPABILITY);
     expect(ALL_CAPABILITY_IDS.filter((id) => id === CAPABILITY)).toHaveLength(
@@ -197,62 +203,62 @@ describe("descriptor-relative-native-session-io: declaration", () => {
       (entry) => entry.id === CAPABILITY,
     );
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.supplier).toBe("host");
-    expect(entries[0]?.remediationHint).toBeDefined();
   });
 
-  it("is declared as a required host surface in the compatibility matrix", () => {
-    expect(PI_HOST_SURFACE_IDS).toContain(CAPABILITY);
+  it("retires the obsolete descriptor capability from every closed set", () => {
+    const obsolete = "descriptor-relative-native-session-io";
+    expect([...(ALL_CAPABILITY_IDS as readonly string[])]).not.toContain(
+      obsolete,
+    );
+    expect([...(PI_HOST_SURFACE_IDS as readonly string[])]).not.toContain(
+      obsolete,
+    );
   });
 });
 
-describe("descriptor-relative-native-session-io: production inventory", () => {
-  it("reports unsupported with path-only-session-api even when restore, custom session directory, and every RPC method are present", async () => {
+describe("delegated-specialist-execution: production inventory", () => {
+  it("proves every required surface on a complete Pi host namespace", async () => {
     const result = await new DefaultPiHostSurfaceReader().read(
       completeHostInput(),
     );
     expect(result.isOk()).toBe(true);
     const report = readHostSurfaceReport(result._unsafeUnwrap());
-    expect(
-      report.probes.find((probe) => probe.surfaceId === CAPABILITY),
-    ).toEqual({
-      surfaceId: CAPABILITY,
-      status: "unavailable",
-      details: PATH_ONLY,
-    });
-    expect(report.requiredGaps).toEqual([CAPABILITY]);
+    expect(report.requiredGaps).toEqual([]);
   });
 
-  it("cannot be enabled by any environment variable or configuration", () => {
-    const port = createDefaultPiHostProbePort(completeHostInput());
-    // Every other probe on this fully capable host answers true.
-    expect(port.hasSessionCreate()).toBe(true);
-    expect(port.hasCustomSessionDirectoryContract()).toBe(true);
-    expect(port.hasSupportedVersion()).toBe(true);
-    // This one never does, regardless of the process environment.
-    const before = port.hasDescriptorRelativeSessionIo();
+  it("cannot be raised by any environment variable or configuration", () => {
+    const port = createDefaultPiHostProbePort({
+      ...completeHostInput(),
+      rootExports: { VERSION: "0.83.0" },
+    });
     process.env.WEAVE_PI_DESCRIPTOR_RELATIVE_SESSION_IO = "1";
     process.env.WEAVE_PI_UNSAFE_ENABLE_SESSION_IO = "true";
     try {
-      expect(before).toBe(false);
-      expect(port.hasDescriptorRelativeSessionIo()).toBe(false);
-      expect(
-        createDefaultPiHostProbePort(
-          completeHostInput(),
-        ).hasDescriptorRelativeSessionIo(),
-      ).toBe(false);
+      expect(port.hasSessionCreate()).toBe(false);
+      expect(port.hasSessionOpen()).toBe(false);
+      expect(port.hasCustomSessionDirectoryContract()).toBe(false);
     } finally {
       delete process.env.WEAVE_PI_DESCRIPTOR_RELATIVE_SESSION_IO;
       delete process.env.WEAVE_PI_UNSAFE_ENABLE_SESSION_IO;
     }
   });
 
-  it("probes unavailable from the real prober, and ok only for an explicitly descriptor-safe report", () => {
+  it("probes unavailable with one closed path-free reason, and ok only for a proven host", () => {
     const prober = new DefaultPiCapabilityProber();
     const base = {
       mode: "tui" as const,
       trust: "trusted" as const,
       commands: ALL_OWNED_COMMANDS,
+      candidatePlan: {
+        configLoaded: true,
+        materializationErrorCount: 0,
+        primaryDescriptorFound: true,
+        primaryModelDryResolved: true,
+        delegationToolPlanned: true,
+        eventLoggingPlanned: true,
+        runtimeDirectoryContained: true,
+        plansDirectoryContained: true,
+      },
     };
     const blocked = prober
       .probe({ ...base, hostSurface: pathOnlyReport() })
@@ -266,16 +272,19 @@ describe("descriptor-relative-native-session-io: production inventory", () => {
       .probe({ ...base, hostSurface: descriptorSafeReport() })
       .find((probe) => probe.capabilityId === CAPABILITY);
     expect(safe?.probeStatus).toBe("ok");
-    // With no host surface report at all the capability stays fail-closed.
-    const unreported = prober
-      .probe(base)
+    // Without a sealed candidate plan the capability stays fail-closed.
+    const unplanned = prober
+      .probe({
+        mode: "tui" as const,
+        trust: "trusted" as const,
+        commands: ALL_OWNED_COMMANDS,
+      })
       .find((probe) => probe.capabilityId === CAPABILITY);
-    expect(unreported?.probeStatus).toBe("unavailable");
-    expect(unreported?.details).toBe("host-surface-unreported");
+    expect(unplanned?.probeStatus).toBe("unavailable");
   });
 });
 
-describe("descriptor-relative-native-session-io: activation", () => {
+describe("delegated-specialist-execution: activation", () => {
   it("enters health-only mode and names the unsupported capability without paths or prompts", async () => {
     const controller = (await controllerWith(pathOnlyReport()))._unsafeUnwrap();
     const generation = controller.getCurrentGeneration();
@@ -286,19 +295,35 @@ describe("descriptor-relative-native-session-io: activation", () => {
     expect(gap).toEqual({ capabilityId: CAPABILITY, reason: PATH_ONLY });
     expect(gap?.reason).not.toContain("/");
     const diagnostic = generation?.preflight.hostSurfaceGapDiagnostics.find(
-      (entry) => entry.capability === CAPABILITY,
+      (entry) => entry.capability === SESSION_SURFACE,
     );
     expect(diagnostic?.mode).toBe("health-only");
-    expect(diagnostic?.probeResult).toBe(`unavailable:${PATH_ONLY}`);
+    expect(diagnostic?.probeResult).toBe(
+      "unavailable:required-surface-missing",
+    );
   });
 
-  it("stays ready when the host proves the contract, so deep-module coverage survives", async () => {
-    const controller = (
-      await controllerWith(descriptorSafeReport())
-    )._unsafeUnwrap();
+  it("stays ready when every required probe passes, so deep-module coverage survives", async () => {
+    const controller = new PiExtensionController({
+      safeInitializer: new PiSafeInitializer({
+        hostPackageReader: FakeHostPackageReader.ok({
+          name: HOST_PACKAGE_NAME,
+          version: "0.83.0",
+        }),
+        capabilityProber: new FixedProber(allOkProbes()),
+        configActivator: fakeConfigActivator(),
+      }),
+      idGenerator: new FakeIdGenerator(),
+      clock: new FakeClock(),
+      logger: new RecordingLogger(),
+    });
+    const activated = await controller.activate(
+      trustedTuiSession() as never,
+      ALL_OWNED_COMMANDS,
+      descriptorSafeReport(),
+    );
+    expect(activated.isOk()).toBe(true);
     const generation = controller.getCurrentGeneration();
-    // Other capabilities may still have gaps from this minimal fake plan; the
-    // point is that the session-I/O capability is not one of them.
     expect(
       findSessionMutationGap(
         generation?.preflight.requiredCapabilityGaps ?? [],
@@ -382,7 +407,7 @@ describe("descriptor-relative-native-session-io: activation", () => {
   });
 });
 
-describe("descriptor-relative-native-session-io: zero-side-effect routes", () => {
+describe("delegated-specialist-execution: zero-side-effect routes", () => {
   const blocked = createBlockedSessionMutationGate(PATH_ONLY);
 
   function spyingDelegationDeps(calls: string[]) {

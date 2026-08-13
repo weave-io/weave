@@ -4,7 +4,11 @@ import type {
 } from "@weaveio/weave-engine";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
 import { isOwnSourceInfo, WEAVE_COMMAND_NAMES } from "./commands.js";
-import type { PiHostSurfaceReport } from "./host-inventory.js";
+import {
+  PI_HOST_SURFACE_IDS,
+  type PiHostSurfaceId,
+  type PiHostSurfaceReport,
+} from "./host-inventory.js";
 import type { PiCommandInfo, PiMode, PiTrustState } from "./types.js";
 
 /**
@@ -58,6 +62,18 @@ export interface PiPreflightContext {
   readonly candidatePlan?: PiCandidatePlanContext;
   readonly hostSurface?: PiHostSurfaceReport;
 }
+
+/**
+ * Required host surfaces that carry Pi's native session API. A gap in any of
+ * them means the adapter cannot mint or reopen a child session.
+ */
+const SESSION_HOST_SURFACES: ReadonlySet<PiHostSurfaceId> = new Set([
+  "session-restore",
+  "rpc-persistent-session",
+  "rpc-append-entry",
+  "rpc-session-tree-read",
+  "custom-session-directory",
+]);
 
 const CANDIDATE_PLAN_CAPABILITIES: ReadonlySet<CapabilityId> = new Set([
   "config-materialization",
@@ -255,6 +271,52 @@ function evaluateCandidatePlanCapability(
   };
 }
 
+/**
+ * The closed, path-free set of reasons delegation readiness may report
+ * (Spec 33 path-session design §5.6). Raw host messages, causes, paths, and
+ * method names never reach an operator surface, so every host-surface gap is
+ * mapped onto exactly one of these constants.
+ */
+export type PiDelegationReadinessReason =
+  | "pi-session-api-unavailable"
+  | "pi-session-root-unavailable"
+  | "pi-session-root-unsafe"
+  | "pi-process-unavailable";
+
+/**
+ * Which closed reason each required host surface maps to. Total over
+ * `PiHostSurfaceId`: a surface that is not about session storage is a
+ * process/protocol surface, so its gap means the child process surface is
+ * unusable.
+ */
+const HOST_SURFACE_READINESS_REASONS: ReadonlyMap<
+  PiHostSurfaceId,
+  PiDelegationReadinessReason
+> = new Map(
+  PI_HOST_SURFACE_IDS.map((surfaceId) => [
+    surfaceId,
+    SESSION_HOST_SURFACES.has(surfaceId)
+      ? ("pi-session-api-unavailable" as const)
+      : ("pi-process-unavailable" as const),
+  ]),
+);
+
+/**
+ * Reduces every required host-surface gap to one closed readiness reason.
+ * Session-API gaps outrank process gaps because a host that cannot mint a
+ * session cannot run a durable child at all.
+ */
+export function describeDelegationReadinessGap(
+  requiredGaps: readonly PiHostSurfaceId[],
+): PiDelegationReadinessReason {
+  for (const surfaceId of PI_HOST_SURFACE_IDS) {
+    if (!requiredGaps.includes(surfaceId)) continue;
+    const reason = HOST_SURFACE_READINESS_REASONS.get(surfaceId);
+    if (reason === "pi-session-api-unavailable") return reason;
+  }
+  return "pi-process-unavailable";
+}
+
 /** Adapter-owned seam so tests can substitute a fully-controlled probe set (Pi adapter contract). */
 export interface PiCapabilityProbeSource {
   probe(context: PiPreflightContext): readonly CapabilityProbeResult[];
@@ -363,30 +425,6 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
     // `requiredGaps`; it is reported through the host surface report's
     // `overlayFallbackGaps` and selects the existing custom-editor child
     // inspection fallback instead.
-    // `descriptor-relative-native-session-io` is answered only by the host
-    // surface report. There is no environment variable, config flag, or
-    // method-presence inference that can raise it: the host either proves the
-    // descriptor-relative contract through its own inventory or the capability
-    // is unavailable and the adapter enters health-only mode.
-    if (id === "descriptor-relative-native-session-io") {
-      const probe = context.hostSurface?.probes.find(
-        (candidate) =>
-          candidate.surfaceId === "descriptor-relative-native-session-io",
-      );
-      if (probe === undefined)
-        return {
-          capabilityId: id,
-          probeStatus: "unavailable",
-          details: "host-surface-unreported",
-        };
-      if (probe.status !== "native")
-        return {
-          capabilityId: id,
-          probeStatus: "unavailable",
-          details: probe.details,
-        };
-      return { capabilityId: id, probeStatus: "ok", details: probe.details };
-    }
     if (
       context.hostSurface !== undefined &&
       context.hostSurface.requiredGaps.length > 0 &&
@@ -395,7 +433,9 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
       return {
         capabilityId: id,
         probeStatus: "unavailable",
-        details: `host-surface-gap:${context.hostSurface.requiredGaps.join(",")}`,
+        details: describeDelegationReadinessGap(
+          context.hostSurface.requiredGaps,
+        ),
       };
     }
     if (id === "command-entrypoints") {

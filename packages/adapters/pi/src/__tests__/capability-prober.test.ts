@@ -9,6 +9,7 @@ import {
 import {
   buildBlockedProbeSet,
   DefaultPiCapabilityProber,
+  describeDelegationReadinessGap,
   PROJECT_PATH_DEPENDENT_CAPABILITIES,
   sanitizeCapabilityProbeResults,
 } from "../capability-prober.js";
@@ -18,6 +19,7 @@ import {
   buildHostSurfaceGapDiagnostics,
   DefaultPiHostSurfaceReader,
   PI_HOST_SURFACE_IDS,
+  type PiHostSurfaceId,
   readHostSurfaceReport,
   selectsCustomEditorFallback,
 } from "../host-inventory.js";
@@ -341,7 +343,9 @@ describe("DefaultPiCapabilityProber", () => {
     expect(blocked).toEqual({
       capabilityId: "delegated-specialist-execution",
       probeStatus: "unavailable",
-      details: `host-surface-gap:${required?.id}`,
+      details: describeDelegationReadinessGap([
+        required?.id as PiHostSurfaceId,
+      ]),
     });
     const renderingFallback = readHostSurfaceReport(
       PI_HOST_SURFACE_IDS.map((surfaceId, index) => ({
@@ -537,21 +541,10 @@ describe("native session capability probes", () => {
     expect(result.isOk()).toBe(true);
     expect(calls).toEqual([]);
     const report = readHostSurfaceReport(result._unsafeUnwrap());
-    // The production probe port can never prove descriptor-relative session
-    // I/O, so a host that supplies every other surface - restore, custom
-    // session directory, and every RPC method - still reports this one gap.
-    expect(report.requiredGaps).toEqual([
-      "descriptor-relative-native-session-io",
-    ]);
-    expect(
-      report.probes.find(
-        (probe) => probe.surfaceId === "descriptor-relative-native-session-io",
-      ),
-    ).toEqual({
-      surfaceId: "descriptor-relative-native-session-io",
-      status: "unavailable",
-      details: "path-only-session-api",
-    });
+    // Reading the surface report never constructs, opens, or appends to a
+    // session: a complete public namespace proves every required surface
+    // through presence alone.
+    expect(report.requiredGaps).toEqual([]);
     expect(report.overlayFallbackGaps).toEqual([]);
   });
 
@@ -587,7 +580,7 @@ describe("native session capability probes", () => {
       expect(probe).toEqual({
         capabilityId: "delegated-specialist-execution",
         probeStatus: "unavailable",
-        details: `host-surface-gap:${surfaceId}`,
+        details: "pi-session-api-unavailable",
       });
 
       const [diagnostic, ...rest] = buildHostSurfaceGapDiagnostics(

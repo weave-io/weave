@@ -49,7 +49,7 @@ function allRequiredAt(
   };
 }
 
-/** Build a contract with all 22 capabilities at the given readiness. */
+/** Build a contract with all 21 capabilities at the given readiness. */
 function allCapabilitiesAt(
   readiness: CapabilityReadiness,
 ): AdapterCapabilityContract {
@@ -181,7 +181,7 @@ describe("required capability: native → pass", () => {
     const result = evaluateCoreReadinessProfile(contract);
     expect(result.ready).toBe(true);
     expect(result.failures).toHaveLength(0);
-    expect(result.passes).toHaveLength(13);
+    expect(result.passes).toHaveLength(12);
   });
 
   it("all required native → ready: true", () => {
@@ -383,10 +383,9 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
       "command-entrypoints",
       "event-logging",
       "token-usage-reporting",
-      "descriptor-relative-native-session-io",
     ];
     expect(new Set(REQUIRED_CAPABILITIES)).toEqual(new Set(specRequired));
-    expect(REQUIRED_CAPABILITIES).toHaveLength(13);
+    expect(REQUIRED_CAPABILITIES).toHaveLength(12);
   });
 
   it("OPTIONAL_CAPABILITIES contains exactly the 9 capabilities from the spec", () => {
@@ -415,12 +414,12 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
     }
   });
 
-  it("evaluation result accounts for all 22 capabilities when all are declared", () => {
+  it("evaluation result accounts for all 21 capabilities when all are declared", () => {
     const contract = fullPassingContract();
     const result = evaluateCoreReadinessProfile(contract);
     const total =
       result.passes.length + result.failures.length + result.warnings.length;
-    expect(total).toBe(22);
+    expect(total).toBe(21);
   });
 });
 
