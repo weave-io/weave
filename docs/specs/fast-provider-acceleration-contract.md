@@ -2,7 +2,7 @@
 
 Date: 2026-08-12
 
-Status: Approved contract baseline; provider mappings are not yet implemented
+Status: Approved and shipped; every adapter declares `provider-fast-activation` as `unsupported` and mutates no provider request
 
 Retrieval date for web sources: 2026-08-12
 
@@ -257,4 +257,6 @@ No current Weave harness adapter has a complete request-plus-response seam that 
 
 All three adapters therefore ship with `provider-fast-activation` declared `unsupported`, send no acceleration control, and leave provider requests untouched. `fast true` remains inert neutral intent end to end.
 
-Later implementation must preserve these ceilings. It may implement `requested` where this note proves a safe request seam, but it must not raise any adapter to `applied` without a new official harness response seam and tests against the exact provider evidence contract.
+This is the shipped result, not a staging point: Pi reports `harness-seam-unavailable`, OpenCode reports `response-proof-unavailable`, and Claude Code materialization reports `harness-seam-unavailable`. No adapter adds a provider field, header, or service-tier control, so `fast true` leaves every request byte-identical to the same config without it.
+
+Any change to these ceilings requires new evidence. Raising an adapter to `requested` requires a proven safe request seam under this note's contract; raising one to `applied` requires an official harness response seam and tests against the exact provider evidence contract.

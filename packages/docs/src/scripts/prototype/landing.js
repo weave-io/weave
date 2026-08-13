@@ -69,8 +69,9 @@
     // adapt: dashed adapter boundary
     s += dashbox(790, 120, 130, 130, 'adapter boundary');
     s += box(810, 150, 90, 70, 'plugin', 'var(--secondary)');
-    // use: only OpenCode is implemented today; others are documented as placeholders
-    var harness = ['opencode', '/start-work', '/weave:start', 'runtime journal'];
+    // use: three shipped adapter surfaces — a Pi extension, an OpenCode plugin,
+    // and Claude Code agent/command file materialization — plus the runtime journal
+    var harness = ['pi extension', 'opencode plugin', 'claude code files', 'runtime journal'];
     harness.forEach(function (hn, i) {
       s += box(1010, 60 + i * 74, 160, 50, hn, 'var(--border-strong)');
     });
@@ -82,7 +83,7 @@
     s += link(430, 185, 530, 185, 'gf', 'd2');
     // composed descriptors -> adapter
     s += link(670, 185, 810, 185, 'gf', 'd3');
-    // adapter -> OpenCode surfaces
+    // adapter -> harness surfaces
     [85, 159, 233, 307].forEach(function (y, i) {
       s += link(900, 185, 1010, y, 'gf', 'd4');
     });
