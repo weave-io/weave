@@ -33,7 +33,7 @@
  * field: an unusable header is a typed refusal.
  */
 
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 
 /**
  * Header fields this adapter reads from a native Pi v3 session, as reported
@@ -69,7 +69,11 @@ export interface PiValidatedSessionHeader {
 
 /** Why one header was refused. Bounded and path-free. */
 export type PiNativeSessionHeaderViolation =
-  /** Not an object, an array, or carrying an exotic/class prototype. */
+  /**
+   * Not an object, an array, carrying an exotic/class prototype, or an exotic
+   * object whose own reflection traps (`getPrototypeOf`, `ownKeys`,
+   * `getOwnPropertyDescriptor`) threw instead of answering.
+   */
   | "not-plain-object"
   /** An own symbol key, an accessor, or a non-enumerable own property. */
   | "unsafe-descriptor"
@@ -107,6 +111,46 @@ export const MAX_SESSION_HEADER_STRING_LENGTH = 4_096;
 /** Pi `Date.prototype.toISOString()` shape; never synthesized by the adapter. */
 const HOST_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
+/**
+ * Every reflection this module performs runs through one of these throwing
+ * boundaries. A hostile proxy can make `getPrototypeOf`, `ownKeys`,
+ * `getOwnPropertyDescriptor`, or a descriptor's own accessors throw, and a
+ * validator that reflects directly would propagate that throw out of a
+ * `Result`-returning function. Here every trap failure is a typed refusal.
+ */
+const reflectPrototypeOf = Result.fromThrowable(
+  (candidate: object): object | null =>
+    Object.getPrototypeOf(candidate) as object | null,
+  (): PiNativeSessionHeaderViolation => "not-plain-object",
+);
+
+const reflectOwnKeys = Result.fromThrowable(
+  (candidate: object): readonly (string | symbol)[] =>
+    Reflect.ownKeys(candidate),
+  (): PiNativeSessionHeaderViolation => "not-plain-object",
+);
+
+const reflectOwnDescriptor = Result.fromThrowable(
+  (candidate: object, key: string): PropertyDescriptor | undefined =>
+    Object.getOwnPropertyDescriptor(candidate, key),
+  (): PiNativeSessionHeaderViolation => "unsafe-descriptor",
+);
+
+const reflectIsArray = Result.fromThrowable(
+  (candidate: object): boolean => Array.isArray(candidate),
+  (): PiNativeSessionHeaderViolation => "not-plain-object",
+);
+
+/**
+ * One own field, read from its own data descriptor and never by property
+ * access. A caller property is never touched directly, so no `get` trap and
+ * no inherited accessor can ever run.
+ */
+interface OwnDataField {
+  readonly key: string;
+  readonly value: unknown;
+}
+
 function isBoundedHeaderString(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -136,45 +180,62 @@ export function validatePiNativeSessionHeader(
   if (typeof candidate !== "object" || candidate === null) {
     return err("not-plain-object");
   }
-  if (Array.isArray(candidate)) return err("not-plain-object");
-  const prototype = Object.getPrototypeOf(candidate) as object | null;
-  if (prototype !== null && prototype !== Object.prototype) {
+  const array = reflectIsArray(candidate);
+  if (array.isErr()) return err(array.error);
+  if (array.value) return err("not-plain-object");
+  const prototype = reflectPrototypeOf(candidate);
+  if (prototype.isErr()) return err(prototype.error);
+  if (prototype.value !== null && prototype.value !== Object.prototype) {
     return err("not-plain-object");
   }
-  if (Object.getOwnPropertySymbols(candidate).length > 0) {
+
+  // `Reflect.ownKeys` also reports non-enumerable and symbol own keys, so a
+  // hidden `toJSON`, a shadowed `constructor`, or any other invisible field
+  // is a refusal instead of a field this adapter silently drops while
+  // persisting bytes it believes it validated. One `ownKeys` call answers
+  // both the symbol question and the string-key question, so a proxy cannot
+  // report different key sets to two separate reflections.
+  const ownKeys = reflectOwnKeys(candidate);
+  if (ownKeys.isErr()) return err(ownKeys.error);
+  if (ownKeys.value.some((key) => typeof key === "symbol")) {
     return err("unsafe-descriptor");
   }
-
-  // `Reflect.ownKeys` also reports non-enumerable own keys, so a hidden
-  // `toJSON`, a shadowed `constructor`, or any other invisible field is a
-  // refusal instead of a field this adapter silently drops while persisting
-  // bytes it believes it validated.
-  const keys = Reflect.ownKeys(candidate).filter(
+  const keys = ownKeys.value.filter(
     (key): key is string => typeof key === "string",
   );
+
+  // Values come from the own data descriptors read here, never from property
+  // access on the caller's object: no `get` trap and no accessor ever runs.
+  const fields: OwnDataField[] = [];
   for (const key of keys) {
-    const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
-    if (descriptor === undefined) return err("unsafe-descriptor");
-    if (!("value" in descriptor)) return err("unsafe-descriptor");
-    if (!descriptor.enumerable) return err("unsafe-descriptor");
+    const descriptor = reflectOwnDescriptor(candidate, key);
+    if (descriptor.isErr()) return err(descriptor.error);
+    const own = descriptor.value;
+    if (own === undefined) return err("unsafe-descriptor");
+    if (!("value" in own)) return err("unsafe-descriptor");
+    if (!own.enumerable) return err("unsafe-descriptor");
     if (!SUPPORTED_HEADER_FIELDS.has(key)) return err("unknown-field");
+    fields.push({ key, value: own.value });
   }
 
-  const source = candidate as Record<string, unknown>;
+  const source = new Map<string, unknown>(
+    fields.map((field) => [field.key, field.value]),
+  );
   for (const field of PI_SESSION_HEADER_REQUIRED_FIELDS) {
-    if (!Object.hasOwn(source, field)) return err("missing-field");
-    if (source[field] === undefined) return err("missing-field");
+    if (!source.has(field)) return err("missing-field");
+    if (source.get(field) === undefined) return err("missing-field");
   }
 
-  if (source.type !== "session") return err("invalid-type");
-  if (source.version !== 3) return err("unsupported-version");
-  if (!isBoundedHeaderString(source.id)) return err("invalid-id");
-  if (!isBoundedHeaderString(source.timestamp)) return err("invalid-timestamp");
-  if (!isHostIsoTimestamp(source.timestamp)) return err("invalid-timestamp");
-  if (!isBoundedHeaderString(source.cwd)) return err("invalid-cwd");
+  const timestamp = source.get("timestamp");
+  if (source.get("type") !== "session") return err("invalid-type");
+  if (source.get("version") !== 3) return err("unsupported-version");
+  if (!isBoundedHeaderString(source.get("id"))) return err("invalid-id");
+  if (!isBoundedHeaderString(timestamp)) return err("invalid-timestamp");
+  if (!isHostIsoTimestamp(timestamp)) return err("invalid-timestamp");
+  if (!isBoundedHeaderString(source.get("cwd"))) return err("invalid-cwd");
   if (
-    Object.hasOwn(source, "parentSession") &&
-    !isBoundedHeaderString(source.parentSession)
+    source.has("parentSession") &&
+    !isBoundedHeaderString(source.get("parentSession"))
   ) {
     return err("invalid-parent-session");
   }
@@ -182,7 +243,7 @@ export function validatePiNativeSessionHeader(
   // Copied in the host's own key order so the persisted bytes stay identical
   // to the header Pi generated.
   const copied: Record<string, unknown> = {};
-  for (const key of keys) copied[key] = source[key];
+  for (const field of fields) copied[field.key] = field.value;
   return ok(Object.freeze(copied) as unknown as PiValidatedSessionHeader);
 }
 

@@ -87,11 +87,11 @@
 - `packages/adapters/pi/src/adapter-cli-commands.ts`
   - function createPlaceholderDoctorPort: () => PiAdapterDoctorPort
   - function looksLikeFilesystemPath: (value) => boolean
+  - function safeDiagnosticSessionRef: (candidate) => string | undefined
   - function stripPathsUnlessDiagnostic: (value, diagnostic) => T
   - function createPiChildrenCommandPort: (options) => PiAdapterChildrenPort
   - function createPiAdapterCommandHandlers: (options) => Readonly<Record<string, AdapterCommandHandler>>
-  - function createPiAdapterCommandRegistry: (options) => AdapterCommandRegistry
-  - _...20 more_
+  - _...21 more_
 - `packages/adapters/pi/src/adapter-cli-production.ts`
   - function evaluateProductionChildrenDeleteGate: (options, "SessionManager"
   >) => Result<void, PiAdapterFailure>
