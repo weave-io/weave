@@ -55,6 +55,7 @@ function degradedProbes(): CapabilityProbeResult[] {
 
 function makeController(probes: readonly CapabilityProbeResult[]) {
   const safeInitializer = new PiSafeInitializer({
+    delegationAuthority: () => ({ status: "ready" as const }),
     hostPackageReader: FakeHostPackageReader.ok({
       name: HOST_PACKAGE_NAME,
       version: "0.81.1",
@@ -203,6 +204,7 @@ describe("PiExtensionController generation replacement and staleness", () => {
     };
     const controller = new PiExtensionController({
       safeInitializer: new PiSafeInitializer({
+        delegationAuthority: () => ({ status: "ready" as const }),
         hostPackageReader,
         capabilityProber: new FixedProber(allOkProbes()),
         configActivator: fakeConfigActivator(),

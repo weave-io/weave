@@ -57,6 +57,7 @@ describe("PiSafeInitializer.preflight call discipline", () => {
 
     let probeCalls = 0;
     const initializer = new PiSafeInitializer({
+      delegationAuthority: () => ({ status: "ready" as const }),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
@@ -129,6 +130,7 @@ describe("PiSafeInitializer.preflight call discipline", () => {
       version: "0.81.1",
     });
     const initializer = new PiSafeInitializer({
+      delegationAuthority: () => ({ status: "ready" as const }),
       hostPackageReader: reader,
       capabilityProber: new DefaultPiCapabilityProber(),
       configActivator: fakeConfigActivator(),

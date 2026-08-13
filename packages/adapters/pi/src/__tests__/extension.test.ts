@@ -3476,7 +3476,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       order.push("upsert");
       return originalUpsert(ref, workspaceKey);
     }) as typeof cache.upsertRef;
-    const storage = createTestOnlyObservedSessionStorageAuthority({
+    const storage = await createTestOnlyObservedSessionStorageAuthority({
       granted: false,
       onCheck: () => {
         order.push("authority");
@@ -3546,7 +3546,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       order.push("upsert");
       return originalUpsert(ref, workspaceKey);
     }) as typeof cache.upsertRef;
-    const storage = createTestOnlyObservedSessionStorageAuthority({
+    const storage = await createTestOnlyObservedSessionStorageAuthority({
       granted: true,
       onCheck: () => {
         order.push("authority");
@@ -3608,7 +3608,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       deleteValue: () => undefined,
     };
     const order: string[] = [];
-    const storage = createTestOnlyObservedSessionStorageAuthority({
+    const storage = await createTestOnlyObservedSessionStorageAuthority({
       granted: false,
       onCheck: () => {
         order.push("authority");

@@ -44,7 +44,7 @@ const hmacPort = new WebCryptoHmacPort();
  * immediate-child session directory under it.
  */
 const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
-  createTestOnlyGrantedSessionStorageAuthority("/tmp");
+  await createTestOnlyGrantedSessionStorageAuthority("/tmp");
 const SESSION_DIR = "/tmp/weave-sessions";
 const SESSION_PATH = `${SESSION_DIR}/child-1.jsonl`;
 
@@ -56,8 +56,8 @@ function nativeSession(
     readonly sessionPath?: string;
     readonly activeLeafId?: string;
     readonly checkpointCursor?: number;
-    readonly authority?: ReturnType<
-      typeof createTestOnlyGrantedSessionStorageAuthority
+    readonly authority?: Awaited<
+      ReturnType<typeof createTestOnlyGrantedSessionStorageAuthority>
     >;
   } = {},
 ): NonNullable<PiRpcChildSpawnInput["session"]> {
@@ -1207,7 +1207,7 @@ describe("PiRpcChild", () => {
 
   it("rejects forged, foreign, and unrecognized launch grants before spawning", async () => {
     const foreignAuthority =
-      createTestOnlyGrantedSessionStorageAuthority("/tmp");
+      await createTestOnlyGrantedSessionStorageAuthority("/tmp");
     const invalidSessions: readonly PiRpcChildSpawnInput["session"][] = [
       // A hand-built look-alike carries no minted payload.
       {

@@ -176,6 +176,7 @@ function completeHostInput() {
 function controllerWith(hostSurface: PiHostSurfaceReport) {
   const controller = new PiExtensionController({
     safeInitializer: new PiSafeInitializer({
+      delegationAuthority: () => ({ status: "ready" as const }),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.83.0",
@@ -259,6 +260,8 @@ describe("delegated-specialist-execution: production inventory", () => {
         runtimeDirectoryContained: true,
         plansDirectoryContained: true,
       },
+      // A proven host still needs this generation's real spawn authority.
+      delegationAuthority: { status: "ready" as const },
     };
     const blocked = prober
       .probe({ ...base, hostSurface: pathOnlyReport() })
@@ -306,6 +309,7 @@ describe("delegated-specialist-execution: activation", () => {
   it("stays ready when every required probe passes, so deep-module coverage survives", async () => {
     const controller = new PiExtensionController({
       safeInitializer: new PiSafeInitializer({
+        delegationAuthority: () => ({ status: "ready" as const }),
         hostPackageReader: FakeHostPackageReader.ok({
           name: HOST_PACKAGE_NAME,
           version: "0.83.0",
@@ -369,6 +373,7 @@ describe("delegated-specialist-execution: activation", () => {
     // old contract: mutating blocked, cleanup still allowed.
     const controller = new PiExtensionController({
       safeInitializer: new PiSafeInitializer({
+        delegationAuthority: () => ({ status: "ready" as const }),
         hostPackageReader: FakeHostPackageReader.ok({
           name: HOST_PACKAGE_NAME,
           version: "0.83.0",

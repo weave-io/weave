@@ -48,7 +48,7 @@ import {
 
 /** One shared authority: it mints every launch grant these fixtures use. */
 const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
-  createTestOnlyGrantedSessionStorageAuthority("/history/children");
+  await createTestOnlyGrantedSessionStorageAuthority("/history/children");
 
 const encoder = new TextEncoder();
 const randomPort = new WebCryptoRandomPort();

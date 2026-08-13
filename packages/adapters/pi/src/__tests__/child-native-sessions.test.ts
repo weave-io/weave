@@ -262,6 +262,7 @@ function harness(options: FakeHostOptions = {}): Harness {
   const host = new FakeHost(options);
   const store = new PiNativeSessionStore({
     root: ROOT,
+    launch: { mode: "read-only" },
     // Structural stand-in until Task 16 removes the legacy JSONL FS module.
     fs: fs as unknown as PiNativeSessionFsPort,
     host,
@@ -448,6 +449,7 @@ describe("ref validation precedes host and filesystem work", () => {
     let clockCalls = 0;
     const store = new PiNativeSessionStore({
       root: ROOT,
+      launch: { mode: "read-only" },
       fs: throwingFilesystem(filesystemCalls),
       host,
       now: () => {
@@ -497,6 +499,7 @@ describe("ref validation precedes host and filesystem work", () => {
     const host = new UnreachableHost();
     const store = new PiNativeSessionStore({
       root: ROOT,
+      launch: { mode: "read-only" },
       fs: fs as unknown as PiNativeSessionFsPort,
       host,
     });

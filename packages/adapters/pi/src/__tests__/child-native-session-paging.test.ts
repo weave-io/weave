@@ -89,6 +89,7 @@ class ForbiddenHost implements PiNativeSessionHostPort {
 function pagingStore(fs: PiNativeSessionFsPort): PiNativeSessionStore {
   return new PiNativeSessionStore({
     root: ROOT,
+    launch: { mode: "read-only" },
     fs,
     host: new ForbiddenHost(),
   });

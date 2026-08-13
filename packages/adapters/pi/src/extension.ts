@@ -170,7 +170,7 @@ import {
 import {
   createPiChildSessionStorageAuthority,
   type PiChildSessionStorageAuthority,
-  resolvePiChildSessionRoot,
+  provePiChildSessionRoot,
 } from "./child-session-storage-authority.js";
 import {
   applyTreeControlKey,
@@ -242,6 +242,7 @@ import {
   PiModelResolver,
   type PiThinkingApplyPort,
 } from "./model-resolution.js";
+import { createBunPiNativeSessionFs } from "./native-session-fs.js";
 import {
   BunPathContainmentPort,
   type PathContainmentPort,
@@ -4280,22 +4281,30 @@ export function createPiExtension(
       );
       if (!startupStillCurrent()) return;
       // Built before preflight so capability probing, and every later launch
-      // consumer, share one authority. The root is resolved here, once, and
-      // the raw violation never leaves `resolvePiChildSessionRoot`.
-      const sessionRootResolution = await resolvePiChildSessionRoot({
-        env: {
-          XDG_DATA_HOME: deps.envPort.read("XDG_DATA_HOME"),
-          HOME: deps.envPort.read("HOME"),
-        },
-      }).unwrapOr({ status: "unavailable" as const });
+      // consumer, share one authority. The root is *proven* here, once, by
+      // really opening it no-follow through the production filesystem port;
+      // the raw violation never leaves `provePiChildSessionRoot`.
+      const injectedAuthority = deps.sessionStorageAuthority;
+      const sessionRootProof =
+        injectedAuthority === undefined
+          ? await provePiChildSessionRoot({
+              env: {
+                XDG_DATA_HOME: deps.envPort.read("XDG_DATA_HOME"),
+                HOME: deps.envPort.read("HOME"),
+              },
+              fs: createBunPiNativeSessionFs(),
+            }).unwrapOr(undefined)
+          : undefined;
       if (!startupStillCurrent()) return;
       sessionAuthorityCell.authority =
-        deps.sessionStorageAuthority ??
+        injectedAuthority ??
         createPiChildSessionStorageAuthority({
           SessionManager: (PiPublicExports as { SessionManager?: unknown })
             .SessionManager,
-          sessionRoot: sessionRootResolution,
-          processAvailable: typeof deps.processPort.spawn === "function",
+          ...(sessionRootProof === undefined
+            ? {}
+            : { sessionRoot: sessionRootProof }),
+          processLaunch: deps.processPort,
           scopeId: `pi-startup-${startupSequence}`,
         });
       const sessionAuthority = sessionAuthorityCell.authority;

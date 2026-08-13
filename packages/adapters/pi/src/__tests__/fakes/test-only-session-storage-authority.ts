@@ -5,7 +5,11 @@ import {
   type PiChildSessionLaunchRejection,
 } from "../../child-session-launch.js";
 import type { PiChildSessionStorageAuthority } from "../../child-session-storage-authority.js";
-import { createPiChildSessionStorageAuthority } from "../../child-session-storage-authority.js";
+import {
+  createPiChildSessionStorageAuthority,
+  provePiChildSessionRoot,
+} from "../../child-session-storage-authority.js";
+import { MemoryPiNativeSessionFs } from "../../native-session-fs.js";
 
 /**
  * Test-only native-session authority.
@@ -30,20 +34,35 @@ const FAKE_SESSION_MANAGER = {
   },
 };
 
-/** Builds a granted authority bound to `root`. */
-export function createTestOnlyGrantedSessionStorageAuthority(
+const FAKE_PROCESS_LAUNCH = { spawn: () => undefined };
+
+/**
+ * Builds a granted authority bound to `root`.
+ *
+ * The root proof is produced by the *production* prover, which really opens
+ * the root no-follow through an in-memory filesystem. No test can assert a
+ * resolved root, so a test authority is only ever as ready as a real open
+ * made it.
+ */
+export async function createTestOnlyGrantedSessionStorageAuthority(
   root: string = TEST_ONLY_SESSION_ROOT,
-): PiChildSessionStorageAuthority {
+): Promise<PiChildSessionStorageAuthority> {
+  const proof = (
+    await provePiChildSessionRoot({
+      root,
+      fs: new MemoryPiNativeSessionFs(),
+    })
+  )._unsafeUnwrap();
   return createPiChildSessionStorageAuthority({
     SessionManager: FAKE_SESSION_MANAGER,
-    sessionRoot: { status: "resolved", root },
-    processAvailable: true,
+    sessionRoot: proof,
+    processLaunch: FAKE_PROCESS_LAUNCH,
     scopeId: "test-only-authority",
   });
 }
 
 export const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY: PiChildSessionStorageAuthority =
-  createTestOnlyGrantedSessionStorageAuthority();
+  await createTestOnlyGrantedSessionStorageAuthority();
 
 /**
  * Mints a launch grant the way the session store does, so a transport test
@@ -103,18 +122,22 @@ export function mintTestOnlyLaunchGrant(
  * A granted or refused authority that reports every check, so a test can
  * assert the authority is consulted before any mutation or launch.
  */
-export function createTestOnlyObservedSessionStorageAuthority(options: {
+export async function createTestOnlyObservedSessionStorageAuthority(options: {
   readonly granted: boolean;
   readonly onCheck?: () => void;
   readonly root?: string;
-}): PiChildSessionStorageAuthority {
+}): Promise<PiChildSessionStorageAuthority> {
   const granted = options.granted
-    ? createTestOnlyGrantedSessionStorageAuthority(options.root)
+    ? await createTestOnlyGrantedSessionStorageAuthority(options.root)
     : createPiChildSessionStorageAuthority();
   return {
     requireNativeSessionAuthority: () => {
       options.onCheck?.();
       return granted.requireNativeSessionAuthority();
+    },
+    requireSessionRoot: () => {
+      options.onCheck?.();
+      return granted.requireSessionRoot();
     },
     requireLaunchAuthority: () => {
       options.onCheck?.();

@@ -146,6 +146,7 @@ function makeHarness(): {
   const manager = new ScriptedSessionManager();
   const store = new PiNativeSessionStore({
     root: ROOT,
+    launch: { mode: "read-only" },
     fs,
     host: createPiNativeSessionHost(manager),
     now: () => new Date("2026-08-11T00:00:00.000Z"),

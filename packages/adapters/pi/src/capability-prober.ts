@@ -76,9 +76,9 @@ export interface PiPreflightContext {
   readonly candidatePlan?: PiCandidatePlanContext;
   readonly hostSurface?: PiHostSurfaceReport;
   /**
-   * Absent only for embeddings that wire no session authority at all;
-   * production always supplies it, so `delegated-specialist-execution` can
-   * never claim readiness a spawn would refuse.
+   * This generation's spawn-authority verdict. An absent verdict is treated
+   * as unavailable, never as "assume ready": `delegated-specialist-execution`
+   * must never claim readiness a spawn would refuse.
    */
   readonly delegationAuthority?: PiDelegationAuthorityReadiness;
 }
@@ -457,15 +457,26 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
     // The spawn authority is a real, generation-scoped fact, so a generation
     // whose session API, session root, or process surface is missing reports
     // delegation as unavailable even when the candidate plan is perfect.
+    //
+    // An *absent* verdict is treated the same way. "No authority was wired"
+    // must never read as "assume a spawn would work": readiness has to imply
+    // that a usable spawn authority exists. The one exception is withheld
+    // project trust, whose narrow documented `ok` means only that
+    // project-path access was correctly withheld and which already forces
+    // health-only mode, so it can never promote the adapter to ready.
     if (
       id === "delegated-specialist-execution" &&
-      context.delegationAuthority !== undefined &&
-      context.delegationAuthority.status === "unavailable"
+      context.delegationAuthority?.status !== "ready" &&
+      !(
+        context.trust === "withheld" &&
+        PROJECT_PATH_DEPENDENT_CAPABILITIES.includes(id)
+      )
     ) {
       return {
         capabilityId: id,
         probeStatus: "unavailable",
-        details: context.delegationAuthority.reason,
+        details:
+          context.delegationAuthority?.reason ?? "pi-session-api-unavailable",
       };
     }
     if (id === "command-entrypoints") {

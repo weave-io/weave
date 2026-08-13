@@ -9,7 +9,7 @@ import {
 
 const SESSION_ROOT = "/data/weave/adapters/pi/sessions";
 const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
-  createTestOnlyGrantedSessionStorageAuthority(SESSION_ROOT);
+  await createTestOnlyGrantedSessionStorageAuthority(SESSION_ROOT);
 const SESSION_DIR = `${SESSION_ROOT}/child-1`;
 const SESSION_FILE = `${SESSION_DIR}/pi-generated.jsonl`;
 const INHERITED_SESSION_DIR = "PI_CODING_AGENT_SESSION_DIR";

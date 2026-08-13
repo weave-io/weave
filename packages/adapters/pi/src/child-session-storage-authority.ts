@@ -11,9 +11,17 @@
  *
  * 1. the installed Pi host exposes the public `SessionManager` create/open
  *    constructors (`pi-session-api-unavailable` otherwise),
- * 2. the adapter-owned session root resolved (`pi-session-root-unavailable`)
- *    and passed its safety checks (`pi-session-root-unsafe`),
+ * 2. the adapter-owned session root was *proven* by really opening it with
+ *    `openat(O_NOFOLLOW)` through the production filesystem port - not merely
+ *    resolved as a string - so an absent, uncreatable, symlinked, wrongly
+ *    typed, permissively moded, swapped, or unreadable root reports
+ *    `pi-session-root-unavailable` or `pi-session-root-unsafe`,
  * 3. a child process launch surface exists (`pi-process-unavailable`).
+ *
+ * Every fact is derived here from a real object or a real syscall. The
+ * authority accepts no asserted boolean and no asserted path: the root
+ * arrives as an opaque proof this module alone mints, and the process surface
+ * arrives as the launch port itself, whose `spawn` this module checks.
  *
  * Exactly one authority is created per generation and handed, by name, to
  * every consumer: thread sources, the session store that mints grants, the
@@ -30,6 +38,10 @@
 import { err, ok, okAsync, type Result, type ResultAsync } from "neverthrow";
 
 import {
+  PI_NATIVE_SESSION_LAYOUT,
+  type PiNativeSessionError,
+  type PiNativeSessionFsError,
+  type PiNativeSessionFsPort,
   type PiNativeSessionRootInput,
   type PiNativeSessionRootViolation,
   type PiNativeSessionStorageUnavailable,
@@ -76,17 +88,62 @@ export interface PiChildSessionStorageAuthority {
     PiNativeSessionStorageUnavailable
   >;
   /**
+   * The proven adapter-owned session root, for the seams that must construct
+   * storage over it (the session store, the CLI ports). `err` whenever the
+   * root was not proven, so no seam can build storage over an asserted path.
+   */
+  requireSessionRoot(): Result<string, PiNativeSessionStorageUnavailable>;
+  /**
    * Path-free readiness verdict for capability probing. `undefined` means
    * ready; otherwise exactly one of the four closed reasons.
    */
   readinessReason(): PiChildSessionReadinessReason | undefined;
 }
 
-/** How the adapter-owned session root resolved for this generation. */
-export type PiChildSessionRootResolution =
-  | { readonly status: "resolved"; readonly root: string }
-  | { readonly status: "unavailable" }
-  | { readonly status: "unsafe" };
+/**
+ * Opaque proof of how the adapter-owned session root really behaved this
+ * generation.
+ *
+ * Only {@link provePiChildSessionRoot} constructs one, and only after a real
+ * no-follow `openat` of the root through the injected filesystem port. The
+ * root path itself lives in a module-private table, so a caller cannot read
+ * it off the proof, and a structurally similar `{ status: "resolved" }`
+ * object asserted by a caller carries no proof at all and is refused.
+ */
+export interface PiChildSessionRootProof {
+  /** Structural marker only; the proven root is private to this module. */
+  readonly status: "resolved" | "unavailable" | "unsafe";
+}
+
+/** Proofs this module minted. Membership is the only evidence of validity. */
+const ROOT_PROOFS = new WeakMap<PiChildSessionRootProof, string | undefined>();
+
+function mintRootProof(
+  status: PiChildSessionRootProof["status"],
+  root?: string,
+): PiChildSessionRootProof {
+  const proof: PiChildSessionRootProof = Object.freeze({ status });
+  ROOT_PROOFS.set(proof, root);
+  return proof;
+}
+
+/**
+ * Reads a minted proof. An unrecognized object - including a caller-built
+ * `{ status: "resolved" }` - reads as `unavailable`, never as resolved.
+ */
+function readRootProof(proof: PiChildSessionRootProof | undefined): {
+  readonly status: PiChildSessionRootProof["status"];
+  readonly root?: string;
+} {
+  if (proof === undefined || !ROOT_PROOFS.has(proof)) {
+    return { status: "unavailable" };
+  }
+  const root = ROOT_PROOFS.get(proof);
+  if (proof.status !== "resolved" || root === undefined) {
+    return { status: proof.status === "unsafe" ? "unsafe" : "unavailable" };
+  }
+  return { status: "resolved", root };
+}
 
 function unavailable(
   reason: PiNativeSessionStorageUnavailableReason,
@@ -115,27 +172,54 @@ const UNSAFE_ROOT_VIOLATIONS: ReadonlySet<PiNativeSessionRootViolation> =
   ]);
 
 /**
- * Classifies a session-root failure into the two closed root reasons. A
+ * Classifies a session-root failure into the two closed root states. A
  * violation that proves the base is hostile or wrongly owned is `unsafe`;
  * anything else (missing home, relative base, unresolvable base, I/O) is
  * `unavailable`.
  */
-export function classifyPiChildSessionRootFailure(
+function classifyRootViolation(
   violation: PiNativeSessionRootViolation | undefined,
-): PiChildSessionRootResolution {
+): "unsafe" | "unavailable" {
   return violation !== undefined && UNSAFE_ROOT_VIOLATIONS.has(violation)
-    ? { status: "unsafe" }
-    : { status: "unavailable" };
+    ? "unsafe"
+    : "unavailable";
+}
+
+/**
+ * Which filesystem refusals prove the root is hostile rather than merely
+ * absent or unreachable. A symlinked, wrongly-typed, group/world-readable, or
+ * swapped root is unsafe; a missing or unwritable one is unavailable.
+ */
+function classifyRootFsError(
+  error: PiNativeSessionFsError,
+): "unsafe" | "unavailable" {
+  switch (error.type) {
+    case "symlink-rejected":
+    case "unsafe-path":
+    case "permissive-mode":
+    case "wrong-kind":
+    case "identity-changed":
+      return "unsafe";
+    default:
+      return "unavailable";
+  }
 }
 
 /** What the production authority inspects. Never an environment or config. */
 export interface PiChildSessionStorageAuthorityInput {
   /** Pi's public `SessionManager` export, as the extension received it. */
   readonly SessionManager?: unknown;
-  /** How the adapter-owned session root resolved for this generation. */
-  readonly sessionRoot?: PiChildSessionRootResolution;
-  /** Whether this generation holds a child process launch surface. */
-  readonly processAvailable?: boolean;
+  /**
+   * The proof {@link provePiChildSessionRoot} produced for this generation.
+   * Absent or unrecognized means "not proven", which is a refusal.
+   */
+  readonly sessionRoot?: PiChildSessionRootProof;
+  /**
+   * The child process launch surface this generation holds, as the extension
+   * received it. The authority checks for a callable `spawn` itself rather
+   * than trusting a caller-asserted boolean.
+   */
+  readonly processLaunch?: unknown;
   /** Generation/startup scope this authority belongs to. */
   readonly scopeId?: string;
 }
@@ -151,12 +235,11 @@ export function createPiChildSessionStorageAuthority(
   input: PiChildSessionStorageAuthorityInput = {},
 ): PiChildSessionStorageAuthority {
   const apiAvailable = isPiSessionManagerStatic(input.SessionManager);
-  const rootResolution = input.sessionRoot ?? {
-    status: "unavailable" as const,
-  };
-  const processAvailable = input.processAvailable === true;
+  const rootResolution = readRootProof(input.sessionRoot);
+  const spawn = (input.processLaunch as { spawn?: unknown } | undefined)?.spawn;
+  const processAvailable = typeof spawn === "function";
   const launchAuthority =
-    rootResolution.status === "resolved"
+    rootResolution.status === "resolved" && rootResolution.root !== undefined
       ? createPiChildSessionLaunchAuthority({
           scopeId: input.scopeId ?? "pi-child-session-authority",
           sessionRoot: rootResolution.root,
@@ -185,6 +268,15 @@ export function createPiChildSessionStorageAuthority(
     > {
       const reason = storageReason();
       return reason === undefined ? ok(undefined) : err(unavailable(reason));
+    },
+    requireSessionRoot(): Result<string, PiNativeSessionStorageUnavailable> {
+      const reason = storageReason();
+      if (reason !== undefined) return err(unavailable(reason));
+      const root = rootResolution.root;
+      if (root === undefined) {
+        return err(unavailable("pi-session-root-unavailable"));
+      }
+      return ok(root);
     },
     requireLaunchAuthority(): Result<
       PiChildSessionLaunchAuthority,
@@ -218,21 +310,68 @@ export function describeChildSessionStorageUnavailable(
 }
 
 /**
- * Resolves the adapter-owned session root for one generation and reduces the
- * outcome to the two closed root states. Never throws, never returns a
- * failure: an unresolvable or unsafe root is itself the answer, and the raw
- * violation (which can name a host path) stays inside this call.
+ * Proves the adapter-owned session root for one generation.
+ *
+ * Resolution alone was never a proof: it only canonicalized the XDG base and
+ * appended fixed segments, so a root that did not exist, could not be
+ * created, was a symlink or a file, was group/world-accessible, or was swapped
+ * underneath us all reported "resolved", and readiness could promise a spawn
+ * authority no launch could obtain.
+ *
+ * This performs the real check the launch path performs: it opens the root
+ * itself through the injected no-follow filesystem port, creating it when
+ * absent, and immediately closes the descriptor. The outcome is reduced to
+ * the two closed states and returned as an opaque proof. Never throws and
+ * never fails: an unusable root is itself the answer, and the raw violation
+ * (which can name a host path) never leaves this call.
  */
-export function resolvePiChildSessionRoot(
-  input: PiNativeSessionRootInput,
-): ResultAsync<PiChildSessionRootResolution, never> {
-  return resolvePiNativeSessionRoot(input)
-    .map((root): PiChildSessionRootResolution => ({ status: "resolved", root }))
+export function provePiChildSessionRoot(
+  input: PiNativeSessionRootInput & {
+    readonly fs: PiNativeSessionFsPort;
+    /**
+     * An adapter-owned root supplied directly instead of derived from the
+     * environment. It changes *derivation* only: the root is still proven by
+     * the same real no-follow open below, so no caller can assert that a root
+     * is usable. Production never passes it; unit embeddings that model a
+     * synthetic tree do.
+     */
+    readonly root?: string;
+  },
+): ResultAsync<PiChildSessionRootProof, never> {
+  const resolved =
+    input.root === undefined
+      ? resolvePiNativeSessionRoot(input)
+      : okAsync<string, PiNativeSessionError>(input.root);
+  return resolved
     .orElse((error) =>
       okAsync(
-        classifyPiChildSessionRootFailure(
-          error.type === "SessionRootViolation" ? error.reason : undefined,
+        mintRootProof(
+          classifyRootViolation(
+            error.type === "SessionRootViolation" ? error.reason : undefined,
+          ),
         ),
       ),
-    );
+    )
+    .andThen((resolved) => {
+      if (typeof resolved !== "string") return okAsync(resolved);
+      return input.fs
+        .openDirectory(resolved, true)
+        .andThen((directory) =>
+          // One descriptor-relative probe of the ledger the store itself
+          // uses. It costs nothing when absent, and it forces the port's
+          // held-descriptor identity, symlink, kind, and mode checks to run
+          // now rather than at the first launch.
+          directory
+            .statFile(PI_NATIVE_SESSION_LAYOUT.tombstoneFile)
+            .map(() => {
+              directory.close();
+              return mintRootProof("resolved", resolved);
+            })
+            .mapErr((error) => {
+              directory.close();
+              return error;
+            }),
+        )
+        .orElse((error) => okAsync(mintRootProof(classifyRootFsError(error))));
+    });
 }

@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  type PiNativeSessionFsPort,
+  PiNativeSessionStore,
+} from "../child-native-sessions.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
+import { validatePiNativeSessionHeader } from "../native-session-header.js";
+import {
   createPiNativeSessionHost,
   type PiSessionManagerInstance,
 } from "../native-session-host.js";
@@ -165,5 +171,200 @@ describe("Pi v3 header integrity", () => {
     for (const value of ["header", 3, true, []]) {
       expect(readHeader(value)).toBeNull();
     }
+  });
+});
+
+describe("one strict validator guards every lifecycle path", () => {
+  const ROOT = "/data/weave/adapters/pi/sessions";
+  const PARENT = "parent-session-1";
+  const REF = "child-1/session.jsonl";
+
+  function readOnlyStore(fs: MemoryPiNativeSessionFs): PiNativeSessionStore {
+    return new PiNativeSessionStore({
+      root: ROOT,
+      launch: { mode: "read-only" },
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host: {
+        create: () => {
+          throw new Error("host.create must not run on a read path");
+        },
+        open: () => {
+          throw new Error("host.open must not run on a read path");
+        },
+      },
+    });
+  }
+
+  async function seed(headerLine: string): Promise<MemoryPiNativeSessionFs> {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = (
+      await fs.openDirectory(`${ROOT}/child-1`, true)
+    )._unsafeUnwrap();
+    (
+      await directory.appendFile(
+        "session.jsonl",
+        new TextEncoder().encode(`${headerLine}\n`),
+        0o600,
+      )
+    )._unsafeUnwrap();
+    directory.close();
+    return fs;
+  }
+
+  test("rejects a non-enumerable own field a key walk would miss", () => {
+    const hidden = Object.defineProperty({ ...SUPPORTED_HEADER }, "toJSON", {
+      value: () => ({ type: "session" }),
+      enumerable: false,
+    });
+
+    expect(Object.keys(hidden)).not.toContain("toJSON");
+    expect(readHeader(hidden)).toBeNull();
+    expect(validatePiNativeSessionHeader(hidden).isErr()).toBe(true);
+  });
+
+  test("rejects an exotic prototype even when every field is right", () => {
+    class HostileHeader {
+      type = "session";
+      version = 3;
+      id = "pi-session-1";
+      timestamp = "2026-08-11T00:00:00.000Z";
+      cwd = "/repo";
+      parentSession = PARENT;
+    }
+
+    expect(validatePiNativeSessionHeader(new HostileHeader()).isErr()).toBe(
+      true,
+    );
+    expect(
+      validatePiNativeSessionHeader(
+        Object.assign(Object.create({ evil: true }), SUPPORTED_HEADER),
+      ).isErr(),
+    ).toBe(true);
+  });
+
+  test("rejects a timestamp the host could not have generated", () => {
+    for (const timestamp of [
+      "2026-08-11T00:00:00Z",
+      "2026-08-11",
+      "2026-13-40T00:00:00.000Z",
+      "not-a-time",
+    ]) {
+      expect(
+        validatePiNativeSessionHeader({
+          ...SUPPORTED_HEADER,
+          timestamp,
+        })._unsafeUnwrapErr(),
+      ).toBe("invalid-timestamp");
+    }
+  });
+
+  test("returns a frozen copy a caller cannot mutate after validation", () => {
+    const validated = validatePiNativeSessionHeader(
+      SUPPORTED_HEADER,
+    )._unsafeUnwrap() as { cwd: string };
+
+    expect(() => {
+      validated.cwd = "/hostile";
+    }).toThrow();
+  });
+
+  test("refuses an incomplete on-disk header on the descriptor read path", async () => {
+    const incomplete = await seed(
+      JSON.stringify({
+        type: "session",
+        id: "pi-session-1",
+        parentSession: PARENT,
+      }),
+    );
+
+    expect(
+      (
+        await readOnlyStore(incomplete).readSessionEntries(REF, PARENT)
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionCorrupt", ref: REF, reason: "missing-header" });
+  });
+
+  test("refuses an unknown on-disk header field on the descriptor read path", async () => {
+    const injected = await seed(
+      JSON.stringify({ ...SUPPORTED_HEADER, parentSession: PARENT, x: 1 }),
+    );
+
+    expect(
+      (
+        await readOnlyStore(injected).openSession(REF, PARENT)
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionCorrupt", ref: REF, reason: "missing-header" });
+  });
+
+  test("refuses the same header on the bounded paging path", async () => {
+    const injected = await seed(
+      JSON.stringify({ ...SUPPORTED_HEADER, parentSession: PARENT, x: 1 }),
+    );
+
+    const page = await readOnlyStore(injected).readSessionEntryPage(
+      REF,
+      PARENT,
+      { direction: "newest" },
+    );
+
+    expect(page._unsafeUnwrapErr()).toEqual({
+      type: "SessionCorrupt",
+      ref: REF,
+      reason: "missing-header",
+    });
+  });
+
+  test("refuses a partial header reported by the host on reopen", async () => {
+    const fs = await seed(
+      JSON.stringify({ ...SUPPORTED_HEADER, parentSession: PARENT }),
+    );
+    const store = new PiNativeSessionStore({
+      root: ROOT,
+      launch: { mode: "read-only" },
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host: {
+        create: () => {
+          throw new Error("unused");
+        },
+        // A host that reports a v3-looking header without `cwd`/`timestamp`.
+        open: () => ({
+          getSessionId: () => "pi-session-1",
+          getSessionFile: () => `${ROOT}/${REF}`,
+          getSessionDir: () => `${ROOT}/child-1`,
+          getHeader: () =>
+            ({
+              type: "session",
+              version: 3,
+              id: "pi-session-1",
+              parentSession: PARENT,
+            }) as never,
+          getEntries: () => [],
+          isPersisted: () => true,
+          getLeafId: () => "leaf-1",
+          appendCustomEntry: () => "entry-1",
+        }),
+      },
+    });
+
+    const result = await store.establishThreadLeaf(
+      REF,
+      {
+        threadId: "thread-1",
+        agentName: "shuttle",
+        parentId: "parent-1",
+        parentAgentName: "loom",
+        parentDepth: 0,
+        ownerParentSessionId: PARENT,
+        cwd: "/repo",
+        createdAt: 0,
+      },
+      PARENT,
+    );
+
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionCorrupt",
+      ref: REF,
+      reason: "missing-header",
+    });
   });
 });

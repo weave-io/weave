@@ -71,7 +71,7 @@ const SESSION_PATH =
  */
 const SESSION_ROOT = "/data/weave/adapters/pi/sessions/workspace";
 const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
-  createTestOnlyGrantedSessionStorageAuthority(SESSION_ROOT);
+  await createTestOnlyGrantedSessionStorageAuthority(SESSION_ROOT);
 const SECRET_TASK_SENTINEL = "SECRET_TASK_TOKEN_WARP_T6";
 const SECRET_TASK = [
   SECRET_TASK_SENTINEL,
@@ -140,6 +140,8 @@ function switchableSessionStorageAuthority(): PiChildSessionStorageAuthority & {
     },
     requireNativeSessionAuthority: () =>
       available ? granted.requireNativeSessionAuthority() : err(refusal),
+    requireSessionRoot: () =>
+      available ? granted.requireSessionRoot() : err(refusal),
     requireLaunchAuthority: () =>
       available ? granted.requireLaunchAuthority() : err(refusal),
     readinessReason: () =>
@@ -377,7 +379,7 @@ class FakeSessionStore implements PiThreadSessionPort {
     // The fake store mints through the same shared authority the controller
     // holds, so redemption sees one authority identity exactly as in
     // production.
-    return ok(
+    return okAsync(
       mintTestOnlyLaunchGrant(TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY, {
         childId: input.childId,
         sessionId: input.record.sessionId,

@@ -33,7 +33,7 @@ import {
  * shares one generation authority.
  */
 const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
-  createTestOnlyGrantedSessionStorageAuthority("/history/children");
+  await createTestOnlyGrantedSessionStorageAuthority("/history/children");
 
 function config(source: string): WeaveConfig {
   const result = parseConfig(source);

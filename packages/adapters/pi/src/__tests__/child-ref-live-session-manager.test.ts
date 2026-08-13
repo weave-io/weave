@@ -188,6 +188,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
     const nativeHost = new MemoryNativeSessionHost();
     const store = new PiNativeSessionStore({
       root: SESSION_ROOT,
+      launch: { mode: "read-only" },
       fs: fs as unknown as PiNativeSessionFsPort,
       host: nativeHost,
     });

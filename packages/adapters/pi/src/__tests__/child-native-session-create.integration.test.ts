@@ -33,7 +33,12 @@ describe("PiNativeSessionStore.createChildSession — Pi 0.83 SessionManager", (
   test("persists host header, reopens, and appends thread metadata durably", async () => {
     const fs = createBunPiNativeSessionFs();
     const host = createPiNativeSessionHost(SessionManager);
-    const store = new PiNativeSessionStore({ root, fs, host });
+    const store = new PiNativeSessionStore({
+      root,
+      fs,
+      host,
+      launch: { mode: "read-only" },
+    });
 
     const created = await store.createChildSession({
       childId: "child-1",
@@ -125,6 +130,7 @@ describe("PiNativeSessionStore.createChildSession — Pi 0.83 SessionManager", (
       root,
       fs,
       host,
+      launch: { mode: "read-only" },
     });
     const result = await store.createChildSession({
       childId: "child-2",

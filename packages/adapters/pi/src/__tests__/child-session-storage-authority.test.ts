@@ -3,7 +3,9 @@ import {
   CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
   createPiChildSessionStorageAuthority,
   describeChildSessionStorageUnavailable,
+  provePiChildSessionRoot,
 } from "../child-session-storage-authority.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 describe("child session storage authority", () => {
@@ -47,10 +49,16 @@ describe("child session storage authority", () => {
     }
   });
 
-  test("grants only for a host exposing public create and open with a proven root", () => {
+  test("grants only for a host exposing public create and open with a proven root", async () => {
+    const proof = (
+      await provePiChildSessionRoot({
+        root: "/data/weave/sessions",
+        fs: new MemoryPiNativeSessionFs(),
+      })
+    )._unsafeUnwrap();
     const result = createPiChildSessionStorageAuthority({
       SessionManager: { create: () => undefined, open: () => undefined },
-      sessionRoot: { status: "resolved", root: "/data/weave/sessions" },
+      sessionRoot: proof,
     }).requireNativeSessionAuthority();
 
     expect(result.isOk()).toBe(true);

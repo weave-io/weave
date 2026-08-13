@@ -274,6 +274,9 @@ function openWithSessionRoot(
     root: sessionRoot,
     fs: createBunPiNativeSessionFs(),
     host,
+    // The CLI inspects sessions; it never launches a child, so it states
+    // read-only explicitly and cannot mint a launch grant at all.
+    launch: { mode: "read-only" },
   });
   const authority = createNativeChildRefSourceAuthority(sessions);
   const accessMode = options.accessMode ?? "read";

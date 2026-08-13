@@ -165,12 +165,16 @@ export interface PiSafeInitializerDeps {
   ) => ResultAsync<PiChildInspectionSettingsChoice, never>;
   /**
    * Reads this generation's real spawn-authority verdict from the single
-   * session authority every launch path consumes (Spec 33 §5.6). Production
-   * wiring MUST supply it, so `delegated-specialist-execution` never reports
-   * ready while every spawn would refuse. Embeddings that wire no authority
-   * omit it and keep the candidate-plan verdict.
+   * session authority every launch path consumes (Spec 33 §5.6).
+   *
+   * Mandatory. While it was optional, an embedding that wired no authority
+   * kept the candidate-plan verdict, so `delegated-specialist-execution`
+   * could report ready in a generation where every spawn would refuse -
+   * exactly the disagreement the single authority exists to remove. An
+   * embedding that genuinely cannot delegate says so by returning
+   * `{ status: "unavailable", reason }`.
    */
-  readonly delegationAuthority?: () => PiDelegationAuthorityReadiness;
+  readonly delegationAuthority: () => PiDelegationAuthorityReadiness;
 }
 
 interface HostOutcome {
@@ -212,7 +216,7 @@ export class PiSafeInitializer {
     // Read once per preflight, from the same authority object the delegation
     // controller, direct dispatch, and every RPC child will consume.
     const delegationAuthority = Result.fromThrowable(
-      () => this.deps.delegationAuthority?.(),
+      () => this.deps.delegationAuthority(),
       (): PiDelegationAuthorityReadiness => ({
         status: "unavailable",
         reason: "pi-session-api-unavailable",

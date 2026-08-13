@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { ok } from "neverthrow";
 
 import {
-  type MintNativeSessionLaunchGrantInput,
+  type PiNativeSessionFsPort,
+  type PiNativeSessionHandle,
+  type PiNativeSessionHostPort,
   type PiNativeSessionRecord,
   PiNativeSessionStore,
+  type PiNativeSessionStoreLaunchMode,
 } from "../child-native-sessions.js";
 import {
   createPiChildSessionLaunchAuthority,
@@ -14,6 +17,7 @@ import {
   type PiChildSessionLaunchRejection,
   redeemPiChildSessionLaunchGrant,
 } from "../child-session-launch.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 
 const ROOT = "/data/weave/adapters/pi/sessions";
 const DIR = `${ROOT}/child-1`;
@@ -217,62 +221,210 @@ describe("Pi child session launch grants", () => {
 });
 
 describe("PiNativeSessionStore launch minting", () => {
-  const record: PiNativeSessionRecord = {
-    childId: "child-1",
-    sessionId: "pi-session-1",
-    ref: "child-1/pi-generated.jsonl",
-    path: FILE,
-    parentSession: "parent-1",
-    cwd: "/repo",
-  };
-  const input: MintNativeSessionLaunchGrantInput = {
-    childId: "run-child-9",
-    record,
-    activeLeafId: "leaf-1",
-  };
-  const ports = {
-    fs: {} as never,
-    host: {} as never,
-  };
+  const PARENT = "parent-1";
+  const CWD = "/repo";
+  const CHILD = "child-1";
 
-  test("refuses to mint without a launch authority", () => {
-    const store = new PiNativeSessionStore({ root: ROOT, ...ports });
-
-    expect(store.mintLaunchGrant(input)._unsafeUnwrapErr()).toEqual({
-      type: "SessionStorageUnavailable",
-      reason: "pi-session-root-unavailable",
+  function memoryHost(
+    overrides: { readonly openSessionId?: string } = {},
+  ): PiNativeSessionHostPort {
+    const handle = (
+      file: string,
+      dir: string,
+      id: string,
+    ): PiNativeSessionHandle => ({
+      getSessionId: () => id,
+      getSessionFile: () => file,
+      getSessionDir: () => dir,
+      getHeader: () => ({
+        type: "session",
+        version: 3,
+        id,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        cwd: CWD,
+        parentSession: PARENT,
+      }),
+      getEntries: () => [],
+      isPersisted: () => true,
+      getLeafId: () => "leaf-1",
+      appendCustomEntry: () => "entry-1",
     });
-  });
+    return {
+      create: (_cwd, sessionDir) =>
+        handle(`${sessionDir}/session.jsonl`, sessionDir, "pi-session-1"),
+      open: (path, sessionDir) =>
+        handle(path, sessionDir, overrides.openSessionId ?? "pi-session-1"),
+    };
+  }
 
-  test("refuses an authority bound to a different root", () => {
+  async function storeWith(options: {
+    readonly launch: PiNativeSessionStoreLaunchMode;
+    readonly host?: PiNativeSessionHostPort;
+    readonly fs?: MemoryPiNativeSessionFs;
+  }): Promise<{
+    readonly store: PiNativeSessionStore;
+    readonly fs: MemoryPiNativeSessionFs;
+  }> {
+    const fs = options.fs ?? new MemoryPiNativeSessionFs();
     const store = new PiNativeSessionStore({
       root: ROOT,
-      ...ports,
-      launchAuthority: authority("/other/root"),
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host: options.host ?? memoryHost(),
+      launch: options.launch,
     });
+    return { store, fs };
+  }
 
-    expect(store.mintLaunchGrant(input)._unsafeUnwrapErr()).toEqual({
-      type: "SessionRootViolation",
-      reason: "path-escape",
+  /** A session this store itself created, validated, and returned. */
+  async function provenRecord(
+    store: PiNativeSessionStore,
+  ): Promise<PiNativeSessionRecord> {
+    return (
+      await store.createChildSession({
+        childId: CHILD,
+        parentSession: PARENT,
+        cwd: CWD,
+      })
+    )._unsafeUnwrap();
+  }
+
+  test("refuses to mint without a launch authority", async () => {
+    const { store } = await storeWith({ launch: { mode: "read-only" } });
+    const record = await provenRecord(store);
+
+    expect(
+      (
+        await store.mintLaunchGrant({
+          childId: "run-child-9",
+          record,
+          activeLeafId: "leaf-1",
+        })
+      )._unsafeUnwrapErr(),
+    ).toEqual({
+      type: "SessionGrantRefused",
+      reason: "authority-unavailable",
     });
   });
 
-  test("binds the grant to the launching child, not the session owner", () => {
+  test("refuses an authority bound to a different root", async () => {
+    const { store } = await storeWith({
+      launch: { mode: "authorized", authority: authority("/other/root") },
+    });
+    const record = await provenRecord(store);
+
+    expect(
+      (
+        await store.mintLaunchGrant({
+          childId: "run-child-9",
+          record,
+          activeLeafId: "leaf-1",
+        })
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionGrantRefused", reason: "authority-mismatch" });
+  });
+
+  test("refuses a caller-built record that only looks like a validated one", async () => {
     const granted = authority();
-    const store = new PiNativeSessionStore({
-      root: ROOT,
-      ...ports,
-      launchAuthority: granted,
+    const { store } = await storeWith({
+      launch: { mode: "authorized", authority: granted },
     });
+    const proven = await provenRecord(store);
+    // Same fields, different object: the structural shape a public caller can
+    // build. It carries no store provenance at all.
+    const forged: PiNativeSessionRecord = { ...proven };
 
-    const grant = store.mintLaunchGrant(input)._unsafeUnwrap();
+    expect(
+      (
+        await store.mintLaunchGrant({
+          childId: "run-child-9",
+          record: forged,
+          activeLeafId: "leaf-1",
+        })
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionGrantRefused", reason: "unproven-session" });
+  });
+
+  test("refuses a record another store validated", async () => {
+    const granted = authority();
+    const fs = new MemoryPiNativeSessionFs();
+    const { store } = await storeWith({
+      fs,
+      launch: { mode: "authorized", authority: granted },
+    });
+    const other = new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host: memoryHost(),
+      launch: { mode: "authorized", authority: granted },
+    });
+    const foreign = await provenRecord(other);
+
+    expect(
+      (
+        await store.mintLaunchGrant({
+          childId: "run-child-9",
+          record: foreign,
+          activeLeafId: "leaf-1",
+        })
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionGrantRefused", reason: "unproven-session" });
+  });
+
+  test("refuses when reopening no longer yields the validated identity", async () => {
+    const granted = authority();
+    const fs = new MemoryPiNativeSessionFs();
+    const { store } = await storeWith({
+      fs,
+      launch: { mode: "authorized", authority: granted },
+    });
+    const record = await provenRecord(store);
+    // A store whose host now reports a different session on reopen.
+    const drifted = new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host: memoryHost({ openSessionId: "pi-session-2" }),
+      launch: { mode: "authorized", authority: granted },
+    });
+    const driftedRecord = (
+      await drifted.readSessionEntries(`${CHILD}/session.jsonl`, PARENT)
+    )._unsafeUnwrap().record;
+
+    // The on-disk header still names the original session, so the drifted
+    // host's reopen cannot agree with what the store validated.
+    expect(driftedRecord.sessionId).toBe("pi-session-1");
+    expect(
+      (
+        await drifted.mintLaunchGrant({
+          childId: "run-child-9",
+          record: driftedRecord,
+          activeLeafId: "leaf-1",
+        })
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionGrantRefused", reason: "identity-mismatch" });
+    expect(record.ref).toBe(`${CHILD}/session.jsonl`);
+  });
+
+  test("binds the grant to the launching child, not the session owner", async () => {
+    const granted = authority();
+    const { store } = await storeWith({
+      launch: { mode: "authorized", authority: granted },
+    });
+    const record = await provenRecord(store);
+
+    const grant = (
+      await store.mintLaunchGrant({
+        childId: "run-child-9",
+        record,
+        activeLeafId: "leaf-1",
+      })
+    )._unsafeUnwrap();
 
     expect(
       redeemPiChildSessionLaunchGrant(grant, {
         childId: "run-child-9",
         authority: granted,
       }).map((launch) => launch.sessionPath),
-    ).toEqual(ok(FILE));
+    ).toEqual(ok(`${ROOT}/${CHILD}/session.jsonl`));
     expect(
       redeemPiChildSessionLaunchGrant(grant, {
         childId: record.childId,
@@ -281,20 +433,24 @@ describe("PiNativeSessionStore launch minting", () => {
     ).toBe("child-mismatch");
   });
 
-  test("refuses a record whose path escapes the store root", () => {
-    const store = new PiNativeSessionStore({
-      root: ROOT,
-      ...ports,
-      launchAuthority: authority(),
+  test("refuses an invalid active leaf even for a proven session", async () => {
+    const granted = authority();
+    const { store } = await storeWith({
+      launch: { mode: "authorized", authority: granted },
     });
+    const record = await provenRecord(store);
 
     expect(
-      store
-        .mintLaunchGrant({
-          ...input,
-          record: { ...record, path: `${ROOT}-evil/child-1/session.jsonl` },
+      (
+        await store.mintLaunchGrant({
+          childId: "run-child-9",
+          record,
+          activeLeafId: "",
         })
-        ._unsafeUnwrapErr(),
-    ).toEqual({ type: "SessionRootViolation", reason: "path-escape" });
+      )._unsafeUnwrapErr(),
+    ).toEqual({
+      type: "SessionGrantRefused",
+      reason: "invalid-launch-identity",
+    });
   });
 });

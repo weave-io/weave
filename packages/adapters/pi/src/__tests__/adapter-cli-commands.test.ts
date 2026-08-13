@@ -408,6 +408,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     directory.close();
     return new PiNativeSessionStore({
       root: ROOT,
+      launch: { mode: "read-only" },
       fs: fs as unknown as PiNativeSessionFsPort,
       host: {
         create(): PiNativeSessionHandle {

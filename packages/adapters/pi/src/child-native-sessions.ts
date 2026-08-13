@@ -36,6 +36,12 @@ import {
   type PiChildSessionLaunchAuthority,
   type PiChildSessionLaunchGrant,
 } from "./child-session-launch.js";
+import {
+  type PiNativeSessionHeader,
+  type PiValidatedSessionHeader,
+  validatedHeadersMatch,
+  validatePiNativeSessionHeader,
+} from "./native-session-header.js";
 import { isLexicallyContained } from "./path-containment.js";
 import {
   createBunPiTrustedDataRootPort,
@@ -165,6 +171,10 @@ export type PiNativeSessionError =
     }
   | { readonly type: "SessionConfirmationRequired"; readonly ref: string }
   | {
+      readonly type: "SessionGrantRefused";
+      readonly reason: PiNativeSessionGrantRefusal;
+    }
+  | {
       readonly type: "TombstoneAppendFailed";
       readonly reason: "io" | "unavailable" | "permission";
     }
@@ -172,6 +182,26 @@ export type PiNativeSessionError =
       readonly type: "SessionStorageUnavailable";
       readonly reason: PiNativeSessionStorageUnavailableReason;
     };
+
+/**
+ * Why a launch grant was refused. Bounded and path-free.
+ *
+ * `unproven-session` is the important one: the caller presented a session
+ * record this store never validated - a structural look-alike built by a
+ * public caller, a record from another store or generation, or a copy. The
+ * store mints only from records it produced itself.
+ */
+export type PiNativeSessionGrantRefusal =
+  /** The presented record is not one this store validated and returned. */
+  | "unproven-session"
+  /** This store holds no generation-scoped launch authority. */
+  | "authority-unavailable"
+  /** The authority's validated root is not this store's root. */
+  | "authority-mismatch"
+  /** Reopening the proven ref no longer yields the validated identity. */
+  | "identity-mismatch"
+  /** The child id, active leaf, ref, or checkpoint failed its bounds. */
+  | "invalid-launch-identity";
 
 /**
  * Why native session storage is unavailable. Bounded and path-free: a
@@ -582,17 +612,10 @@ export function verifyNativeSessionRef(
 // Host session port
 // ---------------------------------------------------------------------------
 
-/** Header fields this module reads from a native Pi v3 session. */
-export interface PiNativeSessionHeader {
-  readonly id: string;
-  readonly cwd: string;
-  /** Native entry discriminator; Pi always emits `"session"`. */
-  readonly type?: string;
-  readonly version?: number;
-  /** Host-generated ISO-8601 creation timestamp. Never synthesized here. */
-  readonly timestamp?: string;
-  readonly parentSession?: string;
-}
+export type {
+  PiNativeSessionHeader,
+  PiValidatedSessionHeader,
+} from "./native-session-header.js";
 
 /**
  * The narrow slice of Pi's `SessionManager` instance this module depends on.
@@ -760,18 +783,33 @@ export function nativeSessionDeletionToken(ref: string): string {
 // Store
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether this store may authorize launches, stated explicitly at
+ * construction (Spec 33 path-session design §5.3 / R5).
+ *
+ * There is no default. A read-only store - diagnostics, history, doctor,
+ * inspection - must say `read-only` and then physically cannot mint a grant;
+ * a launching store must present the generation-scoped launch authority the
+ * same object graph proved readiness with. Omission used to mean "read-only",
+ * which made a missing wiring look like a policy decision.
+ */
+export type PiNativeSessionStoreLaunchMode =
+  | { readonly mode: "read-only" }
+  | {
+      readonly mode: "authorized";
+      readonly authority: PiChildSessionLaunchAuthority;
+    };
+
 export interface PiNativeSessionStoreOptions {
   readonly root: string;
   readonly fs: PiNativeSessionFsPort;
   readonly host: PiNativeSessionHostPort;
   readonly now?: () => Date;
   /**
-   * The generation-scoped launch authority this store mints launch grants
-   * from (Spec 33 §5.3 / R5). Omitted for read-only stores: without it, no
-   * grant can be minted and therefore no child can be launched from this
-   * store's sessions.
+   * Mandatory statement of whether this store may mint launch grants, and
+   * from which generation-scoped authority.
    */
-  readonly launchAuthority?: PiChildSessionLaunchAuthority;
+  readonly launch: PiNativeSessionStoreLaunchMode;
 }
 
 /** What a caller must prove before a validated session may launch a child. */
@@ -782,7 +820,11 @@ export interface MintNativeSessionLaunchGrantInput {
    * never to the id that originally created the session.
    */
   readonly childId: string;
-  /** The validated session record this store returned. */
+  /**
+   * A record this store itself validated and returned. Provenance is object
+   * identity: a structurally identical record built by a caller carries no
+   * proof and is refused with `unproven-session`.
+   */
   readonly record: PiNativeSessionRecord;
   readonly activeLeafId: string;
   readonly checkpointCursor?: number;
@@ -1016,18 +1058,6 @@ function parseJsonlBodyLine(
     return { kind: "corrupt", offset, reason: "not-object" };
   }
   return { kind: "entry", offset, value: parsed.value };
-}
-
-function isSessionHeaderLine(value: unknown): value is {
-  type: "session";
-  version?: number;
-  id?: string;
-  parentSession?: string;
-  cwd?: string;
-} {
-  if (typeof value !== "object" || value === null) return false;
-  const record = value as { type?: unknown };
-  return record.type === "session";
 }
 
 /**
@@ -1423,60 +1453,52 @@ function readLinesBackward(
   return step(endExclusive, new Uint8Array(), endExclusive);
 }
 
-function headerCorruption(
-  header: PiNativeSessionHeader | null,
+/**
+ * Validates one candidate header for a *child* session: the complete strict
+ * Pi v3 contract, plus the parent link this adapter always writes and always
+ * requires. Used by every read/reopen path, so a header refused at create can
+ * never be accepted later.
+ */
+function validateChildSessionHeader(
+  candidate: unknown,
   expectedParent: string | undefined,
-): PiNativeSessionCorruption | undefined {
-  if (
-    header === null ||
-    typeof header.id !== "string" ||
-    header.id.length === 0
-  )
-    return "missing-header";
-  if (header.version !== undefined && header.version !== 3)
-    return "unsupported-version";
-  if (
-    expectedParent !== undefined &&
-    header.parentSession !== undefined &&
-    header.parentSession !== expectedParent
-  ) {
-    return "parent-session-mismatch";
+): Result<PiValidatedSessionHeader, PiNativeSessionCorruption> {
+  const validated = validatePiNativeSessionHeader(candidate);
+  if (validated.isErr()) {
+    return err(
+      validated.error === "unsupported-version"
+        ? "unsupported-version"
+        : "missing-header",
+    );
   }
-  if (header.parentSession === undefined) return "parent-session-mismatch";
-  return undefined;
-}
-
-/** Pi `Date.prototype.toISOString()` shape; never synthesized by this store. */
-const HOST_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-
-function isHostIsoTimestamp(value: string): boolean {
-  if (!HOST_ISO_TIMESTAMP.test(value)) return false;
-  return !Number.isNaN(Date.parse(value));
+  const header = validated.value;
+  // Every Weave child session carries the immutable parent link this adapter
+  // wrote at create. A session without one is not this adapter's, and one
+  // that names a different parent belongs to another parent session.
+  if (header.parentSession === undefined) return err("parent-session-mismatch");
+  if (expectedParent !== undefined && header.parentSession !== expectedParent) {
+    return err("parent-session-mismatch");
+  }
+  return ok(header);
 }
 
 /**
  * Headers this store will persist verbatim before spawn. Missing host fields
- * are never invented; wrong type/version/timestamp fail as `header-unusable`.
+ * are never invented; an incomplete, exotic, or wrong-version header fails as
+ * `header-unusable`. The parent link and cwd must be exactly the ones this
+ * store asked the host to create.
  */
 function persistableHostHeader(
-  header: PiNativeSessionHeader | null,
+  header: unknown,
   input: CreateNativeChildSessionInput,
-): Result<PiNativeSessionHeader, "header-unusable"> {
-  if (
-    header === null ||
-    header.type !== "session" ||
-    header.version !== 3 ||
-    typeof header.id !== "string" ||
-    header.id.length === 0 ||
-    typeof header.cwd !== "string" ||
-    header.cwd.length === 0 ||
-    typeof header.timestamp !== "string" ||
-    !isHostIsoTimestamp(header.timestamp) ||
-    header.parentSession !== input.parentSession
-  ) {
+): Result<PiValidatedSessionHeader, "header-unusable"> {
+  const validated = validatePiNativeSessionHeader(header);
+  if (validated.isErr()) return err("header-unusable");
+  if (validated.value.parentSession !== input.parentSession) {
     return err("header-unusable");
   }
-  return ok(header);
+  if (validated.value.cwd !== input.cwd) return err("header-unusable");
+  return ok(validated.value);
 }
 
 /**
@@ -1501,7 +1523,8 @@ interface HostSessionIdentity {
   readonly sessionFile: string | undefined;
   readonly sessionDir: string;
   readonly sessionId: string;
-  readonly header: PiNativeSessionHeader | null;
+  /** Exactly what the host reported, never assumed to have been validated. */
+  readonly header: unknown;
   readonly persisted: boolean;
 }
 
@@ -1526,20 +1549,6 @@ function readHostSessionIdentity(
       reason: "host-threw",
     }),
   )();
-}
-
-function headersMatchIdentity(
-  left: PiNativeSessionHeader,
-  right: PiNativeSessionHeader,
-): boolean {
-  return (
-    left.type === right.type &&
-    left.version === right.version &&
-    left.id === right.id &&
-    left.cwd === right.cwd &&
-    left.timestamp === right.timestamp &&
-    left.parentSession === right.parentSession
-  );
 }
 
 const headerLineEncoder = new TextEncoder();
@@ -1744,7 +1753,7 @@ function parseSessionFileContents(
   expectedParentSession: string | undefined,
 ): Result<
   {
-    readonly header: PiNativeSessionHeader;
+    readonly header: PiValidatedSessionHeader;
     readonly entries: readonly unknown[];
   },
   PiNativeSessionError
@@ -1756,7 +1765,7 @@ function parseSessionFileContents(
 
   const maxLine = effectiveMaxRangeLength();
   const entries: unknown[] = [];
-  let header: PiNativeSessionHeader | undefined;
+  let header: PiValidatedSessionHeader | undefined;
   let start = 0;
   while (start < bytes.length) {
     let end = bytes.indexOf(0x0a, start);
@@ -1772,15 +1781,12 @@ function parseSessionFileContents(
     const parsed = parseJsonlBodyLine(0, line);
     if (parsed.kind !== "entry") return err(corrupt("unreadable"));
     if (header === undefined) {
-      if (!isSessionHeaderLine(parsed.value)) {
-        return err(corrupt("missing-header"));
-      }
-      const candidate = parsed.value as PiNativeSessionHeader | null;
-      const violation = headerCorruption(candidate, expectedParentSession);
-      if (violation !== undefined || candidate === null) {
-        return err(corrupt(violation ?? "missing-header"));
-      }
-      header = candidate;
+      const validated = validateChildSessionHeader(
+        parsed.value,
+        expectedParentSession,
+      );
+      if (validated.isErr()) return err(corrupt(validated.error));
+      header = validated.value;
       continue;
     }
     if (entries.length >= MAX_DESCRIPTOR_SESSION_ENTRIES) {
@@ -1790,6 +1796,20 @@ function parseSessionFileContents(
   }
   if (header === undefined) return err(corrupt("missing-header"));
   return ok({ header, entries });
+}
+
+/**
+ * What one store proved about one session at the moment it returned a record.
+ * Private to this module: no caller can read it, assert it, or construct it.
+ */
+interface ValidatedSessionFacts {
+  readonly root: string;
+  readonly ref: string;
+  readonly sessionDir: string;
+  readonly sessionPath: string;
+  readonly sessionId: string;
+  readonly parentSession: string | undefined;
+  readonly header: PiValidatedSessionHeader;
 }
 
 /**
@@ -1803,13 +1823,28 @@ export class PiNativeSessionStore {
   private readonly host: PiNativeSessionHostPort;
   private readonly now: () => Date;
   private readonly launchAuthority: PiChildSessionLaunchAuthority | undefined;
+  /**
+   * Provenance for every record this store validated and returned.
+   *
+   * Keyed by object identity, so a caller-built record with identical fields
+   * - the shape a public API consumer can trivially construct - carries no
+   * entry and can never be turned into a launch grant. The stored facts, not
+   * the caller's record, are what a grant is minted from.
+   */
+  private readonly provenance = new WeakMap<
+    PiNativeSessionRecord,
+    ValidatedSessionFacts
+  >();
 
   constructor(options: PiNativeSessionStoreOptions) {
     this.root = options.root;
     this.fs = options.fs;
     this.host = options.host;
     this.now = options.now ?? (() => new Date());
-    this.launchAuthority = options.launchAuthority;
+    this.launchAuthority =
+      options.launch.mode === "authorized"
+        ? options.launch.authority
+        : undefined;
   }
 
   /** Absolute session root this store is bound to. */
@@ -1818,50 +1853,111 @@ export class PiNativeSessionStore {
   }
 
   /**
+   * Records the facts this store proved about one session and freezes the
+   * record it hands back. Only records that passed through here can be minted
+   * into a launch grant.
+   */
+  private rememberValidatedRecord(
+    record: PiNativeSessionRecord,
+    header: PiValidatedSessionHeader,
+  ): PiNativeSessionRecord {
+    const frozen = Object.freeze({ ...record });
+    const separator = frozen.path.lastIndexOf("/");
+    this.provenance.set(frozen, {
+      root: this.root,
+      ref: frozen.ref,
+      sessionDir: separator <= 0 ? "" : frozen.path.slice(0, separator),
+      sessionPath: frozen.path,
+      sessionId: header.id,
+      parentSession: header.parentSession,
+      header,
+    });
+    return frozen;
+  }
+
+  /**
    * Mints the unforgeable launch grant a child process needs to start against
    * this validated session (Spec 33 §5.3 / R5).
    *
-   * The store is the only mint authority: it holds the generation's launch
-   * authority, and the authority's validated root must be exactly this
-   * store's root. Callers never hand a filesystem path to a launch path; they
-   * hand this opaque grant, which only the RPC transport can redeem, and only
-   * for the child the grant names.
+   * Three independent proofs must hold, and none of them is supplied by the
+   * caller:
+   *
+   * 1. **Provenance.** The presented record must be one this store itself
+   *    validated and returned. A structural look-alike is refused before any
+   *    filesystem or host call.
+   * 2. **Freshness.** The proven ref is reopened through the no-follow
+   *    directory and the host's own `SessionManager.open`, and the complete
+   *    Pi v3 header is validated again. The reopened identity - session id,
+   *    parent link, cwd, absolute path, ref - must equal the identity this
+   *    store proved when it produced the record.
+   * 3. **Authority.** This store must hold the generation-scoped launch
+   *    authority, and that authority's validated root must be exactly this
+   *    store's root.
+   *
+   * Only then is the grant minted, bound to the reopened directory, file,
+   * ref, session id, the child id that will actually launch, the active leaf,
+   * and the optional checkpoint cursor. Callers never hand a filesystem path
+   * to a launch path; they hand this opaque grant.
    */
   mintLaunchGrant(
     input: MintNativeSessionLaunchGrantInput,
-  ): Result<PiChildSessionLaunchGrant, PiNativeSessionError> {
+  ): ResultAsync<PiChildSessionLaunchGrant, PiNativeSessionError> {
     const authority = this.launchAuthority;
     if (authority === undefined) {
-      return err({
-        type: "SessionStorageUnavailable",
-        reason: "pi-session-root-unavailable",
+      return errAsync({
+        type: "SessionGrantRefused",
+        reason: "authority-unavailable",
       });
     }
     if (authority.sessionRoot !== this.root) {
-      return err({ type: "SessionRootViolation", reason: "path-escape" });
+      return errAsync({
+        type: "SessionGrantRefused",
+        reason: "authority-mismatch",
+      });
     }
-    return mintPiChildSessionLaunchGrant(authority, {
-      childId: input.childId,
-      sessionId: input.record.sessionId,
-      ref: input.record.ref,
-      sessionDir: input.record.path.slice(
-        0,
-        Math.max(input.record.path.lastIndexOf("/"), 0),
-      ),
-      sessionPath: input.record.path,
-      activeLeafId: input.activeLeafId,
-      ...(input.checkpointCursor === undefined
-        ? {}
-        : { checkpointCursor: input.checkpointCursor }),
-    }).mapErr((rejection): PiNativeSessionError => {
-      if (
-        rejection === "invalid-session-path" ||
-        rejection === "session-path-not-in-root"
-      ) {
-        return { type: "SessionRootViolation", reason: "path-escape" };
-      }
-      return { type: "SessionRootViolation", reason: "unsafe-component" };
-    });
+    const proven = this.provenance.get(input.record);
+    if (proven === undefined || proven.root !== this.root) {
+      return errAsync({
+        type: "SessionGrantRefused",
+        reason: "unproven-session",
+      });
+    }
+    return this.openValidated(proven.ref, proven.parentSession).andThen(
+      (reopened) => {
+        const fresh = this.provenance.get(reopened.record);
+        if (
+          fresh === undefined ||
+          fresh.sessionPath !== proven.sessionPath ||
+          fresh.sessionDir !== proven.sessionDir ||
+          fresh.sessionId !== proven.sessionId ||
+          fresh.parentSession !== proven.parentSession ||
+          !validatedHeadersMatch(fresh.header, proven.header)
+        ) {
+          return err<PiChildSessionLaunchGrant, PiNativeSessionError>({
+            type: "SessionGrantRefused",
+            reason: "identity-mismatch",
+          });
+        }
+        return mintPiChildSessionLaunchGrant(authority, {
+          childId: input.childId,
+          sessionId: fresh.sessionId,
+          ref: fresh.ref,
+          sessionDir: fresh.sessionDir,
+          sessionPath: fresh.sessionPath,
+          activeLeafId: input.activeLeafId,
+          ...(input.checkpointCursor === undefined
+            ? {}
+            : { checkpointCursor: input.checkpointCursor }),
+        }).mapErr((): PiNativeSessionError => {
+          // Every remaining rejection describes launch identity the store
+          // derived itself; it never names a path.
+          return {
+            type: "SessionGrantRefused",
+            reason: "invalid-launch-identity",
+          };
+        });
+      },
+    );
   }
 
   /**
@@ -1980,7 +2076,7 @@ export class PiNativeSessionStore {
     directory: PiNativeSessionDirectory,
     fileName: string,
     ref: string,
-    hostHeader: PiNativeSessionHeader,
+    hostHeader: PiValidatedSessionHeader,
   ): ResultAsync<void, PiNativeSessionError> {
     return directory
       .statFile(fileName)
@@ -2043,7 +2139,7 @@ export class PiNativeSessionStore {
     childDir: string,
     ref: string,
     input: CreateNativeChildSessionInput,
-    hostHeader: PiNativeSessionHeader,
+    hostHeader: PiValidatedSessionHeader,
   ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError> {
     return Result.fromThrowable(
       () => this.host.open(path, childDir),
@@ -2074,7 +2170,7 @@ export class PiNativeSessionStore {
       const reopened = persistableHostHeader(identity.header, input);
       if (
         reopened.isErr() ||
-        !headersMatchIdentity(hostHeader, reopened.value) ||
+        !validatedHeadersMatch(hostHeader, reopened.value) ||
         identity.sessionId !== reopened.value.id
       ) {
         return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
@@ -2082,14 +2178,19 @@ export class PiNativeSessionStore {
           reason: "header-unusable",
         });
       }
-      return okAsync<PiNativeSessionRecord, PiNativeSessionError>({
-        childId: input.childId,
-        sessionId: reopened.value.id,
-        ref,
-        path,
-        parentSession: input.parentSession,
-        cwd: reopened.value.cwd,
-      });
+      return okAsync<PiNativeSessionRecord, PiNativeSessionError>(
+        this.rememberValidatedRecord(
+          {
+            childId: input.childId,
+            sessionId: reopened.value.id,
+            ref,
+            path,
+            parentSession: input.parentSession,
+            cwd: reopened.value.cwd,
+          },
+          reopened.value,
+        ),
+      );
     });
   }
 
@@ -2347,37 +2448,24 @@ export class PiNativeSessionStore {
         });
       }
       const parsed = parseJsonlBodyLine(headerLine.offset, headerLine.bytes);
-      if (parsed.kind !== "entry" || !isSessionHeaderLine(parsed.value)) {
+      if (parsed.kind !== "entry") {
         return errAsync<number, PiNativeSessionError>({
           type: "SessionCorrupt",
           ref,
           reason: "missing-header",
         });
       }
-      const version = parsed.value.version;
-      if (version !== undefined && version !== 3) {
+      // Paging validates the same complete header contract as every other
+      // lifecycle path; a header good enough to page is good enough to open.
+      const validated = validateChildSessionHeader(
+        parsed.value,
+        expectedParentSession,
+      );
+      if (validated.isErr()) {
         return errAsync<number, PiNativeSessionError>({
           type: "SessionCorrupt",
           ref,
-          reason: "unsupported-version",
-        });
-      }
-      const parent = parsed.value.parentSession;
-      if (typeof parent !== "string" || parent.length === 0) {
-        return errAsync<number, PiNativeSessionError>({
-          type: "SessionCorrupt",
-          ref,
-          reason: "parent-session-mismatch",
-        });
-      }
-      if (
-        expectedParentSession !== undefined &&
-        parent !== expectedParentSession
-      ) {
-        return errAsync<number, PiNativeSessionError>({
-          type: "SessionCorrupt",
-          ref,
-          reason: "parent-session-mismatch",
+          reason: validated.error,
         });
       }
       // Header line ends at first newline, or the whole file when absent.
@@ -2728,14 +2816,17 @@ export class PiNativeSessionStore {
     ).andThen((bytes) =>
       parseSessionFileContents(bytes, verified, expectedParentSession).map(
         ({ header, entries }): PiNativeSessionEntries => ({
-          record: {
-            childId: component,
-            sessionId: header.id,
-            ref: verified,
-            path,
-            parentSession: header.parentSession ?? "",
-            cwd: header.cwd,
-          },
+          record: this.rememberValidatedRecord(
+            {
+              childId: component,
+              sessionId: header.id,
+              ref: verified,
+              path,
+              parentSession: header.parentSession ?? "",
+              cwd: header.cwd,
+            },
+            header,
+          ),
           entries,
         }),
       ),
@@ -2843,29 +2934,34 @@ export class PiNativeSessionStore {
         }),
       )();
       if (header.isErr()) return errAsync(header.error);
-      const corruption = headerCorruption(header.value, expectedParentSession);
-      if (corruption !== undefined || header.value === null) {
+      // The reopen path validates the *complete* header contract, exactly as
+      // create does: a host that reports a partial or exotic header on open
+      // can never hand this store a record other code would then trust.
+      const validated = validateChildSessionHeader(
+        header.value,
+        expectedParentSession,
+      );
+      if (validated.isErr()) {
         return errAsync<
           {
             readonly record: PiNativeSessionRecord;
             readonly handle: PiNativeSessionHandle;
           },
           PiNativeSessionError
-        >({
-          type: "SessionCorrupt",
-          ref,
-          reason: corruption ?? "missing-header",
-        });
+        >({ type: "SessionCorrupt", ref, reason: validated.error });
       }
       return okAsync({
-        record: {
-          childId: component,
-          sessionId: header.value.id,
-          ref,
-          path,
-          parentSession: header.value.parentSession ?? "",
-          cwd: header.value.cwd,
-        },
+        record: this.rememberValidatedRecord(
+          {
+            childId: component,
+            sessionId: validated.value.id,
+            ref,
+            path,
+            parentSession: validated.value.parentSession ?? "",
+            cwd: validated.value.cwd,
+          },
+          validated.value,
+        ),
         handle,
       });
     });

@@ -109,6 +109,7 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     const nativeHost = createPiNativeSessionHost(SessionManager);
     const store = new PiNativeSessionStore({
       root: `${root}/sessions`,
+      launch: { mode: "read-only" },
       fs,
       host: nativeHost,
     });

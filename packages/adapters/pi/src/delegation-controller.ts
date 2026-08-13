@@ -360,11 +360,13 @@ export interface PiThreadSessionPort {
   /**
    * Mints the unforgeable launch grant one child needs to start against one
    * validated native session (Spec 33 §5.3 / R5). The controller never hands
-   * a filesystem path to a launch path.
+   * a filesystem path to a launch path, and never a record the store did not
+   * itself validate: the mint reopens and revalidates the proven session
+   * before it authorizes anything, which is why it is asynchronous.
    */
   mintLaunchGrant(
     input: MintNativeSessionLaunchGrantInput,
-  ): Result<PiChildSessionLaunchGrant, PiNativeSessionError>;
+  ): ResultAsync<PiChildSessionLaunchGrant, PiNativeSessionError>;
   createChildSession(
     input: CreateNativeChildSessionInput,
   ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError>;
@@ -962,33 +964,31 @@ export class PiDelegationController {
                   "thread-ref-write-failed",
                 );
               })
-              .andThen((ref) => {
+              .andThen((ref) =>
                 // The launch grant is minted by the store, from the store's
                 // own validated record, and bound to the child that will
                 // actually start. Nothing downstream sees a path.
-                const grant = sessions.mintLaunchGrant({
-                  childId,
-                  record,
-                  activeLeafId: leaf.leafId,
-                });
-                if (grant.isErr()) {
-                  this.tombstoneProvisionedSession(sessions, record);
-                  return errAsync(
-                    makeChildSpawnFailedFailure(
+                sessions
+                  .mintLaunchGrant({
+                    childId,
+                    record,
+                    activeLeafId: leaf.leafId,
+                  })
+                  .mapErr(() => {
+                    this.tombstoneProvisionedSession(sessions, record);
+                    return makeChildSpawnFailedFailure(
                       childId,
                       "thread-launch-grant-unavailable",
-                    ),
-                  );
-                }
-                this.rememberThreadRecord(ref);
-                return okAsync({
-                  session: {
-                    mode: "native" as const,
-                    grant: grant.value,
-                  },
-                  ref,
-                });
-              }),
+                    );
+                  })
+                  .map((grant) => {
+                    this.rememberThreadRecord(ref);
+                    return {
+                      session: { mode: "native" as const, grant },
+                      ref,
+                    };
+                  }),
+              ),
           ),
       );
   }
@@ -1472,80 +1472,85 @@ export class PiDelegationController {
         // owns the session, before the divider is written or any process
         // starts. A thread with no proven source stays path-free too.
         const sessions = this.deps.threadSessions?.();
-        let runSession: PiRpcChildSpawnSession | undefined;
-        if (source.launch !== undefined) {
+        const launchSource = source.launch;
+        // Minting reopens and revalidates the proven session, so it is part
+        // of the async chain rather than a synchronous precondition.
+        const mintedSession = ((): ResultAsync<
+          PiRpcChildSpawnSession | undefined,
+          PiAdapterFailure
+        > => {
+          if (launchSource === undefined) return okAsync(undefined);
           if (sessions === undefined) {
-            return errAsync<PiThreadRunOutcome, PiAdapterFailure>(
+            return errAsync(
               makeThreadResumeUnavailableFailure(
                 threadId,
                 "session-unavailable",
               ),
             );
           }
-          const minted = this.mintLaunchSession(
-            sessions,
-            source.launch,
-            runChildId,
-          );
-          if (minted.isErr()) {
-            return errAsync<PiThreadRunOutcome, PiAdapterFailure>(
+          return this.mintLaunchSession(sessions, launchSource, runChildId)
+            .map((session): PiRpcChildSpawnSession | undefined => session)
+            .mapErr(() =>
               makeThreadResumeUnavailableFailure(
                 threadId,
                 "session-unavailable",
               ),
             );
-          }
-          runSession = minted.value;
-        }
-        const priorOutcome = state.status;
-        return this.appendThreadDivider(
-          source.ref,
-          request,
-          priorOutcome,
-          state,
-        ).andThen((divider) => {
-          state.runs = runNumber;
-          state.running = true;
-          state.status = "running";
-          state.latestChildId = runChildId;
-          const runRequest: PiDelegationRequest = {
-            parentId: state.parentId,
-            parentDepth: state.parentDepth,
-            parentAgentName: state.parentAgentName,
-            agentName: state.agentName,
-            task: instruction.value,
-            cwd: state.cwd,
-            env: state.env,
-            bootstrap: buildBootstrap(target.value, runChildId, {
-              parentAgentName: state.parentAgentName,
+        })();
+        return mintedSession.andThen((runSession) => {
+          const priorOutcome = state.status;
+          return this.appendThreadDivider(
+            source.ref,
+            request,
+            priorOutcome,
+            state,
+          ).andThen((divider) => {
+            state.runs = runNumber;
+            state.running = true;
+            state.status = "running";
+            state.latestChildId = runChildId;
+            const runRequest: PiDelegationRequest = {
+              parentId: state.parentId,
               parentDepth: state.parentDepth,
+              parentAgentName: state.parentAgentName,
+              agentName: state.agentName,
+              task: instruction.value,
               cwd: state.cwd,
-            }),
-            ...(runSession === undefined ? {} : { session: runSession }),
-            ...(request.onSessionEvent === undefined
-              ? {}
-              : { onSessionEvent: request.onSessionEvent }),
-          };
-          return new ResultAsync<PiThreadRunOutcome, PiAdapterFailure>(
-            (async () => {
-              this.invokeRunAssignedCallback(request.onRunAssigned, {
-                threadId,
-                runNumber,
-                action: request.action,
-                agentName: state.agentName,
-                childId: runChildId,
-              });
-              const settled = await this.spawnNow(runChildId, runRequest);
-              this.settleThread(threadId, settled);
-              this.recordThreadSettlement(divider, this.threads.get(threadId));
-              if (settled.isErr()) return err(settled.error);
-              return ok({
-                threadId,
-                run: runNumber,
-                settlement: settled.value,
-              });
-            })(),
-          );
+              env: state.env,
+              bootstrap: buildBootstrap(target.value, runChildId, {
+                parentAgentName: state.parentAgentName,
+                parentDepth: state.parentDepth,
+                cwd: state.cwd,
+              }),
+              ...(runSession === undefined ? {} : { session: runSession }),
+              ...(request.onSessionEvent === undefined
+                ? {}
+                : { onSessionEvent: request.onSessionEvent }),
+            };
+            return new ResultAsync<PiThreadRunOutcome, PiAdapterFailure>(
+              (async () => {
+                this.invokeRunAssignedCallback(request.onRunAssigned, {
+                  threadId,
+                  runNumber,
+                  action: request.action,
+                  agentName: state.agentName,
+                  childId: runChildId,
+                });
+                const settled = await this.spawnNow(runChildId, runRequest);
+                this.settleThread(threadId, settled);
+                this.recordThreadSettlement(
+                  divider,
+                  this.threads.get(threadId),
+                );
+                if (settled.isErr()) return err(settled.error);
+                return ok({
+                  threadId,
+                  run: runNumber,
+                  settlement: settled.value,
+                });
+              })(),
+            );
+          });
         });
       });
     });
@@ -1948,7 +1953,7 @@ export class PiDelegationController {
     sessions: PiThreadSessionPort,
     launch: PiThreadLaunchSource,
     childId: string,
-  ): Result<PiRpcChildSpawnSession, PiAdapterFailure> {
+  ): ResultAsync<PiRpcChildSpawnSession, PiAdapterFailure> {
     return sessions
       .mintLaunchGrant({
         childId,
@@ -2834,19 +2839,23 @@ export class PiDelegationController {
           });
         // Only the store may authorize this launch, and only for the exact
         // child being restored. The absolute path never leaves the store.
-        const grant = sessions.mintLaunchGrant({
-          childId: record.childId,
-          record: opened.record,
-          activeLeafId: activeLeaf,
-        });
-        if (grant.isErr())
-          return errAsync<RestoreSession, PiChildRestoreFailure>({
-            type: "ChildRecoveryUnavailable",
-            reason: "containment failed",
-          });
-        return okAsync<RestoreSession, PiChildRestoreFailure>({
-          session: { mode: "native", grant: grant.value },
-        });
+        return sessions
+          .mintLaunchGrant({
+            childId: record.childId,
+            record: opened.record,
+            activeLeafId: activeLeaf,
+          })
+          .mapErr(
+            (): PiChildRestoreFailure => ({
+              type: "ChildRecoveryUnavailable",
+              reason: "containment failed",
+            }),
+          )
+          .map(
+            (grant): RestoreSession => ({
+              session: { mode: "native", grant },
+            }),
+          );
       })
       .andThen(({ session }) => {
         const authorization = this.authorize({

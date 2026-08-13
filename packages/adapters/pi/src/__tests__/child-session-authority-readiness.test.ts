@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { errAsync } from "neverthrow";
 
 import {
   DefaultPiCapabilityProber,
@@ -7,12 +8,15 @@ import {
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { redeemPiChildSessionLaunchGrant } from "../child-session-launch.js";
 import {
-  classifyPiChildSessionRootFailure,
   createPiChildSessionStorageAuthority,
   describeChildSessionStorageUnavailable,
+  type PiChildSessionRootProof,
   type PiChildSessionStorageAuthority,
+  provePiChildSessionRoot,
 } from "../child-session-storage-authority.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 import { PiRpcChild, type PiRpcChildSpawnInput } from "../rpc-child.js";
+import { IdentityPiTrustedDataRootPort } from "../trusted-data-root.js";
 import { FakeChildProcessPort } from "./fakes/fake-child-process-port.js";
 import {
   createTestOnlyGrantedSessionStorageAuthority,
@@ -21,22 +25,42 @@ import {
 
 const ROOT = "/data/weave/adapters/pi/sessions";
 const SESSION_MANAGER = { create: () => undefined, open: () => undefined };
+const PROCESS_LAUNCH = { spawn: () => undefined };
 
 function noopLogger() {
   return { debug() {}, info() {}, warn() {}, error() {} };
 }
 
-function readyAuthority(): PiChildSessionStorageAuthority {
+/** Creates the root in an in-memory tree so a hostile state can be modelled. */
+async function seededRoot(
+  root: string = ROOT,
+): Promise<MemoryPiNativeSessionFs> {
+  const fs = new MemoryPiNativeSessionFs();
+  (await fs.openDirectory(root, true))._unsafeUnwrap().close();
+  return fs;
+}
+
+/** A real proof over an in-memory no-follow tree. Never an asserted path. */
+async function provenRoot(
+  fs: MemoryPiNativeSessionFs = new MemoryPiNativeSessionFs(),
+  root: string = ROOT,
+): Promise<PiChildSessionRootProof> {
+  return (await provePiChildSessionRoot({ root, fs }))._unsafeUnwrap();
+}
+
+async function readyAuthority(): Promise<PiChildSessionStorageAuthority> {
   return createPiChildSessionStorageAuthority({
     SessionManager: SESSION_MANAGER,
-    sessionRoot: { status: "resolved", root: ROOT },
-    processAvailable: true,
+    sessionRoot: await provenRoot(),
+    processLaunch: PROCESS_LAUNCH,
     scopeId: "generation-1",
   });
 }
 
 describe("generation-scoped session authority", () => {
-  test("reports exactly one closed reason for each missing fact", () => {
+  test("reports exactly one closed reason for each missing fact", async () => {
+    const unsafeFs = await seededRoot();
+    unsafeFs.simulateDirectorySymlink(ROOT);
     const cases: readonly [
       PiDelegationReadinessReason,
       Parameters<typeof createPiChildSessionStorageAuthority>[0],
@@ -44,27 +68,27 @@ describe("generation-scoped session authority", () => {
       [
         "pi-session-api-unavailable",
         {
-          sessionRoot: { status: "resolved", root: ROOT },
-          processAvailable: true,
+          sessionRoot: await provenRoot(),
+          processLaunch: PROCESS_LAUNCH,
         },
       ],
       [
         "pi-session-root-unavailable",
-        { SessionManager: SESSION_MANAGER, processAvailable: true },
+        { SessionManager: SESSION_MANAGER, processLaunch: PROCESS_LAUNCH },
       ],
       [
         "pi-session-root-unsafe",
         {
           SessionManager: SESSION_MANAGER,
-          sessionRoot: { status: "unsafe" },
-          processAvailable: true,
+          sessionRoot: await provenRoot(unsafeFs),
+          processLaunch: PROCESS_LAUNCH,
         },
       ],
       [
         "pi-process-unavailable",
         {
           SessionManager: SESSION_MANAGER,
-          sessionRoot: { status: "resolved", root: ROOT },
+          sessionRoot: await provenRoot(),
         },
       ],
     ];
@@ -85,8 +109,8 @@ describe("generation-scoped session authority", () => {
     }
   });
 
-  test("a proven generation reports ready and yields one stable launch authority", () => {
-    const authority = readyAuthority();
+  test("a proven generation reports ready and yields one stable launch authority", async () => {
+    const authority = await readyAuthority();
 
     expect(authority.readinessReason()).toBeUndefined();
     expect(authority.requireNativeSessionAuthority().isOk()).toBe(true);
@@ -98,9 +122,9 @@ describe("generation-scoped session authority", () => {
     expect(first.scopeId).toBe("generation-1");
   });
 
-  test("a launch grant redeems only against the authority that minted it", () => {
-    const generationOne = readyAuthority();
-    const generationTwo = readyAuthority();
+  test("a launch grant redeems only against the authority that minted it", async () => {
+    const generationOne = await readyAuthority();
+    const generationTwo = await readyAuthority();
     const grant = mintTestOnlyLaunchGrant(generationOne, {
       childId: "child-1",
       sessionDir: `${ROOT}/child-1`,
@@ -121,29 +145,90 @@ describe("generation-scoped session authority", () => {
     ).toBe("authority-mismatch");
   });
 
-  test("classifies root failures into the two closed root states", () => {
-    for (const violation of [
-      "foreign-data-root",
-      "writable-data-root",
-      "non-directory-data-root",
-      "symlink-rejected",
-      "unsafe-component",
-      "path-escape",
-    ] as const) {
-      expect(classifyPiChildSessionRootFailure(violation)).toEqual({
-        status: "unsafe",
-      });
-    }
-    for (const violation of [
-      "empty-home",
-      "relative-xdg-data-home",
-      "unresolvable-data-root",
-      undefined,
-    ] as const) {
-      expect(classifyPiChildSessionRootFailure(violation)).toEqual({
-        status: "unavailable",
-      });
-    }
+  test("an asserted root proof is refused; only a minted proof is honored", () => {
+    const asserted = createPiChildSessionStorageAuthority({
+      SessionManager: SESSION_MANAGER,
+      // Structurally identical to a minted proof, but this module never
+      // minted it, so it carries no root at all.
+      sessionRoot: { status: "resolved" } as PiChildSessionRootProof,
+      processLaunch: PROCESS_LAUNCH,
+    });
+
+    expect(asserted.readinessReason()).toBe("pi-session-root-unavailable");
+    expect(asserted.requireSessionRoot().isErr()).toBe(true);
+    expect(asserted.requireLaunchAuthority().isErr()).toBe(true);
+  });
+
+  test("an asserted process surface is refused; spawn must be callable", async () => {
+    const asserted = createPiChildSessionStorageAuthority({
+      SessionManager: SESSION_MANAGER,
+      sessionRoot: await provenRoot(),
+      processLaunch: { spawn: true },
+    });
+
+    expect(asserted.readinessReason()).toBe("pi-process-unavailable");
+  });
+
+  test("proves the root by really opening it, and closes each closed state", async () => {
+    const identityRoot = new IdentityPiTrustedDataRootPort();
+
+    // Absent and uncreatable: the port refuses to create the root.
+    const uncreatable = await provePiChildSessionRoot({
+      root: ROOT,
+      fs: {
+        openDirectory: () =>
+          errAsync({ type: "unavailable", operation: "open" as const }),
+      },
+    });
+    expect(uncreatable._unsafeUnwrap().status).toBe("unavailable");
+
+    // Symlinked root: no-follow refuses it as hostile.
+    const symlinked = await seededRoot();
+    symlinked.simulateDirectorySymlink(ROOT);
+    expect(
+      (
+        await provePiChildSessionRoot({ root: ROOT, fs: symlinked })
+      )._unsafeUnwrap().status,
+    ).toBe("unsafe");
+
+    // Permissive mode: the root exists but is not 0700.
+    const permissive = await seededRoot();
+    permissive.simulatePermissiveDirectory(ROOT);
+    expect(
+      (
+        await provePiChildSessionRoot({ root: ROOT, fs: permissive })
+      )._unsafeUnwrap().status,
+    ).toBe("unsafe");
+
+    // Identity change under us between open and use.
+    const swapped = await seededRoot();
+    swapped.simulateDirectoryReplacement(ROOT);
+    expect(
+      (
+        await provePiChildSessionRoot({ root: ROOT, fs: swapped })
+      )._unsafeUnwrap().status,
+    ).toBe("unsafe");
+
+    // An escaping or unresolvable base never reaches the filesystem at all.
+    const relative = await provePiChildSessionRoot({
+      env: { XDG_DATA_HOME: "relative/data" },
+      fs: new MemoryPiNativeSessionFs(),
+    });
+    expect(relative._unsafeUnwrap().status).toBe("unavailable");
+
+    // The derived production path is proven end to end.
+    const derived = await provePiChildSessionRoot({
+      env: { XDG_DATA_HOME: "/data" },
+      trustedRoot: identityRoot,
+      fs: new MemoryPiNativeSessionFs(),
+    });
+    const proven = createPiChildSessionStorageAuthority({
+      SessionManager: SESSION_MANAGER,
+      sessionRoot: derived._unsafeUnwrap(),
+      processLaunch: PROCESS_LAUNCH,
+    });
+    expect(proven.readinessReason()).toBeUndefined();
+    expect(proven.requireSessionRoot()._unsafeUnwrap()).toBe(ROOT);
   });
 });
 
@@ -225,7 +310,7 @@ describe("no launch effect before the authority is proven", () => {
     const processPort = new FakeChildProcessPort();
     const storageOnly = createPiChildSessionStorageAuthority({
       SessionManager: SESSION_MANAGER,
-      sessionRoot: { status: "resolved", root: ROOT },
+      sessionRoot: await provenRoot(),
     });
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
@@ -246,8 +331,10 @@ describe("no launch effect before the authority is proven", () => {
 
   test("a grant from another generation cannot launch in this one", async () => {
     const processPort = new FakeChildProcessPort();
-    const thisGeneration = createTestOnlyGrantedSessionStorageAuthority(ROOT);
-    const otherGeneration = createTestOnlyGrantedSessionStorageAuthority(ROOT);
+    const thisGeneration =
+      await createTestOnlyGrantedSessionStorageAuthority(ROOT);
+    const otherGeneration =
+      await createTestOnlyGrantedSessionStorageAuthority(ROOT);
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
       sessionStorageAuthority: thisGeneration,

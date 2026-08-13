@@ -248,7 +248,7 @@
   - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
   - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
-  - _...43 more_
+  - _...44 more_
 - `packages/adapters/pi/src/child-overlay-component.ts`
   - function formatChildOverlayTelemetryLine: (telemetry) => string
   - function compactChildOverlayEntryLine: (entry, width) => string
@@ -392,13 +392,17 @@
   - class PiChildSessionRefStore
   - _...29 more_
 - `packages/adapters/pi/src/child-session-storage-authority.ts`
-  - function classifyPiChildSessionRootFailure: (violation) => PiChildSessionRootResolution
   - function createPiChildSessionStorageAuthority: (input) => PiChildSessionStorageAuthority
   - function describeChildSessionStorageUnavailable: (failure) => string
-  - function resolvePiChildSessionRoot: (input) => ResultAsync<PiChildSessionRootResolution, never>
+  - function provePiChildSessionRoot: (input, so no caller can assert that a root
+     * is usable. Production never passes it; unit embeddings that model a
+     * synthetic tree do.
+     */
+    readonly root?) => ResultAsync<PiChildSessionRootProof, never>
   - interface PiChildSessionStorageAuthority
+  - interface PiChildSessionRootProof
   - interface PiChildSessionStorageAuthorityInput
-  - _...3 more_
+  - _...2 more_
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
   - interface TimerHandle
@@ -564,6 +568,14 @@
   - function setForcedPreadByteLimitForTests: (limit) => void
   - function createBunPiNativeSessionFs: () => PiNativeSessionFsPort
   - class MemoryPiNativeSessionFs
+- `packages/adapters/pi/src/native-session-header.ts`
+  - function isHostIsoTimestamp: (value) => boolean
+  - function validatePiNativeSessionHeader: (candidate) => Result<PiValidatedSessionHeader, PiNativeSessionHeaderViolation>
+  - function validatedHeadersMatch: (left, right) => boolean
+  - interface PiNativeSessionHeader
+  - interface PiValidatedSessionHeader
+  - type PiNativeSessionHeaderViolation
+  - _...3 more_
 - `packages/adapters/pi/src/native-session-host.ts`
   - function isPiSessionManagerStatic: (value) => value is PiSessionManagerStatic
   - function adaptPiSessionManagerHandle: (manager) => PiNativeSessionHandle

@@ -292,6 +292,7 @@ export type {
   PiNativeSessionFileStat,
   PiNativeSessionFsError,
   PiNativeSessionFsPort,
+  PiNativeSessionGrantRefusal,
   PiNativeSessionHandle,
   PiNativeSessionHeader,
   PiNativeSessionHostPort,
@@ -300,6 +301,7 @@ export type {
   PiNativeSessionRootViolation,
   PiNativeSessionState,
   PiNativeSessionStorageUnavailable,
+  PiNativeSessionStoreLaunchMode,
   PiNativeSessionStoreOptions,
   PiNativeSessionTombstone,
   PiNativeThreadMetadata,
@@ -535,7 +537,9 @@ export {
   CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
   createPiChildSessionStorageAuthority,
   describeChildSessionStorageUnavailable,
+  type PiChildSessionRootProof,
   type PiChildSessionStorageAuthority,
+  provePiChildSessionRoot,
 } from "./child-session-storage-authority.js";
 export {
   DEFAULT_HANDSHAKE_TIMEOUT_MS,
@@ -736,6 +740,11 @@ export {
   createBunPiNativeSessionFs,
   MemoryPiNativeSessionFs,
 } from "./native-session-fs.js";
+export type {
+  PiNativeSessionHeaderViolation,
+  PiValidatedSessionHeader,
+} from "./native-session-header.js";
+export { validatePiNativeSessionHeader } from "./native-session-header.js";
 export type {
   PiSessionManagerInstance,
   PiSessionManagerStatic,
