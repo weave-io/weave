@@ -1250,6 +1250,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     { remainingSuccesses: number; error: PiNativeSessionFsError }[]
   >();
   private readonly deleteFailures = new Map<string, PiNativeSessionFsError>();
+  private readonly syncFailures: PiNativeSessionFsError[] = [];
 
   private midReadKey(path: string, name: string): string {
     return `${path}\0${name}`;
@@ -1684,6 +1685,8 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
         });
       },
       sync() {
+        const failure = fs.syncFailures.shift();
+        if (failure !== undefined) return fsErrAsync(failure);
         return this.identity().map<void>(() => undefined);
       },
       tryExclusiveLock(name) {
@@ -1919,6 +1922,11 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     const queued = this.appendFailures.get(key) ?? [];
     queued.push({ remainingSuccesses: afterSuccesses, error });
     this.appendFailures.set(key, queued);
+  }
+
+  /** Forces the next directory sync to fail with the given error. */
+  simulateDirectorySyncFailure(error: PiNativeSessionFsError): void {
+    this.syncFailures.push(error);
   }
 
   /**

@@ -1160,6 +1160,36 @@ describe("deletion and tombstones", () => {
     expect((await store.readTombstones())._unsafeUnwrap()).toHaveLength(1);
   });
 
+  test("retry repeats directory sync before unlink after the first sync fails", async () => {
+    const { store, fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    const token = nativeSessionDeletionToken(RECORD.ref);
+    fs.simulateDirectorySyncFailure({ type: "io" });
+
+    expect(await store.deleteSession(RECORD, token)).toEqual(
+      err({ type: "TombstoneAppendFailed", reason: "io" }),
+    );
+    expect((await store.openSession(RECORD.ref, PARENT)).isOk()).toBe(true);
+    expect(
+      (await store.readDeletionLedger())
+        ._unsafeUnwrap()
+        .map(({ phase }) => phase),
+    ).toEqual(["intent"]);
+
+    const completed = (
+      await store.deleteSession(RECORD, token)
+    )._unsafeUnwrap();
+    expect(completed.phase).toBe("completed");
+    expect(
+      (await store.openSession(RECORD.ref, PARENT))._unsafeUnwrapErr(),
+    ).toEqual({ type: "SessionMissing", ref: RECORD.ref });
+    expect(
+      (await store.readDeletionLedger())
+        ._unsafeUnwrap()
+        .map(({ phase }) => phase),
+    ).toEqual(["intent", "completed"]);
+  });
+
   test("completion append failure after unlink stays pending, not completed", async () => {
     const { store, fs, create } = harness();
     (await create())._unsafeUnwrap();
