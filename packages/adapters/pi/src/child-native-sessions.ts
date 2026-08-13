@@ -2648,7 +2648,9 @@ export class PiNativeSessionStore {
     const located = this.locate(ref);
     if (located.isErr()) return errAsync(located.error);
     const { component, fileName, childDir, path, verified } = located.value;
-    if (component !== expected.childId) {
+    const expectedComponent = safeNativeSessionComponent(expected.childId);
+    if (expectedComponent.isErr()) return errAsync(expectedComponent.error);
+    if (component !== expectedComponent.value) {
       return errAsync({
         type: "SessionCorrupt",
         ref: verified,
@@ -2678,6 +2680,7 @@ export class PiNativeSessionStore {
               chunks: plan.value.chunks,
               meta,
               ref: verified,
+              expectedChildComponent: expectedComponent.value,
               guards: {
                 beforeChunks: () =>
                   this.requireUnchangedLeaf(
@@ -2753,7 +2756,9 @@ export class PiNativeSessionStore {
     const located = this.locate(refValue);
     if (located.isErr()) return errAsync(located.error);
     const { component, fileName, childDir } = located.value;
-    if (component !== expected.childId) {
+    const expectedComponent = safeNativeSessionComponent(expected.childId);
+    if (expectedComponent.isErr()) return errAsync(expectedComponent.error);
+    if (component !== expectedComponent.value) {
       return errAsync({
         type: "SessionCorrupt",
         ref: refValue,

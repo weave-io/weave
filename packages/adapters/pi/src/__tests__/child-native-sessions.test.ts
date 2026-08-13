@@ -5,7 +5,6 @@ import {
   nativeSessionDeletionToken,
   PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
   PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
-  PI_NATIVE_RESULT_SCHEMA_VERSION as RESULT_SCHEMA_VERSION,
   PI_NATIVE_SESSION_LAYOUT,
   type PiNativeSessionFsPort,
   type PiNativeSessionHandle,
@@ -13,6 +12,7 @@ import {
   type PiNativeSessionHostPort,
   type PiNativeSessionRecord,
   PiNativeSessionStore,
+  PI_NATIVE_RESULT_SCHEMA_VERSION as RESULT_SCHEMA_VERSION,
   readNativeResultGroup,
   resolvePiNativeSessionRoot,
   safeNativeSessionComponent,
@@ -491,25 +491,31 @@ describe("durable result output", () => {
     });
     const output = `prefix ${"界".repeat(40_000)} suffix`;
 
-    const result = await store.appendResultOutput(record.ref, output, APPEND_IDENTITY);
+    const result = await store.appendResultOutput(
+      record.ref,
+      output,
+      APPEND_IDENTITY,
+    );
 
     expect(result.isOk()).toBe(true);
     expect(host.appended.length).toBeGreaterThan(1);
     const commit = host.appended[host.appended.length - 1];
     expect(commit?.customType).toBe(PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE);
     expect(
-      host.appended.slice(0, -1).every(
-        (entry) => entry.customType === PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
-      ),
+      host.appended
+        .slice(0, -1)
+        .every(
+          (entry) => entry.customType === PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+        ),
     ).toBe(true);
-    const chunks = host.appended.slice(0, -1).map(
-      (entry) => (entry.data as { content: string }).content,
-    );
+    const chunks = host.appended
+      .slice(0, -1)
+      .map((entry) => (entry.data as { content: string }).content);
     expect(chunks.join("")).toBe(output);
     expect(
-      host.appended.slice(0, -1).map(
-        (entry) => (entry.data as { index: number }).index,
-      ),
+      host.appended
+        .slice(0, -1)
+        .map((entry) => (entry.data as { index: number }).index),
     ).toEqual(host.appended.slice(0, -1).map((_, index) => index));
     const resultId = (commit?.data as { resultId: string }).resultId;
     expect(resultId).toMatch(
@@ -585,7 +591,11 @@ describe("durable result output", () => {
       host,
     });
 
-    const result = await store.appendResultOutput(record.ref, "output", APPEND_IDENTITY);
+    const result = await store.appendResultOutput(
+      record.ref,
+      "output",
+      APPEND_IDENTITY,
+    );
 
     expect(result._unsafeUnwrapErr()).toEqual({
       type: "SessionCorrupt",
@@ -594,6 +604,61 @@ describe("durable result output", () => {
     });
     expect(host.appended).toEqual([]);
     expect(host.opened.length).toBeGreaterThan(openedAfterCreate);
+  });
+
+  /**
+   * Regression: a direct workflow step's child id is
+   * `direct-<instance>-<step>-<uuid>`, which is longer than one safe path
+   * component, so `createChildSession` stores it under the hashed component.
+   * The result guards compared the ref component against the *raw* child id,
+   * so every direct step failed persistence with `SessionCorrupt` /
+   * identity-mismatch and could never retrieve its own authoritative result.
+   */
+  test("persists and reads a result for a child id that needs a hashed path component", async () => {
+    const childId =
+      "direct-t13-direct-1786663558523-work-7f8c35c2-4aeb-4048-8bfd-fe259b5630b4";
+    expect(childId.length).toBeGreaterThan(64);
+    const { host, store } = harness();
+    const record = (
+      await store.createChildSession({
+        childId,
+        parentSession: PARENT,
+        cwd: "/repo",
+      })
+    )._unsafeUnwrap();
+    // The stored component is the hash, not the raw id.
+    expect(record.ref.startsWith(`${childId}/`)).toBe(false);
+    expect(record.ref.split("/")[0]).toBe(
+      safeNativeSessionComponent(childId)._unsafeUnwrap(),
+    );
+    host.appended.length = 0;
+    const identity = {
+      childId,
+      nativeSessionId: record.sessionId,
+      parentSession: PARENT,
+    } as const;
+    const written = await store.appendResultOutput(
+      record.ref,
+      "DIRECT STEP AUTHORITATIVE RESULT",
+      identity,
+    );
+
+    expect(written.isOk()).toBe(true);
+    expect(host.appended.at(-1)?.customType).toBe(
+      PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
+    );
+
+    // A different child id must still be refused, hashed or not.
+    const wrong = await store.appendResultOutput(
+      record.ref,
+      "SOMEONE ELSE'S RESULT",
+      { ...identity, childId: `${childId}-other` },
+    );
+    expect(wrong._unsafeUnwrapErr()).toEqual({
+      type: "SessionCorrupt",
+      ref: record.ref,
+      reason: "identity-mismatch",
+    });
   });
 
   test("refuses a sibling session under the same parent", async () => {

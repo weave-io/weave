@@ -530,9 +530,17 @@ function requireResultAppendIdentity(
   record: PiNativeSessionRecord,
   expected: PiNativeResultIdentity,
   ref: string,
+  /**
+   * The storage component the caller's `expected.childId` maps to. The store
+   * owns that mapping - an over-long or unsafe child id, such as every direct
+   * workflow step's, is stored under a hash - so the protocol compares the two
+   * strings the store hands it rather than assuming a record's child id is
+   * ever the raw one.
+   */
+  expectedChildComponent: string,
 ): Result<void, PiNativeSessionError> {
   if (
-    record.childId !== expected.childId ||
+    record.childId !== expectedChildComponent ||
     record.sessionId !== expected.nativeSessionId ||
     record.parentSession !== expected.parentSession
   ) {
@@ -919,9 +927,16 @@ export function appendResultGroup(input: {
   readonly meta: PiNativeResultGroupWriteMeta;
   readonly guards: PiNativeResultAppendGuards;
   readonly ref: string;
+  /** Storage component `expected.childId` maps to; see {@link requireResultAppendIdentity}. */
+  readonly expectedChildComponent: string;
 }): ResultAsync<void, PiNativeSessionError> {
   const { handle, expected, guards, meta, ref } = input;
-  return requireResultAppendIdentity(input.record, expected, ref)
+  return requireResultAppendIdentity(
+    input.record,
+    expected,
+    ref,
+    input.expectedChildComponent,
+  )
     .asyncAndThen(() => guards.beforeChunks())
     .andThen(() => appendResultChunkEntries(handle, input.chunks, meta))
     .andThen(() => guards.beforeCommit())
