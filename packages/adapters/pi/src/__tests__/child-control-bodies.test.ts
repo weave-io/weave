@@ -344,6 +344,14 @@ describe("DelegateRequestBodySchema.task", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts a chunked task far larger than one envelope body", () => {
+    const result = parseControlBody("delegate-request", {
+      agentName: "shuttle",
+      task: `nested-\u{1F642}\n${"x".repeat(1_100_000)}`,
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it("rejects an empty task", () => {
     const result = parseControlBody("delegate-request", {
       agentName: "shuttle",

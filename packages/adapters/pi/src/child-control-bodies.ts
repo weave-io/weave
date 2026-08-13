@@ -14,6 +14,7 @@ import {
   MAX_CONTROL_BODY_BYTES,
   type PiControlKind,
 } from "./child-envelope.js";
+import { PI_TRANSPORT_LIMITS } from "./errors.js";
 import { canonicalizeToBytes, type JsonValue } from "./strict-json.js";
 import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
 
@@ -414,16 +415,32 @@ const MAX_SAFE_GRAPH_DEPTH = 64;
 const MAX_SAFE_GRAPH_NODES = 4_096;
 const MAX_SAFE_GRAPH_PROPERTIES = 4_096;
 const MAX_SAFE_GRAPH_PROPERTIES_PER_OBJECT = 512;
-// Delegate requests may carry larger tasks that are chunked by the transport;
-// keep this graph-copy bound independent of the bootstrap wire-byte limit. The
-// bootstrap canonicalization check below still enforces MAX_CONTROL_BODY_BYTES.
+// Every ordinary control body travels inside one signed envelope, so this
+// graph-copy bound only has to stay generously above MAX_CONTROL_BODY_BYTES.
 const MAX_SAFE_GRAPH_STRING_LENGTH = 256 * 1024;
+// A delegate-request task is the one control string the transport chunks and
+// reassembles instead of carrying whole, so its ceiling is the assembler's
+// aggregate payload budget - not the envelope body limit. UTF-16 code units
+// never outnumber UTF-8 bytes, so the assembler's byte bound is a sound unit
+// bound here and a task the assembler accepted can always be copied.
+const MAX_SAFE_GRAPH_TRANSFERRED_STRING_LENGTH =
+  PI_TRANSPORT_LIMITS.transferAggregateBytes;
 const MAX_SAFE_GRAPH_ARRAY_LENGTH = 512;
 
 interface SafeJsonGraphBudget {
   nodesRemaining: number;
   propertiesRemaining: number;
   stringUnitsRemaining: number;
+  maxStringLength: number;
+}
+
+function makeSafeJsonGraphBudget(maxStringLength: number): SafeJsonGraphBudget {
+  return {
+    nodesRemaining: MAX_SAFE_GRAPH_NODES,
+    propertiesRemaining: MAX_SAFE_GRAPH_PROPERTIES,
+    stringUnitsRemaining: maxStringLength,
+    maxStringLength,
+  };
 }
 
 function consumeSafeGraphNode(budget: SafeJsonGraphBudget): boolean {
@@ -437,7 +454,7 @@ function consumeSafeGraphString(
   budget: SafeJsonGraphBudget,
 ): boolean {
   if (
-    value.length > MAX_SAFE_GRAPH_STRING_LENGTH ||
+    value.length > budget.maxStringLength ||
     value.length > budget.stringUnitsRemaining
   ) {
     return false;
@@ -458,11 +475,9 @@ function consumeSafeGraphProperties(
 function copySafeJsonGraph(
   value: unknown,
   active: WeakSet<object> = new WeakSet<object>(),
-  budget: SafeJsonGraphBudget = {
-    nodesRemaining: MAX_SAFE_GRAPH_NODES,
-    propertiesRemaining: MAX_SAFE_GRAPH_PROPERTIES,
-    stringUnitsRemaining: MAX_SAFE_GRAPH_STRING_LENGTH,
-  },
+  budget: SafeJsonGraphBudget = makeSafeJsonGraphBudget(
+    MAX_SAFE_GRAPH_STRING_LENGTH,
+  ),
   depth = 0,
 ): SafeJsonCopy {
   try {
@@ -599,7 +614,15 @@ export function parseControlBody<K extends PiControlKind>(
   kind: K,
   body: unknown,
 ): { ok: true; value: ControlBodyFor<K> } | { ok: false; issueCount: number } {
-  const copied = copySafeJsonGraph(body);
+  const copied = copySafeJsonGraph(
+    body,
+    undefined,
+    makeSafeJsonGraphBudget(
+      kind === "delegate-request"
+        ? MAX_SAFE_GRAPH_TRANSFERRED_STRING_LENGTH
+        : MAX_SAFE_GRAPH_STRING_LENGTH,
+    ),
+  );
   if (!copied.ok) return { ok: false, issueCount: 1 };
 
   // Incoming envelopes already enforce this bound during authentication. Keep
