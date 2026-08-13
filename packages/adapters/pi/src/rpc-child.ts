@@ -280,6 +280,12 @@ const SESSION_FLAGS = [
   "--resume",
   "--fork",
 ] as const;
+/**
+ * Pi's own session-directory environment variable. Inherited values, whether
+ * from the parent process or a caller-supplied environment, must not redirect
+ * a child away from the validated `--session-dir`.
+ */
+const PI_INHERITED_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 const MAX_SPAWN_SESSION_ID_BYTES = 256;
 const MAX_SPAWN_CHECKPOINT_CURSOR = Number.MAX_SAFE_INTEGER;
 const MAX_LIVE_RPC_ID_LENGTH = 256;
@@ -377,10 +383,17 @@ function buildSpawnCommand(
   if (!sessionPath.value.endsWith(".jsonl")) {
     return invalidSpawnSession("sessionPath must end in .jsonl");
   }
+  // Containment is canonical immediate-child equality, never a prefix: a
+  // prefix test also accepts `<dir>/nested/leaf.jsonl`, which is not the leaf
+  // the adapter validated and handed to Pi's own `SessionManager`.
   const directory = sessionDir.value.replace(/\/+$/, "") || "/";
-  const containmentPrefix = directory === "/" ? "/" : `${directory}/`;
-  if (!sessionPath.value.startsWith(containmentPrefix)) {
-    return invalidSpawnSession("sessionPath must be contained by sessionDir");
+  const separator = sessionPath.value.lastIndexOf("/");
+  const parent = separator <= 0 ? "/" : sessionPath.value.slice(0, separator);
+  const basename = sessionPath.value.slice(separator + 1);
+  if (parent !== directory || basename.length === 0) {
+    return invalidSpawnSession(
+      "sessionPath must be an immediate child of sessionDir",
+    );
   }
 
   const activeLeafId = validateSpawnSessionId(selected.activeLeafId);
@@ -891,7 +904,7 @@ export class PiRpcChild {
    */
   private requireSessionStorageAuthority(): Result<void, PiAdapterFailure> {
     return this.sessionStorageAuthority
-      .requireDescriptorSafeSessionIo()
+      .requireNativeSessionAuthority()
       .mapErr((unavailable) =>
         makeChildSpawnFailedFailure(
           this.childId,
@@ -947,6 +960,10 @@ export class PiRpcChild {
       [WEAVE_CHILD_AGENT_NAME_ENV]: this.agentName,
       [WEAVE_CHILD_DEPTH_ENV]: String(this.depth),
     };
+    // The explicit `--session-dir` argument is the sole authority over child
+    // session storage. An inherited or caller-supplied session directory is
+    // untrusted for that choice, so it never reaches the child environment.
+    delete env[PI_INHERITED_SESSION_DIR_ENV];
     return this.processPort
       .spawn({ command: command.value, env, cwd: input.cwd })
       .mapErr((spawnError) =>
