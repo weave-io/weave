@@ -279,10 +279,16 @@ export {
   READ_ONLY_WRITE_REFUSED,
   resolvePiChildMetadataCacheRoot,
 } from "./child-metadata-cache.js";
-export type { PiNativeTranscriptComponentDeps } from "./child-native-components.js";
+export type {
+  PiChildCardComponentOptions,
+  PiNativeTranscriptComponentDeps,
+} from "./child-native-components.js";
 export {
+  CHILD_CARD_NATIVE_RENDER_FAILED,
   CHILD_COMPACT_NATIVE_RENDER_FAILED,
   createPiNativeTranscriptComponentFactory,
+  degradedPiChildCardComponent,
+  renderPiChildCardComponent,
   renderPiChildCompactComponent,
 } from "./child-native-components.js";
 export type {
@@ -687,7 +693,15 @@ export {
 } from "./delegation-controller.js";
 export {
   buildDelegationToolRegistration,
+  CARD_DETAILS_INVALID_CODE,
+  CARD_RENDER_FAILED_CODE,
+  DELEGATION_CARD_DETAILS_VERSION,
+  MAX_DELEGATION_CARD_DETAILS_BYTES,
+  type PiDelegationCardDetails,
+  type PiDelegationCardDetailsError,
   type PiDelegationToolDeps,
+  parseDelegationCardDetails,
+  renderDelegationCardResult,
   WEAVE_DELEGATION_TOOL_NAME,
 } from "./delegation-tool.js";
 export type {

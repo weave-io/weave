@@ -7,25 +7,43 @@
  * state; direct workflow dispatch is a distinct port for a later task.
  */
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Text } from "@earendil-works/pi-tui";
 import type { DelegationTarget } from "@weaveio/weave-engine";
-import { Result, type ResultAsync } from "neverthrow";
+import { err, ok, Result, type ResultAsync } from "neverthrow";
 import { Type } from "typebox";
 import {
-  type ChildCompactRenderOutput,
-  degradedChildCompactRender,
-  PiChildCompactProjection,
-} from "./child-compact-render.js";
+  applyDelegationCardEvent,
+  applyDelegationCardInput,
+  CARD_AGENT_NAME_MAX,
+  CARD_ASSIGNMENT_MAX,
+  CARD_FACTS_SCHEMA_VERSION,
+  CARD_MAX_RUN_NUMBER,
+  CARD_MODEL_MAX,
+  CARD_PHASE_MAX,
+  CARD_ROW_HEAD_MAX,
+  CARD_ROW_TEXT_MAX,
+  CARD_STATUS_MAX,
+  CARD_TELEMETRY_MAX,
+  CARD_TERMINAL_TEXT_MAX,
+  CARD_VIEWPORT_ROWS,
+  createDelegationCardState,
+  type PiCardActivityKind,
+  type PiCardRowKind,
+  type PiCardTerminalFacts,
+  type PiCardTone,
+  type PiCardViewportRow,
+  type PiDelegationCardFacts,
+  type PiDelegationCardState,
+  projectDelegationCardFacts,
+} from "./child-card-model.js";
+import type { ChildCompactRunAction } from "./child-compact-render.js";
 import {
-  CHILD_COMPACT_NATIVE_RENDER_FAILED,
-  renderPiChildCompactComponent,
+  CHILD_CARD_NATIVE_RENDER_FAILED,
+  degradedPiChildCardComponent,
+  renderPiChildCardComponent,
 } from "./child-native-components.js";
 import type { PiChildRuntime, PiChildRuntimeError } from "./child-runtime.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
-import {
-  MAX_FINAL_OUTPUT_BYTES,
-  truncateFinalOutput,
-} from "./child-tree.js";
+import { MAX_FINAL_OUTPUT_BYTES, truncateFinalOutput } from "./child-tree.js";
 import type {
   PiDelegationController,
   PiDelegationRequest,
@@ -54,9 +72,14 @@ import type {
   PiToolResultContent,
   PiUiThemePort,
 } from "./types.js";
+import { makePaint, type Paint, plainPaint } from "./ui-paint.js";
+import { clipRow, emit, seg } from "./ui-rows.js";
 
-/** Stable logger code when compact native theming fails. */
-export const COMPACT_RENDER_FAILED_CODE = CHILD_COMPACT_NATIVE_RENDER_FAILED;
+/** Stable logger code when the card cannot be drawn. */
+export const CARD_RENDER_FAILED_CODE = CHILD_CARD_NATIVE_RENDER_FAILED;
+
+/** Stable logger code when a stored details payload cannot be trusted. */
+export const CARD_DETAILS_INVALID_CODE = "DelegationCardDetailsInvalid";
 
 export const WEAVE_DELEGATION_TOOL_NAME = "weave_delegate";
 // The raw `task` tool argument validation (Pi adapter contract) lives in
@@ -193,30 +216,41 @@ export interface PiDelegationToolDeps {
   readonly sessionMutationGate?: PiSessionMutationGate;
 }
 
+/** Payload version of {@link PiDelegationCardDetails}. Bumped on any shape change. */
+export const DELEGATION_CARD_DETAILS_VERSION = 1;
+
 /**
- * Strict §6 compact projection payload carried on tool-result details.
- * Prefer this over the legacy snapshot details shape.
+ * The documented serialized ceiling of one details payload.
+ *
+ * Pi persists `details` with the entry, replays it in a later session, and
+ * hands it back to `renderResult` unchanged, so the payload is a stored public
+ * surface rather than a transient render argument. Every published update is
+ * measured against this ceiling first, and an over-budget payload sheds facts
+ * in a fixed order rather than growing.
  */
-export interface PiDelegationCompactDetails {
-  readonly kind: "weave-delegation-compact";
-  readonly lines: readonly [string, string, string];
-  readonly expandedCurrentItem: string | undefined;
-  readonly degraded: boolean;
+export const MAX_DELEGATION_CARD_DETAILS_BYTES = 8 * 1_024;
+
+/**
+ * The strict, versioned card payload carried on tool-result details.
+ *
+ * It carries only the already-sanitized and bounded fact model — no snapshot,
+ * no rendered chrome, no location, and nothing the card does not print.
+ */
+export interface PiDelegationCardDetails {
+  readonly kind: "weave-delegation-card";
+  readonly version: typeof DELEGATION_CARD_DETAILS_VERSION;
+  readonly facts: PiDelegationCardFacts;
 }
 
-/** Legacy snapshot-driven details retained only as a render fallback. */
-interface PiDelegationLegacyRenderDetails {
-  readonly kind: "weave-delegation";
-  readonly agent: string;
-  readonly displayName: string;
-  readonly status: string;
-  readonly currentTool?: string;
-  readonly latestOutput: string;
-}
-
-type PiDelegationRenderDetails =
-  | PiDelegationCompactDetails
-  | PiDelegationLegacyRenderDetails;
+/**
+ * Why a stored payload was refused. Parsing is total: a payload from another
+ * extension, from an older adapter, from a truncated write, or one larger than
+ * the ceiling becomes one of these reasons and the caller degrades.
+ */
+export type PiDelegationCardDetailsError = {
+  readonly type: "PiDelegationCardDetailsInvalid";
+  readonly reason: "absent" | "foreign" | "malformed" | "oversized";
+};
 
 function formatNamePart(part: string): string {
   if (part.length === 0) return part;
@@ -239,47 +273,431 @@ export function formatDelegationAgentName(agentName: string): string {
 
 function toolResult(
   text: PiToolResultContent["text"],
-  details?: PiDelegationRenderDetails,
+  details?: PiDelegationCardDetails,
 ): PiToolResult {
   return { content: [{ type: "text", text }], details };
 }
 
-function compactDetailsFrom(
-  output: ChildCompactRenderOutput,
-): PiDelegationCompactDetails {
+// ---------------------------------------------------------------------------
+// The details payload
+// ---------------------------------------------------------------------------
+
+const CARD_TONES: ReadonlySet<string> = new Set<PiCardTone>([
+  "run",
+  "ok",
+  "warn",
+  "bad",
+  "mute",
+]);
+
+const CARD_ACTIVITY_KINDS: ReadonlySet<string> = new Set<PiCardActivityKind>([
+  "sent",
+  "boot",
+  "think",
+  "tool",
+  "queue",
+  "say",
+  "reply",
+  "error",
+  "cancel",
+]);
+
+const CARD_ROW_KINDS: ReadonlySet<string> = new Set<PiCardRowKind>([
+  "boot",
+  "msg",
+  "think",
+  "tool",
+  "result",
+  "queue",
+  "retry",
+  "error",
+  "settled",
+]);
+
+const CARD_RUN_ACTIONS: ReadonlySet<string> = new Set<ChildCompactRunAction>([
+  "start",
+  "retry",
+  "continue",
+]);
+
+const CARD_OUTCOMES: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+function isDetailsRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Accepts a string only when it is inside its documented code-point bound. */
+function boundedDetailsText(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return Array.from(value).length <= max ? value : undefined;
+}
+
+function boundedDetailsCount(value: unknown, max: number): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= max
+    ? value
+    : undefined;
+}
+
+function parseCardViewportRow(value: unknown): PiCardViewportRow | undefined {
+  if (!isDetailsRecord(value)) return undefined;
+  if (typeof value.kind !== "string" || !CARD_ROW_KINDS.has(value.kind))
+    return undefined;
+  const head = boundedDetailsText(value.head, CARD_ROW_HEAD_MAX);
+  const text = boundedDetailsText(value.text, CARD_ROW_TEXT_MAX);
+  if (head === undefined || text === undefined) return undefined;
+  return { kind: value.kind as PiCardRowKind, head, text };
+}
+
+function parseCardTerminal(value: unknown): PiCardTerminalFacts | undefined {
+  if (!isDetailsRecord(value)) return undefined;
+  if (typeof value.outcome !== "string" || !CARD_OUTCOMES.has(value.outcome))
+    return undefined;
+  const verdict = boundedDetailsText(value.verdict, CARD_STATUS_MAX);
+  const glyph = boundedDetailsText(value.glyph, CARD_STATUS_MAX);
+  const headline = boundedDetailsText(value.headline, CARD_TERMINAL_TEXT_MAX);
+  const evidence = boundedDetailsText(value.evidence, CARD_TERMINAL_TEXT_MAX);
+  if (
+    verdict === undefined ||
+    glyph === undefined ||
+    headline === undefined ||
+    evidence === undefined
+  )
+    return undefined;
+  if (value.recovery === undefined) {
+    return {
+      outcome: value.outcome as PiCardTerminalFacts["outcome"],
+      verdict,
+      glyph,
+      headline,
+      evidence,
+    };
+  }
+  const recovery = boundedDetailsText(value.recovery, CARD_TERMINAL_TEXT_MAX);
+  if (recovery === undefined) return undefined;
   return {
-    kind: "weave-delegation-compact",
-    lines: output.lines,
-    expandedCurrentItem: output.expandedCurrentItem,
-    degraded: output.degraded,
+    outcome: value.outcome as PiCardTerminalFacts["outcome"],
+    verdict,
+    glyph,
+    headline,
+    evidence,
+    recovery,
   };
 }
 
-/** Always stores both collapsed lines and the bounded expanded item. */
-function projectCompactDetails(
-  projection: PiChildCompactProjection,
-): PiDelegationCompactDetails {
-  const collapsed = projection.render();
-  const expanded = projection.render({ expanded: true });
+/**
+ * Rebuilds the fact model field by field, so a payload that reaches the
+ * renderer is one this adapter itself could have produced. Anything unknown,
+ * mistyped, or over its bound refuses the whole payload rather than being
+ * repaired into a plausible-looking card.
+ */
+function parseCardFacts(value: unknown): PiDelegationCardFacts | undefined {
+  if (!isDetailsRecord(value)) return undefined;
+  if (value.schemaVersion !== CARD_FACTS_SCHEMA_VERSION) return undefined;
+  const tool = boundedDetailsText(value.tool, CARD_AGENT_NAME_MAX);
+  const agentName = boundedDetailsText(value.agentName, CARD_AGENT_NAME_MAX);
+  const status = boundedDetailsText(value.status, CARD_STATUS_MAX);
+  const assignment = boundedDetailsText(value.assignment, CARD_ASSIGNMENT_MAX);
+  if (
+    tool === undefined ||
+    agentName === undefined ||
+    status === undefined ||
+    assignment === undefined
+  )
+    return undefined;
+  if (typeof value.tone !== "string" || !CARD_TONES.has(value.tone))
+    return undefined;
+  if (typeof value.settled !== "boolean") return undefined;
+
+  const model =
+    value.model === undefined
+      ? undefined
+      : boundedDetailsText(value.model, CARD_MODEL_MAX);
+  if (value.model !== undefined && model === undefined) return undefined;
+
+  const run = value.run;
+  if (!isDetailsRecord(run)) return undefined;
+  const runNumber = boundedDetailsCount(run.number, CARD_MAX_RUN_NUMBER);
+  const phase = boundedDetailsText(run.phase, CARD_PHASE_MAX);
+  if (
+    runNumber === undefined ||
+    phase === undefined ||
+    typeof run.action !== "string" ||
+    !CARD_RUN_ACTIONS.has(run.action)
+  )
+    return undefined;
+
+  const activity = value.activity;
+  if (!isDetailsRecord(activity)) return undefined;
+  const activityText = boundedDetailsText(activity.text, CARD_ROW_TEXT_MAX);
+  if (
+    activityText === undefined ||
+    typeof activity.kind !== "string" ||
+    !CARD_ACTIVITY_KINDS.has(activity.kind) ||
+    typeof activity.live !== "boolean"
+  )
+    return undefined;
+
+  const telemetry = value.telemetry;
+  if (!isDetailsRecord(telemetry)) return undefined;
+  const figures: Record<string, string> = {};
+  for (const key of ["elapsed", "tokens", "cost"] as const) {
+    const raw = telemetry[key];
+    if (raw === undefined) continue;
+    const figure = boundedDetailsText(raw, CARD_TELEMETRY_MAX);
+    if (figure === undefined) return undefined;
+    figures[key] = figure;
+  }
+
+  const viewport = value.viewport;
+  if (!isDetailsRecord(viewport)) return undefined;
+  if (!Array.isArray(viewport.rows)) return undefined;
+  if (viewport.rows.length > CARD_VIEWPORT_ROWS) return undefined;
+  const rows: PiCardViewportRow[] = [];
+  for (const row of viewport.rows) {
+    const parsed = parseCardViewportRow(row);
+    if (parsed === undefined) return undefined;
+    rows.push(parsed);
+  }
+  const above = boundedDetailsCount(viewport.above, Number.MAX_SAFE_INTEGER);
+  if (above === undefined || typeof viewport.atBottom !== "boolean")
+    return undefined;
+
+  let terminal: PiCardTerminalFacts | undefined;
+  if (value.terminal !== undefined) {
+    terminal = parseCardTerminal(value.terminal);
+    if (terminal === undefined) return undefined;
+  }
+
   return {
-    kind: "weave-delegation-compact",
-    lines: collapsed.lines,
-    expandedCurrentItem: expanded.expandedCurrentItem,
-    degraded: collapsed.degraded || expanded.degraded,
+    schemaVersion: CARD_FACTS_SCHEMA_VERSION,
+    tool,
+    agentName,
+    ...(model !== undefined ? { model } : {}),
+    run: {
+      number: runNumber,
+      action: run.action as ChildCompactRunAction,
+      phase,
+    },
+    status,
+    tone: value.tone as PiCardTone,
+    settled: value.settled,
+    assignment,
+    activity: {
+      kind: activity.kind as PiCardActivityKind,
+      text: activityText,
+      live: activity.live,
+    },
+    telemetry: figures,
+    viewport: { rows, above, atBottom: viewport.atBottom },
+    ...(terminal !== undefined ? { terminal } : {}),
   };
 }
 
-function compactPartialResult(
-  modelVisibleText: string,
-  details: PiDelegationCompactDetails,
-): PiToolResult {
-  return toolResult(modelVisibleText, details);
+/** The serialized size of a payload, or `undefined` when it cannot be stored. */
+function serializedDetailsBytes(value: unknown): number | undefined {
+  return Result.fromThrowable(
+    () => JSON.stringify(value),
+    () => undefined,
+  )()
+    .map((text) =>
+      typeof text === "string"
+        ? new TextEncoder().encode(text).byteLength
+        : undefined,
+    )
+    .unwrapOr(undefined);
 }
 
-function modelVisibleFromCompact(details: PiDelegationCompactDetails): string {
-  // Keep model-visible partial content as the activity line, never chrome.
-  const activity = details.lines[1];
-  return activity.length > 0 ? activity : "…";
+/**
+ * Reads a stored details payload strictly.
+ *
+ * Total by construction: an absent, foreign, malformed, or over-ceiling
+ * payload is a typed error, never a throw and never a half-trusted card.
+ */
+export function parseDelegationCardDetails(
+  details: unknown,
+): Result<PiDelegationCardDetails, PiDelegationCardDetailsError> {
+  const invalid = (
+    reason: PiDelegationCardDetailsError["reason"],
+  ): Result<PiDelegationCardDetails, PiDelegationCardDetailsError> =>
+    err({ type: "PiDelegationCardDetailsInvalid", reason });
+
+  if (details === undefined || details === null) return invalid("absent");
+  if (!isDetailsRecord(details)) return invalid("malformed");
+  // A payload another extension (or an older adapter) wrote is foreign, not
+  // broken: it degrades without ever being reported as this adapter's fault.
+  if (details.kind !== "weave-delegation-card") return invalid("foreign");
+  if (details.version !== DELEGATION_CARD_DETAILS_VERSION)
+    return invalid("foreign");
+  const bytes = serializedDetailsBytes(details);
+  if (bytes === undefined) return invalid("malformed");
+  if (bytes > MAX_DELEGATION_CARD_DETAILS_BYTES) return invalid("oversized");
+  const facts = parseCardFacts(details.facts);
+  if (facts === undefined) return invalid("malformed");
+  return ok({
+    kind: "weave-delegation-card",
+    version: DELEGATION_CARD_DETAILS_VERSION,
+    facts,
+  });
+}
+
+function cardDetailsOf(facts: PiDelegationCardFacts): PiDelegationCardDetails {
+  return {
+    kind: "weave-delegation-card",
+    version: DELEGATION_CARD_DETAILS_VERSION,
+    facts,
+  };
+}
+
+function fitsDetailsCeiling(details: PiDelegationCardDetails): boolean {
+  const bytes = serializedDetailsBytes(details);
+  return bytes !== undefined && bytes <= MAX_DELEGATION_CARD_DETAILS_BYTES;
+}
+
+/**
+ * Keeps the viewport honest while shedding rows: rows are dropped from the top
+ * of the window only, and every dropped row is added to `above`, so the count
+ * of rows the window does not show stays exact after shedding.
+ */
+function withViewportRows(
+  facts: PiDelegationCardFacts,
+  rows: readonly PiCardViewportRow[],
+): PiDelegationCardFacts {
+  const dropped = Math.max(0, facts.viewport.rows.length - rows.length);
+  return {
+    ...facts,
+    viewport: {
+      rows,
+      above: facts.viewport.above + dropped,
+      atBottom: facts.viewport.atBottom,
+    },
+  };
+}
+
+/**
+ * Bounds one payload to {@link MAX_DELEGATION_CARD_DETAILS_BYTES} before it is
+ * published.
+ *
+ * The shedding order is fixed and stated here once: the viewport ring goes
+ * first, one row at a time from the top; then the whole expanded viewport, so
+ * a payload that cannot afford a window publishes none. Nothing else is traded
+ * away — the collapsed card's own facts and the authoritative settlement record
+ * (`terminal`) both survive every step, because a persisted payload that
+ * dropped its settlement would replay a completed run as an unfinished one. A
+ * payload that still does not fit with zero rows is not published at all, and
+ * the entry degrades to the honest fallback card rather than to a silently
+ * truncated or silently unsettled one.
+ */
+export function boundDelegationCardDetails(
+  facts: PiDelegationCardFacts,
+): PiDelegationCardDetails | undefined {
+  const full = cardDetailsOf(facts);
+  if (fitsDetailsCeiling(full)) return full;
+
+  for (let keep = facts.viewport.rows.length - 1; keep > 0; keep -= 1) {
+    const trimmed = cardDetailsOf(
+      withViewportRows(facts, facts.viewport.rows.slice(-keep)),
+    );
+    if (fitsDetailsCeiling(trimmed)) return trimmed;
+  }
+
+  const withoutViewport = cardDetailsOf(withViewportRows(facts, []));
+  return fitsDetailsCeiling(withoutViewport) ? withoutViewport : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// The live producer
+// ---------------------------------------------------------------------------
+
+/** Injected clock for the card's elapsed fact. Read at event time, not render time. */
+type PiCardNow = () => number;
+
+interface PiDelegationCardProducerConfig {
+  readonly threadId: string;
+  readonly agentName: string;
+  /** The parent's own sentence for this run. */
+  readonly assignment: string;
+  readonly model?: string;
+  readonly runNumber: number;
+  readonly action: ChildCompactRunAction;
+}
+
+/**
+ * Folds one run's authoritative events into card facts.
+ *
+ * It owns no timers and publishes nothing on its own: the tool decides when an
+ * update leaves. Malformed input keeps the facts the card already had, so a
+ * single bad event can never blank a running card.
+ */
+class PiDelegationCardProducer {
+  private state: PiDelegationCardState;
+  private readonly now: PiCardNow;
+
+  constructor(
+    config: PiDelegationCardProducerConfig,
+    now: PiCardNow = () => Date.now(),
+  ) {
+    this.now = now;
+    this.state = createDelegationCardState({
+      agentName: config.agentName,
+      assignment: config.assignment,
+      ...(config.model !== undefined ? { model: config.model } : {}),
+      runNumber: config.runNumber,
+      action: config.action,
+    });
+    this.applyInput({
+      kind: "start_run",
+      threadId: config.threadId,
+      runNumber: config.runNumber,
+      action: config.action,
+      agentName: config.agentName,
+    });
+  }
+
+  applyEvent(event: PiChildSessionEvent): void {
+    applyDelegationCardEvent(this.state, event, this.now).match(
+      (next) => {
+        this.state = next;
+      },
+      () => undefined,
+    );
+  }
+
+  settle(settlement: PiChildSettlement): void {
+    this.applyInput({ kind: "settle", settlement });
+  }
+
+  facts(): PiDelegationCardFacts {
+    return projectDelegationCardFacts(this.state);
+  }
+
+  details(): PiDelegationCardDetails | undefined {
+    return boundDelegationCardDetails(this.facts());
+  }
+
+  private applyInput(input: unknown): void {
+    applyDelegationCardInput(this.state, input, this.now).match(
+      (next) => {
+        this.state = next;
+      },
+      () => undefined,
+    );
+  }
+}
+
+/**
+ * The model-visible line of one update: the bounded activity sentence, never
+ * card chrome. The card is for the human reading the terminal; the model reads
+ * this line and, at the end, the structured result.
+ */
+function modelVisibleActivity(facts: PiDelegationCardFacts): string {
+  return facts.activity.text.length > 0 ? facts.activity.text : "…";
 }
 
 /**
@@ -352,7 +770,7 @@ function parentVisibleSettlement(
  */
 function successResult(
   settlement: PiChildSettlement,
-  compact?: PiDelegationCompactDetails,
+  card?: PiDelegationCardDetails,
   threadId?: string,
 ): PiToolResult {
   return toolResult(
@@ -367,7 +785,7 @@ function successResult(
         ? { thread: threadId }
         : {}),
     }),
-    compact,
+    card,
   );
 }
 
@@ -379,7 +797,7 @@ function successResult(
  */
 function threadResult(
   outcome: PiThreadRunOutcome,
-  compact?: PiDelegationCompactDetails,
+  card?: PiDelegationCardDetails,
 ): PiToolResult {
   const settlement = outcome.settlement;
   const status = settlement.outcome;
@@ -407,7 +825,7 @@ function threadResult(
           }
         : {}),
     }),
-    compact,
+    card,
   );
 }
 
@@ -483,106 +901,37 @@ function failureResult(
   return toolResult(text);
 }
 
-function readCompactDetails(
-  details: unknown,
-): PiDelegationCompactDetails | undefined {
-  if (typeof details !== "object" || details === null || Array.isArray(details))
-    return undefined;
-  const candidate = details as Partial<PiDelegationCompactDetails>;
-  if (candidate.kind !== "weave-delegation-compact") return undefined;
-  if (
-    !Array.isArray(candidate.lines) ||
-    candidate.lines.length !== 3 ||
-    typeof candidate.lines[0] !== "string" ||
-    typeof candidate.lines[1] !== "string" ||
-    typeof candidate.lines[2] !== "string" ||
-    typeof candidate.degraded !== "boolean"
-  ) {
-    return undefined;
-  }
-  return {
-    kind: "weave-delegation-compact",
-    lines: [candidate.lines[0], candidate.lines[1], candidate.lines[2]],
-    expandedCurrentItem:
-      typeof candidate.expandedCurrentItem === "string"
-        ? candidate.expandedCurrentItem
-        : undefined,
-    degraded: candidate.degraded,
-  };
-}
-
-/** Legacy snapshot details — fallback only for older stored results. */
-function readLegacyRenderDetails(
-  details: unknown,
-): PiDelegationLegacyRenderDetails | undefined {
-  if (typeof details !== "object" || details === null || Array.isArray(details))
-    return undefined;
-  const candidate = details as Partial<PiDelegationLegacyRenderDetails>;
-  if (candidate.kind !== "weave-delegation") return undefined;
-  if (
-    typeof candidate.agent !== "string" ||
-    typeof candidate.displayName !== "string" ||
-    typeof candidate.status !== "string" ||
-    typeof candidate.latestOutput !== "string"
-  )
-    return undefined;
-  return candidate as PiDelegationLegacyRenderDetails;
-}
-
-function renderStatus(
-  details: PiDelegationLegacyRenderDetails,
-  theme: PiUiThemePort,
-): string {
-  const tool =
-    details.currentTool === undefined ? "" : ` · ${details.currentTool}`;
-  return theme.fg("muted", `${details.status}${tool}`);
-}
-
-const COLLAPSED_PREVIEW_CODE_POINT_LIMIT = 240;
-
-/** Width of the rule that separates the delegation call line from its output. */
-const DELEGATION_RULE_WIDTH = 50;
-
-function collapsedPreview(output: string): string {
-  const normalized = output.replace(/\s+/gu, " ").trim();
-  const codePoints = Array.from(normalized);
-  if (codePoints.length <= COLLAPSED_PREVIEW_CODE_POINT_LIMIT) {
-    return normalized;
-  }
-  return `…${codePoints
-    .slice(-(COLLAPSED_PREVIEW_CODE_POINT_LIMIT - 1))
-    .join("")}`;
-}
-
-function pushCompactUpdate(
+/**
+ * Publishes one bounded card update.
+ *
+ * The model-visible line and the stored payload are produced from the same
+ * facts, in the same call, so what the model reads and what the terminal shows
+ * can never describe different runs.
+ */
+function pushCardUpdate(
   onUpdate: ((update: PiToolResult) => void) | undefined,
-  projection: PiChildCompactProjection,
-): PiDelegationCompactDetails {
-  const details = projectCompactDetails(projection);
-  onUpdate?.(compactPartialResult(modelVisibleFromCompact(details), details));
+  producer: PiDelegationCardProducer,
+): PiDelegationCardDetails | undefined {
+  const facts = producer.facts();
+  const details = boundDelegationCardDetails(facts);
+  onUpdate?.(toolResult(modelVisibleActivity(facts), details));
   return details;
 }
 
-function settleCompactProjection(
-  projection: PiChildCompactProjection | undefined,
+function settleCardProducer(
+  producer: PiDelegationCardProducer | undefined,
   settlement: PiChildSettlement,
-  agentName: string,
-  threadId: string,
-  runNumber: number,
-  action: "start" | "retry" | "continue",
-): PiDelegationCompactDetails {
-  if (projection !== undefined) {
-    projection.settle(settlement);
-    return projectCompactDetails(projection);
+  config: PiDelegationCardProducerConfig,
+): PiDelegationCardDetails | undefined {
+  if (producer !== undefined) {
+    producer.settle(settlement);
+    return producer.details();
   }
-  // Nested/relay fallback: build the final three-line block from settlement.
-  const fallback = new PiChildCompactProjection({
-    threadId,
-    agentName,
-  });
-  fallback.startRun({ runNumber, action, agentName });
+  // Nested/relay fallback: the relay carries no live session events, so the
+  // final card is built from the authoritative settlement alone.
+  const fallback = new PiDelegationCardProducer(config);
   fallback.settle(settlement);
-  return projectCompactDetails(fallback);
+  return fallback.details();
 }
 
 function parseRelaySettlement(body: JsonValue): PiChildSettlement | undefined {
@@ -622,74 +971,107 @@ function parseRelaySettlement(body: JsonValue): PiChildSettlement | undefined {
 }
 
 /**
- * Shared compact `renderResult` for root and relayed `weave_delegate` tools.
- * Prefer strict compact details; fall back to legacy snapshot details; theme
- * failures degrade without affecting execution.
+ * The shared `renderResult` for the root and relayed `weave_delegate` tools.
+ *
+ * There is exactly one card path: a nested delegation draws the same card the
+ * root one does, from the same parsed facts. A payload this adapter cannot
+ * vouch for — foreign, older, malformed, or larger than the ceiling — and a
+ * theme that cannot paint both end at the same honest fallback card, reported
+ * through the caller's own failure reporter.
  */
-export function renderDelegationCompactResult(
+export function renderDelegationCardResult(
   result: PiToolResult,
   options: PiToolRenderOptions,
   theme: PiUiThemePort,
-  context: PiToolRenderContext,
-  onCompactRenderFailure?: (code: string) => void,
+  _context: PiToolRenderContext,
+  onCardRenderFailure?: (code: string) => void,
 ): PiToolRenderComponent {
-  const degrade = (code: string): PiToolRenderComponent => {
-    onCompactRenderFailure?.(code);
-    const degraded = degradedChildCompactRender("render_failed");
-    return new Text(degraded.lines.join("\n"), 0, 0);
-  };
-
-  const compact = readCompactDetails(result.details);
-  if (compact !== undefined) {
-    return renderPiChildCompactComponent(
-      {
-        lines: compact.lines,
-        expandedCurrentItem: compact.expandedCurrentItem,
-        degraded: compact.degraded,
-      },
-      { expanded: options.expanded },
-      theme,
-    ).match(
-      (component) => component,
-      (code) => degrade(code),
-    );
+  const parsed = parseDelegationCardDetails(result.details);
+  if (parsed.isErr()) {
+    onCardRenderFailure?.(CARD_DETAILS_INVALID_CODE);
+    return degradedPiChildCardComponent(parsed.error.reason);
   }
-
-  return Result.fromThrowable(
-    () => {
-      const legacy = readLegacyRenderDetails(result.details);
-      const agent =
-        legacy?.agent ??
-        (typeof context.args?.agent === "string"
-          ? context.args.agent
-          : "delegate");
-      if (legacy === undefined) {
-        const fallback = result.content[0]?.text ?? "";
-        return new Text(
-          theme.fg(
-            "toolOutput",
-            fallback === "" ? formatDelegationAgentName(agent) : fallback,
-          ),
-          0,
-          0,
-        );
-      }
-      const rule = theme.fg("muted", "\u2500".repeat(DELEGATION_RULE_WIDTH));
-      const body =
-        legacy.latestOutput.length === 0
-          ? renderStatus(legacy, theme)
-          : theme.fg(
-              "toolOutput",
-              options.expanded
-                ? legacy.latestOutput
-                : collapsedPreview(legacy.latestOutput),
-            );
-      return new Text(`${rule}\n${body}`, 0, 0);
-    },
-    () => COMPACT_RENDER_FAILED_CODE,
-  )().match(
+  return renderPiChildCardComponent(
+    parsed.value.facts,
+    { expanded: options.expanded, onFailure: onCardRenderFailure },
+    theme,
+  ).match(
     (component) => component,
-    (code) => degrade(code),
+    (code) => {
+      onCardRenderFailure?.(code);
+      return degradedPiChildCardComponent("render_failed");
+    },
+  );
+}
+
+/** Code points the pre-execution call row prints before it is clipped. */
+const MAX_CALL_LABEL_CODE_POINTS = 120;
+
+/** A component that draws nothing, so exactly one card occupies the entry. */
+const CARD_EMPTY_COMPONENT: PiToolRenderComponent = {
+  render: () => [],
+  invalidate: () => undefined,
+};
+
+function callRowPaint(theme: PiUiThemePort): Paint {
+  return Result.fromThrowable(
+    () => makePaint(theme),
+    () => undefined,
+  )().unwrapOr(plainPaint());
+}
+
+/**
+ * The one muted pre-execution row: the tool that was called and who it is for.
+ *
+ * It exists only while Pi streams the arguments; the card replaces it the
+ * moment execution starts.
+ */
+function delegationCallComponent(
+  theme: PiUiThemePort,
+  label: string,
+): PiToolRenderComponent {
+  const paint = callRowPaint(theme);
+  const bounded = Array.from(label)
+    .slice(0, MAX_CALL_LABEL_CODE_POINTS)
+    .join("");
+  return {
+    render(width) {
+      const w = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+      return Result.fromThrowable(
+        () => [emit(clipRow([seg("muted", bounded)], w), w, paint)],
+        () => "call_render_failed",
+      )().unwrapOr([]);
+    },
+    invalidate: () => undefined,
+  };
+}
+
+/**
+ * The pre-execution row for one delegation call.
+ *
+ * `renderShell: "self"` makes this tool the sole owner of its entry, so once
+ * execution has started the call renderer must yield: a row drawn beside the
+ * card would print a second, stateless head above a framed one.
+ */
+function renderDelegationCall(
+  args: Record<string, unknown>,
+  theme: PiUiThemePort,
+  context: PiToolRenderContext,
+  resolveAgentRuntime?: (agentName: string) => {
+    readonly model?: string;
+    readonly reasoningLevel?: string;
+  },
+): PiToolRenderComponent {
+  if (context.executionStarted === true) return CARD_EMPTY_COMPONENT;
+  const agent = typeof args.agent === "string" ? args.agent : "delegate";
+  const runtime = resolveAgentRuntime?.(agent) ?? {};
+  const suffix = [runtime.model, runtime.reasoningLevel]
+    .filter((part): part is string => part !== undefined && part !== "")
+    .join(" ");
+  const target = formatDelegationAgentName(agent);
+  return delegationCallComponent(
+    theme,
+    `${WEAVE_DELEGATION_TOOL_NAME} · ${target}${suffix === "" ? "" : ` ${suffix}`}`,
   );
 }
 
@@ -844,22 +1226,12 @@ export function buildDelegationToolRegistration(
     promptGuidelines: [
       "Pass the exact normalized subagent name from the `agent` enum; never use a display label, description, or alias.",
     ],
-    renderCall: (args, theme) => {
-      const agent = typeof args.agent === "string" ? args.agent : "delegate";
-      const displayName = formatDelegationAgentName(agent);
-      const runtime = deps.resolveAgentRuntime?.(agent) ?? {};
-      const suffix = [runtime.model, runtime.reasoningLevel]
-        .filter((part): part is string => part !== undefined && part !== "")
-        .join(" ");
-      const title = theme.fg("toolTitle", theme.bold(displayName));
-      return new Text(
-        suffix === "" ? title : `${title} ${theme.fg("muted", suffix)}`,
-        0,
-        0,
-      );
-    },
+    // The card owns its own frame, so Pi's coloured tool shell must stand down.
+    renderShell: "self",
+    renderCall: (args, theme, context) =>
+      renderDelegationCall(args, theme, context, deps.resolveAgentRuntime),
     renderResult: (result, options, theme, context) =>
-      renderDelegationCompactResult(
+      renderDelegationCardResult(
         result,
         options,
         theme,
@@ -905,8 +1277,9 @@ export function buildDelegationToolRegistration(
         // block; prior Pi tool blocks stay frozen.
         const instruction =
           parsed.kind === "retry" ? parsed.instruction : parsed.task;
-        let projection: PiChildCompactProjection | undefined;
+        let producer: PiDelegationCardProducer | undefined;
         let assignedAgent = "delegate";
+        let assignedRun = 1;
         return controller
           .resumeThread({
             threadId: parsed.threadId,
@@ -921,34 +1294,32 @@ export function buildDelegationToolRegistration(
             },
             onRunAssigned: (assignment) => {
               assignedAgent = assignment.agentName;
-              projection = new PiChildCompactProjection({
+              assignedRun = assignment.runNumber;
+              producer = new PiDelegationCardProducer({
                 threadId: assignment.threadId,
                 agentName: assignment.agentName,
-              });
-              projection.startRun({
+                assignment: instruction ?? "",
                 runNumber: assignment.runNumber,
                 action: assignment.action,
-                agentName: assignment.agentName,
               });
-              pushCompactUpdate(onUpdate, projection);
+              pushCardUpdate(onUpdate, producer);
             },
             onSessionEvent: (event: PiChildSessionEvent) => {
-              if (projection === undefined) return;
-              projection.applySessionEvent(event);
-              pushCompactUpdate(onUpdate, projection);
+              if (producer === undefined) return;
+              producer.applyEvent(event);
+              pushCardUpdate(onUpdate, producer);
             },
           })
           .match(
             (outcome) => {
-              const compact = settleCompactProjection(
-                projection,
-                outcome.settlement,
-                assignedAgent,
-                parsed.threadId,
-                outcome.run,
-                parsed.kind,
-              );
-              return threadResult(outcome, compact);
+              const card = settleCardProducer(producer, outcome.settlement, {
+                threadId: parsed.threadId,
+                agentName: assignedAgent,
+                assignment: instruction ?? "",
+                runNumber: outcome.run > 0 ? outcome.run : assignedRun,
+                action: parsed.kind,
+              });
+              return threadResult(outcome, card);
             },
             (failure) => threadFailureResult(parsed.threadId, failure),
           );
@@ -982,16 +1353,16 @@ export function buildDelegationToolRegistration(
         return failureResult(aborted.code, aborted);
       }
       // Root start: child id is also the opaque thread id (controller provision).
-      const projection = new PiChildCompactProjection({
+      const producer = new PiDelegationCardProducer({
         threadId: childId,
         agentName: parsed.agent,
-      });
-      projection.startRun({
+        assignment: parsed.task,
         runNumber: 1,
         action: "start",
-        agentName: parsed.agent,
       });
-      pushCompactUpdate(onUpdate, projection);
+      // The first update is published before this call awaits anything, so Pi
+      // never shows an empty entry while the arguments are still streaming.
+      pushCardUpdate(onUpdate, producer);
       const request: PiDelegationRequest = {
         parentId: deps.parentId,
         parentDepth: deps.parentDepth,
@@ -1007,25 +1378,24 @@ export function buildDelegationToolRegistration(
           ctx,
           invocation.parentAgentName,
         ),
-        // Compact live updates come only from parser-approved session events.
-        // Tree-snapshot onUpdate must not overwrite compact event output.
+        // Live card updates come only from parser-approved session events.
+        // Tree-snapshot onUpdate must not overwrite event-derived card facts.
         onSessionEvent: (event: PiChildSessionEvent) => {
-          projection.applySessionEvent(event);
-          pushCompactUpdate(onUpdate, projection);
+          producer.applyEvent(event);
+          pushCardUpdate(onUpdate, producer);
         },
         childId,
       };
       const settlement = controller.delegate(request).match(
         (value) => {
-          const compact = settleCompactProjection(
-            projection,
-            value,
-            parsed.agent,
-            childId,
-            1,
-            "start",
-          );
-          return successResult(value, compact, childId);
+          const card = settleCardProducer(producer, value, {
+            threadId: childId,
+            agentName: parsed.agent,
+            assignment: parsed.task,
+            runNumber: 1,
+            action: "start",
+          });
+          return successResult(value, card, childId);
         },
         (failure) => startFailureResult(controller, childId, failure),
       );
@@ -1053,6 +1423,13 @@ export function buildDelegationToolRegistration(
   return tool;
 }
 
+/**
+ * The thread label a relayed card opens under. The relay reply carries no
+ * thread id, and the card never prints one, so this is an adapter-owned
+ * constant rather than anything a caller or a host may set.
+ */
+const RELAY_CARD_THREAD_LABEL = "nested";
+
 export interface PiRelayedDelegationToolDeps {
   readonly targets: readonly DelegationTarget[];
   /** Lazily reads this child's own private-control runtime; `undefined` before bootstrap has applied (fails closed). */
@@ -1078,9 +1455,12 @@ export interface PiRelayedDelegationToolDeps {
  * tree/process budget as every other delegation - nested delegation is
  * never a second, independent, untracked budget.
  *
- * Live session events are unavailable across the relay control channel, so
- * the compact block is built from the structured settlement only. Final
- * appearance and the three-line contract match the root tool.
+ * Live session events are unavailable across the relay control channel, so the
+ * card opens on the bootstrap facts this call already knows and is completed by
+ * the structured settlement. One producer owns the entry from the first update
+ * to the last, exactly as at the root. The renderer, the details payload and
+ * the frame are the root tool's own: nested delegation never forks a second
+ * card path.
  */
 export function buildRelayedDelegationToolRegistration(
   deps: PiRelayedDelegationToolDeps,
@@ -1092,21 +1472,28 @@ export function buildRelayedDelegationToolRegistration(
     label: "Delegate to a Weave agent",
     description:
       "Delegates one task to a single eligible Weave agent, run as a private ephemeral child of this session, and returns its structured result. Never advances or creates workflow state.",
-    parameters: buildDelegationParameters(allowedNames, deps.targets.length === 0),
+    parameters: buildDelegationParameters(
+      allowedNames,
+      deps.targets.length === 0,
+    ),
     promptGuidelines: [
       deps.targets.length === 0
         ? "Pass a normalized agent name; the authenticated parent validates eligibility."
         : "Use only an `agent` name listed as an eligible delegation target for this session.",
     ],
+    // Same contract as the root tool: this tool draws its own frame.
+    renderShell: "self",
+    renderCall: (args, theme, context) =>
+      renderDelegationCall(args, theme, context),
     renderResult: (result, options, theme, context) =>
-      renderDelegationCompactResult(
+      renderDelegationCardResult(
         result,
         options,
         theme,
         context,
         deps.onCompactRenderFailure,
       ),
-    execute: async (_toolCallId, params) => {
+    execute: async (_toolCallId, params, _signal, onUpdate) => {
       const capability = requireSessionMutationCapability(
         deps.sessionMutationGate,
       );
@@ -1158,6 +1545,21 @@ export function buildRelayedDelegationToolRegistration(
           ],
         };
       }
+      // The relay carries no thread id back to this child, so the card is
+      // opened under an adapter-owned label. It names no host state and the
+      // renderer never prints it.
+      const cardConfig: PiDelegationCardProducerConfig = {
+        threadId: RELAY_CARD_THREAD_LABEL,
+        agentName: parsed.agent,
+        assignment: parsed.task,
+        runNumber: 1,
+        action: "start",
+      };
+      const producer = new PiDelegationCardProducer(cardConfig);
+      // The bootstrap card is published before this call awaits the relay:
+      // `renderCall` draws nothing once execution starts, so an entry that
+      // waited for the settlement would sit blank for the whole nested run.
+      pushCardUpdate(onUpdate, producer);
       const reply: ResultAsync<JsonValue, PiChildRuntimeError> =
         runtime.requestDelegation({
           agentName: parsed.agent,
@@ -1166,20 +1568,15 @@ export function buildRelayedDelegationToolRegistration(
       return reply.match(
         (body) => {
           const settlement = parseRelaySettlement(body);
-          const compact =
+          // A relay reply this tool cannot read is not turned into a card that
+          // claims an outcome: the entry degrades instead.
+          const card =
             settlement === undefined
-              ? compactDetailsFrom(degradedChildCompactRender("invalid_input"))
-              : settleCompactProjection(
-                  undefined,
-                  settlement,
-                  parsed.agent,
-                  "nested",
-                  1,
-                  "start",
-                );
+              ? undefined
+              : settleCardProducer(producer, settlement, cardConfig);
           return {
             content: [{ type: "text", text: JSON.stringify(body) }],
-            details: compact,
+            details: card,
           };
         },
         (failure) => ({

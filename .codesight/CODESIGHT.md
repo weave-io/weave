@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 296 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~31,900 tokens. Without it, AI exploration would cost ~95,800 tokens. **Saves ~63,900 tokens per conversation.**
-> **Last scanned:** 2026-08-14 19:47 — re-run after significant changes
+> **Token savings:** this file is ~32,000 tokens. Without it, AI exploration would cost ~95,800 tokens. **Saves ~63,800 tokens per conversation.**
+> **Last scanned:** 2026-08-14 20:17 — re-run after significant changes
 
 ---
 
@@ -279,9 +279,12 @@
   - _...31 more_
 - `packages/adapters/pi/src/child-native-components.ts`
   - function renderPiChildCompactComponent: (output, options, theme) => NeverthrowResult<
+  - function degradedPiChildCardComponent: (reason) => PiToolRenderComponent
+  - function renderPiChildCardComponent: (facts, options, theme) => NeverthrowResult<
   - function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory
   - interface PiNativeTranscriptComponentDeps
-  - const CHILD_COMPACT_NATIVE_RENDER_FAILED
+  - interface PiChildCardComponentOptions
+  - _...2 more_
 - `packages/adapters/pi/src/child-native-results.ts`
   - function readNativeResultGroup: (expected, entries) => PiNativeResultGroupState
   - function planResultGroupWrite: (output) => Result<PiNativeResultWritePlan, PiNativeSessionError>
@@ -567,12 +570,12 @@
   - _...12 more_
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function formatDelegationAgentName: (agentName) => string
-  - function renderDelegationCompactResult: (result, options, theme, context, onCompactRenderFailure?) => void
+  - function parseDelegationCardDetails: (details) => Result<PiDelegationCardDetails, PiDelegationCardDetailsError>
+  - function boundDelegationCardDetails: (facts) => PiDelegationCardDetails | undefined
+  - function renderDelegationCardResult: (result, options, theme, _context, onCardRenderFailure?) => void
   - function buildDelegationToolRegistration: (deps) => PiToolRegistration
   - function buildRelayedDelegationToolRegistration: (deps) => PiToolRegistration
-  - interface PiDelegationInvocationContext
-  - interface PiDelegationToolDeps
-  - _...4 more_
+  - _...10 more_
 - `packages/adapters/pi/src/direct-dispatch-transport.ts`
   - function validateDirectNativeSession: (childId, session) => Result<PiDirectNativeSession, PiAdapterFailure>
   - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
@@ -1828,13 +1831,13 @@
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
+- `packages/adapters/pi/src/child-tree.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
+- `packages/adapters/pi/src/rpc-child.ts` — imported by **15** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **15** files
-- `packages/adapters/pi/src/child-tree.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
-- `packages/adapters/pi/src/rpc-child.ts` — imported by **14** files
 - `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
@@ -1872,7 +1875,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 323 test files found
+> 324 test files found
 
 ---
 

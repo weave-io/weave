@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { DelegationTarget } from "@weaveio/weave-engine";
 import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
+import type { PiDelegationCardFacts } from "../child-card-model.js";
 import type { PiChildRefStatus } from "../child-session-refs.js";
 import type {
   PiDelegationController,
@@ -11,7 +12,10 @@ import type {
 import {
   buildDelegationToolRegistration,
   buildRelayedDelegationToolRegistration,
+  CARD_DETAILS_INVALID_CODE,
+  CARD_RENDER_FAILED_CODE,
   formatDelegationAgentName,
+  type PiDelegationCardDetails,
   type PiDelegationToolDeps,
   WEAVE_DELEGATION_TOOL_NAME,
 } from "../delegation-tool.js";
@@ -28,6 +32,24 @@ import type {
   PiToolResult,
   PiUiThemePort,
 } from "../types.js";
+
+/** A minimal valid card payload, used where the facts themselves are not the subject. */
+function cardDetails(): PiDelegationCardDetails {
+  const facts: PiDelegationCardFacts = {
+    schemaVersion: 1,
+    tool: "weave_delegate",
+    agentName: "shuttle",
+    run: { number: 1, action: "start", phase: "responding" },
+    status: "running",
+    tone: "run",
+    settled: false,
+    assignment: "do it",
+    activity: { kind: "say", text: "working", live: true },
+    telemetry: {},
+    viewport: { rows: [], above: 0, atBottom: true },
+  };
+  return { kind: "weave-delegation-card", version: 1, facts };
+}
 
 const TARGETS: readonly DelegationTarget[] = [
   {
@@ -190,9 +212,15 @@ describe("buildDelegationToolRegistration", () => {
         .join("\n")
         .trimEnd();
 
-    expect(render("pattern")).toBe("Pattern");
-    expect(render("shuttle")).toBe("Shuttle");
-    expect(render("shuttle-infra")).toBe("Infra-Shuttle");
+    expect(render("pattern")).toBe(
+      `${WEAVE_DELEGATION_TOOL_NAME} \u00b7 Pattern`,
+    );
+    expect(render("shuttle")).toBe(
+      `${WEAVE_DELEGATION_TOOL_NAME} \u00b7 Shuttle`,
+    );
+    expect(render("shuttle-infra")).toBe(
+      `${WEAVE_DELEGATION_TOOL_NAME} \u00b7 Infra-Shuttle`,
+    );
     expect(formatDelegationAgentName("shuttle-data-platform")).toBe(
       "Data-Platform-Shuttle",
     );
@@ -311,7 +339,7 @@ describe("buildDelegationToolRegistration", () => {
     ).toBeLessThanOrEqual(64 * 1_024);
   });
 
-  it("execute: pushes compact live updates from session events, not tree snapshots", async () => {
+  it("execute: pushes card live updates from session events, not tree snapshots", async () => {
     let capturedRequest: PiDelegationRequest | undefined;
     const updates: PiToolResult[] = [];
     const registration = buildDelegationToolRegistration(
@@ -331,16 +359,19 @@ describe("buildDelegationToolRegistration", () => {
       (update) => updates.push(update),
       ctx(),
     );
-    // Start run emits the initial compact block before delegate resolves.
+    // Start run publishes the first card payload before delegate resolves and
+    // before this call awaits anything.
     expect(updates.length).toBeGreaterThanOrEqual(1);
-    const startDetails = updates[0]?.details as {
-      kind?: string;
-      lines?: string[];
-    };
-    expect(startDetails?.kind).toBe("weave-delegation-compact");
-    expect(startDetails?.lines).toHaveLength(3);
-    expect(startDetails?.lines?.[0]).toContain("shuttle");
-    expect(startDetails?.lines?.[2]).toContain("run 1");
+    const startDetails = updates[0]?.details as PiDelegationCardDetails;
+    expect(startDetails?.kind).toBe("weave-delegation-card");
+    expect(startDetails?.version).toBe(1);
+    expect(startDetails?.facts.agentName).toBe("shuttle");
+    expect(startDetails?.facts.run).toMatchObject({
+      number: 1,
+      action: "start",
+    });
+    expect(startDetails?.facts.assignment).toBe("do it");
+    expect(startDetails?.facts.settled).toBe(false);
     expect(capturedRequest?.onUpdate).toBeUndefined();
     expect(capturedRequest?.onSessionEvent).toBeDefined();
 
@@ -353,29 +384,25 @@ describe("buildDelegationToolRegistration", () => {
     } as never);
     expect(updates.length).toBeGreaterThanOrEqual(2);
     const live = updates[updates.length - 1];
-    const liveDetails = live?.details as {
-      kind?: string;
-      lines?: [string, string, string];
-      expandedCurrentItem?: string;
-    };
-    expect(liveDetails?.kind).toBe("weave-delegation-compact");
-    expect(liveDetails?.lines?.[1]).toContain("Inspecting the adapter");
-    // Model-visible content stays the activity fragment, not the three-line chrome.
-    expect(live?.content[0]?.type).toBe("text");
-    expect((live?.content[0] as { text: string }).text).toContain(
+    const liveDetails = live?.details as PiDelegationCardDetails;
+    expect(liveDetails?.kind).toBe("weave-delegation-card");
+    expect(liveDetails?.facts.activity.text).toContain(
       "Inspecting the adapter",
     );
-    expect((live?.content[0] as { text: string }).text).not.toContain(
-      "weave_delegate ·",
+    // Model-visible content stays the activity line, never card chrome.
+    expect(live?.content[0]?.type).toBe("text");
+    expect((live?.content[0] as { text: string }).text).toBe(
+      liveDetails.facts.activity.text,
     );
+    for (const frame of ["\u256d", "\u2570", "\u2502", "\u2500"]) {
+      expect((live?.content[0] as { text: string }).text).not.toContain(frame);
+    }
 
     const result = await executePromise;
-    const finalDetails = result.details as {
-      kind?: string;
-      lines?: [string, string, string];
-    };
-    expect(finalDetails?.kind).toBe("weave-delegation-compact");
-    expect(finalDetails?.lines?.[1]).toContain("done");
+    const finalDetails = result.details as PiDelegationCardDetails;
+    expect(finalDetails?.kind).toBe("weave-delegation-card");
+    expect(finalDetails?.facts.settled).toBe(true);
+    expect(finalDetails?.facts.activity.text).toContain("done");
     expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
       ok: true,
       settlement: {
@@ -391,35 +418,19 @@ describe("buildDelegationToolRegistration", () => {
       fg: (_color, text) => text,
       bold: (text) => text,
     };
-    const collapsed = renderer?.(
-      live!,
-      { expanded: false, isPartial: true },
-      theme,
-      { args: { agent: "shuttle", task: "do it" } },
-    )
-      .render(80)
-      .join("\n");
-    expect(
-      collapsed?.split("\n").filter((line) => line.length > 0).length,
-    ).toBe(3);
-    expect(collapsed).toContain("Inspecting the adapter");
-    expect(collapsed).not.toContain("\u2500");
+    const collapsedLines =
+      renderer?.(live!, { expanded: false, isPartial: true }, theme, {
+        args: { agent: "shuttle", task: "do it" },
+      }).render(80) ?? [];
+    expect(collapsedLines[0]?.startsWith("\u256d")).toBe(true);
+    expect(collapsedLines.at(-1)?.startsWith("\u2570")).toBe(true);
+    expect(collapsedLines.join("\n")).toContain("Inspecting the adapter");
 
-    const expanded = renderer?.(
-      {
-        ...live!,
-        details: {
-          ...(liveDetails as object),
-          expandedCurrentItem: "Inspecting the adapter in full",
-        },
-      },
-      { expanded: true, isPartial: true },
-      theme,
-      { args: { agent: "shuttle", task: "do it" } },
-    )
-      .render(80)
-      .join("\n");
-    expect(expanded).toContain("Inspecting the adapter in full");
+    const expandedLines =
+      renderer?.(live!, { expanded: true, isPartial: true }, theme, {
+        args: { agent: "shuttle", task: "do it" },
+      }).render(80) ?? [];
+    expect(expandedLines.length).toBeGreaterThan(collapsedLines.length);
 
     const call = registration
       .renderCall?.({ agent: "shuttle", task: "do it" }, theme, {
@@ -430,8 +441,15 @@ describe("buildDelegationToolRegistration", () => {
     expect(call).toContain("Shuttle");
   });
 
-  it("renderResult: falls back to legacy snapshot details", () => {
-    const registration = buildDelegationToolRegistration(baseDeps());
+  it("renderResult: degrades a foreign (older compact) details payload", () => {
+    const codes: string[] = [];
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        onCompactRenderFailure: (code) => {
+          codes.push(code);
+        },
+      }),
+    );
     const theme: PiUiThemePort = {
       fg: (_color, text) => text,
       bold: (text) => text,
@@ -441,11 +459,10 @@ describe("buildDelegationToolRegistration", () => {
         {
           content: [{ type: "text", text: "legacy" }],
           details: {
-            kind: "weave-delegation",
-            agent: "shuttle",
-            displayName: "Shuttle",
-            status: "running",
-            latestOutput: "old snapshot text",
+            kind: "weave-delegation-compact",
+            lines: ["a", "b", "c"],
+            expandedCurrentItem: undefined,
+            degraded: false,
           },
         },
         { expanded: false, isPartial: true },
@@ -454,8 +471,10 @@ describe("buildDelegationToolRegistration", () => {
       )
       ?.render(80)
       .join("\n");
-    expect(rendered).toContain("\u2500");
-    expect(rendered).toContain("old snapshot text");
+    expect(rendered).toContain("delegation card unavailable");
+    expect(rendered).toContain("foreign");
+    expect(rendered).not.toContain("old snapshot text");
+    expect(codes).toEqual([CARD_DETAILS_INVALID_CODE]);
   });
 
   it("renderResult: degrades when the theme helper throws", () => {
@@ -477,12 +496,7 @@ describe("buildDelegationToolRegistration", () => {
       .renderResult?.(
         {
           content: [{ type: "text", text: "x" }],
-          details: {
-            kind: "weave-delegation-compact",
-            lines: ["a", "b", "c"],
-            expandedCurrentItem: undefined,
-            degraded: false,
-          },
+          details: cardDetails(),
         },
         { expanded: false, isPartial: false },
         theme,
@@ -490,8 +504,8 @@ describe("buildDelegationToolRegistration", () => {
       )
       ?.render(80)
       .join("\n");
-    expect(rendered).toContain("render unavailable");
-    expect(codes).toEqual(["ChildCompactRenderFailed"]);
+    expect(rendered).toContain("delegation card unavailable");
+    expect(codes).toEqual([CARD_RENDER_FAILED_CODE]);
     expect(JSON.stringify(codes)).not.toContain("/secret");
   });
 
@@ -529,7 +543,9 @@ describe("buildDelegationToolRegistration", () => {
       })
       ?.render(80)
       .join("\n");
-    expect(rendered?.trim()).toBe("Shuttle");
+    expect(rendered?.trim()).toBe(
+      `${WEAVE_DELEGATION_TOOL_NAME} \u00b7 Shuttle`,
+    );
   });
 
   it("execute: reads the active primary identity and targets after a primary switch", async () => {
@@ -1409,19 +1425,15 @@ describe("weave_delegate thread lifecycle", () => {
     expect(seen?.onRunAssigned).toBeDefined();
     expect(seen?.onSessionEvent).toBeDefined();
     expect(updates.length).toBeGreaterThanOrEqual(2);
-    const first = updates[0]?.details as {
-      lines?: [string, string, string];
-    };
-    expect(first?.lines?.[2]).toContain("run 3");
-    expect(first?.lines?.[2]).toContain("retry");
-    expect(first?.lines?.join("\n")).not.toContain("thread-opaque");
-    expect(first?.lines?.join("\n")).not.toContain("child-run-3");
-    const details = result.details as {
-      kind?: string;
-      lines?: [string, string, string];
-    };
-    expect(details.kind).toBe("weave-delegation-compact");
-    expect(details.lines?.[1]).toBe("retry done");
+    const first = updates[0]?.details as PiDelegationCardDetails;
+    expect(first?.facts.run).toMatchObject({ number: 3, action: "retry" });
+    const firstJson = JSON.stringify(first);
+    expect(firstJson).not.toContain("thread-opaque");
+    expect(firstJson).not.toContain("child-run-3");
+    const details = result.details as PiDelegationCardDetails;
+    expect(details.kind).toBe("weave-delegation-card");
+    expect(details.facts.settled).toBe(true);
+    expect(details.facts.activity.text).toBe("retry done");
     expect(
       JSON.parse((result.content[0] as { text: string }).text),
     ).toMatchObject({
@@ -1432,7 +1444,7 @@ describe("weave_delegate thread lifecycle", () => {
     });
   });
 
-  it("nested/relayed: final compact three-line parity from structured settlement only", async () => {
+  it("nested/relayed: final card parity from structured settlement only", async () => {
     const registration = buildRelayedDelegationToolRegistration({
       targets: TARGETS,
       sessionMutationGate: createOpenSessionMutationGate(),
@@ -1455,19 +1467,15 @@ describe("weave_delegate thread lifecycle", () => {
       undefined,
       ctx(),
     );
-    const details = result.details as {
-      kind?: string;
-      lines?: [string, string, string];
-      degraded?: boolean;
-    };
-    expect(details.kind).toBe("weave-delegation-compact");
-    expect(details.lines).toHaveLength(3);
-    expect(details.lines?.[0]).toContain("shuttle");
-    expect(details.lines?.[0]).toContain("completed");
-    expect(details.lines?.[1]).toBe("nested-final");
-    expect(details.lines?.[2]).toContain("run 1");
-    expect(details.lines?.join("\n")).not.toContain("/sessions");
-    expect(details.degraded).toBe(false);
+    const details = result.details as PiDelegationCardDetails;
+    expect(details.kind).toBe("weave-delegation-card");
+    expect(details.version).toBe(1);
+    expect(details.facts.agentName).toBe("shuttle");
+    expect(details.facts.settled).toBe(true);
+    expect(details.facts.status).toBe("completed");
+    expect(details.facts.run).toMatchObject({ number: 1, action: "start" });
+    expect(details.facts.activity.text).toBe("nested-final");
+    expect(JSON.stringify(details)).not.toContain("/sessions");
     // Structured model output unchanged.
     expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
       ok: true,
@@ -1480,14 +1488,15 @@ describe("weave_delegate thread lifecycle", () => {
       fg: (_color, text) => text,
       bold: (text) => text,
     };
-    const rendered = registration
-      .renderResult?.(result, { expanded: false, isPartial: false }, theme, {
-        args: { agent: "shuttle" },
-      })
-      ?.render(80)
-      .join("\n");
-    expect(
-      rendered?.split("\n").filter((line) => line.length > 0),
-    ).toHaveLength(3);
+    const rendered =
+      registration
+        .renderResult?.(result, { expanded: false, isPartial: false }, theme, {
+          args: { agent: "shuttle" },
+        })
+        ?.render(80) ?? [];
+    expect(rendered[0]?.startsWith("\u256d")).toBe(true);
+    expect(rendered.at(-1)?.startsWith("\u2570")).toBe(true);
+    expect(rendered.join("\n")).toContain("nested-final");
+    expect(registration.renderShell).toBe("self");
   });
 });

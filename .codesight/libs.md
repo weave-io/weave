@@ -268,9 +268,12 @@
   - _...31 more_
 - `packages/adapters/pi/src/child-native-components.ts`
   - function renderPiChildCompactComponent: (output, options, theme) => NeverthrowResult<
+  - function degradedPiChildCardComponent: (reason) => PiToolRenderComponent
+  - function renderPiChildCardComponent: (facts, options, theme) => NeverthrowResult<
   - function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory
   - interface PiNativeTranscriptComponentDeps
-  - const CHILD_COMPACT_NATIVE_RENDER_FAILED
+  - interface PiChildCardComponentOptions
+  - _...2 more_
 - `packages/adapters/pi/src/child-native-results.ts`
   - function readNativeResultGroup: (expected, entries) => PiNativeResultGroupState
   - function planResultGroupWrite: (output) => Result<PiNativeResultWritePlan, PiNativeSessionError>
@@ -556,12 +559,12 @@
   - _...12 more_
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function formatDelegationAgentName: (agentName) => string
-  - function renderDelegationCompactResult: (result, options, theme, context, onCompactRenderFailure?) => void
+  - function parseDelegationCardDetails: (details) => Result<PiDelegationCardDetails, PiDelegationCardDetailsError>
+  - function boundDelegationCardDetails: (facts) => PiDelegationCardDetails | undefined
+  - function renderDelegationCardResult: (result, options, theme, _context, onCardRenderFailure?) => void
   - function buildDelegationToolRegistration: (deps) => PiToolRegistration
   - function buildRelayedDelegationToolRegistration: (deps) => PiToolRegistration
-  - interface PiDelegationInvocationContext
-  - interface PiDelegationToolDeps
-  - _...4 more_
+  - _...10 more_
 - `packages/adapters/pi/src/direct-dispatch-transport.ts`
   - function validateDirectNativeSession: (childId, session) => Result<PiDirectNativeSession, PiAdapterFailure>
   - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport

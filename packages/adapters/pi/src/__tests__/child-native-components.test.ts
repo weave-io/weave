@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { MarkdownTheme, TUI } from "@earendil-works/pi-tui";
+import type { PiDelegationCardFacts } from "../child-card-model.js";
 import {
   createPiNativeTranscriptComponentFactory,
+  degradedPiChildCardComponent,
+  renderPiChildCardComponent,
   renderPiChildCompactComponent,
 } from "../child-native-components.js";
 import type { PiChildSessionEvent } from "../child-session-events.js";
@@ -353,5 +356,97 @@ describe("renderPiChildCompactComponent", () => {
     expect(rendered.isErr()).toBe(true);
     expect(rendered._unsafeUnwrapErr()).toBe("ChildCompactRenderFailed");
     expect(JSON.stringify(rendered)).not.toContain("/secret");
+  });
+});
+
+function cardFacts(): PiDelegationCardFacts {
+  return {
+    schemaVersion: 1,
+    tool: "weave_delegate",
+    agentName: "shuttle",
+    model: "gpt-5.6-terra",
+    run: { number: 1, action: "start", phase: "responding" },
+    status: "running",
+    tone: "run",
+    settled: false,
+    assignment: "inspect the adapter",
+    activity: { kind: "say", text: "reading delegation-tool.ts", live: true },
+    telemetry: { elapsed: "12s" },
+    viewport: {
+      rows: [{ kind: "msg", head: "shuttle", text: "reading" }],
+      above: 0,
+      atBottom: true,
+    },
+  };
+}
+
+describe("renderPiChildCardComponent", () => {
+  const theme: PiUiThemePort = {
+    fg: (_color, text) => text,
+    bold: (text) => text,
+  };
+
+  it("re-renders at the caller's width and clips every line to it", () => {
+    const component = renderPiChildCardComponent(
+      cardFacts(),
+      { expanded: false },
+      theme,
+    );
+    expect(component.isOk()).toBe(true);
+    const card = component._unsafeUnwrap();
+    for (const width of [12, 40, 80, 132]) {
+      const lines = card.render(width);
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) expect(line.length).toBeLessThanOrEqual(width);
+    }
+    // The cached width is re-served, and `invalidate()` clears the cache
+    // without changing what the same width draws.
+    const before = card.render(80);
+    expect(card.render(80)).toEqual(before);
+    card.invalidate();
+    expect(card.render(80)).toEqual(before);
+  });
+
+  it("draws more rows expanded than collapsed", () => {
+    const collapsed = renderPiChildCardComponent(
+      cardFacts(),
+      { expanded: false },
+      theme,
+    )._unsafeUnwrap();
+    const expanded = renderPiChildCardComponent(
+      cardFacts(),
+      { expanded: true },
+      theme,
+    )._unsafeUnwrap();
+    expect(expanded.render(80).length).toBeGreaterThan(
+      collapsed.render(80).length,
+    );
+  });
+
+  it("returns a stable Err code when the theme throws (no path leakage)", () => {
+    const throwing: PiUiThemePort = {
+      fg: () => {
+        throw new Error("/secret/session.jsonl");
+      },
+      bold: (text) => text,
+    };
+    const rendered = renderPiChildCardComponent(
+      cardFacts(),
+      { expanded: false },
+      throwing,
+    );
+    expect(rendered.isErr()).toBe(true);
+    expect(rendered._unsafeUnwrapErr()).toBe("ChildCardRenderFailed");
+    expect(JSON.stringify(rendered)).not.toContain("/secret");
+  });
+
+  it("degrades to one bounded framed card that claims no outcome", () => {
+    const lines = degradedPiChildCardComponent("malformed").render(48);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(48);
+    const text = lines.join("\n");
+    expect(text).toContain("delegation card unavailable");
+    expect(text).toContain("malformed");
+    expect(text).not.toContain("completed");
   });
 });

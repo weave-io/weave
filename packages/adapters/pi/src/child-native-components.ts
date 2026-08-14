@@ -17,7 +17,12 @@ import {
   Text,
   type TUI,
 } from "@earendil-works/pi-tui";
-import { Result, type Result as NeverthrowResult } from "neverthrow";
+import { err, type Result as NeverthrowResult, Result } from "neverthrow";
+import type { PiDelegationCardFacts } from "./child-card-model.js";
+import {
+  degradedDelegationCard,
+  renderDelegationCard,
+} from "./child-card-render.js";
 import type { ChildCompactRenderOutput } from "./child-compact-render.js";
 import type {
   PiTranscriptComponent,
@@ -25,10 +30,23 @@ import type {
   PiTranscriptComponentRequest,
 } from "./child-transcript.js";
 import type { PiToolRenderComponent, PiUiThemePort } from "./types.js";
+import { makePaint, plainPaint } from "./ui-paint.js";
 
 /** Stable code reported when compact native theming fails. */
 export const CHILD_COMPACT_NATIVE_RENDER_FAILED =
   "ChildCompactRenderFailed" as const;
+
+/** Stable code reported when the delegation card cannot be drawn. */
+export const CHILD_CARD_NATIVE_RENDER_FAILED = "ChildCardRenderFailed" as const;
+
+/**
+ * The width the card is proved at before Pi ever mounts the component.
+ *
+ * A host theme is only known to work once it has actually painted, so the
+ * component is built from one real render rather than from a promise that a
+ * later one will succeed.
+ */
+const CARD_PROBE_WIDTH = 60;
 
 /** Transcript facts Pi never shows in its own chat view. */
 const SUPPRESSED_KINDS: ReadonlySet<PiTranscriptComponentRequest["kind"]> =
@@ -243,6 +261,108 @@ export function renderPiChildCompactComponent(
     },
     (): typeof CHILD_COMPACT_NATIVE_RENDER_FAILED =>
       CHILD_COMPACT_NATIVE_RENDER_FAILED,
+  )();
+}
+
+/** What the card component needs beyond the facts themselves. */
+export interface PiChildCardComponentOptions {
+  /** Pi's own expanded flag for this tool entry. */
+  readonly expanded: boolean;
+  /**
+   * Reports a stable render-failure code. Never receives paths, exception
+   * text, or child content.
+   */
+  readonly onFailure?: (code: string) => void;
+}
+
+function normalizeComponentWidth(width: number): number {
+  return Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+}
+
+/**
+ * The honest fallback component: a bounded framed card that says it could not
+ * be drawn, painted without the host theme so a theme that throws cannot throw
+ * a second time on the degraded path.
+ */
+export function degradedPiChildCardComponent(
+  reason: string,
+): PiToolRenderComponent {
+  return {
+    render(width) {
+      const w = normalizeComponentWidth(width);
+      return Result.fromThrowable(
+        () => degradedDelegationCard(reason, { width: w, paint: plainPaint() }),
+        () => "degraded_render_failed",
+      )().unwrapOr([]);
+    },
+    invalidate() {
+      // The degraded card holds no cache: it is derived from its width alone.
+    },
+  };
+}
+
+/**
+ * Themes the finalized delegation card into a Pi tool-render component.
+ *
+ * The component re-renders at whatever width Pi asks for and caches only the
+ * last width it drew, so `invalidate()` is enough to force a redraw. A theme
+ * that throws becomes a typed Err here (and a degraded card later), never an
+ * exception inside Pi's render loop.
+ */
+export function renderPiChildCardComponent(
+  facts: PiDelegationCardFacts,
+  options: PiChildCardComponentOptions,
+  theme: PiUiThemePort,
+): NeverthrowResult<
+  PiToolRenderComponent,
+  typeof CHILD_CARD_NATIVE_RENDER_FAILED
+> {
+  const expanded = options.expanded;
+  const built = Result.fromThrowable(
+    () => {
+      const paint = makePaint(theme);
+      // Proves the theme paints before the component is handed to Pi.
+      const probe = renderDelegationCard(facts, {
+        width: CARD_PROBE_WIDTH,
+        expanded,
+        paint,
+      });
+      return { paint, probe };
+    },
+    (): typeof CHILD_CARD_NATIVE_RENDER_FAILED =>
+      CHILD_CARD_NATIVE_RENDER_FAILED,
+  )();
+  if (built.isErr()) return err(built.error);
+  const { paint, probe } = built.value;
+  let cache: { readonly width: number; readonly lines: string[] } | undefined =
+    {
+      width: CARD_PROBE_WIDTH,
+      lines: probe,
+    };
+  return Result.fromThrowable(
+    (): PiToolRenderComponent => ({
+      render(width) {
+        const w = normalizeComponentWidth(width);
+        if (cache !== undefined && cache.width === w) return cache.lines;
+        const drawn = Result.fromThrowable(
+          () => renderDelegationCard(facts, { width: w, expanded, paint }),
+          (): typeof CHILD_CARD_NATIVE_RENDER_FAILED =>
+            CHILD_CARD_NATIVE_RENDER_FAILED,
+        )();
+        if (drawn.isErr()) {
+          options.onFailure?.(drawn.error);
+          cache = undefined;
+          return degradedPiChildCardComponent("render_failed").render(w);
+        }
+        cache = { width: w, lines: drawn.value };
+        return drawn.value;
+      },
+      invalidate() {
+        cache = undefined;
+      },
+    }),
+    (): typeof CHILD_CARD_NATIVE_RENDER_FAILED =>
+      CHILD_CARD_NATIVE_RENDER_FAILED,
   )();
 }
 

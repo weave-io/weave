@@ -513,6 +513,12 @@ export interface PiToolRenderOptions {
 export interface PiToolRenderContext {
   readonly args?: Record<string, unknown>;
   readonly lastComponent?: PiToolRenderComponent;
+  /**
+   * Pi's own `ToolRenderContext.executionStarted`. A call renderer uses it to
+   * stop drawing once the result renderer owns the entry, so a tool that draws
+   * its own frame prints exactly one of them.
+   */
+  readonly executionStarted?: boolean;
 }
 
 /**
@@ -527,6 +533,13 @@ export interface PiToolRegistration {
   readonly parameters: unknown;
   readonly promptSnippet?: string;
   readonly promptGuidelines?: readonly string[];
+  /**
+   * Pi's own `ToolDefinition.renderShell`. `"default"` keeps Pi's coloured
+   * tool shell; `"self"` hands the whole entry to this tool's renderers, which
+   * is what lets the delegation card own its frame instead of sitting inside
+   * a second one.
+   */
+  readonly renderShell?: "default" | "self";
   readonly renderCall?: (
     args: Record<string, unknown>,
     theme: PiUiThemePort,
