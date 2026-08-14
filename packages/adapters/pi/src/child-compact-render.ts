@@ -1455,6 +1455,15 @@ function extendDedupKeys(
   return new Set(trimmed);
 }
 
+/**
+ * Bounds an opaque correlation id (message id, tool call id, dedup key) to the
+ * exact length the reducer retains. Shared with the card projection so both
+ * surfaces correlate the same event under the same key.
+ */
+export function boundChildCompactId(value: string): string {
+  return boundOpaqueId(value);
+}
+
 /** Exact collapsed line count invariant helper for tests and callers. */
 export function childCompactLineCount(
   output: ChildCompactRenderOutput,
@@ -1462,163 +1471,4 @@ export function childCompactLineCount(
   return output.lines.length === COLLAPSED_LINE_COUNT
     ? COLLAPSED_LINE_COUNT
     : output.lines.length;
-}
-
-// ---------------------------------------------------------------------------
-// Projection helper (owns state; correlates IDs; safe render boundary)
-// ---------------------------------------------------------------------------
-
-export interface PiChildCompactProjectionConfig {
-  readonly threadId: string;
-  readonly agentName: string;
-}
-
-export interface PiChildCompactStartRunInput {
-  readonly runNumber: number;
-  readonly action: ChildCompactRunAction;
-  readonly agentName?: string;
-}
-
-/**
- * Stateful helper over the pure compact reducer/renderer. Correlates stable
- * message IDs across message_start/update/end, uses toolCallId for tools,
- * maps parser-approved events, starts runs, and settles only from Task 8.
- * Every public method is fail-closed to a degraded 3-line block.
- */
-export class PiChildCompactProjection {
-  private state: ChildCompactState;
-  private readonly defaultAgentName: string;
-  private activeMessageId: string | undefined;
-  private messageSeq = 0;
-
-  constructor(config: PiChildCompactProjectionConfig) {
-    this.state = createChildCompactState(config.threadId);
-    this.defaultAgentName =
-      sanitizeChildCompactText(config.agentName) || "delegate";
-  }
-
-  /** Frozen snapshot of reducer state (never mutates through the return). */
-  getState(): ChildCompactState {
-    return this.state;
-  }
-
-  startRun(input: PiChildCompactStartRunInput): ChildCompactRenderOutput {
-    const agentName =
-      input.agentName !== undefined
-        ? sanitizeChildCompactText(input.agentName) || this.defaultAgentName
-        : this.defaultAgentName;
-    const next = reduceChildCompactSafe(this.state, {
-      kind: "start_run",
-      threadId: this.state.threadId,
-      runNumber: input.runNumber,
-      action: input.action,
-      agentName,
-    });
-    this.state = next;
-    this.activeMessageId = undefined;
-    return renderChildCompactSafe(this.state);
-  }
-
-  /**
-   * Maps one parser-approved session event into reducer input using stable
-   * per-message / per-tool ids, then renders. Never throws.
-   */
-  applySessionEvent(event: PiChildSessionEvent): ChildCompactRenderOutput {
-    const itemId = this.correlateItemId(event);
-    const mapped = mapPiChildSessionEventToCompactInput(event, itemId);
-    if (mapped.isErr()) return degradedChildCompactRender("reduce_failed");
-    const input = mapped.value;
-    if (input === undefined) return renderChildCompactSafe(this.state);
-    this.state = reduceChildCompactSafe(this.state, input);
-    return renderChildCompactSafe(this.state);
-  }
-
-  /** Applies authoritative Task 8 settlement only. Never throws. */
-  settle(settlement: PiChildSettlement): ChildCompactRenderOutput {
-    this.state = reduceChildCompactSafe(this.state, {
-      kind: "settle",
-      settlement,
-    });
-    this.activeMessageId = undefined;
-    return renderChildCompactSafe(this.state);
-  }
-
-  render(options: ChildCompactRenderOptions = {}): ChildCompactRenderOutput {
-    return renderChildCompactSafe(this.state, options);
-  }
-
-  private correlateItemId(event: PiChildSessionEvent): string {
-    switch (event.type) {
-      case "message_start": {
-        const id =
-          messageIdFromUnknown(event.message) ?? this.allocateMessageId();
-        this.activeMessageId = id;
-        return id;
-      }
-      case "message_update": {
-        const fromEvent = messageIdFromMessageUpdate(event);
-        const id =
-          fromEvent ?? this.activeMessageId ?? this.allocateMessageId();
-        this.activeMessageId = id;
-        return id;
-      }
-      case "message_end": {
-        const id =
-          messageIdFromUnknown(event.message) ??
-          this.activeMessageId ??
-          this.allocateMessageId();
-        this.activeMessageId = id;
-        return id;
-      }
-      case "tool_call":
-      case "tool_partial_result":
-      case "tool_result":
-      case "tool_error": {
-        if (
-          typeof event.toolCallId === "string" &&
-          event.toolCallId.length > 0
-        ) {
-          return boundOpaqueId(event.toolCallId);
-        }
-        return boundOpaqueId(`tool:${this.allocateMessageId()}`);
-      }
-      case "text":
-      case "markdown":
-        return this.activeMessageId ?? this.allocateMessageId();
-      case "thinking":
-        return `${this.activeMessageId ?? "assistant"}:thinking`;
-      default:
-        return this.activeMessageId ?? "assistant";
-    }
-  }
-
-  private allocateMessageId(): string {
-    this.messageSeq += 1;
-    return `msg-${this.messageSeq}`;
-  }
-}
-
-function messageIdFromUnknown(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  if (typeof record.messageId === "string" && record.messageId.length > 0) {
-    return boundOpaqueId(record.messageId);
-  }
-  if (typeof record.id === "string" && record.id.length > 0) {
-    return boundOpaqueId(record.id);
-  }
-  return undefined;
-}
-
-function messageIdFromMessageUpdate(
-  event: PiChildSessionEvent,
-): string | undefined {
-  if (event.type !== "message_update") return undefined;
-  const record = event as unknown as Record<string, unknown>;
-  return (
-    messageIdFromUnknown(record.delta) ??
-    messageIdFromUnknown(record.assistantMessageEvent)
-  );
 }

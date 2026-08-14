@@ -620,6 +620,8 @@ export class PiDelegationController {
   private dispatchProcessReservations = 0;
   private disposedAll = false;
   private treeRefreshTimer: TimerHandle | undefined;
+  /** Built once, and only when no port was injected. */
+  private fallbackTimerPort: TimerPort | undefined;
   private readonly restoreReservations = new Set<string>();
   /** One entry per logical thread this generation started or resumed. */
   private readonly threads = new Map<string, PiThreadState>();
@@ -2503,6 +2505,21 @@ export class PiDelegationController {
         });
       },
     );
+  }
+
+  /**
+   * The timer the delegation card's update coalescer schedules its repaints on.
+   *
+   * The controller already owns the adapter's one injected {@link TimerPort},
+   * so exposing it here keeps the card on the same discipline as every other
+   * bounded wait: a test drives repaints deterministically, and no card path
+   * ever reaches for `setTimeout` on its own.
+   */
+  get cardTimerPort(): TimerPort {
+    const injected = this.deps.timerPort;
+    if (injected !== undefined) return injected;
+    this.fallbackTimerPort ??= new SystemTimerPort();
+    return this.fallbackTimerPort;
   }
 
   private notifyTreeChanged(): void {

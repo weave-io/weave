@@ -11,8 +11,6 @@ import type { DelegationTarget } from "@weaveio/weave-engine";
 import { err, ok, Result, type ResultAsync } from "neverthrow";
 import { Type } from "typebox";
 import {
-  applyDelegationCardEvent,
-  applyDelegationCardInput,
   CARD_AGENT_NAME_MAX,
   CARD_ASSIGNMENT_MAX,
   CARD_FACTS_SCHEMA_VERSION,
@@ -25,15 +23,14 @@ import {
   CARD_TELEMETRY_MAX,
   CARD_TERMINAL_TEXT_MAX,
   CARD_VIEWPORT_ROWS,
-  createDelegationCardState,
   type PiCardActivityKind,
   type PiCardRowKind,
   type PiCardTerminalFacts,
   type PiCardTone,
   type PiCardViewportRow,
+  PiChildCardProjection,
+  type PiChildCardProjectionConfig,
   type PiDelegationCardFacts,
-  type PiDelegationCardState,
-  projectDelegationCardFacts,
 } from "./child-card-model.js";
 import type { ChildCompactRunAction } from "./child-compact-render.js";
 import {
@@ -41,8 +38,14 @@ import {
   degradedPiChildCardComponent,
   renderPiChildCardComponent,
 } from "./child-native-components.js";
+import type { PiChildProviderError } from "./child-provider-error.js";
 import type { PiChildRuntime, PiChildRuntimeError } from "./child-runtime.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
+import {
+  SystemTimerPort,
+  type TimerHandle,
+  type TimerPort,
+} from "./child-timer.js";
 import { MAX_FINAL_OUTPUT_BYTES, truncateFinalOutput } from "./child-tree.js";
 import type {
   PiDelegationController,
@@ -214,6 +217,12 @@ export interface PiDelegationToolDeps {
    * only by call sites that predate the gate; a missing gate fails closed.
    */
   readonly sessionMutationGate?: PiSessionMutationGate;
+  /**
+   * The timer the card's update coalescer schedules on. Omitted call sites
+   * fall back to the live controller's own injected port, so the adapter keeps
+   * exactly one timer discipline and never calls `setTimeout` here.
+   */
+  readonly timerPort?: TimerPort;
 }
 
 /** Payload version of {@link PiDelegationCardDetails}. Bumped on any shape change. */
@@ -612,81 +621,264 @@ export function boundDelegationCardDetails(
 }
 
 // ---------------------------------------------------------------------------
-// The live producer
+// The live stream: projection → coalescer → onUpdate
 // ---------------------------------------------------------------------------
 
-/** Injected clock for the card's elapsed fact. Read at event time, not render time. */
-type PiCardNow = () => number;
+/**
+ * The shortest interval between two ordinary repaints of one card.
+ *
+ * A streaming child produces text deltas far faster than a terminal can
+ * usefully redraw, so ordinary frames are coalesced into at most one publish
+ * per interval. Nothing is dropped from the card itself — a coalesced frame is
+ * a repaint the reader never needed, not a fact the card forgot.
+ */
+export const CARD_REFRESH_INTERVAL_MS = 100;
 
-interface PiDelegationCardProducerConfig {
-  readonly threadId: string;
-  readonly agentName: string;
-  /** The parent's own sentence for this run. */
-  readonly assignment: string;
-  readonly model?: string;
-  readonly runNumber: number;
-  readonly action: ChildCompactRunAction;
+/**
+ * Which frames may wait for the refresh window and which may not.
+ *
+ * `immediate` is reserved for the facts a reader acts on: the run opening, a
+ * tool failing, a provider failing, the parent steering the child, and the
+ * authoritative settlement. Everything else is ordinary repaint traffic.
+ */
+export type PiCardUpdatePriority = "coalesced" | "immediate";
+
+/**
+ * Publishes at most one ordinary card update per {@link CARD_REFRESH_INTERVAL_MS}.
+ *
+ * It schedules exclusively through the INJECTED {@link TimerPort} — it never
+ * calls `setTimeout` itself — so a test drives the window deterministically and
+ * production keeps exactly one timer discipline.
+ *
+ * Two guarantees make a coalesced frame safe to drop:
+ *
+ * - **Trailing flush.** A frame that arrives inside an open window is not lost;
+ *   it is published when the window closes.
+ * - **A coalesced update is never the final one.** `flush()` publishes
+ *   unconditionally and settlement always flushes, so the last frame a reader
+ *   sees is always the settled one.
+ */
+export class PiCardUpdateCoalescer {
+  private readonly publish: () => void;
+  private readonly timer: TimerPort;
+  private readonly intervalMs: number;
+  private handle: TimerHandle | undefined;
+  private windowOpen = false;
+  private pending = false;
+  private disposed = false;
+
+  constructor(
+    publish: () => void,
+    timer: TimerPort,
+    intervalMs: number = CARD_REFRESH_INTERVAL_MS,
+  ) {
+    this.publish = publish;
+    this.timer = timer;
+    this.intervalMs = Number.isFinite(intervalMs)
+      ? Math.max(0, Math.floor(intervalMs))
+      : CARD_REFRESH_INTERVAL_MS;
+  }
+
+  /** Requests one update at the given priority. */
+  request(priority: PiCardUpdatePriority): void {
+    if (this.disposed) return;
+    if (priority === "immediate") {
+      this.cancel();
+      this.pending = false;
+      this.emit();
+      this.openWindow();
+      return;
+    }
+    if (!this.windowOpen) {
+      this.emit();
+      this.openWindow();
+      return;
+    }
+    this.pending = true;
+  }
+
+  /** Publishes now, whatever the window says. Settlement always flushes. */
+  flush(): void {
+    if (this.disposed) return;
+    this.cancel();
+    this.pending = false;
+    this.windowOpen = false;
+    this.emit();
+  }
+
+  /** Releases the timer. A disposed coalescer publishes nothing further. */
+  dispose(): void {
+    this.cancel();
+    this.pending = false;
+    this.windowOpen = false;
+    this.disposed = true;
+  }
+
+  private openWindow(): void {
+    this.windowOpen = true;
+    this.handle = this.timer.schedule(() => {
+      this.handle = undefined;
+      if (this.disposed) return;
+      if (this.pending) {
+        this.pending = false;
+        this.emit();
+        this.openWindow();
+        return;
+      }
+      this.windowOpen = false;
+    }, this.intervalMs);
+  }
+
+  private cancel(): void {
+    this.handle?.cancel();
+    this.handle = undefined;
+  }
+
+  private emit(): void {
+    // A publisher that throws must never take the delegation down with it.
+    Result.fromThrowable(
+      () => this.publish(),
+      () => undefined,
+    )();
+  }
 }
 
 /**
- * Folds one run's authoritative events into card facts.
- *
- * It owns no timers and publishes nothing on its own: the tool decides when an
- * update leaves. Malformed input keeps the facts the card already had, so a
- * single bad event can never blank a running card.
+ * The one production timer every card path shares when nothing was injected.
+ * Constructing it schedules nothing; only `schedule()` ever reaches the host.
  */
-class PiDelegationCardProducer {
-  private state: PiDelegationCardState;
-  private readonly now: PiCardNow;
+const SHARED_CARD_TIMER_PORT: TimerPort = new SystemTimerPort();
 
-  constructor(
-    config: PiDelegationCardProducerConfig,
-    now: PiCardNow = () => Date.now(),
-  ) {
-    this.now = now;
-    this.state = createDelegationCardState({
-      agentName: config.agentName,
-      assignment: config.assignment,
-      ...(config.model !== undefined ? { model: config.model } : {}),
-      runNumber: config.runNumber,
-      action: config.action,
-    });
-    this.applyInput({
-      kind: "start_run",
-      threadId: config.threadId,
-      runNumber: config.runNumber,
-      action: config.action,
-      agentName: config.agentName,
-    });
-  }
+/**
+ * The port the card's coalescer schedules repaints on.
+ *
+ * An injected port always wins, then the live controller's own injected port,
+ * so a test drives repaints deterministically. A controller that exposes none
+ * (an older build, or a caller-supplied double) still yields a usable port
+ * rather than leaving the card unable to publish at all.
+ */
+function resolveCardTimerPort(
+  deps: { readonly timerPort?: TimerPort },
+  controller?: PiDelegationController,
+): TimerPort {
+  if (deps.timerPort !== undefined) return deps.timerPort;
+  const fromController = (
+    controller as { readonly cardTimerPort?: TimerPort } | undefined
+  )?.cardTimerPort;
+  return typeof fromController?.schedule === "function"
+    ? fromController
+    : SHARED_CARD_TIMER_PORT;
+}
 
-  applyEvent(event: PiChildSessionEvent): void {
-    applyDelegationCardEvent(this.state, event, this.now).match(
-      (next) => {
-        this.state = next;
-      },
-      () => undefined,
+/** Session events whose meaning a reader acts on the moment they arrive. */
+function eventPriority(event: PiChildSessionEvent): PiCardUpdatePriority {
+  return event.type === "tool_error" || event.type === "queue_change"
+    ? "immediate"
+    : "coalesced";
+}
+
+export interface PiDelegationCardStreamConfig
+  extends PiChildCardProjectionConfig {
+  readonly onUpdate?: (update: PiToolResult) => void;
+  readonly timerPort: TimerPort;
+  readonly refreshIntervalMs?: number;
+}
+
+/**
+ * One delegation card, driven live.
+ *
+ * The projection owns the facts, the coalescer owns the publishing rhythm, and
+ * this class owns the routing between them. The model-visible line and the
+ * stored payload are produced from the SAME facts in the same call, so what the
+ * model reads and what the terminal shows can never describe different runs.
+ */
+export class PiDelegationCardStream {
+  private readonly projection: PiChildCardProjection;
+  private readonly coalescer: PiCardUpdateCoalescer;
+  private readonly onUpdate: ((update: PiToolResult) => void) | undefined;
+
+  constructor(config: PiDelegationCardStreamConfig) {
+    this.projection = new PiChildCardProjection(config);
+    this.onUpdate = config.onUpdate;
+    this.coalescer = new PiCardUpdateCoalescer(
+      () => this.emit(),
+      config.timerPort,
+      config.refreshIntervalMs ?? CARD_REFRESH_INTERVAL_MS,
     );
   }
 
-  settle(settlement: PiChildSettlement): void {
-    this.applyInput({ kind: "settle", settlement });
+  /** Publishes the opening frame. Always immediate: the entry must not sit blank. */
+  start(): void {
+    this.coalescer.request("immediate");
+  }
+
+  /**
+   * Opens a later run of the same thread. Always immediate.
+   *
+   * A run number that does not advance past a settled run is a late report:
+   * the projection ignores it, so nothing is published either.
+   */
+  startRun(input: {
+    readonly runNumber: number;
+    readonly action: ChildCompactRunAction;
+    readonly agentName?: string;
+    readonly assignment?: string;
+  }): void {
+    const wasSettled = this.projection.isSettled();
+    this.projection.startRun(input);
+    // A strictly newer run clears settlement and reopens the card; anything
+    // else leaves a settled run settled and must not repaint it.
+    if (wasSettled && this.projection.isSettled()) return;
+    this.coalescer.request("immediate");
+  }
+
+  applyEvent(event: PiChildSessionEvent): void {
+    if (this.projection.isSettled()) return;
+    this.projection.applySessionEvent(event);
+    this.coalescer.request(eventPriority(event));
+  }
+
+  applyProviderError(error: PiChildProviderError): void {
+    if (this.projection.isSettled()) return;
+    this.projection.applyProviderError(error);
+    this.coalescer.request("immediate");
+  }
+
+  /**
+   * Applies the ONE authoritative settlement and flushes it.
+   *
+   * Settlement authority covers publish cardinality, not just the record: the
+   * first settlement flushes exactly one final update, and a repeated one
+   * returns the same bounded details without flushing or publishing again. A
+   * duplicate can therefore neither rewrite the record nor make a reader
+   * redraw a run that already ended.
+   */
+  settle(settlement: PiChildSettlement): PiDelegationCardDetails | undefined {
+    if (this.projection.isSettled()) return this.details();
+    this.projection.settle(settlement);
+    this.coalescer.flush();
+    return this.details();
   }
 
   facts(): PiDelegationCardFacts {
-    return projectDelegationCardFacts(this.state);
+    return this.projection.facts();
   }
 
   details(): PiDelegationCardDetails | undefined {
     return boundDelegationCardDetails(this.facts());
   }
 
-  private applyInput(input: unknown): void {
-    applyDelegationCardInput(this.state, input, this.now).match(
-      (next) => {
-        this.state = next;
-      },
-      () => undefined,
+  dispose(): void {
+    this.coalescer.dispose();
+  }
+
+  private emit(): void {
+    const facts = this.projection.facts();
+    this.onUpdate?.(
+      toolResult(
+        modelVisibleActivity(facts),
+        boundDelegationCardDetails(facts),
+      ),
     );
   }
 }
@@ -902,36 +1094,31 @@ function failureResult(
 }
 
 /**
- * Publishes one bounded card update.
+ * Settles one card and returns its final payload.
  *
- * The model-visible line and the stored payload are produced from the same
- * facts, in the same call, so what the model reads and what the terminal shows
- * can never describe different runs.
+ * The settled frame always leaves through `PiDelegationCardStream.settle`,
+ * which flushes rather than coalescing, so a settled run can never be published
+ * as an unfinished one.
  */
-function pushCardUpdate(
-  onUpdate: ((update: PiToolResult) => void) | undefined,
-  producer: PiDelegationCardProducer,
-): PiDelegationCardDetails | undefined {
-  const facts = producer.facts();
-  const details = boundDelegationCardDetails(facts);
-  onUpdate?.(toolResult(modelVisibleActivity(facts), details));
-  return details;
-}
-
-function settleCardProducer(
-  producer: PiDelegationCardProducer | undefined,
+function settleCardStream(
+  stream: PiDelegationCardStream | undefined,
   settlement: PiChildSettlement,
-  config: PiDelegationCardProducerConfig,
+  config: PiDelegationCardStreamConfig,
 ): PiDelegationCardDetails | undefined {
-  if (producer !== undefined) {
-    producer.settle(settlement);
-    return producer.details();
+  if (stream !== undefined) {
+    const details = stream.settle(settlement);
+    stream.dispose();
+    return details;
   }
   // Nested/relay fallback: the relay carries no live session events, so the
   // final card is built from the authoritative settlement alone.
-  const fallback = new PiDelegationCardProducer(config);
-  fallback.settle(settlement);
-  return fallback.details();
+  const fallback = new PiDelegationCardStream({
+    ...config,
+    onUpdate: undefined,
+  });
+  const details = fallback.settle(settlement);
+  fallback.dispose();
+  return details;
 }
 
 function parseRelaySettlement(body: JsonValue): PiChildSettlement | undefined {
@@ -1277,7 +1464,8 @@ export function buildDelegationToolRegistration(
         // block; prior Pi tool blocks stay frozen.
         const instruction =
           parsed.kind === "retry" ? parsed.instruction : parsed.task;
-        let producer: PiDelegationCardProducer | undefined;
+        const timerPort = resolveCardTimerPort(deps, controller);
+        let stream: PiDelegationCardStream | undefined;
         let assignedAgent = "delegate";
         let assignedRun = 1;
         return controller
@@ -1295,29 +1483,30 @@ export function buildDelegationToolRegistration(
             onRunAssigned: (assignment) => {
               assignedAgent = assignment.agentName;
               assignedRun = assignment.runNumber;
-              producer = new PiDelegationCardProducer({
+              stream = new PiDelegationCardStream({
                 threadId: assignment.threadId,
                 agentName: assignment.agentName,
                 assignment: instruction ?? "",
                 runNumber: assignment.runNumber,
                 action: assignment.action,
+                ...(onUpdate === undefined ? {} : { onUpdate }),
+                timerPort,
               });
-              pushCardUpdate(onUpdate, producer);
+              stream.start();
             },
             onSessionEvent: (event: PiChildSessionEvent) => {
-              if (producer === undefined) return;
-              producer.applyEvent(event);
-              pushCardUpdate(onUpdate, producer);
+              stream?.applyEvent(event);
             },
           })
           .match(
             (outcome) => {
-              const card = settleCardProducer(producer, outcome.settlement, {
+              const card = settleCardStream(stream, outcome.settlement, {
                 threadId: parsed.threadId,
                 agentName: assignedAgent,
                 assignment: instruction ?? "",
                 runNumber: outcome.run > 0 ? outcome.run : assignedRun,
                 action: parsed.kind,
+                timerPort,
               });
               return threadResult(outcome, card);
             },
@@ -1353,16 +1542,20 @@ export function buildDelegationToolRegistration(
         return failureResult(aborted.code, aborted);
       }
       // Root start: child id is also the opaque thread id (controller provision).
-      const producer = new PiDelegationCardProducer({
+      const timerPort = resolveCardTimerPort(deps, controller);
+      const cardConfig: PiDelegationCardStreamConfig = {
         threadId: childId,
         agentName: parsed.agent,
         assignment: parsed.task,
         runNumber: 1,
         action: "start",
-      });
+        ...(onUpdate === undefined ? {} : { onUpdate }),
+        timerPort,
+      };
+      const stream = new PiDelegationCardStream(cardConfig);
       // The first update is published before this call awaits anything, so Pi
       // never shows an empty entry while the arguments are still streaming.
-      pushCardUpdate(onUpdate, producer);
+      stream.start();
       const request: PiDelegationRequest = {
         parentId: deps.parentId,
         parentDepth: deps.parentDepth,
@@ -1381,23 +1574,20 @@ export function buildDelegationToolRegistration(
         // Live card updates come only from parser-approved session events.
         // Tree-snapshot onUpdate must not overwrite event-derived card facts.
         onSessionEvent: (event: PiChildSessionEvent) => {
-          producer.applyEvent(event);
-          pushCardUpdate(onUpdate, producer);
+          stream.applyEvent(event);
         },
         childId,
       };
       const settlement = controller.delegate(request).match(
         (value) => {
-          const card = settleCardProducer(producer, value, {
-            threadId: childId,
-            agentName: parsed.agent,
-            assignment: parsed.task,
-            runNumber: 1,
-            action: "start",
-          });
+          const card = settleCardStream(stream, value, cardConfig);
           return successResult(value, card, childId);
         },
-        (failure) => startFailureResult(controller, childId, failure),
+        (failure) => {
+          // A delegation that never settled still owns a live timer.
+          stream.dispose();
+          return startFailureResult(controller, childId, failure);
+        },
       );
       if (signal === undefined) return settlement;
       // Wires the exact generated `childId`'s subtree to this tool call's
@@ -1441,6 +1631,8 @@ export interface PiRelayedDelegationToolDeps {
   readonly onCompactRenderFailure?: (code: string) => void;
   /** Same fail-closed required-capability gate contract as the root tool. */
   readonly sessionMutationGate?: PiSessionMutationGate;
+  /** Same injected card-refresh timer contract as the root tool. */
+  readonly timerPort?: TimerPort;
 }
 
 /**
@@ -1548,18 +1740,20 @@ export function buildRelayedDelegationToolRegistration(
       // The relay carries no thread id back to this child, so the card is
       // opened under an adapter-owned label. It names no host state and the
       // renderer never prints it.
-      const cardConfig: PiDelegationCardProducerConfig = {
+      const cardConfig: PiDelegationCardStreamConfig = {
         threadId: RELAY_CARD_THREAD_LABEL,
         agentName: parsed.agent,
         assignment: parsed.task,
         runNumber: 1,
         action: "start",
+        ...(onUpdate === undefined ? {} : { onUpdate }),
+        timerPort: resolveCardTimerPort(deps),
       };
-      const producer = new PiDelegationCardProducer(cardConfig);
+      const stream = new PiDelegationCardStream(cardConfig);
       // The bootstrap card is published before this call awaits the relay:
       // `renderCall` draws nothing once execution starts, so an entry that
       // waited for the settlement would sit blank for the whole nested run.
-      pushCardUpdate(onUpdate, producer);
+      stream.start();
       const reply: ResultAsync<JsonValue, PiChildRuntimeError> =
         runtime.requestDelegation({
           agentName: parsed.agent,
@@ -1573,20 +1767,24 @@ export function buildRelayedDelegationToolRegistration(
           const card =
             settlement === undefined
               ? undefined
-              : settleCardProducer(producer, settlement, cardConfig);
+              : settleCardStream(stream, settlement, cardConfig);
+          stream.dispose();
           return {
             content: [{ type: "text", text: JSON.stringify(body) }],
             details: card,
           };
         },
-        (failure) => ({
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ ok: false, error: failure.type }),
-            },
-          ],
-        }),
+        (failure) => {
+          stream.dispose();
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ ok: false, error: failure.type }),
+              },
+            ],
+          };
+        },
       );
     },
   };

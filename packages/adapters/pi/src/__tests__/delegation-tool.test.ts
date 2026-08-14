@@ -342,8 +342,22 @@ describe("buildDelegationToolRegistration", () => {
   it("execute: pushes card live updates from session events, not tree snapshots", async () => {
     let capturedRequest: PiDelegationRequest | undefined;
     const updates: PiToolResult[] = [];
+    // The card coalesces ordinary repaints, so this test drives the refresh
+    // window itself rather than waiting on wall-clock time.
+    const timers: (() => void)[] = [];
+    const timerPort = {
+      schedule: (callback: () => void) => {
+        timers.push(callback);
+        return { cancel: () => undefined };
+      },
+    };
+    const fireRefreshWindow = (): void => {
+      const pending = timers.splice(0, timers.length);
+      for (const tick of pending) tick();
+    };
     const registration = buildDelegationToolRegistration(
       baseDeps({
+        timerPort,
         getController: () =>
           fakeController((request) => {
             capturedRequest = request;
@@ -382,6 +396,9 @@ describe("buildDelegationToolRegistration", () => {
         delta: "Inspecting the adapter",
       },
     } as never);
+    // Ordinary deltas wait for the window the opening frame started; the
+    // trailing flush publishes them the moment it closes.
+    fireRefreshWindow();
     expect(updates.length).toBeGreaterThanOrEqual(2);
     const live = updates[updates.length - 1];
     const liveDetails = live?.details as PiDelegationCardDetails;

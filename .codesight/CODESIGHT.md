@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 296 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
 > **Token savings:** this file is ~32,000 tokens. Without it, AI exploration would cost ~95,800 tokens. **Saves ~63,800 tokens per conversation.**
-> **Last scanned:** 2026-08-14 20:17 — re-run after significant changes
+> **Last scanned:** 2026-08-14 20:42 — re-run after significant changes
 
 ---
 
@@ -143,7 +143,7 @@
   - function projectDelegationCardFacts: (state) => PiDelegationCardFacts
   - function formatElapsed: (ms) => string
   - function formatTokens: (count) => string
-  - _...28 more_
+  - _...34 more_
 - `packages/adapters/pi/src/child-card-render.ts`
   - function renderDelegationCard: (facts, options) => string[]
   - function composeDelegationCard: (facts, width, expanded) => readonly PiCardRow[]
@@ -159,7 +159,7 @@
   - function mapPiChildSessionEventToCompactInput: (event, itemId) => NeverthrowResult<ChildCompactReducerInput | undefined, ChildCompactError>
   - function reduceChildCompact: (state, input) => NeverthrowResult<ChildCompactState, ChildCompactError>
   - function reduceChildCompactSafe: (state, input) => ChildCompactState
-  - _...29 more_
+  - _...27 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function makeCancelBody: (reason) => void
@@ -575,7 +575,7 @@
   - function renderDelegationCardResult: (result, options, theme, _context, onCardRenderFailure?) => void
   - function buildDelegationToolRegistration: (deps) => PiToolRegistration
   - function buildRelayedDelegationToolRegistration: (deps) => PiToolRegistration
-  - _...10 more_
+  - _...15 more_
 - `packages/adapters/pi/src/direct-dispatch-transport.ts`
   - function validateDirectNativeSession: (childId, session) => Result<PiDirectNativeSession, PiAdapterFailure>
   - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
@@ -1821,7 +1821,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/adapters/pi/src/types.ts` — imported by **47** files
+- `packages/adapters/pi/src/types.ts` — imported by **48** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/adapters/pi/src/strict-json.ts` — imported by **28** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
@@ -1844,7 +1844,7 @@
 
 ## Import Map (who imports what)
 
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +42 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +43 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts` +23 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
@@ -1875,7 +1875,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 324 test files found
+> 325 test files found
 
 ---
 

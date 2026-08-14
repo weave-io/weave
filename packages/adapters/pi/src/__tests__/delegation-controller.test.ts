@@ -655,6 +655,25 @@ function recoveryController(
 }
 
 describe("PiDelegationController", () => {
+  it("exposes the injected timer port the delegation card coalesces on", () => {
+    const port = new FakeChildProcessPort();
+    const injected = new SystemTimerPort();
+    const controller = makeController(config(GENEROUS), port, {
+      timerPort: injected,
+    });
+    // The card never opens a second timer discipline of its own.
+    expect(controller.cardTimerPort).toBe(injected);
+
+    const withoutPort = makeController(config(GENEROUS), port, {
+      timerPort: undefined,
+    });
+    // A controller with no injected port still yields one usable port, and the
+    // same one every time.
+    const fallback = withoutPort.cardTimerPort;
+    expect(typeof fallback.schedule).toBe("function");
+    expect(withoutPort.cardTimerPort).toBe(fallback);
+  });
+
   it("authorizes and spawns immediately when under budget, resolving on settlement", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(config(GENEROUS), port);

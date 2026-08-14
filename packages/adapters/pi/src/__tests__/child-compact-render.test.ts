@@ -6,7 +6,6 @@ import {
   createChildCompactState,
   degradedChildCompactRender,
   mapPiChildSessionEventToCompactInput,
-  PiChildCompactProjection,
   projectChildCompact,
   reduceChildCompact,
   reduceChildCompactSafe,
@@ -586,91 +585,5 @@ describe("child-compact-render", () => {
     ]);
     // Operational facts never become collapsed activity.
     expect(renderChildCompactSafe(state).lines[1]).toBe("…");
-  });
-
-  describe("PiChildCompactProjection", () => {
-    it("correlates message ids across start/update/end and ignores thinking activity", () => {
-      const projection = new PiChildCompactProjection({
-        threadId: "thread-opaque-proj",
-        agentName: "shuttle",
-      });
-      const started = projection.startRun({ runNumber: 1, action: "start" });
-      expect(started.lines).toHaveLength(3);
-      expect(started.lines[0]).toContain("running");
-
-      projection.applySessionEvent({
-        type: "message_start",
-        message: { id: "asst-42", role: "assistant", content: [] },
-      });
-      projection.applySessionEvent({
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "text_delta",
-          delta: "hello",
-          messageId: "asst-42",
-        },
-      });
-      projection.applySessionEvent({
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "thinking_delta",
-          delta: "secret thought",
-        },
-      });
-      projection.applySessionEvent({
-        type: "tool_call",
-        toolCallId: "tool-7",
-        toolName: "read",
-      });
-      const mid = projection.applySessionEvent({
-        type: "message_end",
-        message: {
-          id: "asst-42",
-          role: "assistant",
-          content: [{ type: "text", text: "hello world" }],
-        },
-      });
-      expect(mid.lines[1]).toContain("hello");
-      expect(mid.lines.join("\n")).not.toContain("secret thought");
-
-      const items = projection.getState().runs[0]?.items ?? [];
-      expect(items.some((item) => item.id === "asst-42")).toBe(true);
-      expect(items.some((item) => item.id === "tool-7")).toBe(true);
-
-      const settled = projection.settle({
-        outcome: "completed",
-        assistantOutput: "final assembled",
-        completionCandidate: "must-not-appear",
-      });
-      expect(settled.lines[1]).toBe("final assembled");
-      expect(settled.lines.join("\n")).not.toContain("must-not-appear");
-      expect(settled.degraded).toBe(false);
-    });
-
-    it("freezes prior run on retry and keeps render isolation", () => {
-      const projection = new PiChildCompactProjection({
-        threadId: "t-retry",
-        agentName: "shuttle",
-      });
-      projection.startRun({ runNumber: 1, action: "start" });
-      projection.applySessionEvent({
-        type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta: "first" },
-      });
-      projection.settle({ outcome: "failed", reason: "retryable" });
-      const retry = projection.startRun({ runNumber: 2, action: "retry" });
-      expect(retry.lines[2]).toContain("retry");
-      expect(projection.getState().runs[0]?.frozen).toBe(true);
-      expect(projection.getState().runs[0]?.errorSummary).toBe("retryable");
-
-      projection.applySessionEvent({
-        type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta: "second" },
-      });
-      expect(projection.getState().runs[0]?.latestMeaningfulFragment).toBe(
-        "first",
-      );
-      expect(projection.render().lines[1]).toBe("second");
-    });
   });
 });

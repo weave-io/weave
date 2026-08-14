@@ -32,6 +32,8 @@
  */
 import { err, ok, type Result } from "neverthrow";
 import {
+  boundChildCompactId,
+  CHILD_COMPACT_MAX_DEDUP_KEYS,
   type ChildCompactReducerInput,
   type ChildCompactRunAction,
   type ChildCompactUsageFacts,
@@ -39,7 +41,13 @@ import {
   parseReducerInput,
   sanitizeChildCompactText,
 } from "./child-compact-render.js";
-import type { PiChildErrorClass } from "./child-provider-error.js";
+import {
+  type PiChildErrorClass,
+  type PiChildProviderError,
+  type PiChildProviderErrorDescriptor,
+  parsePiChildProviderError,
+} from "./child-provider-error.js";
+import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
 import type { PiChildSettlement } from "./rpc-child.js";
 
@@ -176,6 +184,8 @@ export interface PiDelegationCardFacts {
     readonly number: number;
     readonly action: ChildCompactRunAction;
     readonly phase: string;
+    /** The attempt a `retry` event named, when it named one. Never guessed. */
+    readonly attempt?: number;
   };
   readonly status: string;
   readonly tone: PiCardTone;
@@ -242,6 +252,7 @@ export interface PiDelegationCardState {
   readonly assignment: string;
   readonly runNumber: number;
   readonly runAction: ChildCompactRunAction;
+  readonly runAttempt: number | undefined;
   readonly phase: string;
   readonly startedAtMs: number | undefined;
   readonly elapsedMs: number | undefined;
@@ -279,6 +290,7 @@ export function createDelegationCardState(
     ),
     runNumber: boundRunNumber(config.runNumber ?? 1),
     runAction: config.action ?? "start",
+    runAttempt: undefined,
     phase: "bootstrap",
     startedAtMs: undefined,
     elapsedMs: undefined,
@@ -400,6 +412,7 @@ function applyStartRun(
     agentName: agentName.length > 0 ? agentName : state.agentName,
     runNumber: boundRunNumber(input.runNumber),
     runAction: input.action,
+    runAttempt: undefined,
     phase: "bootstrap",
     startedAtMs: atMs,
     elapsedMs: 0,
@@ -614,6 +627,9 @@ function applyRetry(
       text,
     }),
     runAction: "retry",
+    // The attempt the child itself named. An unnamed attempt stays absent
+    // rather than becoming a fabricated `1`.
+    runAttempt: attempt ?? state.runAttempt,
     phase: "bootstrap",
     activity: { kind: "boot", text, live: false },
   };
@@ -679,6 +695,7 @@ export function projectDelegationCardFacts(
       number: state.runNumber,
       action: state.runAction,
       phase: boundText(state.phase, CARD_PHASE_MAX),
+      ...(state.runAttempt !== undefined ? { attempt: state.runAttempt } : {}),
     },
     status: boundText(statusWord(state), CARD_STATUS_MAX),
     tone: toneOf(state),
@@ -985,4 +1002,354 @@ function boundName(value: string): string {
 function boundRunNumber(value: number): number {
   if (!Number.isSafeInteger(value)) return 1;
   return Math.min(CARD_MAX_RUN_NUMBER, Math.max(1, value));
+}
+
+// ---------------------------------------------------------------------------
+// Provider failure
+// ---------------------------------------------------------------------------
+
+/** The head the card prints on a sanitized provider-failure row. */
+export const CARD_PROVIDER_ERROR_HEAD = "provider";
+/** The lifecycle phase a sanitized provider failure names. */
+export const CARD_PROVIDER_ERROR_PHASE = "provider error";
+
+/**
+ * Fold ONE sanitized provider failure into the card.
+ *
+ * The text is produced by `child-provider-error-render.ts`, which is the exact
+ * formatter the child overlay prints, so the card and the overlay can never
+ * report the same failure in two different vocabularies. No provider payload,
+ * exception text, or raw message reaches this function: only the closed,
+ * already-sanitized projection does.
+ *
+ * The class is retained as the run's failure class, so a later failed
+ * settlement can name the documented recovery for it — and only for it.
+ */
+export function applyDelegationCardProviderError(
+  state: PiDelegationCardState,
+  error: PiChildProviderError,
+  now: PiCardClock,
+): Result<PiDelegationCardState, PiDelegationCardError> {
+  const stamp = readClock(now);
+  if (stamp === undefined) {
+    return err({
+      type: "PiDelegationCardFailed",
+      operation: "apply",
+      detail: "invalid_clock",
+    });
+  }
+  // A settled run is a closed record: a late provider failure cannot rewrite it.
+  if (state.settlement !== undefined) return ok(state);
+  const text = boundText(
+    sanitizeChildCompactText(formatPiChildProviderError(error)),
+    CARD_ROW_TEXT_MAX,
+  );
+  const timed = withClock(state, stamp);
+  return ok({
+    ...pushRow(timed, {
+      // Repeats of the same canonical failure grow in place rather than
+      // stacking, so `producedRows` stays an honest count of distinct facts.
+      id: `provider-error:${text}`,
+      kind: "error",
+      head: CARD_PROVIDER_ERROR_HEAD,
+      text,
+    }),
+    phase: CARD_PROVIDER_ERROR_PHASE,
+    failureClass: error.class,
+    activity: { kind: "error", text, live: false },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Projection (owns state; correlates ids; dedups; freezes prior runs)
+// ---------------------------------------------------------------------------
+
+export interface PiChildCardProjectionConfig {
+  /** Opaque logical thread id. Correlation only; the card never prints it. */
+  readonly threadId: string;
+  readonly agentName: string;
+  /** One imperative sentence in the parent's own words. */
+  readonly assignment: string;
+  readonly model?: string;
+  readonly runNumber?: number;
+  readonly action?: ChildCompactRunAction;
+  /** Injected clock. Elapsed is read at event time, never at render time. */
+  readonly now?: PiCardClock;
+  /** Controller-authenticated identity labels for provider failures, if any. */
+  readonly providerErrorDescriptor?: PiChildProviderErrorDescriptor;
+}
+
+export interface PiChildCardStartRunInput {
+  readonly runNumber: number;
+  readonly action: ChildCompactRunAction;
+  readonly agentName?: string;
+  readonly assignment?: string;
+}
+
+/**
+ * The single authoritative reducer behind one delegation card.
+ *
+ * It correlates stable message ids across `message_start`/`update`/`end`, uses
+ * `toolCallId` for tools, dedups repeated fragments by the mapper's own dedup
+ * key, routes sanitized provider failures through the overlay's formatter, and
+ * settles only from an authoritative settlement.
+ *
+ * Two freezes make the honesty structural rather than remembered:
+ *
+ * - **A settled run is frozen.** Late, duplicate, and out-of-order events after
+ *   settlement — including a second settlement — change nothing.
+ * - **A superseded run is frozen.** Starting run N+1 snapshots run N, and no
+ *   later event can reach that snapshot.
+ *
+ * It owns no timers and publishes nothing: the caller decides when an update
+ * leaves. Malformed input keeps the facts the card already had, so one bad
+ * event can never blank a running card.
+ */
+export class PiChildCardProjection {
+  private state: PiDelegationCardState;
+  private readonly now: PiCardClock;
+  private readonly threadId: string;
+  private readonly config: PiChildCardProjectionConfig;
+  private readonly frozenRuns = new Map<number, PiDelegationCardFacts>();
+  private dedupKeys = new Set<string>();
+  private activeMessageId: string | undefined;
+  private messageSeq = 0;
+  private runNumber: number;
+  private assignment: string;
+  private agentName: string;
+  private settled = false;
+
+  constructor(config: PiChildCardProjectionConfig) {
+    this.config = config;
+    this.now = config.now ?? (() => Date.now());
+    this.threadId = boundChildCompactId(config.threadId);
+    this.runNumber = config.runNumber ?? 1;
+    this.assignment = config.assignment;
+    this.agentName = config.agentName;
+    this.state = createDelegationCardState({
+      agentName: config.agentName,
+      assignment: config.assignment,
+      ...(config.model !== undefined ? { model: config.model } : {}),
+      runNumber: this.runNumber,
+      action: config.action ?? "start",
+    });
+    this.applyInput({
+      kind: "start_run",
+      threadId: this.threadId,
+      runNumber: this.runNumber,
+      action: config.action ?? "start",
+      agentName: config.agentName,
+    });
+  }
+
+  /** The opaque card state. Only the projection itself may fold it forward. */
+  getState(): PiDelegationCardState {
+    return this.state;
+  }
+
+  /** The frozen facts of a superseded run, for parity checks and tests. */
+  frozenRunFacts(runNumber: number): PiDelegationCardFacts | undefined {
+    return this.frozenRuns.get(runNumber);
+  }
+
+  /** True once an authoritative settlement has closed this run. */
+  isSettled(): boolean {
+    return this.settled;
+  }
+
+  /**
+   * Opens a run. A run number at or below the current one is a late or
+   * out-of-order report and changes nothing; a higher one freezes the run in
+   * progress and opens a fresh card for the new one.
+   */
+  startRun(input: PiChildCardStartRunInput): PiDelegationCardFacts {
+    if (input.runNumber <= this.runNumber) return this.facts();
+    this.frozenRuns.set(this.runNumber, this.facts());
+    this.runNumber = input.runNumber;
+    this.agentName = input.agentName ?? this.agentName;
+    this.assignment = input.assignment ?? this.assignment;
+    this.dedupKeys = new Set<string>();
+    this.activeMessageId = undefined;
+    this.settled = false;
+    this.state = createDelegationCardState({
+      agentName: this.agentName,
+      assignment: this.assignment,
+      ...(this.config.model !== undefined ? { model: this.config.model } : {}),
+      runNumber: this.runNumber,
+      action: input.action,
+    });
+    this.applyInput({
+      kind: "start_run",
+      threadId: this.threadId,
+      runNumber: this.runNumber,
+      action: input.action,
+      agentName: this.agentName,
+    });
+    return this.facts();
+  }
+
+  /**
+   * Folds one parser-approved session event in. A terminal assistant message
+   * that reports a provider failure is routed through the same sanitized
+   * projection the overlay prints.
+   */
+  applySessionEvent(event: PiChildSessionEvent): PiDelegationCardFacts {
+    if (this.settled) return this.facts();
+    const itemId = this.correlateItemId(event);
+    const mapped = mapPiChildSessionEventToCompactInput(event, itemId);
+    if (mapped.isErr() || mapped.value === undefined) {
+      return this.applyEventProviderError(event);
+    }
+    const input = mapped.value;
+    if (input.kind === "settle") return this.facts();
+    if (input.kind === "assistant_fragment") {
+      const dedupKey = boundChildCompactId(input.dedupKey);
+      if (this.dedupKeys.has(dedupKey)) return this.facts();
+      this.retainDedupKey(dedupKey);
+    }
+    this.applyInput(input);
+    return this.applyEventProviderError(event);
+  }
+
+  /** Folds one already-sanitized provider failure in. */
+  applyProviderError(error: PiChildProviderError): PiDelegationCardFacts {
+    if (this.settled) return this.facts();
+    applyDelegationCardProviderError(this.state, error, this.now).match(
+      (next) => {
+        this.state = next;
+      },
+      () => undefined,
+    );
+    return this.facts();
+  }
+
+  /**
+   * Applies the ONE authoritative settlement. A repeated settlement is a
+   * protocol duplicate: it is ignored and the first record stands.
+   */
+  settle(
+    settlement: PiChildSettlement,
+    failureClass?: PiChildErrorClass,
+  ): PiDelegationCardFacts {
+    if (this.settled) return this.facts();
+    // A caller-named class wins; otherwise the class a sanitized provider
+    // failure already established stands. Nothing invents one.
+    const named = failureClass ?? this.state.failureClass;
+    this.applyInput({
+      kind: "settle",
+      settlement,
+      ...(named !== undefined ? { failureClass: named } : {}),
+    });
+    this.settled = true;
+    this.activeMessageId = undefined;
+    return this.facts();
+  }
+
+  facts(): PiDelegationCardFacts {
+    return projectDelegationCardFacts(this.state);
+  }
+
+  private applyEventProviderError(
+    event: PiChildSessionEvent,
+  ): PiDelegationCardFacts {
+    const projected = parsePiChildProviderError(
+      event,
+      this.config.providerErrorDescriptor,
+    );
+    if (projected.isErr()) return this.facts();
+    return this.applyProviderError(projected.value);
+  }
+
+  private applyInput(input: unknown): void {
+    applyDelegationCardInput(this.state, input, this.now).match(
+      (next) => {
+        this.state = next;
+      },
+      () => undefined,
+    );
+  }
+
+  private retainDedupKey(key: string): void {
+    this.dedupKeys.add(key);
+    if (this.dedupKeys.size <= CHILD_COMPACT_MAX_DEDUP_KEYS) return;
+    this.dedupKeys = new Set(
+      [...this.dedupKeys].slice(-CHILD_COMPACT_MAX_DEDUP_KEYS),
+    );
+  }
+
+  private correlateItemId(event: PiChildSessionEvent): string {
+    switch (event.type) {
+      case "message_start": {
+        const id =
+          messageIdFromUnknown(event.message) ?? this.allocateMessageId();
+        this.activeMessageId = id;
+        return id;
+      }
+      case "message_update": {
+        const id =
+          messageIdFromMessageUpdate(event) ??
+          this.activeMessageId ??
+          this.allocateMessageId();
+        this.activeMessageId = id;
+        return id;
+      }
+      case "message_end": {
+        const id =
+          messageIdFromUnknown(event.message) ??
+          this.activeMessageId ??
+          this.allocateMessageId();
+        this.activeMessageId = id;
+        return id;
+      }
+      case "tool_call":
+      case "tool_partial_result":
+      case "tool_result":
+      case "tool_error": {
+        if (
+          typeof event.toolCallId === "string" &&
+          event.toolCallId.length > 0
+        ) {
+          return boundChildCompactId(event.toolCallId);
+        }
+        return boundChildCompactId(`tool:${this.allocateMessageId()}`);
+      }
+      case "text":
+      case "markdown":
+        return this.activeMessageId ?? this.allocateMessageId();
+      case "thinking":
+        return `${this.activeMessageId ?? "assistant"}:thinking`;
+      default:
+        return this.activeMessageId ?? "assistant";
+    }
+  }
+
+  private allocateMessageId(): string {
+    this.messageSeq += 1;
+    return `msg-${this.messageSeq}`;
+  }
+}
+
+function messageIdFromUnknown(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.messageId === "string" && record.messageId.length > 0) {
+    return boundChildCompactId(record.messageId);
+  }
+  if (typeof record.id === "string" && record.id.length > 0) {
+    return boundChildCompactId(record.id);
+  }
+  return undefined;
+}
+
+function messageIdFromMessageUpdate(
+  event: PiChildSessionEvent,
+): string | undefined {
+  if (event.type !== "message_update") return undefined;
+  const record = event as unknown as Record<string, unknown>;
+  return (
+    messageIdFromUnknown(record.delta) ??
+    messageIdFromUnknown(record.assistantMessageEvent)
+  );
 }

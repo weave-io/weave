@@ -132,7 +132,7 @@
   - function projectDelegationCardFacts: (state) => PiDelegationCardFacts
   - function formatElapsed: (ms) => string
   - function formatTokens: (count) => string
-  - _...28 more_
+  - _...34 more_
 - `packages/adapters/pi/src/child-card-render.ts`
   - function renderDelegationCard: (facts, options) => string[]
   - function composeDelegationCard: (facts, width, expanded) => readonly PiCardRow[]
@@ -148,7 +148,7 @@
   - function mapPiChildSessionEventToCompactInput: (event, itemId) => NeverthrowResult<ChildCompactReducerInput | undefined, ChildCompactError>
   - function reduceChildCompact: (state, input) => NeverthrowResult<ChildCompactState, ChildCompactError>
   - function reduceChildCompactSafe: (state, input) => ChildCompactState
-  - _...29 more_
+  - _...27 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function makeCancelBody: (reason) => void
@@ -564,7 +564,7 @@
   - function renderDelegationCardResult: (result, options, theme, _context, onCardRenderFailure?) => void
   - function buildDelegationToolRegistration: (deps) => PiToolRegistration
   - function buildRelayedDelegationToolRegistration: (deps) => PiToolRegistration
-  - _...10 more_
+  - _...15 more_
 - `packages/adapters/pi/src/direct-dispatch-transport.ts`
   - function validateDirectNativeSession: (childId, session) => Result<PiDirectNativeSession, PiAdapterFailure>
   - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
