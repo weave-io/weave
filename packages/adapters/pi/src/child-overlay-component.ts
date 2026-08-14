@@ -368,6 +368,15 @@ export function createChildOverlayCustomComponent(
 ): PiChildOverlayCustomComponent {
   const searchTrigger = searchRoute.trigger;
   const draftEditor = createChildOverlayDraftEditor(tui, theme, keybindings);
+  // Focused on mount, from here rather than from the mount site. The overlay
+  // owns the keyboard as soon as it is on screen, so a reader's first keystroke
+  // must land in the visible field instead of in a surface behind the frame.
+  // Focus never moves anywhere else while mounted: `handleInput` routes every
+  // byte itself, and closing simply unmounts, which returns input to whichever
+  // primary editor the host already had. This module never calls the host's
+  // editor-component installer, so a foreign editor such as `pi-vim` keeps the
+  // primary editor across the whole overlay lifetime.
+  draftEditor.focused = true;
   const transcriptRenderer = createPiChildTranscriptRenderer();
   const paint = childOverlayPaint(theme);
   /** The frame's title and lifecycle marker, refreshed by every composition. */

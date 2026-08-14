@@ -23,6 +23,13 @@
  * 4. **The expanded region is a fixed budget.** One interior rule, one status
  *    strip, and exactly {@link CARD_VIEWPORT_ROWS} literal bottom transcript
  *    rows, at every width and in every state.
+ * 5. **One line, one cut mark.** A composed line may carry at most one `…`.
+ *    Prose — the assignment, the Native Line, a transcript row — keeps the
+ *    mark, because prose is where a reader needs to know something was lost.
+ *    Fixed-field cells beside it on the same line ({@link clipCell}: the rail's
+ *    state word, child name and elapsed, and a transcript row's bounded head
+ *    label) cut flush or drop whole, so two columns can never mark the same
+ *    line twice.
  *
  * See `docs/specs/33-spec-pi-adapter/33-weave-ui-design.md` §1, and the
  * normative prototype `prototypes/weave-delegate-tool-grilling.ts`
@@ -457,16 +464,18 @@ export function railStatusFirst(
   tight: boolean,
 ): readonly Row[] {
   const ink = toneInk(facts.tone);
+  // Rail cells are fixed-field identity, so they cut flush: the one cut mark
+  // this line may carry belongs to the body column beside them.
   const cells: Row[] = [
     [
       glyph(ink, "▌"),
-      seg(ink, clipText(facts.status.toUpperCase(), Math.max(1, w - 1))),
+      seg(ink, clipCell(facts.status.toUpperCase(), Math.max(1, w - 1))),
     ],
-    [seg("text", clipText(facts.agentName, w))],
+    [seg("text", clipCell(facts.agentName, w))],
   ];
   if (!tight) {
     const elapsed = facts.telemetry.elapsed;
-    cells.push(elapsed === undefined ? [] : [seg("dim", clipText(elapsed, w))]);
+    cells.push(elapsed === undefined ? [] : [seg("dim", clipCell(elapsed, w))]);
   }
   return cells.slice(0, CARD_RAIL_CELL_MAX);
 }
@@ -489,10 +498,16 @@ export function identityRow(facts: PiDelegationCardFacts, bodyW: number): Row {
     seg("text", facts.agentName),
   ];
   const fitted = fitRow(
-    [full, [glyph(ink, "▌"), seg(ink, state)], [seg(ink, state)]],
+    [full, [glyph(ink, "▌"), seg(ink, state)]],
     Math.max(0, bodyW),
   );
-  return fitted.length > 0 ? fitted : [seg(ink, clipText(state, bodyW))];
+  // The floor keeps the bar and cuts the word flush. The bar is the state's
+  // only colour-free signal, so it is the last thing the card gives up, and
+  // cutting the word without a mark leaves this line's one `…` to the prose
+  // rows below it.
+  return fitted.length > 0
+    ? fitted
+    : [glyph(ink, "▌"), seg(ink, clipCell(state, Math.max(1, bodyW - 1)))];
 }
 
 // ---------------------------------------------------------------------------
@@ -874,13 +889,20 @@ function viewportRow(
 ): Row {
   const ink = ROW_INK[row.kind];
   const head = safeTrim(row.head);
-  const lead: Seg[] = [glyph(ink, `${ROW_GLYPH[row.kind]} `)];
-  if (head.length > 0 && !narrow) {
-    lead.push(
-      seg("muted", clipText(head, Math.max(2, Math.floor(inner / 3)))),
+  const headBudget = Math.max(2, Math.floor(inner / 3));
+  // The head is a bounded label, so it is printed whole or not at all: a head
+  // that had to be cut would put a second `…` on a line whose text already
+  // carries one.
+  if (head.length > 0 && !narrow && measureWidth(head) <= headBudget) {
+    const lead: Seg[] = [
+      glyph(ink, `${ROW_GLYPH[row.kind]} `),
+      seg("muted", head),
       fill("dim", " ", 2),
-    );
+    ];
+    const used = lead.reduce((total, s) => total + measureWidth(s.t), 0);
+    return [...lead, seg(ink, clipText(row.text, Math.max(2, inner - used)))];
   }
+  const lead: Seg[] = [glyph(ink, `${ROW_GLYPH[row.kind]} `)];
   const used = lead.reduce((total, s) => total + measureWidth(s.t), 0);
   return [...lead, seg(ink, clipText(row.text, Math.max(2, inner - used)))];
 }
@@ -910,4 +932,17 @@ function innerWidth(width: number): number {
 /** Clips already-sanitized text, marking the cut. */
 function clipText(text: string, width: number): string {
   return truncatePlainToWidth(safeTrim(text), Math.max(1, width));
+}
+
+/**
+ * Clips a fixed-field cell FLUSH, without a cut mark.
+ *
+ * Used only where a cell shares its line with a prose column that already
+ * states the line's loss. The card is a summary; the complete value of every
+ * cell cut here — the state word, the child name, elapsed — is one `Alt+I`
+ * away in the inspector, which is why the rail can afford to lose the mark
+ * rather than let one line carry two of them.
+ */
+function clipCell(text: string, width: number): string {
+  return truncatePlainToWidth(safeTrim(text), Math.max(1, width), "");
 }

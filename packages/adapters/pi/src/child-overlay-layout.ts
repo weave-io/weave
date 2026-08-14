@@ -44,7 +44,12 @@
  * `frameTop`, `frameBottom`, `squeezeBody`, `composeOverlayRegions`).
  */
 
-import { clampToWidth, fitLineToWidth, measureWidth } from "./render-width.js";
+import {
+  clampToWidth,
+  fitLineToWidth,
+  measureWidth,
+  truncatePlainToWidth,
+} from "./render-width.js";
 import { type Paint, paintTone, type Tone } from "./ui-paint.js";
 import {
   cell,
@@ -91,6 +96,22 @@ export const OVERLAY_HEADER_SEP = " · ";
 
 /** Matches the rail search lists at most this many rows before folding. */
 export const OVERLAY_SEARCH_LIST_MAX = 3;
+
+/**
+ * What the search rail promises the keyboard, richest first.
+ *
+ * The full sentence is the contract; the narrower rungs exist only so a rail
+ * at its minimum width still states BOTH actions rather than cutting one of
+ * them off mid-word. The indent is the first thing to go, because alignment is
+ * worth less than the words.
+ */
+export const OVERLAY_SEARCH_KEY_HINT = "Enter jump · Esc close search";
+const OVERLAY_SEARCH_KEY_HINT_LADDER: readonly string[] = [
+  `  ${OVERLAY_SEARCH_KEY_HINT}`,
+  OVERLAY_SEARCH_KEY_HINT,
+  "Enter jump · Esc close",
+  "Enter · Esc",
+];
 
 /** What an absent operational fact prints. Never a fabricated zero. */
 export const OVERLAY_UNKNOWN = "—";
@@ -387,6 +408,22 @@ export function overlaySectionHead(
   );
 }
 
+/**
+ * Cuts a FIXED-FIELD cell flush, without a cut mark.
+ *
+ * One line, one `…`. The transcript pane and the Status Matrix rail share a
+ * line, so if both marked their own cut the reader would see two marks for one
+ * line. Prose keeps the mark, because prose is where lost words matter;
+ * the rail's key/value cells and its match list — bounded, repeated, and one
+ * resize away from being whole again — cut flush instead.
+ *
+ * Only ever called with already-sanitized, ANSI-free text, which is what makes
+ * {@link truncatePlainToWidth} the right cutter here.
+ */
+function fitFieldToWidth(text: string, width: number): string {
+  return truncatePlainToWidth(text, width, "");
+}
+
 /** The value an absent operational fact prints. */
 function factValue(value: string | undefined): string {
   if (value === undefined) return OVERLAY_UNKNOWN;
@@ -651,9 +688,12 @@ export function matrixRow(
 ): string {
   const valueWidth = Math.max(1, width - OVERLAY_MATRIX_KEY - 1);
   return cell(
-    `${paint.dim(cell(safeTrim(key), OVERLAY_MATRIX_KEY))} ${ink(
-      fitLineToWidth(safeTrim(value), valueWidth),
-    )}`,
+    `${paint.dim(
+      cell(
+        fitFieldToWidth(safeTrim(key), OVERLAY_MATRIX_KEY),
+        OVERLAY_MATRIX_KEY,
+      ),
+    )} ${ink(fitFieldToWidth(safeTrim(value), valueWidth))}`,
     width,
   );
 }
@@ -984,6 +1024,17 @@ export function highlightQuery(
   return out.join("");
 }
 
+/** The widest search hint this rail can print whole. Never a cut one. */
+function searchKeyHint(rail: number): string {
+  const floor = OVERLAY_SEARCH_KEY_HINT_LADDER[
+    OVERLAY_SEARCH_KEY_HINT_LADDER.length - 1
+  ] as string;
+  return (
+    OVERLAY_SEARCH_KEY_HINT_LADDER.find((rung) => measureWidth(rung) <= rail) ??
+    floor
+  );
+}
+
 /** The SEARCH section prepended to the Status Matrix while `/` is open. */
 export function searchRailSections(
   paint: Paint,
@@ -998,11 +1049,14 @@ export function searchRailSections(
       current
         ? paint.inv(
             paint.acc(
-              cell(` ▸ ${fitLineToWidth(plain, Math.max(1, rail - 3))} `, rail),
+              cell(
+                ` ▸ ${fitFieldToWidth(plain, Math.max(1, rail - 4))} `,
+                rail,
+              ),
             ),
           )
         : `${paint.dim("  ")}${paint.muted(
-            fitLineToWidth(plain, Math.max(1, rail - 2)),
+            fitFieldToWidth(plain, Math.max(1, rail - 2)),
           )}`,
       rail,
     );
@@ -1030,7 +1084,7 @@ export function searchRailSections(
       ),
       ...rows,
       ...more,
-      cell(paint.dim("  Enter jump · Esc close search"), rail),
+      cell(paint.dim(searchKeyHint(rail)), rail),
     ],
   ];
 }
