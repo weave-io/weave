@@ -276,6 +276,12 @@ export type PiNativeSessionFsError =
   | { readonly type: "identity-changed" }
   | { readonly type: "invalid-range" }
   | { readonly type: "permissive-mode"; readonly kind: "directory" | "file" }
+  /**
+   * An adapter-owned node is owned by another user. Reported separately from
+   * {@link PiNativeSessionFsError} `permissive-mode` because a foreign owner
+   * can re-loosen a mode at will, so the mode alone proves nothing.
+   */
+  | { readonly type: "foreign-owner"; readonly kind: "directory" | "file" }
   | { readonly type: "wrong-kind"; readonly kind: "directory" | "file" }
   /**
    * Exclusive create lost a race: the leaf appeared between the absence check
@@ -450,6 +456,7 @@ function fromFsError(
     case "missing":
       return { type: "SessionMissing", ref };
     case "permissive-mode":
+    case "foreign-owner":
       return { type: "SessionPermissionError", kind: error.kind };
     case "wrong-kind":
       return { type: "SessionCorrupt", ref, reason: "unreadable" };
@@ -2130,7 +2137,7 @@ export class PiNativeSessionStore {
     if (error.type === "io" || error.type === "unavailable") {
       return { type: "SessionCreateFailed", reason: "io" };
     }
-    if (error.type === "permissive-mode") {
+    if (error.type === "permissive-mode" || error.type === "foreign-owner") {
       return { type: "SessionPermissionError", kind: error.kind };
     }
     return fromFsError(error, ref);
@@ -3090,7 +3097,10 @@ export class PiNativeSessionStore {
           PI_NATIVE_SESSION_LAYOUT.fileMode,
         )
         .mapErr((error): PiNativeSessionError => {
-          if (error.type === "permissive-mode")
+          if (
+            error.type === "permissive-mode" ||
+            error.type === "foreign-owner"
+          )
             return { type: "TombstoneAppendFailed", reason: "permission" };
           if (error.type === "unavailable")
             return { type: "TombstoneAppendFailed", reason: "unavailable" };

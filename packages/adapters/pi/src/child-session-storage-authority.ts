@@ -187,8 +187,10 @@ function classifyRootViolation(
 
 /**
  * Which filesystem refusals prove the root is hostile rather than merely
- * absent or unreachable. A symlinked, wrongly-typed, group/world-readable, or
- * swapped root is unsafe; a missing or unwritable one is unavailable.
+ * absent or unreachable. A symlinked, wrongly-typed, group/world-readable,
+ * foreign-owned, or swapped root - at the root itself or at any adapter-owned
+ * ancestor the no-follow chain proves - is unsafe; a missing or unwritable one
+ * is unavailable.
  */
 function classifyRootFsError(
   error: PiNativeSessionFsError,
@@ -197,6 +199,7 @@ function classifyRootFsError(
     case "symlink-rejected":
     case "unsafe-path":
     case "permissive-mode":
+    case "foreign-owner":
     case "wrong-kind":
     case "identity-changed":
       return "unsafe";

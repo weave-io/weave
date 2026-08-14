@@ -39,6 +39,13 @@ interface FileNodeIdentity extends NodeIdentity {
 
 const textEncoder = new TextEncoder();
 
+/**
+ * The only mode an adapter-owned directory may carry. Exact equality is the
+ * contract: it rejects group- or world-writable trees and any other loosened
+ * variant instead of masking single bits.
+ */
+const PI_NATIVE_SESSION_DIRECTORY_MODE = 0o700;
+
 function safeName(name: string): boolean {
   return (
     name.length > 0 &&
@@ -106,6 +113,7 @@ function isFsError(value: unknown): value is PiNativeSessionFsError {
     type === "identity-changed" ||
     type === "invalid-range" ||
     type === "permissive-mode" ||
+    type === "foreign-owner" ||
     type === "wrong-kind" ||
     type === "already-exists" ||
     type === "io"
@@ -173,6 +181,8 @@ interface NativeLibc {
   ) => number;
   readonly unlinkat: (dir: number, name: Uint8Array, flags: number) => number;
   readonly errno: () => number;
+  /** Effective uid of this process, for adapter-owned ownership proofs. */
+  readonly geteuid: () => number;
   readonly dispose: () => void;
 }
 
@@ -244,6 +254,7 @@ function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
         fsync: { args: ["i32"], returns: "i32" },
         renameat: { args: ["i32", "ptr", "i32", "ptr"], returns: "i32" },
         unlinkat: { args: ["i32", "ptr", "i32"], returns: "i32" },
+        geteuid: { args: [], returns: "u32" },
         [errnoName]: { args: [], returns: "ptr" },
       }),
     () => ({ type: "unavailable", operation: "open" }) as const,
@@ -274,6 +285,7 @@ function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
         newName: unknown,
       ) => number;
       unlinkat: (dir: number, name: unknown, flags: number) => number;
+      geteuid: () => number;
       [key: string]: unknown;
     };
     return {
@@ -303,6 +315,7 @@ function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
       ) => symbols.renameat(oldDir, ptr(oldName), newDir, ptr(newName)),
       unlinkat: (dir: number, name: Uint8Array, unlinkFlags: number) =>
         symbols.unlinkat(dir, ptr(name), unlinkFlags),
+      geteuid: () => symbols.geteuid(),
       errno: () =>
         read.i32((symbols[errnoName] as () => unknown)() as never, 0),
       dispose: () => library.close(),
@@ -448,8 +461,102 @@ function preadOnce(
 }
 
 /**
+ * The component sequence that marks the start of adapter-owned storage.
+ *
+ * Every Weave-owned Pi tree hangs off `<trusted base>/weave/adapters/pi/...`
+ * ({@link PI_NATIVE_SESSION_LAYOUT} for sessions, the metadata cache layout
+ * for `cache`). Components above it belong to the user and are proven by the
+ * trusted-data-root canonicalizer; this marker and everything below it is
+ * created and owned by this adapter, so each such component must satisfy the
+ * adapter's own directory contract.
+ */
+const ADAPTER_OWNED_ROOT_MARKER = Object.freeze([
+  "weave",
+  "adapters",
+  "pi",
+] as const);
+
+/**
+ * Index of the first adapter-owned component of `segments`.
+ *
+ * The deepest occurrence of {@link ADAPTER_OWNED_ROOT_MARKER} wins, so a user
+ * directory that happens to be called `weave` higher up cannot shrink the
+ * proven suffix. When the marker is absent - synthetic roots in unit
+ * embeddings and tests - only the final component is treated as adapter-owned,
+ * which is the directory the caller asked for and therefore always ours.
+ */
+function adapterOwnedFromIndex(segments: readonly string[]): number {
+  for (
+    let start = segments.length - ADAPTER_OWNED_ROOT_MARKER.length;
+    start >= 0;
+    start -= 1
+  ) {
+    if (
+      ADAPTER_OWNED_ROOT_MARKER.every(
+        (marker, offset) => segments[start + offset] === marker,
+      )
+    ) {
+      return start;
+    }
+  }
+  return Math.max(0, segments.length - 1);
+}
+
+/**
+ * Proves one adapter-owned directory through the descriptor already opened
+ * with `O_NOFOLLOW`.
+ *
+ * The check runs against the open descriptor (`fstat` semantics), never
+ * against the name, so nothing can be swapped between the decision and the
+ * node it describes. A component must be a real directory, must be owned by
+ * the current user where the platform reports ownership, and must carry the
+ * exact restrictive mode 0700 - which also excludes every group- or
+ * world-writable variant. Existing components are proven, never repaired.
+ */
+function verifyAdapterOwnedDirectoryFd(
+  libc: NativeLibc,
+  fd: number,
+): ResultAsync<void, PiNativeSessionFsError> {
+  return ResultAsync.fromThrowable(
+    () => Bun.file(fd).stat(),
+    () => ({ type: "io" }) as const,
+  )().andThen((stat) => {
+    if (!stat.isDirectory()) {
+      return errAsync<void, PiNativeSessionFsError>({
+        type: "wrong-kind",
+        kind: "directory",
+      });
+    }
+    const owner = (stat as unknown as { uid?: unknown }).uid;
+    if (typeof owner === "number" && Number.isInteger(owner)) {
+      const euid = libc.geteuid();
+      if (Number.isInteger(euid) && euid >= 0 && owner !== euid) {
+        return errAsync<void, PiNativeSessionFsError>({
+          type: "foreign-owner",
+          kind: "directory",
+        });
+      }
+    }
+    if ((stat.mode & 0o7777) !== PI_NATIVE_SESSION_DIRECTORY_MODE) {
+      return errAsync<void, PiNativeSessionFsError>({
+        type: "permissive-mode",
+        kind: "directory",
+      });
+    }
+    return okAsync<void, PiNativeSessionFsError>(undefined);
+  });
+}
+
+/**
  * Walks a path without following symlinks. Existing nodes are checked, never
  * repaired. Only a component created by this call is chmoded to 0700.
+ *
+ * Every adapter-owned component - the `weave/adapters/pi` marker, the storage
+ * root below it, and each component under that - is proven by
+ * {@link verifyAdapterOwnedDirectoryFd} before the walk descends through it,
+ * whether this call created it or found it already there. A hostile
+ * intermediate ancestor therefore fails the whole open instead of being
+ * traversed because only the final directory was inspected.
  */
 function openDirectoryChain(
   libc: NativeLibc,
@@ -459,6 +566,7 @@ function openDirectoryChain(
 ): ResultAsync<number, PiNativeSessionFsError> {
   const segments = absoluteSegments(path);
   if (segments.isErr()) return errAsync(segments.error);
+  const ownedFrom = adapterOwnedFromIndex(segments.value);
 
   return ResultAsync.fromThrowable(async () => {
     let current = libc.open(
@@ -472,7 +580,7 @@ function openDirectoryChain(
     if (current < 0) throw { type: "unavailable", operation: "open" };
 
     try {
-      for (const segment of segments.value) {
+      for (const [index, segment] of segments.value.entries()) {
         let created = false;
         let next = libc.openat(
           current,
@@ -512,6 +620,13 @@ function openDirectoryChain(
         if (created && libc.fchmod(next, mode) !== 0) {
           libc.close(next);
           throw { type: "io" };
+        }
+        if (index >= ownedFrom) {
+          const proven = await verifyAdapterOwnedDirectoryFd(libc, next);
+          if (proven.isErr()) {
+            libc.close(next);
+            throw proven.error;
+          }
         }
         libc.close(current);
         current = next;
