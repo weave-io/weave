@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 294 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~31,600 tokens. Without it, AI exploration would cost ~95,300 tokens. **Saves ~63,600 tokens per conversation.**
-> **Last scanned:** 2026-08-14 19:15 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 295 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~31,800 tokens. Without it, AI exploration would cost ~95,600 tokens. **Saves ~63,800 tokens per conversation.**
+> **Last scanned:** 2026-08-14 19:34 — re-run after significant changes
 
 ---
 
@@ -136,6 +136,14 @@
   - interface PiCandidatePlanContext
   - interface PiPreflightContext
   - _...6 more_
+- `packages/adapters/pi/src/child-card-model.ts`
+  - function createDelegationCardState: (config) => PiDelegationCardState
+  - function applyDelegationCardInput: (state, input, now) => Result<PiDelegationCardState, PiDelegationCardError>
+  - function applyDelegationCardEvent: (state, event, now, itemId) => Result<PiDelegationCardState, PiDelegationCardError>
+  - function projectDelegationCardFacts: (state) => PiDelegationCardFacts
+  - function formatElapsed: (ms) => string
+  - function formatTokens: (count) => string
+  - _...28 more_
 - `packages/adapters/pi/src/child-compact-render.ts`
   - function createChildCompactState: (threadId) => ChildCompactState
   - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
@@ -143,7 +151,7 @@
   - function mapPiChildSessionEventToCompactInput: (event, itemId) => NeverthrowResult<ChildCompactReducerInput | undefined, ChildCompactError>
   - function reduceChildCompact: (state, input) => NeverthrowResult<ChildCompactState, ChildCompactError>
   - function reduceChildCompactSafe: (state, input) => ChildCompactState
-  - _...24 more_
+  - _...29 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function makeCancelBody: (reason) => void
@@ -1818,10 +1826,10 @@
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
+- `packages/adapters/pi/src/rpc-child.ts` — imported by **14** files
 - `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
-- `packages/adapters/pi/src/rpc-child.ts` — imported by **13** files
 
 ## Import Map (who imports what)
 
@@ -1856,7 +1864,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 321 test files found
+> 322 test files found
 
 ---
 

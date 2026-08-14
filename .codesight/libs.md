@@ -125,6 +125,14 @@
   - interface PiCandidatePlanContext
   - interface PiPreflightContext
   - _...6 more_
+- `packages/adapters/pi/src/child-card-model.ts`
+  - function createDelegationCardState: (config) => PiDelegationCardState
+  - function applyDelegationCardInput: (state, input, now) => Result<PiDelegationCardState, PiDelegationCardError>
+  - function applyDelegationCardEvent: (state, event, now, itemId) => Result<PiDelegationCardState, PiDelegationCardError>
+  - function projectDelegationCardFacts: (state) => PiDelegationCardFacts
+  - function formatElapsed: (ms) => string
+  - function formatTokens: (count) => string
+  - _...28 more_
 - `packages/adapters/pi/src/child-compact-render.ts`
   - function createChildCompactState: (threadId) => ChildCompactState
   - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
@@ -132,7 +140,7 @@
   - function mapPiChildSessionEventToCompactInput: (event, itemId) => NeverthrowResult<ChildCompactReducerInput | undefined, ChildCompactError>
   - function reduceChildCompact: (state, input) => NeverthrowResult<ChildCompactState, ChildCompactError>
   - function reduceChildCompactSafe: (state, input) => ChildCompactState
-  - _...24 more_
+  - _...29 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function makeCancelBody: (reason) => void

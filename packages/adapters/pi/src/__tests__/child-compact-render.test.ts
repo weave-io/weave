@@ -476,7 +476,116 @@ describe("child-compact-render", () => {
     const mapped = mapPiChildSessionEventToCompactInput(event);
     expect(mapped.isOk()).toBe(true);
     const input = mapped._unsafeUnwrap();
-    expect(input).toEqual({ kind: "tool", itemId: "call-stable-9" });
+    expect(input).toEqual({
+      kind: "tool",
+      itemId: "call-stable-9",
+      phase: "call",
+      toolName: "bash",
+    });
+  });
+
+  it("maps operational events to typed inputs instead of a generic control", () => {
+    const mapOne = (
+      event: PiChildSessionEvent,
+    ): ChildCompactReducerInput | undefined =>
+      mapPiChildSessionEventToCompactInput(event, "assistant")._unsafeUnwrap();
+
+    expect(
+      mapOne({
+        type: "tool_result",
+        toolCallId: "call-7",
+        content: [{ type: "text", text: "1 replacement" }],
+      }),
+    ).toEqual({
+      kind: "tool",
+      itemId: "call-7",
+      phase: "result",
+      detail: "1 replacement",
+    });
+
+    expect(
+      mapOne({ type: "tool_error", toolCallId: "call-7", error: "exit 1" }),
+    ).toEqual({
+      kind: "tool",
+      itemId: "call-7",
+      phase: "error",
+      detail: "exit 1",
+    });
+
+    expect(mapOne({ type: "thinking", text: "weighing options" })).toEqual({
+      kind: "thinking",
+      itemId: "assistant:thinking",
+      summary: "weighing options",
+    });
+
+    expect(
+      mapOne({
+        type: "usage",
+        usage: {
+          input: 100,
+          output: 20,
+          totalTokens: 120,
+          cost: { total: 0.5 },
+        },
+      }),
+    ).toEqual({
+      kind: "usage",
+      itemId: "assistant:control:usage",
+      usage: {
+        totalTokens: 120,
+        inputTokens: 100,
+        outputTokens: 20,
+        costUsd: 0.5,
+      },
+    });
+
+    expect(mapOne({ type: "queue_change", size: 2 })).toEqual({
+      kind: "queue",
+      itemId: "assistant:control:queue_change",
+      size: 2,
+    });
+
+    expect(mapOne({ type: "status", status: "tool call" })).toEqual({
+      kind: "status",
+      itemId: "assistant:control:status",
+      status: "tool call",
+    });
+
+    expect(mapOne({ type: "retry", attempt: 2, reason: "overloaded" })).toEqual(
+      {
+        kind: "retry",
+        itemId: "assistant:control:retry",
+        attempt: 2,
+        reason: "overloaded",
+      },
+    );
+
+    expect(
+      mapOne({ type: "unknown", originalType: "host_only", payload: {} }),
+    ).toEqual({
+      kind: "control",
+      itemId: "assistant:control:unknown",
+    });
+  });
+
+  it("records every operational input as one compact control item", () => {
+    let state = mustReduce(createChildCompactState("t1"), start());
+    state = mustReduce(state, {
+      kind: "usage",
+      itemId: "u1",
+      usage: { totalTokens: 10 },
+    });
+    state = mustReduce(state, { kind: "queue", itemId: "q1", size: 1 });
+    state = mustReduce(state, { kind: "status", itemId: "s1", status: "tool" });
+    state = mustReduce(state, { kind: "retry", itemId: "r1", attempt: 2 });
+    expect(state.runs[0]?.items.map((item) => item.kind)).toEqual([
+      "control",
+      "control",
+      "control",
+      "control",
+    ]);
+    // Operational facts never become collapsed activity.
+    expect(renderChildCompactSafe(state).lines[1]).toBe("…");
   });
 
   describe("PiChildCompactProjection", () => {

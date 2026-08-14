@@ -9,10 +9,15 @@
  * Never throws on expected paths: invalid reduce/render input yields a typed
  * degraded three-line block.
  */
-import { err, ok, Result, type Result as NeverthrowResult } from "neverthrow";
+import { err, type Result as NeverthrowResult, ok, Result } from "neverthrow";
+import {
+  PI_CHILD_ERROR_CLASSES,
+  type PiChildErrorClass,
+} from "./child-provider-error.js";
 import {
   MAX_CHILD_EVENT_STRING,
   type PiChildSessionEvent,
+  parsePiChildUsageReport,
 } from "./child-session-events.js";
 import {
   extractAssistantTextDeltaPreview,
@@ -35,6 +40,13 @@ export const CHILD_COMPACT_MAX_RUNS = 64;
 export const CHILD_COMPACT_MAX_ITEMS = 128;
 /** Maximum dedup keys retained per run. */
 export const CHILD_COMPACT_MAX_DEDUP_KEYS = 256;
+
+/** Largest accepted money figure, in whole units. Anything larger is absent. */
+export const CHILD_COMPACT_MAX_COST = 1_000_000;
+/** Largest accepted queue depth. Anything larger is absent. */
+export const CHILD_COMPACT_MAX_QUEUE_SIZE = 10_000;
+/** Largest accepted retry attempt number. Anything larger is absent. */
+export const CHILD_COMPACT_MAX_ATTEMPT = 1_000;
 
 const COLLAPSED_LINE_COUNT = 3;
 const DEGRADED_LINES = [
@@ -70,6 +82,26 @@ export type ChildCompactRunStatus =
   | "failed"
   | "cancelled";
 
+/** Which point of a tool call's life one `tool` input reports. */
+export type ChildCompactToolPhase = "call" | "partial" | "result" | "error";
+
+/**
+ * Bounded, already-parsed usage facts carried alongside an input.
+ *
+ * Every field is independently optional: a report that carries no usable field
+ * is a legitimate "unavailable" state and never becomes a zero or a guess.
+ */
+export interface ChildCompactUsageFacts {
+  readonly totalTokens?: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly contextTokens?: number;
+  readonly contextWindow?: number;
+  /** Whole currency units, as the host reported them. Never derived. */
+  readonly costUsd?: number;
+  readonly model?: string;
+}
+
 /**
  * Bounded reducer inputs. Callers map `PiChildSessionEvent` / Task 8 settlement
  * into this union; the reducer never imports UI types.
@@ -94,14 +126,44 @@ export type ChildCompactReducerInput =
       readonly kind: "assistant_end";
       readonly itemId: string;
       readonly text?: string;
+      /** Usage the terminal assistant message reported, when it carried any. */
+      readonly usage?: ChildCompactUsageFacts;
     }
   | {
       readonly kind: "thinking";
       readonly itemId: string;
+      /** Bounded reasoning SUMMARY. Raw chain-of-thought is never retained. */
+      readonly summary?: string;
     }
   | {
       readonly kind: "tool";
       readonly itemId: string;
+      readonly phase?: ChildCompactToolPhase;
+      readonly toolName?: string;
+      /** Safe progress, result, or error detail the child reported. */
+      readonly detail?: string;
+    }
+  | {
+      readonly kind: "usage";
+      readonly itemId: string;
+      readonly usage: ChildCompactUsageFacts;
+    }
+  | {
+      readonly kind: "queue";
+      readonly itemId: string;
+      readonly size?: number;
+    }
+  | {
+      readonly kind: "status";
+      readonly itemId: string;
+      readonly status?: string;
+      readonly message?: string;
+    }
+  | {
+      readonly kind: "retry";
+      readonly itemId: string;
+      readonly attempt?: number;
+      readonly reason?: string;
     }
   | {
       readonly kind: "control";
@@ -111,6 +173,11 @@ export type ChildCompactReducerInput =
       readonly kind: "settle";
       /** Authoritative Task 8 / §10 settlement only. */
       readonly settlement: PiChildSettlement;
+      /**
+       * The closed-vocabulary failure class behind a failed settlement, when a
+       * classifier named one. It is the only gate on recovery guidance.
+       */
+      readonly failureClass?: PiChildErrorClass;
     };
 
 // ---------------------------------------------------------------------------
@@ -333,10 +400,12 @@ export function mapPiChildSessionEventToCompactInput(
         }
         case "message_end": {
           const text = extractAssistantEndText(event.message);
+          const usage = extractUsageFacts(event);
           return {
             kind: "assistant_end",
             itemId,
             ...(text !== undefined ? { text } : {}),
+            ...(usage !== undefined ? { usage } : {}),
           };
         }
         case "text":
@@ -351,8 +420,17 @@ export function mapPiChildSessionEventToCompactInput(
             mode: "replace",
           };
         }
-        case "thinking":
-          return { kind: "thinking", itemId: `${itemId}:thinking` };
+        case "thinking": {
+          const summary =
+            typeof event.text === "string"
+              ? sanitizeChildCompactText(event.text)
+              : "";
+          return {
+            kind: "thinking",
+            itemId: `${itemId}:thinking`,
+            ...(summary.length > 0 ? { summary } : {}),
+          };
+        }
         case "tool_call":
         case "tool_partial_result":
         case "tool_result":
@@ -361,12 +439,64 @@ export function mapPiChildSessionEventToCompactInput(
             typeof event.toolCallId === "string" && event.toolCallId.length > 0
               ? boundOpaqueId(event.toolCallId)
               : `${itemId}:tool`;
-          return { kind: "tool", itemId: toolId };
+          const toolName = sanitizeChildCompactText(readToolName(event) ?? "");
+          const detail = extractToolDetailText(event);
+          return {
+            kind: "tool",
+            itemId: toolId,
+            phase: TOOL_PHASE_BY_EVENT[event.type],
+            ...(toolName.length > 0 ? { toolName } : {}),
+            ...(detail !== undefined ? { detail } : {}),
+          };
         }
-        case "usage":
-        case "queue_change":
-        case "status":
-        case "retry":
+        case "usage": {
+          const usage = extractUsageFacts(event);
+          return {
+            kind: "usage",
+            itemId: `${itemId}:control:usage`,
+            usage: usage ?? {},
+          };
+        }
+        case "queue_change": {
+          const size = boundedCount(event.size, CHILD_COMPACT_MAX_QUEUE_SIZE);
+          return {
+            kind: "queue",
+            itemId: `${itemId}:control:queue_change`,
+            ...(size !== undefined ? { size } : {}),
+          };
+        }
+        case "status": {
+          const status =
+            typeof event.status === "string"
+              ? sanitizeChildCompactText(event.status)
+              : "";
+          const message =
+            typeof event.message === "string"
+              ? sanitizeChildCompactText(event.message)
+              : "";
+          return {
+            kind: "status",
+            itemId: `${itemId}:control:status`,
+            ...(status.length > 0 ? { status } : {}),
+            ...(message.length > 0 ? { message } : {}),
+          };
+        }
+        case "retry": {
+          const attempt = boundedCount(
+            event.attempt,
+            CHILD_COMPACT_MAX_ATTEMPT,
+          );
+          const reason =
+            typeof event.reason === "string"
+              ? sanitizeChildCompactText(event.reason)
+              : "";
+          return {
+            kind: "retry",
+            itemId: `${itemId}:control:retry`,
+            ...(attempt !== undefined ? { attempt } : {}),
+            ...(reason.length > 0 ? { reason } : {}),
+          };
+        }
         case "extension_ui_request":
         case "extension_ui_response":
         case "image":
@@ -382,6 +512,151 @@ export function mapPiChildSessionEventToCompactInput(
       detail: stableErrorDetail("map", cause),
     }),
   )();
+}
+
+/** Pi names a tool on `toolName`; some hosts still send `name`. */
+function readToolName(event: PiChildSessionEvent): string | undefined {
+  const record = event as unknown as Record<string, unknown>;
+  const named = record["toolName"];
+  if (typeof named === "string") return named;
+  const legacy = record["name"];
+  return typeof legacy === "string" ? legacy : undefined;
+}
+
+const TOOL_PHASE_BY_EVENT: Readonly<Record<string, ChildCompactToolPhase>> =
+  Object.freeze({
+    tool_call: "call",
+    tool_partial_result: "partial",
+    tool_result: "result",
+    tool_error: "error",
+  });
+
+/** Non-negative integers only, capped. Anything else is absent, never zero. */
+function boundedCount(value: unknown, max: number): number | undefined {
+  if (typeof value !== "number" || !Number.isSafeInteger(value))
+    return undefined;
+  if (value < 0 || value > max) return undefined;
+  return value;
+}
+
+/** Non-negative finite money figures only, capped. */
+function boundedCost(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  if (value < 0 || value > CHILD_COMPACT_MAX_COST) return undefined;
+  return value;
+}
+
+function plainRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * The host's own reported total spend for this run, when it reported one.
+ *
+ * Cost is money, not tokens, so it is read only from the exact places pi-ai
+ * puts it (`usage.cost.total`, on the standalone event or on the terminal
+ * assistant message) and never derived from token counts.
+ */
+function extractUsageCost(event: PiChildSessionEvent): number | undefined {
+  const record = event as unknown as Record<string, unknown>;
+  const carriers = [
+    plainRecord(record["usage"]),
+    plainRecord(plainRecord(record["message"])?.["usage"]),
+  ];
+  for (const carrier of carriers) {
+    if (carrier === undefined) continue;
+    const nested = plainRecord(carrier["usage"]) ?? carrier;
+    const cost = plainRecord(nested["cost"]) ?? plainRecord(carrier["cost"]);
+    const total = boundedCost(cost?.["total"]);
+    if (total !== undefined) return total;
+  }
+  return undefined;
+}
+
+/**
+ * Bounded usage facts from a parser-approved `usage` or `message_end` event.
+ *
+ * Token and model facts come from the shared narrow in `child-session-events`;
+ * only the money figure is read here, so there is still exactly one token
+ * projection in the adapter.
+ */
+function extractUsageFacts(
+  event: PiChildSessionEvent,
+): ChildCompactUsageFacts | undefined {
+  const parsed = parsePiChildUsageReport(event);
+  const report = parsed.isOk() ? parsed.value : undefined;
+  const costUsd = extractUsageCost(event);
+  const facts: ChildCompactUsageFacts = {
+    ...(report?.totalTokens !== undefined
+      ? { totalTokens: report.totalTokens }
+      : {}),
+    ...(report?.inputTokens !== undefined
+      ? { inputTokens: report.inputTokens }
+      : {}),
+    ...(report?.outputTokens !== undefined
+      ? { outputTokens: report.outputTokens }
+      : {}),
+    ...(report?.contextTokens !== undefined
+      ? { contextTokens: report.contextTokens }
+      : {}),
+    ...(report?.contextWindow !== undefined
+      ? { contextWindow: report.contextWindow }
+      : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(report?.model !== undefined ? { model: report.model } : {}),
+  };
+  return Object.keys(facts).length > 0 ? facts : undefined;
+}
+
+/**
+ * Safe, bounded detail text a tool event carried, in the child's own words.
+ *
+ * Only string-shaped fields and `text` content blocks are read; a structured
+ * payload contributes nothing rather than being stringified into the card.
+ */
+function extractToolDetailText(event: PiChildSessionEvent): string | undefined {
+  const record = event as unknown as Record<string, unknown>;
+  for (const key of [
+    "error",
+    "message",
+    "result",
+    "partialResult",
+    "content",
+  ]) {
+    const text = readDetailValue(record[key]);
+    if (text !== undefined) return text;
+  }
+  return undefined;
+}
+
+function readDetailValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const clean = sanitizeChildCompactText(value);
+    return clean.length > 0 ? clean : undefined;
+  }
+  if (Array.isArray(value)) {
+    let text = "";
+    for (const block of value.slice(0, 16)) {
+      const record = plainRecord(block);
+      if (record?.["type"] === "text" && typeof record["text"] === "string") {
+        text += `${record["text"]} `;
+      }
+    }
+    const clean = sanitizeChildCompactText(text);
+    return clean.length > 0 ? clean : undefined;
+  }
+  const record = plainRecord(value);
+  if (record === undefined) return undefined;
+  for (const key of ["text", "message", "summary", "output"]) {
+    const nested = record[key];
+    if (typeof nested === "string") {
+      const clean = sanitizeChildCompactText(nested);
+      if (clean.length > 0) return clean;
+    }
+  }
+  return undefined;
 }
 
 function extractAssistantEndText(message: unknown): string | undefined {
@@ -453,6 +728,12 @@ function reduceChildCompactUnchecked(
       return reduceSideItem(state, input.itemId, "thinking");
     case "tool":
       return reduceSideItem(state, input.itemId, "tool");
+    // Operational inputs carry card facts; the compact block records them as
+    // one control item each, exactly as it always did.
+    case "usage":
+    case "queue":
+    case "status":
+    case "retry":
     case "control":
       return reduceSideItem(state, input.itemId, "control");
     case "settle":
@@ -549,9 +830,7 @@ function reduceAssistantFragment(
     itemIds,
     dedupKeys,
     latestMeaningfulFragment:
-      meaningful !== undefined
-        ? meaningful
-        : current.latestMeaningfulFragment,
+      meaningful !== undefined ? meaningful : current.latestMeaningfulFragment,
   });
 }
 
@@ -889,23 +1168,126 @@ export function parseReducerInput(
           detail: "invalid_assistant_end",
         });
       }
+      const usage = parseUsageFacts(record.usage);
       return ok({
         kind: "assistant_end",
         itemId: record.itemId,
         ...(typeof record.text === "string" ? { text: record.text } : {}),
+        ...(usage !== undefined ? { usage } : {}),
       });
     }
-    case "thinking":
-    case "tool":
+    case "thinking": {
+      if (typeof record.itemId !== "string") {
+        return err({
+          type: "ChildCompactFailed",
+          operation: "reduce",
+          detail: "invalid_thinking",
+        });
+      }
+      return ok({
+        kind: "thinking",
+        itemId: record.itemId,
+        ...(typeof record.summary === "string"
+          ? { summary: record.summary }
+          : {}),
+      });
+    }
+    case "tool": {
+      if (typeof record.itemId !== "string") {
+        return err({
+          type: "ChildCompactFailed",
+          operation: "reduce",
+          detail: "invalid_tool",
+        });
+      }
+      const phase =
+        record.phase === "call" ||
+        record.phase === "partial" ||
+        record.phase === "result" ||
+        record.phase === "error"
+          ? record.phase
+          : undefined;
+      return ok({
+        kind: "tool",
+        itemId: record.itemId,
+        ...(phase !== undefined ? { phase } : {}),
+        ...(typeof record.toolName === "string"
+          ? { toolName: record.toolName }
+          : {}),
+        ...(typeof record.detail === "string" ? { detail: record.detail } : {}),
+      });
+    }
+    case "usage": {
+      if (typeof record.itemId !== "string") {
+        return err({
+          type: "ChildCompactFailed",
+          operation: "reduce",
+          detail: "invalid_usage",
+        });
+      }
+      return ok({
+        kind: "usage",
+        itemId: record.itemId,
+        usage: parseUsageFacts(record.usage) ?? {},
+      });
+    }
+    case "queue": {
+      if (typeof record.itemId !== "string") {
+        return err({
+          type: "ChildCompactFailed",
+          operation: "reduce",
+          detail: "invalid_queue",
+        });
+      }
+      const size = boundedCount(record.size, CHILD_COMPACT_MAX_QUEUE_SIZE);
+      return ok({
+        kind: "queue",
+        itemId: record.itemId,
+        ...(size !== undefined ? { size } : {}),
+      });
+    }
+    case "status": {
+      if (typeof record.itemId !== "string") {
+        return err({
+          type: "ChildCompactFailed",
+          operation: "reduce",
+          detail: "invalid_status",
+        });
+      }
+      return ok({
+        kind: "status",
+        itemId: record.itemId,
+        ...(typeof record.status === "string" ? { status: record.status } : {}),
+        ...(typeof record.message === "string"
+          ? { message: record.message }
+          : {}),
+      });
+    }
+    case "retry": {
+      if (typeof record.itemId !== "string") {
+        return err({
+          type: "ChildCompactFailed",
+          operation: "reduce",
+          detail: "invalid_retry",
+        });
+      }
+      const attempt = boundedCount(record.attempt, CHILD_COMPACT_MAX_ATTEMPT);
+      return ok({
+        kind: "retry",
+        itemId: record.itemId,
+        ...(attempt !== undefined ? { attempt } : {}),
+        ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+      });
+    }
     case "control": {
       if (typeof record.itemId !== "string") {
         return err({
           type: "ChildCompactFailed",
           operation: "reduce",
-          detail: `invalid_${kind}`,
+          detail: "invalid_control",
         });
       }
-      return ok({ kind, itemId: record.itemId });
+      return ok({ kind: "control", itemId: record.itemId });
     }
     case "settle": {
       const settlement = parseSettlement(record.settlement);
@@ -916,7 +1298,14 @@ export function parseReducerInput(
           detail: "invalid_settlement",
         });
       }
-      return ok({ kind: "settle", settlement });
+      const failureClass = isChildErrorClass(record.failureClass)
+        ? record.failureClass
+        : undefined;
+      return ok({
+        kind: "settle",
+        settlement,
+        ...(failureClass !== undefined ? { failureClass } : {}),
+      });
     }
     default:
       return err({
@@ -925,6 +1314,42 @@ export function parseReducerInput(
         detail: "unknown_kind",
       });
   }
+}
+
+function isChildErrorClass(value: unknown): value is PiChildErrorClass {
+  return (
+    typeof value === "string" &&
+    (PI_CHILD_ERROR_CLASSES as readonly string[]).includes(value)
+  );
+}
+
+/** Field-wise parse: every malformed or out-of-bounds figure is simply absent. */
+function parseUsageFacts(value: unknown): ChildCompactUsageFacts | undefined {
+  const record = plainRecord(value);
+  if (record === undefined) return undefined;
+  const facts: ChildCompactUsageFacts = {
+    ...tokenField(record, "totalTokens"),
+    ...tokenField(record, "inputTokens"),
+    ...tokenField(record, "outputTokens"),
+    ...tokenField(record, "contextTokens"),
+    ...tokenField(record, "contextWindow"),
+    ...(boundedCost(record["costUsd"]) !== undefined
+      ? { costUsd: boundedCost(record["costUsd"]) }
+      : {}),
+    ...(typeof record["model"] === "string" &&
+    sanitizeChildCompactText(record["model"]).length > 0
+      ? { model: sanitizeChildCompactText(record["model"]) }
+      : {}),
+  };
+  return Object.keys(facts).length > 0 ? facts : undefined;
+}
+
+function tokenField(
+  record: Record<string, unknown>,
+  key: keyof ChildCompactUsageFacts,
+): Partial<ChildCompactUsageFacts> {
+  const count = boundedCount(record[key], Number.MAX_SAFE_INTEGER);
+  return count === undefined ? {} : { [key]: count };
 }
 
 function parseSettlement(value: unknown): PiChildSettlement | undefined {
@@ -969,7 +1394,9 @@ function boundOpaqueId(value: string): string {
   return value.slice(0, 256);
 }
 
-function currentRun(state: ChildCompactState): ChildCompactRunBlock | undefined {
+function currentRun(
+  state: ChildCompactState,
+): ChildCompactRunBlock | undefined {
   if (state.currentRunNumber === undefined) return undefined;
   return state.runs.find((run) => run.runNumber === state.currentRunNumber);
 }
