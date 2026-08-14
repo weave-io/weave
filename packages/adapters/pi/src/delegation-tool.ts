@@ -41,11 +41,7 @@ import {
 import type { PiChildProviderError } from "./child-provider-error.js";
 import type { PiChildRuntime, PiChildRuntimeError } from "./child-runtime.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
-import {
-  SystemTimerPort,
-  type TimerHandle,
-  type TimerPort,
-} from "./child-timer.js";
+import { SystemTimerPort, type TimerPort } from "./child-timer.js";
 import { MAX_FINAL_OUTPUT_BYTES, truncateFinalOutput } from "./child-tree.js";
 import type {
   PiDelegationController,
@@ -77,6 +73,10 @@ import type {
 } from "./types.js";
 import { makePaint, type Paint, plainPaint } from "./ui-paint.js";
 import { clipRow, emit, seg } from "./ui-rows.js";
+import {
+  UiUpdateCoalescer,
+  type UiUpdatePriority,
+} from "./ui-update-coalescer.js";
 
 /** Stable logger code when the card cannot be drawn. */
 export const CARD_RENDER_FAILED_CODE = CHILD_CARD_NATIVE_RENDER_FAILED;
@@ -637,109 +637,30 @@ export const CARD_REFRESH_INTERVAL_MS = 100;
 /**
  * Which frames may wait for the refresh window and which may not.
  *
- * `immediate` is reserved for the facts a reader acts on: the run opening, a
- * tool failing, a provider failing, the parent steering the child, and the
- * authoritative settlement. Everything else is ordinary repaint traffic.
+ * The card and the child overlay share one definition; see
+ * `UiUpdatePriority` in `ui-update-coalescer.ts`.
  */
-export type PiCardUpdatePriority = "coalesced" | "immediate";
+export type PiCardUpdatePriority = UiUpdatePriority;
 
 /**
  * Publishes at most one ordinary card update per {@link CARD_REFRESH_INTERVAL_MS}.
  *
- * It schedules exclusively through the INJECTED {@link TimerPort} — it never
- * calls `setTimeout` itself — so a test drives the window deterministically and
- * production keeps exactly one timer discipline.
- *
- * Two guarantees make a coalesced frame safe to drop:
- *
- * - **Trailing flush.** A frame that arrives inside an open window is not lost;
- *   it is published when the window closes.
- * - **A coalesced update is never the final one.** `flush()` publishes
- *   unconditionally and settlement always flushes, so the last frame a reader
- *   sees is always the settled one.
+ * The publishing rhythm itself lives in the shared `UiUpdateCoalescer`
+ * leaf, which the child overlay's live stream uses as well; this subclass only
+ * pins the card's default refresh window so every card path keeps exactly one
+ * documented interval.
  */
-export class PiCardUpdateCoalescer {
-  private readonly publish: () => void;
-  private readonly timer: TimerPort;
-  private readonly intervalMs: number;
-  private handle: TimerHandle | undefined;
-  private windowOpen = false;
-  private pending = false;
-  private disposed = false;
-
+export class PiCardUpdateCoalescer extends UiUpdateCoalescer {
   constructor(
     publish: () => void,
     timer: TimerPort,
     intervalMs: number = CARD_REFRESH_INTERVAL_MS,
   ) {
-    this.publish = publish;
-    this.timer = timer;
-    this.intervalMs = Number.isFinite(intervalMs)
-      ? Math.max(0, Math.floor(intervalMs))
-      : CARD_REFRESH_INTERVAL_MS;
-  }
-
-  /** Requests one update at the given priority. */
-  request(priority: PiCardUpdatePriority): void {
-    if (this.disposed) return;
-    if (priority === "immediate") {
-      this.cancel();
-      this.pending = false;
-      this.emit();
-      this.openWindow();
-      return;
-    }
-    if (!this.windowOpen) {
-      this.emit();
-      this.openWindow();
-      return;
-    }
-    this.pending = true;
-  }
-
-  /** Publishes now, whatever the window says. Settlement always flushes. */
-  flush(): void {
-    if (this.disposed) return;
-    this.cancel();
-    this.pending = false;
-    this.windowOpen = false;
-    this.emit();
-  }
-
-  /** Releases the timer. A disposed coalescer publishes nothing further. */
-  dispose(): void {
-    this.cancel();
-    this.pending = false;
-    this.windowOpen = false;
-    this.disposed = true;
-  }
-
-  private openWindow(): void {
-    this.windowOpen = true;
-    this.handle = this.timer.schedule(() => {
-      this.handle = undefined;
-      if (this.disposed) return;
-      if (this.pending) {
-        this.pending = false;
-        this.emit();
-        this.openWindow();
-        return;
-      }
-      this.windowOpen = false;
-    }, this.intervalMs);
-  }
-
-  private cancel(): void {
-    this.handle?.cancel();
-    this.handle = undefined;
-  }
-
-  private emit(): void {
-    // A publisher that throws must never take the delegation down with it.
-    Result.fromThrowable(
-      () => this.publish(),
-      () => undefined,
-    )();
+    super(
+      publish,
+      timer,
+      Number.isFinite(intervalMs) ? intervalMs : CARD_REFRESH_INTERVAL_MS,
+    );
   }
 }
 

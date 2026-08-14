@@ -5,7 +5,8 @@
  *
  *   child-overlay-types  →  child-overlay-scroll   →  child-overlay-window
  *                        →  child-overlay-replay   →  child-overlay-controller
- *                        →  child-overlay-facts    →  child-overlay-component
+ *                        →  child-overlay-stream   →  child-overlay-facts
+ *                        →  child-overlay-component
  *                                                  →  child-overlay (facade)
  *
  * Imports must only flow left to right. Nothing may import the facade, and no
@@ -26,6 +27,7 @@ const LAYERS = [
   "child-overlay-replay.ts",
   "child-overlay-window.ts",
   "child-overlay-controller.ts",
+  "child-overlay-stream.ts",
   "child-overlay-facts.ts",
   "child-overlay-component.ts",
   "child-overlay.ts",

@@ -6,7 +6,8 @@
  * scroll anchoring, and run/branch navigation.
  *
  * Depends on `child-overlay-types.js` and `child-overlay-replay.js` only; it
- * never imports the native component or the `child-overlay.js` facade.
+ * never imports the native component or the `child-overlay.js` facade. The
+ * live-event gate in front of it lives in `child-overlay-stream.js`.
  */
 
 import { matchesKey } from "@earendil-works/pi-tui";
@@ -258,6 +259,86 @@ export class ChildOverlayController {
             return this.toView(child, state);
           });
       });
+  }
+
+  /**
+   * Re-reads the open child's identity and status facts from the source.
+   *
+   * The inspector captures a descriptor when it opens a child, and that
+   * descriptor is a snapshot: a child that was live when the reader opened it
+   * stays `status: "live"` in this controller forever, however the run
+   * actually ended. A final "settled" repaint drawn over that snapshot would
+   * still paint a caret, an editable prompt and a LIVE state word, because
+   * every fact the layout reads comes from the descriptor rather than from the
+   * publisher's settlement flag.
+   *
+   * This refresh replaces the identity and status facts only. Loaded entries,
+   * transcript, search, draft, scroll offset and anchor are per-child saved
+   * state and are never touched, so the reader keeps exactly the transcript
+   * they were reading.
+   *
+   * Focus is re-checked after the describe resolves: if the reader moved to
+   * another child while the source was answering, nothing is applied and
+   * `OverlayNotOpen` is returned, so a late answer can never rewrite the child
+   * now on screen.
+   */
+  refreshOpenChild(): ResultAsync<ChildOverlayView, ChildOverlayError> {
+    const open = this.openChild;
+    if (open === undefined) return errAsync({ type: "OverlayNotOpen" });
+    const childId = open.childId;
+    return this.source
+      .describe(childId)
+      .mapErr(
+        (error): ChildOverlayError =>
+          this.fallbackFromError(childId, "describe-failed", error),
+      )
+      .andThen((described) => {
+        const parsed = ChildOverlayChildSchema.safeParse({
+          ...described,
+          childId,
+        });
+        if (!parsed.success) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayInvalidChild",
+            issues: parsed.error.issues.map((issue) => issue.path.join(".")),
+          });
+        }
+        const current = this.openChild;
+        if (current === undefined || current.childId !== childId) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayNotOpen",
+          });
+        }
+        const state = this.saved.get(childId);
+        if (state === undefined) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayNotOpen",
+          });
+        }
+        this.openChild = parsed.data;
+        return okAsync(this.toView(parsed.data, state));
+      });
+  }
+
+  /**
+   * Fails the open child closed to read-only history without claiming success.
+   *
+   * Used when the delegation tree says the child is gone but the source cannot
+   * confirm how it ended. `orphan` is the honest word for that: the run left
+   * the live set and the overlay lost track of it, which is exactly what an
+   * unanswerable refresh proves. Calling it `settled` would invent a completion
+   * the adapter never observed, and leaving it `live` would keep an editable
+   * prompt pointed at a child nothing can deliver to.
+   *
+   * A child that is already read-only is left untouched.
+   */
+  markOpenChildReadOnly(): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      if (isReadOnly(child)) return this.toView(child, state);
+      const orphaned: ChildOverlayChild = { ...child, status: "orphan" };
+      this.openChild = orphaned;
+      return this.toView(orphaned, state);
+    });
   }
 
   close(): Result<void, ChildOverlayError> {

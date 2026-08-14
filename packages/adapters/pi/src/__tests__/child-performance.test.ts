@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createChildOverlayController,
+  createChildOverlayLiveStream,
+  createMemoryChildOverlaySource,
+} from "../child-overlay.js";
+import { CHILD_OVERLAY_BURST_REPAINT_CEILING } from "../child-overlay-stream.js";
+import { CHILD_OVERLAY_BOUNDS } from "../child-overlay-types.js";
+import type { TimerHandle, TimerPort } from "../child-timer.js";
+import {
   MAX_PI_TRANSCRIPT_RENDER_LINES,
   MAX_PI_TRANSCRIPT_RENDER_STRING,
   MAX_TRANSCRIPT_ENTRIES,
@@ -29,18 +37,24 @@ describe("native child transcript performance bounds", () => {
 
     const state = transcript.getState();
     expect(state.entries.length).toBeLessThanOrEqual(MAX_TRANSCRIPT_ENTRIES);
-    expect(state.historyBytes).toBeLessThanOrEqual(MAX_TRANSCRIPT_HISTORY_BYTES);
+    expect(state.historyBytes).toBeLessThanOrEqual(
+      MAX_TRANSCRIPT_HISTORY_BYTES,
+    );
     const lastEntry = state.entries.at(-1);
     expect(lastEntry?.kind).toBe("steering");
-    expect(lastEntry && "text" in lastEntry ? lastEntry.text : "").toContain("2999:");
+    expect(lastEntry && "text" in lastEntry ? lastEntry.text : "").toContain(
+      "2999:",
+    );
 
     const history = new PiChildTranscript();
     for (let index = 0; index < 1_000; index += 1) {
       expect(
-        history.applyEvent({
-          type: "message_update",
-          delta: { messageId: "large-message", text: "x".repeat(10_000) },
-        }).isOk(),
+        history
+          .applyEvent({
+            type: "message_update",
+            delta: { messageId: "large-message", text: "x".repeat(10_000) },
+          })
+          .isOk(),
       ).toBe(true);
     }
     expect(history.getState().historyTrimmedCount).toBeGreaterThan(0);
@@ -55,17 +69,97 @@ describe("native child transcript performance bounds", () => {
 
     const factory: PiTranscriptComponentFactory = {
       create: () => ({
-        render: () => ["🙂".repeat(MAX_PI_TRANSCRIPT_RENDER_STRING + 100), ...Array(999).fill("line")],
+        render: () => [
+          "🙂".repeat(MAX_PI_TRANSCRIPT_RENDER_STRING + 100),
+          ...Array(999).fill("line"),
+        ],
         invalidate: () => undefined,
       }),
     };
-    const rendered = new PiChildTranscriptRenderer({ componentFactory: factory }).render(
-      transcript.getState(),
-      240,
+    const rendered = new PiChildTranscriptRenderer({
+      componentFactory: factory,
+    }).render(transcript.getState(), 240);
+    expect(rendered.lines.length).toBeLessThanOrEqual(
+      MAX_PI_TRANSCRIPT_RENDER_LINES,
     );
-    expect(rendered.lines.length).toBeLessThanOrEqual(MAX_PI_TRANSCRIPT_RENDER_LINES);
     expect(rendered.lines.every((line) => [...line].length <= 240)).toBe(true);
     expect(rendered.lines[0]).toContain("🙂");
+  });
+
+  /**
+   * The overlay's own burst budget. A live child can emit deltas far faster
+   * than a terminal redraws, so the two costs that must stay constant are the
+   * retained window and the number of repaints the burst asks for.
+   */
+  test("keeps a 5,000-event overlay burst inside the window and repaint budgets", async () => {
+    const childId = "perf-burst-child";
+    const source = createMemoryChildOverlaySource([
+      {
+        childId,
+        threadId: childId,
+        status: "live",
+        generationId: "generation-1",
+        runs: [{ run: 1, action: "start" }],
+        branchIds: ["main"],
+        descendantChildIds: [],
+        entries: [],
+      } as never,
+    ]);
+    const controller = createChildOverlayController(source);
+    expect((await controller.open(childId)).isOk()).toBe(true);
+
+    const scheduled: (() => void)[] = [];
+    const timer: TimerPort = {
+      schedule: (callback: () => void): TimerHandle => {
+        let live = true;
+        scheduled.push(() => {
+          if (live) callback();
+        });
+        return {
+          cancel: () => {
+            live = false;
+          },
+        };
+      },
+    };
+    let repaints = 0;
+    const stream = createChildOverlayLiveStream({
+      controller,
+      repaint: {
+        invalidate: () => undefined,
+        requestRender: () => {
+          repaints += 1;
+        },
+      },
+      timer,
+      generationId: "generation-1",
+      currentGenerationId: () => "generation-1",
+    });
+
+    for (let index = 0; index < 5_000; index += 1) {
+      const outcome = stream.ingest(childId, {
+        type: "thinking",
+        text: `burst-${index}-${"x".repeat(200)}`,
+      });
+      expect(outcome.kind).toBe("applied");
+    }
+    // Close the open refresh window so the trailing frame is counted too.
+    for (const tick of scheduled.splice(0, scheduled.length)) tick();
+
+    expect(repaints).toBeLessThanOrEqual(CHILD_OVERLAY_BURST_REPAINT_CEILING);
+    const view = controller.view()._unsafeUnwrap();
+    expect(view.entries.length).toBeLessThanOrEqual(
+      CHILD_OVERLAY_BOUNDS.defaultWindowCap,
+    );
+    expect(view.transcript.entries.length).toBeLessThanOrEqual(
+      MAX_TRANSCRIPT_ENTRIES,
+    );
+    expect(view.transcript.historyBytes).toBeLessThanOrEqual(
+      MAX_TRANSCRIPT_HISTORY_BYTES,
+    );
+    // The newest fact survives the trim: coalescing costs frames, not facts.
+    expect(view.entries.at(-1)?.text).toContain("burst-4999");
+    stream.dispose();
   });
 
   test("uses deterministic injected clock and IDs for a repeatable large window", () => {

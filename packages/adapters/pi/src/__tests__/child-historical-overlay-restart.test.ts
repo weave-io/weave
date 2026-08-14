@@ -99,7 +99,21 @@ describe("createPiExtension: historical native overlay after a parent restart", 
    * and selects it. The child's ref `title` is the only variable: it is the
    * exact field that decided native mount versus custom-editor fallback.
    */
-  async function openHistoricalChildAfterRestart(title: string): Promise<{
+  async function openHistoricalChildAfterRestart(
+    title: string,
+    /**
+     * Optional `weave.child.thread` identity for the child's own session. It is
+     * the only place the header and rail may learn the agent, parent agent,
+     * model and reasoning of a settled child: after a restart there is no live
+     * thread state left to read them from.
+     */
+    threadMetadata?: {
+      readonly agentName: string;
+      readonly parentAgentName: string;
+      readonly model?: string;
+      readonly reasoning?: string;
+    },
+  ): Promise<{
     readonly host: RecordingFakePiHost;
     readonly customBefore: number;
     readonly editorCallsBefore: number;
@@ -120,6 +134,30 @@ describe("createPiExtension: historical native overlay after a parent restart", 
         cwd: root,
       })
     )._unsafeUnwrap();
+    if (threadMetadata !== undefined) {
+      (
+        await store.establishThreadLeaf(
+          created.ref,
+          {
+            threadId: CHILD,
+            agentName: threadMetadata.agentName,
+            parentId: PARENT,
+            parentAgentName: threadMetadata.parentAgentName,
+            parentDepth: 1,
+            ownerParentSessionId: PARENT,
+            cwd: root,
+            ...(threadMetadata.model === undefined
+              ? {}
+              : { model: threadMetadata.model }),
+            ...(threadMetadata.reasoning === undefined
+              ? {}
+              : { reasoning: threadMetadata.reasoning }),
+            createdAt: 1_700_000_000_000,
+          },
+          PARENT,
+        )
+      )._unsafeUnwrap();
+    }
     const directory = (
       await fs.openDirectory(`${root}/sessions/${CHILD}`, false)
     )._unsafeUnwrap();
@@ -323,6 +361,48 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     host.finishCustom();
     await flushBackgroundWork();
     expect(host.getEditorComponentForTest()).toBe(editorOwnerBefore);
+    expect(host.sentUserMessages).toEqual([]);
+  });
+
+  /**
+   * Restart/resume, in full: after the parent generation is replaced there is
+   * no live thread state, no live event stream and no in-memory descriptor
+   * left. Everything the reader sees must therefore come from the child's own
+   * `weave.child.thread` entry plus the bounded page of persisted session
+   * entries — and the surface must still be the native overlay, not the
+   * custom-editor fallback that a live-state miss would have produced.
+   */
+  it("renders a restarted child's identity from thread metadata and paged entries", async () => {
+    const { host, customBefore, editorCallsBefore, editorOwnerBefore } =
+      await openHistoricalChildAfterRestart("loom", {
+        // Deliberately unlike the ref title: a header that echoed the title
+        // would pass without ever reading the metadata.
+        agentName: "shuttle-mini",
+        parentAgentName: "tapestry",
+        model: "metadata-model-9",
+        reasoning: "high",
+      });
+
+    // Native mount, not the custom-editor fallback.
+    expect(host.customCalls.length - customBefore).toBe(1);
+    expect(host.editorFactoryCalls.length).toBe(editorCallsBefore);
+    expect(host.getEditorComponentForTest()).toBe(editorOwnerBefore);
+
+    const rendered = host.customRenderedLines.at(-1)?.join("\n") ?? "";
+    // Header/rail identity: only the metadata entry names these.
+    expect(rendered).toContain("shuttle-mini");
+    expect(rendered).toContain("metadata-model-9");
+    // Transcript: the bounded newest page of persisted entries.
+    expect(rendered).toContain("body-68");
+    expect(rendered).toContain("SETTLED");
+    expect(rendered.toLowerCase()).toContain("read-only");
+    // Nothing live leaked in, and no path ever reaches the pane.
+    expect(rendered).not.toContain(root);
+    expect(rendered).not.toContain("/Users/");
+
+    host.inputCustom("\u001b");
+    host.finishCustom();
+    await flushBackgroundWork();
     expect(host.sentUserMessages).toEqual([]);
   });
 

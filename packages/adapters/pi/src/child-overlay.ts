@@ -420,9 +420,21 @@ export {
 } from "./child-overlay-facts.js";
 export {
   mapNativeSessionEntryToOverlay,
-  mergeChildOverlayReplaySteps,
+  // The public name for the typed capacity result of semantic replay
+  // compaction; the internal caller and the export are one function.
+  mergeReplaySteps as mergeChildOverlayReplaySteps,
   transcriptFromOverlayEntries,
 } from "./child-overlay-replay.js";
+export {
+  CHILD_OVERLAY_BURST_REPAINT_CEILING,
+  CHILD_OVERLAY_REPAINT_INTERVAL_MS,
+  type ChildOverlayLiveEventDrop,
+  type ChildOverlayLiveEventOutcome,
+  ChildOverlayLiveStream,
+  type ChildOverlayLiveStreamConfig,
+  type ChildOverlayRepaintPort,
+  createChildOverlayLiveStream,
+} from "./child-overlay-stream.js";
 export type { ChildOverlayPlanContextPort } from "./child-overlay-telemetry.js";
 export type {
   ChildOverlayAnchor,

@@ -63,11 +63,11 @@ const RunDividerDataSchema = z.looseObject({
   runNumber: ChildOverlayRunOrdinalSchema.optional(),
 });
 
-/** C0 except TAB/LF/CR, DEL, and C1 U+0080–U+009F — String.raw for Biome. */
-const BOUND_TEXT_CONTROL_PATTERN = new RegExp(
-  String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0080-\u009f]`,
-  "gu",
-);
+// C0 except TAB/LF/CR, DEL, and C1 U+0080–U+009F. Named first, compiled second:
+// the literal form is rejected by `noControlCharactersInRegex`, and an inline
+// `String.raw` argument is rewritten back into it by `useRegexLiterals`.
+const BOUND_TEXT_CONTROL_CLASS = String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0080-\u009f]`;
+const BOUND_TEXT_CONTROL_PATTERN = new RegExp(BOUND_TEXT_CONTROL_CLASS, "gu");
 
 export function boundText(value: string): string {
   const clean = value.replace(BOUND_TEXT_CONTROL_PATTERN, "");
@@ -640,20 +640,6 @@ export function mergeReplaySteps(
   return boundReplaySteps(compacted, CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps);
 }
 
-/**
- * Public merge helper for tests and callers that need the typed capacity
- * result from semantic replay compaction.
- */
-export function mergeChildOverlayReplaySteps(
-  existing: readonly ChildOverlayReplayStep[] | undefined,
-  incoming: readonly ChildOverlayReplayStep[] | undefined,
-): Result<
-  readonly ChildOverlayReplayStep[] | undefined,
-  ChildOverlayMappingError
-> {
-  return mergeReplaySteps(existing, incoming);
-}
-
 export function safeEntryId(value: string, fallback: string): string {
   const parsed = OpaqueIdSchema.safeParse(value);
   if (parsed.success) return parsed.data;
@@ -1140,9 +1126,29 @@ export function projectLiveEntry(
         expanded,
         replay,
       };
+    // Replay is the contract. The reducer turns `queue_change` into a queue
+    // row, so a live child showed the parent's queued follow-ups while the
+    // same window rebuilt through `transcriptFromOverlayEntries` showed none.
+    // The row stays suppressed in the full pane; only the fact is retained.
+    case "queue_change":
+      return {
+        id: `live-queue-${sequence}`,
+        sequence,
+        kind: "status",
+        text: boundText(`queue: ${queueChangeSize(event)}`),
+        expanded,
+        replay,
+      };
     default:
       return undefined;
   }
+}
+
+/** Queued follow-ups a `queue_change` reports; an unstated count reads as 0. */
+function queueChangeSize(event: PiChildSessionEvent): number {
+  const record = event as unknown as Record<string, unknown>;
+  if (typeof record.size === "number") return record.size;
+  return Array.isArray(record.queue) ? record.queue.length : 0;
 }
 
 // ---------------------------------------------------------------------------

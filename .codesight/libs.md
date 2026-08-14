@@ -354,7 +354,7 @@
   - function nonEmptyString: (value) => string | undefined
   - function boundLabel: (value) => string
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
-  - _...11 more_
+  - _...10 more_
 - `packages/adapters/pi/src/child-overlay-scroll.ts`
   - function setLayoutSpans: (state, spans) => void
   - function captureViewportAnchor: (state) => ChildOverlayAnchor | undefined
@@ -368,6 +368,14 @@
   - function matchingEntryIds: (entries, needle) => string[]
   - function matchingTerminalErrorEntryIds: (entries, error, needle) => string[]
   - function mergeMatchIds: (older, newer) => string[]
+- `packages/adapters/pi/src/child-overlay-stream.ts`
+  - function createChildOverlayLiveStream: (config) => ChildOverlayLiveStream
+  - class ChildOverlayLiveStream
+  - interface ChildOverlayRepaintPort
+  - interface ChildOverlayLiveStreamConfig
+  - type ChildOverlayLiveEventDrop
+  - type ChildOverlayLiveEventOutcome
+  - _...2 more_
 - `packages/adapters/pi/src/child-overlay-telemetry.ts`
   - function latestUsageInWindow: (entries) => PiChildUsageReport | undefined
   - function latestWindowErrorEvidence: (entries) => ChildTerminalErrorEvidence
@@ -566,7 +574,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...7 more_
+  - _...8 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -852,6 +860,7 @@
   - function fill: (ink, character, count) => Seg
   - function rowWidth: (row) => number
   - _...20 more_
+- `packages/adapters/pi/src/ui-update-coalescer.ts` — class UiUpdateCoalescer, type UiUpdatePriority
 - `packages/adapters/pi/src/workflow-commands.ts`
   - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
   - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>

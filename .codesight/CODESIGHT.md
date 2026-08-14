@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 300 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~32,500 tokens. Without it, AI exploration would cost ~96,900 tokens. **Saves ~64,400 tokens per conversation.**
-> **Last scanned:** 2026-08-14 22:17 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 302 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~32,600 tokens. Without it, AI exploration would cost ~97,400 tokens. **Saves ~64,700 tokens per conversation.**
+> **Last scanned:** 2026-08-14 23:00 — re-run after significant changes
 
 ---
 
@@ -365,7 +365,7 @@
   - function nonEmptyString: (value) => string | undefined
   - function boundLabel: (value) => string
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
-  - _...11 more_
+  - _...10 more_
 - `packages/adapters/pi/src/child-overlay-scroll.ts`
   - function setLayoutSpans: (state, spans) => void
   - function captureViewportAnchor: (state) => ChildOverlayAnchor | undefined
@@ -379,6 +379,14 @@
   - function matchingEntryIds: (entries, needle) => string[]
   - function matchingTerminalErrorEntryIds: (entries, error, needle) => string[]
   - function mergeMatchIds: (older, newer) => string[]
+- `packages/adapters/pi/src/child-overlay-stream.ts`
+  - function createChildOverlayLiveStream: (config) => ChildOverlayLiveStream
+  - class ChildOverlayLiveStream
+  - interface ChildOverlayRepaintPort
+  - interface ChildOverlayLiveStreamConfig
+  - type ChildOverlayLiveEventDrop
+  - type ChildOverlayLiveEventOutcome
+  - _...2 more_
 - `packages/adapters/pi/src/child-overlay-telemetry.ts`
   - function latestUsageInWindow: (entries) => PiChildUsageReport | undefined
   - function latestWindowErrorEvidence: (entries) => ChildTerminalErrorEvidence
@@ -577,7 +585,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...7 more_
+  - _...8 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -863,6 +871,7 @@
   - function fill: (ink, character, count) => Seg
   - function rowWidth: (row) => number
   - _...20 more_
+- `packages/adapters/pi/src/ui-update-coalescer.ts` — class UiUpdateCoalescer, type UiUpdatePriority
 - `packages/adapters/pi/src/workflow-commands.ts`
   - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
   - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>
@@ -1853,7 +1862,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/adapters/pi/src/types.ts` — imported by **48** files
+- `packages/adapters/pi/src/types.ts` — imported by **49** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/adapters/pi/src/strict-json.ts` — imported by **28** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
@@ -1865,18 +1874,18 @@
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **15** files
 - `packages/adapters/pi/src/rpc-child.ts` — imported by **15** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
-- `packages/adapters/pi/src/child-session-events.ts` — imported by **14** files
+- `packages/adapters/pi/src/child-timer.ts` — imported by **14** files
 - `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **14** files
-- `packages/engine/src/tool-policy.ts` — imported by **14** files
 
 ## Import Map (who imports what)
 
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +43 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +44 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts` +23 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
@@ -1907,7 +1916,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 326 test files found
+> 327 test files found
 
 ---
 

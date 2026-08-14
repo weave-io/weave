@@ -117,9 +117,11 @@ import type {
 import {
   type ChildOverlayChild,
   type ChildOverlayFallbackRequired,
+  type ChildOverlayLiveStream,
   type ChildOverlayPlanContext,
   createChildOverlayController,
   createChildOverlayCustomComponent,
+  createChildOverlayLiveStream,
   createReadSessionEntryPageOverlaySource,
   mapPiDelegationFailureToOverlaySourceError,
   PI_CHILD_OVERLAY_CUSTOM_OPTIONS,
@@ -179,6 +181,7 @@ import {
   type PiChildSessionStorageAuthority,
   provePiChildSessionRoot,
 } from "./child-session-storage-authority.js";
+import { SystemTimerPort } from "./child-timer.js";
 import {
   applyTreeControlKey,
   EMPTY_USAGE_AGGREGATE,
@@ -4885,6 +4888,10 @@ export function createPiExtension(
           }
         }
 
+        // The one live-event gate for this generation's overlay. It is
+        // constructed with the overlay controller below and read by the
+        // delegation callbacks above, which run only after that point.
+        let childOverlayLiveStream: ChildOverlayLiveStream | undefined;
         if (allowDelegationController) {
           delegationControllerCell.generationId = generation.id;
           delegationControllerCell.controller = new PiDelegationController({
@@ -4978,6 +4985,9 @@ export function createPiExtension(
               ),
             onTreeChanged: () => {
               if (!startupOwnsGeneration()) return;
+              // The focused child leaving the live set is the only settlement
+              // signal the overlay gets; no session event carries one.
+              childOverlayLiveStream?.noteTreeChanged();
               renderChildTreeWidget(
                 ctx,
                 delegationControllerCell.controller,
@@ -4987,39 +4997,13 @@ export function createPiExtension(
             },
             onPrivateOutput: deps.onChildPrivateOutput,
             inspectionRegistry,
+            // One gate, one pipeline. Focus, generation, settlement and
+            // repaint coalescing all live in `ChildOverlayLiveStream`; this
+            // callback only hands it the event.
             onChildSessionEvent: (childId, event) => {
               if (!startupOwnsGeneration()) return;
-              const overlay = childOverlayCell.controller;
-              if (
-                overlay === undefined ||
-                !overlay.isOpen() ||
-                childOverlayCell.generationId !== generation.id
-              ) {
-                return;
-              }
-              const openView = overlay.view();
-              if (openView.isErr()) return;
-              const threadId =
-                delegationControllerCell.controller?.resolveThreadIdForLiveChild(
-                  childId,
-                ) ?? childId;
-              if (
-                openView.value.child.threadId !== threadId &&
-                openView.value.child.childId !== childId &&
-                openView.value.child.childId !== threadId
-              ) {
-                return;
-              }
-              Result.fromThrowable(
-                () => overlay.applyLiveEvent(event),
-                () => "overlay_live_event_failed" as const,
-              )().match(
-                () => {
-                  childOverlayCell.component?.invalidate();
-                  childOverlayCell.tui?.requestRender();
-                },
-                () => undefined,
-              );
+              if (childOverlayCell.generationId !== generation.id) return;
+              childOverlayLiveStream?.ingest(childId, event);
             },
             // Lazy wrapper (Pi adapter contract): `telemetryCell.telemetry` is only
             // populated once the Runtime Store opens successfully, below -
@@ -5107,6 +5091,27 @@ export function createPiExtension(
             // a plan lookup of its own from a repaint.
             () => readActivePlanBreadcrumb(activePlanUiState.view()),
           );
+          childOverlayLiveStream?.dispose();
+          childOverlayLiveStream = createChildOverlayLiveStream({
+            controller: childOverlayCell.controller,
+            // Reads the mounted pane at paint time: the overlay mounts and
+            // unmounts many times over one generation, and a captured
+            // component would repaint a pane that is already gone.
+            repaint: {
+              invalidate: () => childOverlayCell.component?.invalidate(),
+              requestRender: () => childOverlayCell.tui?.requestRender(),
+            },
+            timer:
+              delegationControllerCell.controller?.cardTimerPort ??
+              new SystemTimerPort(),
+            generationId: generation.id,
+            currentGenerationId: () =>
+              startupOwnsGeneration() ? generation.id : undefined,
+            resolveLiveThreadId: (childId) =>
+              delegationControllerCell.controller?.resolveThreadIdForLiveChild(
+                childId,
+              ),
+          });
         }
 
         // Child recovery is generation-scoped. Construct it only after the
