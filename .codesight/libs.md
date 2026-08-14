@@ -323,6 +323,14 @@
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
   - _...52 more_
+- `packages/adapters/pi/src/child-overlay-layout.ts`
+  - function overlayHeaderTier: (width) => OverlayHeaderTier
+  - function overlaySettlementFacts: (phase, word?) => OverlaySettlementFacts
+  - function overlayRuleRow: (paint, width) => string
+  - function overlaySectionHead: (paint, title, width) => string
+  - function headerIdentityRow: (paint, facts, width) => HeaderRow
+  - function headerContextRow: (paint, facts, width) => HeaderRow | undefined
+  - _...55 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void

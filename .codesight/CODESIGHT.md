@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 297 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~32,100 tokens. Without it, AI exploration would cost ~96,100 tokens. **Saves ~63,900 tokens per conversation.**
-> **Last scanned:** 2026-08-14 21:16 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 298 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~32,300 tokens. Without it, AI exploration would cost ~96,300 tokens. **Saves ~64,100 tokens per conversation.**
+> **Last scanned:** 2026-08-14 21:30 — re-run after significant changes
 
 ---
 
@@ -334,6 +334,14 @@
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
   - _...52 more_
+- `packages/adapters/pi/src/child-overlay-layout.ts`
+  - function overlayHeaderTier: (width) => OverlayHeaderTier
+  - function overlaySettlementFacts: (phase, word?) => OverlaySettlementFacts
+  - function overlayRuleRow: (paint, width) => string
+  - function overlaySectionHead: (paint, title, width) => string
+  - function headerIdentityRow: (paint, facts, width) => HeaderRow
+  - function headerContextRow: (paint, facts, width) => HeaderRow | undefined
+  - _...55 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
@@ -1883,7 +1891,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 325 test files found
+> 326 test files found
 
 ---
 
