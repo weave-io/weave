@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 295 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~31,800 tokens. Without it, AI exploration would cost ~95,600 tokens. **Saves ~63,800 tokens per conversation.**
-> **Last scanned:** 2026-08-14 19:34 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 296 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~31,900 tokens. Without it, AI exploration would cost ~95,800 tokens. **Saves ~63,900 tokens per conversation.**
+> **Last scanned:** 2026-08-14 19:47 — re-run after significant changes
 
 ---
 
@@ -144,6 +144,14 @@
   - function formatElapsed: (ms) => string
   - function formatTokens: (count) => string
   - _...28 more_
+- `packages/adapters/pi/src/child-card-render.ts`
+  - function renderDelegationCard: (facts, options) => string[]
+  - function composeDelegationCard: (facts, width, expanded) => readonly PiCardRow[]
+  - function degradedDelegationCard: (reason, options, paint) => void
+  - function cardEdge: (width, open, left, right) => Row
+  - function cardBody: (width, content) => Row
+  - function ruleRow: (width) => PiCardRow
+  - _...36 more_
 - `packages/adapters/pi/src/child-compact-render.ts`
   - function createChildCompactState: (threadId) => ChildCompactState
   - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
@@ -1864,7 +1872,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 322 test files found
+> 323 test files found
 
 ---
 

@@ -133,6 +133,14 @@
   - function formatElapsed: (ms) => string
   - function formatTokens: (count) => string
   - _...28 more_
+- `packages/adapters/pi/src/child-card-render.ts`
+  - function renderDelegationCard: (facts, options) => string[]
+  - function composeDelegationCard: (facts, width, expanded) => readonly PiCardRow[]
+  - function degradedDelegationCard: (reason, options, paint) => void
+  - function cardEdge: (width, open, left, right) => Row
+  - function cardBody: (width, content) => Row
+  - function ruleRow: (width) => PiCardRow
+  - _...36 more_
 - `packages/adapters/pi/src/child-compact-render.ts`
   - function createChildCompactState: (threadId) => ChildCompactState
   - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
