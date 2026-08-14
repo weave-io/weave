@@ -19,9 +19,9 @@
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **14** files
 - `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
-- `scripts/release/model.ts` — imported by **14** files
 
 ## Import Map (who imports what)
 

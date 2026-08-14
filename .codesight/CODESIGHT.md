@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 296 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~32,000 tokens. Without it, AI exploration would cost ~95,800 tokens. **Saves ~63,800 tokens per conversation.**
-> **Last scanned:** 2026-08-14 20:42 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 297 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~32,100 tokens. Without it, AI exploration would cost ~96,100 tokens. **Saves ~63,900 tokens per conversation.**
+> **Last scanned:** 2026-08-14 21:16 — re-run after significant changes
 
 ---
 
@@ -317,7 +317,7 @@
   - function overlayUsableRows: (tui) => number
   - function toChildOverlayEditorTheme: (theme) => EditorTheme
   - _...7 more_
-- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
+- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?, planContext?) => ChildOverlayController, class ChildOverlayController
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string
@@ -361,8 +361,8 @@
   - function latestWindowError: (entries) => PiChildProviderError | undefined
   - function pageEvidence: (previous, window, direction) => ChildTerminalErrorEvidence
   - function applyProviderErrorEvent: (previous, event) => void
-  - function deriveChildOverlayTelemetry: (usage, child) => ChildOverlayTelemetry | undefined
-  - _...7 more_
+  - function deriveChildOverlayIdentity: (child) => ChildOverlayIdentity | undefined
+  - _...10 more_
 - `packages/adapters/pi/src/child-overlay-terminal-input.ts`
   - function normalizeChildOverlayScrollFrame: (data) => string | undefined
   - function isChildOverlayScrollFrame: (data) => boolean
@@ -378,7 +378,15 @@
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
   - interface ChildOverlayConfig
-  - _...32 more_
+  - _...37 more_
+- `packages/adapters/pi/src/child-overlay-window.ts`
+  - function emptySaved: (threadId, touched) => SavedChildState
+  - function isReadOnly: (child) => boolean
+  - function prependOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
+  - function appendOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
+  - function dedupEntries: (entries) => ChildOverlayEntry[]
+  - function syncTranscriptFromEntries: (state) => void
+  - _...1 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
@@ -565,9 +573,9 @@
   - interface PiDelegationContext
   - interface PiDelegationControllerDeps
   - interface PiOverlayChildDescriptor
+  - interface PiOverlayChildUsage
   - interface PiThreadRunAssignment
-  - interface PiThreadRunRequest
-  - _...12 more_
+  - _...13 more_
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function formatDelegationAgentName: (agentName) => string
   - function parseDelegationCardDetails: (details) => Result<PiDelegationCardDetails, PiDelegationCardDetailsError>
@@ -1838,9 +1846,9 @@
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **14** files
 - `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
-- `scripts/release/model.ts` — imported by **14** files
 
 ## Import Map (who imports what)
 

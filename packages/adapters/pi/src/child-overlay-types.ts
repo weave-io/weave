@@ -13,6 +13,7 @@ import { z } from "zod";
 import type { ChildCompactState } from "./child-compact-render.js";
 import type { PiChildProviderError } from "./child-provider-error.js";
 import {
+  MAX_CHILD_EVENT_ITEMS,
   MAX_CHILD_USAGE_MODEL_LENGTH,
   MAX_CHILD_USAGE_TOKENS,
   type PiChildSessionEvent,
@@ -92,6 +93,23 @@ export const CHILD_OVERLAY_BOUNDS = Object.freeze({
    * silently drop `message_end` (which leaves assistants falsely streaming).
    */
   maxEntryReplaySteps: MAX_ENTRY_CONTENT_BLOCKS + ENTRY_REPLAY_FRAME_STEPS,
+  /**
+   * Ceiling on the child's own assignment sentence.
+   *
+   * The assignment is the exact dispatched task text, bounded here so a long
+   * prompt cannot grow the descriptor. It is never parsed for identity.
+   */
+  maxAssignmentLength: 240,
+  /** Ceiling on a reported conversation turn ordinal. */
+  maxTurn: 1_000_000,
+  /** Ceiling on a reported queued-prompt depth (pinned to the event parser). */
+  maxQueueDepth: MAX_CHILD_EVENT_ITEMS,
+  /** Ceiling on reported elapsed milliseconds (one year). */
+  maxElapsedMs: 31_536_000_000,
+  /** Ceiling on any single reported usage token count (pinned to the parser). */
+  maxUsageTokens: MAX_CHILD_USAGE_TOKENS,
+  /** Ceiling on a reported aggregate cost. */
+  maxUsageCost: 1_000_000,
 });
 
 export const SCROLL_KEYS = {
@@ -168,6 +186,52 @@ export const DEFAULT_CHILD_OVERLAY_VIEW_MODE: ChildOverlayViewMode = "full";
 export const ChildOverlayStatusSchema = z.enum(["live", "settled", "orphan"]);
 export type ChildOverlayStatus = z.infer<typeof ChildOverlayStatusSchema>;
 
+/** One bounded identity label (agent, parent agent, role, model, reasoning). */
+export const ChildOverlayLabelSchema = z
+  .string()
+  .min(1)
+  .max(CHILD_OVERLAY_BOUNDS.maxLabelLength);
+
+/**
+ * Bounded, all-optional aggregate usage the host reported for this child.
+ *
+ * Distinct from {@link ChildOverlayTelemetry}: this is the delegation tree's
+ * own aggregate for the child process, not the latest assistant usage report.
+ * Any field the tree did not report is absent rather than zero.
+ */
+export const ChildOverlayDescriptorUsageSchema = z
+  .object({
+    inputTokens: z
+      .number()
+      .int()
+      .min(0)
+      .max(CHILD_OVERLAY_BOUNDS.maxUsageTokens)
+      .optional(),
+    outputTokens: z
+      .number()
+      .int()
+      .min(0)
+      .max(CHILD_OVERLAY_BOUNDS.maxUsageTokens)
+      .optional(),
+    cacheReadTokens: z
+      .number()
+      .int()
+      .min(0)
+      .max(CHILD_OVERLAY_BOUNDS.maxUsageTokens)
+      .optional(),
+    cacheWriteTokens: z
+      .number()
+      .int()
+      .min(0)
+      .max(CHILD_OVERLAY_BOUNDS.maxUsageTokens)
+      .optional(),
+    cost: z.number().min(0).max(CHILD_OVERLAY_BOUNDS.maxUsageCost).optional(),
+  })
+  .strict();
+export type ChildOverlayDescriptorUsage = z.infer<
+  typeof ChildOverlayDescriptorUsageSchema
+>;
+
 export const ChildOverlayChildSchema = z
   .object({
     childId: OpaqueIdSchema,
@@ -189,6 +253,39 @@ export const ChildOverlayChildSchema = z
       .array(OpaqueIdSchema)
       .max(CHILD_OVERLAY_BOUNDS.maxHierarchyDepth)
       .default([]),
+    /**
+     * Authoritative identity and operational facts (Spec 33 §7 header/rail).
+     *
+     * Every one is optional and every one is absent unless an authoritative
+     * source named it: live thread/tree state for a running child, the child's
+     * own `weave.child.thread` metadata for a historical one. None of them is
+     * ever inferred from a title, a parent's model, or another child's usage.
+     */
+    agentName: ChildOverlayLabelSchema.optional(),
+    parentAgentName: ChildOverlayLabelSchema.optional(),
+    /** Configured category name for this agent. Never invented. */
+    role: ChildOverlayLabelSchema.optional(),
+    model: ChildOverlayLabelSchema.optional(),
+    reasoning: ChildOverlayLabelSchema.optional(),
+    /** Bounded copy of the exact dispatched task text. */
+    assignment: z
+      .string()
+      .max(CHILD_OVERLAY_BOUNDS.maxAssignmentLength)
+      .optional(),
+    turn: z.number().int().min(0).max(CHILD_OVERLAY_BOUNDS.maxTurn).optional(),
+    queueDepth: z
+      .number()
+      .int()
+      .min(0)
+      .max(CHILD_OVERLAY_BOUNDS.maxQueueDepth)
+      .optional(),
+    elapsedMs: z
+      .number()
+      .int()
+      .min(0)
+      .max(CHILD_OVERLAY_BOUNDS.maxElapsedMs)
+      .optional(),
+    usage: ChildOverlayDescriptorUsageSchema.optional(),
   })
   .strict();
 export type ChildOverlayChild = z.infer<typeof ChildOverlayChildSchema>;
@@ -397,6 +494,18 @@ export interface ChildOverlayView {
    */
   readonly telemetry: ChildOverlayTelemetry | undefined;
   /**
+   * Authoritative identity and operational facts for the finalized inspector
+   * header and rail, projected from the descriptor. `undefined` when no
+   * authoritative source named a single fact: an unknown is never guessed.
+   */
+  readonly identity: ChildOverlayIdentity | undefined;
+  /**
+   * The *parent* session's own plan breadcrumb (header row 2), resolved by
+   * `active-plan-ui-state.ts`. `undefined` when the parent tracks no active
+   * plan. Never derived from the child's title or assignment.
+   */
+  readonly planContext: ChildOverlayPlanContext | undefined;
+  /**
    * Latest terminal provider error for this child, sanitized and bounded by
    * `child-provider-error.ts`. Absent when the child's newest terminal
    * assistant message did not fail, or when nothing authoritative was
@@ -428,6 +537,41 @@ export interface ChildOverlayTelemetry {
   readonly contextWindow?: number;
   /** Present only when the host reported both context tokens and window. */
   readonly contextPercent?: number;
+}
+
+/**
+ * Bounded, all-optional identity/operational projection of the descriptor.
+ *
+ * Carries no child id, thread id, session ref, native session id, or path: it
+ * is only what the header and rail print about *who* the child is and *what*
+ * it is doing right now.
+ */
+export interface ChildOverlayIdentity {
+  readonly agentName?: string;
+  readonly parentAgentName?: string;
+  readonly role?: string;
+  readonly model?: string;
+  readonly reasoning?: string;
+  readonly assignment?: string;
+  readonly turn?: number;
+  readonly queueDepth?: number;
+  readonly elapsedMs?: number;
+  readonly usage?: ChildOverlayDescriptorUsage;
+}
+
+/**
+ * The parent's plan breadcrumb for header row 2.
+ *
+ * `taskOrdinal`/`taskTotal` are the active parent task's own ordinal and the
+ * plan's parent-task count; `subtask` is present only when the active task is
+ * a child task. Every field is absent when the plan did not name it.
+ */
+export interface ChildOverlayPlanContext {
+  readonly planName?: string;
+  readonly taskOrdinal?: number;
+  readonly taskTotal?: number;
+  readonly taskTitle?: string;
+  readonly subtask?: string;
 }
 
 export const CHILD_OVERLAY_TELEMETRY_BOUNDS = Object.freeze({

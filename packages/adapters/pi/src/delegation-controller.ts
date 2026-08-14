@@ -219,6 +219,13 @@ export interface PiDelegationControllerDeps {
     name: string,
   ) => DelegationTarget | undefined;
   /**
+   * Resolves the configured engine descriptor's category name for one agent,
+   * used as the inspector's `role` fact. Returns `undefined` for an agent this
+   * session did not configure, or for a configured agent with no category:
+   * a role is only ever reported, never invented.
+   */
+  readonly resolveAgentRole?: (agentName: string) => string | undefined;
+  /**
    * Reads the live parent session id (Task 7's persistent-parent probe). Thread
    * ownership is measured against it, so a session transition can never let a
    * new parent inherit another parent's threads.
@@ -280,6 +287,47 @@ export interface PiOverlayChildDescriptor {
    * only — never an absolute filesystem path.
    */
   readonly sessionRef: string | undefined;
+  /**
+   * Authoritative identity and operational facts for the inspector header and
+   * rail (Spec 33 §7).
+   *
+   * Live children fill these from this generation's own thread state and the
+   * child tree node; historical children fill them from the child's own
+   * `weave.child.thread` metadata entry. Nothing here is ever inferred from a
+   * title, from the parent's model, from a configured default, or from another
+   * child's usage: an unknown fact is absent.
+   */
+  readonly agentName?: string;
+  readonly parentAgentName?: string;
+  /** Configured category name for this agent; absent when unconfigured. */
+  readonly role?: string;
+  readonly model?: string;
+  readonly reasoning?: string;
+  /**
+   * The child's own assignment fact, when an authoritative privacy-safe source
+   * names one.
+   *
+   * It is deliberately never the dispatched task text. A task is untrusted
+   * caller content that can carry secrets, credentials and filesystem paths,
+   * and no such content may cross this boundary — the thread-lifecycle privacy
+   * test pins that for every descriptor a live or historical child yields. No
+   * source proves an assignment today, so the fact stays absent, exactly like
+   * every other unknown here.
+   */
+  readonly assignment?: string;
+  readonly turn?: number;
+  readonly queueDepth?: number;
+  readonly elapsedMs?: number;
+  readonly usage?: PiOverlayChildUsage;
+}
+
+/** Bounded aggregate usage the delegation tree reported for one child. */
+export interface PiOverlayChildUsage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly cost: number;
 }
 
 /**
@@ -625,6 +673,15 @@ export class PiDelegationController {
   private readonly restoreReservations = new Set<string>();
   /** One entry per logical thread this generation started or resumed. */
   private readonly threads = new Map<string, PiThreadState>();
+  /**
+   * Newest queued-prompt depth a live child itself reported, keyed by child id.
+   *
+   * The only authoritative source is the child's own parser-approved
+   * `queue_change` event, so a child that never reported one has no entry and
+   * the inspector shows no queue fact rather than a guessed zero. Entries are
+   * dropped with the child, so this stays bounded by the live child count.
+   */
+  private readonly liveQueueDepths = new Map<string, number>();
   /** Explicit thread transfers: thread id to the ancestor child id granted it. */
   private readonly threadTransfers = new Map<string, string>();
   /**
@@ -1206,6 +1263,22 @@ export class PiDelegationController {
     return fn(child);
   }
 
+  /**
+   * Retains the newest queue depth a live child reported about itself.
+   *
+   * Only the parser-approved `queue_change` event may write it, and only when
+   * that event actually carried a size: an event without one leaves the last
+   * proven depth in place rather than resetting it to a guess.
+   */
+  private recordQueueDepth(childId: string, event: PiChildSessionEvent): void {
+    if (event.type !== "queue_change") return;
+    // The event schema carries a bounded catch-all, so the parsed `size` is
+    // only trusted when it really is a non-negative integer.
+    const size = event.size;
+    if (typeof size !== "number" || !Number.isInteger(size) || size < 0) return;
+    this.liveQueueDepths.set(childId, size);
+  }
+
   private findLiveThreadState(childId: string): PiThreadState | undefined {
     const byThread = this.threads.get(childId);
     if (byThread !== undefined) return byThread;
@@ -1240,6 +1313,11 @@ export class PiDelegationController {
         branchIds: [],
         descendantChildIds: [],
         sessionRef: record?.sessionRef,
+        // The tree node's own `name` IS the agent name it was spawned with,
+        // so this is authoritative even before thread registration lands.
+        agentName: snap.name,
+        ...this.roleFact(snap.name),
+        ...this.liveOperationalFacts(childId, snap),
       };
     }
     const record = this.threadRecords.get(state.threadId);
@@ -1268,6 +1346,66 @@ export class PiDelegationController {
       branchIds: [],
       descendantChildIds: [],
       sessionRef: record?.sessionRef,
+      agentName: state.agentName,
+      parentAgentName: state.parentAgentName,
+      ...this.roleFact(state.agentName),
+      ...(state.model === undefined ? {} : { model: state.model }),
+      ...(state.reasoning === undefined ? {} : { reasoning: state.reasoning }),
+      ...this.liveOperationalFacts(state.latestChildId, treeChild?.snapshot()),
+    };
+  }
+
+  /**
+   * The configured category name for one agent, as a spreadable fragment.
+   *
+   * An unconfigured agent, or a configured agent with no category, yields an
+   * empty fragment: the inspector then prints no role at all rather than a
+   * fabricated one.
+   */
+  private roleFact(agentName: string): { role?: string } {
+    const role = Result.fromThrowable(
+      () => this.deps.resolveAgentRole?.(agentName),
+      () => undefined,
+    )().match(
+      (value) => value,
+      () => undefined,
+    );
+    return role === undefined || role.length === 0 ? {} : { role };
+  }
+
+  /**
+   * Live operational facts for one run, taken only from the child's own tree
+   * node and its own reported queue depth.
+   *
+   * A node this generation no longer holds yields nothing: turn, elapsed and
+   * usage are live measurements, and a stale copy would be a lie rather than
+   * an absence.
+   */
+  private liveOperationalFacts(
+    childId: string,
+    snapshot: PiChildTreeNode | undefined,
+  ): {
+    turn?: number;
+    elapsedMs?: number;
+    usage?: PiOverlayChildUsage;
+    queueDepth?: number;
+  } {
+    const queueDepth = this.liveQueueDepths.get(childId);
+    return {
+      ...(snapshot === undefined
+        ? {}
+        : {
+            turn: snapshot.currentTurn,
+            elapsedMs: snapshot.elapsedMs,
+            usage: {
+              inputTokens: snapshot.usage.inputTokens,
+              outputTokens: snapshot.usage.outputTokens,
+              cacheReadTokens: snapshot.usage.cacheReadTokens,
+              cacheWriteTokens: snapshot.usage.cacheWriteTokens,
+              cost: snapshot.usage.cost,
+            },
+          }),
+      ...(queueDepth === undefined ? {} : { queueDepth }),
     };
   }
 
@@ -1275,16 +1413,10 @@ export class PiDelegationController {
     childId: string,
   ): ResultAsync<PiOverlayChildDescriptor, PiAdapterFailure> {
     const cached = this.threadRecords.get(childId);
-    if (cached !== undefined) {
-      return okAsync(
-        refRecordToOverlayDescriptor(cached, this.deps.generationId),
-      );
-    }
+    if (cached !== undefined) return this.describeHistoricalRecord(cached);
     for (const record of this.threadRecords.values()) {
       if (record.childId === childId) {
-        return okAsync(
-          refRecordToOverlayDescriptor(record, this.deps.generationId),
-        );
+        return this.describeHistoricalRecord(record);
       }
     }
     const refs = this.deps.threadRefs?.();
@@ -1302,10 +1434,50 @@ export class PiDelegationController {
           return errAsync(makeThreadNotFoundFailure(childId, "unknown-thread"));
         }
         this.rememberThreadRecord(match);
-        return okAsync(
-          refRecordToOverlayDescriptor(match, this.deps.generationId),
-        );
+        return this.describeHistoricalRecord(match);
       });
+  }
+
+  /**
+   * Completes a historical descriptor from the child's own `weave.child.thread`
+   * metadata entry, so a settled child reports the same agent, parent agent,
+   * model and reasoning a live one does.
+   *
+   * The metadata read is best effort *for description only*: an unreadable or
+   * absent entry leaves those facts absent instead of failing the inspector,
+   * because a describe is a read of history, not an authorization to resume.
+   * Any metadata that disagrees with the ref it was reached through is
+   * discarded rather than trusted.
+   */
+  private describeHistoricalRecord(
+    record: PiChildRefRecord,
+  ): ResultAsync<PiOverlayChildDescriptor, PiAdapterFailure> {
+    const base = refRecordToOverlayDescriptor(record, this.deps.generationId);
+    const sessions = this.deps.threadSessions?.();
+    if (sessions === undefined) return okAsync(base);
+    return ResultAsync.fromSafePromise(
+      sessions
+        .readThreadMetadata(record.sessionRef, record.originParentSessionId)
+        .match(
+          (metadata): PiOverlayChildDescriptor =>
+            metadata.threadId !== record.threadId ||
+            metadata.ownerParentSessionId !== record.originParentSessionId
+              ? base
+              : {
+                  ...base,
+                  agentName: metadata.agentName,
+                  parentAgentName: metadata.parentAgentName,
+                  ...this.roleFact(metadata.agentName),
+                  ...(metadata.model === undefined
+                    ? {}
+                    : { model: metadata.model }),
+                  ...(metadata.reasoning === undefined
+                    ? {}
+                    : { reasoning: metadata.reasoning }),
+                },
+          () => base,
+        ),
+    );
   }
 
   private persistPrivateOutput(
@@ -1391,6 +1563,8 @@ export class PiDelegationController {
         // Disposal and capacity promotion are cleanup, so they happen even when
         // terminal persistence fails. The persistence result is still returned.
         child.dispose();
+        // A queue depth is a live fact only: a settled child reports no queue.
+        this.liveQueueDepths.delete(childId);
         this.promoteQueued();
         this.notifyTreeChanged();
         this.maybeStopTreeRefreshTimer();
@@ -2374,6 +2548,7 @@ export class PiDelegationController {
               () => undefined,
               () => undefined,
             );
+            this.recordQueueDepth(childId, event);
             this.invokeChildSessionEventDep(childId, event);
             this.invokeSessionEventCallback(
               childId,

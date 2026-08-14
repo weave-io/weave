@@ -55,11 +55,13 @@ import {
 } from "./child-overlay-search.js";
 import {
   applyProviderErrorEvent,
-  type ChildTerminalErrorEvidence,
+  type ChildOverlayPlanContextPort,
+  deriveChildOverlayIdentity,
   deriveChildOverlayTelemetry,
   latestUsageInWindow,
   NO_TERMINAL_ERROR_EVIDENCE,
   pageEvidence,
+  readChildOverlayPlanContext,
   terminalErrorOf,
   terminalErrorView,
 } from "./child-overlay-telemetry.js";
@@ -88,6 +90,15 @@ import {
   OverlayTextSchema,
 } from "./child-overlay-types.js";
 import {
+  appendOverlayPage,
+  dedupEntries,
+  emptySaved,
+  isReadOnly,
+  prependOverlayPage,
+  type SavedChildState,
+  syncTranscriptFromEntries,
+} from "./child-overlay-window.js";
+import {
   type PiChildUsageReport,
   parsePiChildSessionEvent,
   parsePiChildUsageReport,
@@ -97,90 +108,6 @@ import {
   type PiChildTranscriptState,
   reducePiChildTranscript,
 } from "./child-transcript.js";
-
-interface SavedChildState extends OverlayScrollState {
-  draft: string;
-  searchQuery: string;
-  /**
-   * Every match for {@link SavedChildState.searchQuery}, in stable transcript
-   * order (oldest first), deduplicated by entry id. Fetching older pages trims
-   * the newest entries out of the bounded window, so matches cannot be derived
-   * from the window alone without losing every match scrolled out of it. This
-   * list is authoritative and is rebuilt on each `search` call.
-   */
-  searchMatchIds: string[];
-  globalExpanded: boolean;
-  activeRun: number | undefined;
-  activeBranchId: string | undefined;
-  olderCursor: string | undefined;
-  newerCursor: string | undefined;
-  hasOlderFlag: boolean;
-  hasNewerFlag: boolean;
-  /**
-   * Per-child render mode. Saved beside the rest of the child's view state so
-   * it survives focus switches within this controller, stays isolated per
-   * child, and is gone when the controller (and its LRU) is discarded.
-   */
-  viewMode: ChildOverlayViewMode;
-  compact: ChildCompactState;
-  usage: PiChildUsageReport | undefined;
-  evidence: ChildTerminalErrorEvidence;
-  transcript: PiChildTranscriptState;
-  /**
-   * Overlay entry id of the assistant message lifecycle currently in flight,
-   * or undefined when no `message_start` is open.
-   *
-   * Pi 0.84 `AssistantMessage` carries no `id`, and `message_start` /
-   * `message_end` carry the message directly, so the only place a lifecycle
-   * identity can live is here, beside the child it belongs to. It is one
-   * optional string, so it stays bounded, isolated per child, and is discarded
-   * with the child's LRU slot on controller teardown.
-   */
-  liveAssistantEntryId: string | undefined;
-  /**
-   * Bounded monotonic allocator for {@link SavedChildState.liveAssistantEntryId}.
-   * Advances once per lifecycle and wraps at
-   * {@link MAX_LIVE_ASSISTANT_LIFECYCLES}.
-   */
-  liveAssistantCounter: number;
-  width: number;
-  height: number;
-  lastTouched: number;
-}
-
-function emptySaved(threadId: string, touched: number): SavedChildState {
-  return {
-    draft: "",
-    searchQuery: "",
-    searchMatchIds: [],
-    scrollOffset: 0,
-    scrollExtent: undefined,
-    liveTail: true,
-    pendingTailExtentAdjustment: false,
-    globalExpanded: false,
-    activeRun: undefined,
-    activeBranchId: undefined,
-    olderCursor: undefined,
-    newerCursor: undefined,
-    hasOlderFlag: false,
-    hasNewerFlag: false,
-    entries: [],
-    layoutSpans: undefined,
-    pendingViewportAnchor: undefined,
-    pendingViewportLiveTail: false,
-    viewMode: DEFAULT_CHILD_OVERLAY_VIEW_MODE,
-    compact: createChildCompactState(threadId),
-    usage: undefined,
-    evidence: NO_TERMINAL_ERROR_EVIDENCE,
-    transcript: createPiChildTranscriptState(),
-    liveAssistantEntryId: undefined,
-    liveAssistantCounter: 0,
-    anchor: undefined,
-    width: 80,
-    height: 24,
-    lastTouched: touched,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Controller
@@ -194,6 +121,7 @@ export class ChildOverlayController {
   private readonly maxLruChildren: number;
   private readonly maxSearchPages: number;
   private readonly saved = new Map<string, SavedChildState>();
+  private readonly planContext: ChildOverlayPlanContextPort | undefined;
   private openChild: ChildOverlayChild | undefined;
   private clock = 0;
 
@@ -201,9 +129,11 @@ export class ChildOverlayController {
     source: ChildOverlaySourcePort,
     config: ChildOverlayConfig = {},
     mutations?: ChildOverlayMutationPort,
+    planContext?: ChildOverlayPlanContextPort,
   ) {
     this.source = source;
     this.mutations = mutations;
+    this.planContext = planContext;
     this.pageSize = clampPageSize(
       config.pageSize ?? CHILD_OVERLAY_BOUNDS.defaultPageSize,
     );
@@ -1037,6 +967,8 @@ export class ChildOverlayController {
       compact: state.compact,
       transcript: state.transcript,
       telemetry: deriveChildOverlayTelemetry(state.usage, child),
+      identity: deriveChildOverlayIdentity(child),
+      planContext: readChildOverlayPlanContext(this.planContext),
       ...(terminalError === undefined ? {} : { terminalError }),
     };
   }
@@ -1067,131 +999,11 @@ export class ChildOverlayController {
   }
 }
 
-function isReadOnly(child: ChildOverlayChild): boolean {
-  return child.status === "settled" || child.status === "orphan";
-}
-
-function prependOverlayPage(
-  state: SavedChildState,
-  page: ChildOverlayPage,
-  incoming: readonly ChildOverlayEntry[],
-  priorAnchor: ChildOverlayAnchor | undefined,
-  windowCap: number,
-): void {
-  const existingIds = new Set(state.entries.map((entry) => entry.id));
-  const uniqueOlder = incoming.filter((entry) => !existingIds.has(entry.id));
-  const merged = dedupEntries([...uniqueOlder, ...state.entries]);
-  const retained = merged.slice(0, windowCap);
-  const trimmedNewest = merged.length - retained.length;
-  state.entries = retained;
-  state.olderCursor = page.olderCursor;
-  state.hasOlderFlag = page.hasOlder;
-  if (trimmedNewest > 0) {
-    state.newerCursor = page.newerCursor;
-    state.hasNewerFlag = true;
-    state.liveTail = false;
-  }
-  restoreAfterOlderEntries(state, priorAnchor, uniqueOlder[0], retained.length);
-  syncTranscriptFromEntries(state);
-  state.usage ??= latestUsageInWindow(incoming);
-  state.evidence = pageEvidence(state.evidence, incoming, "older");
-}
-
-function appendOverlayPage(
-  state: SavedChildState,
-  page: ChildOverlayPage,
-  incoming: readonly ChildOverlayEntry[],
-  priorAnchor: ChildOverlayAnchor | undefined,
-  windowCap: number,
-): void {
-  const existingIds = new Set(state.entries.map((entry) => entry.id));
-  const uniqueNewer = incoming.filter((entry) => !existingIds.has(entry.id));
-  const merged = dedupEntries([...state.entries, ...uniqueNewer]);
-  const retained = merged.slice(-windowCap);
-  const trimmedOldest = merged.length - retained.length;
-  state.entries = retained;
-  if (trimmedOldest > 0) {
-    state.olderCursor = page.olderCursor;
-    state.hasOlderFlag = true;
-  }
-  state.newerCursor = page.newerCursor;
-  state.hasNewerFlag = page.hasNewer;
-  restoreScrollAnchor(state, priorAnchor);
-  if (uniqueNewer.length > 0) markTailGrowth(state);
-  syncTranscriptFromEntries(state);
-  state.usage = latestUsageInWindow(uniqueNewer) ?? state.usage;
-  state.evidence = pageEvidence(state.evidence, uniqueNewer, "newer");
-}
-
-function dedupEntries(
-  entries: readonly ChildOverlayEntry[],
-): ChildOverlayEntry[] {
-  const seen = new Set<string>();
-  const result: ChildOverlayEntry[] = [];
-  for (const entry of entries) {
-    if (seen.has(entry.id)) continue;
-    seen.add(entry.id);
-    result.push(entry);
-  }
-  return result;
-}
-
-/**
- * Rebuilds {@link SavedChildState.transcript} from the retained overlay window
- * so paged merges (older/newer/search/replace) cannot leave the render model
- * pointing at a stale tip-only transcript. Preserves expanded IDs that still
- * resolve; scroll anchors are owned by {@link restoreAfterOlderPrepend}.
- */
-function syncTranscriptFromEntries(state: SavedChildState): void {
-  const priorExpandedIds = new Set<string>();
-  const priorExpandedTexts = new Set<string>();
-  for (const entry of state.transcript.entries) {
-    if (!entry.expanded) continue;
-    priorExpandedIds.add(entry.id);
-    if ("messageId" in entry && typeof entry.messageId === "string") {
-      priorExpandedIds.add(entry.messageId);
-    }
-    if ("text" in entry && typeof entry.text === "string") {
-      priorExpandedTexts.add(entry.text);
-    }
-  }
-  for (const entry of state.entries) {
-    if (!entry.expanded) continue;
-    priorExpandedIds.add(entry.id);
-    priorExpandedTexts.add(entry.text);
-  }
-
-  const rebuilt = transcriptFromOverlayEntries(state.entries);
-  if (priorExpandedIds.size === 0 && !state.globalExpanded) {
-    state.transcript = rebuilt;
-    return;
-  }
-
-  state.transcript = {
-    ...rebuilt,
-    entries: rebuilt.entries.map((entry) => {
-      const messageId =
-        "messageId" in entry && typeof entry.messageId === "string"
-          ? entry.messageId
-          : undefined;
-      const text =
-        "text" in entry && typeof entry.text === "string"
-          ? entry.text
-          : undefined;
-      const expanded =
-        state.globalExpanded ||
-        priorExpandedIds.has(entry.id) ||
-        (messageId !== undefined && priorExpandedIds.has(messageId)) ||
-        (text !== undefined && priorExpandedTexts.has(text));
-      return expanded === entry.expanded ? entry : { ...entry, expanded };
-    }),
-  };
-}
-
 export function createChildOverlayController(
   source: ChildOverlaySourcePort,
   config?: ChildOverlayConfig,
   mutations?: ChildOverlayMutationPort,
+  planContext?: ChildOverlayPlanContextPort,
 ): ChildOverlayController {
-  return new ChildOverlayController(source, config, mutations);
+  return new ChildOverlayController(source, config, mutations, planContext);
 }

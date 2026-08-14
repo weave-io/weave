@@ -306,7 +306,7 @@
   - function overlayUsableRows: (tui) => number
   - function toChildOverlayEditorTheme: (theme) => EditorTheme
   - _...7 more_
-- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
+- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?, planContext?) => ChildOverlayController, class ChildOverlayController
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string
@@ -350,8 +350,8 @@
   - function latestWindowError: (entries) => PiChildProviderError | undefined
   - function pageEvidence: (previous, window, direction) => ChildTerminalErrorEvidence
   - function applyProviderErrorEvent: (previous, event) => void
-  - function deriveChildOverlayTelemetry: (usage, child) => ChildOverlayTelemetry | undefined
-  - _...7 more_
+  - function deriveChildOverlayIdentity: (child) => ChildOverlayIdentity | undefined
+  - _...10 more_
 - `packages/adapters/pi/src/child-overlay-terminal-input.ts`
   - function normalizeChildOverlayScrollFrame: (data) => string | undefined
   - function isChildOverlayScrollFrame: (data) => boolean
@@ -367,7 +367,15 @@
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
   - interface ChildOverlayConfig
-  - _...32 more_
+  - _...37 more_
+- `packages/adapters/pi/src/child-overlay-window.ts`
+  - function emptySaved: (threadId, touched) => SavedChildState
+  - function isReadOnly: (child) => boolean
+  - function prependOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
+  - function appendOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
+  - function dedupEntries: (entries) => ChildOverlayEntry[]
+  - function syncTranscriptFromEntries: (state) => void
+  - _...1 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
@@ -554,9 +562,9 @@
   - interface PiDelegationContext
   - interface PiDelegationControllerDeps
   - interface PiOverlayChildDescriptor
+  - interface PiOverlayChildUsage
   - interface PiThreadRunAssignment
-  - interface PiThreadRunRequest
-  - _...12 more_
+  - _...13 more_
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function formatDelegationAgentName: (agentName) => string
   - function parseDelegationCardDetails: (details) => Result<PiDelegationCardDetails, PiDelegationCardDetailsError>

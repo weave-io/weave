@@ -641,6 +641,8 @@ function harness(
     readonly idGenerator?: SequentialIdGenerator;
     readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
     readonly maxChildren?: number;
+    readonly resolveAgentRole?: (agentName: string) => string | undefined;
+    readonly bootstrap?: Record<string, unknown>;
   } = {},
 ): Harness {
   const port = new FakeChildProcessPort();
@@ -670,16 +672,24 @@ function harness(
         : OWNER_SESSION,
     resolveRootDelegationTarget: () =>
       "target" in overrides ? overrides.target : TARGET,
-    buildBootstrap: (_target, childId) => ({
-      mode: "ordinary",
-      agentName: "shuttle",
-      composedPrompt: "You are Shuttle.",
-      models: [],
-      correlationId: childId,
-      resolvedModel: { provider: "anthropic", id: "model-x" },
-      thinkingLevel: "high",
-      context: { parentAgentName: "shuttle", parentDepth: 0, cwd: "/project" },
-    }),
+    buildBootstrap: (_target, childId) =>
+      (overrides.bootstrap ?? {
+        mode: "ordinary",
+        agentName: "shuttle",
+        composedPrompt: "You are Shuttle.",
+        models: [],
+        correlationId: childId,
+        resolvedModel: { provider: "anthropic", id: "model-x" },
+        thinkingLevel: "high",
+        context: {
+          parentAgentName: "shuttle",
+          parentDepth: 0,
+          cwd: "/project",
+        },
+      }) as JsonValue,
+    ...(overrides.resolveAgentRole === undefined
+      ? {}
+      : { resolveAgentRole: overrides.resolveAgentRole }),
     threadRefs: () => refs,
     threadSessions: () => sessions,
     threadCache: () => cache,
@@ -1730,5 +1740,184 @@ describe("thread lifecycle: storage authority guard", () => {
       expect(h.sessions?.leaves).toHaveLength(before.leaves);
       expect(h.cache.writes).toHaveLength(before.cache);
     }
+  });
+});
+
+describe("thread lifecycle: overlay identity facts", () => {
+  it("reports live agent, parent agent, model, reasoning, and role", async () => {
+    const h = harness({ resolveAgentRole: () => "implementer" });
+    const start = h.controller.delegate(request());
+    await flush();
+    const child = spawnedAt(h.port, 0);
+    const signer = await authenticateChild(child, h.port);
+
+    const live = await h.controller.resolveOverlayChild("child-1");
+    if (live.isErr()) throw new Error(JSON.stringify(live.error));
+    const descriptor = live._unsafeUnwrap();
+    expect({
+      agentName: descriptor.agentName,
+      parentAgentName: descriptor.parentAgentName,
+      model: descriptor.model,
+      reasoning: descriptor.reasoning,
+      role: descriptor.role,
+    }).toEqual({
+      agentName: "shuttle",
+      parentAgentName: "shuttle",
+      model: "model-x",
+      reasoning: "high",
+      role: "implementer",
+    });
+    // Operational facts come from the live tree node, never from a guess.
+    expect(typeof descriptor.turn).toBe("number");
+    expect(typeof descriptor.elapsedMs).toBe("number");
+    expect(descriptor.usage).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      cost: 0,
+    });
+    // Nothing reported a queue, so no queue fact is invented.
+    expect(descriptor.queueDepth).toBeUndefined();
+    // No authoritative privacy-safe assignment source exists.
+    expect(descriptor.assignment).toBeUndefined();
+
+    await finishChild(child, signer, "completed");
+    const settled = await start;
+    if (settled.isErr()) throw new Error(JSON.stringify(settled.error));
+  });
+
+  it("reports a queue depth only from the child's own queue_change event", async () => {
+    const h = harness();
+    const start = h.controller.delegate(request());
+    await flush();
+    const child = spawnedAt(h.port, 0);
+    const signer = await authenticateChild(child, h.port);
+
+    child.emitLine({ type: "queue_change", size: 3 });
+    await flush();
+    const withQueue = await h.controller.resolveOverlayChild("child-1");
+    if (withQueue.isErr()) throw new Error(JSON.stringify(withQueue.error));
+    expect(withQueue._unsafeUnwrap().queueDepth).toBe(3);
+
+    // An event without a size may not reset the last proven depth.
+    child.emitLine({ type: "queue_change" });
+    await flush();
+    const unchanged = await h.controller.resolveOverlayChild("child-1");
+    if (unchanged.isErr()) throw new Error(JSON.stringify(unchanged.error));
+    expect(unchanged._unsafeUnwrap().queueDepth).toBe(3);
+
+    await finishChild(child, signer, "completed");
+    const settled = await start;
+    if (settled.isErr()) throw new Error(JSON.stringify(settled.error));
+  });
+
+  it("rebuilds the same identity for a historical child from thread metadata", async () => {
+    const refs = new FakeRefStore(undefined);
+    const sessions = new FakeSessionStore();
+    const first = harness({
+      refs,
+      sessions,
+      resolveAgentRole: () => "implementer",
+    });
+    const start = first.controller.delegate(request());
+    await flush();
+    const child = spawnedAt(first.port, 0);
+    const signer = await authenticateChild(child, first.port);
+    const live = await first.controller.resolveOverlayChild("child-1");
+    if (live.isErr()) throw new Error(JSON.stringify(live.error));
+    await finishChild(child, signer, "completed");
+    const settled = await start;
+    if (settled.isErr()) throw new Error(JSON.stringify(settled.error));
+
+    // A fresh controller has no live memory: every identity fact below can
+    // only have come from the child's own `weave.child.thread` metadata.
+    const restarted = harness({
+      refs,
+      sessions,
+      idGenerator: new SequentialIdGenerator(),
+      resolveAgentRole: () => "implementer",
+    });
+    const historical =
+      await restarted.controller.resolveOverlayChild("child-1");
+    if (historical.isErr()) throw new Error(JSON.stringify(historical.error));
+    const past = historical._unsafeUnwrap();
+    const present = live._unsafeUnwrap();
+    expect({
+      agentName: past.agentName,
+      parentAgentName: past.parentAgentName,
+      model: past.model,
+      reasoning: past.reasoning,
+      role: past.role,
+    }).toEqual({
+      agentName: present.agentName,
+      parentAgentName: present.parentAgentName,
+      model: present.model,
+      reasoning: present.reasoning,
+      role: present.role,
+    });
+    // Live-only measurements are absent rather than stale for history.
+    expect(past.turn).toBeUndefined();
+    expect(past.elapsedMs).toBeUndefined();
+    expect(past.usage).toBeUndefined();
+    expect(past.queueDepth).toBeUndefined();
+  });
+
+  it("keeps an unreported model absent for both a live and a historical child", async () => {
+    const refs = new FakeRefStore(undefined);
+    const sessions = new FakeSessionStore();
+    const modelless = {
+      mode: "ordinary",
+      agentName: "shuttle",
+      composedPrompt: "You are Shuttle.",
+      models: [],
+      correlationId: "child-1",
+      context: { parentAgentName: "shuttle", parentDepth: 0, cwd: "/project" },
+    };
+    const first = harness({ refs, sessions, bootstrap: modelless });
+    const start = first.controller.delegate(
+      request({ bootstrap: modelless as JsonValue }),
+    );
+    await flush();
+    const child = spawnedAt(first.port, 0);
+    const signer = await authenticateChild(child, first.port);
+    const live = await first.controller.resolveOverlayChild("child-1");
+    if (live.isErr()) throw new Error(JSON.stringify(live.error));
+    expect(live._unsafeUnwrap().model).toBeUndefined();
+    expect(live._unsafeUnwrap().reasoning).toBeUndefined();
+    await finishChild(child, signer, "completed");
+    const settled = await start;
+    if (settled.isErr()) throw new Error(JSON.stringify(settled.error));
+
+    const restarted = harness({
+      refs,
+      sessions,
+      bootstrap: modelless,
+      idGenerator: new SequentialIdGenerator(),
+    });
+    const historical =
+      await restarted.controller.resolveOverlayChild("child-1");
+    if (historical.isErr()) throw new Error(JSON.stringify(historical.error));
+    // The metadata really was read: the agent it names crossed the boundary.
+    expect(historical._unsafeUnwrap().agentName).toBe("shuttle");
+    expect(historical._unsafeUnwrap().model).toBeUndefined();
+    expect(historical._unsafeUnwrap().reasoning).toBeUndefined();
+  });
+
+  it("reports no role for an agent this session did not configure", async () => {
+    const h = harness({ resolveAgentRole: () => undefined });
+    const start = h.controller.delegate(request());
+    await flush();
+    const child = spawnedAt(h.port, 0);
+    const signer = await authenticateChild(child, h.port);
+
+    const live = await h.controller.resolveOverlayChild("child-1");
+    if (live.isErr()) throw new Error(JSON.stringify(live.error));
+    expect(live._unsafeUnwrap().role).toBeUndefined();
+    expect("role" in live._unsafeUnwrap()).toBe(false);
+
+    await finishChild(child, signer, "completed");
+    const settled = await start;
+    if (settled.isErr()) throw new Error(JSON.stringify(settled.error));
   });
 });

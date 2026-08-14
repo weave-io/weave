@@ -15,6 +15,7 @@ import {
 import {
   CHILD_OVERLAY_BOUNDS,
   type ChildOverlayChild,
+  ChildOverlayChildSchema,
   type ChildOverlayEntry,
   type ChildOverlayFallbackRequired,
   type ChildOverlayMutationPort,
@@ -194,6 +195,16 @@ function child(
     descendantChildIds: partial.descendantChildIds ?? [],
     childId: partial.childId,
     entries: partial.entries,
+    agentName: partial.agentName,
+    parentAgentName: partial.parentAgentName,
+    role: partial.role,
+    model: partial.model,
+    reasoning: partial.reasoning,
+    assignment: partial.assignment,
+    turn: partial.turn,
+    queueDepth: partial.queueDepth,
+    elapsedMs: partial.elapsedMs,
+    usage: partial.usage,
   };
 }
 
@@ -2590,6 +2601,107 @@ describe("ChildOverlayController", () => {
     );
     expect(overlayWire).not.toContain("readSessionEntries");
     expect(overlayWire).toContain("readSessionEntryPage");
+  });
+
+  it("threads authoritative identity and plan context through the view", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({
+        childId: "ident",
+        entries: entries(3),
+        agentName: "shuttle",
+        parentAgentName: "loom",
+        role: "implementer",
+        model: "gpt-5.6-sol",
+        reasoning: "high",
+        turn: 4,
+        queueDepth: 2,
+        elapsedMs: 9_000,
+        usage: { inputTokens: 12, outputTokens: 3, cost: 0.5 },
+      }),
+    ]);
+    const overlay = createChildOverlayController(source, {}, undefined, () => ({
+      planName: "pi-weave-ui-redesign",
+      taskOrdinal: 7,
+      taskTotal: 19,
+      taskTitle: "Carry authoritative child identity",
+      subtask: "descriptor",
+    }));
+    const view = await mustOpen(overlay, "ident");
+    expect(view.identity).toEqual({
+      agentName: "shuttle",
+      parentAgentName: "loom",
+      role: "implementer",
+      model: "gpt-5.6-sol",
+      reasoning: "high",
+      assignment: undefined,
+      turn: 4,
+      queueDepth: 2,
+      elapsedMs: 9_000,
+      usage: { inputTokens: 12, outputTokens: 3, cost: 0.5 },
+    });
+    expect(view.planContext).toEqual({
+      planName: "pi-weave-ui-redesign",
+      taskOrdinal: 7,
+      taskTotal: 19,
+      taskTitle: "Carry authoritative child identity",
+      subtask: "descriptor",
+    });
+  });
+
+  it("leaves identity and plan context absent when nothing is authoritative", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "bare", entries: entries(3) }),
+    ]);
+    const view = await mustOpen(createChildOverlayController(source), "bare");
+    expect(view.identity).toBeUndefined();
+    expect(view.planContext).toBeUndefined();
+  });
+
+  it("clears the breadcrumb, not the inspector, when the plan port throws", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "boom", entries: entries(3), agentName: "shuttle" }),
+    ]);
+    const overlay = createChildOverlayController(source, {}, undefined, () => {
+      throw new Error("plan lookup exploded");
+    });
+    const view = await mustOpen(overlay, "boom");
+    expect(view.planContext).toBeUndefined();
+    expect(view.identity).toEqual({
+      agentName: "shuttle",
+      parentAgentName: undefined,
+      role: undefined,
+      model: undefined,
+      reasoning: undefined,
+      assignment: undefined,
+      turn: undefined,
+      queueDepth: undefined,
+      elapsedMs: undefined,
+      usage: undefined,
+    });
+  });
+
+  it("refuses a descriptor carrying a path, session ref, or native session id", async () => {
+    for (const forbidden of [
+      { sessionRef: "workspace/child-1/session.jsonl" },
+      { nativeSessionId: "native-1" },
+      { path: "/data/weave/sessions/child-1.jsonl" },
+      { activeChildId: "child-1" },
+    ]) {
+      const parsed = ChildOverlayChildSchema.safeParse({
+        childId: "c1",
+        threadId: "c1",
+        status: "settled",
+        runs: [],
+        branchIds: [],
+        descendantChildIds: [],
+        agentName: "shuttle",
+        ...forbidden,
+      });
+      expect({ forbidden, accepted: parsed.success }).toEqual({
+        forbidden,
+        accepted: false,
+      });
+    }
   });
 
   it("keeps one instance: open swaps content instead of stacking", async () => {

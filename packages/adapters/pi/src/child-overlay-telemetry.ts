@@ -13,10 +13,13 @@
  * terminal-error shape is documented in `child-provider-error.ts`.
  */
 
+import { Result } from "neverthrow";
 import {
   CHILD_OVERLAY_TELEMETRY_BOUNDS,
   type ChildOverlayChild,
   type ChildOverlayEntry,
+  type ChildOverlayIdentity,
+  type ChildOverlayPlanContext,
   type ChildOverlayTelemetry,
 } from "./child-overlay-types.js";
 import {
@@ -283,6 +286,58 @@ function providerFromModel(model: string | undefined): string | undefined {
  * reported both operands and the window is positive; the host-reported percent
  * is never trusted and no limit is inferred from a model name.
  */
+/**
+ * Projects the descriptor's authoritative identity and operational facts.
+ *
+ * Pure and additive: it copies only what the descriptor already carries (the
+ * source boundary already proved those facts came from live thread/tree state
+ * or the child's own thread metadata) and returns `undefined` when the
+ * descriptor named nothing. It never falls back to another child's model, the
+ * parent's model, the configured default, or a parsed title.
+ */
+export function deriveChildOverlayIdentity(
+  child: ChildOverlayChild,
+): ChildOverlayIdentity | undefined {
+  const identity: ChildOverlayIdentity = {
+    agentName: child.agentName,
+    parentAgentName: child.parentAgentName,
+    role: child.role,
+    model: child.model,
+    reasoning: child.reasoning,
+    assignment: child.assignment,
+    turn: child.turn,
+    queueDepth: child.queueDepth,
+    elapsedMs: child.elapsedMs,
+    usage: child.usage,
+  };
+  return Object.values(identity).some((value) => value !== undefined)
+    ? identity
+    : undefined;
+}
+
+/**
+ * Reads the parent's already-resolved plan breadcrumb (header row 2), or
+ * `undefined` when the parent tracks no active plan. Synchronous by design:
+ * a repaint must never start a plan lookup of its own.
+ */
+export type ChildOverlayPlanContextPort = () =>
+  | ChildOverlayPlanContext
+  | undefined;
+
+/**
+ * Reads one breadcrumb port, isolating a throwing host: a failed ambient
+ * lookup clears the breadcrumb and never the inspector around it.
+ */
+export function readChildOverlayPlanContext(
+  port: ChildOverlayPlanContextPort | undefined,
+): ChildOverlayPlanContext | undefined {
+  if (port === undefined) return undefined;
+  return Result.fromThrowable(port, () => undefined)().match(
+    (context) => context,
+    () => undefined,
+  );
+}
+
 export function deriveChildOverlayTelemetry(
   usage: PiChildUsageReport | undefined,
   child: ChildOverlayChild,

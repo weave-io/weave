@@ -115,7 +115,9 @@ import type {
   PiNativeSessionStore,
 } from "./child-native-sessions.js";
 import {
+  type ChildOverlayChild,
   type ChildOverlayFallbackRequired,
+  type ChildOverlayPlanContext,
   createChildOverlayController,
   createChildOverlayCustomComponent,
   createReadSessionEntryPageOverlaySource,
@@ -2101,6 +2103,89 @@ function applyActivePlanSurfaces(
     WEAVE_WORKFLOW_TASK_STATUS_KEY,
     renderWorkflowTaskFooter({ activeTask, theme: ctx.ui.theme }),
   );
+}
+
+/**
+ * Narrows one controller descriptor to the overlay's own bounded child shape.
+ *
+ * This is the source boundary: only path-free identity, run, and operational
+ * facts cross it. `sessionRef` and every other storage identity stay behind
+ * it by omission, and each optional fact is copied only when the controller
+ * proved it, so an unknown reaches the inspector as an absence.
+ */
+function toChildOverlayDescriptor(
+  descriptor: PiOverlayChildDescriptor,
+): ChildOverlayChild {
+  return {
+    childId: descriptor.childId,
+    threadId: descriptor.threadId,
+    ...(descriptor.parentChildId === undefined
+      ? {}
+      : { parentChildId: descriptor.parentChildId }),
+    status: descriptor.status,
+    title: descriptor.title,
+    generationId: descriptor.generationId,
+    runs: descriptor.runs.map((run) => ({
+      run: run.run,
+      action: run.action,
+      ...(run.startedAt === undefined ? {} : { startedAt: run.startedAt }),
+      ...(run.priorOutcome === undefined
+        ? {}
+        : { priorOutcome: run.priorOutcome }),
+      ...(run.initiator === undefined ? {} : { initiator: run.initiator }),
+      ...(run.model === undefined ? {} : { model: run.model }),
+      ...(run.reasoning === undefined ? {} : { reasoning: run.reasoning }),
+    })),
+    branchIds: [...descriptor.branchIds],
+    descendantChildIds: [...descriptor.descendantChildIds],
+    ...(descriptor.agentName === undefined
+      ? {}
+      : { agentName: descriptor.agentName }),
+    ...(descriptor.parentAgentName === undefined
+      ? {}
+      : { parentAgentName: descriptor.parentAgentName }),
+    ...(descriptor.role === undefined ? {} : { role: descriptor.role }),
+    ...(descriptor.model === undefined ? {} : { model: descriptor.model }),
+    ...(descriptor.reasoning === undefined
+      ? {}
+      : { reasoning: descriptor.reasoning }),
+    ...(descriptor.assignment === undefined
+      ? {}
+      : { assignment: descriptor.assignment }),
+    ...(descriptor.turn === undefined ? {} : { turn: descriptor.turn }),
+    ...(descriptor.queueDepth === undefined
+      ? {}
+      : { queueDepth: descriptor.queueDepth }),
+    ...(descriptor.elapsedMs === undefined
+      ? {}
+      : { elapsedMs: descriptor.elapsedMs }),
+    ...(descriptor.usage === undefined
+      ? {}
+      : { usage: { ...descriptor.usage } }),
+  };
+}
+
+/**
+ * Projects the parent's own plan breadcrumb for the child inspector header.
+ *
+ * Reads only an already-resolved `ActivePlanView`, so it never starts a plan
+ * lookup and can never disagree with the plan widget: an empty, failed, or
+ * terminal resolution yields `undefined` and the header simply omits row 2.
+ * The subtask is present only when the active task really is a child task.
+ */
+function readActivePlanBreadcrumb(
+  view: ActivePlanView | undefined,
+): ChildOverlayPlanContext | undefined {
+  if (view === undefined || view.kind !== "active") return undefined;
+  const task = view.activeTask;
+  if (task === undefined) return { planName: view.planName };
+  return {
+    planName: view.planName,
+    taskOrdinal: task.parentOrdinal,
+    taskTotal: task.totalParentCount,
+    taskTitle: task.parentTitle,
+    ...(task.isChild ? { subtask: task.taskTitle } : {}),
+  };
 }
 
 /**
@@ -4873,6 +4958,12 @@ export function createPiExtension(
                 ?.delegationTargets.find(
                   (target) => target.name === targetAgentName,
                 ),
+            // The inspector's `role` fact. An agent this session did not
+            // configure resolves to `undefined`, so the header prints no role
+            // rather than inventing one.
+            resolveAgentRole: (agentName) =>
+              configActivation.descriptors.byName.get(agentName)?.category
+                ?.name,
             buildBootstrap: (target, childId, context) =>
               buildChildBootstrapBody(
                 configActivation.descriptors.byName,
@@ -4964,35 +5055,7 @@ export function createPiExtension(
                 }
                 return ctrl
                   .resolveOverlayChild(id)
-                  .map((descriptor) => ({
-                    childId: descriptor.childId,
-                    threadId: descriptor.threadId,
-                    ...(descriptor.parentChildId === undefined
-                      ? {}
-                      : { parentChildId: descriptor.parentChildId }),
-                    status: descriptor.status,
-                    title: descriptor.title,
-                    generationId: descriptor.generationId,
-                    runs: descriptor.runs.map((run) => ({
-                      run: run.run,
-                      action: run.action,
-                      ...(run.startedAt === undefined
-                        ? {}
-                        : { startedAt: run.startedAt }),
-                      ...(run.priorOutcome === undefined
-                        ? {}
-                        : { priorOutcome: run.priorOutcome }),
-                      ...(run.initiator === undefined
-                        ? {}
-                        : { initiator: run.initiator }),
-                      ...(run.model === undefined ? {} : { model: run.model }),
-                      ...(run.reasoning === undefined
-                        ? {}
-                        : { reasoning: run.reasoning }),
-                    })),
-                    branchIds: [...descriptor.branchIds],
-                    descendantChildIds: [...descriptor.descendantChildIds],
-                  }))
+                  .map(toChildOverlayDescriptor)
                   .mapErr((failure) =>
                     mapPiDelegationFailureToOverlaySourceError(failure, id),
                   );
@@ -5040,6 +5103,10 @@ export function createPiExtension(
                   .mapErr(() => ({ type: "MutationFailed" as const }));
               },
             },
+            // Header row 2's breadcrumb. It reads only the one already-resolved
+            // active-plan view `active-plan-ui-state.ts` owns, and never starts
+            // a plan lookup of its own from a repaint.
+            () => readActivePlanBreadcrumb(activePlanUiState.view()),
           );
         }
 

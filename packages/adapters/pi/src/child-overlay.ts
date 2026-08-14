@@ -190,6 +190,18 @@ export function createMemoryChildOverlaySource(
         runs: child.runs,
         branchIds: child.branchIds,
         descendantChildIds: child.descendantChildIds,
+        // Identity/operational facts are copied verbatim; the strict schema
+        // still decides which of them are admissible.
+        agentName: child.agentName,
+        parentAgentName: child.parentAgentName,
+        role: child.role,
+        model: child.model,
+        reasoning: child.reasoning,
+        assignment: child.assignment,
+        turn: child.turn,
+        queueDepth: child.queueDepth,
+        elapsedMs: child.elapsedMs,
+        usage: child.usage,
       });
       if (!parsed.success) {
         return errAsync({
@@ -405,20 +417,24 @@ export {
   mergeChildOverlayReplaySteps,
   transcriptFromOverlayEntries,
 } from "./child-overlay-replay.js";
+export type { ChildOverlayPlanContextPort } from "./child-overlay-telemetry.js";
 export type {
   ChildOverlayAnchor,
   ChildOverlayChild,
   ChildOverlayConfig,
+  ChildOverlayDescriptorUsage,
   ChildOverlayEntry,
   ChildOverlayEntryKind,
   ChildOverlayError,
   ChildOverlayFallbackMetadata,
   ChildOverlayFallbackReason,
   ChildOverlayFallbackRequired,
+  ChildOverlayIdentity,
   ChildOverlayInputOutcome,
   ChildOverlayMappingError,
   ChildOverlayMutationPort,
   ChildOverlayPage,
+  ChildOverlayPlanContext,
   ChildOverlayReplayStep,
   ChildOverlayRunDivider,
   ChildOverlaySourceError,

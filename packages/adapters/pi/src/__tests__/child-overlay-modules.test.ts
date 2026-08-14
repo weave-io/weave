@@ -3,8 +3,9 @@
  *
  * The overlay runtime is intentionally layered:
  *
- *   child-overlay-types  →  child-overlay-scroll   →  child-overlay-controller
- *                        →  child-overlay-replay   →  child-overlay-component
+ *   child-overlay-types  →  child-overlay-scroll   →  child-overlay-window
+ *                        →  child-overlay-replay   →  child-overlay-controller
+ *                                                  →  child-overlay-component
  *                                                  →  child-overlay (facade)
  *
  * Imports must only flow left to right. Nothing may import the facade, and no
@@ -23,6 +24,7 @@ const LAYERS = [
   "child-overlay-telemetry.ts",
   "child-overlay-scroll.ts",
   "child-overlay-replay.ts",
+  "child-overlay-window.ts",
   "child-overlay-controller.ts",
   "child-overlay-component.ts",
   "child-overlay.ts",
