@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 291 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~31,500 tokens. Without it, AI exploration would cost ~94,500 tokens. **Saves ~63,100 tokens per conversation.**
-> **Last scanned:** 2026-08-14 01:11 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 294 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~31,600 tokens. Without it, AI exploration would cost ~95,300 tokens. **Saves ~63,600 tokens per conversation.**
+> **Last scanned:** 2026-08-14 19:15 — re-run after significant changes
 
 ---
 
@@ -518,6 +518,7 @@
   - type WeaveCommandClassification
   - const WEAVE_INSPECT_COMMAND_NAME
   - _...7 more_
+- `packages/adapters/pi/src/config-activation-diagnostics.ts` — function projectConfigLoadIssues: (errors, projectRoot) => readonly string[]
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -525,7 +526,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...7 more_
+  - _...8 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -707,8 +708,8 @@
   - function fitLineToWidth: (line, width) => string
   - function fitLineWithSuffix: (head, suffix, width) => string
   - function fitLinesToWidth: (lines, width) => string[]
-  - function fitRuleToWidth: (rule, width, cap) => string
-  - _...2 more_
+  - function measureWidth: (text) => number
+  - _...6 more_
 - `packages/adapters/pi/src/repeated-settlement-validator.ts`
   - function validateRepeatedSettlements: (options) => ResultAsync<
   - interface PiSettlementValidationRun
@@ -794,7 +795,23 @@
   - interface PiModelInfo
   - interface PiModelRegistry
   - interface PiSkillInfo
-  - _...37 more_
+  - _...38 more_
+- `packages/adapters/pi/src/ui-paint.ts`
+  - function makePaint: (theme) => Paint
+  - function plainPaint: () => Paint
+  - function toneInk: (tone) => Ink
+  - function paintTone: (paint, tone, text) => string
+  - type Ink
+  - type Tone
+  - _...1 more_
+- `packages/adapters/pi/src/ui-rows.ts`
+  - function safeText: (raw) => string
+  - function safeTrim: (raw) => string
+  - function seg: (ink, text) => Seg
+  - function glyph: (ink, text) => Seg
+  - function fill: (ink, character, count) => Seg
+  - function rowWidth: (row) => number
+  - _...20 more_
 - `packages/adapters/pi/src/workflow-commands.ts`
   - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
   - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>
@@ -1785,7 +1802,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/adapters/pi/src/types.ts` — imported by **45** files
+- `packages/adapters/pi/src/types.ts` — imported by **47** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/adapters/pi/src/strict-json.ts` — imported by **28** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
@@ -1808,7 +1825,7 @@
 
 ## Import Map (who imports what)
 
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +40 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`, `packages/adapters/pi/src/__tests__/child-native-components.test.ts` +42 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts` +23 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
@@ -1832,14 +1849,14 @@
 - `\x1b[1;2:1B` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
 - `\x1b[5~` [event] — `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`
 - `\x1b[6~` [event] — `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`
-- `session_start` [event] — `prototypes/weave-pi-tui-grilling.ts`
+- `session_start` [event] — `prototypes/weave-delegate-tool-grilling.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 319 test files found
+> 321 test files found
 
 ---
 

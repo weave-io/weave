@@ -950,5 +950,35 @@ export type {
   PiUiDialogOptions,
   PiUiNotifyLevel,
   PiUiPort,
+  PiUiThemeBgColor,
+  PiUiThemeFgColor,
+  PiUiThemePort,
 } from "./types.js";
 export { projectPiProviderEvent } from "./types.js";
+export type { Ink, Paint, Tone } from "./ui-paint.js";
+export { makePaint, paintTone, plainPaint, toneInk } from "./ui-paint.js";
+export type { RailGeometry, Row, Seg, UiLayoutError } from "./ui-rows.js";
+export {
+  cell,
+  clipRow,
+  emit,
+  fill,
+  fitRow,
+  fitTo,
+  glyph,
+  joinColumns,
+  joinFit,
+  padRow,
+  RAIL_GEOMETRY,
+  reserveRows,
+  rowLR,
+  rowWidth,
+  safeText,
+  safeTrim,
+  seg,
+  splitRail,
+  stackSections,
+  TRANSCRIPT_MIN,
+  wrapIndented,
+  wrapPlain,
+} from "./ui-rows.js";

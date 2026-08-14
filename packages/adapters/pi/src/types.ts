@@ -215,23 +215,44 @@ export type PiUiThemeBgColor =
   | "toolSuccessBg"
   | "toolErrorBg";
 
-/** Narrow projection of Pi's theme helpers used by the active-agent badge. */
+/**
+ * Foreground tokens every Pi theme defines, so every caller may use them
+ * unconditionally.
+ *
+ * `borderAccent`, `customMessageLabel` and `thinkingText` are the tokens the
+ * finalized Weave surfaces use for, respectively, the one high-contrast
+ * overlay boundary, the alternate identity ink (badges and labels), and
+ * reasoning summaries. They are listed here rather than approximated with
+ * `accent`/`muted` so a user's theme keeps control of those three roles.
+ *
+ * `searchMatchText` is one of Pi's two *optional* theme colours, but it is
+ * still an ordinary `ThemeColor` accepted by `Theme.fg`, not a separate
+ * helper method. Pi degrades it deterministically inside the host: a theme
+ * that does not define `searchMatchText` resolves it to `colors.text`, so a
+ * caller may always pass the token unconditionally. That also keeps this
+ * port narrow — a simple stand-in only has to implement `fg`, with no
+ * special-cased search method to model.
+ */
+export type PiUiThemeFgColor =
+  | "accent"
+  | "muted"
+  | "text"
+  | "warning"
+  | "error"
+  | "success"
+  | "dim"
+  | "border"
+  | "borderMuted"
+  | "borderAccent"
+  | "customMessageLabel"
+  | "thinkingText"
+  | "searchMatchText"
+  | "toolTitle"
+  | "toolOutput";
+
+/** Narrow projection of Pi's theme helpers used by the Weave UI surfaces. */
 export interface PiUiThemePort {
-  fg(
-    color:
-      | "accent"
-      | "muted"
-      | "text"
-      | "warning"
-      | "error"
-      | "success"
-      | "dim"
-      | "border"
-      | "borderMuted"
-      | "toolTitle"
-      | "toolOutput",
-    text: string,
-  ): string;
+  fg(color: PiUiThemeFgColor, text: string): string;
   bold(text: string): string;
   /**
    * Optional deliberately: the real Pi `Theme` always provides `bg()`, but
@@ -239,6 +260,16 @@ export interface PiUiThemePort {
    * must degrade to foreground-only rendering when it is absent.
    */
   bg?(color: PiUiThemeBgColor, text: string): string;
+  /**
+   * Optional deliberately: the real Pi `Theme` provides `inverse()`, but a
+   * simpler stand-in may not.
+   *
+   * Documented degradation: when it is absent, a caller falls back to
+   * `bold(…)`. An inverse run is always a short badge or alert pair, so bold
+   * keeps it legible without inventing a background colour the theme did not
+   * choose.
+   */
+  inverse?(text: string): string;
 }
 
 /**

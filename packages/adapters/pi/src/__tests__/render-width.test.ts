@@ -1,10 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
+  clampToWidth,
   fitLinesToWidth,
   fitLineToWidth,
   fitLineWithSuffix,
   fitRuleToWidth,
+  measureWidth,
+  padLineToWidth,
+  truncatePlainToWidth,
 } from "../render-width.js";
 
 /** Exact crash shape: adapter-composed header of 115 columns on a 51-col TUI. */
@@ -113,5 +117,102 @@ describe("fitRuleToWidth", () => {
     expect(visibleWidth(fitRuleToWidth("─", 51, 40))).toBe(40);
     expect(visibleWidth(fitRuleToWidth("─", 10, 40))).toBe(10);
     expect(fitRuleToWidth("─", 0, 40)).toBe("");
+  });
+});
+
+/** Hostile and wide-grapheme inputs the shared row layer must survive. */
+const WIDTH_SAMPLES: readonly string[] = [
+  "plain ascii",
+  "\u001B[31mred\u001B[0m and \u001B[1mbold\u001B[0m",
+  "宽字宽字宽字宽字",
+  "🚀 emoji 🚀 run 🚀",
+  "combining a\u0301 mark",
+  "",
+];
+
+describe("measureWidth", () => {
+  it("measures visible columns, ignoring ANSI and paying for wide graphemes", () => {
+    expect(measureWidth("abc")).toBe(3);
+    expect(measureWidth("\u001B[31mabc\u001B[0m")).toBe(3);
+    expect(measureWidth("宽字")).toBe(4);
+    expect(measureWidth("")).toBe(0);
+  });
+});
+
+describe("padLineToWidth", () => {
+  it("returns exactly the requested width for every sample, widths 1..200", () => {
+    for (const sample of WIDTH_SAMPLES) {
+      for (let width = 1; width <= 200; width += 1) {
+        expect(visibleWidth(padLineToWidth(sample, width))).toBe(width);
+      }
+    }
+  });
+
+  it("returns an empty string for a non-positive or non-finite width", () => {
+    expect(padLineToWidth("abc", 0)).toBe("");
+    expect(padLineToWidth("abc", -4)).toBe("");
+    expect(padLineToWidth("abc", Number.NaN)).toBe("");
+  });
+});
+
+describe("truncatePlainToWidth", () => {
+  it("never exceeds the requested width, widths 1..200", () => {
+    for (const sample of WIDTH_SAMPLES) {
+      for (let width = 1; width <= 200; width += 1) {
+        expect(
+          visibleWidth(truncatePlainToWidth(sample, width)),
+        ).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
+  it("adds no escape sequence to already-plain text", () => {
+    for (let width = 1; width <= 40; width += 1) {
+      expect(truncatePlainToWidth("宽字宽字宽字宽字", width)).not.toContain(
+        "\u001B",
+      );
+      expect(truncatePlainToWidth("🚀🚀🚀🚀🚀🚀", width)).not.toContain(
+        "\u001B",
+      );
+    }
+  });
+
+  it("returns the text unchanged when it already fits", () => {
+    expect(truncatePlainToWidth("abc", 10)).toBe("abc");
+    expect(truncatePlainToWidth("宽字", 4)).toBe("宽字");
+  });
+
+  it("never splits a wide grapheme", () => {
+    // Three columns cannot hold two double-width glyphs, so one plus the
+    // ellipsis is the honest answer.
+    expect(truncatePlainToWidth("宽字宽", 3)).toBe("宽…");
+  });
+
+  it("degrades to the suffix alone when the suffix owns the whole budget", () => {
+    expect(truncatePlainToWidth("abcdef", 1)).toBe("…");
+    expect(truncatePlainToWidth("abcdef", 1, "..")).toBe(".");
+  });
+
+  it("returns an empty string for a non-positive or non-finite width", () => {
+    expect(truncatePlainToWidth("abc", 0)).toBe("");
+    expect(truncatePlainToWidth("abc", Number.NaN)).toBe("");
+  });
+});
+
+describe("clampToWidth", () => {
+  it("is a no-op when the text already fits", () => {
+    expect(clampToWidth("abc", 10)).toBe("abc");
+  });
+
+  it("cuts an over-wide line down to the budget", () => {
+    for (let width = 1; width <= 60; width += 1) {
+      expect(
+        visibleWidth(clampToWidth("w".repeat(200), width)),
+      ).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it("returns an empty string when nothing can fit", () => {
+    expect(clampToWidth("abc", 0)).toBe("");
   });
 });

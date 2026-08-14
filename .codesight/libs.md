@@ -507,6 +507,7 @@
   - type WeaveCommandClassification
   - const WEAVE_INSPECT_COMMAND_NAME
   - _...7 more_
+- `packages/adapters/pi/src/config-activation-diagnostics.ts` — function projectConfigLoadIssues: (errors, projectRoot) => readonly string[]
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -514,7 +515,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...7 more_
+  - _...8 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -696,8 +697,8 @@
   - function fitLineToWidth: (line, width) => string
   - function fitLineWithSuffix: (head, suffix, width) => string
   - function fitLinesToWidth: (lines, width) => string[]
-  - function fitRuleToWidth: (rule, width, cap) => string
-  - _...2 more_
+  - function measureWidth: (text) => number
+  - _...6 more_
 - `packages/adapters/pi/src/repeated-settlement-validator.ts`
   - function validateRepeatedSettlements: (options) => ResultAsync<
   - interface PiSettlementValidationRun
@@ -783,7 +784,23 @@
   - interface PiModelInfo
   - interface PiModelRegistry
   - interface PiSkillInfo
-  - _...37 more_
+  - _...38 more_
+- `packages/adapters/pi/src/ui-paint.ts`
+  - function makePaint: (theme) => Paint
+  - function plainPaint: () => Paint
+  - function toneInk: (tone) => Ink
+  - function paintTone: (paint, tone, text) => string
+  - type Ink
+  - type Tone
+  - _...1 more_
+- `packages/adapters/pi/src/ui-rows.ts`
+  - function safeText: (raw) => string
+  - function safeTrim: (raw) => string
+  - function seg: (ink, text) => Seg
+  - function glyph: (ink, text) => Seg
+  - function fill: (ink, character, count) => Seg
+  - function rowWidth: (row) => number
+  - _...20 more_
 - `packages/adapters/pi/src/workflow-commands.ts`
   - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
   - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>

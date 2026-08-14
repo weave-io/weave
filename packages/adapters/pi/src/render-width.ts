@@ -197,6 +197,72 @@ export function fitLinesToWidth(
 }
 
 /**
+ * Measures one line in visible terminal columns.
+ *
+ * The single measurement entry point for the adapter's UI layer, so ANSI cost
+ * and wide-grapheme cost are decided in exactly one place. `ui-rows.ts` builds
+ * every width decision on this rather than on `String.prototype.length`.
+ */
+export function measureWidth(text: string): number {
+  return visibleWidth(text);
+}
+
+/**
+ * Pads `text` on the right with spaces to exactly `width` visible columns.
+ *
+ * The text is fitted first, so the result is exactly `width` columns whenever
+ * `width` is a positive finite number, and `""` otherwise.
+ */
+export function padLineToWidth(text: string, width: number): string {
+  if (!Number.isFinite(width) || width <= 0) return "";
+  const max = Math.floor(width);
+  const fitted = fitLineToWidth(text, max);
+  const gap = Math.max(0, max - visibleWidth(fitted));
+  return gap > 0 ? `${fitted}${" ".repeat(gap)}` : fitted;
+}
+
+/**
+ * Cuts already-sanitized, ANSI-free text to `width` columns.
+ *
+ * {@link fitLineToWidth} is the right tool for painted text, because
+ * `truncateToWidth` emits reset sequences to keep styling correct. That is
+ * exactly wrong for the row layer, whose segments are ANSI-free by
+ * construction and whose callers assert on plain output: a reset sequence
+ * there would put escapes into text the layer promises has none.
+ *
+ * The walk is by code point, so a grapheme is never split, and the result is
+ * clamped like every other cut in this module.
+ */
+export function truncatePlainToWidth(
+  text: string,
+  width: number,
+  suffix = ELLIPSIS,
+): string {
+  if (!Number.isFinite(width) || width <= 0) return "";
+  const limit = Math.floor(width);
+  if (visibleWidth(text) <= limit) return text;
+
+  const suffixWidth = visibleWidth(suffix);
+  if (limit <= suffixWidth) return takeColumns(suffix, limit);
+
+  const head = takeColumns(text, limit - suffixWidth);
+  return clampToWidth(`${head}${suffix}`, limit);
+}
+
+/** Takes whole code points from `text` while they still fit in `columns`. */
+function takeColumns(text: string, columns: number): string {
+  let out = "";
+  let used = 0;
+  for (const character of text) {
+    const cost = visibleWidth(character);
+    if (used + cost > columns) break;
+    out += character;
+    used += cost;
+  }
+  return out;
+}
+
+/**
  * Fits a horizontal rule to at most `width` columns.
  *
  * `cap` keeps short rules short on wide terminals; the width bound always
@@ -221,7 +287,7 @@ export function fitRuleToWidth(
  * otherwise reach Pi as a fatal line. Each pass removes one column of budget,
  * so this terminates.
  */
-function clampToWidth(text: string, max: number): string {
+export function clampToWidth(text: string, max: number): string {
   let result = text;
   let budget = max;
   while (budget > 0 && visibleWidth(result) > max) {
