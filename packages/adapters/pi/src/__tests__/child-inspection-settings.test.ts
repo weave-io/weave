@@ -10,6 +10,7 @@ import {
   parsePiChildInspectionSettings,
   resolvePiChildInspectionSettings,
 } from "../child-inspection-settings.js";
+import { PI_CHILD_OVERLAY_ACTION_IDS } from "../child-overlay-keys.js";
 
 const configWithAdapters = (adapters: unknown): WeaveConfig =>
   ({ settings: { adapters } }) as WeaveConfig;
@@ -56,11 +57,7 @@ describe("Pi child-inspection settings", () => {
     const issues = result._unsafeUnwrapErr();
     expect(issues.length).toBe(3);
     expect(issues.map((issue) => issue.code)).toEqual(
-      expect.arrayContaining([
-        "invalid_type",
-        "too_big",
-        "unrecognized_keys",
-      ]),
+      expect.arrayContaining(["invalid_type", "too_big", "unrecognized_keys"]),
     );
     expect(formatPiChildInspectionSettingsIssues(issues)).toContain("typo");
     expect(formatPiChildInspectionSettingsIssues(issues)).toContain(
@@ -160,7 +157,9 @@ describe("Pi child-inspection settings", () => {
       },
     });
     expect(parsed.isOk()).toBe(true);
-    const overrides = childInspectionOverlayKeyOverrides(parsed._unsafeUnwrap());
+    const overrides = childInspectionOverlayKeyOverrides(
+      parsed._unsafeUnwrap(),
+    );
     expect(overrides.get("weave.child.picker.open")).toEqual(["ctrl+p"]);
     expect(overrides.get("weave.child.slot.1")).toEqual(["alt+1", "ctrl+1"]);
     expect(overrides.has("weave.child.sibling.next")).toBe(false);
@@ -170,7 +169,38 @@ describe("Pi child-inspection settings", () => {
     });
     expect(unknown.isErr()).toBe(true);
     expect(
-      unknown._unsafeUnwrapErr().some((issue) => issue.code === "unrecognized_keys"),
+      unknown
+        ._unsafeUnwrapErr()
+        .some((issue) => issue.code === "unrecognized_keys"),
     ).toBe(true);
+  });
+
+  it("rejects the removed compact-view toggle instead of silently ignoring it", () => {
+    // The compact view is gone and `Ctrl+O` is Pi's own action. A config that
+    // still rebinds the old id must fail loudly: parsing it into a binding
+    // nothing reads would leave the operator believing the key still works.
+    for (const removedId of [
+      "weave.child.view.toggle",
+      "weave.child.viewMode",
+      "weave.child.compact",
+    ]) {
+      const parsed = parsePiChildInspectionSettings({
+        keys: { [removedId]: "ctrl+o" },
+      });
+      expect(parsed.isErr()).toBe(true);
+      const issues = parsed._unsafeUnwrapErr();
+      expect(issues.some((issue) => issue.code === "unrecognized_keys")).toBe(
+        true,
+      );
+      // The rejection names the id, so the fix is obvious from the message.
+      expect(
+        issues.some((issue) => issue.keys?.includes(removedId) === true),
+      ).toBe(true);
+    }
+
+    // No declared action id can bind ctrl+o either.
+    expect(
+      PI_CHILD_OVERLAY_ACTION_IDS.some((id) => /view|compact/i.test(id)),
+    ).toBe(false);
   });
 });

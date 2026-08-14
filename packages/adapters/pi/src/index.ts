@@ -427,7 +427,6 @@ export type {
   PiChildOverlayKeyRegistration,
   PiChildOverlayShortcutRegistrar,
   PiChildOverlaySlotActionId,
-  PiChildOverlayViewModeRoute,
   PiKeybindingsConfigPort,
 } from "./child-overlay-keys.js";
 export {
@@ -446,14 +445,16 @@ export {
   createChildOverlayConflictPort,
   createChildOverlayKeyInterceptor,
   createChildOverlayKeyMachine,
+  isChildOverlaySearchOpenInput,
   isPiChildOverlayActionId,
   PI_CHILD_OVERLAY_ACTION_IDS,
   PI_CHILD_OVERLAY_ACTIONS,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
   PI_CHILD_OVERLAY_SEARCH_KEY,
+  PI_CHILD_OVERLAY_SEARCH_KEY_USUAL_OWNER,
+  PI_CHILD_OVERLAY_SEARCH_OPEN_KEY,
   PI_CHILD_OVERLAY_SEARCH_TRIGGER,
-  PI_CHILD_OVERLAY_VIEW_MODE_KEY,
-  PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
+  PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE,
   PI_NAMED_SHORTCUT_ACTIONS_CAPABILITY_ID,
   PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
   PiChildOverlayKeyMachine,
@@ -461,7 +462,6 @@ export {
   planChildOverlayKeyRegistrations,
   resolveChildOverlayCancelChoice,
   resolveChildOverlaySearchRoute,
-  resolveChildOverlayViewModeRoute,
 } from "./child-overlay-keys.js";
 export type {
   PiChildPickerActiveChild,

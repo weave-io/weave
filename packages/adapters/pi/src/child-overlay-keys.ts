@@ -112,19 +112,24 @@ export const PI_CHILD_OVERLAY_ACTIONS: readonly PiChildOverlayActionDefinition[]
       ] as const satisfies readonly KeyId[]),
       description: `Focus active child ${index + 1}`,
     })),
+    // Sibling defaults lead with keys Pi does not own. Pi binds `alt+left` /
+    // `alt+right` to `app.tree.foldOrUp` / `app.tree.unfoldOrDown` and pi-tui
+    // binds them to word motion, so they stay as SECOND candidates that the
+    // conflict port normally skips and reports; `alt+h` / `alt+l` are the keys
+    // a user can actually press.
     {
       id: "weave.child.sibling.previous",
       defaultKeys: Object.freeze([
-        "alt+left",
         "alt+h",
+        "alt+left",
       ] as const satisfies readonly KeyId[]),
       description: "Focus the previous sibling child",
     },
     {
       id: "weave.child.sibling.next",
       defaultKeys: Object.freeze([
-        "alt+right",
         "alt+l",
+        "alt+right",
       ] as const satisfies readonly KeyId[]),
       description: "Focus the next sibling child",
     },
@@ -992,15 +997,53 @@ export const PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC =
 // ---------------------------------------------------------------------------
 
 /**
- * Documented key that opens the transcript search prompt while the native
- * overlay owns the keyboard. `ctrl+f` is the standard "find" key and is not one
- * of Pi's own bindings, but the host may still claim it, so it is offered to
- * the same conflict port every other overlay key uses.
+ * The primary in-overlay search opener.
+ *
+ * `/` is a printable byte, so it is claimed ONLY while the overlay's draft is
+ * empty (the rule {@link PiChildOverlayKeyMachine.handleCancelKey} already
+ * applies to `q`). A reader typing a steer that contains a slash keeps typing
+ * it; the empty-draft gate is the whole guarantee.
+ *
+ * It is deliberately never registered as a Pi shortcut: `/` outside the
+ * mounted overlay keeps its ordinary meaning.
+ */
+export const PI_CHILD_OVERLAY_SEARCH_OPEN_KEY = "/" as const;
+
+/**
+ * Conflict-safe alias that opens the transcript search prompt while the native
+ * overlay owns the keyboard. `ctrl+f` is the standard "find" key, but Pi
+ * usually binds it to `tui.editor.cursorRight`, so it is offered to the same
+ * conflict port every other overlay key uses and dropped when it is taken.
+ * Losing the alias never loses search: {@link PI_CHILD_OVERLAY_SEARCH_OPEN_KEY}
+ * always opens it on an empty draft.
  */
 export const PI_CHILD_OVERLAY_SEARCH_KEY = "ctrl+f" as const;
 
 /** Raw terminal byte Pi delivers for {@link PI_CHILD_OVERLAY_SEARCH_KEY}. */
 export const PI_CHILD_OVERLAY_SEARCH_TRIGGER = "\x06" as const;
+
+/** The binding id that usually owns `ctrl+f` in a stock Pi keymap. */
+export const PI_CHILD_OVERLAY_SEARCH_KEY_USUAL_OWNER =
+  "tui.editor.cursorRight" as const;
+
+/**
+ * True when `data` should open in-overlay search right now.
+ *
+ * One predicate for both openers, so the empty-draft gate cannot drift between
+ * the component that reads keys and the tests that pin the rule.
+ *
+ * `aliasTrigger` is required and explicitly nullable: a disabled alias is a
+ * real, reachable state (the host owns `ctrl+f`), and a default value would
+ * make "disabled" indistinguishable from "not stated".
+ */
+export function isChildOverlaySearchOpenInput(
+  data: string,
+  draft: string,
+  aliasTrigger: string | undefined,
+): boolean {
+  if (data === PI_CHILD_OVERLAY_SEARCH_OPEN_KEY) return draft.length === 0;
+  return aliasTrigger !== undefined && data === aliasTrigger;
+}
 
 export interface PiChildOverlaySearchRoute {
   /** Raw key data that opens the search prompt, or undefined when skipped. */
@@ -1015,7 +1058,9 @@ export interface PiChildOverlaySearchRoute {
  * The overlay never registers this key as a Pi shortcut: it is consumed only
  * while the overlay is mounted and focused. When the host already binds the
  * key, the route is skipped and reported instead of being silently stolen, so
- * a conflict is always visible rather than changing the key's meaning.
+ * a conflict is always visible rather than changing the key's meaning. The
+ * report names {@link PI_CHILD_OVERLAY_SEARCH_KEY_USUAL_OWNER} so a reader can
+ * tell an ordinary Pi keymap from a surprising one.
  */
 export function resolveChildOverlaySearchRoute(
   conflicts?: PiChildOverlayKeybindingConflictPort,
@@ -1025,7 +1070,7 @@ export function resolveChildOverlaySearchRoute(
     return Object.freeze({
       trigger: undefined,
       diagnostics: Object.freeze([
-        `weave overlay search skipped key ${PI_CHILD_OVERLAY_SEARCH_KEY}: already bound to ${owner}`,
+        `weave overlay search skipped key ${PI_CHILD_OVERLAY_SEARCH_KEY}: already bound to ${owner} (usually ${PI_CHILD_OVERLAY_SEARCH_KEY_USUAL_OWNER}); ${PI_CHILD_OVERLAY_SEARCH_OPEN_KEY} still opens search on an empty draft`,
       ]),
     });
   }
@@ -1036,44 +1081,24 @@ export function resolveChildOverlaySearchRoute(
 }
 
 // ---------------------------------------------------------------------------
-// In-overlay compact view route (Task 7)
+// Deliberate non-claims
 // ---------------------------------------------------------------------------
 
 /**
- * Documented key that flips the mounted overlay between the full transcript
- * and the compact one-line projection.
+ * Keys the mounted overlay deliberately does NOT claim, and why.
  *
- * `ctrl+o` is not printable, so it can never be mistaken for draft text, and
- * it is offered to the same conflict port every other overlay key uses: when
- * the host already owns it, the route is skipped and reported instead of
- * stealing the key.
+ * Written down as one bounded line because every item is a decision a reader
+ * would otherwise read as a bug:
+ *
+ * - `Ctrl+O` is Pi's own tool-expand action. The overlay has a single view, so
+ *   there is no compact toggle to bind it to and Weave never registers it.
+ * - `Alt+A` / `Alt+T` are Weave's own agent / plan shortcuts, and Pi dispatches
+ *   extension shortcuts outside a focused `ui.custom` component, so they do not
+ *   route while the overlay is mounted. Closing the overlay restores them.
+ * - The mounted `ui.custom` component owns input for as long as it lives, and
+ *   Weave never calls `setEditorComponent` on the native route, so a foreign
+ *   primary editor (`pi-vim`) is neither replaced nor consulted while the
+ *   overlay is up.
  */
-export const PI_CHILD_OVERLAY_VIEW_MODE_KEY = "ctrl+o" as const;
-
-/** Raw terminal byte Pi delivers for {@link PI_CHILD_OVERLAY_VIEW_MODE_KEY}. */
-export const PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER = "\x0f" as const;
-
-export interface PiChildOverlayViewModeRoute {
-  /** Raw key data that toggles compact view, or undefined when skipped. */
-  readonly trigger: string | undefined;
-  /** Bounded diagnostic lines; one line when the host already owns the key. */
-  readonly diagnostics: readonly string[];
-}
-
-export function resolveChildOverlayViewModeRoute(
-  conflicts?: PiChildOverlayKeybindingConflictPort,
-): PiChildOverlayViewModeRoute {
-  const owner = conflicts?.ownerOf(PI_CHILD_OVERLAY_VIEW_MODE_KEY);
-  if (owner !== undefined) {
-    return Object.freeze({
-      trigger: undefined,
-      diagnostics: Object.freeze([
-        `weave overlay compact view skipped key ${PI_CHILD_OVERLAY_VIEW_MODE_KEY}: already bound to ${owner}`,
-      ]),
-    });
-  }
-  return Object.freeze({
-    trigger: PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
-    diagnostics: Object.freeze([]),
-  });
-}
+export const PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE =
+  "Weave does not claim Ctrl+O (Pi's tool expand) while the child overlay is mounted; Alt+A and Alt+T do not route because Pi dispatches extension shortcuts outside a focused ui.custom component; the mounted ui.custom overlay owns input and Weave never calls setEditorComponent, so pi-vim keeps the primary editor." as const;

@@ -1,0 +1,229 @@
+/**
+ * The two modal keyboards the mounted child overlay owns: in-overlay search
+ * and the cancel confirmation.
+ *
+ * Both are pure: a key plus the current mode yields the next mode and an
+ * effect for the component to run. Keeping them out of the component is what
+ * lets the precedence chain
+ *
+ *     cancel confirmation › search › overlay keys › draft editor
+ *
+ * be read as four ordered calls rather than as four inlined state machines,
+ * and it lets every key rule be asserted without a TUI, a controller, or a
+ * rendered frame.
+ *
+ * Neither machine ever reports a key as unclaimed once its mode is open: a
+ * modal surface that leaks keys to the layer below is not modal.
+ */
+import { matchesKey } from "@earendil-works/pi-tui";
+import {
+  isChildOverlaySearchOpenInput,
+  PI_CHILD_OVERLAY_SEARCH_OPEN_KEY,
+} from "./child-overlay-keys.js";
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/** Longest search query the prompt accepts before it stops taking input. */
+export const OVERLAY_SEARCH_QUERY_MAX = 120;
+
+/** Raw terminal data the search prompt understands. */
+const SEARCH_KEYS = {
+  commit: ["\r", "\n"],
+  cancel: "\x1b",
+  backspace: ["\x7f", "\b"],
+  /** `n` and `j` walk forward; `Down` is matched by key identity, not by byte. */
+  nextMatch: ["n", "j"],
+  /** `N` and `k` walk back; `Up` is matched by key identity, not by byte. */
+  previousMatch: ["N", "k"],
+} as const;
+
+/**
+ * How the overlay is routing keyboard input.
+ *
+ * `off` is the ordinary overlay; `typing` collects a query and consumes every
+ * key; `navigate` walks committed matches. Neither open state ever forwards a
+ * key to the draft editor, the key interceptor, or Pi.
+ */
+export type OverlaySearchMode = "off" | "typing" | "navigate";
+
+export interface OverlaySearchState {
+  readonly mode: OverlaySearchMode;
+  /** The query being typed, or the last one typed while navigating. */
+  readonly query: string;
+  /** Signed match ordinal; the caller wraps it against the live match list. */
+  readonly matchIndex: number;
+  /** Enter latched a jump, so the transcript stays anchored on the match. */
+  readonly accepted: boolean;
+}
+
+export const CLOSED_OVERLAY_SEARCH: OverlaySearchState = Object.freeze({
+  mode: "off",
+  query: "",
+  matchIndex: 0,
+  accepted: false,
+});
+
+const OPEN_OVERLAY_SEARCH: OverlaySearchState = Object.freeze({
+  mode: "typing",
+  query: "",
+  matchIndex: 0,
+  accepted: false,
+});
+
+export type OverlaySearchEffect =
+  /** Consumed, and nothing on screen changed. */
+  | { readonly kind: "none" }
+  /** Consumed; the surface must repaint. */
+  | { readonly kind: "repaint" }
+  /** Run this query, then focus the first match. */
+  | { readonly kind: "run"; readonly query: string }
+  /** Focus the match the new `matchIndex` points at. */
+  | { readonly kind: "focus" }
+  /** Leave search; the query is dropped with it. */
+  | { readonly kind: "close" };
+
+export interface OverlaySearchTransition {
+  /** False only when search is closed and the key is not one of its openers. */
+  readonly claimed: boolean;
+  readonly state: OverlaySearchState;
+  readonly effect: OverlaySearchEffect;
+}
+
+const unclaimed = (state: OverlaySearchState): OverlaySearchTransition =>
+  Object.freeze({ claimed: false, state, effect: { kind: "none" } as const });
+
+const claimed = (
+  state: OverlaySearchState,
+  effect: OverlaySearchEffect,
+): OverlaySearchTransition => Object.freeze({ claimed: true, state, effect });
+
+/** Printable ASCII only; control sequences never edit the query. */
+const isQueryText = (data: string): boolean =>
+  data.length > 0 && /^[\x20-\x7e]+$/.test(data);
+
+/**
+ * One key against the search keyboard.
+ *
+ * `draft` gates the printable opener: `/` opens search only on an empty draft,
+ * so a reader typing a steer that contains a slash keeps typing it.
+ * `aliasTrigger` is the resolved `Ctrl+F` alias, or `undefined` when the host
+ * already owns that key — which never removes search, because `/` still opens
+ * it.
+ */
+export function stepOverlaySearch(
+  state: OverlaySearchState,
+  data: string,
+  draft: string,
+  aliasTrigger: string | undefined,
+): OverlaySearchTransition {
+  if (state.mode === "off") {
+    if (!isChildOverlaySearchOpenInput(data, draft, aliasTrigger)) {
+      return unclaimed(state);
+    }
+    return claimed(OPEN_OVERLAY_SEARCH, { kind: "repaint" });
+  }
+  // Escape closes SEARCH ONLY. The overlay stays open and the child keeps
+  // running; that is the whole reason search outranks the overlay keys.
+  if (data === SEARCH_KEYS.cancel || matchesKey(data, "escape")) {
+    return claimed(CLOSED_OVERLAY_SEARCH, { kind: "close" });
+  }
+  if (aliasTrigger !== undefined && data === aliasTrigger) {
+    // Re-opening from navigate mode edits the committed query again.
+    return claimed({ ...state, mode: "typing" }, { kind: "repaint" });
+  }
+  if (state.mode === "navigate") {
+    if (
+      SEARCH_KEYS.nextMatch.includes(data as never) ||
+      matchesKey(data, "down")
+    ) {
+      return claimed(
+        { ...state, matchIndex: state.matchIndex + 1 },
+        { kind: "focus" },
+      );
+    }
+    if (
+      SEARCH_KEYS.previousMatch.includes(data as never) ||
+      matchesKey(data, "up")
+    ) {
+      return claimed(
+        { ...state, matchIndex: state.matchIndex - 1 },
+        { kind: "focus" },
+      );
+    }
+    // Every other key stays consumed: search owns the keyboard until Escape.
+    return claimed(state, { kind: "none" });
+  }
+  if (SEARCH_KEYS.commit.includes(data as never)) {
+    return claimed(
+      { ...state, mode: "navigate", matchIndex: 0, accepted: true },
+      { kind: "run", query: state.query },
+    );
+  }
+  if (SEARCH_KEYS.backspace.includes(data as never)) {
+    return claimed(
+      { ...state, query: state.query.slice(0, -1) },
+      { kind: "repaint" },
+    );
+  }
+  if (isQueryText(data) && state.query.length < OVERLAY_SEARCH_QUERY_MAX) {
+    return claimed(
+      {
+        ...state,
+        query: `${state.query}${data}`.slice(0, OVERLAY_SEARCH_QUERY_MAX),
+      },
+      { kind: "repaint" },
+    );
+  }
+  return claimed(state, { kind: "none" });
+}
+
+/** The query the rail should print for `state`, given the committed one. */
+export function overlaySearchQuery(
+  state: OverlaySearchState,
+  committed: string,
+): string {
+  return state.mode === "typing" ? state.query : committed;
+}
+
+// ---------------------------------------------------------------------------
+// Cancel confirmation
+// ---------------------------------------------------------------------------
+
+/** Raw terminal data the confirmation understands. */
+const CANCEL_CONFIRM_KEYS = {
+  yes: ["y", "Y"],
+  no: ["n", "N"],
+} as const;
+
+export type OverlayCancelConfirmAnswer =
+  | "confirm"
+  | "dismiss"
+  /** Consumed without answering: a destructive question is never guessed at. */
+  | "swallow";
+
+/**
+ * One key against the open cancel confirmation.
+ *
+ * The confirmation consumes every key it is open for, which is what makes `n`
+ * unambiguously NO and `y` unambiguously YES: neither byte can reach search
+ * (where `n` steps matches), the overlay keys, or the draft editor while the
+ * question is up. Escape dismisses the question and never closes the overlay.
+ */
+export function answerOverlayCancelConfirm(
+  data: string,
+): OverlayCancelConfirmAnswer {
+  if (CANCEL_CONFIRM_KEYS.yes.includes(data as never)) return "confirm";
+  if (
+    CANCEL_CONFIRM_KEYS.no.includes(data as never) ||
+    data === SEARCH_KEYS.cancel ||
+    matchesKey(data, "escape")
+  ) {
+    return "dismiss";
+  }
+  return "swallow";
+}
+
+/** Documented openers, for help text and tests. */
+export const OVERLAY_SEARCH_OPEN_KEY = PI_CHILD_OVERLAY_SEARCH_OPEN_KEY;

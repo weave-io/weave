@@ -686,11 +686,8 @@ export class ChildOverlayController {
       });
     }
 
-    if (matchesKey(data, "ctrl+o") || data === "\x0f") {
-      const toggled = this.toggleViewMode();
-      if (toggled.isErr()) return errAsync(toggled.error);
-      return okAsync({ kind: "view-mode", viewMode: toggled.value.viewMode });
-    }
+    // `Ctrl+O` is deliberately absent: it is Pi's own tool-expand action, and
+    // the overlay has a single view, so Weave claims it nowhere.
 
     if (data === "\x1b[1;3D" || matchesKey(data, "alt+left")) {
       const nav = this.navigateRun(-1);

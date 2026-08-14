@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 299 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~32,400 tokens. Without it, AI exploration would cost ~96,600 tokens. **Saves ~64,200 tokens per conversation.**
-> **Last scanned:** 2026-08-14 21:54 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 300 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~32,500 tokens. Without it, AI exploration would cost ~96,900 tokens. **Saves ~64,400 tokens per conversation.**
+> **Last scanned:** 2026-08-14 22:17 — re-run after significant changes
 
 ---
 
@@ -325,7 +325,7 @@
   - function formatOverlayCost: (cost) => string | undefined
   - function childOverlaySettlementFacts: (view) => OverlaySettlementFacts
   - function childOverlayName: (view) => string
-  - _...8 more_
+  - _...7 more_
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string
@@ -334,6 +334,14 @@
   - function piChildOverlayOpenErrorReasonCodeFromUnknown: (error) => PiChildOverlayFallbackReasonCode
   - type ChildOverlayOpenTerminalError
   - _...4 more_
+- `packages/adapters/pi/src/child-overlay-input-modes.ts`
+  - function stepOverlaySearch: (state, data, draft, aliasTrigger) => OverlaySearchTransition
+  - function overlaySearchQuery: (state, committed) => string
+  - function answerOverlayCancelConfirm: (data) => OverlayCancelConfirmAnswer
+  - interface OverlaySearchState
+  - interface OverlaySearchTransition
+  - type OverlaySearchMode
+  - _...5 more_
 - `packages/adapters/pi/src/child-overlay-keys.ts`
   - function isPiChildOverlayActionId: (value) => value is PiChildOverlayActionId
   - function childOverlayActionFromId: (id) => PiChildOverlayAction | undefined
@@ -569,7 +577,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...8 more_
+  - _...7 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration

@@ -314,7 +314,7 @@
   - function formatOverlayCost: (cost) => string | undefined
   - function childOverlaySettlementFacts: (view) => OverlaySettlementFacts
   - function childOverlayName: (view) => string
-  - _...8 more_
+  - _...7 more_
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string
@@ -323,6 +323,14 @@
   - function piChildOverlayOpenErrorReasonCodeFromUnknown: (error) => PiChildOverlayFallbackReasonCode
   - type ChildOverlayOpenTerminalError
   - _...4 more_
+- `packages/adapters/pi/src/child-overlay-input-modes.ts`
+  - function stepOverlaySearch: (state, data, draft, aliasTrigger) => OverlaySearchTransition
+  - function overlaySearchQuery: (state, committed) => string
+  - function answerOverlayCancelConfirm: (data) => OverlayCancelConfirmAnswer
+  - interface OverlaySearchState
+  - interface OverlaySearchTransition
+  - type OverlaySearchMode
+  - _...5 more_
 - `packages/adapters/pi/src/child-overlay-keys.ts`
   - function isPiChildOverlayActionId: (value) => value is PiChildOverlayActionId
   - function childOverlayActionFromId: (id) => PiChildOverlayAction | undefined
@@ -558,7 +566,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...8 more_
+  - _...7 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration

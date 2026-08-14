@@ -30,6 +30,7 @@ import {
   createChildOverlayKeyInterceptor,
   createChildOverlayKeyMachine,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
+  PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE,
   PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
   type PiChildOverlayAction,
   type PiChildOverlayHierarchyNode,
@@ -211,7 +212,12 @@ export function createChildOverlayKeysCell(
     interceptor: undefined,
     terminalInput: undefined,
     terminalInputHost: undefined,
-    diagnostics: Object.freeze([PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC]),
+    // The non-claim note ships with every generation: which keys Weave leaves
+    // alone is exactly as operable a fact as which keys it took.
+    diagnostics: Object.freeze([
+      PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
+      PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE,
+    ]),
     generationId: undefined,
   };
 }
@@ -329,6 +335,14 @@ export interface PiChildInspectionRuntime {
   ) => readonly PiChildOverlayHierarchyNode[];
   /** Activates the inspection view for one child, when one is installed. */
   readonly focusOverlayChild: (childId: string) => void;
+  /**
+   * Cancels a child subtree that the in-overlay `y` / `n` confirmation just
+   * approved. The mounted overlay owns the question; this owns the effect.
+   */
+  readonly cancelOverlaySubtree: (
+    childId: string,
+    generationId: string,
+  ) => void;
   /** Opens the bounded child picker for a generation. */
   readonly openChildPicker: (
     ctx: PiSessionContext,
@@ -782,6 +796,20 @@ export function createChildInspectionRuntime(
           );
           return;
         }
+        // The mounted overlay asks inside its own prompt region, where the
+        // question replaces the editor and `y` / `n` are the only answers.
+        // Stacking a host `ui.select` on a surface that already owns the
+        // keyboard would put two modal readers on the same keystroke.
+        if (
+          childOverlayCell.open &&
+          childOverlayCell.component?.requestCancelConfirmation?.(childId) ===
+            true
+        ) {
+          childOverlayCell.tui?.requestRender();
+          return;
+        }
+        // Custom-editor fallback: no in-overlay prompt exists, so the host
+        // dialog stays the only way to confirm.
         const prompt = childOverlayCancelPrompt(
           view?.child.childId === childId
             ? (view?.child.title ?? childId)
@@ -805,6 +833,39 @@ export function createChildInspectionRuntime(
       },
       report: (detail) => reportOverlayKeyDiagnostic(detail),
     });
+  };
+
+  /**
+   * Cancels the focused child's subtree after the in-overlay confirmation has
+   * already been answered `y`.
+   *
+   * It repeats the same authority checks the confirmation route ran, because
+   * the answer arrives asynchronously: a generation replaced while the question
+   * was on screen must cancel nothing.
+   */
+  const cancelOverlaySubtree = (
+    childId: string,
+    generationId: string,
+  ): void => {
+    if (deps.activeGenerationId() !== generationId) {
+      reportOverlayKeyDiagnostic(
+        "weave overlay cancel ignored: generation is no longer active",
+      );
+      return;
+    }
+    const readOnly = childOverlayCell.controller?.view().match(
+      (view) => view.readOnly,
+      () => undefined,
+    );
+    if (readOnly === true) {
+      reportOverlayKeyDiagnostic(
+        "weave overlay cancel ignored: child is read-only",
+      );
+      return;
+    }
+    const controller = delegationControllerCell.controller;
+    if (controller === undefined) return;
+    void controller.cancelSubtree(childId);
   };
 
   const terminalInput = createChildOverlayTerminalInputBinder({
@@ -848,7 +909,10 @@ export function createChildInspectionRuntime(
     ) {
       return;
     }
-    const diagnostics: string[] = [PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC];
+    const diagnostics: string[] = [
+      PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
+      PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE,
+    ];
     const captured =
       captureChildOverlayKeybindings(keybindings) ??
       captureChildOverlayKeybindings(readHostKeybindings());
@@ -943,6 +1007,7 @@ export function createChildInspectionRuntime(
     recordOverlayDiagnostic,
     buildOverlayHierarchy,
     focusOverlayChild,
+    cancelOverlaySubtree,
     openChildPicker: openTask13ChildPicker,
     dispatchOverlayAction,
     bindOverlayKeyInterceptor,

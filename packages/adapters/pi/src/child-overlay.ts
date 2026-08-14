@@ -411,7 +411,6 @@ export {
 } from "./child-overlay-controller.js";
 export {
   CHILD_OVERLAY_COMPACT_BADGE,
-  CHILD_OVERLAY_COMPACT_HELP_LINE,
   childOverlayHeaderFacts,
   childOverlayPromptFacts,
   childOverlayRailFacts,

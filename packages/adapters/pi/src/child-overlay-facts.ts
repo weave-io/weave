@@ -279,10 +279,6 @@ export function childOverlayPromptFacts(
 /** Header marker shown while a child renders in compact mode. */
 export const CHILD_OVERLAY_COMPACT_BADGE = "COMPACT" as const;
 
-/** Help row documenting the compact toggle; shown only when the key is free. */
-export const CHILD_OVERLAY_COMPACT_HELP_LINE =
-  "Ctrl+O toggles compact view" as const;
-
 /** Characters kept from one entry's text before the width fit trims further. */
 const COMPACT_SUMMARY_MAX = 160;
 

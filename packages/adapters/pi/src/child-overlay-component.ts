@@ -41,11 +41,15 @@ import {
   childOverlaySettlementFacts,
   compactChildOverlayLines,
 } from "./child-overlay-facts.js";
-import type { PiChildOverlayKeyInterceptor } from "./child-overlay-keys.js";
 import {
-  PI_CHILD_OVERLAY_SEARCH_TRIGGER,
-  PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
-} from "./child-overlay-keys.js";
+  answerOverlayCancelConfirm,
+  CLOSED_OVERLAY_SEARCH,
+  type OverlaySearchState,
+  overlaySearchQuery,
+  stepOverlaySearch,
+} from "./child-overlay-input-modes.js";
+import type { PiChildOverlayKeyInterceptor } from "./child-overlay-keys.js";
+import { PI_CHILD_OVERLAY_SEARCH_TRIGGER } from "./child-overlay-keys.js";
 import {
   compactStatusMatrix,
   composeSessionHeader,
@@ -95,32 +99,20 @@ import { cell, fitTo, joinColumns } from "./ui-rows.js";
 // Native custom component (Task 12 phase B1)
 // ---------------------------------------------------------------------------
 
-/** Longest search query the prompt accepts before it stops taking input. */
-const OVERLAY_SEARCH_QUERY_MAX = 120;
-
-/** Keys the search prompt understands, as raw terminal data. */
-const SEARCH_KEYS = {
-  commit: ["\r", "\n"],
-  cancel: "\x1b",
-  backspace: ["\x7f", "\b"],
-  nextMatch: "n",
-  previousMatch: "N",
-} as const;
-
-/**
- * How the overlay is routing keyboard input.
- *
- * `off` is the ordinary overlay; `typing` collects a search query and consumes
- * every key; `navigate` walks committed matches. Neither search state ever
- * forwards a key to the draft editor, the key interceptor, or Pi.
- */
-type OverlaySearchMode = "off" | "typing" | "navigate";
-
 export interface PiChildOverlayCustomComponent {
   focused?: boolean;
   render(width: number): string[];
   handleInput(data: string): void;
   invalidate(): void;
+  /**
+   * Opens the in-overlay `y` / `n` cancel confirmation for `childId`.
+   *
+   * Returns `true` when the mounted overlay took the confirmation, which is
+   * how the caller knows it must not open a nested host dialog on top of a
+   * surface that already owns the keyboard. Only the custom-editor fallback,
+   * which has no such surface, still asks the host.
+   */
+  requestCancelConfirmation?(childId: string): boolean;
 }
 
 /**
@@ -355,25 +347,26 @@ export function createChildOverlayCustomComponent(
    */
   keyInterceptor?: PiChildOverlayKeyInterceptor,
   /**
-   * Resolved in-overlay search route. Omitted keeps the documented default
-   * key; passing a route with an undefined trigger disables the route, which
-   * is how a host binding conflict is honored: the key keeps its existing
-   * meaning instead of being silently stolen.
+   * Resolved in-overlay search ALIAS route (`Ctrl+F`). Omitted keeps the
+   * documented default; passing a route with an undefined trigger disables the
+   * alias, which is how a host binding conflict is honored: the key keeps its
+   * existing meaning instead of being silently stolen. `/` on an empty draft
+   * opens search either way, so a disabled alias never removes search.
    */
   searchRoute: { readonly trigger: string | undefined } = {
     trigger: PI_CHILD_OVERLAY_SEARCH_TRIGGER,
   },
   /**
-   * Resolved compact-view toggle route. Same contract as `searchRoute`: an
-   * undefined trigger means the host already owns the key, so the overlay
-   * leaves it alone and never advertises the toggle in the help rows.
+   * Runs the subtree cancellation the in-overlay confirmation just approved.
+   *
+   * The confirmation itself lives here, in the prompt region, so the mounted
+   * overlay never stacks a host dialog on top of a surface that owns the
+   * keyboard. Absent means `y` has nothing to call, so the confirmation can
+   * only ever dismiss.
    */
-  viewModeRoute: { readonly trigger: string | undefined } = {
-    trigger: PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
-  },
+  cancelSubtree?: (childId: string) => void,
 ): PiChildOverlayCustomComponent {
   const searchTrigger = searchRoute.trigger;
-  const viewModeTrigger = viewModeRoute.trigger;
   const draftEditor = createChildOverlayDraftEditor(tui, theme, keybindings);
   const transcriptRenderer = createPiChildTranscriptRenderer();
   const paint = childOverlayPaint(theme);
@@ -391,9 +384,9 @@ export function createChildOverlayCustomComponent(
   let finished = false;
   let fallbackEmitted = false;
   let inputBusy = false;
-  let searchMode: OverlaySearchMode = "off";
-  let searchDraft = "";
-  let searchMatchIndex = 0;
+  let search: OverlaySearchState = CLOSED_OVERLAY_SEARCH;
+  /** The child whose cancellation is awaiting a `y` / `n` answer, if any. */
+  let confirmingCancelChildId: string | undefined;
   let lastDraftChildId: string | undefined;
   let lastDraftReadOnly: boolean | undefined;
 
@@ -445,6 +438,9 @@ export function createChildOverlayCustomComponent(
     const childChanged = lastDraftChildId !== view.child.childId;
     const readOnlyChanged = lastDraftReadOnly !== view.readOnly;
     if (!childChanged && !readOnlyChanged) return;
+    // A confirmation belongs to the child it named. Focus moved, so the
+    // question no longer has a subject and is dropped rather than re-aimed.
+    if (childChanged) confirmingCancelChildId = undefined;
     lastDraftChildId = view.child.childId;
     lastDraftReadOnly = view.readOnly;
     const nextText = view.readOnly ? "" : view.draft;
@@ -486,9 +482,13 @@ export function createChildOverlayCustomComponent(
   const promptRegion = (view: ChildOverlayView, width: number): string[] => {
     const facts = childOverlayPromptFacts(view, {
       draft: draftEditor.getText(),
-      confirmingCancel: false,
+      confirmingCancel: confirmingCancelChildId !== undefined,
     });
-    if (facts.settled) return renderPromptGroup(paint, facts, width);
+    // The confirmation REPLACES the editor, which is the structural reason `q`
+    // can never cancel without a `y` / `n` answer.
+    if (facts.settled || facts.confirmingCancel) {
+      return renderPromptGroup(paint, facts, width);
+    }
     return [
       ...renderEditorLines(width, false).map((line) =>
         cell(fitLineToWidth(line, width), width),
@@ -517,7 +517,7 @@ export function createChildOverlayCustomComponent(
     }
     const total = view.searchMatches.length;
     const current =
-      total === 0 ? 0 : (((searchMatchIndex % total) + total) % total) + 1;
+      total === 0 ? 0 : (((search.matchIndex % total) + total) % total) + 1;
     const matches: OverlayNavMatch[] = view.searchMatches.map(
       (entryId, index) => {
         const entry = view.entries.find(
@@ -537,9 +537,9 @@ export function createChildOverlayCustomComponent(
       counts.set(match.label, (counts.get(match.label) ?? 0) + 1);
     }
     return {
-      open: searchMode !== "off",
-      accepted: false,
-      query: searchMode === "typing" ? searchDraft : view.searchQuery,
+      open: search.mode !== "off",
+      accepted: search.accepted,
+      query: overlaySearchQuery(search, view.searchQuery),
       matches,
       total,
       current,
@@ -673,10 +673,10 @@ export function createChildOverlayCustomComponent(
     const view = viewResult.value;
     if (view.searchMatches.length === 0) return;
     const bounded =
-      ((searchMatchIndex % view.searchMatches.length) +
+      ((search.matchIndex % view.searchMatches.length) +
         view.searchMatches.length) %
       view.searchMatches.length;
-    searchMatchIndex = bounded;
+    search = { ...search, matchIndex: bounded };
     const matchId = view.searchMatches[bounded];
     const index = view.entries.findIndex((entry) => entry.id === matchId);
     if (index < 0) return;
@@ -689,9 +689,7 @@ export function createChildOverlayCustomComponent(
   };
 
   const exitSearch = (clearQuery: boolean): void => {
-    searchMode = "off";
-    searchDraft = "";
-    searchMatchIndex = 0;
+    search = CLOSED_OVERLAY_SEARCH;
     if (!clearQuery) {
       requestPaint();
       return;
@@ -702,78 +700,93 @@ export function createChildOverlayCustomComponent(
     );
   };
 
+  const runSearchQuery = (query: string): void => {
+    inputBusy = true;
+    void controller.search(query).match(
+      () => {
+        inputBusy = false;
+        focusSearchMatch();
+        requestPaint();
+      },
+      (error) => {
+        inputBusy = false;
+        afterControllerOutcome(err(error));
+      },
+    );
+  };
+
   /**
    * Runs the whole search route. Returns true when the key belonged to search,
    * which means it must never reach the interceptor, the controller, the draft
    * editor, or Pi.
+   *
+   * `/` opens search only on an empty draft; `Ctrl+F` is the conflict-safe
+   * alias and is absent when the host owns it. Once open, EVERY byte is
+   * consumed until Escape, which closes search and nothing else.
    */
   const handleSearchInput = (data: string): boolean => {
-    if (searchMode === "off") {
-      if (searchTrigger === undefined || data !== searchTrigger) return false;
-      searchMode = "typing";
-      searchDraft = "";
-      searchMatchIndex = 0;
-      requestPaint();
-      return true;
-    }
-    if (data === SEARCH_KEYS.cancel) {
-      exitSearch(true);
-      return true;
-    }
-    if (searchTrigger !== undefined && data === searchTrigger) {
-      // Re-opening from navigate mode edits the committed query again.
-      searchMode = "typing";
-      requestPaint();
-      return true;
-    }
-    if (searchMode === "navigate") {
-      if (data === SEARCH_KEYS.nextMatch) {
-        searchMatchIndex += 1;
+    const step = stepOverlaySearch(
+      search,
+      data,
+      draftEditor.getText(),
+      searchTrigger,
+    );
+    if (!step.claimed) return false;
+    search = step.state;
+    switch (step.effect.kind) {
+      case "none":
+        return true;
+      case "repaint":
+        requestPaint();
+        return true;
+      case "focus":
         focusSearchMatch();
         requestPaint();
         return true;
-      }
-      if (data === SEARCH_KEYS.previousMatch) {
-        searchMatchIndex -= 1;
-        focusSearchMatch();
-        requestPaint();
+      case "run":
+        runSearchQuery(step.effect.query);
         return true;
-      }
-      // Every other key stays consumed: search owns the keyboard until Escape.
-      return true;
+      case "close":
+        exitSearch(true);
+        return true;
     }
-    if (SEARCH_KEYS.commit.includes(data as never)) {
-      const query = searchDraft;
-      searchMode = "navigate";
-      searchMatchIndex = 0;
-      inputBusy = true;
-      void controller.search(query).match(
-        () => {
-          inputBusy = false;
-          focusSearchMatch();
-          requestPaint();
-        },
-        (error) => {
-          inputBusy = false;
-          afterControllerOutcome(err(error));
-        },
+  };
+
+  /**
+   * Opens the in-overlay confirmation. Search is closed first so the two
+   * modes can never be open at once, and the confirmation outranks search for
+   * as long as it is up.
+   */
+  const openCancelConfirmation = (childId: string): boolean => {
+    if (search.mode !== "off") exitSearch(false);
+    confirmingCancelChildId = childId;
+    requestPaint();
+    return true;
+  };
+
+  /**
+   * The cancel confirmation owns EVERY key while it is open.
+   *
+   * That is what makes `n` unambiguously NO and `y` unambiguously YES: with the
+   * confirmation up, neither byte can reach search, the overlay actions, or the
+   * draft editor. Escape dismisses the question and never closes the overlay.
+   */
+  const handleCancelConfirmInput = (data: string): boolean => {
+    const childId = confirmingCancelChildId;
+    if (childId === undefined) return false;
+    const answer = answerOverlayCancelConfirm(data);
+    if (answer === "swallow") return true;
+    confirmingCancelChildId = undefined;
+    if (answer === "confirm") {
+      Result.fromThrowable(
+        () => cancelSubtree?.(childId),
+        () => "overlay_cancel_subtree_failed" as const,
+      )().match(
+        () => undefined,
+        () => undefined,
       );
-      return true;
     }
-    if (SEARCH_KEYS.backspace.includes(data as never)) {
-      searchDraft = searchDraft.slice(0, -1);
-      requestPaint();
-      return true;
-    }
-    // Printable ASCII only; control sequences never edit the query.
-    if (
-      data.length > 0 &&
-      searchDraft.length < OVERLAY_SEARCH_QUERY_MAX &&
-      /^[\x20-\x7e]+$/.test(data)
-    ) {
-      searchDraft = `${searchDraft}${data}`.slice(0, OVERLAY_SEARCH_QUERY_MAX);
-      requestPaint();
-    }
+    requestPaint();
     return true;
   };
 
@@ -805,14 +818,14 @@ export function createChildOverlayCustomComponent(
     return okAsync(undefined);
   };
 
+  // `Ctrl+O` is absent on purpose: the overlay has one view, so the key stays
+  // Pi's own tool-expand action and is never routed to the controller.
   const isControllerInput = (
     data: string,
     normalizedScroll: string | undefined,
   ): boolean =>
     normalizedScroll !== undefined ||
     matchesKey(data, "ctrl+e") ||
-    (viewModeTrigger !== undefined &&
-      (data === viewModeTrigger || matchesKey(data, "ctrl+o"))) ||
     matchesKey(data, "alt+left") ||
     matchesKey(data, "alt+right") ||
     matchesKey(data, "alt+up") ||
@@ -917,7 +930,7 @@ export function createChildOverlayCustomComponent(
       marker: ` ${settlement.glyph} ${settlement.word} `,
       markerTone: settlement.tone,
     };
-    const geometry = overlayPaneGeometry(outer, searchMode !== "off");
+    const geometry = overlayPaneGeometry(outer, search.mode !== "off");
     const inner = geometry.inner;
     const innerHeight = Math.max(1, rowLimit - OVERLAY_FRAME_ROWS);
 
@@ -1105,13 +1118,30 @@ export function createChildOverlayCustomComponent(
         rowLimit,
       );
     },
+    requestCancelConfirmation(childId) {
+      if (finished) return false;
+      return openCancelConfirmation(childId);
+    },
+    /**
+     * THE PRECEDENCE CHAIN, in one place and in this order:
+     *
+     *     cancel confirmation › search › overlay keys › draft editor
+     *
+     * Nothing else reads keys while the overlay is mounted, so the order cannot
+     * be reordered from elsewhere. A key release is dropped before any of it,
+     * because a release is the same physical press reported twice.
+     */
     handleInput(data) {
       if (finished || isKeyRelease(data)) return;
       Result.fromThrowable(
         () => {
+          // 1. The confirmation consumes everything it is open for.
+          if (handleCancelConfirmInput(data)) return;
+          // 2. Search claims its openers and, once open, every byte until Esc.
           if (handleSearchInput(data)) return;
           const normalizedScroll = normalizeChildOverlayScrollFrame(data);
           const routedData = normalizedScroll ?? data;
+          // 3. Overlay actions: Escape, planned child keys, Backspace, q.
           if (keyInterceptor !== undefined) {
             const consumed = Result.fromThrowable(
               () => keyInterceptor(routedData),
@@ -1137,6 +1167,7 @@ export function createChildOverlayCustomComponent(
             handleControllerInput(routedData);
             return;
           }
+          // 4. Whatever is left is text for the draft editor.
           handleDraftEditorInput(data);
         },
         () => "overlay_input_failed" as const,

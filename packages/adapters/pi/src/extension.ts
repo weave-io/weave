@@ -135,7 +135,6 @@ import {
   childOverlayConflictPortFromHost,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
   resolveChildOverlaySearchRoute,
-  resolveChildOverlayViewModeRoute,
 } from "./child-overlay-keys.js";
 import {
   buildChildPickerEntries,
@@ -5648,28 +5647,6 @@ export function createPiExtension(
           }
           return { trigger: route.trigger };
         };
-        let viewModeRouteReported = false;
-        /**
-         * Same contract as {@link searchRouteTrigger} for the compact-view
-         * toggle: a key the host already owns keeps its existing meaning and
-         * the conflict is reported once instead of being stolen.
-         */
-        const viewModeRouteTrigger = (
-          keybindings: unknown,
-        ): { readonly trigger: string | undefined } => {
-          const route = resolveChildOverlayViewModeRoute(
-            childOverlayConflictPortFromHost(
-              captureChildOverlayKeybindings(keybindings),
-            ),
-          );
-          if (!viewModeRouteReported) {
-            viewModeRouteReported = true;
-            for (const diagnostic of route.diagnostics) {
-              childInspectionRuntime.reportOverlayKeyDiagnostic(diagnostic);
-            }
-          }
-          return { trigger: route.trigger };
-        };
         const mountNativeOverlay = (): void => {
           const overlay = childOverlayCell.controller;
           if (
@@ -5760,7 +5737,13 @@ export function createPiExtension(
                 { cwd: ctx.cwd },
                 overlayKeysCell.interceptor,
                 searchRouteTrigger(overlayKeybindings),
-                viewModeRouteTrigger(overlayKeybindings),
+                // The in-overlay `y` answer runs the cancellation; the overlay
+                // owns the question, the runtime owns the effect.
+                (childId) =>
+                  childInspectionRuntime.cancelOverlaySubtree(
+                    childId,
+                    generation.id,
+                  ),
               );
               if (mounted.focused !== undefined) mounted.focused = true;
               childOverlayCell.component = mounted;

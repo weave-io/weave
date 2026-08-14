@@ -2,9 +2,9 @@ import type { WeaveConfig } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 import {
+  isPiChildOverlayKeySyntax,
   PI_CHILD_OVERLAY_ACTION_IDS,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
-  isPiChildOverlayKeySyntax,
   type PiChildOverlayActionId,
   type PiChildOverlayKey,
 } from "./child-overlay-keys.js";
@@ -65,6 +65,10 @@ function buildPiChildOverlayKeysShape(): PiChildOverlayKeysShape {
  * The override map is keyed by the closed set of Task 13 action ids and is
  * `.strict()` for the same reason the surrounding block is: silently ignoring
  * a misspelled action id would leave the user believing a rebind took effect.
+ *
+ * Strictness is also how a REMOVED action stays removed. The compact-view
+ * toggle no longer exists, so a config that still rebinds it is rejected with
+ * its id named, rather than parsed into a binding nothing will ever read.
  */
 const PiChildOverlayKeysSchema = z
   .object(buildPiChildOverlayKeysShape())

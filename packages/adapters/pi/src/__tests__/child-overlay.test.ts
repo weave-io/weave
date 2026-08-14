@@ -3013,7 +3013,9 @@ describe("createChildOverlayCustomComponent", () => {
       (await controller.search("rate limit"))._unsafeUnwrap().searchMatches,
     ).toHaveLength(1);
 
-    component.handleInput(CTRL_O);
+    // Compact is a controller-owned layout, not a key route: Ctrl+O stays Pi's.
+    controller.toggleViewMode()._unsafeUnwrap();
+    component.invalidate();
     await flush();
     const compact = component.render(40);
     expect(compact.some((line) => line.includes("assistant error"))).toBe(true);
@@ -3923,6 +3925,7 @@ describe("mapPiDelegationFailureToOverlaySourceError", () => {
 // Compact view mode (Task 7)
 // ---------------------------------------------------------------------------
 
+/** Pi's own tool-expand key. Weave claims it nowhere. */
 const CTRL_O = "\x0f";
 
 describe("child overlay compact view mode", () => {
@@ -3931,7 +3934,6 @@ describe("child overlay compact view mode", () => {
 
   const mountCompact = async (
     options: {
-      readonly disableViewModeRoute?: boolean;
       readonly entryCount?: number;
       readonly status?: "live" | "settled" | "orphan";
     } = {},
@@ -3957,7 +3959,6 @@ describe("child overlay compact view mode", () => {
       { cwd: "/workspace" },
       undefined,
       { trigger: undefined },
-      { trigger: options.disableViewModeRoute === true ? undefined : CTRL_O },
     );
     return { component, controller };
   };
@@ -3973,7 +3974,7 @@ describe("child overlay compact view mode", () => {
     expect(overlay.toggleViewMode()._unsafeUnwrap().viewMode).toBe("full");
   });
 
-  it("toggles from the non-printable ctrl+o key through handleInput", async () => {
+  it("never claims ctrl+o: the controller leaves the key to Pi", async () => {
     const source = createMemoryChildOverlaySource([
       child({
         childId: "vm-key",
@@ -3985,9 +3986,9 @@ describe("child overlay compact view mode", () => {
     const overlay = createChildOverlayController(source, { pageSize: 10 });
     await mustOpen(overlay, "vm-key");
     const outcome = (await overlay.handleInput(CTRL_O))._unsafeUnwrap();
-    expect(outcome).toEqual({ kind: "view-mode", viewMode: "compact" });
-    expect(overlay.view()._unsafeUnwrap().viewMode).toBe("compact");
-    // The toggle key is never treated as draft text.
+    // Consumed while mounted, but it toggles nothing and types nothing.
+    expect(outcome).toEqual({ kind: "consumed" });
+    expect(overlay.view()._unsafeUnwrap().viewMode).toBe("full");
     expect(overlay.view()._unsafeUnwrap().draft).toBe("");
   });
 
@@ -4137,7 +4138,8 @@ describe("child overlay compact view mode", () => {
   it("renders one summary row per entry", async () => {
     const { component, controller } = await mountCompact({ entryCount: 6 });
 
-    component.handleInput(CTRL_O);
+    controller.toggleViewMode()._unsafeUnwrap();
+    component.invalidate();
     await flush();
     expect(controller.view()._unsafeUnwrap().viewMode).toBe("compact");
     const compactLines = component.render(80);
@@ -4154,15 +4156,15 @@ describe("child overlay compact view mode", () => {
     }
   });
 
-  it("leaves the toggle key to the host when the route is disabled", async () => {
-    const { component, controller } = await mountCompact({
-      disableViewModeRoute: true,
-    });
+  it("leaves ctrl+o to the host: the mounted overlay never routes it", async () => {
+    const { component, controller } = await mountCompact();
     const rendered = component.render(80).join("\n");
-    expect(rendered).not.toContain("Ctrl+O toggles compact view");
+    expect(rendered).not.toContain("Ctrl+O");
     component.handleInput(CTRL_O);
     await flush();
     // Not routed to the controller: the child stays in full view.
     expect(controller.view()._unsafeUnwrap().viewMode).toBe("full");
+    // And it is not typed into the draft either.
+    expect(controller.view()._unsafeUnwrap().draft).toBe("");
   });
 });

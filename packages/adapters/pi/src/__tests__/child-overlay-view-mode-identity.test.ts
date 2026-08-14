@@ -29,7 +29,6 @@ import {
   type MemoryOverlaySourceChild,
   type MemoryOverlaySourceEntry,
 } from "../child-overlay.js";
-import { PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER } from "../child-overlay-keys.js";
 import { SCROLL_KEYS } from "../child-overlay-types.js";
 import type { PiUiThemePort } from "../types.js";
 
@@ -145,6 +144,7 @@ interface MountedOverlay {
   readonly component: {
     render(width: number): string[];
     handleInput(data: string): void;
+    invalidate(): void;
   };
   readonly controller: ReturnType<typeof createChildOverlayController>;
 }
@@ -173,6 +173,20 @@ async function mount(entryCount = ENTRY_COUNT): Promise<MountedOverlay> {
 /** Send a key through the real component input path and repaint. */
 async function press(mounted: MountedOverlay, data: string): Promise<void> {
   mounted.component.handleInput(data);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  mounted.component.render(WIDTH);
+}
+
+/**
+ * Flip the layout without pressing a key.
+ *
+ * The overlay has no compact-view key route: `Ctrl+O` stays Pi's own
+ * tool-expand action, so the toggle is driven through the controller and the
+ * component is invalidated exactly as a controller outcome would.
+ */
+async function toggleViewMode(mounted: MountedOverlay): Promise<void> {
+  expect(mounted.controller.toggleViewMode().isOk()).toBe(true);
+  mounted.component.invalidate();
   await new Promise((resolve) => setTimeout(resolve, 0));
   mounted.component.render(WIDTH);
 }
@@ -229,7 +243,7 @@ describe("mounted overlay entry identity across view modes", () => {
     expect(full.bottomEntry).toBeGreaterThan(0);
     expect(full.bottomEntry).toBeLessThan(ENTRY_COUNT - 1);
 
-    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await toggleViewMode(mounted);
     const compact = observe(mounted);
     expect(compact.viewMode).toBe("compact");
     // The 28 → 23 regression: full-layout spans reported renderer-owned ids the
@@ -241,7 +255,7 @@ describe("mounted overlay entry identity across view modes", () => {
     // intra-entry row and it must be exactly that, not a stale full-layout row.
     expect(compact.anchorLineOffset).toBe(0);
 
-    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await toggleViewMode(mounted);
     const back = observe(mounted);
     expect(back.viewMode).toBe("full");
     expect(back.bottomEntry).toBe(full.bottomEntry);
@@ -259,9 +273,9 @@ describe("mounted overlay entry identity across view modes", () => {
     expect(start.bottomEntry).toBeGreaterThan(0);
 
     for (let round = 0; round < 3; round += 1) {
-      await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+      await toggleViewMode(mounted);
       expect(observe(mounted).bottomEntry).toBe(start.bottomEntry);
-      await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+      await toggleViewMode(mounted);
       expect(observe(mounted).bottomEntry).toBe(start.bottomEntry);
     }
   });
@@ -272,13 +286,13 @@ describe("mounted overlay entry identity across view modes", () => {
     expect(before.scrollOffset).toBe(0);
     expect(before.bottomEntry).toBe(ENTRY_COUNT - 1);
 
-    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await toggleViewMode(mounted);
     const compact = observe(mounted);
     expect(compact.viewMode).toBe("compact");
     expect(compact.scrollOffset).toBe(0);
     expect(compact.bottomEntry).toBe(ENTRY_COUNT - 1);
 
-    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await toggleViewMode(mounted);
     const back = observe(mounted);
     expect(back.viewMode).toBe("full");
     expect(back.scrollOffset).toBe(0);

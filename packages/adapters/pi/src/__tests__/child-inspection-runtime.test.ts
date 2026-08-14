@@ -22,7 +22,9 @@ import {
   type MemoryOverlaySourceEntry,
 } from "../child-overlay.js";
 import {
+  PI_CHILD_OVERLAY_SEARCH_OPEN_KEY,
   PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+  PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE,
   PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
 } from "../child-overlay-keys.js";
 import { SCROLL_KEYS } from "../child-overlay-types.js";
@@ -64,6 +66,7 @@ describe("child-inspection-runtime cells", () => {
     expect(overlayKeysCell.status).toBe("pending");
     expect(overlayKeysCell.diagnostics).toEqual([
       PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
+      PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE,
     ]);
     expect(treeSelectionCell.selectedId).toBe(ROOT_NODE_ID);
     expect(editorCell.editor).toBeUndefined();
@@ -131,6 +134,7 @@ describe("child-inspection-runtime cells", () => {
 
     expect(overlayKeysCell.diagnostics).toEqual([
       PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
+      PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE,
     ]);
   });
 });
@@ -1651,5 +1655,294 @@ describe("child cancellation behind q with explicit confirmation", () => {
 
     expect(harness.selects).toEqual([]);
     expect(harness.cancelled).toEqual([]);
+  });
+});
+
+/**
+ * The mounted precedence chain, end to end:
+ *
+ *     cancel confirmation › search › overlay keys › draft editor
+ *
+ * Every test here drives the REAL component with the REAL interceptor, so a
+ * rule that only holds in a unit fixture cannot pass.
+ */
+describe("mounted overlay input precedence", () => {
+  const CHILD_ID = "overlay-1";
+  const CHILD_TITLE = "Refactor the parser";
+  /** Two entries carry the needle, so `n` has somewhere to wrap to. */
+  const NEEDLE = "zebra";
+  const WIDTH = 120;
+
+  const flushInput = async (): Promise<void> => {
+    for (let tick = 0; tick < 8; tick += 1) await Promise.resolve();
+  };
+
+  async function mountPrecedenceHarness(): Promise<{
+    readonly press: (data: string) => Promise<void>;
+    readonly render: () => string;
+    readonly controller: ReturnType<typeof createChildOverlayController>;
+    readonly cancelled: string[];
+    readonly selects: string[];
+    readonly closed: () => number;
+  }> {
+    const registry = new PiChildInspectionRegistry();
+    await registry.register({
+      id: CHILD_ID,
+      parentId: ROOT_NODE_ID,
+      name: CHILD_ID,
+      kind: "ordinary",
+      snapshot: () => ({
+        id: CHILD_ID,
+        parentId: undefined,
+        name: CHILD_ID,
+        status: "running",
+        currentTurn: 1,
+        currentTool: undefined,
+        startedAtMs: 1,
+        elapsedMs: 0,
+        usage: {} as never,
+        latestOutput: "",
+      }),
+    });
+
+    const overlayCell = createChildOverlayCell();
+    const overlayKeysCell = createChildOverlayKeysCell(() => 1);
+    const registryCell = createChildInspectionRegistryCell();
+    registryCell.registry = registry;
+    const delegationCell = createDelegationControllerCell();
+    const selects: string[] = [];
+    const ctx = {
+      cwd: "/repo",
+      hasUI: true,
+      ui: {
+        notify: () => undefined,
+        select: async (title: string) => {
+          selects.push(title);
+          return undefined;
+        },
+      },
+    } as never;
+
+    const runtime = createChildInspectionRuntime({
+      overlayCell,
+      overlayKeysCell,
+      inspectionEditorCell: createChildInspectionEditorCell(),
+      inspectionRegistryCell: registryCell,
+      treeSelectionCell: createChildTreeSelectionCell(),
+      threadSourcesCell: createThreadSourcesCell(),
+      delegationControllerCell: delegationCell,
+      latestSessionCtx: () => ctx,
+      activeGenerationId: () => "gen-1",
+      parentSessionState: () => ({ persistence: "unknown", sessionId: "" }),
+      childInspectionSettings: () => undefined,
+      closeOverlay: () => closeChildOverlay(overlayCell, overlayKeysCell),
+      hostKeybindings: () => ({ getResolvedBindings: () => ({}) }),
+    });
+
+    const cancelled: string[] = [];
+    delegationCell.controller = {
+      cancelSubtree: (nodeId: string) => {
+        cancelled.push(nodeId);
+        return okAsync(undefined);
+      },
+    } as never;
+
+    const entries: MemoryOverlaySourceEntry[] = Array.from(
+      { length: 12 },
+      (_unused, index) => ({
+        id: `e${index}`,
+        payload: {
+          type: "message",
+          id: `e${index}`,
+          parentId: null,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: {
+            role: index % 2 === 0 ? "user" : "assistant",
+            content:
+              index === 2 || index === 9
+                ? `overlay ${NEEDLE} line ${index}`
+                : `overlay line ${index}`,
+          },
+        },
+      }),
+    );
+    const source = createMemoryChildOverlaySource([
+      {
+        childId: CHILD_ID,
+        threadId: CHILD_ID,
+        status: "live",
+        title: CHILD_TITLE,
+        generationId: "gen-1",
+        runs: [{ run: 1, action: "start" }],
+        branchIds: ["main"],
+        descendantChildIds: [],
+        entries,
+      },
+    ]);
+    const controller = createChildOverlayController(source, { pageSize: 20 });
+    expect((await controller.open(CHILD_ID)).isOk()).toBe(true);
+
+    let closed = 0;
+    overlayCell.controller = controller;
+    overlayCell.generationId = "gen-1";
+    overlayCell.open = true;
+    overlayCell.settle = () => {
+      closed += 1;
+      overlayCell.open = false;
+    };
+
+    runtime.maybeRegisterOverlayKeys(recordingPi().pi, undefined, "gen-1");
+    runtime.bindOverlayKeyInterceptor("gen-1");
+
+    const component = createChildOverlayCustomComponent(
+      { requestRender: () => undefined } as never,
+      {} as never,
+      getKeybindings() as never,
+      controller,
+      () => undefined,
+      () => undefined,
+      { cwd: "/workspace" },
+      (data: string) => overlayKeysCell.interceptor?.(data) ?? false,
+      { trigger: PI_CHILD_OVERLAY_SEARCH_TRIGGER },
+      (childId: string) => runtime.cancelOverlaySubtree(childId, "gen-1"),
+    );
+    overlayCell.component = component;
+    component.render(WIDTH);
+
+    return {
+      press: async (data: string) => {
+        component.handleInput(data);
+        await flushInput();
+        component.render(WIDTH);
+      },
+      render: () => component.render(WIDTH).join("\n"),
+      controller,
+      cancelled,
+      selects,
+      closed: () => closed,
+    };
+  }
+
+  test("/ opens search on an empty draft and Escape closes search only", async () => {
+    const harness = await mountPrecedenceHarness();
+
+    await harness.press(PI_CHILD_OVERLAY_SEARCH_OPEN_KEY);
+    for (const byte of NEEDLE) await harness.press(byte);
+    await harness.press("\r");
+
+    const searched = harness.controller.view()._unsafeUnwrap();
+    expect(searched.searchQuery).toBe(NEEDLE);
+    expect(searched.searchMatches).toHaveLength(2);
+    // The query never reached the draft editor.
+    expect(searched.draft).toBe("");
+
+    // Escape leaves search and nothing else: the overlay is still mounted.
+    await harness.press("\u001b");
+    expect(harness.closed()).toBe(0);
+    expect(harness.controller.view()._unsafeUnwrap().searchQuery).toBe("");
+
+    // The next Escape, with search closed, closes the overlay.
+    await harness.press("\u001b");
+    expect(harness.closed()).toBe(1);
+    expect(harness.cancelled).toEqual([]);
+  });
+
+  test("/ typed into a non-empty draft is text, not a search opener", async () => {
+    const harness = await mountPrecedenceHarness();
+
+    await harness.press("a");
+    await harness.press(PI_CHILD_OVERLAY_SEARCH_OPEN_KEY);
+    await harness.press("b");
+
+    const view = harness.controller.view()._unsafeUnwrap();
+    expect(view.draft).toBe("a/b");
+    expect(view.searchQuery).toBe("");
+  });
+
+  test("n and N walk the committed matches and wrap at both ends", async () => {
+    const harness = await mountPrecedenceHarness();
+    await harness.press(PI_CHILD_OVERLAY_SEARCH_OPEN_KEY);
+    for (const byte of NEEDLE) await harness.press(byte);
+    await harness.press("\r");
+
+    /** The rail's `current/total` counter, which is what `n` / `N` move. */
+    const counter = (): string => {
+      const match = /(\d+)\/(\d+) match/.exec(harness.render());
+      expect(match).not.toBeNull();
+      const found = match as RegExpExecArray;
+      return `${found[1]}/${found[2]}`;
+    };
+
+    expect(counter()).toBe("1/2");
+    await harness.press("n");
+    expect(counter()).toBe("2/2");
+    // Forward past the end wraps to the first match.
+    await harness.press("n");
+    expect(counter()).toBe("1/2");
+    // Backward past the start wraps to the last one.
+    await harness.press("N");
+    expect(counter()).toBe("2/2");
+    // `j` / `k` are the same movements.
+    await harness.press("j");
+    expect(counter()).toBe("1/2");
+    await harness.press("k");
+    expect(counter()).toBe("2/2");
+    // None of it leaked into the draft.
+    expect(harness.controller.view()._unsafeUnwrap().draft).toBe("");
+  });
+
+  test("q opens the in-overlay confirmation instead of a host dialog", async () => {
+    const harness = await mountPrecedenceHarness();
+
+    await harness.press("q");
+    const confirming = harness.render();
+    // The question replaces the editor, inside the overlay Weave already owns.
+    expect(confirming).toContain("cancel");
+    expect(confirming).toContain("y");
+    expect(confirming).toContain("n");
+    // No nested host modal on the mounted route.
+    expect(harness.selects).toEqual([]);
+    expect(harness.cancelled).toEqual([]);
+    // `q` was never typed.
+    expect(harness.controller.view()._unsafeUnwrap().draft).toBe("");
+  });
+
+  test("the open confirmation swallows /, and n means no", async () => {
+    const harness = await mountPrecedenceHarness();
+    await harness.press("q");
+
+    // Search cannot open underneath the question.
+    await harness.press(PI_CHILD_OVERLAY_SEARCH_OPEN_KEY);
+    expect(harness.controller.view()._unsafeUnwrap().searchQuery).toBe("");
+    expect(harness.controller.view()._unsafeUnwrap().draft).toBe("");
+
+    await harness.press("n");
+    expect(harness.cancelled).toEqual([]);
+    // Dismissed, not closed: the overlay and the child both survive.
+    expect(harness.closed()).toBe(0);
+    // The editor is back, so the next byte is draft text again.
+    await harness.press("z");
+    expect(harness.controller.view()._unsafeUnwrap().draft).toBe("z");
+  });
+
+  test("Escape dismisses the confirmation and never closes the overlay", async () => {
+    const harness = await mountPrecedenceHarness();
+    await harness.press("q");
+    await harness.press("\u001b");
+    expect(harness.cancelled).toEqual([]);
+    expect(harness.closed()).toBe(0);
+  });
+
+  test("y cancels the focused subtree exactly once", async () => {
+    const harness = await mountPrecedenceHarness();
+    await harness.press("q");
+    await harness.press("y");
+    expect(harness.cancelled).toEqual([CHILD_ID]);
+    // The overlay stays open: cancelling a child is not closing its view.
+    expect(harness.closed()).toBe(0);
+    // A second `y` has no question to answer, so it is ordinary draft text.
+    await harness.press("y");
+    expect(harness.cancelled).toEqual([CHILD_ID]);
+    expect(harness.controller.view()._unsafeUnwrap().draft).toBe("y");
   });
 });

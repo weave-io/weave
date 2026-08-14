@@ -26,7 +26,6 @@ import {
   createMemoryChildOverlaySource,
   type MemoryOverlaySourceChild,
 } from "../child-overlay.js";
-import { PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER } from "../child-overlay-keys.js";
 import {
   allocateLiveAssistantEntryId,
   MAX_LIVE_ASSISTANT_LIFECYCLES,
@@ -135,6 +134,7 @@ interface MountedOverlay {
   readonly component: {
     render(width: number): string[];
     handleInput(data: string): void;
+    invalidate(): void;
   };
   readonly controller: ReturnType<typeof createChildOverlayController>;
 }
@@ -167,6 +167,20 @@ async function mount(turns = TURN_COUNT): Promise<MountedOverlay> {
 /** Send a key through the real component input path and repaint. */
 async function press(mounted: MountedOverlay, data: string): Promise<void> {
   mounted.component.handleInput(data);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  mounted.component.render(WIDTH);
+}
+
+/**
+ * Flip the layout without pressing a key.
+ *
+ * The overlay has no compact-view key route: `Ctrl+O` stays Pi's own
+ * tool-expand action, so the toggle is driven through the controller and the
+ * component is invalidated exactly as a controller outcome would.
+ */
+async function toggleViewMode(mounted: MountedOverlay): Promise<void> {
+  expect(mounted.controller.toggleViewMode().isOk()).toBe(true);
+  mounted.component.invalidate();
   await new Promise((resolve) => setTimeout(resolve, 0));
   mounted.component.render(WIDTH);
 }
@@ -330,7 +344,7 @@ describe("mounted live-child overlay identity across view modes", () => {
     expect(full.bottomTurn).toBeLessThan(TURN_COUNT - 1);
     expect(full.anchorEntryId).toBeDefined();
 
-    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await toggleViewMode(mounted);
     const compact = observe(mounted);
     expect(compact.viewMode).toBe("compact");
     // The live regression: full-layout spans reported reducer-owned ids the
@@ -339,7 +353,7 @@ describe("mounted live-child overlay identity across view modes", () => {
     expect(compact.bottomTurn).toBe(full.bottomTurn);
     expect(compact.scrollOffset).toBeGreaterThan(0);
 
-    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await toggleViewMode(mounted);
     const back = observe(mounted);
     expect(back.viewMode).toBe("full");
     expect(back.bottomTurn).toBe(full.bottomTurn);
@@ -355,9 +369,9 @@ describe("mounted live-child overlay identity across view modes", () => {
     expect(start.bottomTurn).toBeGreaterThan(0);
 
     for (let round = 0; round < 3; round += 1) {
-      await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+      await toggleViewMode(mounted);
       expect(observe(mounted).bottomTurn).toBe(start.bottomTurn);
-      await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+      await toggleViewMode(mounted);
       expect(observe(mounted).bottomTurn).toBe(start.bottomTurn);
     }
   });
@@ -368,13 +382,13 @@ describe("mounted live-child overlay identity across view modes", () => {
     expect(before.scrollOffset).toBe(0);
     expect(before.bottomTurn).toBe(TURN_COUNT - 1);
 
-    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await toggleViewMode(mounted);
     const compact = observe(mounted);
     expect(compact.viewMode).toBe("compact");
     expect(compact.scrollOffset).toBe(0);
     expect(compact.bottomTurn).toBe(TURN_COUNT - 1);
 
-    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await toggleViewMode(mounted);
     const back = observe(mounted);
     expect(back.viewMode).toBe("full");
     expect(back.scrollOffset).toBe(0);
@@ -625,14 +639,14 @@ describe("mounted real Pi 0.84 lifecycle across view modes", () => {
       Array.from({ length: TURN_COUNT }, (_, i) => `live-assistant-${i}`),
     );
 
-    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await toggleViewMode(mounted);
     const compact = observe(mounted);
     expect(compact.viewMode).toBe("compact");
     expect(compact.bottomTurn).toBe(full.bottomTurn);
     expect(compact.anchorEntryId).toBeDefined();
     expect(overlayIds.has(compact.anchorEntryId as string)).toBe(true);
 
-    await press(mounted, PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    await toggleViewMode(mounted);
     const back = observe(mounted);
     expect(back.viewMode).toBe("full");
     expect(back.bottomTurn).toBe(full.bottomTurn);
@@ -951,7 +965,8 @@ describe("mounted real assistantMessageEvent missing-start regression", () => {
     }
 
     // Compact and full agree on that identity, and a round trip holds it.
-    component.handleInput(PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    expect(controller.toggleViewMode().isOk()).toBe(true);
+    component.invalidate();
     await new Promise((resolve) => setTimeout(resolve, 0));
     const compactLines = component.render(WIDTH);
     expect(compactLines.join("\n")).toContain("#E0#");
@@ -963,7 +978,8 @@ describe("mounted real assistantMessageEvent missing-start regression", () => {
         .map((entry) => entry.id),
     ).toEqual(["live-assistant-0"]);
 
-    component.handleInput(PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    expect(controller.toggleViewMode().isOk()).toBe(true);
+    component.invalidate();
     await new Promise((resolve) => setTimeout(resolve, 0));
     component.render(WIDTH);
     const backView = controller.view()._unsafeUnwrap();

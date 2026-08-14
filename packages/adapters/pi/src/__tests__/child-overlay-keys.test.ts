@@ -1,5 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import {
+  answerOverlayCancelConfirm,
+  CLOSED_OVERLAY_SEARCH,
+  OVERLAY_SEARCH_QUERY_MAX,
+  type OverlaySearchState,
+  overlaySearchQuery,
+  stepOverlaySearch,
+} from "../child-overlay-input-modes.js";
+import {
   applyChildOverlayKeyPlan,
   CHILD_OVERLAY_CANCEL_CHOICES,
   CHILD_OVERLAY_CANCEL_DEFAULT_CHOICE,
@@ -14,19 +22,23 @@ import {
   createChildOverlayConflictPort,
   createChildOverlayKeyMachine,
   isChildOverlayCancelKey,
+  isChildOverlaySearchOpenInput,
   isPiChildOverlayActionId,
   PI_CHILD_OVERLAY_ACTION_IDS,
   PI_CHILD_OVERLAY_ACTIONS,
   PI_CHILD_OVERLAY_KEY_BOUNDS,
-  PI_CHILD_OVERLAY_VIEW_MODE_KEY,
-  PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
+  PI_CHILD_OVERLAY_SEARCH_KEY,
+  PI_CHILD_OVERLAY_SEARCH_KEY_USUAL_OWNER,
+  PI_CHILD_OVERLAY_SEARCH_OPEN_KEY,
+  PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+  PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE,
   type PiChildOverlayHierarchyNode,
   type PiChildOverlayKeyContext,
   type PiChildOverlayKeyPlan,
   parseChildOverlayKeyOverrides,
   planChildOverlayKeyRegistrations,
   resolveChildOverlayCancelChoice,
-  resolveChildOverlayViewModeRoute,
+  resolveChildOverlaySearchRoute,
 } from "../child-overlay-keys.js";
 
 function mustPlan(
@@ -107,13 +119,36 @@ describe("child-overlay-keys actions and registration plans", () => {
     expect(byAction.get("weave.child.picker.open")).toEqual(["alt+i"]);
     expect(byAction.get("weave.child.slot.1")).toEqual(["alt+1"]);
     expect(byAction.get("weave.child.slot.9")).toEqual(["alt+9"]);
+    // Pi does not own alt+h / alt+l, so they lead; alt+left / alt+right stay
+    // as secondary candidates a real host normally skips.
     expect(byAction.get("weave.child.sibling.previous")).toEqual([
-      "alt+left",
       "alt+h",
+      "alt+left",
     ]);
     expect(byAction.get("weave.child.sibling.next")).toEqual([
-      "alt+right",
       "alt+l",
+      "alt+right",
+    ]);
+  });
+
+  it("keeps the sibling primaries when Pi owns the arrow aliases", () => {
+    // The bindings a stock Pi keymap actually declares for these keys.
+    const plan = mustPlan({
+      conflicts: createChildOverlayConflictPort({
+        "app.tree.foldOrUp": "alt+left",
+        "app.tree.unfoldOrDown": "alt+right",
+      }),
+    });
+    const keysFor = (actionId: string): readonly string[] =>
+      plan.registrations
+        .filter((registration) => registration.actionId === actionId)
+        .map((registration) => registration.key);
+    expect(keysFor("weave.child.sibling.previous")).toEqual(["alt+h"]);
+    expect(keysFor("weave.child.sibling.next")).toEqual(["alt+l"]);
+    // The skipped aliases are reported, and each diagnostic names its owner.
+    expect(plan.diagnostics).toEqual([
+      "weave overlay action weave.child.sibling.previous skipped key alt+left: already bound to app.tree.foldOrUp",
+      "weave overlay action weave.child.sibling.next skipped key alt+right: already bound to app.tree.unfoldOrDown",
     ]);
   });
 
@@ -521,39 +556,226 @@ describe("child-overlay-keys Backspace, Escape, and cancel", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Compact view toggle route (Task 7)
+// The in-overlay search openers
 // ---------------------------------------------------------------------------
 
-describe("resolveChildOverlayViewModeRoute", () => {
-  it("uses a non-printable key so it can never be mistaken for draft text", () => {
-    expect(PI_CHILD_OVERLAY_VIEW_MODE_KEY).toBe("ctrl+o");
-    expect(PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER).toBe("\x0f");
-    expect(/^[\x20-\x7e]$/.test(PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER)).toBe(
+describe("child overlay search openers", () => {
+  it("opens on / only while the draft is empty", () => {
+    const alias = PI_CHILD_OVERLAY_SEARCH_TRIGGER;
+    expect(PI_CHILD_OVERLAY_SEARCH_OPEN_KEY).toBe("/");
+    expect(isChildOverlaySearchOpenInput("/", "", alias)).toBe(true);
+    // A reader typing a steer that contains a slash keeps typing it.
+    expect(isChildOverlaySearchOpenInput("/", "fix packages/", alias)).toBe(
       false,
     );
+    expect(isChildOverlaySearchOpenInput("/", " ", alias)).toBe(false);
   });
 
-  it("keeps the trigger when no host binding owns the key", () => {
-    const route = resolveChildOverlayViewModeRoute(
+  it("accepts the ctrl+f alias regardless of the draft, and only when free", () => {
+    const alias = PI_CHILD_OVERLAY_SEARCH_TRIGGER;
+    expect(PI_CHILD_OVERLAY_SEARCH_TRIGGER).toBe("\x06");
+    expect(isChildOverlaySearchOpenInput("\x06", "", alias)).toBe(true);
+    expect(isChildOverlaySearchOpenInput("\x06", "a draft", alias)).toBe(true);
+    // A disabled alias never removes search: `/` still opens it.
+    expect(isChildOverlaySearchOpenInput("\x06", "", undefined)).toBe(false);
+    expect(isChildOverlaySearchOpenInput("/", "", undefined)).toBe(true);
+    expect(isChildOverlaySearchOpenInput("x", "", alias)).toBe(false);
+  });
+
+  it("keeps the alias when no host binding owns ctrl+f", () => {
+    const route = resolveChildOverlaySearchRoute(
       createChildOverlayConflictPort({ "app.something": "ctrl+g" }),
     );
-    expect(route.trigger).toBe(PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER);
+    expect(route.trigger).toBe(PI_CHILD_OVERLAY_SEARCH_TRIGGER);
     expect(route.diagnostics).toEqual([]);
+    expect(resolveChildOverlaySearchRoute().trigger).toBe(
+      PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+    );
   });
 
-  it("participates in the shared conflict port and reports a taken key", () => {
-    const route = resolveChildOverlayViewModeRoute(
-      createChildOverlayConflictPort({ "app.openFile": "ctrl+o" }),
+  it("skips a taken ctrl+f and names its usual owner in the diagnostic", () => {
+    const route = resolveChildOverlaySearchRoute(
+      createChildOverlayConflictPort({
+        [PI_CHILD_OVERLAY_SEARCH_KEY_USUAL_OWNER]: PI_CHILD_OVERLAY_SEARCH_KEY,
+      }),
     );
     expect(route.trigger).toBeUndefined();
-    expect(route.diagnostics).toEqual([
-      "weave overlay compact view skipped key ctrl+o: already bound to app.openFile",
-    ]);
+    expect(route.diagnostics).toHaveLength(1);
+    const diagnostic = route.diagnostics[0] as string;
+    expect(diagnostic).toContain(PI_CHILD_OVERLAY_SEARCH_KEY);
+    expect(diagnostic).toContain(PI_CHILD_OVERLAY_SEARCH_KEY_USUAL_OWNER);
+    // The report still states that search remains reachable.
+    expect(diagnostic).toContain(PI_CHILD_OVERLAY_SEARCH_OPEN_KEY);
   });
 
-  it("defaults to the documented trigger without a conflict port", () => {
-    expect(resolveChildOverlayViewModeRoute().trigger).toBe(
-      PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
+  it("never registers /, q, n or N as host shortcuts", () => {
+    const plan = mustPlan();
+    const registered = plan.registrations.map(
+      (registration) => registration.key,
     );
+    for (const key of ["/", "q", "shift+q", "n", "shift+n", "ctrl+f"]) {
+      expect(registered).not.toContain(key);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deliberate non-claims
+// ---------------------------------------------------------------------------
+
+describe("child overlay non-claims", () => {
+  it("states which keys the mounted overlay leaves alone and why", () => {
+    expect(PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE).toContain("Ctrl+O");
+    expect(PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE).toContain("Alt+A");
+    expect(PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE).toContain("Alt+T");
+    expect(PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE).toContain("ui.custom");
+    expect(PI_CHILD_OVERLAY_UNCLAIMED_KEYS_NOTE).toContain(
+      "setEditorComponent",
+    );
+  });
+
+  it("declares no compact-view action, so ctrl+o is never planned", () => {
+    expect(PI_CHILD_OVERLAY_ACTION_IDS.some((id) => id.includes("view"))).toBe(
+      false,
+    );
+    const plan = mustPlan();
+    expect(
+      plan.registrations.some((registration) => registration.key === "ctrl+o"),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two modal keyboards: search and the cancel confirmation
+// ---------------------------------------------------------------------------
+
+describe("overlay search keyboard", () => {
+  const ALIAS = PI_CHILD_OVERLAY_SEARCH_TRIGGER;
+
+  const open = (query = ""): OverlaySearchState => ({
+    mode: "typing",
+    query,
+    matchIndex: 0,
+    accepted: false,
+  });
+
+  it("opens on / only from an empty draft, and on the alias always", () => {
+    const shut = stepOverlaySearch(CLOSED_OVERLAY_SEARCH, "/", "", ALIAS);
+    expect(shut.claimed).toBe(true);
+    expect(shut.state.mode).toBe("typing");
+    expect(shut.effect).toEqual({ kind: "repaint" });
+
+    // A slash typed into a steer belongs to the draft, not to search.
+    const typing = stepOverlaySearch(
+      CLOSED_OVERLAY_SEARCH,
+      "/",
+      "fix packages/",
+      ALIAS,
+    );
+    expect(typing.claimed).toBe(false);
+    expect(typing.state).toBe(CLOSED_OVERLAY_SEARCH);
+
+    expect(
+      stepOverlaySearch(CLOSED_OVERLAY_SEARCH, ALIAS, "a draft", ALIAS).claimed,
+    ).toBe(true);
+    // A host-owned alias is simply absent; `/` still opens search.
+    expect(
+      stepOverlaySearch(CLOSED_OVERLAY_SEARCH, ALIAS, "", undefined).claimed,
+    ).toBe(false);
+    expect(
+      stepOverlaySearch(CLOSED_OVERLAY_SEARCH, "n", "", ALIAS).claimed,
+    ).toBe(false);
+  });
+
+  it("edits the query with printable bytes and backspace, and bounds it", () => {
+    const typed = stepOverlaySearch(open(), "ab", "", ALIAS);
+    expect(typed.state.query).toBe("ab");
+    expect(stepOverlaySearch(open("ab"), "\x7f", "", ALIAS).state.query).toBe(
+      "a",
+    );
+    // Control sequences never edit the query, but they stay consumed.
+    const arrow = stepOverlaySearch(open("ab"), "\x1b[C", "", ALIAS);
+    expect(arrow.claimed).toBe(true);
+    expect(arrow.state.query).toBe("ab");
+
+    const long = "x".repeat(OVERLAY_SEARCH_QUERY_MAX);
+    expect(stepOverlaySearch(open(long), "y", "", ALIAS).state.query).toBe(
+      long,
+    );
+  });
+
+  it("commits on Enter, latches the anchor, and runs the query once", () => {
+    const committed = stepOverlaySearch(open("needle"), "\r", "", ALIAS);
+    expect(committed.state.mode).toBe("navigate");
+    expect(committed.state.accepted).toBe(true);
+    expect(committed.state.matchIndex).toBe(0);
+    expect(committed.effect).toEqual({ kind: "run", query: "needle" });
+    expect(stepOverlaySearch(open("needle"), "\n", "", ALIAS).effect).toEqual({
+      kind: "run",
+      query: "needle",
+    });
+  });
+
+  it("walks matches with n/j/Down and N/k/Up while navigating", () => {
+    const navigating: OverlaySearchState = {
+      mode: "navigate",
+      query: "needle",
+      matchIndex: 0,
+      accepted: true,
+    };
+    for (const key of ["n", "j", "\x1b[B"]) {
+      const next = stepOverlaySearch(navigating, key, "", ALIAS);
+      expect(next.state.matchIndex).toBe(1);
+      expect(next.effect).toEqual({ kind: "focus" });
+    }
+    for (const key of ["N", "k", "\x1b[A"]) {
+      const previous = stepOverlaySearch(navigating, key, "", ALIAS);
+      expect(previous.state.matchIndex).toBe(-1);
+      expect(previous.effect).toEqual({ kind: "focus" });
+    }
+    // Everything else stays consumed: search owns the keyboard until Escape.
+    for (const key of ["q", "/", "x", "\r"]) {
+      const other = stepOverlaySearch(navigating, key, "", ALIAS);
+      expect(other.claimed).toBe(true);
+      expect(other.state).toEqual(navigating);
+      expect(other.effect).toEqual({ kind: "none" });
+    }
+  });
+
+  it("closes search on Escape from either open mode, and nothing else", () => {
+    for (const state of [
+      open("needle"),
+      { mode: "navigate", query: "n", matchIndex: 3, accepted: true } as const,
+    ]) {
+      const closed = stepOverlaySearch(state, "\x1b", "", ALIAS);
+      expect(closed.claimed).toBe(true);
+      expect(closed.state).toEqual(CLOSED_OVERLAY_SEARCH);
+      expect(closed.effect).toEqual({ kind: "close" });
+    }
+  });
+
+  it("reports the typed query while typing and the committed one after", () => {
+    expect(overlaySearchQuery(open("half"), "committed")).toBe("half");
+    expect(
+      overlaySearchQuery(
+        { mode: "navigate", query: "half", matchIndex: 0, accepted: true },
+        "committed",
+      ),
+    ).toBe("committed");
+  });
+});
+
+describe("overlay cancel confirmation keyboard", () => {
+  it("answers only y and n/Esc, and swallows everything else", () => {
+    expect(answerOverlayCancelConfirm("y")).toBe("confirm");
+    expect(answerOverlayCancelConfirm("Y")).toBe("confirm");
+    expect(answerOverlayCancelConfirm("n")).toBe("dismiss");
+    expect(answerOverlayCancelConfirm("N")).toBe("dismiss");
+    expect(answerOverlayCancelConfirm("\x1b")).toBe("dismiss");
+    // Precedence made visible: while the question is up, none of these can
+    // reach search, the overlay keys, or the draft editor.
+    for (const key of ["/", "q", "j", "k", "\r", "\x7f", "\x06", "a"]) {
+      expect(answerOverlayCancelConfirm(key)).toBe("swallow");
+    }
   });
 });
