@@ -38,6 +38,7 @@ import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import type { PiChildRefRecord } from "../child-session-refs.js";
 import { createPiChildSessionStorageAuthority } from "../child-session-storage-authority.js";
 import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
+import { MAX_FINAL_OUTPUT_BYTES } from "../child-tree.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
 import type {
@@ -56,7 +57,6 @@ import {
   readOverlaySessionEntryPage,
   resolveDirectStepBadgeAgent,
 } from "../extension.js";
-import { MAX_FINAL_OUTPUT_BYTES } from "../child-tree.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
 import {
@@ -7742,7 +7742,9 @@ describe("createPiExtension: Task 12 native child overlay", () => {
     expect(host.customCalls.length).toBe(replacementCustomCallsBefore + 1);
     const replacementOverlay =
       host.customRenderedLines.at(-1)?.join("\n") ?? "";
-    expect(replacementOverlay).toContain("◆ loom-istchild · SETTLED");
+    // Identity on the Session Header, lifecycle on the frame marker.
+    expect(replacementOverlay).toContain("loom-istchild");
+    expect(replacementOverlay).toContain("SETTLED");
     expect(replacementOverlay).toContain("native-overlay-body");
 
     expect(host.editorFactoryCalls.length).toBe(0);

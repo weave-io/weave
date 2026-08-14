@@ -279,7 +279,7 @@ describe("createPiExtension: historical native overlay after a parent restart", 
 
     const rendered = host.customRenderedLines.at(-1)?.join("\n") ?? "";
     expect(rendered).toContain("SETTLED");
-    expect(rendered).toContain("Read-only");
+    expect(rendered.toLowerCase()).toContain("read-only");
     // Bounded newest page: the newest entries are present, the oldest are not.
     expect(rendered).toContain("body-68");
     expect(rendered).not.toContain("body-0 ");
@@ -316,7 +316,7 @@ describe("createPiExtension: historical native overlay after a parent restart", 
 
     const rendered = host.customRenderedLines.at(-1)?.join("\n") ?? "";
     expect(rendered).toContain("SETTLED");
-    expect(rendered).toContain("Read-only");
+    expect(rendered.toLowerCase()).toContain("read-only");
     expect(rendered).toContain("body-68");
 
     host.inputCustom("\u001b");

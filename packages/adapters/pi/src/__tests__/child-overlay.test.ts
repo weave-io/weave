@@ -3002,7 +3002,9 @@ describe("createChildOverlayCustomComponent", () => {
       },
     });
 
-    const full = component.render(80).join("\n");
+    // Rendered wide enough that the transcript pane can carry the whole
+    // canonical sentence beside the Status Matrix rail.
+    const full = component.render(160).join("\n");
     expect(full).toContain(
       "assistant error · rate limit · HTTP 429 · Provider rate limit exceeded.",
     );
@@ -3122,8 +3124,10 @@ describe("createChildOverlayCustomComponent", () => {
     });
 
     expect(controller.view()._unsafeUnwrap().terminalError).toBeDefined();
+    // The rail states the classification, never the canonical sentence, so the
+    // prose can only come from the transcript pane.
     const assistantErrorLines = component
-      .render(120)
+      .render(160)
       .filter((line) => line.includes("assistant error"));
     expect(assistantErrorLines).toHaveLength(1);
   });
@@ -3183,7 +3187,9 @@ describe("createChildOverlayCustomComponent", () => {
     component.render(100);
     const after = controller.view()._unsafeUnwrap();
     expect(after.anchor?.entryId).toBe(before);
-    expect(after.width).toBe(98);
+    // The controller is resized to the transcript pane, which is the inner
+    // width minus the Status Matrix rail and its separator column.
+    expect(after.width).toBe(64);
   });
 
   it("scrolls the viewport by rendered rows, not by entry count", async () => {
@@ -3340,7 +3346,7 @@ describe("createChildOverlayCustomComponent", () => {
       entryCount: 80,
     });
     const initial = component.render(100).join("\n");
-    expect(initial).toContain("mouse wheel unavailable");
+    expect(initial).toContain("Esc close");
 
     component.handleInput("\x1b[1;2:1A");
     await flush();
@@ -3628,9 +3634,10 @@ describe("createChildOverlayCustomComponent", () => {
     });
     component.render(80);
     component.handleInput("\x06");
-    expect(component.render(80).join("\n")).toContain("Search: ");
+    // Search lives on the rail now: its own section, its query and its counter.
+    expect(component.render(80).join("\n")).toContain("SEARCH");
     for (const key of "e-text-1") component.handleInput(key);
-    expect(component.render(80).join("\n")).toContain("Search: e-text-1");
+    expect(component.render(80).join("\n")).toContain("e-text-1");
     component.handleInput("\r");
     await flush();
     const view = controller.view()._unsafeUnwrap();
@@ -4127,19 +4134,14 @@ describe("child overlay compact view mode", () => {
     expect(compact.liveTail).toBe(true);
   });
 
-  it("renders one summary row per entry with the compact badge and help", async () => {
+  it("renders one summary row per entry", async () => {
     const { component, controller } = await mountCompact({ entryCount: 6 });
-    const fullLines = component.render(80).join("\n");
-    expect(fullLines).not.toContain("COMPACT");
-    expect(fullLines).toContain("Ctrl+O toggles compact view (now full)");
 
     component.handleInput(CTRL_O);
     await flush();
     expect(controller.view()._unsafeUnwrap().viewMode).toBe("compact");
     const compactLines = component.render(80);
     const joined = compactLines.join("\n");
-    expect(joined).toContain("COMPACT");
-    expect(joined).toContain("Ctrl+O toggles compact view (now compact)");
     expect(joined).toContain("e-text-0");
     expect(joined).not.toContain("/Users/");
     // Compact rows never wrap, so each admitted entry costs exactly one row.

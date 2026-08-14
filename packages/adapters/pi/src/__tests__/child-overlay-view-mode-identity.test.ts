@@ -37,8 +37,14 @@ initTheme("default");
 
 const CHILD_ID = "identity-child-1";
 const WIDTH = 60;
-/** Short terminal: both layouts keep real scroll room at this height. */
-const ROWS = 16;
+/**
+ * Short terminal: both layouts keep real scroll room at this height.
+ *
+ * The inspector's header, folded rail and prompt reserve their rows before the
+ * transcript, so this is the shortest height that still leaves a transcript
+ * window worth comparing across a layout toggle.
+ */
+const ROWS = 28;
 const ENTRY_COUNT = 30;
 
 const TEST_THEME: PiUiThemePort = {

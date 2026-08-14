@@ -299,14 +299,22 @@
   - function readNativeThreadMetadata: (entries) => PiNativeThreadMetadata | undefined
   - _...26 more_
 - `packages/adapters/pi/src/child-overlay-component.ts`
-  - function formatChildOverlayTelemetryLine: (telemetry) => string
-  - function compactChildOverlayEntryLine: (entry, width) => string
-  - function compactChildOverlayLines: (entries, width) => readonly string[]
   - function spansFromRows: (rows) => readonly OverlayLayoutSpan[]
   - function overlayUsableRows: (tui) => number
+  - function fitOverlayRows: (lines, limit) => string[]
+  - function childOverlayPaint: (theme) => Paint
   - function toChildOverlayEditorTheme: (theme) => EditorTheme
-  - _...7 more_
+  - function createChildOverlayDraftEditor: (tui, theme, keybindings) => CustomEditor
+  - _...5 more_
 - `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?, planContext?) => ChildOverlayController, class ChildOverlayController
+- `packages/adapters/pi/src/child-overlay-facts.ts`
+  - function formatOverlayTokenCount: (count) => string | undefined
+  - function formatOverlayElapsed: (elapsedMs) => string | undefined
+  - function formatOverlayFailureSummary: (error) => string | undefined
+  - function formatOverlayCost: (cost) => string | undefined
+  - function childOverlaySettlementFacts: (view) => OverlaySettlementFacts
+  - function childOverlayName: (view) => string
+  - _...8 more_
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string

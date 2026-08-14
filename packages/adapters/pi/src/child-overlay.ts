@@ -399,19 +399,26 @@ export function createReadSessionEntryPageOverlaySource(deps: {
 // ---------------------------------------------------------------------------
 
 export {
-  CHILD_OVERLAY_COMPACT_BADGE,
-  CHILD_OVERLAY_COMPACT_HELP_LINE,
-  compactChildOverlayEntryLine,
-  compactChildOverlayLines,
   createChildOverlayCustomComponent,
   createChildOverlayDraftEditor,
   PI_CHILD_OVERLAY_CUSTOM_OPTIONS,
+  PI_CHILD_OVERLAY_MIN_TERMINAL,
   type PiChildOverlayCustomComponent,
 } from "./child-overlay-component.js";
 export {
   ChildOverlayController,
   createChildOverlayController,
 } from "./child-overlay-controller.js";
+export {
+  CHILD_OVERLAY_COMPACT_BADGE,
+  CHILD_OVERLAY_COMPACT_HELP_LINE,
+  childOverlayHeaderFacts,
+  childOverlayPromptFacts,
+  childOverlayRailFacts,
+  childOverlaySettlementFacts,
+  compactChildOverlayEntryLine,
+  compactChildOverlayLines,
+} from "./child-overlay-facts.js";
 export {
   mapNativeSessionEntryToOverlay,
   mergeChildOverlayReplaySteps,

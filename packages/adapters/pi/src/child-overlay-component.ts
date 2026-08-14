@@ -34,11 +34,39 @@ import {
   type PiNativeTranscriptComponentDeps,
 } from "./child-native-components.js";
 import type { ChildOverlayController } from "./child-overlay-controller.js";
+import {
+  childOverlayHeaderFacts,
+  childOverlayPromptFacts,
+  childOverlayRailFacts,
+  childOverlaySettlementFacts,
+  compactChildOverlayLines,
+} from "./child-overlay-facts.js";
 import type { PiChildOverlayKeyInterceptor } from "./child-overlay-keys.js";
 import {
   PI_CHILD_OVERLAY_SEARCH_TRIGGER,
   PI_CHILD_OVERLAY_VIEW_MODE_TRIGGER,
 } from "./child-overlay-keys.js";
+import {
+  compactStatusMatrix,
+  composeSessionHeader,
+  frameOverlay,
+  identitySafetyRow,
+  keyLine,
+  markSearchGutter,
+  OVERLAY_FRAME_ROWS,
+  OVERLAY_FRAME_TITLE,
+  type OverlayFrameChrome,
+  type OverlayNavFacts,
+  type OverlayNavMatch,
+  overlayPaneGeometry,
+  overlayRuleRow,
+  promptKeys,
+  renderPromptGroup,
+  renderRailStatusMatrix,
+  searchRailSections,
+  squeezeBody,
+  transcriptWindow,
+} from "./child-overlay-layout.js";
 import { boundText } from "./child-overlay-replay.js";
 import type { OverlayLayoutSpan } from "./child-overlay-scroll.js";
 import { normalizeChildOverlayScrollFrame } from "./child-overlay-terminal-input.js";
@@ -48,7 +76,6 @@ import {
   type ChildOverlayFallbackReason,
   type ChildOverlayFallbackRequired,
   type ChildOverlayInputOutcome,
-  type ChildOverlayTelemetry,
   type ChildOverlayView,
   SCROLL_KEYS,
 } from "./child-overlay-types.js";
@@ -59,14 +86,10 @@ import {
   type PiChildTranscriptRenderedRow,
   type PiTranscriptComponentFactory,
 } from "./child-transcript.js";
-import {
-  fitLineToWidth,
-  fitLineWithSuffix,
-  fitRuleToWidth,
-  frameLinesToWidth,
-  overlayFrameGeometry,
-} from "./render-width.js";
+import { fitLineToWidth } from "./render-width.js";
 import type { PiUiThemePort } from "./types.js";
+import { makePaint, type Paint, plainPaint } from "./ui-paint.js";
+import { cell, fitTo, joinColumns } from "./ui-rows.js";
 
 // ---------------------------------------------------------------------------
 // Native custom component (Task 12 phase B1)
@@ -116,156 +139,43 @@ export interface PiChildOverlayCustomComponent {
  *   terminals without ever exceeding the screen.
  * - `margin` keeps one column and row of host content visible around the
  *   frame, which is what makes it read as floating rather than full-screen.
- * - No `minWidth` is set. A minimum wider than the terminal would force Pi to
- *   hand the component a width it cannot honor, and an over-wide line aborts
- *   Pi. Narrowness is handled by dropping the border, never by overflowing.
+ * - `minWidth` is the inspector's two-column floor. Pi clamps a minimum it
+ *   cannot honor to the terminal, and the component drops its border rather
+ *   than overflow, so the minimum widens the surface without ever producing
+ *   an over-wide line.
+ * - `visible` hides the overlay entirely below
+ *   {@link PI_CHILD_OVERLAY_MIN_TERMINAL}. A terminal that small cannot carry
+ *   a readable inspector, and a hidden overlay is honest where a corrupted one
+ *   is not.
  */
+export const PI_CHILD_OVERLAY_MIN_TERMINAL = Object.freeze({
+  width: 44,
+  height: 12,
+} as const);
+
 export const PI_CHILD_OVERLAY_CUSTOM_OPTIONS = Object.freeze({
   overlay: true,
   overlayOptions: Object.freeze({
     anchor: "center",
-    width: "90%",
-    maxHeight: "90%",
+    width: "92%",
+    minWidth: 40,
+    maxHeight: "86%",
     margin: 1,
+    visible: (terminalWidth: number, terminalHeight: number): boolean =>
+      terminalWidth >= PI_CHILD_OVERLAY_MIN_TERMINAL.width &&
+      terminalHeight >= PI_CHILD_OVERLAY_MIN_TERMINAL.height,
   }),
 } as const);
 
 const DEFAULT_TERMINAL_ROWS = 40;
 
 /**
- * Honest placeholder for any telemetry field the host did not report.
+ * Transcript rows the folded rail may never take.
  *
- * Pin this exact character in render tests. Never invent `0`, `0%`, or an
- * empty segment for an unknown value.
+ * The compact matrix is a degradation of the rail, and a degradation that
+ * leaves no transcript has degraded the wrong region.
  */
-const TELEMETRY_UNAVAILABLE = "—";
-
-/**
- * Compact a bounded token count for the overlay header.
- *
- * Keeps labels short enough for narrow terminals while staying exact for
- * sub-thousand counts. Values already passed Zod ceilings in Task 5.
- */
-function formatOverlayTokenCount(count: number): string {
-  if (!Number.isFinite(count) || count < 0) return TELEMETRY_UNAVAILABLE;
-  const n = Math.floor(count);
-  if (n < 1_000) return String(n);
-  if (n < 1_000_000) {
-    const k = Math.round((n / 1_000) * 10) / 10;
-    return Number.isInteger(k) ? `${k}k` : `${k.toFixed(1)}k`;
-  }
-  if (n < 1_000_000_000) {
-    const m = Math.round((n / 1_000_000) * 10) / 10;
-    return Number.isInteger(m) ? `${m}M` : `${m.toFixed(1)}M`;
-  }
-  const g = Math.round((n / 1_000_000_000) * 10) / 10;
-  return Number.isInteger(g) ? `${g}B` : `${g.toFixed(1)}B`;
-}
-
-/**
- * One consistent header meta line for {@link ChildOverlayView.telemetry}.
- *
- * Absent fields always render {@link TELEMETRY_UNAVAILABLE}. Context percent
- * is shown only when the view already derived it from both host operands;
- * unknown context never becomes `0%`.
- */
-export function formatChildOverlayTelemetryLine(
-  telemetry: ChildOverlayTelemetry | undefined,
-): string {
-  const provider =
-    telemetry?.provider !== undefined && telemetry.provider.length > 0
-      ? telemetry.provider
-      : TELEMETRY_UNAVAILABLE;
-  const model =
-    telemetry?.model !== undefined && telemetry.model.length > 0
-      ? telemetry.model
-      : TELEMETRY_UNAVAILABLE;
-  const ctx =
-    telemetry?.contextPercent !== undefined
-      ? `${telemetry.contextPercent}%`
-      : TELEMETRY_UNAVAILABLE;
-  const input =
-    telemetry?.inputTokens !== undefined
-      ? formatOverlayTokenCount(telemetry.inputTokens)
-      : TELEMETRY_UNAVAILABLE;
-  const output =
-    telemetry?.outputTokens !== undefined
-      ? formatOverlayTokenCount(telemetry.outputTokens)
-      : TELEMETRY_UNAVAILABLE;
-  return `${provider} · ${model} · ctx ${ctx} · ${input} in / ${output} out`;
-}
-
-// ---------------------------------------------------------------------------
-// Compact view projection (Task 7)
-// ---------------------------------------------------------------------------
-
-/** Header marker shown while a child renders in compact mode. */
-export const CHILD_OVERLAY_COMPACT_BADGE = "COMPACT" as const;
-
-/** Help row documenting the compact toggle; shown only when the key is free. */
-export const CHILD_OVERLAY_COMPACT_HELP_LINE =
-  "Ctrl+O toggles compact view" as const;
-
-/** Characters kept from one entry's text before the width fit trims further. */
-const COMPACT_SUMMARY_MAX = 160;
-
-/** Stable one-character kind marks; never a path, id, or free-form label. */
-const COMPACT_KIND_MARKS: Readonly<Record<string, string>> = Object.freeze({
-  prompt: "›",
-  user: "›",
-  steering: "›",
-  "follow-up": "›",
-  assistant: "•",
-  thinking: "~",
-  tool: "⚙",
-  error: "!",
-  retry: "↻",
-  image: "▣",
-  status: "·",
-  unknown: "?",
-});
-
-/**
- * Collapse one bounded overlay entry into a single summary line.
- *
- * Pure and render-time only: the entry itself is never rewritten, so toggling
- * back to full view restores the untouched transcript. Run dividers keep their
- * own shape so the run structure survives the condensation.
- */
-export function compactChildOverlayEntryLine(
-  entry: ChildOverlayEntry,
-  width: number,
-): string {
-  const flattened = boundText(entry.text)
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, COMPACT_SUMMARY_MAX);
-  if (entry.kind === "run-divider") {
-    const numbered =
-      entry.runNumber !== undefined ? `run ${entry.runNumber}` : "run";
-    const label = flattened.length > 0 ? flattened : numbered;
-    return fitLineToWidth(`── ${label} ──`, width);
-  }
-  const mark = COMPACT_KIND_MARKS[entry.kind] ?? COMPACT_KIND_MARKS.unknown;
-  const run = entry.runNumber !== undefined ? `r${entry.runNumber} ` : "";
-  return fitLineToWidth(
-    `${mark} ${run}${entry.kind}${flattened.length > 0 ? `: ${flattened}` : ""}`,
-    width,
-  );
-}
-
-/**
- * Project the loaded entry window into compact summary rows, in order.
- *
- * This is the compact counterpart of the native transcript render and reads
- * the same bounded entries the controller already holds.
- */
-export function compactChildOverlayLines(
-  entries: readonly ChildOverlayEntry[],
-  width: number,
-): readonly string[] {
-  return entries.map((entry) => compactChildOverlayEntryLine(entry, width));
-}
+const OVERLAY_MIN_TRANSCRIPT_ROWS = 3;
 
 /** Painted transcript rows plus the per-entry row spans that produced them. */
 export interface OverlayRenderedTranscript {
@@ -337,6 +247,45 @@ export function overlayUsableRows(tui: {
       ? maxHeight
       : Math.floor((terminalRows * Number.parseFloat(maxHeight)) / 100);
   return Math.max(1, Math.min(Math.floor(requested), available));
+}
+
+/**
+ * Keeps a rendered overlay inside the row budget Pi will actually keep.
+ *
+ * Pi truncates a component's output to its first `maxHeight` rows, so an
+ * over-tall render loses its bottom border and its prompt. Trimming from the
+ * MIDDLE instead keeps both edges of the frame, which is what a reader needs
+ * to see that the surface is complete.
+ */
+export function fitOverlayRows(
+  lines: readonly string[],
+  limit: number,
+): string[] {
+  const rows = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
+  if (lines.length <= rows) return [...lines];
+  if (rows <= 1) return lines.slice(0, rows);
+  return [lines[0] as string, ...lines.slice(lines.length - (rows - 1))];
+}
+
+/**
+ * The overlay's ink, or the ANSI-free twin when the host port cannot paint.
+ *
+ * A stand-in theme port is a legitimate host state (and every render test
+ * passes one), and a paint that throws would abort a render rather than lose a
+ * colour. Geometry is identical either way, so degrading here changes no
+ * column count.
+ */
+export function childOverlayPaint(theme: PiUiThemePort): Paint {
+  return Result.fromThrowable(
+    (): Paint => {
+      const paint = makePaint(theme);
+      // Prove the port answers before any row depends on it.
+      paint.text("");
+      paint.bold("");
+      return paint;
+    },
+    () => "overlay_paint_unavailable" as const,
+  )().unwrapOr(plainPaint());
 }
 
 /**
@@ -427,6 +376,13 @@ export function createChildOverlayCustomComponent(
   const viewModeTrigger = viewModeRoute.trigger;
   const draftEditor = createChildOverlayDraftEditor(tui, theme, keybindings);
   const transcriptRenderer = createPiChildTranscriptRenderer();
+  const paint = childOverlayPaint(theme);
+  /** The frame's title and lifecycle marker, refreshed by every composition. */
+  let chrome: OverlayFrameChrome = {
+    title: OVERLAY_FRAME_TITLE,
+    marker: "",
+    markerTone: "mute",
+  };
   let componentFactory: PiTranscriptComponentFactory | undefined;
   let dirty = true;
   let lines: string[] = [];
@@ -506,80 +462,105 @@ export function createChildOverlayCustomComponent(
       : [`> ${draftEditor.getText()}`];
   };
 
-  const headerLines = (view: ChildOverlayView, width: number): string[] => {
-    const title = boundText(view.child.title ?? view.child.childId);
-    const status = view.child.status.toUpperCase();
-    const badge =
-      view.viewMode === "compact" ? ` · ${CHILD_OVERLAY_COMPACT_BADGE}` : "";
-    const run =
-      view.activeRun !== undefined ? `run ${view.activeRun}` : undefined;
-    const branch =
-      view.activeBranchId !== undefined
-        ? `branch ${view.activeBranchId}`
-        : undefined;
-    const meta = [run, branch].filter((part) => part !== undefined).join(" · ");
-    // Reserve ` · STATUS` so a narrow terminal truncates the title, not the
-    // live/settled marker the reader needs (Task 20(f) width-51 crash).
-    const header = [
-      fitLineWithSuffix(`◆ ${title}`, ` · ${status}${badge}`, width),
-      ...(meta.length > 0 ? [boundText(meta)] : []),
-      // Always one telemetry row: every absent field is `—`, never guessed.
-      fitLineToWidth(
-        boundText(formatChildOverlayTelemetryLine(view.telemetry)),
-        width,
+  /**
+   * The Session Header and its rule, from identity facts alone.
+   *
+   * Nothing state-derived reaches it: status, elapsed, queue, tokens and the
+   * search all belong to the rail, and the lifecycle marker belongs to the
+   * frame, so this block is byte-identical in every child state.
+   */
+  const headRegion = (view: ChildOverlayView, width: number): string[] => [
+    ...composeSessionHeader(paint, childOverlayHeaderFacts(view), width).lines,
+    overlayRuleRow(paint, width),
+  ];
+
+  /**
+   * The prompt region: Pi's own editor, then the layout's key row.
+   *
+   * The layout renders the settled and cancel-confirmation forms itself, since
+   * both are pure text. A live child instead gets the real {@link CustomEditor}
+   * as the panel body, because a live draft is a component with a caret and
+   * multi-line editing, not a string the layout could paint. The key row below
+   * it still comes from the layout, so the two forms advertise the same keys.
+   */
+  const promptRegion = (view: ChildOverlayView, width: number): string[] => {
+    const facts = childOverlayPromptFacts(view, {
+      draft: draftEditor.getText(),
+      confirmingCancel: false,
+    });
+    if (facts.settled) return renderPromptGroup(paint, facts, width);
+    return [
+      ...renderEditorLines(width, false).map((line) =>
+        cell(fitLineToWidth(line, width), width),
       ),
+      cell(keyLine(paint, promptKeys(facts), width), width),
     ];
-    if (view.readOnly) {
-      header.push(
-        boundText(
-          view.child.status === "orphan"
-            ? "Read-only orphan — mutations disabled"
-            : "Read-only — settled child",
-        ),
-      );
-    }
-    if (view.searchQuery.length > 0 && searchMode !== "typing") {
-      const total = view.searchMatches.length;
-      const position = total === 0 ? 0 : searchMatchIndex + 1;
-      header.push(
-        boundText(
-          `Search: ${view.searchQuery} (${position}/${total} match${total === 1 ? "" : "es"})`,
-        ),
-      );
-    }
-    if (searchMode === "typing") {
-      header.push(boundText(`Search: ${searchDraft}\u258f`));
-    }
-    if (searchMode !== "off") {
-      header.push(
-        boundText(
-          searchMode === "typing"
-            ? "Enter searches · Esc cancels search"
-            : "n next match · N previous match · Esc exits search",
-        ),
-      );
-    }
-    header.push(fitRuleToWidth("─", width, 40));
-    return header;
   };
 
   /**
-   * Pi does not enable terminal mouse reporting, so wheel events cannot reach
-   * this component. Keep the keyboard controls visible until Pi adds a mouse
-   * input surface.
+   * The rail's search vocabulary, built from the controller's own match set.
+   *
+   * The counter counts matched ENTRIES, which is what the controller searched
+   * and what `n` / `N` walk, so the rail can never claim a match the keyboard
+   * cannot reach. Row indices come from the spans the transcript just
+   * reported, so the marker gutter marks rows that were actually painted.
    */
-  const helpLines = (view: ChildOverlayView, width: number): string[] => {
-    const help = [
-      "Scroll: PgUp/PgDn or Shift+↑/↓ · Home/End · mouse wheel unavailable",
-    ];
-    if (!view.readOnly) {
-      help.push("Enter steers · Alt+Enter queues a follow-up");
-      help.push("q cancels this child (confirm required) · Esc exits");
+  const navFacts = (
+    view: ChildOverlayView,
+    spans: readonly OverlayLayoutSpan[],
+  ): OverlayNavFacts => {
+    const startRow = new Map<string, number>();
+    let row = 0;
+    for (const span of spans) {
+      startRow.set(span.entryId, row);
+      row += span.rows;
     }
-    if (viewModeTrigger !== undefined) {
-      help.push(`${CHILD_OVERLAY_COMPACT_HELP_LINE} (now ${view.viewMode})`);
+    const total = view.searchMatches.length;
+    const current =
+      total === 0 ? 0 : (((searchMatchIndex % total) + total) % total) + 1;
+    const matches: OverlayNavMatch[] = view.searchMatches.map(
+      (entryId, index) => {
+        const entry = view.entries.find(
+          (candidate) => candidate.id === entryId,
+        );
+        return {
+          ordinal: index + 1,
+          row: startRow.get(entryId) ?? 0,
+          label: entry?.kind ?? "entry",
+          at: entry?.runNumber === undefined ? "" : `run ${entry.runNumber}`,
+          snippet: boundText(entry?.text ?? ""),
+        };
+      },
+    );
+    const counts = new Map<string, number>();
+    for (const match of matches) {
+      counts.set(match.label, (counts.get(match.label) ?? 0) + 1);
     }
-    return help.map((line) => fitLineToWidth(boundText(line), width));
+    return {
+      open: searchMode !== "off",
+      accepted: false,
+      query: searchMode === "typing" ? searchDraft : view.searchQuery,
+      matches,
+      total,
+      current,
+      currentMatch: current === 0 ? undefined : matches[current - 1],
+      counter: `${current}/${total} match${total === 1 ? "" : "es"}`,
+      summary:
+        total === 0
+          ? "no match in this transcript"
+          : [...counts.entries()]
+              .map(([label, count]) => `${label} ${count}`)
+              .join(" · "),
+      empty: total === 0,
+      rows: new Set(
+        view.searchMatches
+          .map((entryId) => startRow.get(entryId))
+          .filter((value): value is number => value !== undefined),
+      ),
+      // The controller's scroll offset already positions the viewport on the
+      // current match, so the window is never anchored twice.
+      anchorRow: undefined,
+    };
   };
 
   /**
@@ -913,6 +894,172 @@ export function createChildOverlayCustomComponent(
     );
   };
 
+  /**
+   * The whole inspector for one width and one row budget, or `undefined` when
+   * the last painted body must stand.
+   *
+   * The order is the contract: the header and the prompt reserve their rows
+   * first, the rail either takes a column beside the transcript or folds into
+   * dense rows above it, and only what is left becomes the transcript budget
+   * handed to `controller.resize`. The transcript is painted at the pane width
+   * with the search inset already removed, so the marker gutter, the match row
+   * indices and the measured spans all describe the same rows.
+   */
+  const composeOverlayContent = (
+    opened: ChildOverlayView,
+    outer: number,
+    rowLimit: number,
+  ): string[] | undefined => {
+    syncDraftEditorTransition(opened);
+    const settlement = childOverlaySettlementFacts(opened);
+    chrome = {
+      title: OVERLAY_FRAME_TITLE,
+      marker: ` ${settlement.glyph} ${settlement.word} `,
+      markerTone: settlement.tone,
+    };
+    const geometry = overlayPaneGeometry(outer, searchMode !== "off");
+    const inner = geometry.inner;
+    const innerHeight = Math.max(1, rowLimit - OVERLAY_FRAME_ROWS);
+
+    const prompt = promptRegion(opened, inner);
+    // A vertically starved overlay gives up provenance, then the whole header,
+    // before it gives up the prompt: a reader who cannot act on a child is
+    // worse off than one who cannot read its plan breadcrumb.
+    let head = headRegion(opened, inner);
+    if (head.length + prompt.length + 1 > innerHeight) {
+      head = identitySafetyRow(paint, childOverlayHeaderFacts(opened), inner);
+    }
+    if (head.length + prompt.length > innerHeight) head = [];
+
+    const railFacts = childOverlayRailFacts(opened);
+    const room = Math.max(0, innerHeight - head.length - prompt.length);
+    // The folded rail keeps its most valuable rows first and never buys them
+    // from the transcript's floor: an inspector with no transcript is not an
+    // inspector, and the rail's dropped rows are still one resize away.
+    const folded =
+      geometry.rail === undefined
+        ? compactStatusMatrix(paint, railFacts, inner).slice(
+            0,
+            Math.max(0, room - OVERLAY_MIN_TRANSCRIPT_ROWS - 1),
+          )
+        : [];
+    const transcriptBudget = Math.max(
+      0,
+      room - (folded.length > 0 ? folded.length + 1 : 0),
+    );
+
+    const viewport = controller.resize(
+      geometry.transcript,
+      Math.max(1, transcriptBudget),
+    );
+    if (viewport.isErr()) {
+      if (isOverlayFallbackRequired(viewport.error)) {
+        emitFallback(viewport.error);
+      } else if (
+        !("type" in viewport.error) ||
+        viewport.error.type !== "OverlayNotOpen"
+      ) {
+        emitFallback("render-failed");
+      }
+      return undefined;
+    }
+    const view = viewport.value;
+    const transcript =
+      transcriptBudget > 0
+        ? renderTranscriptLines(view, geometry.transcript)
+        : ok<OverlayRenderedTranscript, ChildOverlayFallbackRequired>({
+            lines: [],
+            spans: [],
+          });
+    if (transcript.isErr()) {
+      emitFallback(transcript.error);
+      return undefined;
+    }
+
+    const nav = navFacts(view, transcript.value.spans);
+    const painted = nav.open
+      ? markSearchGutter(paint, nav, transcript.value.lines, geometry.pane)
+      : transcript.value.lines;
+    // The cue costs a transcript row, so it is budgeted rather than overlaid.
+    const contentBudget =
+      view.scrollOffset > 0 && transcriptBudget > 0
+        ? transcriptBudget - 1
+        : transcriptBudget;
+    const scrollMax = Math.max(0, painted.length - contentBudget);
+    // Spans travel with the extent so the controller can translate a logical
+    // viewport into this layout's rendered rows.
+    const measured = controller
+      .setScrollExtent(scrollMax, transcript.value.spans)
+      .match(
+        (updated) => updated.scrollOffset,
+        () => view.scrollOffset,
+      );
+    const scrollOffset = Math.min(measured, scrollMax);
+    const end = Math.max(0, painted.length - scrollOffset);
+    const pane = [
+      ...transcriptWindow(
+        paint,
+        painted.slice(0, end),
+        geometry.pane,
+        contentBudget,
+        nav.anchorRow,
+      ),
+      ...(scrollOffset > 0 && transcriptBudget > 0
+        ? [
+            cell(
+              fitLineToWidth(
+                paint.muted(
+                  `\u2193 ${scrollOffset} newer line(s) below — End follows output`,
+                ),
+                geometry.pane,
+              ),
+              geometry.pane,
+            ),
+          ]
+        : []),
+    ];
+
+    const railWidth = geometry.rail;
+    const main =
+      railWidth === undefined
+        ? [
+            ...folded,
+            ...(folded.length > 0 ? [overlayRuleRow(paint, inner)] : []),
+            ...pane,
+          ]
+        : joinColumns(
+            [
+              { lines: pane, width: geometry.pane },
+              {
+                lines: fitTo(
+                  renderRailStatusMatrix(
+                    paint,
+                    railFacts,
+                    railWidth,
+                    room,
+                    nav.open ? searchRailSections(paint, nav, railWidth) : [],
+                  ),
+                  room,
+                  "head",
+                ),
+                width: railWidth,
+              },
+            ],
+            room,
+            paint.rule("\u2502"),
+          );
+
+    // Overflow is taken out of the transcript block, never out of the prompt,
+    // so a starved terminal can still act on the child.
+    const above = squeezeBody(
+      paint,
+      [...head, ...main],
+      Math.max(1, innerHeight - prompt.length),
+      inner,
+    );
+    return fitTo([...above, ...prompt], innerHeight, "tail");
+  };
+
   return {
     get focused() {
       return draftEditor.focused;
@@ -923,98 +1070,25 @@ export function createChildOverlayCustomComponent(
       requestPaint();
     },
     render(outerWidth) {
-      const frame = overlayFrameGeometry(outerWidth);
-      const width = frame.innerWidth;
+      const outer = Number.isFinite(outerWidth)
+        ? Math.max(0, Math.floor(outerWidth))
+        : 0;
+      const rowLimit = usableRows();
       const rendered = Result.fromThrowable(
         (): string[] => {
           if (finished) return lines;
-          const rowLimit = usableRows();
-          const innerRows = Math.max(0, rowLimit - frame.reservedRows);
           const current = controller.view();
           if (current.isErr()) return lines;
-          let view = current.value;
-          if (dirty || width !== lastWidth || rowLimit !== lastUsableRows) {
-            syncDraftEditorTransition(view);
-            const header = headerLines(view, width);
-            const help = helpLines(view, width);
-            const editor = renderEditorLines(width, view.readOnly).slice(
-              -innerRows,
+          if (dirty || outer !== lastWidth || rowLimit !== lastUsableRows) {
+            const composed = composeOverlayContent(
+              current.value,
+              outer,
+              rowLimit,
             );
-            let leadingRows = Math.max(0, innerRows - editor.length);
-            const visibleHeader = header.slice(0, leadingRows);
-            leadingRows -= visibleHeader.length;
-            const visibleHelp = help.slice(0, leadingRows);
-            leadingRows -= visibleHelp.length;
-            const transcriptBudget = Math.max(0, leadingRows);
-            const viewport = controller.resize(
-              width,
-              Math.max(1, transcriptBudget),
-            );
-            if (viewport.isErr()) {
-              if (isOverlayFallbackRequired(viewport.error)) {
-                emitFallback(viewport.error);
-              } else if (
-                !("type" in viewport.error) ||
-                viewport.error.type !== "OverlayNotOpen"
-              ) {
-                emitFallback("render-failed");
-              }
-              return lines;
-            }
-            view = viewport.value;
-            const transcript =
-              transcriptBudget > 0
-                ? renderTranscriptLines(view, width)
-                : ok<OverlayRenderedTranscript, ChildOverlayFallbackRequired>({
-                    lines: [],
-                    spans: [],
-                  });
-            if (transcript.isErr()) {
-              emitFallback(transcript.error);
-              return lines;
-            }
-
-            const transcriptLines = transcript.value.lines;
-            const contentBudget =
-              view.scrollOffset > 0 && transcriptBudget > 0
-                ? transcriptBudget - 1
-                : transcriptBudget;
-            const scrollMax = Math.max(
-              0,
-              transcriptLines.length - contentBudget,
-            );
-            // Spans travel with the extent so the controller can translate a
-            // logical viewport into this layout's rendered rows.
-            let scrollOffset = controller
-              .setScrollExtent(scrollMax, transcript.value.spans)
-              .match(
-                (measured) => measured.scrollOffset,
-                () => view.scrollOffset,
-              );
-            scrollOffset = Math.min(scrollOffset, scrollMax);
-            const end = transcriptLines.length - scrollOffset;
-            const visibleTranscript = transcriptLines.slice(
-              Math.max(0, end - contentBudget),
-              end,
-            );
-            lines = [
-              ...visibleHeader,
-              ...visibleTranscript,
-              ...(scrollOffset > 0 && transcriptBudget > 0
-                ? [
-                    fitLineToWidth(
-                      boundText(
-                        `${scrollOffset} newer line(s) below — End follows output`,
-                      ),
-                      width,
-                    ),
-                  ]
-                : []),
-              ...visibleHelp,
-              ...editor,
-            ].slice(0, innerRows);
+            if (composed === undefined) return lines;
+            lines = composed;
             dirty = false;
-            lastWidth = width;
+            lastWidth = outer;
             lastUsableRows = rowLimit;
           }
           return lines;
@@ -1024,7 +1098,12 @@ export function createChildOverlayCustomComponent(
           return lines;
         },
       )().unwrapOr(lines);
-      return frameLinesToWidth(rendered, outerWidth).slice(0, usableRows());
+      // The frame is applied on every call, so a cached body is still fitted to
+      // whatever width Pi passed this time and can never overflow it.
+      return fitOverlayRows(
+        frameOverlay(paint, rendered, outer, chrome),
+        rowLimit,
+      );
     },
     handleInput(data) {
       if (finished || isKeyRelease(data)) return;

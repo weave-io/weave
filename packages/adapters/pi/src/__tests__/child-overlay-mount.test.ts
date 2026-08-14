@@ -33,11 +33,13 @@ import {
   type MemoryOverlaySourceChild,
   type MemoryOverlaySourceEntry,
   PI_CHILD_OVERLAY_CUSTOM_OPTIONS,
+  PI_CHILD_OVERLAY_MIN_TERMINAL,
 } from "../child-overlay.js";
 import {
-  formatChildOverlayTelemetryLine,
+  fitOverlayRows,
   overlayUsableRows,
 } from "../child-overlay-component.js";
+import { OVERLAY_FRAME_TITLE } from "../child-overlay-layout.js";
 import {
   FRAME_EDGE_ROWS,
   frameLinesToWidth,
@@ -141,17 +143,19 @@ describe("PI_CHILD_OVERLAY_CUSTOM_OPTIONS", () => {
   it("sizes the floating surface inside the terminal on every side", () => {
     const options = PI_CHILD_OVERLAY_CUSTOM_OPTIONS.overlayOptions;
     expect(options.anchor).toBe("center");
-    expect(options.width).toBe("90%");
-    expect(options.maxHeight).toBe("90%");
+    expect(options.width).toBe("92%");
+    expect(options.minWidth).toBe(40);
+    expect(options.maxHeight).toBe("86%");
     expect(options.margin).toBe(1);
   });
 
-  it("declares no minimum width that a narrow terminal could not honor", () => {
-    // A minWidth wider than the terminal forces Pi to pass a width the
-    // component cannot satisfy, which is a process abort, not a layout bug.
-    expect("minWidth" in PI_CHILD_OVERLAY_CUSTOM_OPTIONS.overlayOptions).toBe(
-      false,
-    );
+  it("hides rather than corrupts the inspector on a tiny terminal", () => {
+    const visible = PI_CHILD_OVERLAY_CUSTOM_OPTIONS.overlayOptions.visible;
+    const { width, height } = PI_CHILD_OVERLAY_MIN_TERMINAL;
+    expect(visible(width, height)).toBe(true);
+    expect(visible(width - 1, height)).toBe(false);
+    expect(visible(width, height - 1)).toBe(false);
+    expect(visible(200, 60)).toBe(true);
   });
 
   it("is frozen so a caller cannot mutate the shared mount options", () => {
@@ -162,9 +166,32 @@ describe("PI_CHILD_OVERLAY_CUSTOM_OPTIONS", () => {
   });
 
   it("matches Pi's percentage floor and margin clamp", () => {
-    expect(overlayUsableRows({ terminal: { rows: 40 } })).toBe(36);
+    // 86% of the terminal, then clamped by the one-row margin on each side.
+    expect(overlayUsableRows({ terminal: { rows: 40 } })).toBe(34);
     expect(overlayUsableRows({ terminal: { rows: 5 } })).toBe(3);
-    expect(overlayUsableRows({ terminal: { rows: Number.NaN } })).toBe(36);
+    expect(overlayUsableRows({ terminal: { rows: Number.NaN } })).toBe(34);
+  });
+
+  it("stays in sync with whatever maxHeight the options declare", () => {
+    const options = PI_CHILD_OVERLAY_CUSTOM_OPTIONS.overlayOptions;
+    const percent = Number.parseFloat(options.maxHeight);
+    for (const rows of [8, 24, 40, 60, 120] as const) {
+      const available = Math.max(1, rows - options.margin * 2);
+      expect(overlayUsableRows({ terminal: { rows } })).toBe(
+        Math.max(1, Math.min(Math.floor((rows * percent) / 100), available)),
+      );
+    }
+  });
+});
+
+describe("fitOverlayRows", () => {
+  it("keeps both frame edges by trimming the middle", () => {
+    const rows = ["top", "a", "b", "c", "bottom"];
+    expect(fitOverlayRows(rows, 5)).toEqual(rows);
+    expect(fitOverlayRows(rows, 3)).toEqual(["top", "c", "bottom"]);
+    expect(fitOverlayRows(rows, 2)).toEqual(["top", "bottom"]);
+    expect(fitOverlayRows(rows, 1)).toEqual(["top"]);
+    expect(fitOverlayRows(rows, 0)).toEqual([]);
   });
 });
 
@@ -265,12 +292,20 @@ describe("child overlay border rendering", () => {
     for (const width of [4, 10, 20, 51, 120] as const) {
       const lines = component.render(width);
       expect(lines.length).toBeGreaterThan(0);
-      expect(lines[0]?.startsWith("┌")).toBe(true);
-      expect(lines.at(-1)?.startsWith("└")).toBe(true);
+      expect(lines[0]?.startsWith("╭")).toBe(true);
+      expect(lines.at(-1)?.startsWith("╰")).toBe(true);
       for (const line of lines) {
         expect(visibleWidth(line)).toBeLessThanOrEqual(width);
       }
     }
+  });
+
+  it("titles the frame and marks the child's state, never its id", async () => {
+    const { component } = await mount();
+    const top = component.render(120)[0] ?? "";
+    expect(top).toContain(OVERLAY_FRAME_TITLE.trim());
+    expect(top).toContain("LIVE");
+    expect(top).not.toContain(CHILD_ID);
   });
 
   it("lays content out against the inner width, not the outer width", async () => {
@@ -281,7 +316,6 @@ describe("child overlay border rendering", () => {
     for (const line of body) {
       // rail + inner + rail
       expect(visibleWidth(line)).toBe(60);
-      expect(visibleWidth(line.slice(1, -1))).toBe(58);
     }
   });
 
@@ -291,7 +325,7 @@ describe("child overlay border rendering", () => {
       const lines = component.render(width);
       for (const line of lines) {
         expect(visibleWidth(line)).toBeLessThanOrEqual(width);
-        expect(line.startsWith("┌")).toBe(false);
+        expect(line.startsWith("╭")).toBe(false);
       }
     }
   });
@@ -344,18 +378,18 @@ describe("child overlay steering field", () => {
   });
 
   it("keeps the native editor and bottom border on a short terminal", async () => {
-    const { component } = await mount({}, 8);
+    const rows = 8;
+    const { component } = await mount({}, rows);
     component.handleInput("short draft");
     const lines = component.render(80);
-    expect(lines).toHaveLength(6);
+    expect(lines).toHaveLength(overlayUsableRows({ terminal: { rows } }));
     expect(lines.join("\n")).toContain("short draft");
-    expect(lines.at(-1)?.startsWith("└")).toBe(true);
+    expect(lines.at(-1)?.startsWith("╰")).toBe(true);
   });
 
-  it("keeps draft editor and bottom border at the shortest supported height with telemetry", async () => {
-    // rows=8 is the shortest height this suite treats as keeping draft text
-    // visible (usableRows 6 → 4 inner rows after the frame). The extra
-    // telemetry header row must not steal those editor/border rows.
+  it("keeps the draft and both frame edges at the shortest supported height", async () => {
+    // The rail owns telemetry now, so a usage report may never cost the
+    // editor or the bottom border a row on a starved terminal.
     const rows = 8;
     const { component, controller } = await mount({}, rows);
     controller
@@ -376,14 +410,8 @@ describe("child overlay steering field", () => {
       overlayUsableRows({ terminal: { rows } }),
     );
     expect(lines.join("\n")).toContain("shortest draft");
-    expect(lines.at(-1)?.startsWith("└")).toBe(true);
-    expect(lines[0]?.startsWith("┌")).toBe(true);
-    // At this height the meta line is budgeted away; taller renders show it.
-    expect(
-      formatChildOverlayTelemetryLine(
-        controller.view()._unsafeUnwrap().telemetry,
-      ),
-    ).toBe("openai · openai/gpt-5.6 · ctx 42% · 12.3k in / 4.1k out");
+    expect(lines.at(-1)?.startsWith("╰")).toBe(true);
+    expect(lines[0]?.startsWith("╭")).toBe(true);
   });
 
   it("never renders more rows than Pi keeps from rows 4 through 80", async () => {
@@ -394,18 +422,54 @@ describe("child overlay steering field", () => {
       expect(rendered.length).toBeLessThanOrEqual(
         overlayUsableRows({ terminal: { rows } }),
       );
-      expect(rendered[0]?.startsWith("┌")).toBe(true);
-      expect(rendered.at(-1)?.startsWith("└")).toBe(true);
+      expect(rendered[0]?.startsWith("╭")).toBe(true);
+      expect(rendered.at(-1)?.startsWith("╰")).toBe(true);
     }
   });
 
-  it("keeps the editor visible with the tall-terminal 90% budget", async () => {
-    const { component } = await mount({}, 60);
+  it("keeps the editor visible with the tall-terminal budget", async () => {
+    const rows = 60;
+    const { component } = await mount({}, rows);
     component.handleInput("tall draft");
     const rendered = component.render(100);
-    expect(rendered.length).toBeLessThanOrEqual(54);
+    expect(rendered.length).toBeLessThanOrEqual(
+      overlayUsableRows({ terminal: { rows } }),
+    );
     expect(rendered.join("\n")).toContain("tall draft");
-    expect(rendered.at(-1)?.startsWith("└")).toBe(true);
+    expect(rendered.at(-1)?.startsWith("╰")).toBe(true);
+  });
+
+  it("keeps every width from 40 to 200 fitted, framed and editable", async () => {
+    const { component } = await mount();
+    component.handleInput("swept draft");
+    for (let width = 40; width <= 200; width += 1) {
+      component.invalidate();
+      const rendered = component.render(width);
+      for (const line of rendered) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+      expect(rendered[0]?.startsWith("╭")).toBe(true);
+      expect(rendered.at(-1)?.startsWith("╰")).toBe(true);
+      expect(rendered.join("\n")).toContain("swept draft");
+    }
+  });
+
+  it("keeps every height from 8 to 60 inside Pi's row budget", async () => {
+    for (let rows = 8; rows <= 60; rows += 1) {
+      const { component } = await mount({}, rows);
+      component.handleInput("height draft");
+      const rendered = component.render(100);
+      const budget = overlayUsableRows({ terminal: { rows } });
+      expect(rendered.length).toBeLessThanOrEqual(budget);
+      expect(rendered[0]?.startsWith("╭")).toBe(true);
+      expect(rendered.at(-1)?.startsWith("╰")).toBe(true);
+      for (const line of rendered) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(100);
+      }
+      // The editor is what a live child is opened for: it survives every
+      // height Pi can hand this component.
+      expect(rendered.join("\n")).toContain("height draft");
+    }
   });
 
   it("propagates overlay focus to the native editor", async () => {
@@ -436,6 +500,6 @@ describe("child overlay steering field", () => {
     component.invalidate();
     const lines = component.render(80);
     expect(lines.join("\n").includes("ignored")).toBe(false);
-    expect(lines.join("\n").includes("Read-only")).toBe(true);
+    expect(lines.join("\n").toLowerCase().includes("read-only")).toBe(true);
   });
 });

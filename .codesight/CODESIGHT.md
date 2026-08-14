@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 298 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~32,300 tokens. Without it, AI exploration would cost ~96,300 tokens. **Saves ~64,100 tokens per conversation.**
-> **Last scanned:** 2026-08-14 21:30 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 299 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~32,400 tokens. Without it, AI exploration would cost ~96,600 tokens. **Saves ~64,200 tokens per conversation.**
+> **Last scanned:** 2026-08-14 21:54 — re-run after significant changes
 
 ---
 
@@ -310,14 +310,22 @@
   - function readNativeThreadMetadata: (entries) => PiNativeThreadMetadata | undefined
   - _...26 more_
 - `packages/adapters/pi/src/child-overlay-component.ts`
-  - function formatChildOverlayTelemetryLine: (telemetry) => string
-  - function compactChildOverlayEntryLine: (entry, width) => string
-  - function compactChildOverlayLines: (entries, width) => readonly string[]
   - function spansFromRows: (rows) => readonly OverlayLayoutSpan[]
   - function overlayUsableRows: (tui) => number
+  - function fitOverlayRows: (lines, limit) => string[]
+  - function childOverlayPaint: (theme) => Paint
   - function toChildOverlayEditorTheme: (theme) => EditorTheme
-  - _...7 more_
+  - function createChildOverlayDraftEditor: (tui, theme, keybindings) => CustomEditor
+  - _...5 more_
 - `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?, planContext?) => ChildOverlayController, class ChildOverlayController
+- `packages/adapters/pi/src/child-overlay-facts.ts`
+  - function formatOverlayTokenCount: (count) => string | undefined
+  - function formatOverlayElapsed: (elapsedMs) => string | undefined
+  - function formatOverlayFailureSummary: (error) => string | undefined
+  - function formatOverlayCost: (cost) => string | undefined
+  - function childOverlaySettlementFacts: (view) => OverlaySettlementFacts
+  - function childOverlayName: (view) => string
+  - _...8 more_
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string

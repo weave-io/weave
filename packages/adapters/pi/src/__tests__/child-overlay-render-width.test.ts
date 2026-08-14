@@ -11,8 +11,7 @@ import {
 import {
   compactChildOverlayEntryLine,
   compactChildOverlayLines,
-  formatChildOverlayTelemetryLine,
-} from "../child-overlay-component.js";
+} from "../child-overlay-facts.js";
 import type { ChildOverlayEntry } from "../child-overlay-types.js";
 import { overlayFrameGeometry } from "../render-width.js";
 
@@ -21,7 +20,8 @@ initTheme("default");
 
 const CRASH_HEADER_WIDTH = 115;
 const CRASH_TERMINAL_WIDTH = 51;
-const LIVE_SUFFIX = " · LIVE";
+/** The frame marker the inspector prints for a live child. */
+const LIVE_MARKER = "LIVE";
 
 function message(
   id: string,
@@ -71,13 +71,9 @@ function child(
   };
 }
 
-/** Title that makes `◆ <title> · LIVE` exactly 115 visible columns. */
+/** A title far wider than any tested terminal. */
 function crashTitle(): string {
-  const prefix = "◆ ";
-  const suffix = LIVE_SUFFIX;
-  return "A".repeat(
-    CRASH_HEADER_WIDTH - visibleWidth(prefix) - visibleWidth(suffix),
-  );
+  return "A".repeat(CRASH_HEADER_WIDTH);
 }
 
 async function mount(title: string, entryCount = 8) {
@@ -105,6 +101,12 @@ async function mount(title: string, entryCount = 8) {
   return { component, controller };
 }
 
+/** ANSI-free twin of a rendered row, for content assertions. */
+function plain(line: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: terminal escapes.
+  return line.replace(/\u001B\[[0-9;]*[A-Za-z]|\u001B\][^\u0007]*\u0007/gu, "");
+}
+
 function assertLinesFit(lines: readonly string[], width: number): void {
   for (const line of lines) {
     expect(visibleWidth(line)).toBeLessThanOrEqual(
@@ -126,25 +128,38 @@ function contentLines(lines: readonly string[], outerWidth: number): string[] {
     .map((line) => line.slice(1, -1).replace(/ +$/u, ""));
 }
 
-describe("child overlay render width (Task 20(f))", () => {
-  it("keeps · LIVE when the 115-column header is rendered at width 51", async () => {
+describe("child overlay render width", () => {
+  it("fits a 115-column title into a 51-column terminal", async () => {
     const title = crashTitle();
-    expect(visibleWidth(`◆ ${title}${LIVE_SUFFIX}`)).toBe(CRASH_HEADER_WIDTH);
+    expect(visibleWidth(title)).toBe(CRASH_HEADER_WIDTH);
     const { component } = await mount(title);
     const lines = component.render(CRASH_TERMINAL_WIDTH);
     expect(lines.length).toBeGreaterThan(0);
     assertLinesFit(lines, CRASH_TERMINAL_WIDTH);
-    const header = contentLines(lines, CRASH_TERMINAL_WIDTH)[0] ?? "";
-    expect(header.endsWith(LIVE_SUFFIX)).toBe(true);
-    expect(header.startsWith("◆")).toBe(true);
-    expect(visibleWidth(header)).toBeLessThanOrEqual(CRASH_TERMINAL_WIDTH);
+    // The identity row names the child; the frame carries the state marker,
+    // so a narrow terminal never has to choose between them.
+    const identity = contentLines(lines, CRASH_TERMINAL_WIDTH)[0] ?? "";
+    expect(identity).toContain("CHILD");
+    expect(lines[0]).toContain(LIVE_MARKER);
   });
 
   it("keeps every line inside widths 1, 2, 10, 20, and 51", async () => {
     const { component } = await mount(crashTitle());
     for (const width of [1, 2, 10, 20, 51] as const) {
+      component.invalidate();
       const lines = component.render(width);
       assertLinesFit(lines, width);
+    }
+  });
+
+  it("keeps every line inside every width from 40 to 200", async () => {
+    const { component } = await mount(crashTitle(), 40);
+    for (let width = 40; width <= 200; width += 1) {
+      component.invalidate();
+      const lines = component.render(width);
+      assertLinesFit(lines, width);
+      expect(lines[0]?.startsWith("╭")).toBe(true);
+      expect(lines.at(-1)?.startsWith("╰")).toBe(true);
     }
   });
 
@@ -154,26 +169,21 @@ describe("child overlay render width (Task 20(f))", () => {
     assertLinesFit(component.render(20), 20);
     const grown = component.render(51);
     assertLinesFit(grown, 51);
-    expect((contentLines(grown, 51)[0] ?? "").endsWith(LIVE_SUFFIX)).toBe(true);
+    expect(grown[0]).toContain(LIVE_MARKER);
   });
 
   it("fits ANSI, emoji, CJK, and combining-mark titles", async () => {
     const title = `\x1b[31m${"漢".repeat(40)}${"😀".repeat(20)}e\u0301\x1b[0m`;
     const { component } = await mount(title);
     for (const width of [10, 20, 51] as const) {
+      component.invalidate();
       const lines = component.render(width);
       assertLinesFit(lines, width);
     }
-    // The status suffix is reserved only while the framed inner width can
-    // still carry a title beside it. At width 10 the frame leaves 8 columns
-    // and ` · LIVE` alone costs 7, so a bare status is correctly dropped in
-    // favor of naming the child.
-    for (const width of [20, 51] as const) {
-      const lines = component.render(width);
-      expect((contentLines(lines, width)[0] ?? "").endsWith(LIVE_SUFFIX)).toBe(
-        true,
-      );
-    }
+    // The state marker rides the frame, so it survives every width whose frame
+    // still has room for it beside the title.
+    component.invalidate();
+    expect(component.render(51)[0]).toContain(LIVE_MARKER);
   });
 
   it("clamps an over-wide draft editor fallback line", async () => {
@@ -201,83 +211,15 @@ describe("child overlay render width (Task 20(f))", () => {
   });
 });
 
-describe("child overlay telemetry header (Task 6)", () => {
+describe("child overlay telemetry placement", () => {
   const usageEvent = (usage: unknown, extra: Record<string, unknown> = {}) => ({
     type: "usage",
     usage,
     ...extra,
   });
 
-  it("formats the full telemetry line with compact token counts", () => {
-    expect(
-      formatChildOverlayTelemetryLine({
-        provider: "openai",
-        model: "openai/gpt-5.6",
-        inputTokens: 12_300,
-        outputTokens: 4_100,
-        contextPercent: 42,
-      }),
-    ).toBe("openai · openai/gpt-5.6 · ctx 42% · 12.3k in / 4.1k out");
-  });
-
-  it("renders — for every absent field and never invents 0%", () => {
-    expect(formatChildOverlayTelemetryLine(undefined)).toBe(
-      "— · — · ctx — · — in / — out",
-    );
-    expect(
-      formatChildOverlayTelemetryLine({
-        contextTokens: 900,
-      }),
-    ).toBe("— · — · ctx — · — in / — out");
-    expect(formatChildOverlayTelemetryLine(undefined)).not.toContain("0%");
-  });
-
-  it("formats large bounded token counts without overflowing the label", () => {
-    const line = formatChildOverlayTelemetryLine({
-      provider: "cursor",
-      model: "cursor/grok-4.5",
-      inputTokens: 999_999_999,
-      outputTokens: 1_000_000_000,
-      contextPercent: 100,
-    });
-    expect(line).toBe(
-      "cursor · cursor/grok-4.5 · ctx 100% · 1000M in / 1B out",
-    );
-    expect(visibleWidth(line)).toBeLessThanOrEqual(80);
-  });
-
-  it("renders full telemetry inside the overlay header", async () => {
+  it("reports host usage on the rail and never in the header", async () => {
     const { component, controller } = await mount("telemetry-child");
-    const applied = controller.applyLiveEvent(
-      usageEvent(
-        {
-          input: 12_300,
-          output: 4_100,
-          context: { tokens: 4_200, contextWindow: 10_000 },
-        },
-        { model: "openai/gpt-5.6" },
-      ),
-    );
-    expect(applied.isOk()).toBe(true);
-    component.invalidate();
-    const lines = component.render(100);
-    assertLinesFit(lines, 100);
-    const content = contentLines(lines, 100);
-    expect(content).toContain(
-      "openai · openai/gpt-5.6 · ctx 42% · 12.3k in / 4.1k out",
-    );
-  });
-
-  it("renders the fully-unavailable telemetry line when the host reported nothing", async () => {
-    const { component } = await mount("no-telemetry");
-    const lines = component.render(80);
-    assertLinesFit(lines, 80);
-    expect(contentLines(lines, 80)).toContain("— · — · ctx — · — in / — out");
-    expect(lines.join("\n")).not.toContain("ctx 0%");
-  });
-
-  it("keeps the telemetry line truncation-safe at ~40 columns", async () => {
-    const { component, controller } = await mount("narrow-telemetry");
     controller
       .applyLiveEvent(
         usageEvent(
@@ -291,16 +233,49 @@ describe("child overlay telemetry header (Task 6)", () => {
       )
       ._unsafeUnwrap();
     component.invalidate();
+    const lines = component.render(120);
+    assertLinesFit(lines, 120);
+    const content = contentLines(lines, 120).map(plain);
+    expect(content.some((line) => /\bin\b.*12\.3k/u.test(line))).toBe(true);
+    expect(content.some((line) => /\bout\b.*4\.1k/u.test(line))).toBe(true);
+    // The header is identity only: no token count and no context percentage.
+    const header = content[0] ?? "";
+    expect(header).not.toContain("12.3k");
+    expect(header).not.toContain("ctx");
+  });
+
+  it("prints — for unreported spend instead of a fabricated zero", async () => {
+    const { component } = await mount("no-telemetry");
+    const lines = component.render(120);
+    assertLinesFit(lines, 120);
+    const joined = contentLines(lines, 120).map(plain).join("\n");
+    expect(joined).toContain("—");
+    expect(joined).not.toContain("ctx 0%");
+    expect(joined).not.toContain("0%");
+  });
+
+  it("keeps the rail readable at ~40 columns", async () => {
+    const { component, controller } = await mount("narrow-telemetry");
+    controller
+      .applyLiveEvent(
+        usageEvent(
+          {
+            input: 12_300,
+            output: 4_100,
+            context: { tokens: 4_200, contextWindow: 10_000 },
+          },
+          { model: "openai/gpt-5.6" },
+        ),
+      )
+      ._unsafeUnwrap();
     for (const width of [40, 41, 42] as const) {
+      component.invalidate();
       const lines = component.render(width);
       assertLinesFit(lines, width);
-      const meta = contentLines(lines, width).find((line) =>
-        line.includes("ctx"),
+      const spend = contentLines(lines, width).find((line) =>
+        plain(line).trim().startsWith("spend"),
       );
-      expect(meta).toBeDefined();
-      expect(visibleWidth(meta ?? "")).toBeLessThanOrEqual(
-        overlayFrameGeometry(width).innerWidth,
-      );
+      expect(spend).toBeDefined();
     }
   });
 });
