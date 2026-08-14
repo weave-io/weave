@@ -308,7 +308,7 @@ Replace structured delegation triggers and category file patterns with portable 
     - [proposed] `rg` finds old terms only in explicit migration/history passages and tests that assert rejection. This controls stale-contract drift.
   - **Review gate**: Run Weft after the documentation/release slice and resolve blocking findings.
 
-- [ ] 13. Run focused and full verification plus final Weft/Warp gates
+- [x] 13. Run focused and full verification plus final Weft/Warp gates
   - **What**: Prove the breaking contract, adapter safety, generated declarations, docs, and clean integration before live harness work.
   - **Depends on**: Task 12
   - **Implementation outline**:
@@ -324,7 +324,8 @@ Replace structured delegation triggers and category file patterns with portable 
     - [user] Weft follows all non-trivial changes; Warp approves input validation, authenticated child bootstrap, and request/header mutation surfaces.
     - [proposed] No supported adapter can reach `applied` in tests without injecting the exact response evidence defined in Task 1. This directly guards truthful reporting.
 
-- [ ] 14. Prove each adapter in a fresh real harness with exact artifacts
+- [x] 14. Prove each adapter in a fresh real harness with exact artifacts
+  - **Execution note**: Skipped by explicit user direction; a full live harness proof is not required for this execution.
   - **What**: Build, bind, install, restart, and exercise exact adapter bytes. Prove both normal behavior and fast intent/evidence behavior where support is claimed.
   - **Files**: `docs/specs/fast-provider-acceleration-live-proof.md` (create)
   - **Depends on**: Task 13
