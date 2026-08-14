@@ -1,9 +1,10 @@
 # Pi child-session smoke checklist
 
-Version: 6
+Version: 7
 
 This checklist covers the acceptance surfaces defined in
-[Spec 33](33-spec-pi-adapter.md). A row is `Pending` until a real-harness Pi
+[Spec 33](33-spec-pi-adapter.md) and the geometry, drop order, and honesty rules
+fixed by the [Weave UI design record](33-weave-ui-design.md). A row is `Pending` until a real-harness Pi
 `0.84.1` run records a proof under [`33-proofs/`](33-proofs/), indexed by
 [`33-proofs/README.md`](33-proofs/README.md). Every live row runs in a fresh
 Herdr pane that the test creates and closes, with isolated Pi config, data,
@@ -36,12 +37,39 @@ path non-disclosure.
 Version 6 also adds sanitized child provider-error evidence. Controlled child
 events must cover 429, 500 with no body, connection/timeout, and unknown JSON
 without an actual provider outage or credential use. The canonical bounded line
-must agree in full, compact, historical, fallback, and parent-summary surfaces;
+must agree on the delegation card, the live and historical child inspector, the
+custom-editor fallback, and the parent-facing summary;
 a later success must clear it. Raw input and sentinel values must remain absent.
 General DLP for secret-shaped tool call IDs and credentials in ordinary tool
 output is outside this acceptance scope.
 
-## Overlay UX live procedure (rows S051, S070–S077)
+## Weave UI redesign surfaces (rows S040–S043, S076–S077, S078–S080)
+
+Version 7 replaces the three-line compact `weave_delegate` block with the inline
+**delegation card** and the earlier overlay chrome with the **child inspector**.
+The surfaces a proof must name are:
+
+- **Delegation card** (§6): one framed card per run, status-first ten-column
+  rail, one assignment row, one Native Line, and a balanced edge footer whose
+  right side prints `Ctrl+O expand · Alt+I inspect child`. Expanded, one
+  interior rule, one status strip, and nine literal bottom transcript rows.
+  Settlement rewrites the rail word, the Native Line, and the footer verb
+  (`expand` → `details`) and adds no row.
+- **Child inspector** (§7): one titled outer frame with the live state marker;
+  a two-row session header (badge · agent · model · role · bounded title, then
+  `delegated by <PARENT>` · plan › task › subtask); a Pi-native transcript pane
+  left; a Status Matrix rail right grouped lifecycle · work · spend; and a
+  primary-like editor with one muted key row below.
+- **Keys** (§8.1): `Alt+I` picker, `Alt+1..9`, sibling and parent navigation,
+  empty-draft `q` cancel confirmation answered in-overlay, empty-draft `/` rail
+  search with `n` / `N` (`j` / `k`) and `Enter` accept, and `Escape` following
+  the precedence **cancel confirmation › search › overlay**. `Ctrl+O` belongs to
+  Pi's own tool expand and is never registered by Weave.
+- **Plan Rail** (design record §4): the widget above the parent editor carrying
+  `◆ WEAVE · <AGENT>`, the `Alt+A cycle` hint, the plan name, task marks with
+  the ordinal, `┃ now`, and `┗ next`, with no duplicate task footer beside it.
+
+## Overlay UX live procedure (rows S051, S070–S080)
 
 Run every step in one fresh Pi `0.84.1` TUI on a real PTY, through the exact
 packaged adapter artifact, after confirming the loaded `dist/extension.js` and
@@ -76,17 +104,40 @@ one child that produces enough output to overflow the viewport, and open it with
    header meta row. Expect `provider · model · ctx N% · X in / Y out` with real
    values. Open a child with no usage report and expect `—` in each unreported
    field, with no `0%` and no invented model.
-7. **Compact (`S076`).** Press `Ctrl+O` on the live child. Expect a `compact`
-   header badge and one-line entry rows. Press `Ctrl+O` again and expect the full
-   transcript with the viewport still anchored on the same entry. Type a draft,
-   run a `Ctrl+F` search, toggle twice, and expect the draft and the search query
-   and match position unchanged. Repeat both toggles on a historical child after
-   restarting Pi.
-8. **Conflict (`S077`).** Bind `ctrl+o` in Pi's own keybindings, restart, and open
-   a child. Expect no compact help row, no toggle, and one bounded diagnostic
-   naming the existing owner.
-9. **Cleanup.** Close the overlay, quit Pi, and confirm no residual child process
-   and no active Runtime Store lease. Close the pane the test created.
+7. **Rail search (`S076`).** With an empty overlay draft, press `/`. Expect a
+   SEARCH section prepended to the Status Matrix and a marker gutter beside the
+   transcript. Press `n` and `N` (then `j` and `k`) and expect the rail cursor and
+   the transcript window to move together. Press `Enter` and expect the jump to
+   latch the anchor. Press `Escape` once and expect search to close with the
+   overlay still mounted; press `Escape` again and expect the overlay to close.
+   Type `hi` into the draft and press `/`; expect `hi/` in the draft and no
+   search. Repeat on a historical child after restarting Pi.
+8. **Conflict (`S077`).** Bind an overlay key in Pi's own keybindings, restart,
+   and open a child. Expect the route to be skipped, the affordance to be absent
+   from the key row, and one bounded diagnostic naming the existing owner.
+   Confirm Weave registers no binding for `ctrl+o`.
+9. **Delegation card (`S078`).** In the parent transcript, watch one
+   `weave_delegate` call from bootstrap through reasoning, a tool call, and a
+   tool result. Expect exactly one framed card with one top and one bottom edge,
+   a ten-column status-first rail, one assignment row, one Native Line, and a
+   footer ending in `Ctrl+O expand · Alt+I inspect child`. Press `Ctrl+O`; expect
+   one interior rule, one status strip, and nine transcript rows. Press `Ctrl+O`
+   again to collapse. Narrow the terminal to about 50 columns and expect the
+   state word, the assignment, and `Alt+I` to survive.
+10. **Card settlement (`S079`).** Observe a completed, a failed, and a cancelled
+    run. Expect the settled card to have the same row count as the running card,
+    the rail word and Native Line rewritten from the authoritative settlement,
+    the footer verb reading `details`, and no added row, banner, or border
+    verdict. Expect no stack frame, absolute path, or provider payload on the
+    failed card, and no success claim on the cancelled one.
+11. **Plan Rail (`S080`).** Confirm the Plan Rail is visible above the parent
+    editor with the selected agent, the `Alt+A cycle` hint, the plan, the task
+    marks, `now`, and `next`. Press `Alt+A` and expect the agent to cycle and the
+    rail to update. Confirm no duplicate task footer, and confirm the rail shows
+    no child ID, token count, cost, elapsed time, or queue depth in any child
+    state. Press `Escape` and expect the rail to survive.
+12. **Cleanup.** Close the overlay, quit Pi, and confirm no residual child process
+    and no active Runtime Store lease. Close the pane the test created.
 
 
 Rows `S057`, `S063`, `S064`, and `S067` were re-run live against the final
@@ -101,10 +152,10 @@ including their formerly passing mutation rows.
 
 | ID | Requirement | Spec | Result | Proof |
 |---|---|---|---|---|
-| S040 | Compact block shows the latest meaningful fragment in a fixed 3-line tail while running | §6 | Pending | historical: [`33-task-20-a-compact-live-settlement-proof.md`](33-proofs/33-task-20-a-compact-live-settlement-proof.md) |
-| S041 | Compact block shows the assembled final response tail or error on settlement, and freezes prior-run blocks | §6 | Pending | historical: [`33-task-20-a-compact-live-settlement-proof.md`](33-proofs/33-task-20-a-compact-live-settlement-proof.md) |
-| S042 | Compact block renders safely at narrow widths, sanitizes terminal control sequences, and isolates render errors | §6 | Pending | not run in Task 20 |
-| S043 | A centered four-sided overlay leaves the parent UI visible, renders the live child transcript, and supports live-tail, resize, expansion, and PageUp/PageDown/Shift+Up/Shift+Down/Home/End with Kitty press frames but no release repeats | §7 | Pending | [`33-true-overlay-owned-editor-proof.md`](33-proofs/33-true-overlay-owned-editor-proof.md) passes the overlay, resize, live-tail, and key matrix; a distinct visible expansion-toggle state was not recorded |
+| S040 | The delegation card shows the status-first rail, the assignment row, and one Native Line carrying the latest meaningful activity while running | §6 | Pending | superseded surface; historical: [`33-task-20-a-compact-live-settlement-proof.md`](33-proofs/33-task-20-a-compact-live-settlement-proof.md) |
+| S041 | The authoritative settlement rewrites the rail word, the Native Line, and the footer verb without changing the row count or adding chrome, and freezes prior-run cards | §6 | Pending | superseded surface; historical: [`33-task-20-a-compact-live-settlement-proof.md`](33-proofs/33-task-20-a-compact-live-settlement-proof.md) |
+| S042 | The card renders safely at narrow widths keeping state, assignment and `Alt+I`, sanitizes terminal control sequences, and degrades instead of failing | §6 | Pending | not run in Task 20 |
+| S043 | The child inspector's titled outer frame leaves the parent UI visible, renders the live child transcript with the Status Matrix rail, and supports live-tail, resize, and PageUp/PageDown/Shift+Up/Shift+Down/Home/End with Kitty press frames but no release repeats | §7 | Pending | [`33-true-overlay-owned-editor-proof.md`](33-proofs/33-true-overlay-owned-editor-proof.md) passes the overlay, resize, live-tail, and key matrix against the superseded chrome |
 | S044 | The owned native editor shows its cursor and border, supports cursor movement and multiline input, steers with `Enter`, and queues a follow-up with `Alt+Enter` | §7 | Pass | [`33-true-overlay-owned-editor-proof.md`](33-proofs/33-true-overlay-owned-editor-proof.md) |
 | S045 | Overlay renders a historical child after parent restart with bounded pagination and search | §7 | Pending | historical: [`33-task20-c-historical-restart-pagination-search-proof.md`](33-proofs/33-task20-c-historical-restart-pagination-search-proof.md) |
 | S046 | A terminal of 12 rows or fewer keeps the owned editor and bottom border visible; settled children remain read-only and focused input never reaches the primary editor | §7 | Pass | [`33-true-overlay-owned-editor-proof.md`](33-proofs/33-true-overlay-owned-editor-proof.md) |
@@ -136,9 +187,12 @@ including their formerly passing mutation rows.
 | S072 | `Escape` closes the overlay and the inspected child is still running afterwards | §7, §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
 | S073 | Empty-draft `q` opens the cancel confirmation; **Cancel subtree** cancels, and dismissal or **Keep running** leaves the child running | §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
 | S074 | Non-empty draft `q` types into the draft and opens no confirmation; a settled child reports no target | §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
-| S075 | Header telemetry shows provider, model, context percent, and tokens on a reporting child, and `—` for every field the host did not report | §7 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
-| S076 | `Ctrl+O` toggles compact and full view on live and historical children, preserving draft, search state, and viewport anchor | §7, §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
-| S077 | A host that already owns `Ctrl+O` keeps it: the toggle is skipped, unadvertised, and reported once | §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
+| S075 | The Status Matrix rail shows lifecycle, work, and spend for a reporting child, and `—` for every field the host did not report; the session header shows the model once and carries no telemetry row and no child ID | §7 | Pending | superseded surface; [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) records the old header telemetry row |
+| S076 | Empty-draft `/` opens rail search with the transcript marker gutter; `n`/`N` and `j`/`k` move, `Enter` latches the jump, and `Escape` closes search before the overlay, on live and historical children | §7, §8.1 | Pending | superseded surface; [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) records the removed compact toggle |
+| S077 | A host that already owns an overlay key keeps it: the route is skipped, unadvertised, and reported once; Weave registers no binding for `Ctrl+O` | §8.1 | Pending | superseded surface; [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) records the removed `Ctrl+O` conflict route |
+| S078 | The delegation card is one framed card with one top and one bottom edge at every width, expands to a status strip over nine literal bottom transcript rows, and prints `Ctrl+O expand · Alt+I inspect child` | §6 | Pending | not yet run |
+| S079 | Completed, failed, and cancelled cards keep the running row count, print the authoritative settlement text, expose no stack frame, path, or provider payload, and never claim unverified success | §6, §10 | Pending | not yet run |
+| S080 | The Plan Rail above the parent editor shows agent, `Alt+A cycle`, plan, task marks, `now`, and `next`; `Alt+A` cycles; it survives `Escape`; and it prints no child-operational fact and no duplicate task footer | §7 | Pending | not yet run |
 
 A passing report must record artifact SHA-256, subject SHA, exact host version,
 checklist version, run attempt, `childSettlementMissingCount: 0`, and, for each
@@ -149,7 +203,13 @@ pane. Every proof cited above records those fields.
 no live scenario for them, and their automated coverage alone cannot close a
 live row.
 
-`S051` and `S070`–`S077` cite the exact-subject evidence and the full overlay
+`S040`–`S043` and `S075`–`S080` are `Pending` for a version-7 reason: they name
+the delegation card, the child inspector, rail search, and the Plan Rail, and no
+recorded proof observed those surfaces. Their cited records remain accurate
+evidence for the superseded compact block and overlay chrome, and cannot close
+the replacement rows.
+
+`S051` and `S070`–`S074` cite the exact-subject evidence and the overlay key
 matrix in `33-proofs/33-overlay-ux-live-proof.md`.
 
 The rows marked `historical` stay `Pending` for a different reason: they need a
