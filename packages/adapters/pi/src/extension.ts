@@ -262,7 +262,11 @@ import {
   type PiPlanCatalogPort,
 } from "./plan-catalog.js";
 import { createPiPlanStateProvider } from "./plan-provider.js";
-import { renderPlanWidgetLines } from "./plan-render.js";
+import {
+  buildPlanRailFacts,
+  type PlanRailFacts,
+  renderPlanRailWidgetLines,
+} from "./plan-render.js";
 import {
   createPlanTaskListComponent,
   PI_PLAN_TASK_LIST_SHORTCUT,
@@ -340,6 +344,7 @@ import type {
   PiSessionContext,
   PiSkillInfo,
 } from "./types.js";
+import { makePaint, plainPaint } from "./ui-paint.js";
 import {
   buildPaletteActions,
   handleWeaveAbort,
@@ -355,10 +360,6 @@ import {
   type PiPaletteAction,
 } from "./workflow-commands.js";
 import { PiWorkflowController } from "./workflow-controller.js";
-import {
-  renderWorkflowTaskFooter,
-  WEAVE_WORKFLOW_TASK_STATUS_KEY,
-} from "./workflow-task-status.js";
 
 export const PI_SHARED_LOG_PATH = ".weave/weave.log";
 const TAPESTRY_PRIMARY_AGENT_NAME = "tapestry";
@@ -1996,8 +1997,17 @@ const WEAVE_AGENT_STATUS_KEY = "weave-agent";
 const WEAVE_CHILD_TREE_WIDGET_KEY = "weave-children";
 const WEAVE_PLAN_WIDGET_KEY = "weave-plan";
 
-/** Shows one exact normalized descriptor name in Pi's persistent footer. */
-function setActiveAgentStatus(
+/**
+ * The non-widget fallback for agent identity.
+ *
+ * The Plan Rail owns ambient parent context wherever it can mount. This
+ * status line exists only for the surfaces the rail cannot reach - a
+ * non-interactive session, or a host without a usable widget slot - so the
+ * selected agent is still stated somewhere. Whenever the rail is available it
+ * is cleared, because two owners of the same identity is exactly the failure
+ * the rail was built to end.
+ */
+function setActiveAgentStatusFallback(
   ctx: PiSessionContext,
   agentName: string | undefined,
 ): void {
@@ -2007,6 +2017,17 @@ function setActiveAgentStatus(
       ? undefined
       : renderActiveAgentBadge(agentName, ctx.ui.theme),
   );
+}
+
+/**
+ * Whether this session can mount the Plan Rail at all.
+ *
+ * Widgets are a TUI affordance; a headless or scripted session has no editor
+ * to sit above, so it degrades to the status-line fallback rather than
+ * mounting a surface nobody will see.
+ */
+function isPlanRailAvailable(ctx: PiSessionContext): boolean {
+  return ctx.mode === "tui" && typeof ctx.ui.setWidget === "function";
 }
 
 function setWeaveUnavailableStatus(ctx: PiSessionContext): void {
@@ -2085,26 +2106,51 @@ function buildActivePlanReadPort(
 }
 
 /**
- * Paints the compact plan widget and the durable current-task footer from one
- * resolved view, so the two surfaces are physically incapable of showing
- * different workflows. `undefined` clears both.
+ * Mounts the Plan Rail above the editor from one agent identity and one
+ * resolved plan view, so ambient parent context has exactly one owner.
+ *
+ * The rail is mounted as a component rather than as fixed lines because its
+ * degradation ladder is *measured*: Pi calls `render(width)` with the real
+ * viewport width on every resize, and the rail picks its tier from that
+ * number instead of guessing at one.
+ *
+ * Two things are cleared here, always:
+ *
+ * - the fallback agent status, so identity is never stated twice; and
+ * - the widget itself when there are no facts to show, which is what makes a
+ *   completed, aborted, or unreadable plan with no active primary remove the
+ *   surface exactly rather than freeze its last paint.
  */
 function applyActivePlanSurfaces(
   ctx: PiSessionContext,
-  view: ActivePlanView | undefined,
+  facts: PlanRailFacts | undefined,
 ): void {
-  const snapshot = view?.kind === "active" ? view.snapshot : undefined;
-  const activeTask = view?.kind === "active" ? view.activeTask : undefined;
-  const lines = renderPlanWidgetLines(snapshot);
+  if (!isPlanRailAvailable(ctx)) {
+    // Remove the rail rather than leave one a previous interactive generation
+    // mounted: a session that cannot repaint the rail must not keep showing
+    // whatever it last said.
+    ctx.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined, {
+      placement: "aboveEditor",
+    });
+    setActiveAgentStatusFallback(ctx, facts?.agent);
+    return;
+  }
+  const paint =
+    ctx.ui.theme === undefined ? plainPaint() : makePaint(ctx.ui.theme);
   ctx.ui.setWidget(
     WEAVE_PLAN_WIDGET_KEY,
-    lines.length === 0 ? undefined : lines,
-    { placement: "belowEditor" },
+    facts === undefined
+      ? undefined
+      : () => ({
+          render: (width: number) =>
+            renderPlanRailWidgetLines(facts, width, paint),
+          invalidate: () => undefined,
+        }),
+    { placement: "aboveEditor" },
   );
-  ctx.ui.setStatus(
-    WEAVE_WORKFLOW_TASK_STATUS_KEY,
-    renderWorkflowTaskFooter({ activeTask, theme: ctx.ui.theme }),
-  );
+  // The rail is the single owner while it can mount. Clearing the fallback
+  // unconditionally is what stops the agent name appearing in two places.
+  setActiveAgentStatusFallback(ctx, undefined);
 }
 
 /**
@@ -2912,6 +2958,67 @@ export function createPiExtension(
   const activePlanUiState = createActivePlanUiState();
 
   /**
+   * The whole of this session's ambient parent context, in one place.
+   *
+   * The Plan Rail shows the selected agent *and* the active plan together, so
+   * neither half may be painted without the other. Holding both here means an
+   * agent switch repaints the plan it belongs to, and a plan repaint keeps the
+   * agent it was resolved under, instead of one surface blanking the other.
+   */
+  const parentContextCell: {
+    agentName: string | undefined;
+    view: ActivePlanView | undefined;
+  } = { agentName: undefined, view: undefined };
+
+  /**
+   * Projects the retained parent context into the rail's closed fact type.
+   * `undefined` whenever no Weave primary is active, which removes the rail.
+   */
+  function currentPlanRailFacts(): PlanRailFacts | undefined {
+    const view = parentContextCell.view;
+    const session = activeSession;
+    return buildPlanRailFacts({
+      agentName: parentContextCell.agentName,
+      cycleCandidateCount:
+        session === undefined
+          ? 0
+          : listCycleablePrimaryAgents(session.descriptors).length,
+      snapshot: view?.kind === "active" ? view.snapshot : undefined,
+      activeTask: view?.kind === "active" ? view.activeTask : undefined,
+    });
+  }
+
+  /** Repaints the single parent-context surface from the retained facts. */
+  function paintParentContext(ctx: PiSessionContext): void {
+    applyActivePlanSurfaces(ctx, currentPlanRailFacts());
+  }
+
+  /**
+   * Records the agent the rail must name and repaints.
+   *
+   * Callers resolve the name exactly as the badge always has - a direct step's
+   * own agent while one is active, and otherwise only the *committed* primary
+   * (`resolveDirectStepBadgeAgent`). A merely pending selection passes
+   * `undefined`, so the rail never names authority the session does not hold.
+   */
+  function setActiveAgent(
+    ctx: PiSessionContext,
+    agentName: string | undefined,
+  ): void {
+    parentContextCell.agentName = agentName;
+    paintParentContext(ctx);
+  }
+
+  /** Records the resolved plan view the rail must show and repaints. */
+  function setActivePlanView(
+    ctx: PiSessionContext,
+    view: ActivePlanView | undefined,
+  ): void {
+    parentContextCell.view = view;
+    paintParentContext(ctx);
+  }
+
+  /**
    * Resolves the active plan once and repaints both always-on surfaces from
    * that single result, returning the outcome for callers (Alt+T) that need to
    * say something about it.
@@ -2944,7 +3051,7 @@ export function createPiExtension(
     );
     if (port === undefined) {
       activePlanUiState.clear();
-      applyActivePlanSurfaces(ctx, undefined);
+      setActivePlanView(ctx, undefined);
       return ok({ kind: "empty", reason: "no-controller" });
     }
     const resolution = await activePlanUiState.resolve(port);
@@ -2970,7 +3077,7 @@ export function createPiExtension(
       return ok({ kind: "empty", reason: "no-controller" });
     }
     if (resolution.isErr()) {
-      applyActivePlanSurfaces(ctx, undefined);
+      setActivePlanView(ctx, undefined);
       return err(resolution.error);
     }
     const view =
@@ -3018,7 +3125,7 @@ export function createPiExtension(
         return ok({ kind: "empty", reason: "no-eligible-recovery-pointer" });
       }
     }
-    applyActivePlanSurfaces(ctx, view);
+    setActivePlanView(ctx, view);
     return ok(view);
   }
 
@@ -3051,7 +3158,7 @@ export function createPiExtension(
   /** Drops the retained active-plan identity and clears both surfaces. */
   function clearActivePlanSurfaces(ctx: PiSessionContext | undefined): void {
     activePlanUiState.clear();
-    if (ctx !== undefined) applyActivePlanSurfaces(ctx, undefined);
+    if (ctx !== undefined) setActivePlanView(ctx, undefined);
   }
 
   function buildWorkflowTracker(projectRoot: string): PiActiveWorkflowTracker {
@@ -3645,7 +3752,7 @@ export function createPiExtension(
       session.pendingPrimaryName = descriptor.name;
       session.primaryActivationAttempted = true;
       session.primaryActivationFailure = undefined;
-      setActiveAgentStatus(ctx, descriptor.name);
+      setActiveAgent(ctx, descriptor.name);
       return okAsync(undefined);
     }
     if (current === undefined && options.activateImmediately !== true) {
@@ -3655,7 +3762,7 @@ export function createPiExtension(
       // A pending selection is not a committed primary. This branch grants
       // no authority and paints no badge; a caller must request explicit
       // immediate activation before the selection can become active.
-      setActiveAgentStatus(ctx, undefined);
+      setActiveAgent(ctx, undefined);
       return okAsync(undefined);
     }
     if (
@@ -3728,7 +3835,7 @@ export function createPiExtension(
           session.primaryActivationAttempted = true;
           session.primaryActivationFailure = undefined;
           resetProviderFastReporting();
-          setActiveAgentStatus(ctx, descriptor.name);
+          setActiveAgent(ctx, descriptor.name);
           return undefined;
         })
         .map((value) => {
@@ -4355,7 +4462,7 @@ export function createPiExtension(
       // activation and every early return - is what stops a stale badge from
       // outliving the session that earned it. Child sessions have painted
       // nothing at this point, so this is a no-op for them.
-      setActiveAgentStatus(ctx, undefined);
+      setActiveAgent(ctx, undefined);
       if (ctx.mode === "tui" && shouldRedirectSharedLogs) {
         const redirected = await deps.logRedirector.redirect(
           join(ctx.cwd, PI_SHARED_LOG_PATH),
@@ -4590,7 +4697,7 @@ export function createPiExtension(
           currentWorkflows = {};
           planStateProviderCell.value = undefined;
           activeWorkflowInstanceCell.value = undefined;
-          setActiveAgentStatus(ctx, undefined);
+          setActiveAgent(ctx, undefined);
           setWeaveUnavailableStatus(ctx);
           deps.logger.warn(
             {
@@ -4631,7 +4738,7 @@ export function createPiExtension(
           clearThreadSources(threadSourcesCell);
           clearChildReconstruction(childReconstructionCell);
           threadSourcesRequired = false;
-          setActiveAgentStatus(ctx, undefined);
+          setActiveAgent(ctx, undefined);
           ctx.ui.setStatus(
             "weave",
             "health-only - run /weave:health for details",
@@ -4664,7 +4771,7 @@ export function createPiExtension(
       // holds. Boot activation above has already committed it for every
       // non-health-only generation that reached this point; health-only
       // generations never commit one, so their badge stays hidden.
-      setActiveAgentStatus(
+      setActiveAgent(
         ctx,
         sessionHealthOnly
           ? undefined
@@ -5358,7 +5465,7 @@ export function createPiExtension(
             },
             onDirectStepActiveChange: (active, agentName) => {
               if (!startupOwnsGeneration()) return;
-              setActiveAgentStatus(
+              setActiveAgent(
                 ctx,
                 resolveDirectStepBadgeAgent(
                   active,

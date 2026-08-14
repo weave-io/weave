@@ -20,6 +20,7 @@ import {
 } from "neverthrow";
 import {
   PI_AGENT_BADGE_BG_TOKENS,
+  renderActiveAgentBadge,
   selectAgentBadgeBg,
 } from "../agent-cycle.js";
 import { DefaultPiCapabilityProber } from "../capability-prober.js";
@@ -119,6 +120,30 @@ workflow direct-flow {
     name "Run direct step"
     type autonomous
     agent loom
+    prompt "Run the direct step"
+    completion agent_signal
+  }
+}
+`);
+  if (parsed.isErr()) throw new Error(JSON.stringify(parsed.error));
+  return {
+    ...EMPTY_CONFIG,
+    workflows: parsed.value.workflows,
+    settings: {},
+  } as unknown as WeaveConfig;
+})();
+
+/** A direct step whose agent is deliberately *not* the committed primary. */
+const TAPESTRY_DIRECT_STEP_CONFIG = (() => {
+  const parsed = parseConfig(`
+workflow tapestry-flow {
+  description "Direct-step identity fixture"
+  version 1
+
+  step run {
+    name "Run direct step"
+    type autonomous
+    agent tapestry
     prompt "Run the direct step"
     completion agent_signal
   }
@@ -876,10 +901,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     expect(
       host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
     ).toBe("ready");
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
   });
 
   it("accepts injected rendering fallback and all required native surfaces through the real session lifecycle", async () => {
@@ -1140,8 +1162,8 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     });
     expect(turn.systemPrompt).toBe("native");
     expect(
-      host.statusCalls.filter(
-        (call) => call.key === "weave-agent" && call.value === "◆ WEAVE · LOOM",
+      shownAgentBadgeHistory(host).filter(
+        (value) => value === "◆ WEAVE · LOOM",
       ),
     ).toHaveLength(0);
   });
@@ -1252,7 +1274,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     expect(ctxA).not.toBe(ctxB);
   });
 
-  it("clears the compact plan widget on session_shutdown (Pi adapter contract) alongside the child-tree widget", async () => {
+  it("clears the Plan Rail on session_shutdown (Pi adapter contract) alongside the child-tree widget", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host);
     await host.triggerSessionStart();
@@ -1262,16 +1284,71 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     );
     expect(planWidgetCalls.length).toBeGreaterThan(0);
     expect(planWidgetCalls.at(-1)?.value).toBeUndefined();
-    const taskFooterCalls = host.statusCalls.filter(
-      (call) => call.key === "weave-task",
+    // The duplicate `weave-task` footer is gone: the rail is the only owner,
+    // so there is no second surface left to clear.
+    expect(host.statusCalls.some((call) => call.key === "weave-task")).toBe(
+      false,
     );
-    expect(taskFooterCalls.length).toBeGreaterThan(0);
-    expect(taskFooterCalls.at(-1)).toEqual({
-      key: "weave-task",
-      value: undefined,
-    });
+    expect(shownAgentBadge(host)).toBeUndefined();
   });
 });
+
+/** The Plan Rail lines the host last mounted, or `[]` when it was removed. */
+function planRailLines(host: RecordingFakePiHost): readonly string[] {
+  const value = host.widgetCalls
+    .filter((call) => call.key === "weave-plan")
+    .at(-1)?.value;
+  return Array.isArray(value) ? (value as readonly string[]) : [];
+}
+
+/** Whether the rail is currently naming an active task at all. */
+function planRailShowsTask(host: RecordingFakePiHost): boolean {
+  return planRailLines(host).some((line) => line.startsWith("┃ now"));
+}
+
+/** SGR escapes, built at runtime so the source carries no control byte. */
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "gu");
+
+/** The `◆ WEAVE · NAME` identity a rail header states, ignoring colour. */
+function railHeaderBadge(header: string): string | undefined {
+  const parts = header.replace(ANSI, "").split(" · ");
+  const mark = parts[0];
+  const name = parts[1];
+  if (mark === undefined || name === undefined) return undefined;
+  return `${mark} · ${name}`;
+}
+
+/**
+ * The agent identity Weave is showing, wherever it currently owns it.
+ *
+ * The Plan Rail owns ambient identity while it can mount; the `weave-agent`
+ * status line is the fallback for hosts that cannot mount a widget. Asking
+ * for the identity rather than for one surface keeps these assertions true to
+ * the contract - exactly one owner - instead of naming which owner won.
+ */
+function shownAgentBadge(host: RecordingFakePiHost): string | undefined {
+  const header = planRailLines(host)[0];
+  if (header !== undefined) return railHeaderBadge(header);
+  return host.statusCalls.filter((call) => call.key === "weave-agent").at(-1)
+    ?.value;
+}
+
+/** Every agent identity Weave has shown, across both owners, in order. */
+function shownAgentBadgeHistory(
+  host: RecordingFakePiHost,
+): (string | undefined)[] {
+  const fromRail = host.widgetCalls
+    .filter((call) => call.key === "weave-plan")
+    .map((call) =>
+      Array.isArray(call.value)
+        ? railHeaderBadge((call.value as readonly string[])[0] ?? "")
+        : undefined,
+    );
+  const fromStatus = host.statusCalls
+    .filter((call) => call.key === "weave-agent")
+    .map((call) => call.value);
+  return [...fromRail, ...fromStatus];
+}
 
 function loomDescriptor(
   overrides: Partial<AgentDescriptor> = {},
@@ -1375,10 +1452,7 @@ describe("strict boot primary activation", () => {
       { kind: "model", model: catalogModel },
       { kind: "thinking", level: "high" },
     ]);
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
     expect(host.statusCalls).toContainEqual({ key: "weave", value: "ready" });
     expect(host.beforeAgentStartCalls).toBe(0);
     expect(host.sentUserMessages).toHaveLength(0);
@@ -1413,9 +1487,7 @@ describe("strict boot primary activation", () => {
 
     await host.triggerSessionStart();
     const activationCalls = [...host.activationCalls];
-    const committedBadge = host.statusCalls
-      .filter((call) => call.key === "weave-agent")
-      .at(-1);
+    const committedBadge = shownAgentBadge(host);
 
     const turn = await host.triggerBeforeAgentStart({
       systemPrompt: "native",
@@ -1423,9 +1495,7 @@ describe("strict boot primary activation", () => {
 
     expect(turn.systemPrompt).toContain("You are Loom, the main orchestrator.");
     expect(host.activationCalls).toEqual(activationCalls);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual(committedBadge);
+    expect(shownAgentBadge(host)).toEqual(committedBadge);
   });
 
   it("appends the committed prompt for a fast primary without changing UI or activation", async () => {
@@ -1465,10 +1535,7 @@ describe("strict boot primary activation", () => {
       { kind: "model", model: catalogModel },
       { kind: "thinking", level: "high" },
     ]);
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
     expect(host.statusCalls).toContainEqual({ key: "weave", value: "ready" });
   });
 
@@ -1497,10 +1564,7 @@ describe("strict boot primary activation", () => {
     await host.triggerSessionStart();
 
     expect(host.getSystemPromptOptionsCalls).toBeGreaterThan(0);
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
 
     const turn = await host.triggerBeforeAgentStart({
       systemPrompt: "native",
@@ -1539,12 +1603,7 @@ describe("strict boot primary activation", () => {
       key: "weave",
       value: "ready",
     });
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
     expect(host.beforeAgentStartCalls).toBe(0);
   });
 
@@ -1684,8 +1743,8 @@ After loading a skill, follow its instructions.
       ),
     ).toBe(false);
     expect(
-      host.statusCalls.filter(
-        (call) => call.key === "weave-agent" && call.value === "◆ WEAVE · LOOM",
+      shownAgentBadgeHistory(host).filter(
+        (value) => value === "◆ WEAVE · LOOM",
       ),
     ).toHaveLength(0);
 
@@ -1695,8 +1754,8 @@ After loading a skill, follow its instructions.
     expect(turn.systemPrompt).toBe("native");
     expect(host.activationCalls).toHaveLength(0);
     expect(
-      host.statusCalls.filter(
-        (call) => call.key === "weave-agent" && call.value === "◆ WEAVE · LOOM",
+      shownAgentBadgeHistory(host).filter(
+        (value) => value === "◆ WEAVE · LOOM",
       ),
     ).toHaveLength(0);
   });
@@ -1772,10 +1831,7 @@ After loading a skill, follow its instructions.
     expect(host.getActiveTools()).toEqual(activeToolsAfterReplacement);
     expect(host.setModelCalls).toEqual([catalogModel, replacementModel]);
     expect(host.getCurrentModel()).toEqual(replacementModel);
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
   });
 
   it("serializes an explicit Alt+A switch ahead of replacement boot model activation", async () => {
@@ -1830,10 +1886,7 @@ After loading a skill, follow its instructions.
 
     expect(host.setModelCalls).toEqual([bootModel, switchModel]);
     expect(host.getCurrentModel()).toEqual(bootModel);
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
 
     plan = {
       agents: [
@@ -1854,10 +1907,7 @@ After loading a skill, follow its instructions.
     // the host model until the stale switch releases its serialized slot.
     expect(host.setModelCalls).toEqual([bootModel, switchModel]);
     expect(host.getCurrentModel()).toEqual(bootModel);
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: undefined,
-    });
+    expect(shownAgentBadge(host)).toEqual(undefined);
 
     deferred.settle(true);
     await staleSwitch;
@@ -1870,15 +1920,11 @@ After loading a skill, follow its instructions.
     ]);
     expect(host.getCurrentModel()).toEqual(replacementModel);
     expect(
-      host.statusCalls.filter(
-        (call) =>
-          call.key === "weave-agent" && call.value === "◆ WEAVE · TAPESTRY",
+      shownAgentBadgeHistory(host).filter(
+        (value) => value === "◆ WEAVE · TAPESTRY",
       ),
     ).toHaveLength(0);
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
     expect(
       host.notifyCalls.some(
         (call) => call.message === "Switched Weave primary agent to tapestry.",
@@ -1930,9 +1976,7 @@ describe("createPiExtension: startup generation races", () => {
     const readyStatus = [...host.statusCalls];
     const readyTools = [...host.registerToolCalls];
     const readyActiveTools = host.getActiveTools();
-    const readyBadge = host.statusCalls
-      .filter((call) => call.key === "weave-agent")
-      .at(-1);
+    const readyBadge = shownAgentBadge(host);
 
     firstRead.settle(ok(nativeSurface));
     await staleStartup;
@@ -1940,9 +1984,7 @@ describe("createPiExtension: startup generation races", () => {
     expect(host.statusCalls).toEqual(readyStatus);
     expect(host.registerToolCalls).toEqual(readyTools);
     expect(host.getActiveTools()).toEqual(readyActiveTools);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual(readyBadge);
+    expect(shownAgentBadge(host)).toEqual(readyBadge);
     expect(host.statusCalls).toContainEqual({
       key: "weave",
       value: "ready",
@@ -1981,10 +2023,7 @@ describe("createPiExtension: startup generation races", () => {
       key: "weave",
       value: "ready",
     });
-    expect(host.statusCalls).toContainEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadgeHistory(host)).toContain("◆ WEAVE · LOOM");
 
     const replacementStartup = host.triggerSessionStart();
     await replacementRead.called;
@@ -2004,9 +2043,7 @@ describe("createPiExtension: startup generation races", () => {
     expect(
       host.statusCalls.filter((call) => call.key === "weave").at(-1),
     ).not.toEqual({ key: "weave", value: "ready" });
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({ key: "weave-agent", value: undefined });
+    expect(shownAgentBadge(host)).toEqual(undefined);
 
     replacementRead.settle(ok(nativeSurface));
     await replacementStartup;
@@ -2015,10 +2052,7 @@ describe("createPiExtension: startup generation races", () => {
       key: "weave",
       value: "ready",
     });
-    expect(host.statusCalls).toContainEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadgeHistory(host)).toContain("◆ WEAVE · LOOM");
   });
 
   it("closes a stale runtime store and keeps the newer runtime generation current", async () => {
@@ -2207,39 +2241,170 @@ describe("createPiExtension: startup generation races", () => {
     const workflowRun = host.invokeCommand("weave:run", "direct-flow");
     const directProcess = await processPort.spawnCalled;
     await flushBackgroundWork();
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
 
     const replacementStartup = host.triggerSessionStart();
     await replacementRead.called;
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({
-      key: "weave-agent",
-      value: undefined,
-    });
+    expect(shownAgentBadge(host)).toEqual(undefined);
 
     directProcess.failStdoutRead("stale generation");
     await workflowRun;
     await flushBackgroundWork();
 
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({
-      key: "weave-agent",
-      value: undefined,
-    });
+    expect(shownAgentBadge(host)).toEqual(undefined);
 
     replacementRead.settle(ok(nativeSurface));
     await replacementStartup;
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
+  });
+});
+
+describe("createPiExtension: the Plan Rail owns ambient parent context", () => {
+  function installRail(
+    host: RecordingFakePiHost,
+    extra: Partial<Parameters<typeof installExtension>[2]> = {},
+  ): void {
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      ...extra,
     });
+  }
+
+  it("mounts above the editor", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installRail(host);
+    await host.triggerSessionStart();
+
+    const mounted = host.widgetCalls
+      .filter((call) => call.key === "weave-plan" && call.value !== undefined)
+      .at(-1);
+    expect(mounted?.options?.placement).toBe("aboveEditor");
+  });
+
+  it("shows the agent row, and only the agent row, with no active plan", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installRail(host);
+    await host.triggerSessionStart();
+
+    // One configured primary means there is nowhere to cycle to, so the rail
+    // advertises no key it could not honour.
+    expect(planRailLines(host)).toEqual(["◆ WEAVE · LOOM"]);
+    expect(planRailShowsTask(host)).toBe(false);
+  });
+
+  it("advertises Alt+A, and only Alt+A, once another primary exists", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installForegroundStartTestExtension(host);
+    await host.triggerSessionStart();
+
+    const header = planRailLines(host)[0] ?? "";
+    expect(header).toBe("◆ WEAVE · LOOM · Alt+A cycle");
+    expect(header).not.toContain("Alt+T");
+  });
+
+  it("clears the fallback agent status whenever it mounts", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installRail(host);
+    await host.triggerSessionStart();
+
+    expect(planRailLines(host)).not.toEqual([]);
+    expect(
+      host.statusCalls
+        .filter((call) => call.key === "weave-agent")
+        .map((call) => call.value),
+    ).not.toContain("◆ WEAVE · LOOM");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1)
+        ?.value,
+    ).toBeUndefined();
+  });
+
+  it("removes the widget and the fallback status when no Weave primary is active", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installRail(host, {
+      configActivator: fakeConfigActivator({ agents: [], errors: [] }),
+    });
+    await host.triggerSessionStart();
+
+    expect(planRailLines(host)).toEqual([]);
+    expect(
+      host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1)
+        ?.value,
+    ).toBeUndefined();
+    expect(shownAgentBadge(host)).toBeUndefined();
+  });
+
+  it("mounts no rail at all in a non-interactive session", async () => {
+    const host = new RecordingFakePiHost({ mode: "print", trusted: true });
+    installRail(host);
+    await host.triggerSessionStart();
+
+    // Widgets are a TUI affordance. A print session leaves the rail unmounted
+    // and keeps the `weave-agent` status line as its only identity surface.
+    expect(planRailLines(host)).toEqual([]);
+    expect(
+      host.widgetCalls
+        .filter((call) => call.key === "weave-plan")
+        .every((call) => call.value === undefined),
+    ).toBe(true);
+  });
+
+  it("names the direct step's own agent while one is active, then the committed primary", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const processPort = new FakeChildProcessPort();
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+            {
+              agentName: "tapestry",
+              source: "explicit",
+              descriptor: tapestryDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        TAPESTRY_DIRECT_STEP_CONFIG,
+      ),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      processPort,
+      childCommand: ["/fake/bin/pi"],
+    });
+
+    await host.triggerSessionStart();
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · LOOM");
+
+    const workflowRun = host.invokeCommand("weave:run", "tapestry-flow");
+    const directProcess = await processPort.spawnCalled;
+    await flushBackgroundWork();
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · TAPESTRY");
+
+    await completeDirectChild(processPort, directProcess);
+    await workflowRun;
+    await flushBackgroundWork();
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · LOOM");
   });
 });
 
@@ -2279,10 +2444,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
 
     await host.invokeCommand("weave:start", "model-thinking-suffix");
 
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · TAPESTRY",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · TAPESTRY");
     expect(host.sentUserMessages).toEqual([
       {
         content:
@@ -2309,12 +2471,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
     await host.invokeCommand("weave:start", "model-thinking-suffix");
 
     expect(host.sentUserMessages).toHaveLength(0);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
     expect(host.notifyCalls.at(-1)).toEqual({
       message:
         "Could not start plan: The configured Tapestry agent cannot run as a primary agent.",
@@ -2397,10 +2554,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
 
     await host.invokeShortcut("alt+a");
 
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · TAPESTRY",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · TAPESTRY");
     expect(host.notifyCalls.at(-1)).toEqual({
       message: "Switched Weave primary agent to tapestry.",
       level: "info",
@@ -2417,10 +2571,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
 
     await host.invokeShortcut("alt+a");
 
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
   });
 
   it("keeps the committed prompt after a failed Alt+A switch in both fast directions", async () => {
@@ -2454,10 +2605,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(afterFailedFastSwitch.systemPrompt).not.toContain(
       "You are Tapestry, the workflow orchestrator.",
     );
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
   });
 
   it("keeps the committed non-fast prompt after a failed switch to a fast ineligible agent", async () => {
@@ -2491,10 +2639,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(afterFailedAbsentSwitch.systemPrompt).not.toContain(
       "You are Tapestry, the workflow orchestrator.",
     );
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
   });
 
   it("never shows a primary badge when the first activation fails", async () => {
@@ -2522,13 +2667,9 @@ describe("createPiExtension: config activation, materialization consumption, pri
       "You are Loom, the main orchestrator.",
     );
     expect(
-      host.statusCalls.filter(
-        (call) => call.key === "weave-agent" && call.value !== undefined,
-      ),
+      shownAgentBadgeHistory(host).filter((value) => value !== undefined),
     ).toEqual([]);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({ key: "weave-agent", value: undefined });
+    expect(shownAgentBadge(host)).toEqual(undefined);
   });
 
   it("cycles the committed primary after boot", async () => {
@@ -2591,10 +2732,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
 
     await host.invokeShortcut("alt+a");
 
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
     expect(host.notifyCalls.at(-1)).toEqual({
       message: "No other Weave primary agent is available.",
       level: "info",
@@ -2914,10 +3052,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
 
     expect(systemPrompt).toBe("native");
     expect(host.setModelCalls).toHaveLength(0);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1)
-        ?.value,
-    ).toBeUndefined();
+    expect(shownAgentBadge(host)).toBeUndefined();
     expect(
       host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
     ).toContain("unavailable");
@@ -2983,10 +3118,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       }),
     });
     await host.triggerSessionStart();
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
 
     await host.triggerModelSelect(userModel, "set");
     const first = await host.triggerBeforeAgentStart({
@@ -3317,17 +3449,13 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(
       host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
     ).toBe("ready");
+    // Both generations committed Loom. The rail repaints whenever either half
+    // of its context changes, so this counts commits, not repaints.
     expect(
-      host.statusCalls.filter(
-        (call) => call.key === "weave-agent" && call.value === "◆ WEAVE · LOOM",
-      ),
-    ).toHaveLength(2);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+      shownAgentBadgeHistory(host).filter((value) => value === "◆ WEAVE · LOOM")
+        .length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
   });
 
   it("uses one trusted parent-session thread identity across replacement generations and separates distinct sessions", async () => {
@@ -4863,10 +4991,7 @@ describe("createPiExtension: restart and resume read committed fast intent", () 
       systemPrompt: "native",
     });
     expect(turn.systemPrompt).toContain("You are Loom, the main orchestrator.");
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
     expect(host.statusCalls).toContainEqual({ key: "weave", value: "ready" });
   });
 });
@@ -5491,12 +5616,7 @@ describe("strict generation ownership and stale async cleanup", () => {
     await shutdownJournal.called;
 
     await host.triggerSessionStart();
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
     const replacementActiveTools = host.getActiveTools();
     expect(secondRuntimeStore.closeCount).toBe(0);
 
@@ -5515,12 +5635,7 @@ describe("strict generation ownership and stale async cleanup", () => {
     await oldShutdown;
     await flushBackgroundWork();
 
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
     expect(host.getActiveTools()).toEqual(replacementActiveTools);
     expect(secondRuntimeStore.closeCount).toBe(0);
     await host.invokeCommand("weave:status");
@@ -5603,11 +5718,7 @@ describe("strict generation ownership and stale async cleanup", () => {
     const currentPlanWidget = host.widgetCalls
       .filter((call) => call.key === "weave-plan")
       .at(-1);
-    const currentTaskFooter = host.statusCalls
-      .filter((call) => call.key === "weave-task")
-      .at(-1);
     expect(JSON.stringify(currentPlanWidget?.value)).toContain("Finish task");
-    expect(JSON.stringify(currentTaskFooter?.value)).toContain("Finish task");
 
     await host.invokeCommand("weave:status");
     const currentWorkflowStatus = host.notifyCalls.at(-1);
@@ -5618,9 +5729,6 @@ describe("strict generation ownership and stale async cleanup", () => {
     expect(
       host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1),
     ).toEqual(currentPlanWidget);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual(currentTaskFooter);
     await host.invokeCommand("weave:status");
     expect(host.notifyCalls.at(-1)).toEqual(currentWorkflowStatus);
   });
@@ -5722,11 +5830,7 @@ describe("strict generation ownership and stale async cleanup", () => {
     const widgetForB = host.widgetCalls
       .filter((call) => call.key === "weave-plan")
       .at(-1);
-    const footerForB = host.statusCalls
-      .filter((call) => call.key === "weave-task")
-      .at(-1);
     expect(JSON.stringify(widgetForB?.value)).toContain("Task B");
-    expect(JSON.stringify(footerForB?.value)).toContain("Task B");
     await host.invokeCommand("weave:status");
     const statusForB = host.notifyCalls.at(-1);
     const planWidgetCountForB = host.widgetCalls.filter(
@@ -5744,9 +5848,6 @@ describe("strict generation ownership and stale async cleanup", () => {
     );
     expect(planWidgets).toHaveLength(planWidgetCountForB);
     expect(planWidgets.at(-1)).toEqual(widgetForB);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual(footerForB);
 
     // The tracker still holds B's workflow, so a fresh modal and
     // /weave:status both describe B rather than the stale resolution.
@@ -5828,11 +5929,10 @@ describe("strict generation ownership and stale async cleanup", () => {
     const clearedWidget = host.widgetCalls
       .filter((call) => call.key === "weave-plan")
       .at(-1);
-    const clearedFooter = host.statusCalls
-      .filter((call) => call.key === "weave-task")
-      .at(-1);
-    expect(clearedWidget?.value).toBeUndefined();
-    expect(clearedFooter?.value).toBeUndefined();
+    // The plan is gone; the agent row remains, because the selected agent is
+    // ambient context whether or not a plan is running.
+    expect(clearedWidget?.value).toEqual(["◆ WEAVE · LOOM · Alt+A cycle"]);
+    expect(planRailShowsTask(host)).toBe(false);
 
     stalePlanResolution.settle(ok(planSnapshotFixture("gated-flow")));
     await staleAltT;
@@ -5841,9 +5941,6 @@ describe("strict generation ownership and stale async cleanup", () => {
     expect(
       host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1),
     ).toEqual(clearedWidget);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual(clearedFooter);
     await host.invokeCommand("weave:status");
     expect(JSON.stringify(host.notifyCalls.at(-1))).not.toContain(
       "Finish task",
@@ -5929,9 +6026,6 @@ describe("strict generation ownership and stale async cleanup", () => {
     const currentPlanWidget = host.widgetCalls
       .filter((call) => call.key === "weave-plan")
       .at(-1);
-    const currentTaskFooter = host.statusCalls
-      .filter((call) => call.key === "weave-task")
-      .at(-1);
 
     oldPlanResolution.settle(ok(planSnapshotFixture("old-plan")));
     await oldAltT;
@@ -5942,9 +6036,6 @@ describe("strict generation ownership and stale async cleanup", () => {
     expect(
       host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1),
     ).toEqual(currentPlanWidget);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual(currentTaskFooter);
   });
 
   it("fails closed for retained Alt+T callbacks after replacement", async () => {
@@ -6025,12 +6116,7 @@ describe("strict generation ownership and stale async cleanup", () => {
     const doneCallsBeforeReplacement = host.customDoneCalls;
 
     await host.triggerSessionStart();
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
-    ).toEqual({
-      key: "weave-agent",
-      value: "◆ WEAVE · LOOM",
-    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
     expect(statusBeforeReplacement.length).toBeGreaterThan(0);
 
     // Replacement settles the retained overlay itself: the awaited
@@ -6691,11 +6777,7 @@ describe("strict generation ownership and stale async cleanup", () => {
     const recoveredWidget = host.widgetCalls
       .filter((call) => call.key === "weave-plan")
       .at(-1);
-    const recoveredTaskFooter = host.statusCalls
-      .filter((call) => call.key === "weave-task")
-      .at(-1);
     expect(JSON.stringify(recoveredWidget?.value)).toContain("Finish task");
-    expect(JSON.stringify(recoveredTaskFooter?.value)).toContain("Finish task");
 
     const customCalled = host.waitForNextCustomCall();
     const altT = host.invokeShortcut("alt+t");
@@ -6791,28 +6873,18 @@ describe("strict generation ownership and stale async cleanup", () => {
     const widgetsBeforeSettle = host.widgetCalls.filter(
       (call) => call.key === "weave-plan",
     ).length;
-    const footersBeforeSettle = host.statusCalls.filter(
-      (call) => call.key === "weave-task",
-    ).length;
     const renderedBeforeSettle = host.customRenderedLines.length;
     const spawnsBeforeSettle = processPort.spawnPromises.length;
     deferredSnapshot.settle(ok(namedTaskSnapshot("gated-flow", "Task A")));
     await pendingAltT;
     await flushBackgroundWork();
 
-    // A never paints: not the widget, not the durable footer, not the modal.
+    // A never paints: not the rail, not the modal.
     expect(
       JSON.stringify(
         host.widgetCalls
           .filter((call) => call.key === "weave-plan")
           .slice(widgetsBeforeSettle),
-      ),
-    ).not.toContain("Task A");
-    expect(
-      JSON.stringify(
-        host.statusCalls
-          .filter((call) => call.key === "weave-task")
-          .slice(footersBeforeSettle),
       ),
     ).not.toContain("Task A");
     expect(
@@ -6824,12 +6896,10 @@ describe("strict generation ownership and stale async cleanup", () => {
     // Workflow B is resolved fresh, exactly once. This session never tracked
     // it, so the lookup fails closed: both surfaces end up clear and the user
     // sees one safe, path-free message instead of workflow A's stale plan.
-    expect(
-      host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1),
-    ).toEqual({ key: "weave-plan", value: undefined });
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual({ key: "weave-task", value: undefined });
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(host.statusCalls.some((call) => call.key === "weave-task")).toBe(
+      false,
+    );
     expect(host.notifyCalls.at(-1)?.message).toBe(
       "Weave could not read the active workflow. Use /weave:status for details.",
     );
@@ -6913,12 +6983,10 @@ describe("strict generation ownership and stale async cleanup", () => {
 
     // The settled pointer is not eligible, so the pending result clears
     // instead of painting, and the modal never opens on it.
-    expect(
-      host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1),
-    ).toEqual({ key: "weave-plan", value: undefined });
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual({ key: "weave-task", value: undefined });
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(host.statusCalls.some((call) => call.key === "weave-task")).toBe(
+      false,
+    );
     expect(
       host.customRenderedLines.some((lines) =>
         lines.some((line) => line.includes("Task gated-flow")),
@@ -7007,16 +7075,9 @@ describe("strict generation ownership and stale async cleanup", () => {
     const widgetForB = host.widgetCalls
       .filter((call) => call.key === "weave-plan")
       .at(-1);
-    const footerForB = host.statusCalls
-      .filter((call) => call.key === "weave-task")
-      .at(-1);
     expect(JSON.stringify(widgetForB?.value)).toContain("Task B");
-    expect(JSON.stringify(footerForB?.value)).toContain("Task B");
     const widgetCountForB = host.widgetCalls.filter(
       (call) => call.key === "weave-plan",
-    ).length;
-    const footerCountForB = host.statusCalls.filter(
-      (call) => call.key === "weave-task",
     ).length;
     const overlayCountForB = host.customCalls.length;
 
@@ -7030,14 +7091,8 @@ describe("strict generation ownership and stale async cleanup", () => {
       host.widgetCalls.filter((call) => call.key === "weave-plan"),
     ).toHaveLength(widgetCountForB);
     expect(
-      host.statusCalls.filter((call) => call.key === "weave-task"),
-    ).toHaveLength(footerCountForB);
-    expect(
       host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1),
     ).toEqual(widgetForB);
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual(footerForB);
     expect(host.customCalls).toHaveLength(overlayCountForB);
     expect(
       host.customRenderedLines.some((lines) =>
@@ -7105,12 +7160,10 @@ describe("strict generation ownership and stale async cleanup", () => {
     host.setMode("print");
     await host.triggerSessionStart();
 
-    expect(
-      host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1),
-    ).toEqual({ key: "weave-plan", value: undefined });
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual({ key: "weave-task", value: undefined });
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(host.statusCalls.some((call) => call.key === "weave-task")).toBe(
+      false,
+    );
   });
 
   it("clears active-plan surfaces when a read fails through Alt+T", async () => {
@@ -7172,12 +7225,10 @@ describe("strict generation ownership and stale async cleanup", () => {
     await host.invokeShortcut("alt+t");
     await flushBackgroundWork();
 
-    expect(
-      host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1),
-    ).toEqual({ key: "weave-plan", value: undefined });
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual({ key: "weave-task", value: undefined });
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(host.statusCalls.some((call) => call.key === "weave-task")).toBe(
+      false,
+    );
     expect(host.customCalls).toHaveLength(customCount);
   });
 
@@ -7239,20 +7290,16 @@ describe("strict generation ownership and stale async cleanup", () => {
 
     host.scriptConfirm(true);
     await host.invokeCommand("weave:abort");
-    expect(
-      host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1),
-    ).toEqual({ key: "weave-plan", value: undefined });
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual({ key: "weave-task", value: undefined });
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(host.statusCalls.some((call) => call.key === "weave-task")).toBe(
+      false,
+    );
 
     await host.invokeCommand("weave:abort");
-    expect(
-      host.widgetCalls.filter((call) => call.key === "weave-plan").at(-1),
-    ).toEqual({ key: "weave-plan", value: undefined });
-    expect(
-      host.statusCalls.filter((call) => call.key === "weave-task").at(-1),
-    ).toEqual({ key: "weave-task", value: undefined });
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(host.statusCalls.some((call) => call.key === "weave-task")).toBe(
+      false,
+    );
   });
 });
 
@@ -7295,10 +7342,13 @@ describe("createPiExtension: themed active-agent badge", () => {
 
     await host.triggerSessionStart();
 
-    const painted = host.statusCalls
-      .filter((call) => call.key === "weave-agent")
-      .at(-1);
-    expect(painted).toEqual({ key: "weave-agent", value: badge("loom") });
+    // The rail owns identity in a TUI, so the themed status badge is the
+    // fallback renderer only: it must be cleared, not painted beside it.
+    expect(planRailLines(host)[0]).toContain("<bold>LOOM</bold>");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
+    ).toEqual({ key: "weave-agent", value: undefined });
+    expect(renderActiveAgentBadge("loom", theme)).toBe(badge("loom"));
     expect(PI_AGENT_BADGE_BG_TOKENS).toContain(selectAgentBadgeBg("loom"));
   });
 
@@ -7326,16 +7376,12 @@ describe("createPiExtension: themed active-agent badge", () => {
     await host.triggerBeforeAgentStart({ systemPrompt: "native" });
 
     await host.invokeShortcut("alt+a");
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: badge("tapestry"),
-    });
+    expect(planRailLines(host)[0]).toContain("<bold>TAPESTRY</bold>");
+    expect(renderActiveAgentBadge("tapestry", theme)).toBe(badge("tapestry"));
 
     await host.invokeShortcut("alt+a");
-    expect(host.statusCalls.at(-1)).toEqual({
-      key: "weave-agent",
-      value: badge("loom"),
-    });
+    expect(planRailLines(host)[0]).toContain("<bold>LOOM</bold>");
+    expect(renderActiveAgentBadge("loom", theme)).toBe(badge("loom"));
   });
 
   it("commits no colored badge when the only primary fails to activate", async () => {
@@ -7357,9 +7403,7 @@ describe("createPiExtension: themed active-agent badge", () => {
     await host.triggerSessionStart();
 
     expect(
-      host.statusCalls.filter(
-        (call) => call.key === "weave-agent" && typeof call.value === "string",
-      ),
+      shownAgentBadgeHistory(host).filter((value) => typeof value === "string"),
     ).toEqual([]);
   });
 
@@ -7406,9 +7450,8 @@ describe("createPiExtension: themed active-agent badge", () => {
     await replacementStart;
 
     expect(
-      host.statusCalls.filter(
-        (call) =>
-          call.key === "weave-agent" && call.value === badge("tapestry"),
+      shownAgentBadgeHistory(host).filter(
+        (value) => value === "◆ WEAVE · TAPESTRY",
       ),
     ).toHaveLength(0);
   });

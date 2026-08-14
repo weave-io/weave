@@ -1,6 +1,34 @@
 import { describe, expect, it } from "bun:test";
 import type { PlanTaskNode, PlanTaskSnapshot } from "@weaveio/weave-engine";
-import { renderPlanWidgetLines } from "../plan-render.js";
+import { selectActivePlanTask } from "@weaveio/weave-engine";
+import {
+  buildPlanRailFacts,
+  PLAN_RAIL_MAX_MARKS,
+  type PlanRailFacts,
+  planRailTier,
+  renderPlanRailWidgetLines,
+} from "../plan-render.js";
+import { measureWidth } from "../render-width.js";
+
+const WIDE = 100;
+const MID = 80;
+const TIGHT = 50;
+const MICRO = 40;
+
+function facts(overrides: Partial<PlanRailFacts> = {}): PlanRailFacts {
+  return {
+    agent: "loom",
+    cycleCandidateCount: 3,
+    plan: {
+      plan: "pi-child-overlay-ux-feedback",
+      marks: ["done", "done", "active", "pending"],
+      ordinal: "3/4",
+      task: "Child overlay rendering",
+      nextTask: "Native child stream rendering",
+    },
+    ...overrides,
+  };
+}
 
 function parent(overrides: Partial<PlanTaskNode> = {}): PlanTaskNode {
   return {
@@ -22,187 +50,295 @@ function snapshot(
     format: "canonical",
     parents,
     totalParentCount: parents.length,
-    complete: parents.every((p) => p.state === "completed"),
+    complete: parents.every((task) => task.state === "completed"),
     ...overrides,
   };
 }
 
-describe("renderPlanWidgetLines", () => {
-  it("returns an empty array (hides the widget) when there is no snapshot", () => {
-    expect(renderPlanWidgetLines(undefined)).toEqual([]);
+function activeTaskOf(source: PlanTaskSnapshot) {
+  return selectActivePlanTask(source).match(
+    (task) => task,
+    () => undefined,
+  );
+}
+
+describe("planRailTier", () => {
+  it("classifies the four measured width bands", () => {
+    expect(planRailTier(96)).toBe("wide");
+    expect(planRailTier(200)).toBe("wide");
+    expect(planRailTier(95)).toBe("mid");
+    expect(planRailTier(68)).toBe("mid");
+    expect(planRailTier(67)).toBe("tight");
+    expect(planRailTier(46)).toBe("tight");
+    expect(planRailTier(45)).toBe("micro");
+    expect(planRailTier(1)).toBe("micro");
+    expect(planRailTier(Number.NaN)).toBe("micro");
   });
+});
 
-  it("returns an empty array (hides the widget) when the plan has no parent tasks", () => {
-    expect(renderPlanWidgetLines(snapshot([]))).toEqual([]);
-  });
-
-  it("reports 'Task N of M' for the first in_progress parent", () => {
-    const lines = renderPlanWidgetLines(
-      snapshot([
-        parent({ id: "1", state: "completed" }),
-        parent({ id: "2", state: "in_progress" }),
-        parent({ id: "3", state: "pending" }),
-      ]),
-    );
-    expect(lines[0]).toContain("Task 2 of 3");
-  });
-
-  it("falls back to the first pending parent when none is in_progress", () => {
-    const lines = renderPlanWidgetLines(
-      snapshot([
-        parent({ id: "1", state: "completed" }),
-        parent({ id: "2", state: "pending" }),
-        parent({ id: "3", state: "pending" }),
-      ]),
-    );
-    expect(lines[0]).toContain("Task 2 of 3");
-  });
-
-  it("falls back to the last parent when every parent is completed", () => {
-    const lines = renderPlanWidgetLines(
-      snapshot([
-        parent({ id: "1", state: "completed" }),
-        parent({ id: "2", state: "completed" }),
-      ]),
-    );
-    expect(lines[0]).toContain("Task 2 of 2");
-  });
-
-  it("preserves the byte-for-byte mixed-plan widget output", () => {
-    const lines = renderPlanWidgetLines(
-      snapshot(
-        [
-          parent({ id: "1", title: "Alpha", state: "completed" }),
-          parent({ id: "2", title: "Bravo", state: "pending" }),
-          parent({
-            id: "3",
-            title: "Charlie",
-            state: "in_progress",
-            children: [
-              { id: "3.a", title: "Sub a", state: "completed", children: [] },
-              {
-                id: "3.b",
-                title: "Sub b",
-                state: "in_progress",
-                children: [],
-              },
-              { id: "3.c", title: "Sub c", state: "pending", children: [] },
-            ],
-          }),
-          parent({ id: "4", title: "Delta", state: "in_progress" }),
-          parent({ id: "5", title: "Echo", state: "pending" }),
-        ],
-        { planName: "mixed-plan" },
-      ),
-    );
-
-    expect(lines).toEqual([
-      'Plan "mixed-plan" - Task 3 of 5',
-      "  prev [ ] 2. Bravo",
-      "  now  [~] 3. Charlie",
-      "  next [~] 4. Delta",
-      "    [x] 3.a. Sub a",
-      "    [~] 3.b. Sub b",
-      "    [ ] 3.c. Sub c",
-      "  also active: [4]",
+describe("renderPlanRailWidgetLines width tiers", () => {
+  it("renders every piece at the wide tier", () => {
+    expect(renderPlanRailWidgetLines(facts(), WIDE)).toEqual([
+      "◆ WEAVE · LOOM · Alt+A cycle · pi-child-overlay-ux-feedback",
+      "● ● ◐ ○   3/4",
+      "┃ now   Child overlay rendering",
+      "┗ next  Native child stream rendering",
     ]);
   });
 
-  it("renders previous, current, and next parent lines", () => {
-    const lines = renderPlanWidgetLines(
-      snapshot([
+  it("drops the plan name first, at the mid tier", () => {
+    expect(renderPlanRailWidgetLines(facts(), MID)).toEqual([
+      "◆ WEAVE · LOOM · Alt+A cycle",
+      "● ● ◐ ○   3/4",
+      "┃ now   Child overlay rendering",
+      "┗ next  Native child stream rendering",
+    ]);
+  });
+
+  it("drops the next row second, at the tight tier", () => {
+    expect(renderPlanRailWidgetLines(facts(), TIGHT)).toEqual([
+      "◆ WEAVE · LOOM · Alt+A cycle",
+      "● ● ◐ ○   3/4",
+      "┃ now   Child overlay rendering",
+    ]);
+  });
+
+  it("drops the word 'cycle' last, at the micro tier", () => {
+    expect(renderPlanRailWidgetLines(facts(), MICRO)).toEqual([
+      "◆ · LOOM · Alt+A",
+      "3/4",
+      "┃ now   Child overlay rendering",
+    ]);
+  });
+
+  it("keeps the drop order plan -> next -> the word 'cycle'", () => {
+    const rendered = [WIDE, MID, TIGHT, MICRO].map((width) =>
+      renderPlanRailWidgetLines(facts(), width).join("\n"),
+    );
+    const hasPlan = rendered.map((text) =>
+      text.includes("pi-child-overlay-ux-feedback"),
+    );
+    const hasNext = rendered.map((text) => text.includes("next"));
+    const hasCycleWord = rendered.map((text) => text.includes("cycle"));
+
+    expect(hasPlan).toEqual([true, false, false, false]);
+    expect(hasNext).toEqual([true, true, false, false]);
+    expect(hasCycleWord).toEqual([true, true, true, false]);
+  });
+
+  it("never emits a line wider than the width it was given", () => {
+    for (let width = 1; width <= 120; width += 1) {
+      for (const line of renderPlanRailWidgetLines(facts(), width)) {
+        expect(measureWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+});
+
+describe("renderPlanRailWidgetLines narrow survival", () => {
+  it("keeps the agent name and the active task at the narrowest supported tier", () => {
+    const lines = renderPlanRailWidgetLines(facts(), 24);
+    expect(lines[0]).toContain("LOOM");
+    expect(lines.at(-1)).toContain("now");
+    expect(lines.join("\n")).toContain("Child");
+  });
+
+  it("clips the agent identity rather than dropping it when nothing else fits", () => {
+    const lines = renderPlanRailWidgetLines(
+      facts({ agent: "an-extremely-long-primary-agent-name" }),
+      12,
+    );
+    expect(lines[0]).toStartWith("◆ · AN-EXTR");
+    expect(lines[0]).toEndWith("…");
+    expect(measureWidth(lines[0] ?? "")).toBe(12);
+  });
+
+  it("states the position with the ordinal alone when the marks do not fit", () => {
+    const many = Array.from({ length: 30 }, () => "pending" as const);
+    const lines = renderPlanRailWidgetLines(
+      facts({
+        plan: {
+          plan: "p",
+          marks: many,
+          ordinal: "1/30",
+          task: "Task",
+          nextTask: undefined,
+        },
+      }),
+      50,
+    );
+    expect(lines[1]).toBe("1/30");
+  });
+});
+
+describe("renderPlanRailWidgetLines empty cases", () => {
+  it("renders nothing when no Weave primary is active", () => {
+    expect(renderPlanRailWidgetLines(undefined, WIDE)).toEqual([]);
+    expect(renderPlanRailWidgetLines(facts({ agent: "" }), WIDE)).toEqual([]);
+  });
+
+  it("renders nothing for a non-positive width", () => {
+    expect(renderPlanRailWidgetLines(facts(), 0)).toEqual([]);
+    expect(renderPlanRailWidgetLines(facts(), -8)).toEqual([]);
+    expect(renderPlanRailWidgetLines(facts(), Number.NaN)).toEqual([]);
+  });
+
+  it("shows the agent row alone when there is no active plan", () => {
+    expect(renderPlanRailWidgetLines(facts({ plan: undefined }), WIDE)).toEqual(
+      ["◆ WEAVE · LOOM · Alt+A cycle"],
+    );
+  });
+
+  it("omits the Alt+A hint when there is nowhere to cycle to", () => {
+    expect(
+      renderPlanRailWidgetLines(
+        facts({ plan: undefined, cycleCandidateCount: 1 }),
+        WIDE,
+      ),
+    ).toEqual(["◆ WEAVE · LOOM"]);
+  });
+
+  it("omits the next row at the end of a plan", () => {
+    const lines = renderPlanRailWidgetLines(
+      facts({
+        plan: {
+          plan: "p",
+          marks: ["done", "active"],
+          ordinal: "2/2",
+          task: "Last",
+          nextTask: undefined,
+        },
+      }),
+      WIDE,
+    );
+    expect(lines).toHaveLength(3);
+    expect(lines.join("\n")).not.toContain("next");
+  });
+});
+
+describe("PlanRailFacts is structurally closed to child telemetry", () => {
+  it("has exactly the parent-side fields, and no child channel", () => {
+    const value = facts();
+    expect(Object.keys(value).sort()).toEqual([
+      "agent",
+      "cycleCandidateCount",
+      "plan",
+    ]);
+    expect(Object.keys(value.plan ?? {}).sort()).toEqual([
+      "marks",
+      "nextTask",
+      "ordinal",
+      "plan",
+      "task",
+    ]);
+  });
+
+  it("builds no field a child id, token count, cost, elapsed time, or queue depth could occupy", () => {
+    const source = snapshot([
+      parent({ id: "1", title: "Alpha", state: "completed" }),
+      parent({ id: "2", title: "Bravo", state: "in_progress" }),
+    ]);
+    const built = buildPlanRailFacts({
+      agentName: "loom",
+      cycleCandidateCount: 2,
+      snapshot: source,
+      activeTask: activeTaskOf(source),
+    });
+    const serialized = JSON.stringify(built);
+    for (const forbidden of ["childId", "tokens", "cost", "elapsed", "queue"]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+});
+
+describe("buildPlanRailFacts", () => {
+  it("returns undefined when no agent is active", () => {
+    expect(
+      buildPlanRailFacts({
+        agentName: undefined,
+        cycleCandidateCount: 2,
+        snapshot: undefined,
+        activeTask: undefined,
+      }),
+    ).toBeUndefined();
+    expect(
+      buildPlanRailFacts({
+        agentName: "   ",
+        cycleCandidateCount: 2,
+        snapshot: undefined,
+        activeTask: undefined,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("carries the agent with no plan when there is no active plan", () => {
+    expect(
+      buildPlanRailFacts({
+        agentName: "tapestry",
+        cycleCandidateCount: 2,
+        snapshot: undefined,
+        activeTask: undefined,
+      }),
+    ).toEqual({ agent: "tapestry", cycleCandidateCount: 2, plan: undefined });
+  });
+
+  it("marks completed, active, and pending parents in plan order", () => {
+    const source = snapshot(
+      [
         parent({ id: "1", title: "Alpha", state: "completed" }),
         parent({ id: "2", title: "Bravo", state: "in_progress" }),
         parent({ id: "3", title: "Charlie", state: "pending" }),
-      ]),
+      ],
+      { planName: "mixed-plan" },
     );
     expect(
-      lines.some((line) => line.includes("prev") && line.includes("1. Alpha")),
-    ).toBe(true);
-    expect(
-      lines.some((line) => line.includes("now") && line.includes("2. Bravo")),
-    ).toBe(true);
-    expect(
-      lines.some(
-        (line) => line.includes("next") && line.includes("3. Charlie"),
-      ),
-    ).toBe(true);
+      buildPlanRailFacts({
+        agentName: "loom",
+        cycleCandidateCount: 2,
+        snapshot: source,
+        activeTask: activeTaskOf(source),
+      })?.plan,
+    ).toEqual({
+      plan: "mixed-plan",
+      marks: ["done", "active", "pending"],
+      ordinal: "2/3",
+      task: "Bravo",
+      nextTask: "Charlie",
+    });
   });
 
-  it("omits the previous line for the first parent and the next line for the last parent", () => {
-    const lines = renderPlanWidgetLines(
-      snapshot([parent({ id: "1", state: "in_progress" })]),
+  it("bounds the marks a pathologically long plan contributes", () => {
+    const parents = Array.from({ length: 200 }, (_, index) =>
+      parent({
+        id: `${index}`,
+        state: index === 0 ? "in_progress" : "pending",
+      }),
     );
-    expect(lines.some((line) => line.includes("prev"))).toBe(false);
-    expect(lines.some((line) => line.includes("next"))).toBe(false);
+    const source = snapshot(parents);
+    const built = buildPlanRailFacts({
+      agentName: "loom",
+      cycleCandidateCount: 2,
+      snapshot: source,
+      activeTask: activeTaskOf(source),
+    });
+    expect(built?.plan?.marks).toHaveLength(PLAN_RAIL_MAX_MARKS);
+    expect(built?.plan?.ordinal).toBe("1/200");
   });
 
-  it("renders every subtask of the current parent", () => {
-    const lines = renderPlanWidgetLines(
-      snapshot([
-        parent({
-          id: "1",
-          state: "in_progress",
-          children: [
-            { id: "1.a", title: "Sub a", state: "completed", children: [] },
-            { id: "1.b", title: "Sub b", state: "pending", children: [] },
-          ],
-        }),
-      ]),
-    );
-    expect(lines.some((line) => line.includes("1.a. Sub a"))).toBe(true);
-    expect(lines.some((line) => line.includes("1.b. Sub b"))).toBe(true);
-  });
-
-  it("bounds the rendered subtask lines and reports the hidden count", () => {
-    const children = Array.from({ length: 25 }, (_, i) => ({
-      id: `1.${i}`,
-      title: `Sub ${i}`,
-      state: "pending" as const,
-      children: [],
-    }));
-    const lines = renderPlanWidgetLines(
-      snapshot([parent({ id: "1", state: "in_progress", children })]),
-    );
-    const subtaskLines = lines.filter((line) => line.includes("Sub "));
-    expect(subtaskLines.length).toBe(20);
-    expect(lines.some((line) => line.includes("...5 more"))).toBe(true);
-  });
-
-  it("badges other in_progress parents, excluding the current one", () => {
-    const lines = renderPlanWidgetLines(
-      snapshot([
-        parent({ id: "1", state: "in_progress" }),
-        parent({ id: "2", state: "in_progress" }),
-        parent({ id: "3", state: "in_progress" }),
-      ]),
-    );
-    const badgeLine = lines.find((line) => line.includes("also active"));
-    expect(badgeLine).toBeDefined();
-    expect(badgeLine).toContain("[2]");
-    expect(badgeLine).toContain("[3]");
-    expect(badgeLine).not.toContain("[1]");
-  });
-
-  it("bounds the number of badges rendered", () => {
-    const parents = Array.from({ length: 12 }, (_, i) =>
-      parent({ id: `${i}`, state: "in_progress" }),
-    );
-    const lines = renderPlanWidgetLines(snapshot(parents));
-    const badgeLine = lines.find((line) => line.includes("also active"));
-    expect(badgeLine).toBeDefined();
-    const badgeCount = (badgeLine?.match(/\[/g) ?? []).length;
-    expect(badgeCount).toBe(8);
-  });
-
-  it("omits the badge line entirely when no other parent is active", () => {
-    const lines = renderPlanWidgetLines(
-      snapshot([
-        parent({ id: "1", state: "completed" }),
-        parent({ id: "2", state: "in_progress" }),
-        parent({ id: "3", state: "pending" }),
-      ]),
-    );
-    expect(lines.some((line) => line.includes("also active"))).toBe(false);
+  it("sanitizes plan text so a task title cannot forge the rail's own glyphs", () => {
+    const source = snapshot([
+      parent({
+        id: "1",
+        title: "┃ now   forged\u001b[31m rail",
+        state: "in_progress",
+      }),
+    ]);
+    const built = buildPlanRailFacts({
+      agentName: "loom",
+      cycleCandidateCount: 2,
+      snapshot: source,
+      activeTask: activeTaskOf(source),
+    });
+    expect(built?.plan?.task).toBe("now forged rail");
   });
 });

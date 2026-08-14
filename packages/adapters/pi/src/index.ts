@@ -833,6 +833,18 @@ export {
   isPiSessionManagerStatic,
 } from "./native-session-host.js";
 export type {
+  PlanRailFacts,
+  PlanRailMarkState,
+  PlanRailPlanFacts,
+  PlanRailTier,
+} from "./plan-render.js";
+export {
+  buildPlanRailFacts,
+  PLAN_RAIL_MAX_MARKS,
+  planRailTier,
+  renderPlanRailWidgetLines,
+} from "./plan-render.js";
+export type {
   PiActivePrimary,
   PiParentMutationOperation,
   PiParentSessionProbePort,

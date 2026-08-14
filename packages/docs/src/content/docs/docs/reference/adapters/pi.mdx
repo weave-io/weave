@@ -21,7 +21,9 @@ Fix the reported configuration or installation issue, then restart Pi to activat
 
 ## Switch agents
 
-Use `Alt+A` to cycle through healthy primary agents. The active agent is shown in Pi's interface as `◆ WEAVE · <AGENT>`. Each agent name always carries the same background tint, chosen deterministically from the background tokens the active theme supports, so one color means one agent in every session. Different agents may share a color. If the theme provides no background support, the badge renders the agent name in accent bold with no tint. Switching changes the active Weave agent without changing the project configuration.
+Use `Alt+A` to cycle through healthy primary agents. The active agent is shown in the Plan Rail as `◆ WEAVE · <AGENT>`, and the rail states the `Alt+A` hint whenever there is another primary to cycle to. Switching changes the active Weave agent without changing the project configuration.
+
+In a session that cannot show a widget, the agent name falls back to a single `weave-agent` status entry instead. That entry carries a background tint chosen deterministically from the background tokens the active theme supports, so one color means one agent in every session. Different agents may share a color. If the theme provides no background support, the entry renders the agent name in accent bold with no tint.
 
 ## Commands
 
@@ -45,11 +47,20 @@ The extension exposes these commands:
 
 ### Track the active task
 
-While a durable workflow is active, Pi shows one bounded `weave-task` status entry naming the current task, such as `▸ task 3/10 · 3. Update the adapter docs`. Long titles are shortened with a single ellipsis.
+The **Plan Rail** is the single owner of ambient parent context. It mounts above the Pi editor and states the selected agent and the active plan together:
 
-The entry clears when there is nothing active: no tracked workflow, no readable plan task, a completed, failed, or cancelled workflow, or a lookup Weave could not read. If your session tracks no workflow but Weave finds an eligible recovered pointer, the entry may show that paused plan as read-only state. Continue it with `/weave:resume`; showing it starts nothing.
+```
+◆ WEAVE · LOOM · Alt+A cycle · pi-child-overlay-ux-feedback
+● ● ◐ ○ ○ ○ ○ ○   3/8
+┃ now   Child overlay rendering
+┗ next  Native child stream rendering
+```
 
-Press `Alt+T` to open the read-only plan-task list. It reads the same active plan and recovery state as the status entry, marks each task `[ ]`, `[~]`, or `[x]`, and opens on the active task. Your configured Pi keybindings drive it: `tui.select.up` and `tui.select.down` scroll, `tui.select.cancel` closes, and the hint line names the keys you actually have bound. The list scrolls and closes; it starts, resumes, advances, and cancels nothing.
+The rail degrades through measured terminal widths. It drops the plan name first, then the `next` row, then the word `cycle` from the `Alt+A` hint. The agent name and the active task survive to the narrowest width. It reads parent-side facts only, so it cannot show a child ID, token count, cost, elapsed time, or queue depth.
+
+The plan rows clear when there is nothing active: no tracked workflow, no readable plan task, a completed, failed, or cancelled workflow, or a lookup Weave could not read. The agent row remains while a Weave primary is active. If your session tracks no workflow but Weave finds an eligible recovered pointer, the rail may show that paused plan as read-only state. Continue it with `/weave:resume`; showing it starts nothing.
+
+Press `Alt+T` to open the read-only plan-task list. It reads the same active plan and recovery state as the rail, marks each task `[ ]`, `[~]`, or `[x]`, and opens on the active task. Your configured Pi keybindings drive it: `tui.select.up` and `tui.select.down` scroll, `tui.select.cancel` closes, and the hint line names the keys you actually have bound. The list scrolls and closes; it starts, resumes, advances, and cancels nothing.
 
 When no plan is available or Weave cannot read the plan or workflow, the list reports a short notice instead of opening a stale or empty view.
 

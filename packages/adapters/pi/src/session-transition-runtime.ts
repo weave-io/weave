@@ -38,7 +38,6 @@ import type {
   PiExtensionApi,
   PiSessionContext,
 } from "./types.js";
-import { WEAVE_WORKFLOW_TASK_STATUS_KEY } from "./workflow-task-status.js";
 
 /**
  * Session-transition prompt options. `Stay` is listed first so it is the
@@ -743,7 +742,6 @@ export function createSessionTransitionRuntime(
       ctx?.ui.setStatus(SESSION_SHUTDOWN_AGENT_STATUS_KEY, undefined);
       deps.clearActivePlanSurfaces(ctx);
       ctx?.ui.setWidget(SESSION_SHUTDOWN_PLAN_WIDGET_KEY, undefined);
-      ctx?.ui.setStatus(WEAVE_WORKFLOW_TASK_STATUS_KEY, undefined);
     },
     restoreEditor: deps.restoreEditor,
     disposeChildMode: deps.disposeChildMode,

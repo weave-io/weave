@@ -148,8 +148,18 @@ export interface RecordedStatus {
 
 export interface RecordedWidget {
   readonly key: string;
+  /**
+   * What the host would show. Pi accepts either fixed lines or a component
+   * factory it calls with the real viewport width; the fake renders a factory
+   * at {@link FAKE_WIDGET_WIDTH} so a test asserts on the same strings a
+   * terminal would, whichever form the extension mounted.
+   */
   readonly value: unknown;
+  readonly options: { readonly placement?: string } | undefined;
 }
+
+/** The viewport width the fake host renders component widgets at. */
+export const FAKE_WIDGET_WIDTH = 100;
 
 export interface RecordedSelectCall {
   readonly title: string;
@@ -761,8 +771,12 @@ export class RecordingFakePiHost {
       setStatus: (key, value) => {
         this.statusCalls.push({ key, value });
       },
-      setWidget: (key, value) => {
-        this.widgetCalls.push({ key, value });
+      setWidget: (key, value, options) => {
+        this.widgetCalls.push({
+          key,
+          value: renderFakeWidgetValue(value),
+          options,
+        });
       },
       select: async (title, options, opts) => {
         const call = { title, options, opts };
@@ -1180,4 +1194,25 @@ export class RecordingLogger implements PiAdapterLogger {
   error(obj: Record<string, unknown>, msg?: string): void {
     this.entries.push({ level: "error", obj, msg });
   }
+}
+
+/**
+ * Renders whatever the extension handed `setWidget` into the lines a terminal
+ * would show.
+ *
+ * Pi's own `setWidget` is overloaded: fixed `string[]` content, or a
+ * `(tui, theme) => Component` factory it calls with the live viewport width.
+ * The Plan Rail uses the factory form because its degradation ladder is
+ * measured, so the fake must exercise the same path rather than record an
+ * opaque function.
+ */
+function renderFakeWidgetValue(value: unknown): unknown {
+  if (typeof value !== "function") return value;
+  const component = (
+    value as (
+      tui: unknown,
+      theme: unknown,
+    ) => { render(width: number): string[] }
+  )(undefined, undefined);
+  return component.render(FAKE_WIDGET_WIDTH);
 }
