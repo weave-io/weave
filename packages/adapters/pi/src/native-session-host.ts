@@ -1,19 +1,24 @@
 /**
  * Concrete Pi `SessionManager` adapter for the native session host port.
- * Production wires the public root export; tests inject a scripted host and
- * never construct this adapter.
  *
- * Create/open call Pi's static constructors. Expected failures are captured at
- * the store seam with `Result.fromThrowable` (this port's return type is fixed
- * by {@link PiNativeSessionHostPort}).
+ * Pi addresses sessions by filesystem path
+ * (`SessionManager.create(cwd, sessionDir, options)` and
+ * `SessionManager.open(path, sessionDir)`). Containment is therefore proven by
+ * the adapter, not by the host: the store opens an adapter-owned `0700` child
+ * directory under the fixed Weave session root, hands that exact directory to
+ * Pi, and accepts a returned leaf only when it is a canonical immediate child
+ * of it. This module owns no policy; it only narrows Pi's public surface to
+ * the port the store validates against.
  */
 
-import { Result } from "neverthrow";
 import type {
   PiNativeSessionHandle,
-  PiNativeSessionHeader,
   PiNativeSessionHostPort,
 } from "./child-native-sessions.js";
+import {
+  type PiNativeSessionHeader,
+  validatePiNativeSessionHeader,
+} from "./native-session-header.js";
 
 /** Narrow static constructors from Pi's public `SessionManager`. */
 export interface PiSessionManagerStatic {
@@ -66,10 +71,22 @@ export function isPiSessionManagerStatic(
 }
 
 /**
- * Adapts one live Pi `SessionManager` instance to the store handle port.
- * Header fields keep Pi's v3 key order so exclusive persistence can
- * `JSON.stringify` the exact generated identity line.
+ * Strictly validates one host header and copies it in the host's own key
+ * order, through the single adapter-wide validator every lifecycle path uses
+ * ({@link validatePiNativeSessionHeader}).
+ *
+ * Returns `null` - which the store maps to a typed `header-unusable` failure -
+ * for a non-plain object, an exotic prototype, an own symbol key, an accessor
+ * or non-enumerable own property, any key outside Pi's supported v3 set, a
+ * missing required field, and any value whose type or bounds do not match
+ * Pi's v3 contract. Key order is taken from the host object itself so the
+ * persisted bytes stay identical to the header Pi generated.
  */
+function copyHostHeader(candidate: unknown): PiNativeSessionHeader | null {
+  return validatePiNativeSessionHeader(candidate).unwrapOr(null);
+}
+
+/** Adapts one live Pi `SessionManager` instance to the store's handle port. */
 export function adaptPiSessionManagerHandle(
   manager: PiSessionManagerInstance,
 ): PiNativeSessionHandle {
@@ -77,24 +94,8 @@ export function adaptPiSessionManagerHandle(
     getSessionId: () => manager.getSessionId(),
     getSessionFile: () => manager.getSessionFile(),
     getSessionDir: () => manager.getSessionDir(),
-    getHeader: (): PiNativeSessionHeader | null => {
-      const header = manager.getHeader();
-      if (header === null) return null;
-      // Pi v3 order: type, version, id, timestamp, cwd, parentSession.
-      // Preserve every host-generated field verbatim; never invent values.
-      return {
-        ...(header.type === undefined ? {} : { type: header.type }),
-        ...(header.version === undefined ? {} : { version: header.version }),
-        id: header.id,
-        ...(header.timestamp === undefined
-          ? {}
-          : { timestamp: header.timestamp }),
-        cwd: header.cwd,
-        ...(header.parentSession === undefined
-          ? {}
-          : { parentSession: header.parentSession }),
-      };
-    },
+    getHeader: (): PiNativeSessionHeader | null =>
+      copyHostHeader(manager.getHeader()),
     getEntries: () => manager.getEntries(),
     isPersisted: () => manager.isPersisted(),
     getLeafId: () => manager.getLeafId(),
@@ -103,58 +104,25 @@ export function adaptPiSessionManagerHandle(
   };
 }
 
-function callSessionManagerCreate(
-  SessionManager: PiSessionManagerStatic,
-  cwd: string,
-  sessionDir: string,
-  options: { readonly parentSession?: string; readonly id?: string },
-): Result<PiSessionManagerInstance, unknown> {
-  return Result.fromThrowable(
-    () => SessionManager.create(cwd, sessionDir, options),
-    (cause) => cause,
-  )();
-}
-
-function callSessionManagerOpen(
-  SessionManager: PiSessionManagerStatic,
-  path: string,
-  sessionDir: string,
-): Result<PiSessionManagerInstance, unknown> {
-  return Result.fromThrowable(
-    () => SessionManager.open(path, sessionDir),
-    (cause) => cause,
-  )();
-}
-
 /**
- * Builds the native session host over Pi's public session constructors.
- * Does not refuse path-addressed hosts and does not throw for policy; the
- * store wraps create/open and maps throws to `SessionCreateFailed`.
+ * Builds the host port over Pi's static session constructors.
+ *
+ * Both constructors receive the adapter-owned child directory, so Pi's
+ * generated leaf and the directory later passed to the RPC child as
+ * `--session-dir` are the same validated directory. A constructor that throws
+ * is caught by the store, which owns every typed failure.
  */
 export function createPiNativeSessionHost(
   SessionManager: PiSessionManagerStatic,
 ): PiNativeSessionHostPort {
   return {
     create(cwd, sessionDir, options): PiNativeSessionHandle {
-      const created = callSessionManagerCreate(
-        SessionManager,
-        cwd,
-        sessionDir,
-        options,
+      return adaptPiSessionManagerHandle(
+        SessionManager.create(cwd, sessionDir, options),
       );
-      if (created.isErr()) {
-        // Port return type cannot be Result; rethrow for the store's
-        // Result.fromThrowable boundary (never a policy/unreachable throw).
-        throw created.error;
-      }
-      return adaptPiSessionManagerHandle(created.value);
     },
     open(path, sessionDir): PiNativeSessionHandle {
-      const opened = callSessionManagerOpen(SessionManager, path, sessionDir);
-      if (opened.isErr()) {
-        throw opened.error;
-      }
-      return adaptPiSessionManagerHandle(opened.value);
+      return adaptPiSessionManagerHandle(SessionManager.open(path, sessionDir));
     },
   };
 }

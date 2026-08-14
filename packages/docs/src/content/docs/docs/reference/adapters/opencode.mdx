@@ -41,6 +41,16 @@ The adapter registers:
 
 The adapter also maps Weave agents, model preferences, prompt composition, and supported policy fields to OpenCode's native configuration.
 
+## Provider acceleration is unsupported
+
+An agent's `fast true` is neutral intent. OpenCode's plugin surface can change a request through `chat.params` and `chat.headers`, but its public plugin events and assistant messages expose no correlated official response-body evidence — no OpenAI `service_tier` and no Anthropic `usage.speed` — for a successful call. A successful status, an error payload, or ordinary token usage is not evidence.
+
+The adapter therefore sends no acceleration control and changes no request option or header. The `provider-fast-activation` capability reports `unsupported` with the bounded reason `response-proof-unavailable`. Materialized agent configuration never claims that acceleration was requested or applied.
+
+This is an optional-capability gap. It warns and never blocks descriptor materialization, agent mapping, commands, or lifecycle.
+
+Support can be enabled only after the plugin contract exposes correlated official response-body evidence for the same attempt, proven in a real harness. Mocked unit coverage is not that proof.
+
 ## Verify loading
 
 Use OpenCode's own diagnostics:

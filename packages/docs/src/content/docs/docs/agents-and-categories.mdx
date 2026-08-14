@@ -18,25 +18,38 @@ agent reviewer {
 }
 ```
 
-Supported fields include `description`, `prompt`, `prompt_file`, prompt appends, `models`, `mode`, `temperature`, `skills`, delegation `triggers`, `routing.delegation_exclude`, and `tool_policy`. Use either `prompt` or `prompt_file` for the primary prompt.
+Supported fields include `description`, `prompt`, `prompt_file`, prompt appends, `models`, `mode`, `temperature`, `skills`, delegation `triggers`, `fast`, `routing.delegation_exclude`, and `tool_policy`. Use either `prompt` or `prompt_file` for the primary prompt.
+
+`triggers` is an ordered list of plain strings, such as `triggers ["Use for pull request review"]`. Structured trigger objects with `domain`, `trigger`, or `routing_hint` are invalid.
+
+`fast true` is optional neutral intent asking an adapter to request provider acceleration. Only the literal `fast true` is valid; omit the field to preserve provider defaults. `fast false` and the aliases `service_class`, `speed`, `variant`, and `priority` are invalid. Every shipped adapter currently reports this capability as unsupported and sends no provider control.
 
 ## Define a category
 
 ```weave
 category frontend {
   description "UI and accessibility work"
-  patterns ["src/**/*.tsx", "src/**/*.css"]
+  triggers ["Use for UI, styling, and accessibility"]
   models ["claude-sonnet-4-5"]
+  fast true
 }
 ```
 
 A category produces an agent named `shuttle-frontend`. Its `description` is required and must contain non-blank routing guidance; Loom and Tapestry show it in their delegation tables. The category's prompt append, model preferences, and tool policy apply to that generated agent.
 
-Generated category shuttles do not inherit the base Shuttle's triggers. They route from their category description and patterns, while the generic Shuttle's triggers describe fallback work that no category claims.
+Generated category shuttles do not inherit the base Shuttle's triggers. They route from their category description and their own trigger strings, while the generic Shuttle's triggers describe fallback work that no category claims. A category `fast true` overrides the base Shuttle value; omitting it inherits the base intent.
+
+Categories have no file-pattern field. Weave does not perform deterministic file routing, and there is no replacement for the removed `patterns` field.
 
 ## Migrate existing categories
 
-This requirement is a breaking config change. Add a non-blank `description` to every existing `category` block before validation. `weave init migrate` skips legacy categories without descriptions and reports a warning instead of writing invalid DSL.
+These are breaking config changes:
+
+- Add a non-blank `description` to every existing `category` block before validation.
+- Delete every `patterns [...]` declaration. Strict parsing rejects it.
+- Replace each structured trigger object with one plain string.
+
+`weave init migrate` converts legacy JSONC on a best-effort basis: it takes each trigger object's non-blank `routing_hint`, otherwise its non-blank `trigger`, preserves source order, drops exact duplicates, and warns for every discarded field. It drops category patterns with a warning and no replacement metadata, skips legacy categories without descriptions, and never infers `fast`. Handwritten `.weave` files get no compatibility path: the old forms are hard validation errors.
 
 ## Override a built-in
 

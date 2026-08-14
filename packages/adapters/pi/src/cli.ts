@@ -48,6 +48,7 @@ export {
   accessModeForAdapterAction,
   createProductionPiAdapterCommandRegistry,
   createProductionPorts,
+  evaluateProductionChildrenDeleteGate,
   openProductionPiAdapterCommandPorts,
   resolveProductionAdapterCliRegistry,
 } from "./adapter-cli-production.js";

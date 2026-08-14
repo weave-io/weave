@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { err, ok } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import {
   isDisjointFromDefaultSessionTree,
   nativeSessionDeletionToken,
@@ -11,6 +11,7 @@ import {
   type PiNativeSessionHeader,
   type PiNativeSessionHostPort,
   type PiNativeSessionRecord,
+  type PiNativeSessionStorageUnavailable,
   PiNativeSessionStore,
   PI_NATIVE_RESULT_SCHEMA_VERSION as RESULT_SCHEMA_VERSION,
   readNativeResultGroup,
@@ -177,8 +178,8 @@ class FakeHost implements PiNativeSessionHostPort {
   }
 }
 
-/** Hostile host: bounded FS reads must not open or create through the host. */
-class DenyingHost implements PiNativeSessionHostPort {
+/** A host that must never be reached once ref validation can reject first. */
+class UnreachableHost implements PiNativeSessionHostPort {
   createCalls = 0;
   openCalls = 0;
 
@@ -195,6 +196,17 @@ class DenyingHost implements PiNativeSessionHostPort {
     this.openCalls += 1;
     throw new Error("SessionManager.open must not be called");
   }
+}
+
+function throwingFilesystem(calls: {
+  openDirectory: number;
+}): PiNativeSessionFsPort {
+  return {
+    openDirectory: () => {
+      calls.openDirectory += 1;
+      throw new Error("filesystem mutation must not be attempted");
+    },
+  } as unknown as PiNativeSessionFsPort;
 }
 
 /** Pre-occupies a session leaf so create can assert collision. */
@@ -272,6 +284,7 @@ function harness(options: FakeHostOptions = {}): Harness {
   const host = new FakeHost(options);
   const store = new PiNativeSessionStore({
     root: ROOT,
+    launch: { mode: "read-only" },
     // Structural stand-in until Task 16 removes the legacy JSONL FS module.
     fs: fs as unknown as PiNativeSessionFsPort,
     host,
@@ -451,8 +464,53 @@ describe("containment", () => {
   });
 });
 
-describe("native session host independence", () => {
-  test("keeps bounded reads available without opening the host", async () => {
+describe("ref validation precedes host and filesystem work", () => {
+  test("an unsafe ref is rejected before host, filesystem, or clock work", async () => {
+    const host = new UnreachableHost();
+    const filesystemCalls = { openDirectory: 0 };
+    let clockCalls = 0;
+    const store = new PiNativeSessionStore({
+      root: ROOT,
+      launch: { mode: "read-only" },
+      fs: throwingFilesystem(filesystemCalls),
+      host,
+      now: () => {
+        clockCalls += 1;
+        return new Date(TIMESTAMP);
+      },
+    });
+
+    const results = [
+      await store.establishThreadLeaf(
+        "../escape/session.jsonl",
+        {
+          threadId: "thread-1",
+          agentName: "agent",
+          parentId: "parent-1",
+          parentAgentName: "parent-agent",
+          parentDepth: 0,
+          ownerParentSessionId: "owner-1",
+          cwd: "/repo",
+          createdAt: 0,
+        },
+        PARENT,
+      ),
+      await store.deleteSession(
+        { ...RECORD, ref: "../escape/session.jsonl" },
+        nativeSessionDeletionToken("../escape/session.jsonl"),
+      ),
+    ];
+
+    for (const result of results) {
+      expect(result.isErr()).toBe(true);
+    }
+    expect(host.createCalls).toBe(0);
+    expect(host.openCalls).toBe(0);
+    expect(filesystemCalls.openDirectory).toBe(0);
+    expect(clockCalls).toBe(0);
+  });
+
+  test("reads stay available without any host call", async () => {
     const fs = new MemoryPiNativeSessionFs();
     await seedSessionFile(
       fs,
@@ -460,9 +518,10 @@ describe("native session host independence", () => {
       "session.jsonl",
       jsonl([defaultHeader("/repo")]),
     );
-    const host = new DenyingHost();
+    const host = new UnreachableHost();
     const store = new PiNativeSessionStore({
       root: ROOT,
+      launch: { mode: "read-only" },
       fs: fs as unknown as PiNativeSessionFsPort,
       host,
     });
@@ -474,7 +533,6 @@ describe("native session host independence", () => {
 
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap().entries).toEqual([]);
-    expect(host.createCalls).toBe(0);
     expect(host.openCalls).toBe(0);
   });
 });
@@ -485,6 +543,7 @@ describe("durable result output", () => {
     const record = (await create())._unsafeUnwrap();
     host.appended.length = 0;
     const store = new PiNativeSessionStore({
+      launch: { mode: "read-only" },
       root: ROOT,
       fs: fs as unknown as PiNativeSessionFsPort,
       host,
@@ -586,6 +645,7 @@ describe("durable result output", () => {
       return originalOpen(path, sessionDir);
     };
     const store = new PiNativeSessionStore({
+      launch: { mode: "read-only" },
       root: ROOT,
       fs: fs as unknown as PiNativeSessionFsPort,
       host,
@@ -666,6 +726,7 @@ describe("durable result output", () => {
     const record = (await create())._unsafeUnwrap();
     host.appended.length = 0;
     const store = new PiNativeSessionStore({
+      launch: { mode: "read-only" },
       root: ROOT,
       fs: fs as unknown as PiNativeSessionFsPort,
       host,
@@ -720,6 +781,7 @@ describe("durable result output", () => {
       };
     };
     const store = new PiNativeSessionStore({
+      launch: { mode: "read-only" },
       root: ROOT,
       fs: fs as unknown as PiNativeSessionFsPort,
       host,
@@ -782,6 +844,7 @@ describe("durable result output", () => {
       };
     };
     const store = new PiNativeSessionStore({
+      launch: { mode: "read-only" },
       root: ROOT,
       fs: fs as unknown as PiNativeSessionFsPort,
       host,

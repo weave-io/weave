@@ -3,52 +3,14 @@ import type {
   CapabilityProbeResult,
 } from "@weaveio/weave-engine";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
+import type { PiChildSessionReadinessReason } from "./child-session-storage-authority.js";
 import { isOwnSourceInfo, WEAVE_COMMAND_NAMES } from "./commands.js";
-import type { PiHostSurfaceId } from "./host-compatibility-matrix.js";
-import type { PiHostSurfaceReport } from "./host-inventory.js";
+import {
+  PI_HOST_SURFACE_IDS,
+  type PiHostSurfaceId,
+  type PiHostSurfaceReport,
+} from "./host-inventory.js";
 import type { PiCommandInfo, PiMode, PiTrustState } from "./types.js";
-
-/**
- * Closed, path-free reasons `delegated-specialist-execution` may report when a
- * required Pi session/process/root probe fails. Raw host details never appear.
- */
-export const PI_DELEGATION_READINESS_UNAVAILABLE_REASONS = [
-  "pi-session-api-unavailable",
-  "pi-session-root-unavailable",
-  "pi-session-root-unsafe",
-  "pi-process-unavailable",
-] as const;
-
-export type PiDelegationReadinessUnavailableReason =
-  (typeof PI_DELEGATION_READINESS_UNAVAILABLE_REASONS)[number];
-
-/** Host surfaces whose absence means the Pi session API is not ready. */
-const SESSION_API_GAP_SURFACES: ReadonlySet<PiHostSurfaceId> = new Set([
-  "session-restore",
-  "rpc-get-entries",
-  "rpc-persistent-session",
-  "rpc-append-entry",
-  "rpc-session-tree-read",
-  "custom-session-directory",
-]);
-
-/**
- * Maps required host-surface gaps onto exactly one closed readiness reason.
- * Session-API gaps win over process/UI gaps when both are present. Never
- * returns a surface id, path, method name, or raw host detail.
- */
-export function mapRequiredGapsToDelegationReadinessReason(
-  gaps: readonly PiHostSurfaceId[],
-): PiDelegationReadinessUnavailableReason {
-  for (const gap of gaps) {
-    if (SESSION_API_GAP_SURFACES.has(gap)) {
-      return "pi-session-api-unavailable";
-    }
-  }
-  // rpc-steer, rpc-follow-up, editor-composition, extension-ui-response, and
-  // any other required gap fail closed as process (path-free).
-  return "pi-process-unavailable";
-}
 
 /**
  * Capabilities whose "not yet implemented" probe would otherwise read a
@@ -93,6 +55,19 @@ export interface PiCandidatePlanContext {
   readonly plansDirectoryContained?: boolean;
 }
 
+/**
+ * This generation's real spawn-authority verdict, produced by the single
+ * generation-scoped session authority every launch path consumes (Spec 33
+ * §5.6). Probing reads the same object the launch paths hold, so readiness
+ * and launch can no longer disagree.
+ */
+export type PiDelegationAuthorityReadiness =
+  | { readonly status: "ready" }
+  | {
+      readonly status: "unavailable";
+      readonly reason: PiDelegationReadinessReason;
+    };
+
 /** Input a capability prober needs; assembled after mode/host/trust are known. */
 export interface PiPreflightContext {
   readonly mode: PiMode;
@@ -100,7 +75,25 @@ export interface PiPreflightContext {
   readonly commands: readonly PiCommandInfo[];
   readonly candidatePlan?: PiCandidatePlanContext;
   readonly hostSurface?: PiHostSurfaceReport;
+  /**
+   * This generation's spawn-authority verdict. An absent verdict is treated
+   * as unavailable, never as "assume ready": `delegated-specialist-execution`
+   * must never claim readiness a spawn would refuse.
+   */
+  readonly delegationAuthority?: PiDelegationAuthorityReadiness;
 }
+
+/**
+ * Required host surfaces that carry Pi's native session API. A gap in any of
+ * them means the adapter cannot mint or reopen a child session.
+ */
+const SESSION_HOST_SURFACES: ReadonlySet<PiHostSurfaceId> = new Set([
+  "session-restore",
+  "rpc-persistent-session",
+  "rpc-append-entry",
+  "rpc-session-tree-read",
+  "custom-session-directory",
+]);
 
 const CANDIDATE_PLAN_CAPABILITIES: ReadonlySet<CapabilityId> = new Set([
   "config-materialization",
@@ -298,6 +291,48 @@ function evaluateCandidatePlanCapability(
   };
 }
 
+/**
+ * The closed, path-free set of reasons delegation readiness may report
+ * (Spec 33 path-session design §5.6). Raw host messages, causes, paths, and
+ * method names never reach an operator surface, so every host-surface gap is
+ * mapped onto exactly one of these constants.
+ */
+export type PiDelegationReadinessReason = PiChildSessionReadinessReason;
+
+/**
+ * Which closed reason each required host surface maps to. Total over
+ * `PiHostSurfaceId`: a surface that is not about session storage is a
+ * process/protocol surface, so its gap means the child process surface is
+ * unusable.
+ */
+const HOST_SURFACE_READINESS_REASONS: ReadonlyMap<
+  PiHostSurfaceId,
+  PiDelegationReadinessReason
+> = new Map(
+  PI_HOST_SURFACE_IDS.map((surfaceId) => [
+    surfaceId,
+    SESSION_HOST_SURFACES.has(surfaceId)
+      ? ("pi-session-api-unavailable" as const)
+      : ("pi-process-unavailable" as const),
+  ]),
+);
+
+/**
+ * Reduces every required host-surface gap to one closed readiness reason.
+ * Session-API gaps outrank process gaps because a host that cannot mint a
+ * session cannot run a durable child at all.
+ */
+export function describeDelegationReadinessGap(
+  requiredGaps: readonly PiHostSurfaceId[],
+): PiDelegationReadinessReason {
+  for (const surfaceId of PI_HOST_SURFACE_IDS) {
+    if (!requiredGaps.includes(surfaceId)) continue;
+    const reason = HOST_SURFACE_READINESS_REASONS.get(surfaceId);
+    if (reason === "pi-session-api-unavailable") return reason;
+  }
+  return "pi-process-unavailable";
+}
+
 /** Adapter-owned seam so tests can substitute a fully-controlled probe set (Pi adapter contract). */
 export interface PiCapabilityProbeSource {
   probe(context: PiPreflightContext): readonly CapabilityProbeResult[];
@@ -414,9 +449,34 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
       return {
         capabilityId: id,
         probeStatus: "unavailable",
-        details: mapRequiredGapsToDelegationReadinessReason(
+        details: describeDelegationReadinessGap(
           context.hostSurface.requiredGaps,
         ),
+      };
+    }
+    // The spawn authority is a real, generation-scoped fact, so a generation
+    // whose session API, session root, or process surface is missing reports
+    // delegation as unavailable even when the candidate plan is perfect.
+    //
+    // An *absent* verdict is treated the same way. "No authority was wired"
+    // must never read as "assume a spawn would work": readiness has to imply
+    // that a usable spawn authority exists. The one exception is withheld
+    // project trust, whose narrow documented `ok` means only that
+    // project-path access was correctly withheld and which already forces
+    // health-only mode, so it can never promote the adapter to ready.
+    if (
+      id === "delegated-specialist-execution" &&
+      context.delegationAuthority?.status !== "ready" &&
+      !(
+        context.trust === "withheld" &&
+        PROJECT_PATH_DEPENDENT_CAPABILITIES.includes(id)
+      )
+    ) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details:
+          context.delegationAuthority?.reason ?? "pi-session-api-unavailable",
       };
     }
     if (id === "command-entrypoints") {

@@ -25,7 +25,12 @@ import {
   parseChildRefRecord,
   serializeChildRefEnvelope,
 } from "../child-session-refs.js";
+import {
+  createPiChildSessionStorageAuthority,
+  type PiChildSessionStorageAuthority,
+} from "../child-session-storage-authority.js";
 import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PARENT = "parent-session-1";
 const OTHER_PARENT = "parent-session-2";
@@ -94,6 +99,7 @@ function authorityByRef(
 interface HarnessOptions {
   readonly parentSessionId?: string;
   readonly authority?: PiChildRefSourceAuthority;
+  readonly storage?: PiChildSessionStorageAuthority;
   readonly now?: () => number;
 }
 
@@ -103,6 +109,7 @@ function harness(options: HarnessOptions = {}) {
   const ids: string[] = [];
   let idCounter = 0;
   const store = new PiChildSessionRefStore({
+    storage: options.storage ?? TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     parentSessionId: options.parentSessionId ?? PARENT,
     append: session,
     read: session,
@@ -400,6 +407,25 @@ describe("append APIs", () => {
     expect(session.appended).toHaveLength(0);
   });
 
+  test("refuses public mutations when the Pi session API is unavailable", async () => {
+    const { session, store } = harness({
+      storage: createPiChildSessionStorageAuthority(),
+    });
+    const created = await store.appendNewChild(NEW_CHILD);
+    expect(created.isErr()).toBe(true);
+    if (created.isErr()) {
+      expect(created.error).toEqual({
+        type: "ChildRefStorageUnavailable",
+        reason: "pi-session-api-unavailable",
+      });
+    }
+    expect(session.appended).toHaveLength(0);
+
+    // Reads stay ungated even when mutation authority refuses.
+    const scan = await store.readRefs();
+    expect(scan.isOk()).toBe(true);
+  });
+
   test("new-child append is rejected with zero writes for each non-available source state", async () => {
     for (const state of [
       "missing",
@@ -563,6 +589,7 @@ describe("cumulative run history", () => {
       append: session,
       read: session,
       authority: fixedAuthority("available"),
+      storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     });
     const scan = await restarted.readRefs();
     expect(scan.isOk()).toBe(true);
@@ -840,6 +867,7 @@ describe("envelope ordering identity", () => {
       append: session,
       read: session,
       authority: fixedAuthority("available"),
+      storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     });
     const scan = await restarted.readRefs();
     expect(scan.isOk()).toBe(true);
@@ -890,6 +918,7 @@ describe("envelope ordering identity", () => {
       append: session,
       read: session,
       authority: fixedAuthority("available"),
+      storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     });
     const settled = await live.appendLifecycle(created.value, {
       status: "completed",
@@ -1189,6 +1218,7 @@ describe("source authority", () => {
         "collect",
         "constructor",
         "guardOrigin",
+        "requireMutationAuthority",
         "liveParentSessionId",
         "nextSequence",
         "readRefs",
@@ -1245,7 +1275,7 @@ describe("native source authority adapter", () => {
       {
         error: {
           type: "SessionStorageUnavailable",
-          reason: "filesystem-unavailable",
+          reason: "pi-session-api-unavailable",
         },
         expected: "unavailable",
       },

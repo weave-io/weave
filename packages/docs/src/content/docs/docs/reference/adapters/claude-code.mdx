@@ -30,4 +30,14 @@ weave compose --adapter claude-code
 
 The standalone `@weaveio/weave-adapter-claude-code` package is a nightly distribution. For the stable CLI path, use the bundled `weave compose` command.
 
+## Provider acceleration is unsupported
+
+Claude Code has a native fast mode through `/fast`, Option/Alt+O, and the Agent SDK's `settings.fastMode`. None of those belongs to this adapter's static file materialization: subagent frontmatter has no fast-mode field, and hooks cover tool, session, and subagent events rather than provider request changes and provider response evidence.
+
+An agent's `fast true` therefore changes no generated file. The adapter writes no frontmatter field, environment value, prompt instruction, or provider control, changes no provider request or header, and generated markdown never claims that acceleration was requested or applied. The `provider-fast-activation` capability reports `unsupported` with the bounded reason `harness-seam-unavailable`.
+
+This is an optional-capability gap. It warns and never blocks agent or command materialization.
+
+Support can be enabled only after a runtime Agent SDK integration provides per-attempt response proof, or an official materialization field provides equivalent proof, verified in a real harness.
+
 See [Packages](../../packages/) for package roles and the [support matrix](./) for release status.

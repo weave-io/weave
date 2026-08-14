@@ -33,7 +33,7 @@ The report status is `ok` when nothing fails, `degraded` when any check fails, a
 | Code | Cause | What to do |
 | --- | --- | --- |
 | `RequiredCapabilityUnavailable` | The host lacks a `required-for-delegation` surface | Upgrade Pi to at least `0.81.1` and re-check `/weave:health` |
-| `RequiredCapabilityUnavailable` with reason `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, or `pi-process-unavailable` | Pi's native create/open API, the private session root, or the Pi process surface did not pass readiness | Use `/weave:health` to identify the closed reason. Verify Pi 0.84.1, private `0700` data directories, and a runnable `pi` command. Read-only status, health, history, inspection, doctor, list, and show still work |
+| `RequiredCapabilityUnavailable` with reason `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, or `pi-process-unavailable` | The public `SessionManager` create/open constructors the adapter mints child sessions through, the adapter-owned private session root, or the Pi process launch surface did not pass readiness | Use `/weave:health` to identify the closed reason. Install a supported Pi host, and verify private `0700` data directories and a runnable `pi` command. Until then every persistent session mutation is refused before it starts; read-only status, health, history, inspection, doctor, list, and show still work |
 | `PersistentParentSessionRequired` | The parent Pi session is not persistent, typically `--no-session` | Restart Pi with a persistent session; child surfaces stay read-only until then |
 | `ChildSessionRootViolation` | `XDG_DATA_HOME` is relative or empty, or a path component is unsafe | Set `XDG_DATA_HOME` to an absolute path, or unset it to use `~/.local/share` |
 | `ChildSessionPermissionError` | A storage directory or file has permissive modes | Restore `0700` on directories and `0600` on files under the storage roots |
@@ -59,7 +59,7 @@ weave adapter pi children show <id> --cursor <c>
 
 `list` returns the newest 50 children for the workspace, including tombstoned rows. `show` returns bounded metadata plus the newest 100 native entry descriptors and a `nextCursor` for older pages.
 
-Add `--diagnostic` only when you need filesystem paths. Without it, absolute paths are replaced with `[path omitted]` and the `sessionPath` field is dropped. Add `--json` for stable machine output.
+Add `--diagnostic` only when you need the bounded root-relative session reference. No command prints a child's absolute session path; without `--diagnostic`, other absolute paths are replaced with `[path omitted]`. Add `--json` for stable machine output.
 
 ## Remove a child
 

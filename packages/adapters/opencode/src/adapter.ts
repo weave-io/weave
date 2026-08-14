@@ -25,7 +25,11 @@ import {
 import type { OpenCodeClientFacade } from "./opencode-client.js";
 import { reconcileAgent } from "./reconcile-agent.js";
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
-import { translateAgent } from "./translate-agent.js";
+import {
+  describeFastActivation,
+  type OpenCodeFastActivationReport,
+  translateAgent,
+} from "./translate-agent.js";
 
 const log = logger.child({ module: "adapter-opencode" });
 
@@ -160,6 +164,19 @@ export class OpenCodeAdapter implements HarnessAdapter {
    * of truth for what is actually registered in OpenCode.
    */
   readonly translatedAgents: Map<string, OpenCodeAgentConfig> = new Map();
+
+  /**
+   * Sanitized provider-acceleration reports for agents that declared
+   * `fast true`, keyed by agent name.
+   *
+   * Agents without the intent are absent: no declaration emits no state.
+   * Every stored report is `unsupported` because OpenCode's plugin contract
+   * exposes no correlated official response-body evidence. The adapter never
+   * writes a provider acceleration control, so materialized config can never
+   * imply that acceleration was requested or applied.
+   */
+  readonly fastActivationReports: Map<string, OpenCodeFastActivationReport> =
+    new Map();
 
   /**
    * Provider for querying plan file state.
@@ -330,6 +347,24 @@ export class OpenCodeAdapter implements HarnessAdapter {
     // Store translated config for test inspection and transitional compatibility.
     // This is a secondary artifact — the SDK-backed path below is primary.
     this.translatedAgents.set(descriptor.name, config);
+
+    // Optional provider acceleration: report the truthful state and continue.
+    // An unsupported optional capability must never block materialization.
+    const fastReport = describeFastActivation(descriptor);
+    if (fastReport === undefined) {
+      this.fastActivationReports.delete(descriptor.name);
+    } else {
+      this.fastActivationReports.set(descriptor.name, fastReport);
+      log.warn(
+        {
+          agent: descriptor.name,
+          capability: fastReport.capability,
+          state: fastReport.state,
+          reason: fastReport.reason,
+        },
+        "Provider acceleration intent is unsupported in OpenCode; materialization continues without any acceleration control",
+      );
+    }
 
     log.info(
       {

@@ -92,7 +92,12 @@ async function storeWith(host: PiNativeSessionHostPort): Promise<{
   readonly ref: string;
 }> {
   const fs = new MemoryPiNativeSessionFs();
-  const store = new PiNativeSessionStore({ root: ROOT, fs, host });
+  const store = new PiNativeSessionStore({
+    root: ROOT,
+    fs,
+    host,
+    launch: { mode: "read-only" },
+  });
   const created = (
     await store.createChildSession({
       childId: "child-1",

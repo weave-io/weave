@@ -3,7 +3,7 @@
  *
  * Covers:
  * - All 4 readiness levels are valid; no extra values accepted by schema.
- * - All 20 capability IDs are valid.
+ * - All 21 capability IDs are valid.
  * - CapabilityEntry accepts all readiness levels and required/optional fields.
  * - AdapterCapabilityContract structural assertions.
  * - Tool-policy capability references @weaveio/weave-core concepts (no duplication).
@@ -30,8 +30,14 @@ import {
   CapabilityEntrySchema,
   CapabilityIdSchema,
   CapabilityReadinessSchema,
+  effectiveProviderFastReadiness,
   OPTIONAL_CAPABILITIES,
+  PROVIDER_FAST_ACTIVATION_ID,
+  PROVIDER_FAST_ACTIVATION_STATUSES,
+  ProviderFastActivationStatusSchema,
+  providerFastActivationState,
   REQUIRED_CAPABILITIES,
+  readinessForProviderFastStatus,
 } from "../capability-contract.js";
 
 // ---------------------------------------------------------------------------
@@ -71,23 +77,27 @@ describe("CapabilityReadiness", () => {
 // ---------------------------------------------------------------------------
 
 describe("CapabilityId", () => {
-  it("has exactly 20 capability IDs", () => {
-    expect(ALL_CAPABILITY_IDS).toHaveLength(20);
+  it("has exactly 21 capability IDs", () => {
+    expect(ALL_CAPABILITY_IDS).toHaveLength(21);
   });
 
   it("has exactly 12 required capability IDs", () => {
     expect(REQUIRED_CAPABILITIES).toHaveLength(12);
   });
 
-  it("has exactly 8 optional capability IDs", () => {
-    expect(OPTIONAL_CAPABILITIES).toHaveLength(8);
+  it("has exactly 9 optional capability IDs", () => {
+    expect(OPTIONAL_CAPABILITIES).toHaveLength(9);
   });
 
   it("includes model-thinking-activation as an optional capability", () => {
     expect(OPTIONAL_CAPABILITIES).toContain("model-thinking-activation");
   });
 
-  it("accepts all 20 capability IDs via schema", () => {
+  it("includes provider-fast-activation as an optional capability", () => {
+    expect(OPTIONAL_CAPABILITIES).toContain("provider-fast-activation");
+  });
+
+  it("accepts all 21 capability IDs via schema", () => {
     for (const id of ALL_CAPABILITY_IDS) {
       const result = CapabilityIdSchema.safeParse(id);
       expect(result.success).toBe(true);
@@ -141,6 +151,8 @@ describe("CapabilityId", () => {
     expect(optional.has("eval-integration")).toBe(true);
     expect(optional.has("static-artifact-generation")).toBe(true);
     expect(optional.has("multiple-active-workflows")).toBe(true);
+    expect(optional.has("model-thinking-activation")).toBe(true);
+    expect(optional.has("provider-fast-activation")).toBe(true);
   });
 });
 
@@ -297,12 +309,12 @@ describe("engine barrel re-exports", () => {
   });
 
   it("exports OPTIONAL_CAPABILITIES from @weaveio/weave-engine", () => {
-    expect(BARREL_OPTIONAL).toHaveLength(8);
+    expect(BARREL_OPTIONAL).toHaveLength(9);
     expect(BARREL_OPTIONAL).toEqual(OPTIONAL_CAPABILITIES);
   });
 
   it("exports ALL_CAPABILITY_IDS from @weaveio/weave-engine", () => {
-    expect(BARREL_ALL).toHaveLength(20);
+    expect(BARREL_ALL).toHaveLength(21);
   });
 
   it("exports evaluateCoreReadinessProfile from @weaveio/weave-engine", () => {
@@ -351,5 +363,178 @@ describe("synthetic fixture sanitization", () => {
       expect(serialized).not.toContain("/Users/");
       expect(serialized).not.toContain("/home/");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// § 7 — provider-fast-activation contract
+// ---------------------------------------------------------------------------
+
+describe("provider-fast-activation", () => {
+  it("names the optional capability by function, not provider implementation", () => {
+    expect(PROVIDER_FAST_ACTIVATION_ID).toBe("provider-fast-activation");
+    expect(OPTIONAL_CAPABILITIES).toContain(PROVIDER_FAST_ACTIVATION_ID);
+    expect(REQUIRED_CAPABILITIES).not.toContain(PROVIDER_FAST_ACTIVATION_ID);
+  });
+
+  it("accepts only the bounded acceleration statuses", () => {
+    expect([...PROVIDER_FAST_ACTIVATION_STATUSES]).toEqual([
+      "declared",
+      "requested",
+      "applied",
+      "not-confirmed",
+      "unsupported",
+    ]);
+    for (const status of PROVIDER_FAST_ACTIVATION_STATUSES) {
+      expect(ProviderFastActivationStatusSchema.safeParse(status).success).toBe(
+        true,
+      );
+    }
+    for (const invalid of [
+      "native",
+      "requested-applied",
+      "service_tier",
+      "fast",
+      "",
+    ]) {
+      expect(
+        ProviderFastActivationStatusSchema.safeParse(invalid).success,
+      ).toBe(false);
+    }
+  });
+
+  it("maps bounded statuses onto existing readiness without a parallel machine", () => {
+    expect(readinessForProviderFastStatus("declared")).toBe("degraded");
+    expect(readinessForProviderFastStatus("requested")).toBe("degraded");
+    expect(readinessForProviderFastStatus("not-confirmed")).toBe("degraded");
+    expect(readinessForProviderFastStatus("applied")).toBe("native");
+    expect(readinessForProviderFastStatus("unsupported")).toBe("unsupported");
+  });
+
+  it("emits no acceleration state when a descriptor has no fast intent", () => {
+    expect(providerFastActivationState({})).toBeUndefined();
+    expect(
+      providerFastActivationState({ status: "requested" }),
+    ).toBeUndefined();
+    expect(providerFastActivationState({ status: "applied" })).toBeUndefined();
+  });
+
+  it("uses declared as the no-attempt state when fast intent is present", () => {
+    expect(providerFastActivationState({ fast: true })).toBe("declared");
+    expect(
+      providerFastActivationState({ fast: true, status: "requested" }),
+    ).toBe("requested");
+  });
+
+  it("never raises a static ceiling from runtime evidence", () => {
+    expect(effectiveProviderFastReadiness("degraded", "applied")).toBe(
+      "degraded",
+    );
+    expect(effectiveProviderFastReadiness("unsupported", "applied")).toBe(
+      "unsupported",
+    );
+    expect(effectiveProviderFastReadiness("unsupported", "requested")).toBe(
+      "unsupported",
+    );
+    expect(effectiveProviderFastReadiness("degraded", "requested")).toBe(
+      "degraded",
+    );
+    expect(effectiveProviderFastReadiness("degraded", "not-confirmed")).toBe(
+      "degraded",
+    );
+    expect(effectiveProviderFastReadiness("degraded", "unsupported")).toBe(
+      "unsupported",
+    );
+    expect(effectiveProviderFastReadiness("native", undefined)).toBe("native");
+  });
+
+  it("keeps capability metadata free of provider request fields and secrets", () => {
+    const entry: CapabilityEntry = {
+      id: "provider-fast-activation",
+      description: "Request provider acceleration and report bounded evidence",
+      readiness: "degraded",
+      runtimeStatus: "not-confirmed",
+      notes: "Request-capable; no public response-body evidence",
+      supplier: "synthetic-adapter",
+      remediationHint:
+        "Keep reporting not-confirmed until response proof exists",
+    };
+    const serialized = JSON.stringify(entry);
+    expect(serialized).not.toContain("service_tier");
+    expect(serialized).not.toContain("anthropic-beta");
+    expect(serialized).not.toContain("Authorization");
+    expect(serialized).not.toContain("https://");
+    expect(serialized).not.toContain("/Users/");
+    expect(serialized).not.toContain("api_key");
+    expect(serialized).not.toContain("prompt");
+    expect(serialized).not.toContain("completion");
+  });
+
+  it("accepts every bounded fast runtimeStatus and omitted status", () => {
+    const base = {
+      id: "provider-fast-activation" as const,
+      description: "Request provider acceleration and report bounded evidence",
+      readiness: "degraded" as const,
+    };
+    expect(CapabilityEntrySchema.safeParse(base).success).toBe(true);
+    for (const runtimeStatus of PROVIDER_FAST_ACTIVATION_STATUSES) {
+      expect(
+        CapabilityEntrySchema.safeParse({ ...base, runtimeStatus }).success,
+      ).toBe(true);
+      expect(
+        AdapterCapabilityContractSchema.safeParse({
+          capabilities: [{ ...base, runtimeStatus }],
+        }).success,
+      ).toBe(true);
+    }
+  });
+
+  it("rejects arbitrary, secret-shaped, empty, and wrong-type fast runtimeStatus", () => {
+    const base = {
+      id: "provider-fast-activation",
+      description: "Request provider acceleration and report bounded evidence",
+      readiness: "degraded",
+    };
+    const invalidStatuses = [
+      "applied-with-secret-payload",
+      "sk-secret-token",
+      "",
+      42,
+      null,
+      { status: "applied" },
+    ];
+    for (const runtimeStatus of invalidStatuses) {
+      expect(
+        CapabilityEntrySchema.safeParse({ ...base, runtimeStatus }).success,
+      ).toBe(false);
+      expect(
+        AdapterCapabilityContractSchema.safeParse({
+          capabilities: [{ ...base, runtimeStatus }],
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("leaves unrelated capability runtimeStatus as sanitized freeform text", () => {
+    const entry = {
+      id: "tool-policy-mapping",
+      description: "Tool policy mapping",
+      readiness: "emulated",
+      runtimeStatus: "active",
+    };
+    expect(CapabilityEntrySchema.safeParse(entry).success).toBe(true);
+    expect(
+      AdapterCapabilityContractSchema.safeParse({
+        capabilities: [
+          entry,
+          {
+            id: "provider-fast-activation",
+            description: "Request provider acceleration",
+            readiness: "degraded",
+            runtimeStatus: "not-confirmed",
+          },
+        ],
+      }).success,
+    ).toBe(true);
   });
 });

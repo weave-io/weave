@@ -13,6 +13,8 @@
  * @see docs/adapters/pi.md (Pi adapter contract)
  */
 
+import { err, ok, Result } from "neverthrow";
+
 export type {
   PiChildSessionEvent,
   PiExtensionUiResponse,
@@ -54,15 +56,24 @@ export interface PiCommandInfo {
 /**
  * One entry from Pi's authenticated model catalog
  * (`ctx.modelRegistry.getAvailable()`) or the currently active model
- * (`ctx.model`).
+ * (`ctx.model`). `api` is the host-reported Pi `Model.api` family when
+ * present; it is never inferred from provider or model ids.
  */
 export interface PiModelInfo {
   readonly provider: string;
   readonly id: string;
   readonly name?: string;
+  readonly api?: string;
+  /**
+   * The model's *declared* transport base URL, when the host reports one.
+   * This is configuration, not proof of where a request goes: Pi replaces it
+   * with the auth-resolved base URL during request preparation. It describes
+   * the catalog entry and must never decide provider eligibility.
+   */
+  readonly baseUrl?: string;
 }
 
-/** Narrow projection of `ctx.modelRegistry`: authenticated-model discovery only. */
+/** Narrow projection of `ctx.modelRegistry`: authenticated-model discovery. */
 export interface PiModelRegistry {
   getAvailable(): readonly PiModelInfo[];
 }
@@ -87,6 +98,105 @@ export interface PiBuildSystemPromptOptions {
 export interface PiBeforeAgentStartEvent {
   readonly systemPrompt?: string;
   readonly systemPromptOptions?: PiBuildSystemPromptOptions;
+}
+
+/**
+ * Narrow projections of Pi's provider hooks. These types deliberately omit
+ * payload, header maps, response bodies, and other harness objects. The
+ * adapter never mutates a provider request, so no projection here reaches
+ * request data.
+ */
+export type PiProviderHookName =
+  | "before_provider_request"
+  | "before_provider_headers"
+  | "after_provider_response";
+
+export interface PiBeforeProviderRequestEvent {
+  readonly type: "before_provider_request";
+}
+
+export interface PiBeforeProviderHeadersEvent {
+  readonly type: "before_provider_headers";
+}
+
+export interface PiAfterProviderResponseEvent {
+  readonly type: "after_provider_response";
+  readonly status: number;
+}
+
+export type PiProviderEventProjection =
+  | PiBeforeProviderRequestEvent
+  | PiBeforeProviderHeadersEvent
+  | PiAfterProviderResponseEvent;
+
+export type PiProviderEventProjectionError = {
+  readonly type: "UnsupportedProviderEvent";
+};
+
+/**
+ * Project a host provider hook into the adapter-owned shape. Copies only the
+ * event name and, for responses, the integer status. Payload, headers, and
+ * other harness fields stay behind this boundary.
+ */
+export function projectPiProviderEvent(
+  event: unknown,
+): Result<PiProviderEventProjection, PiProviderEventProjectionError> {
+  const projected = Result.fromThrowable(
+    () => {
+      if (typeof event !== "object" || event === null) {
+        return err({ type: "UnsupportedProviderEvent" } as const);
+      }
+
+      const prototype = Object.getPrototypeOf(event);
+      if (prototype !== Object.prototype && prototype !== null) {
+        return err({ type: "UnsupportedProviderEvent" } as const);
+      }
+
+      const descriptors = Object.create(null) as Record<
+        string,
+        PropertyDescriptor
+      >;
+      for (const key of Reflect.ownKeys(event)) {
+        if (typeof key !== "string") {
+          return err({ type: "UnsupportedProviderEvent" } as const);
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(event, key);
+        if (
+          descriptor === undefined ||
+          !("value" in descriptor) ||
+          descriptor.enumerable !== true ||
+          descriptor.writable !== true ||
+          descriptor.configurable !== true
+        ) {
+          return err({ type: "UnsupportedProviderEvent" } as const);
+        }
+        descriptors[key] = descriptor;
+      }
+
+      const type = descriptors.type?.value;
+      if (typeof type !== "string") {
+        return err({ type: "UnsupportedProviderEvent" } as const);
+      }
+      if (type === "before_provider_request") {
+        return ok({ type: "before_provider_request" } as const);
+      }
+      if (type === "before_provider_headers") {
+        return ok({ type: "before_provider_headers" } as const);
+      }
+      if (type !== "after_provider_response") {
+        return err({ type: "UnsupportedProviderEvent" } as const);
+      }
+
+      const status = descriptors.status?.value;
+      if (typeof status !== "number" || !Number.isInteger(status)) {
+        return err({ type: "UnsupportedProviderEvent" } as const);
+      }
+      return ok({ type: "after_provider_response", status } as const);
+    },
+    () => ({ type: "UnsupportedProviderEvent" }) as const,
+  )();
+
+  return projected.andThen((result) => result);
 }
 
 /** Notification severity accepted by `ctx.ui.notify`. */

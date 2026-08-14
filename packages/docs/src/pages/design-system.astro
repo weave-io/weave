@@ -125,8 +125,8 @@ const description =
           <div class="type-row"><div class="spec"><b>title · 3xl</b>38 / 500 / -0.025em</div><div class="sample" style="font-size:var(--fs-3xl);font-weight:500;letter-spacing:-0.025em">Author intent once.</div></div>
           <div class="type-row"><div class="spec"><b>heading · xl</b>22 / 500 / -0.015em</div><div class="sample" style="font-size:var(--fs-xl);font-weight:500;letter-spacing:-0.015em">The adapter boundary is one-way.</div></div>
           <div class="type-row"><div class="spec"><b>lede · lg</b>18 / 400</div><div class="sample" style="font-size:var(--fs-lg);color:var(--text-2)">A single .weave file compiles to the surfaces each harness expects.</div></div>
-          <div class="type-row"><div class="spec"><b>body · base</b>14 / 400 / 1.55</div><div class="sample" style="font-size:var(--fs-base);color:var(--text-2)">Categories describe a file domain and generate shuttle agents — declare <code style="font-family:var(--font-mono);background:var(--bg-inset);border:1px solid var(--border-faint);border-radius:4px;padding:1px 5px;color:var(--text)">category frontend &#123; patterns ["**/*.tsx"] &#125;</code> and adapters receive the normalized descriptor.</div></div>
-          <div class="type-row"><div class="spec"><b>code · mono</b>14 / 500</div><div class="sample" style="font-family:var(--font-mono);font-size:var(--fs-sm)"><span class="kw">workflow</span> <span class="id">quick_fix</span> <span class="pn">&#123;</span> <span class="kw">step</span> <span class="id">fix</span> <span class="pn">&#123;</span> <span class="kw">type</span> <span class="id">autonomous</span> <span class="pn">&#125;</span> <span class="pn">&#125;</span></div></div>
+          <div class="type-row"><div class="spec"><b>body · base</b>14 / 400 / 1.55</div><div class="sample" style="font-size:var(--fs-base);color:var(--text-2)">Categories describe a specialist domain and generate shuttle agents — declare <code style="font-family:var(--font-mono);background:var(--bg-inset);border:1px solid var(--border-faint);border-radius:4px;padding:1px 5px;color:var(--text)">category frontend &#123; description "Frontend UI work" triggers ["Use for UI, styling, and accessibility"] &#125;</code> and adapters receive the normalized descriptor.</div></div>
+          <div class="type-row"><div class="spec"><b>code · mono</b>14 / 500</div><div class="sample" style="font-family:var(--font-mono);font-size:var(--fs-sm)"><span class="kw">workflow</span> <span class="id">quick-fix</span> <span class="pn">&#123;</span> <span class="kw">description</span> <span class="str">"Fix one bug"</span> <span class="kw">version</span> <span class="id">1</span> <span class="kw">step</span> <span class="id">fix</span> <span class="pn">&#123;</span> <span class="kw">type</span> <span class="id">autonomous</span> <span class="kw">agent</span> <span class="id">shuttle</span> <span class="kw">prompt</span> <span class="str">"Fix &#123;&#123;instance.goal&#125;&#125;"</span> <span class="kw">completion</span> <span class="id">agent_signal</span> <span class="pn">&#125;</span> <span class="pn">&#125;</span></div></div>
           <div class="type-row"><div class="spec"><b>caption · mono</b>11 / 500 / +0.08em</div><div class="sample" style="font-family:var(--font-mono);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:0.08em;color:var(--text-3)">define · compose · delegate · adapt · execute</div></div>
         </div>
       </section>
@@ -226,12 +226,20 @@ const description =
             <div class="ph">.weave code block</div>
             <div class="codeblock" style="border:0;border-radius:0">
               <div class="code-head"><span class="fdot"></span><span style="color:var(--text-2)">agents.weave</span></div>
-<pre><span class="cm"># six canonical roles; custom roles are first-class</span>
+<pre><span class="cm"># agents declare intent; adapters translate it</span>
 <span class="kw">agent</span> <span class="id">planner</span> <span class="pn">&#123;</span>
-  <span class="kw">role</span><span class="pn">:</span> <span class="str">"decompose intent into a stage graph"</span>
-  <span class="kw">inputs</span><span class="pn">:</span> <span class="pn">[</span><span class="id">repo</span><span class="pn">,</span> <span class="id">objective</span><span class="pn">]</span>
-  <span class="kw">delegates_to</span><span class="pn">:</span> <span class="pn">[</span><span class="id">executor</span><span class="pn">,</span> <span class="id">reviewer</span><span class="pn">]</span>
-  <span class="kw">model</span><span class="pn">:</span> <span class="fn">prefer</span><span class="pn">(</span><span class="id">reasoning</span><span class="pn">,</span> <span class="kw">fallback</span><span class="pn">:</span> <span class="id">fast</span><span class="pn">)</span>
+  <span class="kw">description</span> <span class="str">"Decompose intent into an ordered plan; select for plan-sized work"</span>
+  <span class="kw">prompt_file</span> <span class="str">"planner.md"</span>
+  <span class="kw">models</span> <span class="pn">[</span><span class="str">"claude-sonnet-4-5#high"</span><span class="pn">]</span>
+  <span class="kw">mode</span> <span class="id">primary</span>
+
+  <span class="kw">tool_policy</span> <span class="pn">&#123;</span>
+    <span class="kw">read</span> <span class="id">allow</span>
+    <span class="kw">write</span> <span class="id">allow</span>
+    <span class="kw">execute</span> <span class="id">allow</span>
+    <span class="kw">delegate</span> <span class="id">allow</span>
+    <span class="kw">network</span> <span class="id">ask</span>
+  <span class="pn">&#125;</span>
 <span class="pn">&#125;</span></pre>
             </div>
           </div>

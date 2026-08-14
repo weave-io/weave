@@ -888,3 +888,107 @@ describe("MockOpenCodeClient — facade contract", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: provider acceleration (`fast true`) intent
+// ---------------------------------------------------------------------------
+
+describe("OpenCodeAdapter — fast intent is unsupported but never blocking", () => {
+  it("materializes a fast-declaring agent through the SDK create path", async () => {
+    const client = new MockOpenCodeClient();
+    const adapter = new OpenCodeAdapter({ client });
+    await adapter.init();
+
+    const result = await adapter.spawnSubagent(
+      makeDescriptor({ name: "fast-agent", fast: true }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    expect(client.createAgentCalls).toHaveLength(1);
+    expect(client.createAgentCalls[0]?.name).toBe("fast-agent");
+  });
+
+  it("records a bounded unsupported report for the declaring agent only", async () => {
+    const adapter = new OpenCodeAdapter();
+    await adapter.init();
+
+    await adapter.spawnSubagent(
+      makeDescriptor({ name: "plain", fast: undefined }),
+    );
+    await adapter.spawnSubagent(makeDescriptor({ name: "fast", fast: true }));
+
+    expect(adapter.fastActivationReports.has("plain")).toBe(false);
+    expect(adapter.fastActivationReports.get("fast")).toEqual({
+      capability: "provider-fast-activation",
+      state: "unsupported",
+      reason: "response-proof-unavailable",
+      evidenceKind: "none",
+      evidenceOutcome: "inaccessible",
+    });
+  });
+
+  it("never claims requested or applied for a fast-declaring agent", async () => {
+    const adapter = new OpenCodeAdapter();
+    await adapter.init();
+
+    await adapter.spawnSubagent(makeDescriptor({ name: "fast", fast: true }));
+
+    const report = adapter.fastActivationReports.get("fast");
+    const serialized = JSON.stringify([
+      report,
+      adapter.translatedAgents.get("fast"),
+    ]);
+    expect(report?.state).toBe("unsupported");
+    expect(serialized).not.toContain("applied");
+    expect(serialized).not.toContain("requested");
+    expect(serialized).not.toContain("service_tier");
+  });
+
+  it("sends no acceleration control in the materialized config", async () => {
+    const client = new MockOpenCodeClient();
+    const adapter = new OpenCodeAdapter({ client });
+    await adapter.init();
+
+    await adapter.spawnSubagent(makeDescriptor({ name: "fast", fast: true }));
+
+    const sent = client.createAgentCalls[0]?.config as
+      | Record<string, unknown>
+      | undefined;
+    expect(sent).toBeDefined();
+    for (const field of ["fast", "speed", "service_tier", "priority"]) {
+      expect(Object.hasOwn(sent ?? {}, field)).toBe(false);
+    }
+  });
+
+  it("does not prevent unrelated agents from materializing", async () => {
+    const client = new MockOpenCodeClient();
+    const adapter = new OpenCodeAdapter({ client });
+    await adapter.init();
+
+    const fastResult = await adapter.spawnSubagent(
+      makeDescriptor({ name: "fast", fast: true }),
+    );
+    const plainResult = await adapter.spawnSubagent(
+      makeDescriptor({ name: "plain" }),
+    );
+
+    expect(fastResult.isOk()).toBe(true);
+    expect(plainResult.isOk()).toBe(true);
+    expect(client.createAgentCalls.map((call) => call.name)).toEqual([
+      "fast",
+      "plain",
+    ]);
+    expect(adapter.translatedAgents.size).toBe(2);
+  });
+
+  it("clears a stale report when the same agent stops declaring fast", async () => {
+    const adapter = new OpenCodeAdapter();
+    await adapter.init();
+
+    await adapter.spawnSubagent(makeDescriptor({ name: "agent", fast: true }));
+    expect(adapter.fastActivationReports.has("agent")).toBe(true);
+
+    await adapter.spawnSubagent(makeDescriptor({ name: "agent" }));
+    expect(adapter.fastActivationReports.has("agent")).toBe(false);
+  });
+});

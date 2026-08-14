@@ -6,21 +6,28 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dispatchAdapterCommand } from "@weaveio/weave-engine";
+import type { PiDelegationAuthorityReadiness } from "../capability-prober.js";
 import {
   accessModeForAdapterAction,
   createProductionPiAdapterCommandRegistry,
+  createProductionPorts,
+  evaluateProductionChildrenDeleteGate,
   openProductionPiAdapterCommandPorts,
   PI_ADAPTER_COMMAND_NAMES,
   PI_ADAPTER_NAME,
   resolveProductionAdapterCliRegistry,
 } from "../index.js";
+import { SESSION_MUTATION_REQUIRED_CAPABILITY } from "../required-capability-gate.js";
 import type { PiSessionManagerStatic } from "../native-session-host.js";
-import type { PiNativeSessionReadinessProbe } from "../native-session-readiness.js";
-import { createReadyPiNativeSessionReadinessProbe } from "../native-session-readiness.js";
 
-/** A probe that reports proved readiness, so only the gate wiring is tested. */
-function readyProbe(): PiNativeSessionReadinessProbe {
-  return createReadyPiNativeSessionReadinessProbe();
+/** A verdict that reports proved readiness, so only gate wiring is tested. */
+function readyAuthority(): PiDelegationAuthorityReadiness {
+  return { status: "ready" };
+}
+
+/** A host object that does not expose Pi's public create/open constructors. */
+function sessionManagerWithoutPublicApi(): PiSessionManagerStatic {
+  return {} as unknown as PiSessionManagerStatic;
 }
 
 function fakeSessionManager(): PiSessionManagerStatic {
@@ -148,6 +155,43 @@ describe("health-only CLI production dispatch — non-creating reads", () => {
     await Promise.all(dirs.splice(0).map((dir) => removeScratchFiles(dir)));
   });
 
+  it("gates children.delete before createProductionPorts when Pi has no session API", async () => {
+    const xdg = await tempXdg();
+    dirs.push(xdg);
+    const before = await listRelativePaths(xdg);
+    expect(before).toEqual([]);
+
+    const gated = evaluateProductionChildrenDeleteGate({
+      SessionManager: sessionManagerWithoutPublicApi(),
+    });
+    expect(gated.isErr()).toBe(true);
+    if (gated.isOk()) return;
+    expect(gated.error.code).toBe("RequiredCapabilityUnavailable");
+    expect(gated.error.correlation?.capabilityId).toBe(
+      SESSION_MUTATION_REQUIRED_CAPABILITY,
+    );
+    expect(gated.error.correlation?.reason).toBe("pi-session-api-unavailable");
+
+    const refused = await resolveProductionAdapterCliRegistry({
+      action: "children.delete",
+      workspaceKey: "/tmp/weave-workspace",
+      env: { XDG_DATA_HOME: xdg, HOME: xdg },
+      SessionManager: sessionManagerWithoutPublicApi(),
+    });
+    expect(refused.isErr()).toBe(true);
+    if (refused.isOk()) return;
+    expect(refused.error).toEqual({
+      type: "RequiredCapabilityUnavailable",
+      capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
+      reason: "pi-session-api-unavailable",
+    });
+
+    const after = await listRelativePaths(xdg);
+    expect(after).toEqual([]);
+    // createProductionPorts is the CLI factory name; delete must not reach it.
+    expect(typeof createProductionPorts).toBe("function");
+  });
+
   it("selects write access with a readiness-backed gate only for children.delete", async () => {
     const xdg = await tempXdg();
     dirs.push(xdg);
@@ -158,7 +202,7 @@ describe("health-only CLI production dispatch — non-creating reads", () => {
       workspaceKey: "/tmp/weave-workspace",
       env: { XDG_DATA_HOME: xdg, HOME: xdg },
       SessionManager: fakeSessionManager(),
-      readinessProbe: readyProbe(),
+      delegationAuthority: readyAuthority,
     });
     // Deleting a child tombstones a native session, so the mutating route
     // legitimately opens the writable cache the read routes must never create.
@@ -175,6 +219,14 @@ describe("health-only CLI production dispatch — non-creating reads", () => {
         accessModeForAdapterAction,
       ),
     ).toEqual(["read", "read", "read", "read"]);
+  });
+
+  it("permits children.delete once the real Pi session API is present", () => {
+    expect(
+      evaluateProductionChildrenDeleteGate({
+        SessionManager: fakeSessionManager(),
+      }).isOk(),
+    ).toBe(true);
   });
 
   it("list/show/doctor on a pristine root leave the root absent", async () => {

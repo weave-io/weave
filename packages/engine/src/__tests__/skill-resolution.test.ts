@@ -743,7 +743,6 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
       categories: {
         backend: {
           description: "Implements backend API changes",
-          patterns: ["src/api/**"],
         },
       },
     });
@@ -770,7 +769,6 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
       categories: {
         frontend: {
           description: "Implements frontend component changes",
-          patterns: ["src/components/**"],
         },
       },
     });
@@ -794,15 +792,12 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
       categories: {
         backend: {
           description: "Implements backend API changes",
-          patterns: ["src/api/**"],
         },
         frontend: {
           description: "Implements frontend component changes",
-          patterns: ["src/components/**"],
         },
         infra: {
           description: "Maintains infrastructure code",
-          patterns: ["infra/**"],
         },
       },
     });
@@ -844,7 +839,6 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
       categories: {
         backend: {
           description: "Implements backend API changes",
-          patterns: ["src/api/**"],
         },
       },
     });
@@ -941,7 +935,6 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
       categories: {
         backend: {
           description: "Implements backend API changes",
-          patterns: ["src/api/**"],
         },
       },
       disabled: { agents: ["shuttle-backend"], hooks: [], skills: [] },
@@ -968,7 +961,6 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
       categories: {
         backend: {
           description: "Implements backend API changes",
-          patterns: ["src/api/**"],
         },
       },
       disabled: { agents: ["shuttle"], hooks: [], skills: [] },
@@ -1029,7 +1021,6 @@ describe("resolveSkillsForConfig — accumulated missing-skill warnings", () => 
       categories: {
         backend: {
           description: "Implements backend API changes",
-          patterns: ["src/api/**"],
         },
       },
     });

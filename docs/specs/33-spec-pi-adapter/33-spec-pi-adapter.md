@@ -587,23 +587,32 @@ log file.
 
 - Host version floor stays `0.81.1`, with no maximum. The Pi-native live proof
   target is Pi `0.84.1`.
-- Required host probes remain persistent RPC session and restore, `appendEntry`,
+- Required probes: persistent RPC session and restore, `appendEntry`,
   `get_entries`/`get_tree`, and custom session directory support.
-- Pi-native readiness is not a capability descriptor and has no authority outside
-  the Pi adapter. Before generation activation, the adapter proves the real
-  `SessionManager.create` and `SessionManager.open` API, the fixed private root,
-  and the Pi process launch surface. The externally visible capability remains
-  `delegated-specialist-execution`.
-- A failed proof enters health-only mode before config materialization, persistent
-  session mutation, lease acquisition, or process spawn. It reports exactly one
-  path-free reason: `pi-session-api-unavailable`,
-  `pi-session-root-unavailable`, `pi-session-root-unsafe`, or
-  `pi-process-unavailable`. There is no `descriptor-relative-native-session-io`
-  capability, `path-only-session-api` reason, unsafe flag, environment override,
-  or config override.
+- Pi addresses native sessions by filesystem path. Containment is proven by the
+  adapter, not by the host: the adapter owns the session root, hands Pi the exact
+  child directory, and accepts only a canonical immediate child of it. There is
+  no descriptor-relative host capability.
+- Delegation readiness is `delegated-specialist-execution`. A required
+  host-surface gap reports exactly one closed, path-free reason:
+  `pi-session-api-unavailable`, `pi-session-root-unavailable`,
+  `pi-session-root-unsafe`, or `pi-process-unavailable`. Raw host messages,
+  causes, paths, and method names never reach a public surface, and no
+  environment variable or configuration setting raises readiness.
+- While that capability is unavailable for one of those reasons, every
+  persistent session mutation —
+  delegation, direct workflow dispatch, retry, continue, steering, follow-up,
+  cancellation, clear, recovery, and adapter CLI delete — fails with a typed
+  `RequiredCapabilityUnavailable` result before any controller, session service,
+  filesystem, cache, lease, or child process call. Read-only status, health,
+  history, inspection, doctor, list, and show routes stay available.
 - The same readiness proof gates production `children.delete` before writable
   diagnostics initialize. Read-only status, health, history, inspection, doctor,
   list, and show routes do not initialize writable state.
+- Probes must be side-effect free; probing must not create a session.
+- A missing required session capability puts the adapter in health-only mode with
+  a diagnostic naming the capability, host version, contract, probe result, mode,
+  and remediation.
 - An overlay-only capability gap does not force health-only mode; it routes to
   the existing custom-editor fallback (§7).
 

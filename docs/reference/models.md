@@ -18,12 +18,14 @@ agent loom {
 
 category frontend {
   description "Frontend components and interfaces"
-  patterns ["src/components/**", "**/*.tsx"]
+  triggers ["Use for UI, styling, and accessibility"]
   models ["gpt-5", "claude-sonnet-4-5"]
 }
 ```
 
 `models [...]` means: "these are the models this agent or category prefers, in order." It is not a scalar resolved model field, and it is not a command for core Weave to inspect harness state.
+
+Model intent is independent from provider acceleration intent. `fast true` never selects, adds, reorders, or filters a model, and a model name never implies `fast`. See [Fast intent](dsl.md#fast-intent).
 
 ---
 

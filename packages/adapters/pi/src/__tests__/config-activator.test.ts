@@ -48,6 +48,15 @@ agent loom {
 }
 `;
 
+const PROJECT_FAST_DSL = `
+agent loom {
+  prompt "You are Loom."
+  models ["claude-sonnet-4-5"]
+  mode primary
+  fast true
+}
+`;
+
 describe("createTrustWithheldFileReader", () => {
   it("blocks exists() for any path under the project's .weave directory", async () => {
     const inner = mockReader({ [PROJECT_CONFIG_PATH]: PROJECT_DSL });
@@ -156,9 +165,9 @@ describe("PiConfigActivator (unit, fake ports)", () => {
     expect(settings.status).toBe("invalid");
     if (settings.status === "invalid") {
       expect(settings.issues.length).toBe(2);
-      expect(settings.issues.some((issue) => issue.code === "unrecognized_keys")).toBe(
-        true,
-      );
+      expect(
+        settings.issues.some((issue) => issue.code === "unrecognized_keys"),
+      ).toBe(true);
     }
     expect(result._unsafeUnwrap().config).toBe(config);
   });
@@ -343,6 +352,26 @@ describe("PiConfigActivator (integration, real loadConfig + materializeAgents)",
     expect(activation.descriptors.byName.get("loom")?.composedPrompt).toContain(
       "You are Loom.",
     );
+    expect(activation.descriptors.byName.get("loom")?.fast).toBeUndefined();
+  });
+
+  it("trusted: carries declared fast true onto the materialized primary descriptor", async () => {
+    const reader = mockReader({ [PROJECT_CONFIG_PATH]: PROJECT_FAST_DSL });
+    const activator = new PiConfigActivator({
+      fileReader: reader,
+      configLoader: { load: (root, fr) => loadConfig(root, fr) },
+      materializer: { materialize: (config) => materializeAgents({ config }) },
+    });
+
+    const result = await activator.activate({
+      projectRoot: PROJECT_ROOT,
+      trust: "trusted",
+    });
+
+    expect(result.isOk()).toBe(true);
+    const loom = result._unsafeUnwrap().descriptors.byName.get("loom");
+    expect(loom?.fast).toBe(true);
+    expect(loom).not.toHaveProperty("fast", false);
   });
 
   it("withheld: never merges the real project config, even though it exists on disk", async () => {

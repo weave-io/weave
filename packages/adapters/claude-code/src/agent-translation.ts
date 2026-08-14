@@ -3,6 +3,10 @@
  *
  * Translates a Weave `AgentDescriptor` into Claude Code's markdown agent
  * format with YAML frontmatter, suitable for writing to `.claude/agents/<name>.md`.
+ *
+ * Frontmatter carries only officially documented subagent fields. Claude Code
+ * documents no acceleration field for subagent files, so neutral `fast true`
+ * intent, delegation triggers, and category metadata are never encoded here.
  */
 
 import type { AgentDescriptor } from "@weaveio/weave-engine";
@@ -69,10 +73,14 @@ export function translateAgentToMarkdown(input: AgentTranslationInput): string {
   frontmatterLines.push(`name: ${descriptor.name}`);
 
   if (descriptor.description) {
-    frontmatterLines.push(`description: ${escapeYamlScalar(descriptor.description)}`);
+    frontmatterLines.push(
+      `description: ${escapeYamlScalar(descriptor.description)}`,
+    );
   }
 
-  frontmatterLines.push(`model: ${toClaudeCodeModel(resolvedModel) ?? resolvedModel}`);
+  frontmatterLines.push(
+    `model: ${toClaudeCodeModel(resolvedModel) ?? resolvedModel}`,
+  );
 
   if (allowedTools.length > 0) {
     frontmatterLines.push("tools:");

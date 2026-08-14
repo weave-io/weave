@@ -11,6 +11,7 @@ import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import { encodeTransferChunks } from "../child-transfer.js";
 import type {
   CreateNativeChildSessionInput,
+  MintNativeSessionLaunchGrantInput,
   PiNativeSessionRecord,
   PiNativeResultAppendIdentity,
   PiNativeThreadMetadataInput,
@@ -43,6 +44,10 @@ import {
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
 import { FakeIdGenerator } from "./fakes/fake-pi-host.js";
+import {
+  mintTestOnlyLaunchGrant,
+  TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+} from "./fakes/test-only-session-storage-authority.js";
 
 /**
  * Regression coverage for the live exact-host direct-dispatch bootstrap
@@ -139,6 +144,9 @@ interface ParsedControlEnvelope {
     readonly correlationId?: string;
     readonly resolvedModel?: unknown;
     readonly thinkingLevel?: string;
+    readonly fast?: unknown;
+    readonly models?: unknown;
+    readonly delegationTargets?: unknown;
   };
 }
 
@@ -286,12 +294,152 @@ function baseInput(
 const AVAILABLE_MODELS = [{ provider: "anthropic", id: "claude-sonnet-5" }];
 
 describe("createDirectDispatchTransport (Pi adapter contract)", () => {
+  it("copies fast intent and ordered trigger arrays into the direct bootstrap without source aliasing", async () => {
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new FakeIdGenerator();
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator,
+        availableModels: AVAILABLE_MODELS,
+      },
+      "gen-1",
+    );
+    const models = ["anthropic/claude-sonnet-5#high"];
+    const triggers = ["implement", "test in order"];
+    const delegationTargets = [
+      {
+        name: "shuttle-mini",
+        description: "Bounded implementation",
+        triggers,
+        isCategory: true,
+      },
+    ];
+
+    const resultPromise = transport(
+      baseInput({ models, delegationTargets, fast: true }),
+    );
+    const spawned = await awaitSpawnedChild(processPort);
+    models[0] = "mutated/model";
+    triggers[0] = "mutated trigger";
+    const firstTarget = delegationTargets[0];
+    if (firstTarget === undefined)
+      throw new Error("test setup: missing target");
+    firstTarget.name = "mutated-target";
+    delegationTargets.push({
+      name: "late-target",
+      description: "Added after dispatch",
+      triggers: ["late trigger"],
+      isCategory: false,
+    });
+
+    const expectedChildId = "direct-wf-1-verify-generation-1";
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(
+      spawned,
+      expectedChildId,
+      "gen-1",
+    );
+    await responder.send("handshake", expectedChildId, {}, secretBytes);
+    const bootstrapEnvelope = await waitForBootstrapEnvelope(
+      spawned,
+      expectedChildId,
+    );
+    expect(bootstrapEnvelope.body.fast).toBe(true);
+    expect(bootstrapEnvelope.body.models).toEqual([
+      "anthropic/claude-sonnet-5#high",
+    ]);
+    // Target catalogs stay parent-authoritative: the bootstrap carries none,
+    // so no post-dispatch mutation of the source array can reach a child.
+    expect(bootstrapEnvelope.body.delegationTargets).toEqual([]);
+
+    await responder.send(
+      "bootstrap-ack",
+      expectedChildId,
+      { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
+      secretBytes,
+    );
+    await waitForTaskPrompt(spawned);
+    spawned.emitLine(terminalAssistantMessage());
+    await responder.send(
+      "settled",
+      expectedChildId,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
+      },
+      secretBytes,
+    );
+    expect((await resultPromise).isOk()).toBe(true);
+  });
+
+  it("preserves fast omission in the direct bootstrap", async () => {
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new FakeIdGenerator();
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator,
+        availableModels: AVAILABLE_MODELS,
+      },
+      "gen-1",
+    );
+
+    const resultPromise = transport(baseInput());
+    const spawned = await awaitSpawnedChild(processPort);
+    const expectedChildId = "direct-wf-1-verify-generation-1";
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(
+      spawned,
+      expectedChildId,
+      "gen-1",
+    );
+    await responder.send("handshake", expectedChildId, {}, secretBytes);
+    const bootstrapEnvelope = await waitForBootstrapEnvelope(
+      spawned,
+      expectedChildId,
+    );
+    expect(Object.hasOwn(bootstrapEnvelope.body, "fast")).toBe(false);
+
+    await responder.send(
+      "bootstrap-ack",
+      expectedChildId,
+      { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
+      secretBytes,
+    );
+    await waitForTaskPrompt(spawned);
+    spawned.emitLine(terminalAssistantMessage());
+    await responder.send(
+      "settled",
+      expectedChildId,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
+      },
+      secretBytes,
+    );
+    expect((await resultPromise).isOk()).toBe(true);
+  });
+
   it("bootstraps the direct-step child using its own generated childId as the control-envelope correlationId, never the caller's unrelated engine-level correlationId", async () => {
     const processPort = new FakeChildProcessPort();
     const idGenerator = new FakeIdGenerator();
     const transport = createDirectDispatchTransport(
       {
         processPort,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -394,6 +542,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -460,6 +609,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -582,6 +732,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -655,6 +806,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -709,6 +861,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const failingTransport = createDirectDispatchTransport(
       {
         processPort: failingProcess,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -761,6 +914,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const transport = createDirectDispatchTransport(
       {
         processPort,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
         randomPort,
         hmacPort,
         logger: noopLogger(),
@@ -827,8 +981,8 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
  * failure.
  */
 
-const LIFECYCLE_SESSION_PATH =
-  "/data/weave/adapters/pi/sessions/child/session.jsonl";
+const LIFECYCLE_SESSION_DIR = "/data/weave/adapters/pi/sessions/child";
+const LIFECYCLE_SESSION_PATH = `${LIFECYCLE_SESSION_DIR}/session.jsonl`;
 
 /** A ref port that records every lifecycle append it is asked to perform. */
 class LifecycleRefPort implements PiThreadRefPort {
@@ -899,6 +1053,19 @@ class LifecycleSessionPort implements PiThreadSessionPort {
       parentSession: input.parentSession,
       cwd: input.cwd,
     } as never);
+  }
+
+  mintLaunchGrant(input: MintNativeSessionLaunchGrantInput) {
+    return okAsync(
+      mintTestOnlyLaunchGrant(TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY, {
+        childId: input.childId,
+        sessionId: "native-lifecycle-1",
+        ref: "child/session.jsonl",
+        sessionDir: LIFECYCLE_SESSION_DIR,
+        sessionPath: LIFECYCLE_SESSION_PATH,
+        activeLeafId: input.activeLeafId,
+      }),
+    ) as never;
   }
 
   appendResultOutput(
@@ -977,6 +1144,7 @@ function lifecycleTransport(options: {
       logger: noopLogger(),
       idGenerator: new FakeIdGenerator(),
       availableModels: AVAILABLE_MODELS,
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       threadSessions: () => options.sessions ?? new LifecycleSessionPort(),
       threadRefs: () => options.refs,
       requireNativeSession: () => true,
@@ -1257,6 +1425,7 @@ describe("direct workflow steps persist complete private output", () => {
         logger: noopLogger(),
         idGenerator: new FakeIdGenerator(),
         availableModels: AVAILABLE_MODELS,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
         threadSessions: () => sessions,
         threadRefs: () => refs,
         requireNativeSession: () => true,
@@ -1347,6 +1516,7 @@ describe("direct workflow steps persist complete private output", () => {
         logger: noopLogger(),
         idGenerator: new FakeIdGenerator(),
         availableModels: AVAILABLE_MODELS,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
         threadSessions: () => sessions,
         threadRefs: () => refs,
         requireNativeSession: () => true,

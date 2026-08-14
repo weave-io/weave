@@ -20,5 +20,15 @@ export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       notes:
         "Missing behaviors: no persisted goal state, no enforced continuation budget, no pause/resume, and no status surface.",
     },
+    {
+      id: "provider-fast-activation",
+      description: "Request provider acceleration and report bounded evidence",
+      readiness: "unsupported",
+      runtimeStatus: "unsupported",
+      notes:
+        "OpenCode's plugin surface can mutate a provider request but exposes no correlated official response-body proof, so the adapter sends no acceleration control and cannot claim applied or native. Materialized agent config alone is not evidence of acceleration; declared intent is reported as unsupported and agents still materialize.",
+      remediationHint:
+        "Keep reporting unsupported until the plugin contract exposes correlated official response-body evidence for the same attempt; only then implement the allowlisted request mutation.",
+    },
   ],
 };

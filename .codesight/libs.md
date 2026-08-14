@@ -3,7 +3,12 @@
 - `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
 - `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
 - `packages/adapters/claude-code/src/bootstrap.ts` — function getBootstrapDir: () => string, const BOOTSTRAP_FILES
-- `packages/adapters/claude-code/src/model-resolution.ts` — function buildClaudeCodeModelInput: (descriptor) => ModelResolutionInput, const CLAUDE_CODE_AVAILABLE_MODELS: Set<string>
+- `packages/adapters/claude-code/src/model-resolution.ts`
+  - function buildClaudeCodeModelInput: (descriptor) => ModelResolutionInput
+  - function describeClaudeCodeFastActivation: (descriptor) => ClaudeCodeFastActivationDiagnostic | undefined
+  - interface ClaudeCodeFastActivationDiagnostic
+  - const CLAUDE_CODE_AVAILABLE_MODELS: Set<string>
+  - const CLAUDE_CODE_FAST_UNSUPPORTED_REASON
 - `packages/adapters/claude-code/src/skill-discovery.ts` — function discoverClaudeCodeSkills: (projectRoot, homeDir, readDir) => void
 - `packages/adapters/claude-code/src/tool-classification.ts`
   - function getClaudeCodeToolClassifications: () => readonly ConcreteToolClassification[]
@@ -66,7 +71,11 @@
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
-- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/opencode/src/translate-agent.ts`
+  - function describeFastActivation: (descriptor) => OpenCodeFastActivationReport | undefined
+  - function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>
+  - type TranslateAgentError
+  - type OpenCodeFastActivationReport
 - `packages/adapters/pi/src/active-plan-ui-state.ts`
   - function isTerminalWorkflowStatus: (status) => boolean
   - function resolveActivePlanIdentity: (port) => ResultAsync<ActivePlanIdentity | ActivePlanEmptyReason, ActivePlanUiError>
@@ -81,16 +90,17 @@
   - function toResultWirePage: (childId, page) => PiChildrenResultResult
   - function createPlaceholderDoctorPort: () => PiAdapterDoctorPort
   - function looksLikeFilesystemPath: (value) => boolean
-  - function stripPathsUnlessDiagnostic: (value, diagnostic) => T
-  - _...28 more_
+  - function safeDiagnosticSessionRef: (candidate) => string | undefined
+  - _...29 more_
 - `packages/adapters/pi/src/adapter-cli-production.ts`
+  - function evaluateProductionChildrenDeleteGate: (options, "SessionManager"
+  >) => Result<void, PiAdapterFailure>
   - function openProductionPiAdapterCommandPorts: (options) => ResultAsync<
   - function createProductionPorts: (options) => ResultAsync<
   - function createProductionPiAdapterCommandRegistry: (options) => ResultAsync<AdapterCommandRegistry, PiProductionAdapterCommandError>
   - function accessModeForAdapterAction: (action) => PiProductionAdapterAccessMode
   - function resolveProductionAdapterCliRegistry: (input) => ResultAsync<AdapterCommandRegistry, PiProductionAdapterCliOpenError>
-  - interface PiProductionAdapterCommandPorts
-  - _...5 more_
+  - _...6 more_
 - `packages/adapters/pi/src/agent-cycle.ts`
   - function normalizeAgentBadgeKey: (agentName) => string
   - function selectAgentBadgeBg: (agentName) => PiUiThemeBgColor
@@ -108,7 +118,7 @@
   - interface PiArtifactDigest
   - _...9 more_
 - `packages/adapters/pi/src/capability-prober.ts`
-  - function mapRequiredGapsToDelegationReadinessReason: (gaps) => PiDelegationReadinessUnavailableReason
+  - function describeDelegationReadinessGap: (requiredGaps) => PiDelegationReadinessReason
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
   - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
   - class DefaultPiCapabilityProber
@@ -130,7 +140,7 @@
   - function parseControlBody: (kind, body) => void
   - interface HostModelIdentity
   - type PiBootstrapBody
-  - _...21 more_
+  - _...22 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -254,13 +264,13 @@
   - function scanResultGroup: (source, expected, plan) => ResultAsync<PiNativeResultGroupRead, PiNativeSessionError>
   - _...31 more_
 - `packages/adapters/pi/src/child-native-session-contracts.ts`
-  - function describePiNativeSessionStorageUnavailable: (_reason) => string
+  - function describePiNativeSessionStorageUnavailable: (reason) => string
   - function setPiNativeSessionMaxRangeLengthForTests: (length) => void
   - function effectivePiNativeSessionMaxRangeLength: () => number
   - function fromFsError: (error, ref) => PiNativeSessionError
   - function encodeNativeSessionBase64Url: (bytes) => string
   - function decodeNativeSessionBase64Url: (value) => Result<Uint8Array, undefined>
-  - _...20 more_
+  - _...21 more_
 - `packages/adapters/pi/src/child-native-sessions.ts`
   - function resolvePiNativeSessionRoot: (input) => ResultAsync<string, PiNativeSessionError>
   - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
@@ -268,7 +278,7 @@
   - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
   - function nativeSessionDeletionToken: (ref) => string
   - function readNativeThreadMetadata: (entries) => PiNativeThreadMetadata | undefined
-  - _...24 more_
+  - _...26 more_
 - `packages/adapters/pi/src/child-overlay-component.ts`
   - function formatChildOverlayTelemetryLine: (telemetry) => string
   - function compactChildOverlayEntryLine: (entry, width) => string
@@ -405,6 +415,14 @@
   - interface PiChildUsageReport
   - interface PiAssistantUsageFacts
   - _...11 more_
+- `packages/adapters/pi/src/child-session-launch.ts`
+  - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
+  - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority
+  - function mintPiChildSessionLaunchGrant: (authority, details) => Result<PiChildSessionLaunchGrant, PiChildSessionLaunchRejection>
+  - function redeemPiChildSessionLaunchGrant: (grant, expected) => Result<PiChildSessionLaunchDetails, PiChildSessionLaunchRejection>
+  - function describePiChildSessionLaunchRejection: (rejection) => string
+  - interface PiChildSessionLaunchGrant
+  - _...3 more_
 - `packages/adapters/pi/src/child-session-reconstruction.ts`
   - function describeChildReconstructionError: (error) => string
   - function reconstructParentLocalChildren: (input) => ResultAsync<PiChildReconstructionSummary, PiChildReconstructionError>
@@ -421,6 +439,18 @@
   - function serializeChildRefEnvelope: (envelope) => string
   - function hasNoTranscriptFields: (serialized) => boolean
   - _...31 more_
+- `packages/adapters/pi/src/child-session-storage-authority.ts`
+  - function createPiChildSessionStorageAuthority: (input) => PiChildSessionStorageAuthority
+  - function describeChildSessionStorageUnavailable: (failure) => string
+  - function provePiChildSessionRoot: (input, so no caller can assert that a root
+     * is usable. Production never passes it; unit embeddings that model a
+     * synthetic tree do.
+     */
+    readonly root?) => ResultAsync<PiChildSessionRootProof, never>
+  - interface PiChildSessionStorageAuthority
+  - interface PiChildSessionRootProof
+  - interface PiChildSessionStorageAuthorityInput
+  - _...2 more_
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
   - interface TimerHandle
@@ -516,12 +546,12 @@
   - interface PiDelegationToolDeps
   - _...4 more_
 - `packages/adapters/pi/src/direct-dispatch-transport.ts`
-  - function validateDirectRestoreSession: (childId, session) => Result<PiDirectRestoreSession, PiAdapterFailure>
+  - function validateDirectNativeSession: (childId, session) => Result<PiDirectNativeSession, PiAdapterFailure>
   - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
   - class PiDirectStepChildRegistry
   - interface PiDirectDispatchTransportDeps
   - interface PiDirectStepBootstrap
-  - type PiDirectRestoreSession
+  - type PiDirectNativeSession
 - `packages/adapters/pi/src/direct-dispatch.ts`
   - class TransportDirectDispatchPort
   - class FakeDirectDispatchPort
@@ -545,7 +575,7 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
-  - _...10 more_
+  - _...11 more_
 - `packages/adapters/pi/src/generation-resources.ts`
   - function createGenerationSessionCtxCell: () => PiGenerationSessionCtxCell
   - function readSessionManagerEntries: (ctx, report) => void
@@ -588,20 +618,20 @@
   - function setForcedPreadByteLimitForTests: (limit) => void
   - function createBunPiNativeSessionFs: () => PiNativeSessionFsPort
   - class MemoryPiNativeSessionFs
+- `packages/adapters/pi/src/native-session-header.ts`
+  - function isHostIsoTimestamp: (value) => boolean
+  - function validatePiNativeSessionHeader: (candidate) => Result<PiValidatedSessionHeader, PiNativeSessionHeaderViolation>
+  - function validatedHeadersMatch: (left, right) => boolean
+  - interface PiValidatedSessionHeader
+  - type PiNativeSessionHeaderViolation
+  - const PI_SESSION_HEADER_REQUIRED_FIELDS
+  - _...2 more_
 - `packages/adapters/pi/src/native-session-host.ts`
   - function isPiSessionManagerStatic: (value) => value is PiSessionManagerStatic
   - function adaptPiSessionManagerHandle: (manager) => PiNativeSessionHandle
   - function createPiNativeSessionHost: (SessionManager) => PiNativeSessionHostPort
   - interface PiSessionManagerStatic
   - interface PiSessionManagerInstance
-- `packages/adapters/pi/src/native-session-readiness.ts`
-  - function mapSessionRootErrorToReadinessReason: (error) => PiDelegationReadinessUnavailableReason
-  - function mapRootOpenFailureToReadinessReason: (type) => PiDelegationReadinessUnavailableReason
-  - function isProcessLaunchSurfaceUsable: (processPort, command) => boolean
-  - function createBunPiExecutableResolver: (env?, string | undefined>>) => PiExecutableResolverPort
-  - function createPiNativeSessionReadinessProbe: (options) => PiNativeSessionReadinessProbe
-  - function createBlockedPiNativeSessionReadinessProbe: (reason) => PiNativeSessionReadinessProbe
-  - _...5 more_
 - `packages/adapters/pi/src/path-containment.ts`
   - function isLexicallyContained: (relativePath) => boolean
   - function inspectNoFollowDirectory: (path, mode) => ResultAsync<NoFollowEntryIdentity, NoFollowInspectionError>
@@ -635,7 +665,7 @@
   - function probeParentSession: (probe) => PiParentSessionState
   - function requirePersistentParentSession: (state, operation) => Result<PiParentSessionState, PiAdapterFailure>
   - function isReadOnlyChildAccessAllowed: (_state) => boolean
-  - _...12 more_
+  - _...15 more_
 - `packages/adapters/pi/src/prompt-chunking.ts`
   - function promptTransferNackReason: (error) => PromptTransferNackReason
   - function encodePromptChunksBounded: (task, transferId) => Result<readonly PromptChunk[], PromptChunkError>
@@ -644,6 +674,14 @@
   - class PromptChunkAssembler
   - interface PromptChunk
   - _...4 more_
+- `packages/adapters/pi/src/provider-fast-activation.ts`
+  - function classifyProviderFastIntent: (intent) => ProviderFastClassification
+  - type ProviderFastUnsupportedReason
+  - type ProviderFastState
+  - type ProviderFastEvidenceKind
+  - type ProviderFastEvidenceOutcome
+  - type ProviderFastPublicSnapshot
+  - _...8 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -717,13 +755,13 @@
   - function buildWeaveCompleteStepToolRegistration: (deps) => void
   - _...4 more_
 - `packages/adapters/pi/src/telemetry.ts`
+  - function projectProviderFastJournalData: (snapshot) => Result<PiProviderFastJournalData, PiAdapterFailure>
+  - function renderProviderFastStatusLine: (snapshot) => Result<string | undefined, PiAdapterFailure>
   - function sanitizeDiagnosticValue: (value) => unknown
   - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
   - function createPiTelemetryLogger: (options) => ResultAsync<
   - function createPiTelemetry: (options) => ResultAsync<
-  - class PiTelemetry
-  - interface PiJournalEventInput
-  - _...12 more_
+  - _...21 more_
 - `packages/adapters/pi/src/thread-sources.ts`
   - function openPiThreadSources: (input) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>
   - function createProductionPiThreadSourceFactory: (options) => PiThreadSourceFactory
@@ -738,6 +776,14 @@
   - class FakePiTrustedDataRootPort
   - interface PiTrustedDataRootPort
   - type PiTrustedDataRootViolation
+- `packages/adapters/pi/src/types.ts`
+  - function projectPiProviderEvent: (event) => Result<PiProviderEventProjection, PiProviderEventProjectionError>
+  - interface PiSourceInfo
+  - interface PiCommandInfo
+  - interface PiModelInfo
+  - interface PiModelRegistry
+  - interface PiSkillInfo
+  - _...37 more_
 - `packages/adapters/pi/src/workflow-commands.ts`
   - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
   - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>
@@ -1059,7 +1105,32 @@
   - class BufferTerminal
   - interface TerminalIO
 - `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
-- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/legacy-conversion-diagnostics.ts`
+  - function primitiveCategory: (value) => PrimitiveTypeCategory
+  - function reasonWithType: (reason, value) => string
+  - function joinPath: (parts) => string
+  - function boundWarning: (warning) => ConversionWarning
+  - function pushWarning: (warnings, field, reason) => void
+  - function absorbWarnings: (warnings, extra) => void
+  - _...12 more_
+- `packages/cli/src/migration/legacy-dsl-identifiers.ts`
+  - function isDangerousDslName: (name) => boolean
+  - function isDslIdentifierShape: (name) => boolean
+  - function classifyDslName: (name) => DslNameClassification
+  - function isEmittableDslName: (name) => boolean
+  - type DslNameClassification
+  - const DANGEROUS_DSL_NAMES
+  - _...1 more_
+- `packages/cli/src/migration/legacy-graph-copy.ts`
+  - function copyLegacyGraph: (value) => Result<unknown, LegacyGraphCopyError>
+  - type LegacyGraphCopyError
+  - const UNSAFE_LEGACY_GRAPH_MESSAGE
+  - const LEGACY_GRAPH_TOO_LARGE_MESSAGE
+  - const MAX_LEGACY_GRAPH_NODES
+  - const MAX_LEGACY_GRAPH_DEPTH
+  - _...4 more_
+- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function convertLegacyValue: (value) => ConversionResult, function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/legacy-jsonc-inspect.ts` — function inspectLegacyJsonc: (source) => Result<void, LegacyJsoncInspectError>, type LegacyJsoncInspectError
 - `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
@@ -1113,6 +1184,14 @@
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
 - `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
+- `packages/core/src/config-error-policy.ts`
+  - function boundConfigErrors: (errors, truncationMarker) => void
+  - const MAX_CONFIG_ERROR_ISSUES
+  - const MAX_CONFIG_ERROR_PATH_LENGTH
+  - const MAX_CONFIG_ERROR_FIELD_LENGTH
+  - const MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE
+  - const CONFIG_ERRORS_TRUNCATED
+  - _...1 more_
 - `packages/core/src/errors.ts`
   - function formatError: (error) => string
   - type LexError
@@ -1132,7 +1211,18 @@
   - function refinePromptAppendExclusive: () => [
   - function refinePromptExclusive: () => [
   - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
-- `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
+- `packages/core/src/safe-graph-copy.ts`
+  - function copySafeGraph: (value) => Result<unknown, SafeGraphCopyError>
+  - type SafeGraphCopyError
+  - const UNSAFE_GRAPH_MESSAGE
+- `packages/core/src/safe-schema-input.ts` — function safeSchemaInput: (schema) => z.ZodType<z.output<T>, z.input<T>>
+- `packages/core/src/validate.ts`
+  - function validate: (ast) => Result<WeaveConfig, ValidationError[]>
+  - const MAX_VALIDATION_ISSUES
+  - const MAX_VALIDATION_PATH_LENGTH
+  - const MAX_VALIDATION_MESSAGE_LENGTH
+  - const MAX_VALIDATION_DIAGNOSTIC_SIZE
+  - const VALIDATION_DIAGNOSTICS_TRUNCATED
 - `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
 - `packages/engine/src/adapter-command.ts`
   - function createAdapterCommandRegistry: (adapters, Readonly<Record<string, AdapterCommandHandler>>>
@@ -1144,13 +1234,13 @@
   - type AdapterCommandError
   - _...4 more_
 - `packages/engine/src/capability-contract.ts`
+  - function readinessForProviderFastStatus: (status) => CapabilityReadiness
+  - function providerFastActivationState: (input) => ProviderFastActivationStatus | undefined
+  - function effectiveProviderFastReadiness: (declared, status) => CapabilityReadiness
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
   - function lowerReadinessByProbe: (declared, resolution) => CapabilityReadiness
   - function evaluateEffectiveCapabilities: (contract, probeResults) => EffectiveCapabilityEvaluation
-  - function buildAdapterHealthReport: (input) => AdapterHealthReport
-  - function buildHumanRows: (report) => HumanReadinessRow[]
-  - function buildToonRows: (report) => ToonReadinessRow[]
-  - _...23 more_
+  - _...30 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>

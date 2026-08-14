@@ -87,15 +87,13 @@ const ALLOWED_MUSTACHE_PLACEHOLDERS = [
   "{{/delegation.targets}}",
   "{{#triggers}}",
   "{{/triggers}}",
-  "{{trigger}}",
-  "{{routing_hint}}",
+  "{{.}}",
   "{{#isCategory}}",
   "{{/isCategory}}",
   "{{#agent.skills}}",
   "{{/agent.skills}}",
   "{{name}}",
   "{{description}}",
-  "{{domains}}",
   // Review routing placeholders
   "{{#reviewRouting}}",
   "{{/reviewRouting}}",
@@ -264,6 +262,19 @@ describe("builtin prompt files", () => {
       // {{#delegation.targets}} loop rather than an embedded Mermaid diagram
       expect(content).toContain("{{#delegation.targets}}");
       expect(content).toContain("{{/delegation.targets}}");
+    });
+
+    it("renders exact trigger strings and makes no file-pattern or domain-routing claim", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
+      expect(content).toContain("{{#triggers}}");
+      expect(content).toContain("{{.}}");
+      expect(content).toContain("{{/triggers}}");
+      expect(content).not.toContain("{{routing_hint}}");
+      expect(content).not.toContain("{{trigger}}");
+      expect(content).not.toContain("{{domains}}");
+      expect(content).not.toMatch(/file[- ]pattern/i);
+      expect(content).not.toMatch(/domain-routing/i);
+      expect(content).toContain("category's description or listed triggers");
     });
   });
 

@@ -27,7 +27,7 @@ import {
   type PiNativeSessionFsPort,
   type PiNativeSessionHostPort,
   PiNativeSessionStore,
-  resolvePiNativeSessionRoot,
+  type PiNativeSessionStoreLaunchMode,
 } from "./child-native-sessions.js";
 import {
   createNativeChildRefSourceAuthority,
@@ -35,6 +35,7 @@ import {
   type PiChildRefEntryReadPort,
   PiChildSessionRefStore,
 } from "./child-session-refs.js";
+import type { PiChildSessionStorageAuthority } from "./child-session-storage-authority.js";
 import type {
   PiThreadCachePort,
   PiThreadRefPort,
@@ -101,9 +102,16 @@ export interface PiThreadSourceFactoryInput {
   /** Override the Pi static constructors (production default: public root). */
   readonly SessionManager?: PiSessionManagerStatic;
   /**
+   * The generation's one native-session authority (Spec 33 §5.6). Mandatory:
+   * sources may never build a second authority from an asserted root, because
+   * that is exactly how readiness and launch used to disagree. The store,
+   * the ref store, and every launch consume this same object.
+   */
+  readonly storageAuthority: PiChildSessionStorageAuthority;
+  /**
    * When `true`, open the metadata cache with the non-creating read-only
-   * path. Health-only startup must set this so a pristine data root never
-   * gains directories, DB, WAL, or SHM from source construction.
+   * path. Health-only / path-only startup must set this so a pristine data
+   * root never gains directories, DB, WAL, or SHM from source construction.
    */
   readonly readOnly?: boolean;
 }
@@ -116,6 +124,13 @@ const NOOP_CACHE: PiThreadCachePort = {
   upsertRef: () => ok(undefined),
 };
 
+/**
+ * The session root these sources open over.
+ *
+ * Production takes the root the generation's authority already *proved* by
+ * opening it no-follow, so sources can never be built over a root readiness
+ * never checked. Unit embeddings may name a synthetic root explicitly.
+ */
 function resolveSessionRoot(
   input: PiThreadSourceFactoryInput,
 ): ResultAsync<string, PiThreadSourceFactoryError> {
@@ -128,18 +143,14 @@ function resolveSessionRoot(
     }
     return okAsync(input.sessionRoot);
   }
-  // Production path: the configured XDG base is canonicalized (a user-owned
-  // symlinked base is fine) before the adapter-owned segments are appended.
-  return resolvePiNativeSessionRoot({
-    env: input.env,
-    homeDir: input.homeDir,
-    ...(input.trustedRoot === undefined
-      ? {}
-      : { trustedRoot: input.trustedRoot }),
-  }).mapErr((error) => ({
-    type: "SessionRootUnavailable" as const,
-    reason: error.type === "SessionRootViolation" ? error.reason : error.type,
-  }));
+  return input.storageAuthority.requireSessionRoot().match(
+    (root) => okAsync<string, PiThreadSourceFactoryError>(root),
+    (failure) =>
+      errAsync<string, PiThreadSourceFactoryError>({
+        type: "SessionRootUnavailable" as const,
+        reason: failure.reason,
+      }),
+  );
 }
 
 function resolveHost(
@@ -207,10 +218,23 @@ function openWithSessionRoot(
   host: PiNativeSessionHostPort,
 ): ResultAsync<PiThreadSources, PiThreadSourceFactoryError> {
   const now = input.now;
+  // One authority governs this generation's storage *and* its launches.
+  const storageAuthority = input.storageAuthority;
+  // The store mints launch grants only when that same authority already
+  // proved a root and a launch surface. Without it the store can still read
+  // and write sessions, but no child can be launched from them.
+  const launch = storageAuthority.requireLaunchAuthority().match(
+    (authority): PiNativeSessionStoreLaunchMode => ({
+      mode: "authorized",
+      authority,
+    }),
+    (): PiNativeSessionStoreLaunchMode => ({ mode: "read-only" }),
+  );
   const sessions = new PiNativeSessionStore({
     root,
     fs: input.fs ?? createBunPiNativeSessionFs(),
     host,
+    launch,
     ...(now === undefined ? {} : { now: () => new Date(now()) }),
   });
   const authority = createNativeChildRefSourceAuthority(sessions);
@@ -219,6 +243,7 @@ function openWithSessionRoot(
     append: input.append,
     read: input.read,
     authority,
+    storage: storageAuthority,
     ...(now === undefined ? {} : { now }),
   });
 

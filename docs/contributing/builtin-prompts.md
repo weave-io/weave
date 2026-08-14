@@ -89,10 +89,12 @@ Use Mustache context rather than copying a target table into the prompt:
 {{#delegation.targets}}
 - **{{name}}** — {{description}}
 {{#triggers}}
-  - {{routing_hint}}
+  - {{.}}
 {{/triggers}}
 {{/delegation.targets}}
 ```
+
+`triggers` is an ordered list of plain strings, so render each entry with `{{.}}`. There is no `domain`, `trigger`, or `routing_hint` field, and categories carry no file patterns.
 
 The engine renders only eligible targets after filtering disabled agents, modes, budgets, and caller identity. A primary prompt that references any real `delegation.*` path suppresses automatic fallback placement.
 

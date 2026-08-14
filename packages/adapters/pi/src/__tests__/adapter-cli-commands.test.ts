@@ -433,6 +433,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     directory.close();
     return new PiNativeSessionStore({
       root: ROOT,
+      launch: { mode: "read-only" },
       fs: fs as unknown as PiNativeSessionFsPort,
       host: {
         create(): PiNativeSessionHandle {
@@ -460,6 +461,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
     )._unsafeUnwrap();
     directory.close();
     return new PiNativeSessionStore({
+      launch: { mode: "read-only" },
       root: ROOT,
       fs: fs as unknown as PiNativeSessionFsPort,
       host: {
@@ -819,6 +821,7 @@ describe("createPiChildrenCommandPort children.show paging", () => {
       options,
     });
     return new PiNativeSessionStore({
+      launch: { mode: "read-only" },
       root: ROOT,
       fs: fs as unknown as PiNativeSessionFsPort,
       host: {

@@ -1,6 +1,6 @@
 {
   "id": "tcr-02-multiple-files",
-  "description": "Route this task to the correct category shuttle. The user wants to refactor the client navigation: three files need changes — `src/4.Presentation/DST.Client/Components/NavBar.tsx`, `src/4.Presentation/DST.Client/Pages/Dashboard.tsx`, and `src/4.Presentation/DST.Client/Hooks/useNav.ts`. The active Weave config declares `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }`. All three files fall within the category pattern. Which shuttle agent should handle this work, and why?",
+  "description": "Route this task to the correct category shuttle. The user wants to refactor the client navigation: three files need changes — `src/4.Presentation/DST.Client/Components/NavBar.tsx`, `src/4.Presentation/DST.Client/Pages/Dashboard.tsx`, and `src/4.Presentation/DST.Client/Hooks/useNav.ts`. The active Weave config declares `category client-frontend { description \"DST client web UI: React components, pages, and hooks\" triggers [\"Use for DST client web UI work\"] }`. All three files are DST client web UI work. Which shuttle agent should handle this work, and why?",
   "suite": "tapestry-category-routing",
   "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "loom"],
   "allowed_models": [

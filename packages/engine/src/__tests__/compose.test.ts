@@ -683,7 +683,6 @@ describe("composeAgentDescriptor", () => {
         {
           name: "frontend",
           description: "Frontend UI, styling, accessibility",
-          patterns: ["src/components/**", "**/*.tsx"],
           isCategory: true,
         },
       );
@@ -691,7 +690,6 @@ describe("composeAgentDescriptor", () => {
       expect(descriptor.category).toEqual({
         name: "frontend",
         description: "Frontend UI, styling, accessibility",
-        patterns: ["src/components/**", "**/*.tsx"],
       });
     });
 
@@ -727,7 +725,6 @@ describe("composeAgentDescriptor", () => {
         {
           name: "frontend",
           description: "Frontend UI",
-          patterns: ["src/components/**"],
           isCategory: true,
         },
       );
@@ -1027,14 +1024,14 @@ describe("composeAgentDescriptor", () => {
             network deny
           }
           triggers [
-            { domain "Implementation" trigger "Build feature" }
+            "Build feature"
           ]
         }
         agent helper {
           description "Implementation helper"
           prompt "Help."
           triggers [
-            { domain "Code" trigger "Small implementation" }
+            "Small implementation"
           ]
         }
       `);
@@ -1074,9 +1071,76 @@ describe("composeAgentDescriptor", () => {
         {
           name: "helper",
           description: "Implementation helper",
-          triggers: [{ domain: "Code", trigger: "Small implementation" }],
+          triggers: ["Small implementation"],
           isCategory: false,
         },
+      ]);
+      expect(descriptor.fast).toBeUndefined();
+      expect("patterns" in (descriptor.category ?? {})).toBe(false);
+      expect(
+        descriptor.delegationTargets.every((target) =>
+          target.triggers.every((trigger) => typeof trigger === "string"),
+        ),
+      ).toBe(true);
+    });
+
+    it("Ordinary_agent_fast_true_is_copied_as_neutral_intent", async () => {
+      const config = cfg(`
+        agent helper {
+          prompt "Help."
+          fast true
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "helper",
+        config.agents.helper,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.fast).toBe(true);
+      expect("service_tier" in descriptor).toBe(false);
+      expect("speed" in descriptor).toBe(false);
+    });
+
+    it("Delegation_targets_copy_string_triggers_in_declared_order", async () => {
+      const config = cfg(`
+        agent router {
+          prompt "Route."
+          tool_policy { delegate allow }
+        }
+        agent helper {
+          description "Implementation helper"
+          prompt "Help."
+          triggers ["review code", "fix tests", "audit APIs"]
+        }
+      `);
+      const source = config.agents.helper?.triggers;
+      expect(source).toEqual(["review code", "fix tests", "audit APIs"]);
+
+      const descriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+
+      const helper = descriptor.delegationTargets.find(
+        (target) => target.name === "helper",
+      );
+      expect(helper?.triggers).toEqual([
+        "review code",
+        "fix tests",
+        "audit APIs",
+      ]);
+      expect(helper?.triggers).not.toBe(source);
+
+      source?.push("mutated");
+      expect(helper?.triggers).toEqual([
+        "review code",
+        "fix tests",
+        "audit APIs",
       ]);
     });
 
@@ -1140,7 +1204,6 @@ describe("composeAgentDescriptor", () => {
         }
         category frontend {
           description "Frontend UI"
-          patterns ["src/components/**", "src/pages/**/*.tsx"]
           models ["model-frontend"]
         }
       `);
@@ -1161,8 +1224,7 @@ describe("composeAgentDescriptor", () => {
         allAgents,
         {
           name: "frontend",
-          description: config.categories.frontend?.description,
-          patterns: config.categories.frontend?.patterns,
+          description: config.categories.frontend?.description ?? "Frontend UI",
           isCategory: true,
         },
       );
@@ -1171,7 +1233,6 @@ describe("composeAgentDescriptor", () => {
       expect(descriptor.category).toEqual({
         name: "frontend",
         description: "Frontend UI",
-        patterns: ["src/components/**", "src/pages/**/*.tsx"],
       });
     });
 

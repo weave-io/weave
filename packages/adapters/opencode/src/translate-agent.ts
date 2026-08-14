@@ -10,8 +10,11 @@
  * directly from `@opencode-ai/sdk`.
  */
 
-import type { AgentDescriptor } from "@weaveio/weave-engine";
-import { err, ok, type Result } from "neverthrow";
+import {
+  type AgentDescriptor,
+  providerFastActivationState,
+} from "@weaveio/weave-engine";
+import { ok, type Result } from "neverthrow";
 
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
 import { mapToolPolicy } from "./tool-policy-mapping.js";
@@ -33,6 +36,66 @@ export type TranslateAgentError = {
 };
 
 // ---------------------------------------------------------------------------
+// Provider acceleration (`fast true`) intent
+// ---------------------------------------------------------------------------
+
+/**
+ * Bounded, sanitized report for the optional `provider-fast-activation`
+ * capability in the OpenCode adapter.
+ *
+ * The report carries only neutral enum tokens. It never carries provider
+ * names, model text, payload fragments, headers, or credentials.
+ */
+export type OpenCodeFastActivationReport = {
+  readonly capability: "provider-fast-activation";
+  /** Neutral acceleration state. OpenCode can only reach `unsupported`. */
+  readonly state: "unsupported";
+  /** Fixed reason code from the acceleration contract's bounded list. */
+  readonly reason: "response-proof-unavailable";
+  /** No official response-evidence field is readable through this harness. */
+  readonly evidenceKind: "none";
+  /** The evidence the provider contract requires cannot be reached. */
+  readonly evidenceOutcome: "inaccessible";
+};
+
+const FAST_ACTIVATION_UNSUPPORTED: OpenCodeFastActivationReport = Object.freeze(
+  {
+    capability: "provider-fast-activation",
+    state: "unsupported",
+    reason: "response-proof-unavailable",
+    evidenceKind: "none",
+    evidenceOutcome: "inaccessible",
+  } as const,
+);
+
+/**
+ * Report the truthful acceleration state for one descriptor.
+ *
+ * OpenCode's public plugin contract exposes request mutation (`chat.params`
+ * and `chat.headers`) but no correlated official response-body evidence
+ * (`service_tier` for OpenAI, `usage.speed` for Anthropic). The acceleration
+ * contract therefore forbids `requested` or `applied` here: the adapter sends
+ * no provider acceleration control at all and reports `unsupported`.
+ *
+ * @param descriptor - Source of the neutral `fast` intent. Only the literal
+ *   `true` counts as a declaration.
+ * @returns `undefined` when there is no `fast true` intent — absence must emit
+ *   no acceleration state — or the frozen unsupported report.
+ *
+ * @see docs/specs/fast-provider-acceleration-contract.md
+ */
+export function describeFastActivation(descriptor: {
+  readonly fast?: true;
+}): OpenCodeFastActivationReport | undefined {
+  const state = providerFastActivationState({
+    fast: descriptor.fast === true ? true : undefined,
+    status: "unsupported",
+  });
+
+  return state === undefined ? undefined : FAST_ACTIVATION_UNSUPPORTED;
+}
+
+// ---------------------------------------------------------------------------
 // Translation
 // ---------------------------------------------------------------------------
 
@@ -50,6 +113,11 @@ export type TranslateAgentError = {
  * - `mode` → `mode`
  * - `effectiveToolPolicy` → `permission` + optional `tools` patch via
  *   `mapToolPolicy`
+ *
+ * Neutral `fast true` intent is deliberately NOT translated. OpenCode has no
+ * documented agent-config acceleration field, and a materialized config is not
+ * proof of per-request acceleration. Callers read the truthful state through
+ * `describeFastActivation()` instead.
  *
  * @param descriptor - The fully composed agent descriptor from the engine.
  * @param resolvedModel - The pre-validated model string from

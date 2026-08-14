@@ -57,9 +57,14 @@ import {
   RecordingFakePiHost,
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
-/** All-native host surfaces so transition tests stay ready under the fake host. */
-function allNativeHostSurfaceReader(): PiHostSurfaceReader {
+/**
+ * A hypothetical descriptor-safe host. The production reader can never report
+ * `descriptor-relative-native-session-io` as native, so these transition
+ * tests state the assumption explicitly instead of inheriting health-only.
+ */
+function descriptorSafeHostSurfaceReader(): PiHostSurfaceReader {
   return {
     read: () =>
       okAsync(
@@ -164,14 +169,16 @@ function installTransitionExtension(
       open: () => okAsync(createInMemoryRuntimeStore()),
     },
     processPort,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     childCommand: ["/fake/bin/pi"],
     // Fakes never emit cancelled acks or settlement drains; keep transition
     // tests under Bun's default 5s timeout without changing production.
     childResponseDrainMs: 20,
     childCancelGraceMs: 20,
-    // Keep every host surface native so `weave_delegate` registers under the
-    // fake host (production host probing is out of scope for these tests).
-    hostSurfaceReader: allNativeHostSurfaceReader(),
+    // Model a descriptor-safe host so `weave_delegate` is registered; the
+    // production reader always reports the path-only session API, which is a
+    // required-capability gap and would leave the extension health-only.
+    hostSurfaceReader: descriptorSafeHostSurfaceReader(),
     ...overrides,
   });
   factory(host.api);
@@ -293,6 +300,7 @@ function makeController(
     idGenerator: new FakeIdGenerator(),
     logger: new RecordingLogger(),
     processPort,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     randomPort: new WebCryptoRandomPort(),
     hmacPort: new WebCryptoHmacPort(),
     cancelGraceMs: 1,

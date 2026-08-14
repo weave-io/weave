@@ -142,7 +142,6 @@ describe("resolvePromptPaths", () => {
     const config = cfg(`
       category frontend {
         description "Frontend implementation work"
-        patterns ["src/**/*.tsx"]
         prompt_append_file "cat-extra.md"
       }
     `);
@@ -157,7 +156,6 @@ describe("resolvePromptPaths", () => {
     const config = cfg(`
       category backend {
         description "Backend implementation work"
-        patterns ["src/api/**"]
         prompt_append "Focus on API contracts."
       }
     `);
@@ -173,12 +171,10 @@ describe("resolvePromptPaths", () => {
     const config = cfg(`
       category frontend {
         description "Frontend implementation work"
-        patterns ["src/**/*.tsx"]
         prompt_append_file "cat-extra.md"
       }
       category backend {
         description "Backend implementation work"
-        patterns ["src/api/**"]
         prompt_append "Focus on API contracts."
       }
     `);
@@ -194,7 +190,6 @@ describe("resolvePromptPaths", () => {
     const config = cfg(`
       category frontend {
         description "Frontend implementation work"
-        patterns ["src/**/*.tsx"]
         prompt_append_file "cat-extra.md"
       }
     `);

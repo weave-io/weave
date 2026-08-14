@@ -16,7 +16,6 @@
  * Only `AgentPromptTemplateContext` and `TemplateContextError` are exported.
  */
 
-import type { DelegationTrigger } from "@weaveio/weave-core";
 import { ok, type Result } from "neverthrow";
 
 import type { DelegationTarget } from "./compose.js";
@@ -73,11 +72,7 @@ export const ALLOWED_TEMPLATE_PATHS: Set<string> = new Set([
   // Delegation target fields (accessed inside {{#delegation.targets}} sections)
   "delegation.targets.name",
   "delegation.targets.description",
-  "delegation.targets.domains",
   "delegation.targets.triggers",
-  "delegation.targets.triggers.domain",
-  "delegation.targets.triggers.trigger",
-  "delegation.targets.triggers.routing_hint",
   "delegation.targets.isCategory",
 
   // Fields accessible inside {{#delegation.targets}}{{#isCategory}} sections
@@ -131,10 +126,8 @@ export interface ToolPolicyContextEntry {
 export interface DelegationTargetContextEntry {
   name: string;
   description?: string;
-  /** Deduplicated domain strings across all triggers for this target. */
-  domains: string[];
-  /** Full trigger details including optional routing hints. */
-  triggers: Array<{ domain: string; trigger: string; routing_hint?: string }>;
+  /** Ordered copy of the target's declared string triggers. */
+  triggers: string[];
   /** True when this target is a generated category shuttle agent. */
   isCategory: boolean;
 }
@@ -206,7 +199,6 @@ export type TemplateContextError = {
 export interface CategoryInput {
   name: string;
   description?: string;
-  patterns?: string[];
 }
 
 /** Inputs for building an `AgentPromptTemplateContext`. */
@@ -230,41 +222,15 @@ export interface TemplateContextInput {
 /**
  * Project a `DelegationTarget` into a `DelegationTargetContextEntry`.
  *
- * Deduplicates domain strings across all triggers for the target.
- * Preserves trigger order for deterministic output.
+ * Copies declared trigger strings in source order. Does not invent domains,
+ * structured trigger objects, or provider-specific fields.
  */
 function projectDelegationTarget(
   target: DelegationTarget,
 ): DelegationTargetContextEntry {
-  const seenDomains = new Set<string>();
-  const domains: string[] = [];
-
-  for (const trigger of target.triggers) {
-    if (!seenDomains.has(trigger.domain)) {
-      seenDomains.add(trigger.domain);
-      domains.push(trigger.domain);
-    }
-  }
-
-  const triggers: Array<{
-    domain: string;
-    trigger: string;
-    routing_hint?: string;
-  }> = target.triggers.map((t: DelegationTrigger) => {
-    const entry: { domain: string; trigger: string; routing_hint?: string } = {
-      domain: t.domain,
-      trigger: t.trigger,
-    };
-    if (t.routing_hint !== undefined) {
-      entry.routing_hint = t.routing_hint;
-    }
-    return entry;
-  });
-
   const entry: DelegationTargetContextEntry = {
     name: target.name,
-    domains,
-    triggers,
+    triggers: [...target.triggers],
     isCategory: target.isCategory,
   };
 

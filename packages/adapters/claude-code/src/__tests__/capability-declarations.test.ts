@@ -1,7 +1,19 @@
 import { describe, expect, it } from "bun:test";
+import {
+  AdapterCapabilityContractSchema,
+  effectiveProviderFastReadiness,
+} from "@weaveio/weave-engine";
 import { CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT } from "../index.js";
+import { describeClaudeCodeFastActivation } from "../model-resolution.js";
 
 describe("Claude Code adapter capability contract", () => {
+  it("parses the declared contract through the exported capability schema", () => {
+    const parsed = AdapterCapabilityContractSchema.safeParse(
+      CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT,
+    );
+    expect(parsed.success).toBe(true);
+  });
+
   it("declares thinking-level activation as unsupported with the host-control gap", () => {
     const capability =
       CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
@@ -30,5 +42,44 @@ describe("Claude Code adapter capability contract", () => {
     expect(notes).toContain("status surface");
     expect(notes).not.toContain(["goal", "command"].join(" "));
     expect(notes).not.toContain(["/weave", "goal"].join(":"));
+  });
+
+  it("declares provider-fast-activation as unsupported for static materialization", () => {
+    const capability =
+      CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+        (entry) => entry.id === "provider-fast-activation",
+      );
+    const serialized = JSON.stringify(capability);
+
+    expect(capability?.readiness).toBe("unsupported");
+    expect(capability?.runtimeStatus).toBe("unsupported");
+    expect(capability?.notes).toContain("static materialization");
+    expect(capability?.notes).toContain("no owned request");
+    expect(capability?.readiness).not.toBe("native");
+    expect(capability?.readiness).not.toBe("degraded");
+    expect(serialized).not.toContain("service_tier");
+    expect(serialized).not.toContain("fastMode");
+    expect(serialized).not.toContain("anthropic-beta");
+  });
+
+  it("keeps the runtime fast diagnostic at the declared unsupported ceiling", () => {
+    const capability =
+      CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+        (entry) => entry.id === "provider-fast-activation",
+      );
+    const diagnostic = describeClaudeCodeFastActivation({ fast: true });
+
+    expect(diagnostic?.state).toBe("unsupported");
+    expect(capability?.runtimeStatus).toBe(diagnostic?.state);
+    expect(
+      effectiveProviderFastReadiness(
+        capability?.readiness ?? "unsupported",
+        diagnostic?.state,
+      ),
+    ).toBe("unsupported");
+  });
+
+  it("emits no acceleration state for a descriptor without fast intent", () => {
+    expect(describeClaudeCodeFastActivation({})).toBeUndefined();
   });
 });

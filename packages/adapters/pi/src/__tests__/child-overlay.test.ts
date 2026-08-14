@@ -2176,6 +2176,7 @@ describe("ChildOverlayController", () => {
     }
     const store = new PiNativeSessionStore({
       root: ROOT,
+      launch: { mode: "read-only" },
       fs: fs as unknown as PiNativeSessionFsPort,
       host: new ForbiddenHost(),
     });
@@ -2358,6 +2359,7 @@ describe("ChildOverlayController", () => {
     }
     const store = new PiNativeSessionStore({
       root: ROOT,
+      launch: { mode: "read-only" },
       fs: fs as unknown as PiNativeSessionFsPort,
       host: new ForbiddenHost(),
     });

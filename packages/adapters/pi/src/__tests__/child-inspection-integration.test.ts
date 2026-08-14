@@ -41,6 +41,14 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
+import {
+  createTestOnlyGrantedSessionStorageAuthority,
+  mintTestOnlyLaunchGrant,
+} from "./fakes/test-only-session-storage-authority.js";
+
+/** One shared authority: it mints every launch grant these fixtures use. */
+const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
+  await createTestOnlyGrantedSessionStorageAuthority("/history/children");
 
 const encoder = new TextEncoder();
 const randomPort = new WebCryptoRandomPort();
@@ -86,7 +94,6 @@ const generous = config(`settings {
 agent shuttle {
 }
 agent loom {
-  delegation_targets [shuttle]
 }
 `);
 
@@ -205,6 +212,7 @@ async function runningRpc() {
   const processPort = new FakeChildProcessPort();
   const child = new PiRpcChild("child-1", ROOT_NODE_ID, "gen-1", "shuttle", 1, {
     processPort,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     randomPort,
     hmacPort,
     logger: noopLogger,
@@ -287,6 +295,23 @@ function restoreSessions(childId: string) {
   });
   return () =>
     ({
+      mintLaunchGrant: (input: {
+        readonly childId: string;
+        readonly record: { readonly path: string; readonly sessionId: string };
+        readonly activeLeafId: string;
+      }) =>
+        ok(
+          mintTestOnlyLaunchGrant(TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY, {
+            childId: input.childId,
+            sessionId: input.record.sessionId,
+            sessionDir: input.record.path.slice(
+              0,
+              input.record.path.lastIndexOf("/"),
+            ),
+            sessionPath: input.record.path,
+            activeLeafId: input.activeLeafId,
+          }),
+        ),
       createChildSession: () =>
         okAsync(record(`children/${childId}/session.jsonl`)),
       establishThreadLeaf: (ref: string) =>
@@ -318,6 +343,7 @@ test("real ordinary, nested, and workflow execution retain only bounded topology
     idGenerator: new Ids(),
     logger: noopLogger,
     processPort: port,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     randomPort,
     hmacPort,
     timerPort: new SystemTimerPort(),
@@ -353,6 +379,7 @@ test("real ordinary, nested, and workflow execution retain only bounded topology
   const workflow = createDirectDispatchTransport(
     {
       processPort: workflowPort,
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       randomPort,
       hmacPort,
       logger: noopLogger,
@@ -461,6 +488,7 @@ test("real RPC lifecycle supports steer, queued follow-up, UI response, interrup
     idGenerator: new Ids(),
     logger: noopLogger,
     processPort: restorePort,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     randomPort,
     hmacPort,
     timerPort: new SystemTimerPort(),
@@ -513,6 +541,7 @@ test("real ordinary recovery resumes through the controller and preserves bounde
     idGenerator: new Ids(),
     logger: noopLogger,
     processPort: port,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     randomPort,
     hmacPort,
     timerPort: new SystemTimerPort(),

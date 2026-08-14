@@ -57,24 +57,30 @@ Supported top-level forms include:
 | `mode` | `primary` \| `subagent` \| `all` | Adapter-facing context hint. |
 | `temperature` | number | Optional generation preference. |
 | `skills` | string[] | Skill names resolved using adapter-provided context. |
-| `triggers` | object[] | Delegation metadata with `domain` and `trigger`. |
+| `triggers` | string[] | Ordered routing guidance strings shown to delegating agents. Each entry is a non-blank string. |
+| `fast` | literal `true` | Optional neutral provider-acceleration intent. Only `fast true` is valid; omit it to preserve provider defaults. |
 | `routing.delegation_exclude` | string[] | Exclude named targets from delegation guidance. |
 | `tool_policy` | block | Abstract capability permissions. |
+
+Structured trigger objects with `domain`, `trigger`, or `routing_hint` are invalid, and so are `fast false` and the aliases `service_class`, `speed`, `variant`, and `priority`. Across config layers, trigger arrays union-merge: higher-priority entries come first, then lower-priority entries not already present by exact string equality. `fast` merges as a scalar, so a higher-priority layer can opt in but omission cannot cancel a lower-priority `fast true`.
 
 ## Category Fields
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `description` | string | **Required.** Non-blank routing guidance shown for the generated category shuttle. |
-| `patterns` | string[] | Glob-like routing metadata. |
+| `triggers` | string[] | Ordered routing guidance strings copied to the generated category shuttle. |
+| `fast` | literal `true` | Optional neutral provider-acceleration intent for the generated category shuttle. |
 | `models` | string[] | Category-specific model preference override. |
 | `prompt_append` / `prompt_append_file` | string | Added to the generated shuttle prompt. |
 | `temperature` | number | Optional generation preference. |
 | `tool_policy` | block | Category-specific policy applied to the generated shuttle. |
 
-Categories generate agents named `shuttle-{category}`. The generated agent uses the category description in Loom and Tapestry delegation tables and does not inherit the base Shuttle's triggers; its description and patterns provide category routing, while generic Shuttle triggers cover fallback work.
+Categories generate agents named `shuttle-{category}`. The generated agent uses the category description in Loom and Tapestry delegation tables and does not inherit the base Shuttle's triggers; its description and its own merged trigger list provide category routing, while generic Shuttle triggers cover fallback work. A category `fast true` overrides the base Shuttle value; omitting `fast` inherits the base intent.
 
-This is a breaking config requirement: every existing category block must add a non-blank `description`. Legacy migration skips categories without descriptions and reports a warning rather than writing invalid DSL.
+Categories have no file-pattern field. Weave performs no deterministic file routing, and the removed `patterns` field has no replacement.
+
+These are breaking config requirements: every category block must add a non-blank `description`, delete `patterns`, and replace structured trigger objects with plain strings. Handwritten `.weave` files fail validation on the old forms. Legacy JSONC migration converts on a best-effort basis — it emits each trigger object's non-blank `routing_hint`, otherwise its `trigger`, drops patterns with a warning, skips categories without descriptions, and never infers `fast`.
 
 ## Tool Policy
 

@@ -37,16 +37,22 @@ import type {
 } from "../delegation-controller.js";
 import {
   createDirectDispatchTransport,
-  validateDirectRestoreSession,
+  validateDirectNativeSession,
 } from "../direct-dispatch-transport.js";
 import { createBunPiNativeSessionFs } from "../native-session-fs.js";
+import { createPiNativeSessionHost } from "../native-session-host.js";
+import type { PiChildSessionStorageAuthority } from "../child-session-storage-authority.js";
 import { FakeChildProcessPort } from "./fakes/fake-child-process-port.js";
 import { FakeIdGenerator } from "./fakes/fake-pi-host.js";
 import {
   makeRealTempRoot,
   removeRealTempRoot,
 } from "./fakes/real-temp-root.js";
-import { createTestOnlyDescriptorSafeNativeSessionHost } from "./fakes/test-only-descriptor-safe-host.js";
+import {
+  createTestOnlyGrantedSessionStorageAuthority,
+  mintTestOnlyLaunchGrant,
+  TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+} from "./fakes/test-only-session-storage-authority.js";
 
 const PARENT_SESSION = "parent-session-direct-1";
 const GENERATION = "generation-1";
@@ -151,6 +157,13 @@ class FailingSessionPort implements PiThreadSessionPort {
     } as never);
   }
 
+  mintLaunchGrant() {
+    return errAsync({
+      type: "SessionGrantRefused" as const,
+      reason: "authority-unavailable" as const,
+    } as never);
+  }
+
   appendTombstone(record: PiNativeSessionRecord) {
     this.tombstones.push(record);
     return okAsync({
@@ -185,6 +198,7 @@ function transportWith(options: {
   readonly sessions?: PiThreadSessionPort;
   readonly refs?: PiThreadRefPort;
   readonly requireNativeSession?: boolean;
+  readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
 }) {
   return createDirectDispatchTransport(
     {
@@ -194,6 +208,9 @@ function transportWith(options: {
       logger: noopLogger(),
       idGenerator: new FakeIdGenerator(),
       command: ["/fake/bin/pi", "--mode", "rpc"],
+      sessionStorageAuthority:
+        options.sessionStorageAuthority ??
+        TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       threadSessions: () => options.sessions,
       threadRefs: () => options.refs,
       requireNativeSession: () => options.requireNativeSession ?? true,
@@ -223,14 +240,28 @@ describe("direct workflow steps provision Pi-native sessions", () => {
   });
 
   it("creates a real native session through the store's create/open/header bridge and launches with both session arguments", async () => {
+    // One authority for the whole step: the store mints its launch grant from
+    // it, and the RPC child redeems the same grant against the same object.
+    const sessionStorageAuthority =
+      await createTestOnlyGrantedSessionStorageAuthority(root);
+    const launchAuthority = sessionStorageAuthority.requireLaunchAuthority();
+    if (launchAuthority.isErr()) {
+      throw new Error(`unexpected: ${launchAuthority.error.reason}`);
+    }
     const store = new PiNativeSessionStore({
+      launch: { mode: "authorized", authority: launchAuthority.value },
       root,
       fs: createBunPiNativeSessionFs(),
-      host: createTestOnlyDescriptorSafeNativeSessionHost(SessionManager),
+      host: createPiNativeSessionHost(SessionManager),
     });
     const refs = new RecordingRefPort();
     const processPort = new FakeChildProcessPort();
-    const transport = transportWith({ processPort, sessions: store, refs });
+    const transport = transportWith({
+      processPort,
+      sessions: store,
+      refs,
+      sessionStorageAuthority,
+    });
 
     const settlement = transport(baseInput(root));
     await processPort.spawnCalled;
@@ -315,9 +346,10 @@ describe("direct workflow steps provision Pi-native sessions", () => {
 
   it("refuses before spawn when the ref authority is absent", async () => {
     const store = new PiNativeSessionStore({
+      launch: { mode: "read-only" },
       root,
       fs: createBunPiNativeSessionFs(),
-      host: createTestOnlyDescriptorSafeNativeSessionHost(SessionManager),
+      host: createPiNativeSessionHost(SessionManager),
     });
     const processPort = new FakeChildProcessPort();
     const transport = transportWith({ processPort, sessions: store });
@@ -371,9 +403,10 @@ describe("direct workflow steps provision Pi-native sessions", () => {
 
   it("refuses before spawn when the parent session identity is unavailable", async () => {
     const store = new PiNativeSessionStore({
+      launch: { mode: "read-only" },
       root,
       fs: createBunPiNativeSessionFs(),
-      host: createTestOnlyDescriptorSafeNativeSessionHost(SessionManager),
+      host: createPiNativeSessionHost(SessionManager),
     });
     const processPort = new FakeChildProcessPort();
     const transport = transportWith({
@@ -391,62 +424,30 @@ describe("direct workflow steps provision Pi-native sessions", () => {
     }).toEqual({ spawnCount: 0, failed: true, code: "ChildSpawnFailed" });
   });
 
-  it("rejects every non-restorable direct session selector before it can reach a spawn", () => {
+  it("rejects every non-launchable direct session selector before it can reach a spawn", () => {
+    const grant = mintTestOnlyLaunchGrant(
+      TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+      {
+        childId: CHILD_ID,
+        sessionDir: "/data/weave/adapters/pi/sessions/child",
+        sessionPath:
+          "/data/weave/adapters/pi/sessions/child/session.jsonl",
+      },
+    );
     const reasons = {
-      absent: validateDirectRestoreSession(CHILD_ID, undefined),
-      ephemeral: validateDirectRestoreSession(CHILD_ID, { mode: "ephemeral" }),
-      directoryOnly: validateDirectRestoreSession(CHILD_ID, {
-        mode: "new",
-        sessionDir: "/sessions/child",
-      }),
-      noLeaf: validateDirectRestoreSession(CHILD_ID, {
-        mode: "restore",
-        sessionDir: "/sessions/child",
-        sessionPath: "/sessions/child/session.jsonl",
-        activeLeafId: "",
-      }),
-      outsideDirectory: validateDirectRestoreSession(CHILD_ID, {
-        mode: "restore",
-        sessionDir: "/sessions/child",
-        sessionPath: "/sessions/child/nested/session.jsonl",
-        activeLeafId: "leaf-1",
-      }),
-      valid: validateDirectRestoreSession(CHILD_ID, {
-        mode: "restore",
-        sessionDir: "/sessions/child",
-        sessionPath: "/sessions/child/session.jsonl",
-        activeLeafId: "leaf-1",
-      }),
+      absent: validateDirectNativeSession(CHILD_ID, undefined),
+      ephemeral: validateDirectNativeSession(CHILD_ID, { mode: "ephemeral" }),
+      valid: validateDirectNativeSession(CHILD_ID, { mode: "native", grant }),
     };
-    const rendered = JSON.stringify({
-      absent: reasons.absent.isErr() ? reasons.absent.error : undefined,
-      ephemeral: reasons.ephemeral.isErr()
-        ? reasons.ephemeral.error
-        : undefined,
-      directoryOnly: reasons.directoryOnly.isErr()
-        ? reasons.directoryOnly.error
-        : undefined,
-      outsideDirectory: reasons.outsideDirectory.isErr()
-        ? reasons.outsideDirectory.error
-        : undefined,
-    });
 
     expect({
-      absentRejected: reasons.absent.isErr(),
-      ephemeralRejected: reasons.ephemeral.isErr(),
-      directoryOnlyRejected: reasons.directoryOnly.isErr(),
-      noLeafRejected: reasons.noLeaf.isErr(),
-      outsideDirectoryRejected: reasons.outsideDirectory.isErr(),
-      validAccepted: reasons.valid.isOk(),
-      leakedPath: rendered.includes("/sessions/child"),
+      absent: reasons.absent.isErr(),
+      ephemeral: reasons.ephemeral.isErr(),
+      valid: reasons.valid.isOk(),
     }).toEqual({
-      absentRejected: true,
-      ephemeralRejected: true,
-      directoryOnlyRejected: true,
-      noLeafRejected: true,
-      outsideDirectoryRejected: true,
-      validAccepted: true,
-      leakedPath: false,
+      absent: true,
+      ephemeral: true,
+      valid: true,
     });
   });
 });

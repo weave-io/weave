@@ -18,6 +18,7 @@ import {
 } from "../child-metadata-cache.js";
 import {
   type CreateNativeChildSessionInput,
+  type MintNativeSessionLaunchGrantInput,
   PI_NATIVE_THREAD_ENTRY_TYPE,
   PI_NATIVE_THREAD_SCHEMA_VERSION,
   type PiNativeSessionEntries,
@@ -33,6 +34,11 @@ import type {
   PiChildRefRecord,
   PiChildRefScan,
 } from "../child-session-refs.js";
+import {
+  CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
+  createPiChildSessionStorageAuthority,
+  type PiChildSessionStorageAuthority,
+} from "../child-session-storage-authority.js";
 import { SystemTimerPort } from "../child-timer.js";
 import { isTrustedChildTitleProvenance } from "../child-title.js";
 import {
@@ -48,12 +54,24 @@ import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
+import {
+  createTestOnlyGrantedSessionStorageAuthority,
+  mintTestOnlyLaunchGrant,
+} from "./fakes/test-only-session-storage-authority.js";
 
 const GENERATION = "gen-1";
 const OWNER_SESSION = "parent-session-1";
 const SESSION_REF = "workspace/child-1/session.jsonl";
 const SESSION_PATH =
   "/data/weave/adapters/pi/sessions/workspace/child-1/session.jsonl";
+/**
+ * The validated root these fixtures live directly under. One authority is
+ * shared by the fake store (which mints launch grants) and every controller
+ * in this file, exactly as production shares one generation authority.
+ */
+const SESSION_ROOT = "/data/weave/adapters/pi/sessions/workspace";
+const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
+  await createTestOnlyGrantedSessionStorageAuthority(SESSION_ROOT);
 const SECRET_TASK_SENTINEL = "SECRET_TASK_TOKEN_WARP_T6";
 const SECRET_TASK = [
   SECRET_TASK_SENTINEL,
@@ -105,6 +123,30 @@ class SequentialIdGenerator {
     this.calls += 1;
     return `child-${this.calls}`;
   }
+}
+
+function switchableSessionStorageAuthority(): PiChildSessionStorageAuthority & {
+  readonly deny: () => void;
+} {
+  let available = true;
+  const granted = TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY;
+  const refusal = {
+    type: "SessionStorageUnavailable" as const,
+    reason: "pi-session-api-unavailable" as const,
+  };
+  return {
+    deny: () => {
+      available = false;
+    },
+    requireNativeSessionAuthority: () =>
+      available ? granted.requireNativeSessionAuthority() : err(refusal),
+    requireSessionRoot: () =>
+      available ? granted.requireSessionRoot() : err(refusal),
+    requireLaunchAuthority: () =>
+      available ? granted.requireLaunchAuthority() : err(refusal),
+    readinessReason: () =>
+      available ? granted.readinessReason() : refusal.reason,
+  };
 }
 
 function flush(): Promise<void> {
@@ -331,6 +373,25 @@ class FakeSessionStore implements PiThreadSessionPort {
 
   clearEntries(ref: string = SESSION_REF): void {
     this.entries.set(ref, []);
+  }
+
+  mintLaunchGrant(input: MintNativeSessionLaunchGrantInput) {
+    // The fake store mints through the same shared authority the controller
+    // holds, so redemption sees one authority identity exactly as in
+    // production.
+    return okAsync(
+      mintTestOnlyLaunchGrant(TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY, {
+        childId: input.childId,
+        sessionId: input.record.sessionId,
+        ref: input.record.ref.slice(input.record.ref.indexOf("/") + 1),
+        sessionDir: input.record.path.slice(
+          0,
+          input.record.path.lastIndexOf("/"),
+        ),
+        sessionPath: input.record.path,
+        activeLeafId: input.activeLeafId,
+      }),
+    );
   }
 
   createChildSession(input: CreateNativeChildSessionInput) {
@@ -578,6 +639,7 @@ function harness(
     readonly target?: DelegationTarget | undefined;
     readonly parentSessionId?: string | undefined;
     readonly idGenerator?: SequentialIdGenerator;
+    readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
     readonly maxChildren?: number;
   } = {},
 ): Harness {
@@ -594,6 +656,9 @@ function harness(
     idGenerator: overrides.idGenerator ?? new SequentialIdGenerator(),
     logger: noopLogger,
     processPort: port,
+    sessionStorageAuthority:
+      overrides.sessionStorageAuthority ??
+      TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     randomPort: new WebCryptoRandomPort(),
     hmacPort: new WebCryptoHmacPort(),
     timerPort: new SystemTimerPort(),
@@ -1149,6 +1214,7 @@ describe("thread lifecycle: source integrity", () => {
       idGenerator: new SequentialIdGenerator(),
       logger: noopLogger,
       processPort: new FakeChildProcessPort(),
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       randomPort: new WebCryptoRandomPort(),
       hmacPort: new WebCryptoHmacPort(),
     });
@@ -1562,5 +1628,107 @@ describe("thread lifecycle: durable title privacy", () => {
     );
     expect(boundedFailure.isErr()).toBe(true);
     expectSecretAbsent(boundedFailure._unsafeUnwrapErr());
+  });
+});
+
+describe("thread lifecycle: storage authority guard", () => {
+  it("blocks start before request, id, native session, ref, cache, or process work", async () => {
+    const idGenerator = new SequentialIdGenerator();
+    const h = harness({
+      idGenerator,
+      sessionStorageAuthority: createPiChildSessionStorageAuthority(),
+    });
+    let requestReads = 0;
+    const hostileRequest = new Proxy(request({ cwd: "../../hostile/path" }), {
+      get() {
+        requestReads += 1;
+        throw new Error("delegation request interpreted");
+      },
+    });
+
+    const result = await h.controller.delegate(hostileRequest);
+
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error.code).toBe("ChildSpawnFailed");
+    expect(result.error.safeMessage).toBe(
+      "Weave could not start the delegated child process.",
+    );
+    expect(result.error.correlation).toEqual({
+      reason: CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
+    });
+    expect(requestReads).toBe(0);
+    expect(idGenerator.calls).toBe(0);
+    expect(h.port.spawnInputs).toHaveLength(0);
+    expect(h.port.spawnedProcesses).toHaveLength(0);
+    expect(h.refs.newChildren).toHaveLength(0);
+    expect(h.refs.dividers).toHaveLength(0);
+    expect(h.refs.lifecycles).toHaveLength(0);
+    expect(h.sessions?.created).toHaveLength(0);
+    expect(h.sessions?.leaves).toHaveLength(0);
+    expect(h.cache.writes).toHaveLength(0);
+  });
+
+  it("blocks retry and continue before the next id, divider, cache, control, or spawn", async () => {
+    const cases = [
+      { action: "retry" as const, outcome: "failed" as const },
+      { action: "continue" as const, outcome: "completed" as const },
+    ];
+
+    for (const testCase of cases) {
+      const authority = switchableSessionStorageAuthority();
+      const idGenerator = new SequentialIdGenerator();
+      const h = harness({ idGenerator, sessionStorageAuthority: authority });
+      await startThread(h, testCase.outcome);
+      const process = h.port.spawnedProcesses[0];
+      const before = {
+        childIds: idGenerator.calls,
+        spawned: h.port.spawnedProcesses.length,
+        spawnInputs: h.port.spawnInputs.length,
+        writes: process?.writtenLines().length ?? 0,
+        newChildren: h.refs.newChildren.length,
+        dividers: h.refs.dividers.length,
+        lifecycles: h.refs.lifecycles.length,
+        sessions: h.sessions?.created.length ?? 0,
+        leaves: h.sessions?.leaves.length ?? 0,
+        cache: h.cache.writes.length,
+      };
+      authority.deny();
+      let requestReads = 0;
+      const resumeRequest = new Proxy(
+        resume({
+          action: testCase.action,
+          ...(testCase.action === "continue"
+            ? { instruction: "continue without interpretation" }
+            : {}),
+        }),
+        {
+          get() {
+            requestReads += 1;
+            throw new Error("resume request interpreted");
+          },
+        },
+      );
+
+      const result = await h.controller.resumeThread(resumeRequest);
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) continue;
+      expect(result.error.code).toBe("ChildSpawnFailed");
+      expect(result.error.correlation).toEqual({
+        reason: CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
+      });
+      expect(requestReads).toBe(0);
+      expect(idGenerator.calls).toBe(before.childIds);
+      expect(h.port.spawnedProcesses).toHaveLength(before.spawned);
+      expect(h.port.spawnInputs).toHaveLength(before.spawnInputs);
+      expect(process?.writtenLines()).toHaveLength(before.writes);
+      expect(h.refs.newChildren).toHaveLength(before.newChildren);
+      expect(h.refs.dividers).toHaveLength(before.dividers);
+      expect(h.refs.lifecycles).toHaveLength(before.lifecycles);
+      expect(h.sessions?.created).toHaveLength(before.sessions);
+      expect(h.sessions?.leaves).toHaveLength(before.leaves);
+      expect(h.cache.writes).toHaveLength(before.cache);
+    }
   });
 });

@@ -18,14 +18,18 @@ import type {
   DisableDirective,
   ExtendBeforePlanDirective,
   IdentifierValue,
-  NumberValue,
   NullValue,
+  NumberValue,
   Property,
   SettingAssignment,
   StepBlock,
   StringValue,
   WorkflowBlock,
 } from "./ast.js";
+import {
+  boundConfigErrors,
+  CONFIG_ERRORS_TRUNCATED,
+} from "./config-error-policy.js";
 import type { ParseError } from "./errors.js";
 import type { SourcePos } from "./tokens.js";
 import { type Token, TokenType } from "./tokens.js";
@@ -218,6 +222,7 @@ class Parser {
 
     const properties: Property[] = [];
     const steps: StepBlock[] = [];
+    const seenPropertyKeys = new Set<string>();
     let extendsValue: string | undefined;
 
     while (true) {
@@ -233,6 +238,18 @@ class Parser {
 
       const prop = this.#parseProperty();
       if (!prop) continue;
+
+      if (seenPropertyKeys.has(prop.key)) {
+        this.#errors.push({
+          type: "UnexpectedToken",
+          line: prop.pos.line,
+          column: prop.pos.column,
+          found: prop.key,
+          expected: "unique workflow property",
+        });
+        continue;
+      }
+      seenPropertyKeys.add(prop.key);
 
       if (prop.key === "extends" && prop.value.kind === "string") {
         extendsValue = prop.value.value;
@@ -294,10 +311,23 @@ class Parser {
     // dedicated AST fields rather than leaving them in the generic properties bag.
     const rawProperties = this.#parseProperties();
     const properties: Property[] = [];
+    const seenPropertyKeys = new Set<string>();
     let insertBefore: string | undefined;
     let insertAfter: string | undefined;
 
     for (const prop of rawProperties) {
+      if (seenPropertyKeys.has(prop.key)) {
+        this.#errors.push({
+          type: "UnexpectedToken",
+          line: prop.pos.line,
+          column: prop.pos.column,
+          found: prop.key,
+          expected: "unique step property",
+        });
+        continue;
+      }
+      seenPropertyKeys.add(prop.key);
+
       if (prop.key === "insert_before" && prop.value.kind === "string") {
         insertBefore = prop.value.value;
         continue;
@@ -496,6 +526,7 @@ class Parser {
           pos,
         } satisfies BooleanValue,
         pos,
+        bare: true,
       };
     }
 
@@ -676,7 +707,17 @@ class Parser {
       }
     }
 
-    if (this.#errors.length > 0) return err(this.#errors);
+    if (this.#errors.length > 0) {
+      return err(
+        boundConfigErrors<ParseError>(this.#errors, () => ({
+          type: "UnexpectedToken",
+          line: 0,
+          column: 0,
+          found: "",
+          expected: CONFIG_ERRORS_TRUNCATED,
+        })),
+      );
+    }
     return ok(nodes);
   }
 }

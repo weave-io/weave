@@ -37,7 +37,10 @@ import {
 // Re-exports for backward compatibility
 // ---------------------------------------------------------------------------
 
-export { convertLegacyJsonc } from "../migration/legacy-jsonc-converter.js";
+export {
+  convertLegacyJsonc,
+  convertLegacyValue,
+} from "../migration/legacy-jsonc-converter.js";
 export { writeMigratedDsl } from "../migration/migration-write.js";
 export type {
   ConversionResult,

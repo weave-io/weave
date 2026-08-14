@@ -137,10 +137,10 @@ function buildMixedReport() {
 // ---------------------------------------------------------------------------
 
 describe("buildHumanRows: all pass", () => {
-  it("returns 20 rows when all capabilities are declared", () => {
+  it("returns 21 rows when all capabilities are declared", () => {
     const report = buildPassingReport();
     const rows = buildHumanRows(report);
-    expect(rows).toHaveLength(20);
+    expect(rows).toHaveLength(21);
   });
 
   it("all rows have PASS status when all capabilities are native", () => {
@@ -206,8 +206,8 @@ describe("buildHumanRows: mixed report", () => {
     const report = buildMixedReport();
     const rows = buildHumanRows(report);
     const passRows = rows.filter((r) => r.status === "PASS");
-    // 20 total - 1 FAIL - 1 WARN = 18 PASS
-    expect(passRows).toHaveLength(18);
+    // 21 total - 1 FAIL - 1 WARN = 19 PASS
+    expect(passRows).toHaveLength(19);
   });
 
   it("FAIL row for workflow-persistence includes blocking impact in notes", () => {
@@ -263,10 +263,10 @@ describe("buildHumanRows: deterministic order", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildToonRows: deterministic", () => {
-  it("returns 20 rows when all capabilities are declared", () => {
+  it("returns 21 rows when all capabilities are declared", () => {
     const report = buildPassingReport();
     const rows = buildToonRows(report);
-    expect(rows).toHaveLength(20);
+    expect(rows).toHaveLength(21);
   });
 
   it("all rows have P verdict when all capabilities pass", () => {
@@ -316,7 +316,7 @@ describe("buildToonRows: deterministic", () => {
     const humanRows = buildHumanRows(report);
     const toonRows = buildToonRows(report);
 
-    // Both should have 20 rows in the same capability order
+    // Both should have 22 rows in the same capability order
     expect(toonRows).toHaveLength(humanRows.length);
     for (let i = 0; i < toonRows.length; i++) {
       const toon = toonRows[i];
@@ -368,7 +368,7 @@ describe("toJson: machine-readable interchange", () => {
     const json = toJson(report);
     const parsed = JSON.parse(json) as typeof report;
     expect(Array.isArray(parsed.capabilityContract.capabilities)).toBe(true);
-    expect(parsed.capabilityContract.capabilities).toHaveLength(20);
+    expect(parsed.capabilityContract.capabilities).toHaveLength(21);
   });
 
   it("parsed JSON contains probe results", () => {
@@ -468,6 +468,9 @@ describe("sanitization: no credentials or secrets in renderer output", () => {
     expect(json).not.toContain("api_key");
     expect(json).not.toContain("secret");
     expect(json).not.toContain("/Users/");
+    expect(json).not.toContain("service_tier");
+    expect(json).not.toContain("anthropic-beta");
+    expect(json).not.toContain("Authorization");
   });
 });
 

@@ -2,8 +2,15 @@ import { describe, expect, it } from "bun:test";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { PiRpcChild, type PiRpcChildSpawnInput } from "../rpc-child.js";
 import { FakeChildProcessPort } from "./fakes/fake-child-process-port.js";
+import {
+  createTestOnlyGrantedSessionStorageAuthority,
+  mintTestOnlyLaunchGrant,
+} from "./fakes/test-only-session-storage-authority.js";
 
-const SESSION_DIR = "/data/weave/adapters/pi/sessions/child-1";
+const SESSION_ROOT = "/data/weave/adapters/pi/sessions";
+const TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY =
+  await createTestOnlyGrantedSessionStorageAuthority(SESSION_ROOT);
+const SESSION_DIR = `${SESSION_ROOT}/child-1`;
 const SESSION_FILE = `${SESSION_DIR}/pi-generated.jsonl`;
 const INHERITED_SESSION_DIR = "PI_CODING_AGENT_SESSION_DIR";
 
@@ -30,6 +37,7 @@ function spawnInput(
 function makeChild(processPort: FakeChildProcessPort): PiRpcChild {
   return new PiRpcChild("child-1", "root", "generation-1", "shuttle", 1, {
     processPort,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     randomPort: new WebCryptoRandomPort(),
     hmacPort: new WebCryptoHmacPort(),
     logger: noopLogger(),
@@ -60,10 +68,15 @@ describe("Pi-native RPC launch contract", () => {
 
     const spawnPromise = child.spawnAndHandshake(
       spawnInput({
-        mode: "restore",
-        sessionDir: SESSION_DIR,
-        sessionPath: SESSION_FILE,
-        activeLeafId: "leaf-1",
+        mode: "native",
+        grant: mintTestOnlyLaunchGrant(
+          TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+          {
+            childId: "child-1",
+            sessionDir: SESSION_DIR,
+            sessionPath: SESSION_FILE,
+          },
+        ),
       }),
     );
     await flushSpawn();
@@ -84,18 +97,24 @@ describe("Pi-native RPC launch contract", () => {
     });
   });
 
-  it("rejects an arbitrary non-immediate session path before process spawn", async () => {
+  it("refuses an arbitrary caller-constructed session path before process spawn", async () => {
     const processPort = new FakeChildProcessPort();
     const child = makeChild(processPort);
     const nestedPath = `${SESSION_DIR}/nested/model-chosen.jsonl`;
 
+    // There is no path-carrying spawn mode any more: a caller that knows an
+    // absolute path can still only present an ungranted object, and the
+    // transport refuses it before the argument vector exists.
     const spawnPromise = child.spawnAndHandshake(
       spawnInput({
-        mode: "restore",
-        sessionDir: SESSION_DIR,
-        sessionPath: nestedPath,
-        activeLeafId: "leaf-1",
-      }),
+        mode: "native",
+        grant: {
+          kind: "pi-child-session-launch-grant",
+          sessionDir: SESSION_DIR,
+          sessionPath: nestedPath,
+          activeLeafId: "leaf-1",
+        },
+      } as unknown as NonNullable<PiRpcChildSpawnInput["session"]>),
     );
     await flushSpawn();
     const spawnCallsBeforeDispose = processPort.spawnInputs.length;

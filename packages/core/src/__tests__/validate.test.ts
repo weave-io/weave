@@ -1,7 +1,15 @@
 import { describe, expect, it } from "bun:test";
+import type { AstNode } from "../ast.js";
 import { tokenize } from "../lexer.js";
 import { parse } from "../parser.js";
-import { validate } from "../validate.js";
+import {
+  MAX_VALIDATION_DIAGNOSTIC_SIZE,
+  MAX_VALIDATION_ISSUES,
+  MAX_VALIDATION_MESSAGE_LENGTH,
+  MAX_VALIDATION_PATH_LENGTH,
+  VALIDATION_DIAGNOSTICS_TRUNCATED,
+  validate,
+} from "../validate.js";
 
 /** Helper: lex + parse + validate a source string */
 function validateSource(src: string) {
@@ -13,6 +21,508 @@ function validateSource(src: string) {
     throw new Error(`Parse errors: ${JSON.stringify(parseResult.error)}`);
   return validate(parseResult.value);
 }
+
+describe("validate — fail-closed AST structure", () => {
+  it.each([
+    [
+      "agent",
+      `agent helper { triggers [bareword] }`,
+      "agents.helper.triggers.0",
+    ],
+    [
+      "category",
+      `category helper { description "Helper" triggers [bareword] }`,
+      "categories.helper.triggers.0",
+    ],
+  ])("rejects bare identifiers in %s triggers", (_kind, source, path) => {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path,
+        message: "trigger entries must be quoted strings",
+      }),
+    );
+  });
+
+  it.each([
+    ["agent", `agent helper { fast }`, "agents.helper.fast"],
+    [
+      "category",
+      `category helper { description "Helper" fast }`,
+      "categories.helper.fast",
+    ],
+  ])("rejects bare fast in %s declarations", (_kind, source, path) => {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path,
+        message: expect.stringContaining("fast true"),
+      }),
+    );
+  });
+
+  it("keeps intentionally supported bare extension-point flags", () => {
+    const result = validateSource(`workflow flow {
+      version 1
+      extension_points { before-plan }
+      step plan {
+        agent helper
+        role planning
+        type autonomous
+        prompt "Plan."
+        completion plan_created { plan_name "plan" }
+      }
+    }`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().workflows.flow?.extension_points).toEqual({
+      before_plan: true,
+    });
+  });
+
+  it.each([
+    "agent",
+    "category",
+  ])("rejects duplicate %s fast and trigger properties", (kind) => {
+    const description = kind === "category" ? `description "Helper"` : "";
+    for (const duplicate of [
+      `fast true fast true`,
+      `triggers ["one"] triggers ["two"]`,
+    ]) {
+      const result = validateSource(
+        `${kind} helper { ${description} ${duplicate} }`,
+      );
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("duplicate property"),
+        }),
+      );
+    }
+  });
+
+  it.each([
+    "agent",
+    "category",
+  ])("rejects duplicate %s declarations", (kind) => {
+    const body = kind === "category" ? `description "Helper"` : `fast true`;
+    const result = validateSource(
+      `${kind} helper { ${body} } ${kind} helper { ${body} }`,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining(`duplicate ${kind} declaration`),
+      }),
+    );
+  });
+
+  it("rejects duplicate nested properties and workflow declarations", () => {
+    for (const source of [
+      `agent helper { tool_policy { read allow read deny } }`,
+      `workflow flow { version 1 } workflow flow { version 1 }`,
+      `workflow flow { version 1 step run { agent helper } step run { agent helper } }`,
+    ]) {
+      const result = validateSource(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("duplicate"),
+        }),
+      );
+    }
+  });
+
+  it.each([
+    [
+      "step display name",
+      `workflow flow { version 1 step run { name "Run" display_name "Overwrite" } }`,
+      "display_name",
+    ],
+    [
+      "completion method",
+      `workflow flow { version 1 step run { completion plan_created { method "overwrite" } } }`,
+      "method",
+    ],
+    [
+      "workflow steps",
+      `workflow flow { version 1 steps [] step run { agent helper } }`,
+      "steps",
+    ],
+  ])("rejects %s generated-destination collisions", (_case, source, destination) => {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining(`'${destination}'`),
+      }),
+    );
+  });
+
+  it("rejects direct workflow extends destination collisions", () => {
+    const pos = { line: 1, column: 1 };
+    const result = validate([
+      {
+        type: "workflow",
+        name: "pipeline",
+        properties: [
+          {
+            key: "extends",
+            value: { kind: "string", value: "generic", pos },
+            pos,
+          },
+        ],
+        steps: [],
+        extends: "dedicated",
+        pos,
+      },
+    ]);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path: "workflows.pipeline.extends",
+        message: "property 'extends' collides with generated 'extends'",
+      }),
+    );
+  });
+
+  it("rejects direct step insertion destination collisions", () => {
+    const pos = { line: 1, column: 1 };
+    const result = validate([
+      {
+        type: "workflow",
+        name: "pipeline",
+        properties: [
+          { key: "version", value: { kind: "number", value: 1, pos }, pos },
+        ],
+        steps: [
+          {
+            name: "implement",
+            properties: [
+              {
+                key: "insert_before",
+                value: { kind: "string", value: "generic-before", pos },
+                pos,
+              },
+              {
+                key: "insert_after",
+                value: { kind: "string", value: "generic-after", pos },
+                pos,
+              },
+            ],
+            insert_before: "dedicated-before",
+            insert_after: "dedicated-after",
+            pos,
+          },
+        ],
+        pos,
+      },
+    ]);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "workflows.pipeline.steps.implement.insert_before",
+          message:
+            "property 'insert_before' collides with generated 'insert_before'",
+        }),
+        expect.objectContaining({
+          path: "workflows.pipeline.steps.implement.insert_after",
+          message:
+            "property 'insert_after' collides with generated 'insert_after'",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects unsafe direct AST graphs without executing getters", () => {
+    const pos = { line: 1, column: 1 };
+    let getterExecutions = 0;
+    const inheritedProperty = Object.create({ key: "description" }) as object;
+    Object.defineProperty(inheritedProperty, "value", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return { kind: "string", value: "unsafe", pos };
+      },
+    });
+    Object.defineProperty(inheritedProperty, "pos", {
+      value: pos,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+
+    const unsafeGraphs: unknown[] = [
+      [
+        {
+          type: "category",
+          name: "helper",
+          properties: [inheritedProperty],
+          pos,
+        },
+      ],
+      Object.assign(
+        [
+          {
+            type: "category",
+            name: "helper",
+            properties: [],
+            pos,
+          },
+        ],
+        { extra: true },
+      ),
+    ];
+    const symbolGraph = [
+      { type: "category", name: "helper", properties: [], pos },
+    ];
+    Object.defineProperty(symbolGraph[0], Symbol("unsafe"), {
+      value: true,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    unsafeGraphs.push(symbolGraph);
+
+    const readonlyGraph = [
+      { type: "category", name: "helper", properties: [], pos },
+    ];
+    Object.defineProperty(readonlyGraph[0], "name", {
+      value: "helper",
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    });
+    unsafeGraphs.push(readonlyGraph);
+
+    const cyclicNode: Record<string, unknown> = {
+      type: "category",
+      name: "helper",
+      properties: [],
+      pos,
+    };
+    cyclicNode.self = cyclicNode;
+    unsafeGraphs.push([cyclicNode]);
+
+    const sparseGraph = new Array<unknown>(1);
+    unsafeGraphs.push(sparseGraph);
+
+    class AstContainer extends Array<unknown> {}
+    unsafeGraphs.push(
+      new AstContainer({
+        type: "category",
+        name: "helper",
+        properties: [],
+        pos,
+      }),
+    );
+
+    for (const graph of unsafeGraphs) {
+      const result = validate(graph as AstNode[]);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toEqual([
+        expect.objectContaining({
+          type: "ValidationError",
+          message: expect.stringContaining("own, enumerable, writable"),
+        }),
+      ]);
+    }
+    expect(getterExecutions).toBe(0);
+  });
+
+  it("rejects callable direct AST nodes without executing getters", () => {
+    let getterExecutions = 0;
+    const callable = () => undefined;
+    Object.defineProperty(callable, "type", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return "category";
+      },
+    });
+
+    const result = validate([callable] as unknown as AstNode[]);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual([
+      expect.objectContaining({
+        type: "ValidationError",
+        path: "",
+        message: expect.stringContaining("own, enumerable, writable"),
+      }),
+    ]);
+    expect(getterExecutions).toBe(0);
+  });
+
+  it("returns bounded errors for malformed safe direct AST shapes", () => {
+    const malformedGraphs: unknown[] = [
+      null,
+      {},
+      [null],
+      [{ type: "category" }],
+    ];
+
+    for (const graph of malformedGraphs) {
+      const result = validate(graph as AstNode[]);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toEqual([
+        expect.objectContaining({
+          type: "ValidationError",
+          path: "",
+          message: expect.stringContaining("AST input"),
+        }),
+      ]);
+    }
+  });
+
+  it("accepts safe direct and null-prototype AST graphs", () => {
+    const pos = { line: 1, column: 1 };
+    const directResult = validate([
+      {
+        type: "category",
+        name: "plain",
+        properties: [
+          {
+            key: "description",
+            value: { kind: "string", value: "Plain category", pos },
+            pos,
+          },
+        ],
+        pos,
+      },
+    ]);
+    expect(directResult.isOk()).toBe(true);
+
+    const stringValue = Object.create(null) as Record<string, unknown>;
+    stringValue.kind = "string";
+    stringValue.value = "Null category";
+    stringValue.pos = pos;
+    const property = Object.create(null) as Record<string, unknown>;
+    property.key = "description";
+    property.value = stringValue;
+    property.pos = pos;
+    const node = Object.create(null) as Record<string, unknown>;
+    node.type = "category";
+    node.name = "null-prototype";
+    node.properties = [property];
+    node.pos = pos;
+
+    const nullPrototypeResult = validate([node] as AstNode[]);
+    expect(nullPrototypeResult.isOk()).toBe(true);
+    if (nullPrototypeResult.isOk()) {
+      expect(nullPrototypeResult.value.categories["null-prototype"]).toEqual({
+        description: "Null category",
+      });
+    }
+  });
+
+  it("rejects dangerous declaration, property, nested block, and step names", () => {
+    for (const source of [
+      `agent __proto__ { fast true }`,
+      `category constructor { description "Helper" }`,
+      `agent helper { prototype true }`,
+      `agent helper { extension_points { __proto__ true } }`,
+      `workflow flow { step prototype { agent helper } }`,
+    ]) {
+      const result = validateSource(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("dangerous"),
+        }),
+      );
+    }
+  });
+
+  it("does not admit inherited fast, triggers, or description values", () => {
+    const inherited = Object.create({
+      fast: true,
+      triggers: ["inherited"],
+      description: "inherited",
+    }) as Record<string, unknown>;
+    inherited.models = ["model"];
+    const result = validate([
+      {
+        type: "agent",
+        name: "helper",
+        properties: Object.entries(inherited).map(([key, value]) => ({
+          key,
+          value: {
+            kind: "array" as const,
+            elements: (value as string[]).map((entry) => ({
+              kind: "string" as const,
+              value: entry,
+              pos: { line: 1, column: 1 },
+            })),
+            pos: { line: 1, column: 1 },
+          },
+          pos: { line: 1, column: 1 },
+        })),
+        pos: { line: 1, column: 1 },
+      },
+    ]);
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.helper).toEqual({ models: ["model"] });
+
+    const inheritedCategory = Object.create({
+      description: "inherited",
+      fast: true,
+      triggers: ["inherited"],
+    }) as Record<string, unknown>;
+    const categoryResult = validate([
+      {
+        type: "category",
+        name: "helper",
+        properties: Object.entries(inheritedCategory).map(([key, value]) => ({
+          key,
+          value: {
+            kind: "string" as const,
+            value: String(value),
+            pos: { line: 1, column: 1 },
+          },
+          pos: { line: 1, column: 1 },
+        })),
+        pos: { line: 1, column: 1 },
+      },
+    ]);
+    expect(categoryResult.isErr()).toBe(true);
+    expect(categoryResult._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({ path: "categories.helper.description" }),
+    );
+  });
+
+  it("bounds issue count, path, message, and aggregate diagnostic size", () => {
+    const longKey = "x".repeat(MAX_VALIDATION_PATH_LENGTH * 4);
+    const unknowns = Array.from(
+      { length: MAX_VALIDATION_ISSUES * 4 },
+      (_, index) => `${longKey}${index} true`,
+    ).join("\n");
+    const result = validateSource(`agent helper { ${unknowns} }`);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const aggregate = errors.reduce(
+      (size, error) => size + error.path.length + error.message.length,
+      0,
+    );
+
+    expect(errors.length).toBeLessThanOrEqual(MAX_VALIDATION_ISSUES);
+    expect(
+      Math.max(...errors.map((error) => error.path.length)),
+    ).toBeLessThanOrEqual(MAX_VALIDATION_PATH_LENGTH);
+    expect(
+      Math.max(...errors.map((error) => error.message.length)),
+    ).toBeLessThanOrEqual(MAX_VALIDATION_MESSAGE_LENGTH);
+    expect(aggregate).toBeLessThanOrEqual(MAX_VALIDATION_DIAGNOSTIC_SIZE);
+    expect(errors.at(-1)?.message).toBe(VALIDATION_DIAGNOSTICS_TRUNCATED);
+  });
+});
 
 describe("validate — model thinking suffix", () => {
   it("preserves plain, suffixed, and escaped raw model entries", () => {
@@ -33,7 +543,6 @@ describe("validate — model thinking suffix", () => {
 }
 category backend {
   description "Backend services and persistence"
-  patterns ["src/**"]
   models ["plain-category", "category-model#max", "category\\#model"]
 }`);
     expect(result.isOk()).toBe(true);
@@ -80,9 +589,8 @@ describe("validate — valid agent", () => {
     delegate allow
     network ask
   }
-  triggers [
-    { domain "Orchestration" trigger "Complex tasks" }
-  ]
+  triggers ["Complex tasks"]
+  fast true
 }`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
@@ -93,6 +601,8 @@ describe("validate — valid agent", () => {
     expect(config.agents.loom?.mode).toBe("primary");
     expect(config.agents.loom?.models).toEqual(["claude-sonnet-4-5"]);
     expect(config.agents.loom?.skills).toEqual(["tdd"]);
+    expect(config.agents.loom?.triggers).toEqual(["Complex tasks"]);
+    expect(config.agents.loom?.fast).toBe(true);
   });
 
   it("agent with prompt_file (safe path)", () => {
@@ -109,10 +619,11 @@ describe("validate — valid agent", () => {
 });
 
 describe("validate — valid category", () => {
-  it("category with patterns and tool_policy", () => {
+  it("category with fast, triggers, and tool_policy", () => {
     const src = `category backend {
   description "Backend APIs"
-  patterns ["src/api/**", "src/db/**"]
+  triggers ["API and database changes"]
+  fast true
   temperature 0.2
   tool_policy {
     read allow
@@ -124,11 +635,100 @@ describe("validate — valid category", () => {
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
     expect(config.categories.backend).toBeDefined();
-    expect(config.categories.backend?.patterns).toEqual([
-      "src/api/**",
-      "src/db/**",
+    expect(config.categories.backend?.triggers).toEqual([
+      "API and database changes",
     ]);
+    expect(config.categories.backend?.fast).toBe(true);
     expect(config.categories.backend?.temperature).toBe(0.2);
+  });
+});
+
+describe("validate — fast intent and string triggers", () => {
+  const scopes = [
+    ["agent", "agent helper {", "}", "agents.helper"],
+    [
+      "category",
+      'category helper {\n  description "Bounded work"',
+      "}",
+      "categories.helper",
+    ],
+  ] as const;
+
+  function expectBoundedDiagnostic(source: string, expectedPath: string): void {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      const issue = result.error.find((error) => error.path === expectedPath);
+      expect(issue).toBeDefined();
+      expect(issue?.type).toBe("ValidationError");
+      expect(issue?.message.length).toBeLessThanOrEqual(256);
+    }
+  }
+
+  for (const [kind, open, close, path] of scopes) {
+    it(`${kind} preserves omission of fast and triggers`, () => {
+      const result = validateSource(`${open}\n${close}`);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        const entry =
+          kind === "agent"
+            ? result.value.agents.helper
+            : result.value.categories.helper;
+        expect(entry?.fast).toBeUndefined();
+        expect(entry?.triggers).toBeUndefined();
+      }
+    });
+
+    it(`${kind} rejects fast false with a bounded diagnostic`, () => {
+      expectBoundedDiagnostic(
+        `${open}\n  fast false\n${close}`,
+        `${path}.fast`,
+      );
+    });
+
+    it(`${kind} rejects wrong scalar fast types`, () => {
+      for (const value of ['"true"', "1", '"fast"']) {
+        expectBoundedDiagnostic(
+          `${open}\n  fast ${value}\n${close}`,
+          `${path}.fast`,
+        );
+      }
+    });
+
+    it(`${kind} rejects empty and invalid triggers`, () => {
+      const cases = [
+        ["triggers []", `${path}.triggers`],
+        ['triggers [""]', `${path}.triggers.0`],
+        ['triggers ["   "]', `${path}.triggers.0`],
+        ["triggers [1]", `${path}.triggers.0`],
+      ] as const;
+      for (const [property, expectedPath] of cases) {
+        expectBoundedDiagnostic(
+          `${open}\n  ${property}\n${close}`,
+          expectedPath,
+        );
+      }
+    });
+
+    it(`${kind} rejects old structured trigger objects`, () => {
+      expectBoundedDiagnostic(
+        `${open}\n  triggers [{ domain "Orchestration" trigger "Plan work" }]\n${close}`,
+        `${path}.triggers.0`,
+      );
+    });
+
+    it(`${kind} rejects provider acceleration aliases`, () => {
+      for (const alias of ["service_class", "speed", "variant", "priority"]) {
+        expectBoundedDiagnostic(`${open}\n  ${alias} true\n${close}`, path);
+      }
+    });
+  }
+
+  it("rejects removed category patterns with a bounded diagnostic", () => {
+    expectBoundedDiagnostic(
+      `category helper {\n  description "Bounded work"\n  patterns ["src/**"]\n}`,
+      "categories.helper",
+    );
   });
 });
 
@@ -198,26 +798,12 @@ describe("validate — schema constraint errors", () => {
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
   });
-
-  it("empty patterns array on category → err", () => {
-    const src = `category empty {
-  description "Category with no patterns"
-  patterns []
-}`;
-    const result = validateSource(src);
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
-    expect(errors.some((e) => e.path.includes("patterns"))).toBe(true);
-  });
 });
 
 describe("validate — category description is required and non-blank", () => {
-  const patternsOnly = `  patterns ["src/**"]`;
-
   it("category with a non-blank description → ok and preserved", () => {
     const src = `category backend {
   description "Backend services and persistence"
-${patternsOnly}
 }`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
@@ -229,7 +815,6 @@ ${patternsOnly}
 
   it("category with no description → err at categories.<name>.description", () => {
     const src = `category backend {
-${patternsOnly}
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
@@ -243,7 +828,6 @@ ${patternsOnly}
   it("category with an empty description → err with the non-empty message", () => {
     const src = `category backend {
   description ""
-${patternsOnly}
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
@@ -259,7 +843,6 @@ ${patternsOnly}
   it("category with a whitespace-only description → err with the non-empty message", () => {
     const src = `category backend {
   description "   "
-${patternsOnly}
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
@@ -274,11 +857,9 @@ ${patternsOnly}
 
   it("reports each undescribed category separately", () => {
     const src = `category backend {
-${patternsOnly}
 }
 
 category frontend {
-  patterns ["src/components/**"]
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
@@ -619,7 +1200,6 @@ describe("validate — prompt_append_file (category)", () => {
   it("category with prompt_append_file → ok and field preserved", () => {
     const src = `category frontend {
   description "Frontend components"
-  patterns ["src/components/**"]
   prompt_append_file "cat-extra.md"
 }`;
     const result = validateSource(src);
@@ -632,7 +1212,6 @@ describe("validate — prompt_append_file (category)", () => {
   it("category with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
     const src = `category frontend {
   description "Frontend components"
-  patterns ["src/components/**"]
   prompt_append "inline extra"
   prompt_append_file "cat-extra.md"
 }`;

@@ -9,6 +9,11 @@ import type {
   SettingAssignment,
   WorkflowBlock,
 } from "../ast.js";
+import {
+  CONFIG_ERRORS_TRUNCATED,
+  MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+  MAX_CONFIG_ERROR_FIELD_LENGTH,
+} from "../config-error-policy.js";
 import { tokenize } from "../lexer.js";
 import { parse } from "../parser.js";
 
@@ -19,6 +24,83 @@ function parseSource(src: string) {
     throw new Error(`Lex errors: ${JSON.stringify(lexResult.error)}`);
   return parse(lexResult.value);
 }
+
+describe("Parser — structural preservation", () => {
+  it("marks bare flags without changing explicit true literals", () => {
+    const bare = parseSource(
+      `agent helper { fast }`,
+    )._unsafeUnwrap()[0] as AgentBlock;
+    const explicit = parseSource(
+      `agent helper { fast true }`,
+    )._unsafeUnwrap()[0] as AgentBlock;
+
+    expect(bare.properties[0]).toMatchObject({ key: "fast", bare: true });
+    expect(explicit.properties[0]).toMatchObject({ key: "fast" });
+    expect(explicit.properties[0]?.bare).toBeUndefined();
+  });
+
+  it("preserves bare trigger identifiers for fail-closed validation", () => {
+    for (const source of [
+      `agent helper { triggers [bareword] }`,
+      `category helper { description "Helper" triggers [bareword] }`,
+    ]) {
+      const node = parseSource(source)._unsafeUnwrap()[0] as
+        | AgentBlock
+        | CategoryBlock;
+      const triggers = node.properties.find(
+        (property) => property.key === "triggers",
+      )?.value as ArrayValue;
+      expect(triggers.elements[0]?.kind).toBe("identifier");
+    }
+  });
+
+  it("rejects duplicate extracted workflow and step properties", () => {
+    for (const source of [
+      `workflow flow { extends "one" extends "two" }`,
+      `workflow flow { step run { insert_before "one" insert_before "two" } }`,
+    ]) {
+      const result = parseSource(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          type: "UnexpectedToken",
+          expected: expect.stringContaining("unique"),
+        }),
+      );
+    }
+  });
+
+  it("bounds adversarial parser fields at the direct boundary", () => {
+    const result = parseSource(`agent helper x${"y".repeat(19_999)}`);
+    const errors = result._unsafeUnwrapErr();
+    const size = errors.reduce((total, error) => {
+      if (error.type === "UnexpectedToken") {
+        return total + error.found.length + error.expected.length;
+      }
+      if (error.type === "MissingBlockName") {
+        return total + error.blockType.length;
+      }
+      return total;
+    }, 0);
+
+    expect(errors).toContainEqual(
+      expect.objectContaining({
+        type: "UnexpectedToken",
+        found: expect.stringContaining("[truncated]"),
+      }),
+    );
+    expect(
+      errors.every(
+        (error) =>
+          error.type !== "UnexpectedToken" ||
+          (error.found.length <= MAX_CONFIG_ERROR_FIELD_LENGTH &&
+            error.expected.length <= MAX_CONFIG_ERROR_FIELD_LENGTH),
+      ),
+    ).toBe(true);
+    expect(size).toBeLessThanOrEqual(MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE);
+    expect(JSON.stringify(errors)).toContain(CONFIG_ERRORS_TRUNCATED);
+  });
+});
 
 describe("Parser — model strings", () => {
   it("keeps plain, suffixed, and escaped hashes opaque inside string values", () => {
@@ -83,41 +165,52 @@ describe("Parser — agent block", () => {
     });
   });
 
-  it("parses agent with triggers array of block objects", () => {
+  it("parses agent with fast and ordered string triggers", () => {
     const src = `agent loom {
-  triggers [
-    { domain "Orchestration" trigger "Complex tasks" }
-  ]
+  fast true
+  triggers ["Complex tasks", "System design"]
 }`;
     const result = parseSource(src);
     expect(result.isOk()).toBe(true);
     const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    expect(agent.properties.find((p) => p.key === "fast")?.value).toMatchObject(
+      {
+        kind: "boolean",
+        value: true,
+      },
+    );
     const triggers = agent.properties.find((p) => p.key === "triggers");
     expect(triggers?.value.kind).toBe("array");
     const arr = triggers?.value as ArrayValue;
-    expect(arr.elements).toHaveLength(1);
-    expect(arr.elements[0]?.kind).toBe("block");
+    expect(arr.elements).toMatchObject([
+      { kind: "string", value: "Complex tasks" },
+      { kind: "string", value: "System design" },
+    ]);
   });
 });
 
 describe("Parser — category block", () => {
-  it("parses a category with patterns array", () => {
+  it("parses a category with fast and ordered string triggers", () => {
     const src = `category backend {
-  patterns ["src/api/**", "src/db/**"]
+  description "Backend work"
+  fast true
+  triggers ["API changes", "Database changes"]
 }`;
     const result = parseSource(src);
     expect(result.isOk()).toBe(true);
     const cat = result._unsafeUnwrap()[0] as CategoryBlock;
     expect(cat.type).toBe("category");
     expect(cat.name).toBe("backend");
-    const patterns = cat.properties.find((p) => p.key === "patterns");
-    expect(patterns?.value.kind).toBe("array");
-    const arr = patterns?.value as ArrayValue;
-    expect(arr.elements).toHaveLength(2);
-    expect(arr.elements[0]).toMatchObject({
-      kind: "string",
-      value: "src/api/**",
+    expect(cat.properties.find((p) => p.key === "fast")?.value).toMatchObject({
+      kind: "boolean",
+      value: true,
     });
+    const triggers = cat.properties.find((p) => p.key === "triggers");
+    expect(triggers?.value.kind).toBe("array");
+    expect((triggers?.value as ArrayValue).elements).toMatchObject([
+      { kind: "string", value: "API changes" },
+      { kind: "string", value: "Database changes" },
+    ]);
   });
 });
 
@@ -307,7 +400,7 @@ describe("Parser — multiple top-level blocks", () => {
 }
 
 category backend {
-  patterns ["src/api/**"]
+  description "Backend work"
 }
 
 log_level INFO`;

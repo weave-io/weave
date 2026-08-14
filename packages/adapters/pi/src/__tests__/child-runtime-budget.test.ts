@@ -21,6 +21,7 @@ import {
   PiRpcChild,
 } from "../rpc-child.js";
 import type { JsonValue } from "../strict-json.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 import {
   FakeChildProcessPort,
   FakeSpawnedProcess,
@@ -228,6 +229,7 @@ async function startRunningChild(
     processPort,
     randomPort,
     hmacPort,
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     logger: noopLogger(),
     timerPort,
     settlementTimeoutMs: INACTIVITY_MS,
@@ -363,6 +365,7 @@ describe("absolute child runtime budget", () => {
       processPort,
       randomPort,
       hmacPort,
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       logger: noopLogger(),
       timerPort,
       settlementTimeoutMs: INACTIVITY_MS,
@@ -388,6 +391,7 @@ describe("absolute child runtime budget", () => {
       processPort,
       randomPort,
       hmacPort,
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       logger: noopLogger(),
       timerPort,
     });
@@ -407,6 +411,7 @@ describe("absolute child runtime budget", () => {
       processPort,
       randomPort,
       hmacPort,
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       logger: noopLogger(),
       timerPort,
       runtimeBudgetMs: RUNTIME_BUDGET_MS,
@@ -501,6 +506,7 @@ describe("absolute child runtime budget", () => {
       processPort,
       randomPort,
       hmacPort,
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       logger: noopLogger(),
       timerPort,
       settlementTimeoutMs: INACTIVITY_MS,
@@ -541,6 +547,7 @@ describe("absolute child runtime budget", () => {
       processPort,
       randomPort,
       hmacPort,
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       logger: noopLogger(),
       timerPort,
       settlementTimeoutMs: INACTIVITY_MS,

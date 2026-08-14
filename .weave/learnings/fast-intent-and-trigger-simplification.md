@@ -1,0 +1,137 @@
+# Fast intent and trigger simplification learnings
+
+## Task 3 review remediation
+
+- Gate findings: bare trigger identifiers and bare `fast` crossed the generic parser boundary; AST conversion used prototype-bearing records and overwrote duplicates; Zod diagnostics exposed attacker-controlled key text without global bounds.
+- Resolution: preserve bare-flag provenance in the AST, then fail closed for agent/category `fast` unless the source says `fast true`; require trigger AST elements to be quoted strings; reject dangerous names and duplicate declarations/properties before conversion, including nested blocks, workflows, and steps.
+- Conversion now uses null-prototype records with explicit own-property definitions. Validation diagnostics cap issues, path length, message length, and aggregate size, with a deterministic truncation marker.
+- Intentional bare flags remain valid in their scoped grammar, including `extension_points { before-plan }`.
+
+## Task 3 repeat-audit remediation
+
+- Generated and normalized destinations are also ownership boundaries. Source properties must not target a field already supplied by declaration syntax or normalization. A reusable pre-conversion check now rejects workflow `steps`, step `name` plus `display_name`, and completion-block `method` when the named completion already generates it. This prevents silent overwrite before schema validation.
+- Diagnostic bounds apply to the complete `ConfigError` union, not only Zod issues. One shared policy caps issue count, every source-controlled string field, and aggregate diagnostic size for direct lexer, parser, validator, and end-to-end parse boundaries. It uses deterministic truncation and a stable marker. A duplicate 20,000-character key now returns bounded, repeatable diagnostics.
+- Exported agent, category, and root schemas now inspect the complete input graph through descriptors before Zod reads values. They accept ordinary own writable data properties on plain and null-prototype records. They reject inherited input, accessors, unexpected prototypes, symbols, and unsafe descriptors. Getter rejection occurs without getter execution.
+
+## Task 3 final direct-export remediation
+
+- Descriptor inspection alone was insufficient because the schema preprocessor returned the original plain object. Zod could still find an enumerable field on `Object.prototype`; an inherited category `description` getter executed once and entered validation. The schema boundary now passes a descriptor-copied graph to Zod. Objects use null prototypes, arrays are rebuilt from validated own index and length descriptors, and source values are obtained only from data descriptors.
+- Direct crafted workflow and step ASTs could supply generic properties that conversion later overwrote with dedicated AST fields. Destination ownership now also reserves workflow `extends` and step `insert_before` plus `insert_after`, in addition to the prior workflow `steps`, step `name`/`display_name`, and completion `method` checks.
+- Exported `validate()` previously traversed caller-owned AST objects before descriptor checks. Inherited `key` fields and accessor-backed `value` fields could enter conversion and execute getters. Schema and AST boundaries now share one descriptor-safe graph copier. `validate()` copies the complete AST before any AST property access and rejects inherited fields, accessors, symbols, unsafe descriptors, cycles, sparse or extended arrays, and unexpected prototypes as bounded `ValidationError` results. Valid parser ASTs and safe plain or null-prototype direct ASTs remain accepted.
+
+## Task 3 callable-node remediation
+
+- The safe graph copier treated every non-object `typeof` result as a primitive. Because JavaScript reports callables as `"function"`, a callable AST node with an own `type` getter bypassed the descriptor checks and reached exported `validate()`, where the getter ran repeatedly.
+- `copyGraph()` now rejects callable values before its primitive return path. Direct `validate()` and exported-schema regressions prove that callable graph nodes fail without executing their getters, while the existing suite continues to cover valid primitive values and prior graph protections.
+
+## Task 4 conversion boundary
+
+- Legacy JSONC conversion must copy the parsed graph through own enumerable writable data descriptors before any field read. jsonc-parser output is untrusted even though it usually creates plain objects.
+- Trigger conversion selects nonblank `routing_hint`, else nonblank `trigger`, preserves source order, and drops only exact duplicate strings. Every discarded structured field and every malformed or empty entry gets a warning.
+- Valid category patterns are dropped with a warning; malformed patterns also warn. A category with a nonblank description still converts. Generated DSL must not emit `patterns`, trigger objects, or inferred `fast`.
+- Task 5 owns engine descriptor, category-shuttle inheritance, and normalized pattern removal. This slice does not change engine production files.
+
+## Task 4 review remediation
+
+- Gate findings: `key in` on a prototype-bearing lookup table treated `toString`/`constructor` as members and threw on own `__proto__`; unvalidated custom names and scalars could emit invalid DSL; `jsonc-parser.parse()` collapsed duplicate keys; warnings interpolated discarded values, paths, names, and modes.
+- Resolution: inspect the JSONC CST before parse for duplicate and dangerous keys, bound raw source length, and copy through the existing descriptor-safe graph. Lookup tables are Maps/Sets with own-property checks. Custom agent/category names must match the current identifier contract; temperatures must be finite and in `0..2`; models must pass current model-intent parsing. Generated blocks and the final document are validated with `parseConfig()` and omitted when invalid.
+- Warnings report a bounded path (vocabulary keys, indices, or `<entry>`), a fixed reason, and a primitive type category. They never interpolate discarded values, prompt paths, invalid names, modes, or malformed scalars. Warning count, path/reason length, and aggregate bytes stay capped with a deterministic truncation marker.
+
+## Task 5 descriptor boundary
+
+- Engine descriptors now carry only `fast?: true` and `DelegationTarget.triggers: string[]`. Category metadata no longer has `patterns`. `generateCategoryShuttles()` copies category triggers, never base Shuttle triggers, and sets `fast true` when the category or the base Shuttle declares it. There is no `false` value.
+- Descriptor outputs must copy trigger, model, and skill arrays. Sharing `targetConfig.triggers` or `category.triggers` leaks caller mutation into the normalized shape.
+- Changing `DelegationTarget.triggers` to `string[]` immediately breaks later-task consumers that still validate object triggers, including the Pi bootstrap schema (Task 8) and template trigger projection (Task 6). This slice keeps a compile-only template-context bridge and does not migrate those owners.
+
+## Task 6 prompt and capability boundary
+
+- Template context now copies `DelegationTarget.triggers` as ordered `string[]`. Domains, trigger objects, and `CategoryInput.patterns` are gone. Loom renders exact strings with `{{.}}` and routes category shuttles by description plus listed triggers only.
+- The optional capability ID is `provider-fast-activation`. Bounded `runtimeStatus` values reuse existing readiness: no `fast true` emits no state; `declared`/`requested`/`not-confirmed` stay at or below `degraded`; `applied` may only accompany `native`; `unsupported` cannot be raised. Static declarations are ceilings.
+- Task 1 ceilings: Pi and OpenCode are `degraded`/`not-confirmed` (request-capable, not applied/native). Claude Code static materialization is `unsupported`. Optional gaps do not enter health-only mode.
+- Immediate leftover type consumers needed count updates (`ALL_CAPABILITY_IDS.length` is 22) and leftover `patterns` fixture deletions. Root typecheck still fails in `packages/adapters/pi/src/extension.ts` `parseChildBootstrapBody` because Task 8 still owns converting authenticated child bootstrap triggers from objects to `string[]`.
+- Exported `CapabilityEntrySchema` must discriminate `provider-fast-activation` and reuse `ProviderFastActivationStatusSchema` for present `runtimeStatus`. A standalone status enum is not an enforcement boundary; `applied-with-secret-payload` parsed until the exported contract reused that enum.
+
+## Task 7 primary activation boundary
+
+- Pi primary activation now copies `fast?: true` onto `PiActivePrimary` with identity, prompt, model, and skills. Omission means no intent. Never store `false`, and never infer from model or provider IDs.
+- Request snapshots are instance-owned and frozen. They carry activation `generation`, primary name, copied model intent, selected model when available, and `fast?: true`. A later successful `activate()` increments generation, so a stale snapshot cannot describe the later primary.
+- `projectPiProviderEvent` copies only hook name and integer response status. Payload, headers, and response bodies stay behind this projection. Task 9 owns mutation and evidence.
+- Failed `activate()` still returns typed `NotEligiblePrimary` and leaves `getCurrent()` unchanged. Health-only, unsupported, and failed boot paths have no snapshot. Task 8 still owns authenticated child bootstrap trigger conversion; that remains the known Pi typecheck failure.
+- Provider events now fail closed from own safe data descriptors without executing accessors.
+
+## Task 7 snapshot authentication remediation
+
+- Pi request snapshot resolution now authenticates exact generation, primary identity, fast presence/value, ordered model intent, and selected model. Forged, omitted, extra, reordered, or mutated model fields return the typed stale result; capture and resolve return normalized copies.
+- Committed active-primary state uses bounded descriptor-safe copy-on-commit and copy-on-read; hostile skill metadata accessors and cycles are omitted without execution, so source mutation and reads cannot alter the prompt, snapshot, or state.
+
+## Task 8 child bootstrap fast and trigger boundary
+
+- Pi ordinary and direct-step bootstraps carry optional literal `fast: true` and ordered `DelegationTarget.triggers: string[]`; direct dispatch forwards the selected descriptor intent, copies nested model/target data, and omits absent fast to preserve provider defaults.
+- `parseControlBody` copies hostile graphs through a descriptor-only bounded copier before canonicalization and Zod: depth 64, 4,096 nodes, 4,096 aggregate properties, 512 properties per object, 256 KiB string budget, and 512-element arrays. It rejects cycles, accessors, symbols, callables, unsafe prototypes, and sparse arrays without executing getters; bootstrap canonical bytes remain capped at 64 KiB.
+- Child fast and delegation state commits only after required bootstrap application and before acknowledgement. Signed body construction omits undefined optional keys.
+
+## Task 9 slice D sanitized telemetry and status
+
+- The `provider-fast` journal family accepts only the public tracker snapshot: provider family, API family, rule ID, bounded sequence/pending count, collision, state, evidence kind/outcome, and a fixed reason. Extra keys, raw model/provider strings, payloads, headers, credentials, prompts, URLs, paths, and stacks are rejected at the projection boundary.
+- Lifecycle events persist once per sequence/state (`declared`, `requested`, `not-confirmed`, `unsupported`). No-intent never writes. Session replacement clears in-memory reporting dedupe only. Telemetry write failure degrades through the existing journal path and does not change request mutation.
+- `/weave:status` may add one concise line: `fast: requested`, `fast: not-confirmed`, `fast: unsupported (<fixed reason>)`, or `fast: declared`. It never says applied/active/confirmed. HTTP 2xx remains not-confirmed.
+
+## Task 9 slice E abandoned-attempt settlement
+
+- `requested` is transient attempt state, so an attempt that never receives `after_provider_response` must not keep reporting it. Expiring a `requested` attempt now terminates it as `not-confirmed` with `none`/`none` evidence and the fixed expire reason; expiring a `declared` attempt stays `declared`. Both keep the sequence and free the tracker slot, so a late or forged token cannot revive them.
+- `ProviderFastCoordinator.cancelActive(reason)` is the only cancellation seam. It reports `no-state` when nothing is active, keeps the settled snapshot in `latest()`, and fails closed on a malformed reason.
+- Pi's `agent_settled` is the abandonment signal for a cancelled or aborted turn. Session replacement, primary switch, and hook-detected generation/primary mismatch now settle with `session-replaced`, `primary-switched`, or `generation-superseded` instead of a silent reset, so the journal keeps one terminal record per sequence.
+- The `sequence:state` journal dedupe key already separates a cancelled `requested` attempt from its earlier `requested` event. A cancelled `declared` attempt intentionally records nothing new.
+
+## Task 9 remediation: live model, narrow patching, and terminal-only evidence
+
+- The provider hooks classify from `ctx.model` (`projectPiHookModel` reads own data descriptors for `provider`, `id`, `api`, `baseUrl`), never from activation-time state. Correlation now includes that model identity, and `model_select` settles an in-flight attempt with `model-switched`. A `/model` change therefore cannot carry one model's allowlist decision onto another.
+- The allowlist requires a first-party transport: exact `https://api.openai.com` or `https://api.anthropic.com` origin, no port, no userinfo, case-insensitive host. Anything else is `transport-not-first-party`. No credential, header, or environment value is read to decide this.
+- Payload mutation is a narrow patch, not a rebuilt graph. Validation covers the container (plain object, own prototype) and the one owned field. An exact existing value returns the caller's own reference; a missing field yields one shallow own-descriptor copy, so nested objects, arrays, large strings, symbols, cycles, and unrelated accessors keep their identity and are never executed. There are no global payload depth/size/node bounds any more.
+- Header handling reads only the `anthropic-beta` entry. Every non-exact existing value is `request-collision`; Weave never appends to another extension's beta value. Unrelated header names, values, `null` deletions, and counts are not validated. `applyAnthropicProviderFastHeaders` reports the exact write so `revertAnthropicProviderFastHeaderWrite` can undo it only while it still holds the token Weave wrote.
+- `applyRequest` returns `applied`, `unsupported` (typed mutation reason, header rolled back), or `settled` (live state moved on: `generation-superseded`, `primary-switched`, `model-switched`). Typed terminal outcomes are no longer collapsed into `out-of-order`, which is now reserved for genuine ambiguity such as a forged token or no active attempt.
+- A second `before_provider_request` with no intervening response is a transport retry: the previous attempt settles as `expired` (`not-confirmed`) and the retry becomes a fresh correlated attempt that still receives the controls.
+- Child sessions get request-scoped controls too. `PiChildModeState.bootstrapGeneration` increments on each committed bootstrap and acts as the child's intent generation; ordinary and direct-step children share one snapshot source (`agentName` + authenticated `fast`).
+- Telemetry persists only terminal outcomes (`not-confirmed`, `unsupported`); `declared` and `requested` are live status only and return `transient`. The dedupe window is bounded to `PI_PROVIDER_FAST_DEDUPE_LIMIT` (64) keys with FIFO eviction.
+
+## Task 9 final gap: header lifecycle and proven transport
+
+- The beta-header write is owned across the whole attempt lifecycle, not only inside `applyRequest`. `cancelActive`, `reset`, `failClosed`, the overlap and tracker-error exits of `beginHeaders`, and every generation/primary/model mismatch now revert exactly the still-matching write Weave made. Ownership is released the moment `applyRequest` marks the attempt `requested`, so a request that already carries `speed`/`service_tier`, and the modelled transport retry that reuses the same header map, keep their header. A malformed or frozen header map produces no write, so nothing is rolled back and no write is claimed.
+- `ctx.model.baseUrl` is declared configuration, not the wire. Pi 0.84.1 builds the request model as `resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model` (`dist/core/model-runtime.js` `prepareRequest`), so an auth-resolved gateway can replace a first-party declaration after activation. Classification now takes `effectiveBaseUrl`: the origin the host proved for *this* request.
+- The proof comes from the documented `ctx.modelRegistry.getProviderAuth(provider)` seam, which the extension docs describe as resolving the provider's current API key, headers, base URL, and environment. Only `auth.baseUrl` is read. A nonempty string is the final origin; an absent or empty value proves the declared URL survives, matching Pi's own truthiness test. A missing seam, a rejected resolution, an unconfigured provider, or an unrecognized shape leaves the origin unproven and fails closed as `transport-not-first-party`.
+- Proving the transport requires awaiting the host, so the three provider hooks are async. Auth resolution runs only for a snapshot that actually declares `fast true`, so ordinary sessions pay nothing. The proven origin joins the correlation key, so an auth-resolved transport change mid-request settles the attempt instead of inheriting its allowlist decision. Children resolve the same proof from their own hook context.
+
+## Task 9 fail-closed redesign: Pi reports unsupported
+
+- `getProviderAuth()` is a *fresh* auth resolution. It reports what a new resolution would return, not the transport the request a hook already holds was prepared with, so it cannot bind a first-party proof to that request. Awaiting it also made the three provider hooks async, which let a late hook cross a session generation and settle a newer attempt. There is no documented same-request effective-transport seam in Pi, and internal or timing-based approximations are not proof.
+- Without a transport proof, an allowlist match is a guess, so `requested` was never truthful either. Pi now registers no `before_provider_headers`, `before_provider_request`, or `after_provider_response` handler at all. A fast-declaring primary, ordinary child, or direct-step child leaves the provider payload reference and the header map exactly as other handlers left them, and no `anthropic-beta`, `service_tier`, or `speed` value is ever written. The `model_select` hook existed only to settle in-flight attempts and is gone with them.
+- `provider-fast-activation.ts` is now pure and stateless: no tracker, no coordinator, no correlation token, no mutation. It exports the contract enums plus `classifyProviderFastIntent`, which reads exact own `fast: true` through a data descriptor and returns either `no-intent` or the single frozen terminal snapshot.
+- Terminal evidence now uses the normative sanitized vocabulary: kind `none`, outcome `absent`, reason `harness-seam-unavailable`. The retired `response-status`/`unavailable` pair and every attempt state except `unsupported` are rejected at the telemetry projection boundary, so a stale value cannot be persisted.
+- Attempt loss is structurally impossible because no attempt exists. Reporting happens once per session at `agent_settled`, and the telemetry dedupe key claims its slot *before* the async journal write; claiming only on success let two settled turns persist the same outcome twice. A failed write releases the claim so a later turn may retry.
+- The Pi capability declaration is `unsupported`/`unsupported`, matching OpenCode and Claude Code. Optional-capability gaps do not enter health-only mode, so activation, prompts, models, tools, delegation, and bootstrap are unaffected.
+
+## Task 13 verification findings
+
+- Bisecting against the plan's own parent commit is the only reliable way to attribute a failure. The branch carries 104 commits from two plans, so `main`'s merge base attributes far too much. At the plan parent (`1d091c8`) the whole suite is green except six declared RED tests, which isolates every remaining failure to this plan.
+- Those six remaining failures (`Pi-native delegation readiness contract`, `Pi-native RPC launch contract`, `Pi-native deferred-header session contract`) are the intentional RED contract from Task 10 of `.weave/plans/pi-child-overlay-ux-feedback.md`. Task 11 of that plan owns turning them green; they are not fast-intent fallout and are out of this plan's scope.
+- Making agent and category schemas `.strict()` also breaks fixtures that relied on silent unknown-key stripping. `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts` carried a `delegation_targets` key that never existed in the DSL and had always been discarded, so deleting it preserved behavior exactly.
+- Task 8's descriptor-safe control-body copier applied one 256 KiB string bound to every control kind, which silently broke the one string the transport chunks. A `delegate-request` task larger than that bound failed on the child send path *and* on the parent's reassembly re-validation. Graph-copy bounds must follow the transport contract per kind: ordinary bodies keep the envelope-sized ceiling; a chunked task may reach the assembler's aggregate payload budget. UTF-16 code units never outnumber UTF-8 bytes, so the assembler's byte bound is a sound unit bound.
+- Adding a capability ID is a release-metadata change too. `PI-CAP`'s closed-set check greps every member of `ALL_CAPABILITY_IDS` in the requirement's referenced test files, so `provider-fast-activation` needed a cited test that names it.
+- Repository tests must never read the developer's home. Config discovery reads `$HOME/.weave` before the project scope, so the CLI routing and prompt-snapshot integration suites merged whatever global config the developer had. A breaking DSL change turns a legacy global config into a parse error, which made those suites fail locally while passing in CI. Both suites now pin `HOME` at a nonexistent directory.
+- Adversarial DSL probes confirm the closed contract: `fast true` parses on agents and categories; `fast false`, `fast "true"`, `fast 1`, bare `fast`, the aliases `service_class`/`speed`/`variant`/`priority`, structured trigger objects, category `patterns`, unknown agent/category keys, empty trigger arrays, and blank trigger strings all fail.
+- Built declarations carry no `DelegationTrigger` type and no category `patterns` field. `AgentConfig` and `CategoryConfig` expose `triggers?: string[]` and `fast?: true`, and `DelegationTarget.triggers` is `string[]`.
+- No adapter can reach `applied`. Pi, OpenCode, and Claude Code each declare `provider-fast-activation` as `unsupported`/`unsupported`, and Pi's extension registers no `before_provider_request`, `before_provider_headers`, or `after_provider_response` handler at all.
+- Every stale-term hit is migration guidance, plan/learning history, a documented rejection example, or a negative assertion. No active production path or contract uses `routing_hint`, `patterns [`, structured triggers, or `DelegationTrigger`.
+
+## Task 13 continuation: resolving the six Pi-native failures
+
+- The six failures were the intentional RED contract of Task 10 in `.weave/plans/pi-child-overlay-ux-feedback.md`, so turning them green means implementing that plan's Task 11. The normative source is `docs/specs/33-spec-pi-adapter/33-path-session-conformance-design.md` (Warp-approved), not the older Spec 33 §16 prose it supersedes. Read the design first; the tests encode it exactly.
+- The store already implemented the deferred-header bridge. Its only blocker was a host preflight that refused before any call. Deleting a blanket refusal is not the same as weakening containment: the refusal proved nothing, while the adapter-owned root, `0700`/`0600` modes, immediate-child equality, and full identity revalidation do.
+- Prefix containment is the recurring defect. `startsWith(dir + "/")` accepted `<dir>/nested/leaf.jsonl` in both the store and the RPC argv builder. Canonical immediate-child equality — `dirname(path) === dir` plus a nonempty basename — is the only check that matches what the adapter handed the host.
+- Byte-exact header persistence conflicts with rebuilding the header object. Rebuilding reorders keys, so `JSON.stringify` no longer matches Pi's own bytes. Copying through a fixed field order that mirrors Pi's emission order preserves the bytes and still drops unknown keys.
+- Reading every handle getter is a contract, not bookkeeping. Create and reopen must read session file, session directory, session id, header, and persistence, and compare them against the adapter's expectations. Wrapping that read in one `Result.fromThrowable` also satisfies the "getter throws maps to a typed failure" requirement.
+- Retiring a required capability is a five-surface change: the engine's `CapabilityId` union, schema, `REQUIRED_CAPABILITIES`, the adapter's declaration, and the host-surface matrix plus its probe port. `ALL_CAPABILITY_IDS.length` moved 22 → 21, which shows up in engine reporting tests as hard-coded row counts.
+- Repointing the session-mutation gate to `delegated-specialist-execution` over-blocks unless the gap reason is filtered. That capability also fails for `no-delegation-primary` and `config-not-loaded`, which say nothing about storage safety. Gating on a closed set of session-readiness reasons preserves the prior contract: ordinary health-only keeps idempotent cleanup, an unproven session store does not.
+- A production authority must answer a real question. `createPiChildSessionStorageAuthority` now inspects the installed host for the public `SessionManager` constructor pair, so it is neither an unconditional refusal nor an unconditional `ok`. Because production falls back to the real Pi export, a refusal test must pass a host-shaped object without those constructors; passing `undefined` silently uses the installed host.
+- Release metadata pins test titles. `PI-CAP` binds `acceptance-manifest-data.ts` to exact `it(...)` strings, so renaming a capability-prober test breaks `bun test scripts` even when the assertion is unchanged. Rename manifest-cited tests only together with the manifest.
+- The pre-commit hook runs the full suite through lint-staged, which stashes unstaged changes. Files staged in a shell command that later fails to parse are never actually staged, and the result is a commit that does not typecheck on its own. Verify each commit in a throwaway worktree before moving on.

@@ -34,7 +34,7 @@ import {
   type RuntimeStoreError,
   type UsageObservation,
 } from "@weaveio/weave-engine";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import pino from "pino";
 import {
   makeInvariantViolationFailure,
@@ -44,6 +44,17 @@ import {
   makeUsageWriteFailedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
+import {
+  PROVIDER_FAST_EVIDENCE_KINDS,
+  PROVIDER_FAST_EVIDENCE_OUTCOMES,
+  PROVIDER_FAST_STATES,
+  PROVIDER_FAST_UNSUPPORTED_REASONS,
+  type ProviderFastEvidenceKind,
+  type ProviderFastEvidenceOutcome,
+  type ProviderFastPublicSnapshot,
+  type ProviderFastState,
+  type ProviderFastUnsupportedReason,
+} from "./provider-fast-activation.js";
 import type { JsonValue } from "./strict-json.js";
 import type { Clock, PiAdapterLogger } from "./types.js";
 
@@ -70,6 +81,7 @@ export const PI_JOURNAL_FAMILIES = [
   "usage",
   "retention",
   "telemetry-degradation",
+  "provider-fast",
 ] as const;
 
 export type PiJournalFamily = (typeof PI_JOURNAL_FAMILIES)[number];
@@ -80,14 +92,185 @@ export type PiJournalSafeData = Readonly<
 >;
 
 /**
+ * The adapter sends no acceleration control, so the only outcome it can ever
+ * journal is the terminal unsupported one.
+ */
+export const PI_PROVIDER_FAST_JOURNAL_EVENTS = ["unsupported"] as const;
+
+export type PiProviderFastJournalEvent =
+  (typeof PI_PROVIDER_FAST_JOURNAL_EVENTS)[number];
+
+export const PI_PROVIDER_FAST_JOURNAL_DATA_KEYS = [
+  "state",
+  "evidenceKind",
+  "evidenceOutcome",
+  "reason",
+] as const;
+
+export type PiProviderFastJournalDataKey =
+  (typeof PI_PROVIDER_FAST_JOURNAL_DATA_KEYS)[number];
+
+export type PiProviderFastJournalData = {
+  readonly state: ProviderFastState;
+  readonly evidenceKind: ProviderFastEvidenceKind;
+  readonly evidenceOutcome: ProviderFastEvidenceOutcome;
+  readonly reason: ProviderFastUnsupportedReason;
+};
+
+export type PiProviderFastJournalRecordOutcome = "recorded" | "duplicate";
+
+/** Bound for the in-memory terminal-outcome dedupe window. */
+export const PI_PROVIDER_FAST_DEDUPE_LIMIT = 64;
+
+function isProviderFastState(value: unknown): value is ProviderFastState {
+  return (
+    typeof value === "string" &&
+    PROVIDER_FAST_STATES.includes(value as ProviderFastState)
+  );
+}
+
+function isProviderFastEvidenceKind(
+  value: unknown,
+): value is ProviderFastEvidenceKind {
+  return (
+    typeof value === "string" &&
+    PROVIDER_FAST_EVIDENCE_KINDS.includes(value as ProviderFastEvidenceKind)
+  );
+}
+
+function isProviderFastEvidenceOutcome(
+  value: unknown,
+): value is ProviderFastEvidenceOutcome {
+  return (
+    typeof value === "string" &&
+    PROVIDER_FAST_EVIDENCE_OUTCOMES.includes(
+      value as ProviderFastEvidenceOutcome,
+    )
+  );
+}
+
+function isProviderFastUnsupportedReason(
+  value: unknown,
+): value is ProviderFastUnsupportedReason {
+  return (
+    typeof value === "string" &&
+    PROVIDER_FAST_UNSUPPORTED_REASONS.includes(
+      value as ProviderFastUnsupportedReason,
+    )
+  );
+}
+
+function readOwnDataDescriptor(
+  record: object,
+  key: string,
+): Result<unknown, PiAdapterFailure> {
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  if (
+    descriptor === undefined ||
+    !("value" in descriptor) ||
+    descriptor.enumerable !== true
+  ) {
+    return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+  }
+  return ok(descriptor.value);
+}
+
+const inspectProviderFastPublicState = Result.fromThrowable(
+  (input: unknown): Result<PiProviderFastJournalData, PiAdapterFailure> => {
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+    }
+    const prototype = Object.getPrototypeOf(input);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+    }
+    const ownKeys = Reflect.ownKeys(input);
+    if (ownKeys.length !== PI_PROVIDER_FAST_JOURNAL_DATA_KEYS.length) {
+      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+    }
+    for (const key of ownKeys) {
+      if (
+        typeof key !== "string" ||
+        !PI_PROVIDER_FAST_JOURNAL_DATA_KEYS.includes(
+          key as PiProviderFastJournalDataKey,
+        )
+      ) {
+        return err(
+          makeJournalWriteFailedFailure("invalid-provider-fast-state"),
+        );
+      }
+    }
+
+    const state = readOwnDataDescriptor(input, "state");
+    const evidenceKind = readOwnDataDescriptor(input, "evidenceKind");
+    const evidenceOutcome = readOwnDataDescriptor(input, "evidenceOutcome");
+    const reason = readOwnDataDescriptor(input, "reason");
+    if (
+      state.isErr() ||
+      evidenceKind.isErr() ||
+      evidenceOutcome.isErr() ||
+      reason.isErr()
+    ) {
+      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+    }
+    if (
+      !isProviderFastState(state.value) ||
+      !isProviderFastEvidenceKind(evidenceKind.value) ||
+      !isProviderFastEvidenceOutcome(evidenceOutcome.value) ||
+      !isProviderFastUnsupportedReason(reason.value)
+    ) {
+      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+    }
+    return ok(
+      Object.freeze({
+        state: state.value,
+        evidenceKind: evidenceKind.value,
+        evidenceOutcome: evidenceOutcome.value,
+        reason: reason.value,
+      }),
+    );
+  },
+  () => makeJournalWriteFailedFailure("invalid-provider-fast-state"),
+);
+
+/**
+ * Copy only the closed sanitized provider-fast public snapshot. Extra keys,
+ * raw provider/model strings, and secret-shaped fields never enter the copy.
+ */
+export function projectProviderFastJournalData(
+  snapshot: ProviderFastPublicSnapshot,
+): Result<PiProviderFastJournalData, PiAdapterFailure> {
+  return inspectProviderFastPublicState(snapshot).andThen((copied) => copied);
+}
+
+function providerFastDedupeKey(data: PiProviderFastJournalData): string {
+  return `${data.state}:${data.reason}`;
+}
+
+/**
+ * Render the optional `/weave:status` fast line from sanitized public state.
+ * No declared intent produces no line. The line can only report the bounded
+ * unsupported outcome; it never says requested, confirmed, or applied.
+ */
+export function renderProviderFastStatusLine(
+  snapshot: ProviderFastPublicSnapshot | undefined,
+): Result<string | undefined, PiAdapterFailure> {
+  if (snapshot === undefined) {
+    return ok(undefined);
+  }
+  return projectProviderFastJournalData(snapshot).map(
+    (data) => `fast: ${data.state} (${data.reason})`,
+  );
+}
+
+/**
  * Field names that must never appear in doctor / journal-adjacent diagnostic
  * payloads. Matching is case-insensitive on the final path segment.
  */
 const DIAGNOSTIC_FORBIDDEN_FIELD_PATTERN =
   /^(prompt|prompts|transcript|transcripts|message|messages|content|contents|assistant|thinking|reasoningtext|tool|tools|toolresult|toolresults|task|output|text|path|absolutepath|sessionpath)$/iu;
 
-const ABSOLUTE_PATH_LIKE =
-  /(?:^|[\s"'])(?:\/|[A-Za-z]:\\|\\\\)/u;
+const ABSOLUTE_PATH_LIKE = /(?:^|[\s"'])(?:\/|[A-Za-z]:\\|\\\\)/u;
 
 /**
  * Recursively strips transcript-like keys and absolute filesystem path strings
@@ -105,7 +288,11 @@ export function sanitizeDiagnosticValue(value: unknown): unknown {
     }
     return value;
   }
-  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    value === null
+  ) {
     return value;
   }
   if (Array.isArray(value)) {
@@ -288,6 +475,8 @@ export class PiTelemetry implements PiTelemetryUsageSink {
   private readonly maxTrackedUsageIds: number;
   private readonly notified = new Set<string>();
   private readonly usageTimestamps = new Map<string, string>();
+  /** Bounded FIFO of recorded terminal outcome keys; oldest entries evict. */
+  private readonly providerFastReported = new Set<string>();
   private readonly disposeLogSink:
     | (() => ResultAsync<void, PiAdapterFailure>)
     | undefined;
@@ -314,6 +503,61 @@ export class PiTelemetry implements PiTelemetryUsageSink {
   /** Scoped logger for adapter code that wants the rotating sink directly. */
   getLogger(): PiAdapterLogger {
     return this.logger;
+  }
+
+  /**
+   * Persist one sanitized terminal provider-fast outcome. The adapter sends
+   * no acceleration control, so the only durable outcome is the bounded
+   * unsupported one. Repeats of the same state/reason are no-ops, and the
+   * dedupe window itself is bounded.
+   */
+  recordProviderFastTransition(
+    snapshot: ProviderFastPublicSnapshot,
+  ): ResultAsync<PiProviderFastJournalRecordOutcome, PiAdapterFailure> {
+    const projected = projectProviderFastJournalData(snapshot);
+    if (projected.isErr()) {
+      return errAsync(projected.error);
+    }
+    const data = projected.value;
+    const key = providerFastDedupeKey(data);
+    if (this.providerFastReported.has(key)) {
+      return okAsync("duplicate");
+    }
+    // Claim the key before the write starts. Two settled turns can call this
+    // before the first write resolves, and a claim made only on success
+    // would let both of them persist the same outcome.
+    this.rememberProviderFastKey(key);
+    return this.recordJournalEvent({
+      family: "provider-fast",
+      event: data.state,
+      severity: "warn",
+      data,
+    })
+      .map(() => "recorded" as const)
+      .mapErr((failure) => {
+        // Nothing was persisted, so a later attempt may try again.
+        this.providerFastReported.delete(key);
+        return failure;
+      });
+  }
+
+  private rememberProviderFastKey(key: string): void {
+    this.providerFastReported.add(key);
+    while (this.providerFastReported.size > PI_PROVIDER_FAST_DEDUPE_LIMIT) {
+      const oldest = this.providerFastReported.values().next();
+      if (oldest.done === true) {
+        return;
+      }
+      this.providerFastReported.delete(oldest.value);
+    }
+  }
+
+  /**
+   * Clear in-memory provider-fast reporting dedupe after session replacement.
+   * Durable journal events stay as bounded audit facts.
+   */
+  resetProviderFastReporting(): void {
+    this.providerFastReported.clear();
   }
 
   /**
@@ -497,6 +741,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
     this.retention.stop();
     this.notified.clear();
     this.usageTimestamps.clear();
+    this.providerFastReported.clear();
     this.shutdownOperation = this.disposeLogSink?.() ?? okAsync(undefined);
     return this.shutdownOperation;
   }

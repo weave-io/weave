@@ -49,7 +49,7 @@ function allRequiredAt(
   };
 }
 
-/** Build a contract with all 20 capabilities at the given readiness. */
+/** Build a contract with all 21 capabilities at the given readiness. */
 function allCapabilitiesAt(
   readiness: CapabilityReadiness,
 ): AdapterCapabilityContract {
@@ -369,7 +369,7 @@ describe("token-usage-reporting: conditionally required", () => {
 // ---------------------------------------------------------------------------
 
 describe("coverage guard: all spec capabilities are in the profile", () => {
-  it("REQUIRED_CAPABILITIES contains exactly the 12 capabilities from the spec", () => {
+  it("REQUIRED_CAPABILITIES contains exactly the 13 capabilities from the spec", () => {
     const specRequired: CapabilityId[] = [
       "config-materialization",
       "agent-materialization",
@@ -388,7 +388,7 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
     expect(REQUIRED_CAPABILITIES).toHaveLength(12);
   });
 
-  it("OPTIONAL_CAPABILITIES contains exactly the 8 capabilities from the spec", () => {
+  it("OPTIONAL_CAPABILITIES contains exactly the 9 capabilities from the spec", () => {
     const specOptional: CapabilityId[] = [
       "idle-continuation",
       "compaction-recovery",
@@ -398,9 +398,10 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
       "static-artifact-generation",
       "multiple-active-workflows",
       "model-thinking-activation",
+      "provider-fast-activation",
     ];
     expect(new Set(OPTIONAL_CAPABILITIES)).toEqual(new Set(specOptional));
-    expect(OPTIONAL_CAPABILITIES).toHaveLength(8);
+    expect(OPTIONAL_CAPABILITIES).toHaveLength(9);
   });
 
   it("every capability ID appears in exactly one group (required XOR optional)", () => {
@@ -413,12 +414,12 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
     }
   });
 
-  it("evaluation result accounts for all 20 capabilities when all are declared", () => {
+  it("evaluation result accounts for all 21 capabilities when all are declared", () => {
     const contract = fullPassingContract();
     const result = evaluateCoreReadinessProfile(contract);
     const total =
       result.passes.length + result.failures.length + result.warnings.length;
-    expect(total).toBe(20);
+    expect(total).toBe(21);
   });
 });
 
@@ -454,6 +455,31 @@ describe("mixed required+optional failures and warnings", () => {
     const warningIds = [...result.warnings.map((w) => w.capabilityId)].sort();
     expect(failureIds).toEqual(["event-logging", "workflow-persistence"]);
     expect(warningIds).toEqual(["analytics-dashboard", "eval-integration"]);
+  });
+
+  it("does not fail readiness when provider-fast-activation is missing or degraded", () => {
+    const missing = allRequiredAt("native");
+    const missingResult = evaluateCoreReadinessProfile(missing);
+    expect(missingResult.ready).toBe(true);
+    expect(
+      missingResult.warnings.some(
+        (warning) => warning.capabilityId === "provider-fast-activation",
+      ),
+    ).toBe(true);
+
+    const degraded = withOverride(
+      fullPassingContract(),
+      "provider-fast-activation",
+      { readiness: "degraded" },
+    );
+    const degradedResult = evaluateCoreReadinessProfile(degraded);
+    expect(degradedResult.ready).toBe(true);
+    expect(degradedResult.failures).toHaveLength(0);
+    expect(
+      degradedResult.warnings.some(
+        (warning) => warning.capabilityId === "provider-fast-activation",
+      ),
+    ).toBe(true);
   });
 });
 

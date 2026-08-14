@@ -17,6 +17,7 @@ import { createPiExtension } from "../extension.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_SURFACE_IDS } from "../host-inventory.js";
 import { createBunPiNativeSessionFs } from "../native-session-fs.js";
+import { createPiNativeSessionHost } from "../native-session-host.js";
 import { FakePathContainmentPort } from "../path-containment.js";
 import {
   openPiThreadSources,
@@ -33,7 +34,7 @@ import {
   makeRealTempRoot,
   removeRealTempRoot,
 } from "./fakes/real-temp-root.js";
-import { createTestOnlyDescriptorSafeNativeSessionHost } from "./fakes/test-only-descriptor-safe-host.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PARENT = "parent-session-hist-1";
 const CHILD = "hist-child-1";
@@ -105,10 +106,10 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     readonly editorOwnerBefore: unknown;
   }> {
     const fs = createBunPiNativeSessionFs();
-    const nativeHost =
-      createTestOnlyDescriptorSafeNativeSessionHost(SessionManager);
+    const nativeHost = createPiNativeSessionHost(SessionManager);
     const store = new PiNativeSessionStore({
       root: `${root}/sessions`,
+      launch: { mode: "read-only" },
       fs,
       host: nativeHost,
     });
@@ -149,6 +150,7 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     // Durable parent ref ledger, written before the "restart".
     const parentEntries: { type: string; data: unknown }[] = [];
     const seedRefs = new PiChildSessionRefStore({
+      storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       parentSessionId: PARENT,
       append: {
         appendEntry: (type, data) => {
@@ -185,6 +187,7 @@ describe("createPiExtension: historical native overlay after a parent restart", 
         name: HOST_PACKAGE_NAME,
         version: "0.83.0",
       }),
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       capabilityProber: {
         probe: () =>
           ALL_CAPABILITY_IDS.map((capabilityId) => ({

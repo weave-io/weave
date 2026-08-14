@@ -9,6 +9,7 @@ import type { PiHostSurfaceReport } from "./host-inventory.js";
 import {
   createBlockedSessionMutationGate,
   createSessionMutationGate,
+  findSessionMutationGap,
   type PiRequiredCapabilityGap,
   type PiSessionMutationGate,
   SESSION_MUTATION_REQUIRED_CAPABILITY,
@@ -50,7 +51,7 @@ export interface PiOperationHandle {
 
 /**
  * The gap set used when no generation is active. Fail-closed: absence of a
- * generation is not proof that the host provides Pi-native session
+ * generation is not proof that the host provides descriptor-relative session
  * I/O, so the session-mutation gate must still block.
  */
 const BLOCKED_NO_GENERATION_GAPS: readonly PiRequiredCapabilityGap[] =
@@ -150,11 +151,14 @@ export class PiExtensionController {
 
   /**
    * The health-only gate (Pi adapter contract): blocks `mutating` commands while a
-   * required capability is degraded/unsupported, but always allows
-   * `read-only` and `idempotent-cleanup` commands regardless of health.
+   * required capability is degraded/unsupported, and always allows `read-only`
+   * commands regardless of health.
    *
-   * Persistent session-mutation routes still consult
-   * `sessionMutationGate()` before touching controllers or storage.
+   * `idempotent-cleanup` commands stay available under ordinary health-only
+   * mode, exactly as before. They are blocked only when the required
+   * `descriptor-relative-native-session-io` capability is unavailable, because
+   * cleanup still performs a persistent session mutation and the host cannot
+   * prove where that mutation would land.
    */
   evaluateCommandGate(
     commandName: WeaveCommandName,
@@ -164,6 +168,18 @@ export class PiExtensionController {
       return err(makeActivationFailedFailure("no-active-generation"));
     }
     const classification = classifyWeaveCommand(commandName);
+    if (classification !== "read-only") {
+      const gap = findSessionMutationGap(
+        generation.preflight.requiredCapabilityGaps,
+      );
+      if (gap !== undefined) {
+        return ok({
+          allowed: false,
+          classification,
+          reason: `required-capability-unavailable:${gap.capabilityId}`,
+        });
+      }
+    }
     if (generation.healthOnlyMode && classification === "mutating") {
       return ok({
         allowed: false,
@@ -179,7 +195,7 @@ export class PiExtensionController {
    * a controller, service, filesystem, cache, lease, or child process.
    *
    * With no active generation the gate is blocked: absence of a generation is
-   * not proof that the host is session-ready.
+   * not proof that the host is descriptor-safe.
    */
   sessionMutationGate(): PiSessionMutationGate {
     return createSessionMutationGate(() => {

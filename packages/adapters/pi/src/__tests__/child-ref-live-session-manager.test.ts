@@ -4,7 +4,7 @@ import {
   createInMemoryRuntimeStore,
   MemoryRuntimeLogFileSystem,
 } from "@weaveio/weave-engine";
-import { ok, okAsync } from "neverthrow";
+import { ok, okAsync, type Result } from "neverthrow";
 import {
   FakePiChildMetadataCacheFs,
   openBunChildMetadataDatabase,
@@ -14,6 +14,7 @@ import type {
   PiNativeSessionHandle,
   PiNativeSessionHeader,
   PiNativeSessionHostPort,
+  PiNativeSessionStorageUnavailable,
 } from "../child-native-sessions.js";
 import { PiNativeSessionStore } from "../child-native-sessions.js";
 import {
@@ -45,6 +46,7 @@ import {
   RecordingFakePiHost,
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const PARENT = "parent-session-live-mgr-1";
 const CHILD = "live-mgr-child-1";
@@ -120,6 +122,15 @@ function handleFor(
  * injected {@link MemoryPiNativeSessionFs}.
  */
 class MemoryNativeSessionHost implements PiNativeSessionHostPort {
+  requireDescriptorSafeSessionIo(): Result<
+    void,
+    PiNativeSessionStorageUnavailable
+  > {
+    // Test-only memory host: every byte goes through the injected in-memory
+    // no-follow filesystem, so descriptor-safe storage is provable here.
+    return ok(undefined);
+  }
+
   create(
     cwd: string,
     sessionDir: string,
@@ -177,6 +188,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
     const nativeHost = new MemoryNativeSessionHost();
     const store = new PiNativeSessionStore({
       root: SESSION_ROOT,
+      launch: { mode: "read-only" },
       fs: fs as unknown as PiNativeSessionFsPort,
       host: nativeHost,
     });
@@ -217,6 +229,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
 
     const parentEntries: { type: string; data: unknown }[] = [];
     const seedRefs = new PiChildSessionRefStore({
+      storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       parentSessionId: PARENT,
       append: {
         appendEntry: (type, data) => {
@@ -261,6 +274,7 @@ describe("createPiExtension: child refs follow the live session manager", () => 
         name: HOST_PACKAGE_NAME,
         version: "0.83.0",
       }),
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       capabilityProber: {
         probe: () =>
           ALL_CAPABILITY_IDS.map((capabilityId) => ({

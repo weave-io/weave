@@ -4,7 +4,11 @@ import type {
   EffectiveToolPolicy,
 } from "@weaveio/weave-engine";
 import { errAsync, okAsync } from "neverthrow";
-import type { PiModelApplyPort } from "../model-resolution.js";
+import {
+  type PiModelActivationOutcome,
+  PiModelActivator,
+  type PiModelApplyPort,
+} from "../model-resolution.js";
 import {
   appendWeaveBlockOnce,
   isReadOnlyChildAccessAllowed,
@@ -15,7 +19,11 @@ import {
   UNKNOWN_PARENT_SESSION,
 } from "../primary-session.js";
 import { PiSkillCatalog } from "../skill-catalog.js";
-import type { PiModelInfo } from "../types.js";
+import {
+  type PiModelInfo,
+  type PiSourceInfo,
+  projectPiProviderEvent,
+} from "../types.js";
 import { RecordingLogger } from "./fakes/fake-pi-host.js";
 
 const POLICY: EffectiveToolPolicy = {
@@ -42,6 +50,15 @@ function descriptor(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
 
 const CATALOG: PiModelInfo[] = [
   { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+];
+
+const SNAPSHOT_CATALOG: PiModelInfo[] = [
+  {
+    provider: "anthropic",
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+  },
+  { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
 ];
 
 interface FakeApplier extends PiModelApplyPort {
@@ -387,6 +404,977 @@ describe("PiPrimarySession.activate", () => {
   });
 });
 
+describe("PiPrimarySession committed-state isolation", () => {
+  it("copies mutable activation inputs before committing them", async () => {
+    const reviewModelIntent = "openai/review-model";
+    const models = ["anthropic/claude-sonnet-4-5", reviewModelIntent];
+    const skills = ["tdd"];
+    const effectiveToolPolicy: EffectiveToolPolicy = { ...POLICY };
+    const rawToolPolicy: AgentDescriptor["rawToolPolicy"] = {
+      read: "allow",
+      write: "ask",
+    };
+    const triggers = ["typescript", "review"];
+    const target: AgentDescriptor["delegationTargets"][number] = {
+      name: "shuttle",
+      description: "Implementation worker",
+      triggers,
+      isCategory: false,
+    };
+    const category: NonNullable<AgentDescriptor["category"]> = {
+      name: "tests",
+      description: "Test work",
+    };
+    const model = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      api: "anthropic-messages",
+    };
+    const sourceInfo = {
+      path: "/skills/tdd/SKILL.md",
+      source: "skill",
+      scope: "project",
+      origin: "top-level",
+      baseDir: "/skills/tdd",
+    } satisfies PiSourceInfo;
+    const skillCatalog = new PiSkillCatalog([
+      { name: "tdd", filePath: sourceInfo.path, sourceInfo },
+    ]);
+    const modelActivation: PiModelActivationOutcome = {
+      status: "applied",
+      model,
+      intentEntry: models[0] ?? "",
+      source: "canonical",
+      thinkingLevel: "high",
+      thinkingApplied: true,
+    };
+    const modelActivator = new PiModelActivator();
+    modelActivator.activate = () => okAsync(modelActivation);
+    const session = new PiPrimarySession({
+      skillCatalog,
+      modelActivator,
+      logger: new RecordingLogger(),
+    });
+
+    const activated = await session.activate(
+      descriptor({
+        models,
+        skills,
+        effectiveToolPolicy,
+        rawToolPolicy,
+        delegationTargets: [target],
+        category,
+        fast: true,
+      }),
+      context(),
+    );
+    expect(activated.isOk()).toBe(true);
+    const expected = structuredClone(session.getCurrent());
+    expect(expected?.descriptor.models).toEqual([
+      "anthropic/claude-sonnet-4-5",
+      reviewModelIntent,
+    ]);
+
+    models.splice(0, models.length, "mutated-primary", "mutated-review");
+    skills.splice(0, skills.length, "mutated-skill");
+    Object.assign(effectiveToolPolicy, {
+      read: "deny",
+      write: "deny",
+      execute: "deny",
+      delegate: "deny",
+      network: "deny",
+    });
+    Object.assign(rawToolPolicy, { read: "deny", write: "deny" });
+    target.name = "mutated-target";
+    target.description = "mutated description";
+    triggers.splice(0, triggers.length, "mutated-trigger");
+    category.name = "mutated-category";
+    category.description = "mutated category description";
+    Object.assign(model, {
+      provider: "mutated-provider",
+      id: "mutated-model",
+      name: "Mutated Model",
+      api: "mutated-api",
+    });
+    Object.assign(modelActivation, {
+      intentEntry: "mutated-intent",
+      source: "human-name",
+      thinkingLevel: "low",
+      thinkingApplied: false,
+    });
+    const catalogMetadata = skillCatalog.getAvailableSkills()[0]?.metadata as {
+      filePath?: string;
+      sourceInfo?: {
+        path: string;
+        source: string;
+        scope: string;
+        origin: string;
+        baseDir?: string;
+      };
+    };
+    catalogMetadata.filePath = "/mutated/SKILL.md";
+    Object.assign(catalogMetadata.sourceInfo ?? {}, {
+      path: "/mutated/source",
+      source: "mutated-source",
+      scope: "temporary",
+      origin: "package",
+      baseDir: "/mutated",
+    });
+
+    expect(session.getCurrent()).toEqual(expected);
+  });
+
+  it("isolates later reads and request behavior from getCurrent mutation", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([
+        {
+          name: "tdd",
+          filePath: "/skills/tdd/SKILL.md",
+          sourceInfo: {
+            path: "/skills/tdd/SKILL.md",
+            source: "skill",
+            scope: "project",
+            origin: "top-level",
+          },
+        },
+      ]),
+      logger: new RecordingLogger(),
+    });
+    const modelIntent = "anthropic/claude-sonnet-4-5#high";
+    const activated = await session.activate(
+      descriptor({
+        displayName: "Loom",
+        description: "Primary orchestrator",
+        models: [modelIntent, "openai/review-model"],
+        skills: ["tdd"],
+        rawToolPolicy: { read: "allow", write: "ask" },
+        delegationTargets: [
+          {
+            name: "shuttle",
+            description: "Implementation worker",
+            triggers: ["typescript", "review"],
+            isCategory: false,
+          },
+        ],
+        category: { name: "tests", description: "Test work" },
+        fast: true,
+      }),
+      context({
+        availableModels: [
+          {
+            provider: "anthropic",
+            id: "claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+          },
+        ],
+        thinkingApplier: { applyThinkingLevel: () => okAsync(undefined) },
+      }),
+    );
+    expect(activated.isOk()).toBe(true);
+
+    const exposed = session.getCurrent();
+    expect(exposed).toBeDefined();
+    if (exposed === undefined) return;
+    const expectedCurrent = structuredClone(exposed);
+    const expectedPrompt = session.appendToSystemPrompt("base");
+    const expectedSnapshot = session.captureRequestSnapshot();
+
+    Object.assign(exposed.descriptor, {
+      name: "mutated-name",
+      displayName: "Mutated Name",
+      description: "mutated description",
+      composedPrompt: "mutated prompt",
+      temperature: 1,
+    });
+    exposed.descriptor.models.splice(
+      0,
+      exposed.descriptor.models.length,
+      "mutated-model",
+    );
+    exposed.descriptor.skills.splice(
+      0,
+      exposed.descriptor.skills.length,
+      "mutated-skill",
+    );
+    Object.assign(exposed.descriptor.effectiveToolPolicy, {
+      read: "deny",
+      write: "deny",
+      execute: "deny",
+      delegate: "deny",
+      network: "deny",
+    });
+    Object.assign(exposed.descriptor.rawToolPolicy ?? {}, {
+      read: "deny",
+      write: "deny",
+    });
+    Object.assign(exposed.descriptor.category ?? {}, {
+      name: "mutated-category",
+      description: "mutated category description",
+    });
+    const exposedTarget = exposed.descriptor.delegationTargets[0];
+    expect(exposedTarget).toBeDefined();
+    if (exposedTarget === undefined) return;
+    Object.assign(exposedTarget, {
+      name: "mutated-target",
+      description: "mutated target description",
+      isCategory: true,
+    });
+    exposedTarget.triggers.splice(
+      0,
+      exposedTarget.triggers.length,
+      "mutated-trigger",
+    );
+
+    expect(exposed.modelActivation.status).toBe("applied");
+    if (exposed.modelActivation.status !== "applied") return;
+    Object.assign(
+      exposed.modelActivation.model as unknown as Record<string, unknown>,
+      {
+        provider: "mutated-provider",
+        id: "mutated-model",
+        name: "Mutated Model",
+        api: "mutated-api",
+      },
+    );
+    Object.assign(exposed.modelActivation, {
+      intentEntry: "mutated-intent",
+      source: "human-name",
+      thinkingLevel: "low",
+      thinkingApplied: false,
+    });
+
+    const exposedSkill = exposed.resolvedSkills[0] as
+      | {
+          name: string;
+          skillInfo: {
+            name: string;
+            metadata?: {
+              filePath?: string;
+              sourceInfo?: { path: string; source: string };
+            };
+          };
+        }
+      | undefined;
+    expect(exposedSkill).toBeDefined();
+    if (exposedSkill === undefined) return;
+    exposedSkill.name = "mutated-skill";
+    exposedSkill.skillInfo.name = "mutated-skill-info";
+    if (exposedSkill.skillInfo.metadata !== undefined) {
+      exposedSkill.skillInfo.metadata.filePath = "/mutated/SKILL.md";
+      Object.assign(exposedSkill.skillInfo.metadata.sourceInfo ?? {}, {
+        path: "/mutated/source",
+        source: "mutated-source",
+      });
+    }
+    (exposed.resolvedSkills as unknown[]).push({
+      name: "injected",
+      skillInfo: { name: "injected" },
+    });
+    Object.assign(
+      exposed as {
+        promptBlock: string;
+        temperatureDegraded: boolean;
+        generation: number;
+        fast?: true;
+      },
+      {
+        promptBlock: "mutated prompt block",
+        temperatureDegraded: true,
+        generation: 999,
+      },
+    );
+    delete (exposed as { fast?: true }).fast;
+
+    expect(session.getCurrent()).toEqual(expectedCurrent);
+    expect(session.appendToSystemPrompt("base")).toBe(expectedPrompt);
+    expect(session.captureRequestSnapshot()).toEqual(expectedSnapshot);
+  });
+
+  it("copies repeated arrays and records independently for sibling fields", async () => {
+    const repeatedRecord = { value: "record" };
+    const repeatedArray = [{ value: "array" }];
+    const sourceInfo = {
+      path: "/skills/tdd/SKILL.md",
+      source: "skill",
+      scope: "project",
+      origin: "top-level",
+      firstRecord: repeatedRecord,
+      secondRecord: repeatedRecord,
+      firstArray: repeatedArray,
+      secondArray: repeatedArray,
+    } as unknown as PiSourceInfo;
+    const repeatedTriggers = ["shared-trigger"];
+    const repeatedTarget: AgentDescriptor["delegationTargets"][number] = {
+      name: "shuttle",
+      triggers: repeatedTriggers,
+      isCategory: false,
+    };
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([
+        { name: "tdd", filePath: sourceInfo.path, sourceInfo },
+      ]),
+      logger: new RecordingLogger(),
+    });
+
+    const activated = await session.activate(
+      descriptor({
+        skills: ["tdd"],
+        delegationTargets: [repeatedTarget, repeatedTarget],
+      }),
+      context(),
+    );
+    expect(activated.isOk()).toBe(true);
+    const current = session.getCurrent();
+    expect(current).toBeDefined();
+    if (current === undefined) return;
+
+    const firstTarget = current.descriptor.delegationTargets[0];
+    const secondTarget = current.descriptor.delegationTargets[1];
+    expect(firstTarget).not.toBe(secondTarget);
+    expect(firstTarget?.triggers).not.toBe(secondTarget?.triggers);
+    if (firstTarget === undefined || secondTarget === undefined) return;
+    firstTarget.triggers[0] = "mutated-trigger";
+    expect(secondTarget.triggers).toEqual(["shared-trigger"]);
+
+    const metadata = current.resolvedSkills[0]?.skillInfo.metadata as {
+      sourceInfo: {
+        firstRecord: { value: string };
+        secondRecord: { value: string };
+        firstArray: Array<{ value: string }>;
+        secondArray: Array<{ value: string }>;
+      };
+    };
+    expect(metadata.sourceInfo.firstRecord).not.toBe(
+      metadata.sourceInfo.secondRecord,
+    );
+    expect(metadata.sourceInfo.firstArray).not.toBe(
+      metadata.sourceInfo.secondArray,
+    );
+    metadata.sourceInfo.firstRecord.value = "mutated-record";
+    const firstArrayValue = metadata.sourceInfo.firstArray[0];
+    expect(firstArrayValue).toBeDefined();
+    if (firstArrayValue === undefined) return;
+    firstArrayValue.value = "mutated-array";
+    expect(metadata.sourceInfo.secondRecord.value).toBe("record");
+    expect(metadata.sourceInfo.secondArray).toEqual([{ value: "array" }]);
+  });
+
+  it("omits hostile skill metadata accessors and cycles without reading them", async () => {
+    let getterReads = 0;
+    const sourceInfo: Record<string, unknown> = {
+      source: "skill",
+      scope: "project",
+      origin: "top-level",
+      safe: "kept",
+    };
+    Object.defineProperty(sourceInfo, "path", {
+      enumerable: true,
+      get: () => {
+        getterReads += 1;
+        return "/hostile/SKILL.md";
+      },
+    });
+    sourceInfo.cycle = sourceInfo;
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([
+        {
+          name: "hostile",
+          filePath: "/safe/SKILL.md",
+          sourceInfo: sourceInfo as unknown as PiSourceInfo,
+        },
+      ]),
+      logger: new RecordingLogger(),
+    });
+
+    const activated = await session.activate(
+      descriptor({ skills: ["hostile"] }),
+      context(),
+    );
+    expect(activated.isOk()).toBe(true);
+    const metadata = session.getCurrent()?.resolvedSkills[0]?.skillInfo
+      .metadata as {
+      filePath: string;
+      sourceInfo: Record<string, unknown>;
+    };
+
+    expect(getterReads).toBe(0);
+    expect(metadata.filePath).toBe("/safe/SKILL.md");
+    expect(metadata.sourceInfo.safe).toBe("kept");
+    expect(Object.hasOwn(metadata.sourceInfo, "path")).toBe(false);
+    expect(Object.hasOwn(metadata.sourceInfo, "cycle")).toBe(false);
+    expect(() => JSON.stringify(metadata)).not.toThrow();
+  });
+});
+
+describe("PiPrimarySession fast intent and request snapshots", () => {
+  it("has no committed state or snapshot before activation", () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    expect(session.getCurrent()).toBeUndefined();
+    expect(session.captureRequestSnapshot()).toBeUndefined();
+    expect(
+      session
+        .resolveRequestSnapshot({
+          generation: 1,
+          primaryName: "loom",
+          modelIntent: ["claude-sonnet-4-5"],
+          selectedModel: CATALOG[0],
+          fast: true,
+        })
+        .isErr(),
+    ).toBe(true);
+  });
+
+  it("commits fast true atomically with identity, prompt, model, and skills", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog([{ name: "tdd" }]),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor({ fast: true, skills: ["tdd"] }),
+      context(),
+    );
+    expect(result.isOk()).toBe(true);
+    const active = result._unsafeUnwrap();
+    expect(active.fast).toBe(true);
+    expect(active.descriptor.name).toBe("loom");
+    expect(active.resolvedSkills.map((skill) => skill.name)).toEqual(["tdd"]);
+    expect(active.modelActivation).toMatchObject({
+      status: "applied",
+      model: CATALOG[0],
+    });
+    expect(session.getCurrent()?.fast).toBe(true);
+    expect(session.captureRequestSnapshot()).toMatchObject({
+      generation: 1,
+      primaryName: "loom",
+      fast: true,
+      selectedModel: CATALOG[0],
+    });
+    expect(active).not.toHaveProperty("fast", false);
+  });
+
+  it("omits fast on a non-fast primary and never infers it from model ids", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor({
+        models: ["openai/gpt-fast", "cursor/grok-4.5:fast#high"],
+      }),
+      context({
+        availableModels: [
+          { provider: "openai", id: "gpt-fast" },
+          { provider: "cursor", id: "grok-4.5:fast" },
+        ],
+      }),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().fast).toBeUndefined();
+    expect(session.getCurrent()).not.toHaveProperty("fast");
+    expect(session.captureRequestSnapshot()).not.toHaveProperty("fast");
+  });
+
+  it("switches fast to absent and absent to fast without leftover intent", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const fast = await session.activate(descriptor({ fast: true }), context());
+    expect(fast._unsafeUnwrap().fast).toBe(true);
+    const absent = await session.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context(),
+    );
+    expect(absent._unsafeUnwrap().fast).toBeUndefined();
+    expect(session.getCurrent()?.fast).toBeUndefined();
+    expect(session.captureRequestSnapshot()).toMatchObject({
+      primaryName: "tapestry",
+      generation: 2,
+    });
+    expect(session.captureRequestSnapshot()).not.toHaveProperty("fast");
+
+    const restoredFast = await session.activate(
+      descriptor({ name: "loom-fast", fast: true }),
+      context(),
+    );
+    expect(restoredFast._unsafeUnwrap().fast).toBe(true);
+    expect(session.captureRequestSnapshot()).toMatchObject({
+      primaryName: "loom-fast",
+      generation: 3,
+      fast: true,
+    });
+  });
+
+  it("rolls back a failed fast-to-absent switch and an absent-to-fast switch", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await session.activate(descriptor({ fast: true }), context());
+    const failedAbsent = await session.activate(
+      descriptor({ name: "shuttle", mode: "subagent" }),
+      context(),
+    );
+    expect(failedAbsent.isErr()).toBe(true);
+    expect(session.getCurrent()?.fast).toBe(true);
+    expect(session.getCurrent()?.descriptor.name).toBe("loom");
+    expect(session.captureRequestSnapshot()?.fast).toBe(true);
+
+    await session.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context(),
+    );
+    const failedFast = await session.activate(
+      descriptor({ name: "shuttle-fast", mode: "subagent", fast: true }),
+      context(),
+    );
+    expect(failedFast.isErr()).toBe(true);
+    expect(session.getCurrent()?.fast).toBeUndefined();
+    expect(session.getCurrent()?.descriptor.name).toBe("tapestry");
+    expect(session.captureRequestSnapshot()).not.toHaveProperty("fast");
+  });
+
+  it("rejects a stale or mutated snapshot after a later activation", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await session.activate(descriptor({ fast: true }), context());
+    const stale = session.captureRequestSnapshot();
+    expect(stale).toBeDefined();
+    if (stale === undefined) return;
+
+    await session.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context(),
+    );
+    expect(session.resolveRequestSnapshot(stale).isErr()).toBe(true);
+    expect(session.captureRequestSnapshot()?.generation).toBe(2);
+
+    const current = session.captureRequestSnapshot();
+    expect(current).toBeDefined();
+    if (current === undefined) return;
+    const forged: typeof current = {
+      ...current,
+      fast: true,
+    };
+    expect(session.resolveRequestSnapshot(forged).isErr()).toBe(true);
+  });
+
+  it("keeps request snapshots isolated from later input and output mutation", async () => {
+    const models = ["claude-sonnet-4-5"];
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor({ models, fast: true }),
+      context(),
+    );
+    expect(result.isOk()).toBe(true);
+    models.push("mutated-after-activate");
+    const snapshot = session.captureRequestSnapshot();
+    expect(snapshot?.modelIntent).toEqual(["claude-sonnet-4-5"]);
+    if (snapshot === undefined) return;
+    const mutableIntent = snapshot.modelIntent as string[];
+    expect(() => {
+      mutableIntent.push("mutated-snapshot");
+    }).toThrow();
+    if (snapshot.selectedModel !== undefined) {
+      expect(() => {
+        (snapshot.selectedModel as { id: string }).id = "mutated-model";
+      }).toThrow();
+    }
+    expect(session.captureRequestSnapshot()?.modelIntent).toEqual([
+      "claude-sonnet-4-5",
+    ]);
+    expect(session.captureRequestSnapshot()?.selectedModel).toEqual(CATALOG[0]);
+  });
+
+  it("commits the host-reported model api exactly and never infers it", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const catalogModel: PiModelInfo = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      api: "anthropic-messages",
+    };
+    const result = await session.activate(
+      descriptor(),
+      context({ availableModels: [catalogModel] }),
+    );
+    expect(result.isOk()).toBe(true);
+    const active = result._unsafeUnwrap();
+    expect(active.modelActivation).toMatchObject({
+      status: "applied",
+      model: {
+        provider: "anthropic",
+        id: "claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        api: "anthropic-messages",
+      },
+    });
+    expect(session.getCurrent()?.modelActivation).toMatchObject({
+      status: "applied",
+      model: { api: "anthropic-messages" },
+    });
+    expect(session.captureRequestSnapshot()?.selectedModel).toEqual({
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      api: "anthropic-messages",
+    });
+  });
+
+  it("omits api when the host catalog omits it and never infers it from ids", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const result = await session.activate(
+      descriptor({
+        models: ["openai/gpt-5.6", "anthropic/claude-sonnet-4-5"],
+      }),
+      context({
+        availableModels: [
+          { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
+          {
+            provider: "anthropic",
+            id: "claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+          },
+        ],
+      }),
+    );
+    expect(result.isOk()).toBe(true);
+    const selected = result._unsafeUnwrap().modelActivation;
+    expect(selected).toMatchObject({
+      status: "applied",
+      model: { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
+    });
+    if (selected.status !== "applied") return;
+    expect(selected.model).not.toHaveProperty("api");
+    const currentActivation = session.getCurrent()?.modelActivation;
+    expect(currentActivation?.status).toBe("applied");
+    if (currentActivation?.status !== "applied") return;
+    expect(currentActivation.model).not.toHaveProperty("api");
+    expect(session.captureRequestSnapshot()?.selectedModel).not.toHaveProperty(
+      "api",
+    );
+  });
+
+  it("omits blank, whitespace, non-string, and oversized host api without failing activation", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    for (const api of ["", "   ", "x".repeat(129), 42, { family: "openai" }]) {
+      const result = await session.activate(
+        descriptor(),
+        context({
+          availableModels: [
+            {
+              provider: "anthropic",
+              id: "claude-sonnet-4-5",
+              name: "Claude Sonnet 4.5",
+              api,
+            } as unknown as PiModelInfo,
+          ],
+        }),
+      );
+      expect(result.isOk()).toBe(true);
+      const activation = result._unsafeUnwrap().modelActivation;
+      expect(activation.status).toBe("applied");
+      if (activation.status !== "applied") return;
+      expect(activation.model).not.toHaveProperty("api");
+      expect(
+        session.captureRequestSnapshot()?.selectedModel,
+      ).not.toHaveProperty("api");
+    }
+  });
+
+  it("isolates committed api from later source and output mutation", async () => {
+    const catalogModel: PiModelInfo = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      api: "anthropic-messages",
+    };
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const activated = await session.activate(
+      descriptor(),
+      context({ availableModels: [catalogModel] }),
+    );
+    expect(activated.isOk()).toBe(true);
+    (catalogModel as { api?: string }).api = "mutated-source-api";
+
+    const current = session.getCurrent();
+    expect(current?.modelActivation).toMatchObject({
+      status: "applied",
+      model: { api: "anthropic-messages" },
+    });
+    if (current?.modelActivation.status !== "applied") return;
+    (current.modelActivation.model as { api?: string }).api =
+      "mutated-current-api";
+    delete (current.modelActivation.model as { api?: string }).api;
+
+    const snapshot = session.captureRequestSnapshot();
+    expect(snapshot?.selectedModel).toEqual({
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      api: "anthropic-messages",
+    });
+    if (snapshot?.selectedModel === undefined) return;
+    expect(() => {
+      (snapshot.selectedModel as { api?: string }).api = "mutated-snapshot-api";
+    }).toThrow();
+    expect(session.captureRequestSnapshot()?.selectedModel?.api).toBe(
+      "anthropic-messages",
+    );
+    expect(session.getCurrent()?.modelActivation).toMatchObject({
+      status: "applied",
+      model: { api: "anthropic-messages" },
+    });
+  });
+
+  it("rejects forged, removed, added, and oversized api on exact snapshots", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const withApi = await session.activate(
+      descriptor(),
+      context({
+        availableModels: [
+          {
+            provider: "anthropic",
+            id: "claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+            api: "anthropic-messages",
+          },
+        ],
+      }),
+    );
+    expect(withApi.isOk()).toBe(true);
+    const snapshotWithApi = session.captureRequestSnapshot();
+    expect(snapshotWithApi?.selectedModel?.api).toBe("anthropic-messages");
+    if (
+      snapshotWithApi === undefined ||
+      snapshotWithApi.selectedModel === undefined
+    ) {
+      return;
+    }
+    const selectedWithApi = snapshotWithApi.selectedModel;
+    const { api: _omittedApi, ...withoutApi } = selectedWithApi;
+    for (const forgedSelectedModel of [
+      { ...selectedWithApi, api: "openai-responses" },
+      withoutApi,
+      { ...selectedWithApi, api: "x".repeat(129) },
+    ]) {
+      expect(
+        session
+          .resolveRequestSnapshot({
+            ...snapshotWithApi,
+            selectedModel: forgedSelectedModel,
+          })
+          .isErr(),
+      ).toBe(true);
+    }
+
+    const withoutHostApi = await session.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context({
+        availableModels: [
+          {
+            provider: "anthropic",
+            id: "claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+          },
+        ],
+      }),
+    );
+    expect(withoutHostApi.isOk()).toBe(true);
+    const snapshotWithoutApi = session.captureRequestSnapshot();
+    expect(snapshotWithoutApi?.selectedModel).not.toHaveProperty("api");
+    expect(session.resolveRequestSnapshot(snapshotWithApi).isErr()).toBe(true);
+    if (
+      snapshotWithoutApi === undefined ||
+      snapshotWithoutApi.selectedModel === undefined
+    ) {
+      return;
+    }
+    expect(
+      session
+        .resolveRequestSnapshot({
+          ...snapshotWithoutApi,
+          selectedModel: {
+            ...snapshotWithoutApi.selectedModel,
+            api: "anthropic-messages",
+          },
+        })
+        .isErr(),
+    ).toBe(true);
+    expect(session.resolveRequestSnapshot(snapshotWithoutApi).isOk()).toBe(
+      true,
+    );
+  });
+
+  it("authenticates exact ordered model intent and selected model snapshots", async () => {
+    const firstIntent = "anthropic/claude-sonnet-4-5#high";
+    const secondIntent = "openai/gpt-5.6#medium";
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const activated = await session.activate(
+      descriptor({ models: [firstIntent, secondIntent] }),
+      context({ availableModels: SNAPSHOT_CATALOG }),
+    );
+    expect(activated.isOk()).toBe(true);
+
+    const snapshot = session.captureRequestSnapshot();
+    expect(snapshot).toBeDefined();
+    if (snapshot === undefined || snapshot.selectedModel === undefined) return;
+
+    const resolved = session.resolveRequestSnapshot(snapshot);
+    expect(resolved.isOk()).toBe(true);
+    if (resolved.isErr()) return;
+    expect(resolved.value).toEqual(snapshot);
+    expect(resolved.value).not.toBe(snapshot);
+    expect(resolved.value.modelIntent).not.toBe(snapshot.modelIntent);
+    expect(resolved.value.selectedModel).not.toBe(snapshot.selectedModel);
+    expect(() => {
+      (resolved.value.modelIntent as string[]).push("mutated-resolve-output");
+    }).toThrow();
+    expect(() => {
+      (resolved.value.selectedModel as { id: string }).id =
+        "mutated-resolve-output";
+    }).toThrow();
+    expect(session.captureRequestSnapshot()).toEqual(snapshot);
+
+    const rejectedIntents = [
+      ["openai/claude-sonnet-4-5#high", secondIntent],
+      ["anthropic/forged-model#high", secondIntent],
+      ["anthropic/claude-sonnet-4-5#low", secondIntent],
+      [secondIntent, firstIntent],
+      [firstIntent],
+      [firstIntent, secondIntent, firstIntent],
+    ];
+    for (const modelIntent of rejectedIntents) {
+      expect(
+        session.resolveRequestSnapshot({ ...snapshot, modelIntent }).isErr(),
+      ).toBe(true);
+    }
+
+    const { modelIntent: _omittedModelIntent, ...withoutModelIntent } =
+      snapshot;
+    expect(
+      session
+        .resolveRequestSnapshot(withoutModelIntent as typeof snapshot)
+        .isErr(),
+    ).toBe(true);
+
+    const selectedModel = snapshot.selectedModel;
+    for (const forgedSelectedModel of [
+      { ...selectedModel, provider: "forged-provider" },
+      { ...selectedModel, id: "forged-model" },
+      { ...selectedModel, name: "Forged model" },
+      { ...selectedModel, api: "openai-responses" },
+      { ...selectedModel, forged: true },
+    ]) {
+      expect(
+        session
+          .resolveRequestSnapshot({
+            ...snapshot,
+            selectedModel: forgedSelectedModel,
+          })
+          .isErr(),
+      ).toBe(true);
+    }
+
+    expect(
+      session
+        .resolveRequestSnapshot({ ...snapshot, selectedModel: undefined })
+        .isErr(),
+    ).toBe(true);
+    const { selectedModel: _omittedSelectedModel, ...withoutSelectedModel } =
+      snapshot;
+    expect(
+      session
+        .resolveRequestSnapshot(withoutSelectedModel as typeof snapshot)
+        .isErr(),
+    ).toBe(true);
+  });
+
+  it("re-probes the parent session on restart without leaking the prior snapshot", async () => {
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+      parentSessionProbe: {
+        isPersisted: () => true,
+        getSessionFile: () => "/sessions/a.jsonl",
+        getSessionId: () => "runtime-1",
+        getHeader: () => ({ type: "session", id: "session-a" }),
+      },
+    });
+    await session.activate(descriptor({ fast: true }), context());
+    const first = session.captureRequestSnapshot();
+    expect(session.getParentSession()).toMatchObject({
+      persistence: "persistent",
+      sessionId: "session-a",
+    });
+    session.refreshParentSession({
+      isPersisted: () => true,
+      getSessionFile: () => "/sessions/a.jsonl",
+      getSessionId: () => "runtime-2",
+      getHeader: () => ({ type: "session", id: "session-a" }),
+    });
+    await session.activate(descriptor({ fast: true }), context());
+    const second = session.captureRequestSnapshot();
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (first === undefined || second === undefined) return;
+    expect(session.resolveRequestSnapshot(first).isErr()).toBe(true);
+    expect(second.generation).toBe(2);
+    expect(second.fast).toBe(true);
+  });
+
+  it("does not leak committed state or snapshots across session instances", async () => {
+    const first = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    const second = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await first.activate(descriptor({ fast: true }), context());
+    expect(second.getCurrent()).toBeUndefined();
+    expect(second.captureRequestSnapshot()).toBeUndefined();
+    const firstSnapshot = first.captureRequestSnapshot();
+    expect(firstSnapshot).toBeDefined();
+    if (firstSnapshot === undefined) return;
+    expect(second.resolveRequestSnapshot(firstSnapshot).isErr()).toBe(true);
+    await second.activate(
+      descriptor({ name: "tapestry", mode: "all" }),
+      context(),
+    );
+    expect(second.captureRequestSnapshot()).not.toHaveProperty("fast");
+    expect(first.captureRequestSnapshot()?.fast).toBe(true);
+  });
+});
+
 describe("PiPrimarySession.restorePrevious", () => {
   it("re-activates the descriptor active before the current one", async () => {
     const session = new PiPrimarySession({
@@ -702,5 +1690,188 @@ describe("parent session persistence", () => {
     expect(
       session.requirePersistentParent("retry")._unsafeUnwrapErr().correlation,
     ).toMatchObject({ reason: "no-probe" });
+  });
+});
+
+describe("projectPiProviderEvent", () => {
+  it("projects only the hook name and integer status, never payload or headers", () => {
+    const payload = { secret: "do-not-copy" };
+    const headers = { authorization: "secret-token" };
+    const request = projectPiProviderEvent({
+      type: "before_provider_request",
+      payload,
+    });
+    const headerEvent = projectPiProviderEvent({
+      type: "before_provider_headers",
+      headers,
+    });
+    const response = projectPiProviderEvent({
+      type: "after_provider_response",
+      status: 200,
+      headers,
+      body: "do-not-copy",
+    });
+    expect(request._unsafeUnwrap()).toEqual({
+      type: "before_provider_request",
+    });
+    expect(headerEvent._unsafeUnwrap()).toEqual({
+      type: "before_provider_headers",
+    });
+    expect(response._unsafeUnwrap()).toEqual({
+      type: "after_provider_response",
+      status: 200,
+    });
+    expect(JSON.stringify(request._unsafeUnwrap())).not.toContain("secret");
+    expect(JSON.stringify(headerEvent._unsafeUnwrap())).not.toContain(
+      "authorization",
+    );
+    expect(JSON.stringify(response._unsafeUnwrap())).not.toContain(
+      "do-not-copy",
+    );
+    payload.secret = "mutated";
+    headers.authorization = "mutated";
+    expect(request._unsafeUnwrap()).toEqual({
+      type: "before_provider_request",
+    });
+  });
+
+  it("accepts safe plain and null-prototype events", () => {
+    const nullPrototypeRequest = Object.create(null) as Record<string, unknown>;
+    nullPrototypeRequest.type = "before_provider_request";
+    const nullPrototypeHeaders = Object.create(null) as Record<string, unknown>;
+    nullPrototypeHeaders.type = "before_provider_headers";
+    const nullPrototypeResponse = Object.create(null) as Record<
+      string,
+      unknown
+    >;
+    nullPrototypeResponse.type = "after_provider_response";
+    nullPrototypeResponse.status = 204;
+
+    expect(
+      projectPiProviderEvent({ type: "before_provider_request" }).isOk(),
+    ).toBe(true);
+    expect(projectPiProviderEvent(nullPrototypeRequest).isOk()).toBe(true);
+    expect(projectPiProviderEvent(nullPrototypeHeaders).isOk()).toBe(true);
+    expect(
+      projectPiProviderEvent(nullPrototypeResponse)._unsafeUnwrap(),
+    ).toEqual({ type: "after_provider_response", status: 204 });
+  });
+
+  it("rejects inherited, symbol, callable, and unexpected-prototype inputs", () => {
+    const inheritedType = Object.create({ type: "before_provider_request" });
+    const inheritedStatus = Object.create({ status: 200 });
+    Object.defineProperty(inheritedStatus, "type", {
+      value: "after_provider_response",
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const symbolKey = Symbol("provider-secret");
+    const withSymbol = { type: "before_provider_request" } as Record<
+      string | symbol,
+      unknown
+    >;
+    Object.defineProperty(withSymbol, symbolKey, {
+      value: "secret",
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const unexpectedPrototype = Object.create(Date.prototype) as {
+      type: string;
+    };
+    Object.defineProperty(unexpectedPrototype, "type", {
+      value: "before_provider_request",
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+
+    expect(projectPiProviderEvent(inheritedType).isErr()).toBe(true);
+    expect(projectPiProviderEvent(inheritedStatus).isErr()).toBe(true);
+    expect(projectPiProviderEvent(withSymbol).isErr()).toBe(true);
+    expect(projectPiProviderEvent(() => undefined).isErr()).toBe(true);
+    expect(projectPiProviderEvent(unexpectedPrototype).isErr()).toBe(true);
+  });
+
+  it("rejects accessors without invoking throwing or mutating getters", () => {
+    let throwingGetterReads = 0;
+    const throwingGetter = {};
+    Object.defineProperty(throwingGetter, "type", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        throwingGetterReads += 1;
+        throw new Error("getter must not run");
+      },
+    });
+
+    let mutatingGetterReads = 0;
+    const mutatingGetter = { type: "after_provider_response" };
+    Object.defineProperty(mutatingGetter, "status", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        mutatingGetterReads += 1;
+        mutatingGetter.type = "before_provider_request";
+        return 200;
+      },
+    });
+
+    let setterCalls = 0;
+    const setterOnly = {};
+    Object.defineProperty(setterOnly, "type", {
+      enumerable: true,
+      configurable: true,
+      set: () => {
+        setterCalls += 1;
+      },
+    });
+
+    expect(projectPiProviderEvent(throwingGetter).isErr()).toBe(true);
+    expect(projectPiProviderEvent(mutatingGetter).isErr()).toBe(true);
+    expect(projectPiProviderEvent(setterOnly).isErr()).toBe(true);
+    expect(throwingGetterReads).toBe(0);
+    expect(mutatingGetterReads).toBe(0);
+    expect(setterCalls).toBe(0);
+    expect(mutatingGetter.type).toBe("after_provider_response");
+  });
+
+  it("rejects unsafe descriptors before reading their values", () => {
+    for (const unsafeDescriptor of [
+      { enumerable: false },
+      { writable: false },
+      { configurable: false },
+    ]) {
+      const event = {};
+      Object.defineProperty(event, "type", {
+        value: "before_provider_request",
+        enumerable: true,
+        writable: true,
+        configurable: true,
+        ...unsafeDescriptor,
+      });
+      expect(projectPiProviderEvent(event).isErr()).toBe(true);
+    }
+  });
+
+  it("rejects unknown or malformed provider events without throwing", () => {
+    expect(projectPiProviderEvent(null).isErr()).toBe(true);
+    expect(projectPiProviderEvent({ type: "session_start" }).isErr()).toBe(
+      true,
+    );
+    expect(projectPiProviderEvent({ type: 42 }).isErr()).toBe(true);
+    expect(
+      projectPiProviderEvent({
+        type: "after_provider_response",
+        status: "200",
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      projectPiProviderEvent({
+        type: "after_provider_response",
+        status: 200.5,
+      }).isErr(),
+    ).toBe(true);
   });
 });

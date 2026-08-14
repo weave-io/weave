@@ -1,4 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { run } from "../cli.js";
 import { BufferTerminal } from "../io/terminal.js";
 
@@ -9,6 +11,19 @@ function cli(args: string[]) {
 }
 
 describe("CLI routing", () => {
+  // Routed commands such as `prompt list` load config from disk, and config
+  // discovery reads `$HOME/.weave` before the project scope. Point HOME at a
+  // directory that cannot exist so routing assertions describe the CLI, never
+  // whatever global config the developer happens to have.
+  const originalHome = process.env.HOME;
+  beforeAll(() => {
+    process.env.HOME = join(tmpdir(), `weave-no-global-${crypto.randomUUID()}`);
+  });
+  afterAll(() => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  });
+
   it("Should_exit_0_and_list_init_and_validate_for_help", async () => {
     const { terminal, result } = cli(["--help"]);
     const r = await result;

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { translateAgentToMarkdown } from "../agent-translation.js";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
+import { translateAgentToMarkdown } from "../agent-translation.js";
 
-function makeDescriptor(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
+function makeDescriptor(
+  overrides: Partial<AgentDescriptor> = {},
+): AgentDescriptor {
   return {
     name: "test-agent",
     composedPrompt: "You are a test agent.",
@@ -71,7 +73,7 @@ describe("translateAgentToMarkdown", () => {
       descriptor: makeDescriptor({
         name: "shuttle-backend",
         description: "Backend specialist",
-        category: { name: "backend", description: "Backend APIs", patterns: ["src/api/**"] },
+        category: { name: "backend", description: "Backend APIs" },
       }),
       resolvedModel: "claude-opus-4",
       allowedTools: ["Read", "Write", "Edit", "Bash"],
@@ -80,6 +82,80 @@ describe("translateAgentToMarkdown", () => {
     expect(result).toContain("name: shuttle-backend");
     expect(result).toContain("description: Backend specialist");
     expect(result).toContain("model: opus");
+  });
+
+  it("produces output identical to no-intent parity when fast is declared", () => {
+    const baseline = translateAgentToMarkdown({
+      descriptor: makeDescriptor({ description: "A helpful agent" }),
+      resolvedModel: "claude-sonnet-4-5",
+      allowedTools: ["Read"],
+    });
+    const withFast = translateAgentToMarkdown({
+      descriptor: makeDescriptor({
+        description: "A helpful agent",
+        fast: true,
+      }),
+      resolvedModel: "claude-sonnet-4-5",
+      allowedTools: ["Read"],
+    });
+
+    expect(withFast).toBe(baseline);
+  });
+
+  it("never encodes fast frontmatter, environment, or prompt instructions", () => {
+    const result = translateAgentToMarkdown({
+      descriptor: makeDescriptor({ fast: true }),
+      resolvedModel: "claude-sonnet-4-5",
+      allowedTools: ["Read"],
+    });
+
+    expect(result).not.toContain("fast");
+    expect(result).not.toContain("Fast");
+    expect(result).not.toContain("fastMode");
+    expect(result).not.toContain("service_tier");
+    expect(result).not.toContain("speed");
+    expect(result).not.toContain("anthropic-beta");
+    expect(result).not.toContain("env:");
+  });
+
+  it("omits string delegation triggers from generated frontmatter", () => {
+    const result = translateAgentToMarkdown({
+      descriptor: makeDescriptor({
+        delegationTargets: [
+          {
+            name: "shuttle-backend",
+            description: "Backend APIs",
+            triggers: ["ship patch", "review code"],
+            isCategory: true,
+          },
+        ],
+      }),
+      resolvedModel: "claude-sonnet-4-5",
+      allowedTools: [],
+    });
+
+    expect(result).not.toContain("triggers");
+    expect(result).not.toContain("ship patch");
+    expect(result).not.toContain("routing_hint");
+    expect(result).not.toContain("domain");
+  });
+
+  it("emits no category pattern routing for a generated category shuttle", () => {
+    const result = translateAgentToMarkdown({
+      descriptor: makeDescriptor({
+        name: "shuttle-backend",
+        description: "Backend specialist",
+        category: { name: "backend", description: "Backend APIs" },
+        fast: true,
+      }),
+      resolvedModel: "claude-opus-4",
+      allowedTools: [],
+    });
+
+    expect(result).not.toContain("patterns");
+    expect(result).not.toContain("src/api/**");
+    expect(result).not.toContain("fast");
+    expect(result).toContain("name: shuttle-backend");
   });
 
   describe("toClaudeCodeModel alias mapping", () => {

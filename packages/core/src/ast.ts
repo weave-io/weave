@@ -49,6 +49,8 @@ export type Property = {
   key: string;
   value: AstValue;
   pos: SourcePos;
+  /** True only when the source omitted a value and used the bare-flag form. */
+  bare?: true;
 };
 
 // ---------------------------------------------------------------------------
@@ -86,6 +88,9 @@ export type AgentBlock = {
    * Notable nested blocks stored here as `BlockValue` properties:
    * - `tool_policy` — capability permission map
    * - `routing`     — per-agent routing knobs (e.g. `delegation_exclude`)
+   *
+   * Scalar `fast` and string-array `triggers` values remain generic properties;
+   * the validator enforces their exact config shapes.
    */
   properties: Property[];
   pos: SourcePos;
@@ -94,6 +99,10 @@ export type AgentBlock = {
 export type CategoryBlock = {
   type: "category";
   name: string;
+  /**
+   * Flat property bag. The validator accepts literal `fast true` and ordered
+   * string-array `triggers`, and rejects removed category `patterns`.
+   */
   properties: Property[];
   pos: SourcePos;
 };

@@ -116,7 +116,6 @@ describe("materializeAgents", () => {
 
         category frontend {
           description "Frontend implementation work"
-          patterns ["src/**/*.tsx"]
           models ["model-frontend"]
         }
       `);
@@ -127,7 +126,6 @@ describe("materializeAgents", () => {
       expect(plan.agents[2]?.descriptor.category).toEqual({
         name: "frontend",
         description: "Frontend implementation work",
-        patterns: ["src/**/*.tsx"],
       });
       expect(plan.agents[0]?.source).toBe("explicit");
       expect(plan.agents[1]?.source).toBe("explicit");
@@ -138,9 +136,9 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
 
-        category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { description "Backend implementation work" patterns ["src/**/*.ts"] models ["model-backend"] }
-        category docs { description "Documentation work" patterns ["docs/**/*.md"] models ["model-docs"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
+        category docs { description "Documentation work" models ["model-docs"] }
       `);
 
       expect(agentNames(plan)).toEqual([
@@ -157,7 +155,6 @@ describe("materializeAgents", () => {
 
         category frontend {
           description "Frontend UI"
-          patterns ["src/**/*.tsx"]
           models ["model-frontend-a", "model-frontend-b"]
         }
       `);
@@ -196,7 +193,6 @@ describe("materializeAgents", () => {
 
         category frontend {
           description "Frontend implementation work"
-          patterns ["src/**/*.tsx"]
           models ["model-frontend"]
         }
 
@@ -226,8 +222,8 @@ describe("materializeAgents", () => {
         agent loom { prompt "Loom" models ["model-loom"] }
         agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
 
-        category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { description "Backend implementation work" patterns ["src/**/*.ts"] models ["model-backend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
 
         disable agents ["shuttle"]
       `);
@@ -239,8 +235,8 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
 
-        category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { description "Backend implementation work" patterns ["src/**/*.ts"] models ["model-backend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
 
         disable agents ["shuttle-frontend"]
       `);
@@ -269,7 +265,7 @@ describe("materializeAgents", () => {
         config: cfg(`
           agent loom { prompt "Loom" models ["model-loom"] }
           agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-          category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
+          category frontend { description "Frontend implementation work" models ["model-frontend"] }
         `),
       });
 
@@ -297,8 +293,8 @@ describe("materializeAgents", () => {
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
         agent omega { prompt "Omega" models ["model-omega"] }
 
-        category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { description "Backend implementation work" patterns ["src/**/*.ts"] models ["model-backend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
       `);
 
       expect(agentNames(plan)).toEqual([
@@ -316,9 +312,9 @@ describe("materializeAgents", () => {
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
         agent omega { prompt "Omega" models ["model-omega"] }
 
-        category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { description "Backend implementation work" patterns ["src/**/*.ts"] models ["model-backend"] }
-        category docs { description "Documentation work" patterns ["docs/**/*.md"] models ["model-docs"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
+        category docs { description "Documentation work" models ["model-docs"] }
       `);
 
       const first = await materializeAgents({ config });
@@ -346,7 +342,7 @@ describe("materializeAgents", () => {
           agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
           agent shuttle-frontend { prompt "Explicit frontend" models ["model-explicit"] }
 
-          category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
+          category frontend { description "Frontend implementation work" models ["model-frontend"] }
         `),
       });
 
@@ -413,7 +409,7 @@ describe("materializeAgents", () => {
           agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
           agent shuttle-frontend { prompt "Explicit frontend" models ["model-explicit"] }
 
-          category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
+          category frontend { description "Frontend implementation work" models ["model-frontend"] }
         `),
       });
 
@@ -491,7 +487,7 @@ describe("materializeAgents", () => {
           agent shuttle-backend { prompt "Explicit backend" models ["model-explicit"] }
           agent loom { prompt "Loom" models ["model-loom"] mode primary }
 
-          category backend { description "Backend implementation work" patterns ["src/**/*.ts"] models ["model-backend"] }
+          category backend { description "Backend implementation work" models ["model-backend"] }
         `),
       });
 
@@ -580,7 +576,7 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent loom { prompt "Loom" models ["model-loom"] mode primary review_models ["review-a", "review-b"] }
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-        category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
       `);
 
       // Order: explicit agents, category shuttles, review variants
@@ -654,7 +650,7 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent loom { prompt "Loom" models ["model-loom"] mode primary review_models ["rev-model"] }
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-        category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
       `);
 
       const sources = plan.agents.map((a) => a.source);
@@ -667,7 +663,7 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent loom { prompt "Loom" models ["model-loom"] mode primary review_models ["rev-model"] }
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-        category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
       `);
 
       const explicit = plan.agents.filter((a) => a.source === "explicit");
@@ -678,8 +674,8 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent loom { prompt "Loom" models ["model-loom"] mode primary }
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-        category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { description "Backend implementation work" patterns ["src/**/*.ts"] models ["model-backend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
       `);
 
       const shuttles = plan.agents.filter(
@@ -720,7 +716,7 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent loom { prompt "Loom" models ["model-loom"] mode primary }
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-        category frontend { description "Frontend implementation work" patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
       `);
 
       for (const agent of plan.agents) {

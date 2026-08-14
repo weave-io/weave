@@ -1,6 +1,5 @@
 import type {
   AgentConfig,
-  DelegationTrigger,
   ToolPolicy,
   WeaveConfig,
   WorkflowConfig,
@@ -21,7 +20,6 @@ import {
   type AgentPromptTemplateContext,
   ALLOWED_TEMPLATE_PATHS,
   buildTemplateContext,
-  type CategoryInput,
   type ReviewRoutingContext,
 } from "./template-context.js";
 import {
@@ -42,13 +40,13 @@ type AgentMode = NonNullable<AgentConfig["mode"]>;
  * Category metadata attached to a generated category shuttle.
  *
  * `description` is required here — the DSL requires a non-blank description on
- * every category block, so generated shuttles always carry routing text. The
- * looser `CategoryInput` stays optional for externally supplied descriptors
- * that build template contexts directly.
+ * every category block, so generated shuttles always carry routing text.
+ * Template contexts still use the looser `CategoryInput` for externally
+ * supplied descriptors.
  */
-export interface CategoryMetadata extends CategoryInput {
+export interface CategoryMetadata {
+  name: string;
   description: string;
-  patterns: string[];
   isCategory: true;
 }
 
@@ -61,6 +59,8 @@ export interface AgentDescriptor {
   models: string[];
   mode: AgentMode;
   temperature?: number;
+  /** Neutral provider-acceleration intent. Present only as `true`. */
+  fast?: true;
   effectiveToolPolicy: EffectiveToolPolicy;
   rawToolPolicy: ToolPolicy | undefined;
   delegationTargets: DelegationTarget[];
@@ -70,13 +70,13 @@ export interface AgentDescriptor {
 export interface AgentDescriptorCategory {
   name: string;
   description: string;
-  patterns: string[];
 }
 
 export interface DelegationTarget {
   name: string;
   description?: string;
-  triggers: DelegationTrigger[];
+  /** Bounded copy of the target's declared string triggers. */
+  triggers: string[];
   /** True when this target is a generated category shuttle agent. */
   isCategory: boolean;
 }
@@ -145,6 +145,55 @@ function loadPromptSource(
   }));
 }
 
+function copyStringList(values: readonly string[] | undefined): string[] {
+  return values === undefined ? [] : [...values];
+}
+
+function buildComposedDescriptor(input: {
+  agentName: string;
+  agentConfig: AgentConfig;
+  category: CategoryMetadata | undefined;
+  composedPrompt: string;
+  effectiveToolPolicy: EffectiveToolPolicy;
+  delegationTargets: DelegationTarget[];
+}): AgentDescriptor {
+  const {
+    agentName,
+    agentConfig,
+    category,
+    composedPrompt,
+    effectiveToolPolicy,
+    delegationTargets,
+  } = input;
+
+  const descriptor: AgentDescriptor = {
+    name: agentName,
+    displayName: agentConfig.display_name,
+    description: agentConfig.description,
+    category:
+      category === undefined
+        ? undefined
+        : {
+            name: category.name,
+            description: category.description,
+          },
+    composedPrompt,
+    models: copyStringList(agentConfig.models),
+    mode: agentConfig.mode ?? "subagent",
+    temperature: agentConfig.temperature,
+    effectiveToolPolicy,
+    rawToolPolicy: agentConfig.tool_policy,
+    delegationTargets,
+    skills: copyStringList(agentConfig.skills),
+  };
+
+  if (agentConfig.fast === true) {
+    descriptor.fast = true;
+  }
+
+  return descriptor;
+}
+
 function shouldExcludeSharedShuttleTarget(
   agentName: string,
   agentConfig: AgentConfig,
@@ -197,7 +246,7 @@ function buildDelegationTargets(
     targets.push({
       name: targetName,
       description: targetConfig.description,
-      triggers: targetConfig.triggers ?? [],
+      triggers: copyStringList(targetConfig.triggers),
       isCategory: categoryShuttleNames.has(targetName),
     });
   }
@@ -820,27 +869,16 @@ export function composeAgentDescriptor(
 
           const composedPrompt = sections.join("\n\n");
 
-          return ok({
-            name: agentName,
-            displayName: agentConfig.display_name,
-            description: agentConfig.description,
-            category:
-              category === undefined
-                ? undefined
-                : {
-                    name: category.name,
-                    description: category.description,
-                    patterns: [...(category.patterns ?? [])],
-                  },
-            composedPrompt,
-            models: agentConfig.models ?? [],
-            mode: agentConfig.mode ?? "subagent",
-            temperature: agentConfig.temperature,
-            effectiveToolPolicy,
-            rawToolPolicy: agentConfig.tool_policy,
-            delegationTargets,
-            skills: agentConfig.skills ?? [],
-          });
+          return ok(
+            buildComposedDescriptor({
+              agentName,
+              agentConfig,
+              category,
+              composedPrompt,
+              effectiveToolPolicy,
+              delegationTargets,
+            }),
+          );
         },
       ),
     );

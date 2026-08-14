@@ -1,5 +1,254 @@
 import { describe, expect, it } from "bun:test";
+import {
+  CONFIG_ERRORS_TRUNCATED,
+  MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+  MAX_CONFIG_ERROR_FIELD_LENGTH,
+  MAX_CONFIG_ERROR_ISSUES,
+} from "../config-error-policy.js";
+import type { ConfigError } from "../errors.js";
 import { parseConfig } from "../parse-config.js";
+import {
+  MAX_VALIDATION_DIAGNOSTIC_SIZE,
+  MAX_VALIDATION_ISSUES,
+  MAX_VALIDATION_MESSAGE_LENGTH,
+  MAX_VALIDATION_PATH_LENGTH,
+  VALIDATION_DIAGNOSTICS_TRUNCATED,
+} from "../validate.js";
+
+describe("parseConfig — fail-closed DSL structure", () => {
+  it.each([
+    [
+      "agent",
+      `agent helper { triggers [bareword] }`,
+      "agents.helper.triggers.0",
+    ],
+    [
+      "category",
+      `category helper { description "Helper" triggers [bareword] }`,
+      "categories.helper.triggers.0",
+    ],
+  ])("rejects bare identifiers in %s triggers", (_kind, source, path) => {
+    const result = parseConfig(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path,
+        message: "trigger entries must be quoted strings",
+      }),
+    );
+  });
+
+  it.each([
+    ["agent", `agent helper { fast }`, "agents.helper.fast"],
+    [
+      "category",
+      `category helper { description "Helper" fast }`,
+      "categories.helper.fast",
+    ],
+  ])("rejects bare fast in %s declarations", (_kind, source, path) => {
+    const result = parseConfig(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path,
+        message: expect.stringContaining("fast true"),
+      }),
+    );
+  });
+
+  it("preserves supported bare extension-point flags", () => {
+    const result = parseConfig(`workflow flow {
+      version 1
+      extension_points { before-plan }
+      step plan {
+        agent helper
+        role planning
+        type autonomous
+        prompt "Plan."
+        completion plan_created { plan_name "plan" }
+      }
+    }`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().workflows.flow?.extension_points).toEqual({
+      before_plan: true,
+    });
+  });
+
+  it.each([
+    "agent",
+    "category",
+  ])("rejects duplicate %s properties and declarations", (kind) => {
+    const description = kind === "category" ? `description "Helper"` : "";
+    for (const source of [
+      `${kind} helper { ${description} fast true fast true }`,
+      `${kind} helper { ${description} triggers ["one"] triggers ["two"] }`,
+      `${kind} helper { ${description} } ${kind} helper { ${description} }`,
+    ]) {
+      const result = parseConfig(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("duplicate"),
+        }),
+      );
+    }
+  });
+
+  it("rejects duplicate nested properties and workflow declarations", () => {
+    for (const source of [
+      `agent helper { tool_policy { read allow read deny } }`,
+      `workflow flow { version 1 } workflow flow { version 1 }`,
+      `workflow flow { version 1 step run { agent helper } step run { agent helper } }`,
+    ]) {
+      const result = parseConfig(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("duplicate"),
+        }),
+      );
+    }
+  });
+
+  it("rejects dangerous declaration and property names", () => {
+    for (const source of [
+      `agent __proto__ { fast true }`,
+      `category constructor { description "Helper" }`,
+      `agent helper { prototype true }`,
+      `agent helper { extension_points { __proto__ true } }`,
+    ]) {
+      const result = parseConfig(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("dangerous"),
+        }),
+      );
+    }
+  });
+
+  it.each([
+    `workflow flow { version 1 step run { name "Run" display_name "Overwrite" } }`,
+    `workflow flow { version 1 step run { completion plan_created { method "overwrite" } } }`,
+    `workflow flow { version 1 steps [] step run { agent helper } }`,
+  ])("rejects generated-destination collisions end to end", (source) => {
+    const result = parseConfig(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringMatching(/collid|map to/),
+      }),
+    );
+  });
+
+  it("bounds adversarial aggregate diagnostics end to end", () => {
+    const longKey = "x".repeat(MAX_VALIDATION_PATH_LENGTH * 4);
+    const unknowns = Array.from(
+      { length: MAX_VALIDATION_ISSUES * 4 },
+      (_, index) => `${longKey}${index} true`,
+    ).join("\n");
+    const result = parseConfig(`agent helper { ${unknowns} }`);
+    expect(result.isErr()).toBe(true);
+    const errors = result
+      ._unsafeUnwrapErr()
+      .filter((error) => error.type === "ValidationError");
+    const aggregate = errors.reduce(
+      (size, error) => size + error.path.length + error.message.length,
+      0,
+    );
+
+    expect(errors.length).toBeLessThanOrEqual(MAX_VALIDATION_ISSUES);
+    expect(
+      Math.max(...errors.map((error) => error.path.length)),
+    ).toBeLessThanOrEqual(MAX_VALIDATION_PATH_LENGTH);
+    expect(
+      Math.max(...errors.map((error) => error.message.length)),
+    ).toBeLessThanOrEqual(MAX_VALIDATION_MESSAGE_LENGTH);
+    expect(aggregate).toBeLessThanOrEqual(MAX_VALIDATION_DIAGNOSTIC_SIZE);
+    expect(errors.at(-1)?.message).toBe(VALIDATION_DIAGNOSTICS_TRUNCATED);
+  });
+});
+
+describe("parseConfig — all ConfigError bounds", () => {
+  function diagnosticSize(errors: ConfigError[]): number {
+    return errors.reduce((size: number, error: ConfigError) => {
+      switch (error.type) {
+        case "InvalidNumber":
+          return size + error.value.length;
+        case "UnexpectedCharacter":
+          return size + error.char.length;
+        case "UnexpectedToken":
+          return size + error.found.length + error.expected.length;
+        case "MissingBlockName":
+          return size + error.blockType.length;
+        case "ValidationError":
+          return size + error.path.length + error.message.length;
+        case "UnterminatedString":
+        case "UnclosedBlock":
+          return size;
+        default:
+          return size;
+      }
+    }, 0);
+  }
+
+  it("bounds lexer issue count, fields, and aggregate diagnostics", () => {
+    const source = `1.${"x".repeat(20_000)} ${"@".repeat(100)}`;
+    const first = parseConfig(source)._unsafeUnwrapErr();
+    const second = parseConfig(source)._unsafeUnwrapErr();
+
+    expect(second).toEqual(first);
+    expect(first.length).toBeLessThanOrEqual(MAX_CONFIG_ERROR_ISSUES);
+    expect(diagnosticSize(first)).toBeLessThanOrEqual(
+      MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+    );
+    expect(
+      first.some(
+        (error) =>
+          error.type === "InvalidNumber" &&
+          error.value.length <= MAX_CONFIG_ERROR_FIELD_LENGTH,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(first)).toContain(CONFIG_ERRORS_TRUNCATED);
+  });
+
+  it("bounds a deterministic 20,000-character duplicate key", () => {
+    const key = `x${"y".repeat(19_999)}`;
+    const source = `agent helper { ${key} true ${key} false }`;
+    const first = parseConfig(source)._unsafeUnwrapErr();
+    const second = parseConfig(source)._unsafeUnwrapErr();
+
+    expect(second).toEqual(first);
+    expect(first.length).toBeLessThanOrEqual(MAX_CONFIG_ERROR_ISSUES);
+    expect(diagnosticSize(first)).toBeLessThanOrEqual(
+      MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+    );
+    expect(first).toContainEqual(
+      expect.objectContaining({
+        type: "ValidationError",
+        path: expect.stringContaining("[truncated]"),
+        message: expect.stringContaining("[truncated]"),
+      }),
+    );
+    expect(JSON.stringify(first)).toContain(CONFIG_ERRORS_TRUNCATED);
+  });
+
+  it("bounds parser-controlled fields before returning them", () => {
+    const source = `agent helper x${"y".repeat(19_999)}`;
+    const errors = parseConfig(source)._unsafeUnwrapErr();
+
+    expect(errors).toContainEqual(
+      expect.objectContaining({
+        type: "UnexpectedToken",
+        found: expect.stringContaining("[truncated]"),
+      }),
+    );
+    expect(diagnosticSize(errors)).toBeLessThanOrEqual(
+      MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+    );
+    expect(JSON.stringify(errors)).toContain(CONFIG_ERRORS_TRUNCATED);
+  });
+});
 
 describe("parseConfig — opaque adapter settings", () => {
   it("round-trips null and nested JSON values", () => {
@@ -22,7 +271,6 @@ describe("parseConfig — model thinking suffix", () => {
 }
 category backend {
   description "Backend services and persistence"
-  patterns ["src/**"]
   models ["plain-category", "category/model#max", "category\\#model"]
 }`);
     expect(result.isOk()).toBe(true);
@@ -51,7 +299,6 @@ category backend {
 }
 category backend {
   description "Backend services and persistence"
-  patterns ["src/**"]
   models ["plain-category", "category/model#invalid"]
 }`);
     expect(result.isErr()).toBe(true);
@@ -105,9 +352,8 @@ describe("parseConfig — valid sources", () => {
     delegate allow
     network ask
   }
-  triggers [
-    { domain "Orchestration" trigger "Complex multi-step tasks" }
-  ]
+  triggers ["Complex multi-step tasks"]
+  fast true
   skills ["tdd", "code-review"]
 }
 
@@ -128,7 +374,6 @@ agent shuttle {
 category backend {
   description "Backend APIs, services, persistence"
   models ["claude-sonnet-4-5"]
-  patterns ["src/api/**", "src/server/**", "src/db/**"]
   temperature 0.2
   tool_policy {
     read allow
@@ -139,7 +384,6 @@ category backend {
 
 category frontend {
   description "Frontend UI, styling"
-  patterns ["src/components/**", "src/pages/**"]
 }
 
 disable agents ["warp", "spindle"]
@@ -163,7 +407,9 @@ settings {
     // Categories
     expect(config.categories.backend).toBeDefined();
     expect(config.categories.frontend).toBeDefined();
-    expect(config.categories.backend?.patterns).toContain("src/api/**");
+    expect(config.categories.backend?.description).toBe(
+      "Backend APIs, services, persistence",
+    );
 
     // Disabled
     expect(config.disabled.agents).toEqual(["warp", "spindle"]);
@@ -191,10 +437,8 @@ settings {
     network ask
   }
 
-  triggers [
-    { domain "Orchestration" trigger "Complex multi-step tasks" }
-    { domain "Architecture" trigger "System design and planning" }
-  ]
+  triggers ["Complex multi-step tasks", "System design and planning"]
+  fast true
 
   skills ["tdd", "code-review"]
 }`;
@@ -203,10 +447,8 @@ settings {
     const loom = result._unsafeUnwrap().agents.loom;
     expect(loom?.models).toEqual(["claude-sonnet-4-5", "gpt-4o"]);
     expect(loom?.triggers).toHaveLength(2);
-    expect(loom?.triggers?.[0]).toEqual({
-      domain: "Orchestration",
-      trigger: "Complex multi-step tasks",
-    });
+    expect(loom?.triggers?.[0]).toBe("Complex multi-step tasks");
+    expect(loom?.fast).toBe(true);
     expect(loom?.skills).toEqual(["tdd", "code-review"]);
   });
 
@@ -252,6 +494,100 @@ describe("parseConfig — parse errors", () => {
   });
 });
 
+describe("parseConfig — fast intent and trigger validation", () => {
+  const scopes = [
+    ["agent", "agent helper {", "}", "agents.helper"],
+    [
+      "category",
+      'category helper {\n  description "Bounded work"',
+      "}",
+      "categories.helper",
+    ],
+  ] as const;
+
+  function expectValidationPath(source: string, expectedPath: string): void {
+    const result = parseConfig(source);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      const issue = result.error.find(
+        (error) =>
+          error.type === "ValidationError" && error.path === expectedPath,
+      );
+      expect(issue).toBeDefined();
+      if (issue?.type === "ValidationError") {
+        expect(issue.message.length).toBeLessThanOrEqual(256);
+      }
+    }
+  }
+
+  for (const [kind, open, close, path] of scopes) {
+    it(`${kind} accepts fast true and ordered triggers end to end`, () => {
+      const result = parseConfig(
+        `${open}\n  fast true\n  triggers ["First", "Second"]\n${close}`,
+      );
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        const entry =
+          kind === "agent"
+            ? result.value.agents.helper
+            : result.value.categories.helper;
+        expect(entry?.fast).toBe(true);
+        expect(entry?.triggers).toEqual(["First", "Second"]);
+      }
+    });
+
+    it(`${kind} preserves omission end to end`, () => {
+      const result = parseConfig(`${open}\n${close}`);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        const entry =
+          kind === "agent"
+            ? result.value.agents.helper
+            : result.value.categories.helper;
+        expect(entry?.fast).toBeUndefined();
+        expect(entry?.triggers).toBeUndefined();
+      }
+    });
+
+    it(`${kind} rejects fast false and wrong scalar types end to end`, () => {
+      for (const value of ["false", '"true"', "1"]) {
+        expectValidationPath(
+          `${open}\n  fast ${value}\n${close}`,
+          `${path}.fast`,
+        );
+      }
+    });
+
+    it(`${kind} rejects empty, invalid, and structured triggers end to end`, () => {
+      const cases = [
+        ["triggers []", `${path}.triggers`],
+        ['triggers [""]', `${path}.triggers.0`],
+        ["triggers [1]", `${path}.triggers.0`],
+        [
+          'triggers [{ domain "Orchestration" trigger "Plan work" }]',
+          `${path}.triggers.0`,
+        ],
+      ] as const;
+      for (const [property, expectedPath] of cases) {
+        expectValidationPath(`${open}\n  ${property}\n${close}`, expectedPath);
+      }
+    });
+
+    it(`${kind} rejects provider acceleration aliases end to end`, () => {
+      for (const alias of ["service_class", "speed", "variant", "priority"]) {
+        expectValidationPath(`${open}\n  ${alias} true\n${close}`, path);
+      }
+    });
+  }
+
+  it("rejects category patterns end to end", () => {
+    expectValidationPath(
+      `category helper {\n  description "Bounded work"\n  patterns ["src/**"]\n}`,
+      "categories.helper",
+    );
+  });
+});
+
 describe("parseConfig — validation errors", () => {
   it("both prompt and prompt_file → err with ValidationError", () => {
     const src = `agent bad {
@@ -279,7 +615,6 @@ describe("parseConfig — category description", () => {
   it("a described category survives the full pipeline", () => {
     const src = `category backend {
   description "Backend services, APIs, and persistence"
-  patterns ["src/api/**"]
 }`;
     const result = parseConfig(src);
     expect(result.isOk()).toBe(true);
@@ -290,7 +625,6 @@ describe("parseConfig — category description", () => {
 
   it("a category with no description → ValidationError at categories.<name>.description", () => {
     const src = `category backend {
-  patterns ["src/api/**"]
 }`;
     const result = parseConfig(src);
     expect(result.isErr()).toBe(true);
@@ -307,7 +641,6 @@ describe("parseConfig — category description", () => {
   it("an empty category description → ValidationError with the non-empty message", () => {
     const src = `category backend {
   description ""
-  patterns ["src/api/**"]
 }`;
     const result = parseConfig(src);
     expect(result.isErr()).toBe(true);
@@ -325,7 +658,6 @@ describe("parseConfig — category description", () => {
   it("a whitespace-only category description → ValidationError with the non-empty message", () => {
     const src = `category backend {
   description "   "
-  patterns ["src/api/**"]
 }`;
     const result = parseConfig(src);
     expect(result.isErr()).toBe(true);
@@ -694,7 +1026,6 @@ describe("parseConfig — workflows", () => {
 
 category backend {
   description "Backend API surface"
-  patterns ["src/api/**"]
 }
 
 workflow quick-fix {
@@ -862,7 +1193,6 @@ describe("parseConfig — prompt_append_file", () => {
   it("category with prompt_append_file parses successfully and field is present in output", () => {
     const src = `category frontend {
   description "Frontend UI"
-  patterns ["src/components/**"]
   prompt_append_file "cat-extra.md"
 }`;
     const result = parseConfig(src);

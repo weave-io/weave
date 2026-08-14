@@ -1,15 +1,15 @@
 /**
- * Task 21 phase A: the required `delegated-specialist-execution`
- * capability and the top-level fail-closed boundary it enforces.
+ * The required `delegated-specialist-execution` capability and the top-level
+ * fail-closed boundary it enforces.
  *
  * These tests prove three things:
  *
- * 1. The capability is declared required and is answered only by the host
- *    surface inventory. The exact tested Pi host reports it unsupported with
- *    reason `pi-session-api-unavailable`, and no method presence, environment
- *    variable, or configuration can raise it.
+ * 1. The capability is declared required and is answered by the real host
+ *    surface inventory. A host that cannot prove Pi's session API reports it
+ *    unavailable with the closed reason `pi-session-api-unavailable`, and no
+ *    environment variable or configuration can raise it.
  * 2. Activation against that host enters health-only mode and names the
- *    unsupported capability without leaking a path or a prompt.
+ *    unavailable capability without leaking a path or a prompt.
  * 3. Every mutating adapter route fails with a typed
  *    `RequiredCapabilityUnavailable` **before** it calls a controller,
  *    session service, filesystem, cache, lease, or child process, while the
@@ -35,14 +35,18 @@ import {
 } from "../capability-prober.js";
 import { ADAPTER_PACKAGE_IDENTITY, WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiExtensionController } from "../controller.js";
-import { buildDelegationToolRegistration } from "../delegation-tool.js";
+import {
+  buildDelegationToolRegistration,
+  buildRelayedDelegationToolRegistration,
+} from "../delegation-tool.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_SURFACE_IDS } from "../host-compatibility-matrix.js";
 import {
+  createDefaultPiHostProbePort,
+  DefaultPiHostSurfaceReader,
   type PiHostSurfaceReport,
   readHostSurfaceReport,
 } from "../host-inventory.js";
-import { createReadyPiNativeSessionReadinessProbe } from "../native-session-readiness.js";
 import {
   collectRequiredCapabilityGaps,
   createBlockedSessionMutationGate,
@@ -66,6 +70,8 @@ import {
 
 const CAPABILITY = "delegated-specialist-execution" as const;
 const PATH_ONLY = "pi-session-api-unavailable";
+/** The required host surface that carries Pi's native session API. */
+const SESSION_SURFACE = "session-restore" as const;
 
 const ALL_OWNED_COMMANDS: PiCommandInfo[] = WEAVE_COMMAND_NAMES.map((name) => ({
   name,
@@ -101,8 +107,8 @@ function trustedTuiSession() {
   };
 }
 
-/** A host surface report with every required surface native. */
-function allNativeReport(): PiHostSurfaceReport {
+/** A host surface report where every required surface is proven. */
+function descriptorSafeReport(): PiHostSurfaceReport {
   return readHostSurfaceReport(
     PI_HOST_SURFACE_IDS.map((surfaceId) => ({
       surfaceId,
@@ -112,25 +118,65 @@ function allNativeReport(): PiHostSurfaceReport {
   );
 }
 
-/** A report with a session-API gap that maps to pi-session-api-unavailable. */
-function sessionApiGapReport(): PiHostSurfaceReport {
+/** The report a host without a usable Pi session API produces. */
+function pathOnlyReport(): PiHostSurfaceReport {
   return readHostSurfaceReport(
     PI_HOST_SURFACE_IDS.map((surfaceId) =>
-      surfaceId === "session-restore"
+      surfaceId === SESSION_SURFACE
         ? {
             surfaceId,
             status: "unavailable" as const,
-            details: "SessionManager.open failed for /secret/path.jsonl",
+            details: "required-surface-missing",
           }
         : { surfaceId, status: "native" as const, details: "test-controlled" },
     ),
   );
 }
 
+/** A fully capable host namespace: restore, custom session dir, every RPC. */
+function completeHostInput() {
+  const sessionManager = function SessionManager() {} as unknown as {
+    create: () => void;
+    open: () => void;
+    prototype: Record<string, unknown>;
+  };
+  sessionManager.create = () => undefined;
+  sessionManager.open = () => undefined;
+  sessionManager.prototype = {
+    getEntries: () => undefined,
+    getTree: () => undefined,
+    getSessionDir: () => undefined,
+    usesDefaultSessionDir: () => undefined,
+  };
+  return {
+    api: {
+      appendEntry: () => undefined,
+      sendUserMessage: () => undefined,
+    } as never,
+    ui: {
+      custom: () => undefined,
+      setEditorComponent: () => undefined,
+      getEditorComponent: () => undefined,
+      setStatus: () => undefined,
+    } as never,
+    rootExports: {
+      VERSION: "0.83.0",
+      AssistantMessageComponent: () => undefined,
+      ToolExecutionComponent: () => undefined,
+      Markdown: () => undefined,
+      Image: () => undefined,
+      FooterComponent: () => undefined,
+      BorderedLoader: () => undefined,
+      CustomEditor: () => undefined,
+      SessionManager: sessionManager,
+    },
+  };
+}
+
 function controllerWith(hostSurface: PiHostSurfaceReport) {
   const controller = new PiExtensionController({
     safeInitializer: new PiSafeInitializer({
-      nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
+      delegationAuthority: () => ({ status: "ready" as const }),
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.83.0",
@@ -148,7 +194,7 @@ function controllerWith(hostSurface: PiHostSurfaceReport) {
 }
 
 describe("delegated-specialist-execution: declaration", () => {
-  it("is a required capability owned by the host, declared once in the closed set", () => {
+  it("is a required capability declared once in the closed set", () => {
     expect(SESSION_MUTATION_REQUIRED_CAPABILITY).toBe(CAPABILITY);
     expect(REQUIRED_CAPABILITIES).toContain(CAPABILITY);
     expect(ALL_CAPABILITY_IDS.filter((id) => id === CAPABILITY)).toHaveLength(
@@ -158,90 +204,92 @@ describe("delegated-specialist-execution: declaration", () => {
       (entry) => entry.id === CAPABILITY,
     );
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.readiness).toBe("emulated");
   });
 
-  it("is not a host-surface id; readiness is derived from session/process probes", () => {
-    expect(PI_HOST_SURFACE_IDS).not.toContain(CAPABILITY);
+  it("retires the obsolete descriptor capability from every closed set", () => {
+    const obsolete = "descriptor-relative-native-session-io";
+    expect([...(ALL_CAPABILITY_IDS as readonly string[])]).not.toContain(
+      obsolete,
+    );
+    expect([...(PI_HOST_SURFACE_IDS as readonly string[])]).not.toContain(
+      obsolete,
+    );
   });
 });
 
 describe("delegated-specialist-execution: production inventory", () => {
-  it("maps a session-restore gap to pi-session-api-unavailable without leaking host detail", () => {
-    const raw = "SessionManager.open failed for /secret/path.jsonl";
-    const probes = new DefaultPiCapabilityProber().probe({
-      mode: "tui",
-      trust: "trusted",
-      commands: ALL_OWNED_COMMANDS,
-      hostSurface: sessionApiGapReport(),
-    });
-    const readiness = probes.find((probe) => probe.capabilityId === CAPABILITY);
-    const publicOutput = JSON.stringify(readiness);
-    expect(readiness).toEqual({
-      capabilityId: CAPABILITY,
-      probeStatus: "unavailable",
-      details: PATH_ONLY,
-    });
-    expect(publicOutput.includes(raw)).toBe(false);
-    expect(publicOutput.includes("/secret/path")).toBe(false);
+  it("proves every required surface on a complete Pi host namespace", async () => {
+    const result = await new DefaultPiHostSurfaceReader().read(
+      completeHostInput(),
+    );
+    expect(result.isOk()).toBe(true);
+    const report = readHostSurfaceReport(result._unsafeUnwrap());
+    expect(report.requiredGaps).toEqual([]);
   });
 
-  it("cannot be forced ready by environment variables when session API gaps remain", () => {
+  it("cannot be raised by any environment variable or configuration", () => {
+    const port = createDefaultPiHostProbePort({
+      ...completeHostInput(),
+      rootExports: { VERSION: "0.83.0" },
+    });
     process.env.WEAVE_PI_DESCRIPTOR_RELATIVE_SESSION_IO = "1";
     process.env.WEAVE_PI_UNSAFE_ENABLE_SESSION_IO = "true";
     try {
-      const probes = new DefaultPiCapabilityProber().probe({
-        mode: "tui",
-        trust: "trusted",
-        commands: ALL_OWNED_COMMANDS,
-        hostSurface: sessionApiGapReport(),
-      });
-      const readiness = probes.find(
-        (probe) => probe.capabilityId === CAPABILITY,
-      );
-      expect(readiness?.probeStatus).toBe("unavailable");
-      expect(readiness?.details).toBe(PATH_ONLY);
+      expect(port.hasSessionCreate()).toBe(false);
+      expect(port.hasSessionOpen()).toBe(false);
+      expect(port.hasCustomSessionDirectoryContract()).toBe(false);
     } finally {
       delete process.env.WEAVE_PI_DESCRIPTOR_RELATIVE_SESSION_IO;
       delete process.env.WEAVE_PI_UNSAFE_ENABLE_SESSION_IO;
     }
   });
 
-  it("probes unavailable from the real prober, and ok only for an all-native host report", () => {
+  it("probes unavailable with one closed path-free reason, and ok only for a proven host", () => {
     const prober = new DefaultPiCapabilityProber();
     const base = {
       mode: "tui" as const,
       trust: "trusted" as const,
       commands: ALL_OWNED_COMMANDS,
+      candidatePlan: {
+        configLoaded: true,
+        materializationErrorCount: 0,
+        primaryDescriptorFound: true,
+        primaryModelDryResolved: true,
+        delegationToolPlanned: true,
+        eventLoggingPlanned: true,
+        runtimeDirectoryContained: true,
+        plansDirectoryContained: true,
+      },
+      // A proven host still needs this generation's real spawn authority.
+      delegationAuthority: { status: "ready" as const },
     };
     const blocked = prober
-      .probe({ ...base, hostSurface: sessionApiGapReport() })
+      .probe({ ...base, hostSurface: pathOnlyReport() })
       .find((probe) => probe.capabilityId === CAPABILITY);
     expect(blocked).toEqual({
       capabilityId: CAPABILITY,
       probeStatus: "unavailable",
       details: PATH_ONLY,
     });
-    // Host surfaces alone do not prove delegation readiness; plan probes still apply.
-    const nativeHost = prober
-      .probe({ ...base, hostSurface: allNativeReport() })
+    const safe = prober
+      .probe({ ...base, hostSurface: descriptorSafeReport() })
       .find((probe) => probe.capabilityId === CAPABILITY);
-    expect(nativeHost?.probeStatus).toBe("unavailable");
-    expect(typeof nativeHost?.details).toBe("string");
-    expect(nativeHost?.details?.includes("/")).toBe(false);
-    // With no host surface report at all the capability stays fail-closed.
-    const unreported = prober
-      .probe(base)
+    expect(safe?.probeStatus).toBe("ok");
+    // Without a sealed candidate plan the capability stays fail-closed.
+    const unplanned = prober
+      .probe({
+        mode: "tui" as const,
+        trust: "trusted" as const,
+        commands: ALL_OWNED_COMMANDS,
+      })
       .find((probe) => probe.capabilityId === CAPABILITY);
-    expect(unreported?.probeStatus).toBe("unavailable");
+    expect(unplanned?.probeStatus).toBe("unavailable");
   });
 });
 
 describe("delegated-specialist-execution: activation", () => {
   it("enters health-only mode and names the unsupported capability without paths or prompts", async () => {
-    const controller = (
-      await controllerWith(sessionApiGapReport())
-    )._unsafeUnwrap();
+    const controller = (await controllerWith(pathOnlyReport()))._unsafeUnwrap();
     const generation = controller.getCurrentGeneration();
     expect(generation?.healthOnlyMode).toBe(true);
     const gap = findSessionMutationGap(
@@ -249,26 +297,47 @@ describe("delegated-specialist-execution: activation", () => {
     );
     expect(gap).toEqual({ capabilityId: CAPABILITY, reason: PATH_ONLY });
     expect(gap?.reason).not.toContain("/");
-    expect(gap?.reason).toBe(PATH_ONLY);
-  });
-
-  it("keeps session-mutation gated when delegation readiness is still unavailable", async () => {
-    const controller = (
-      await controllerWith(allNativeReport())
-    )._unsafeUnwrap();
-    const generation = controller.getCurrentGeneration();
-    // Native host surfaces are not enough without a planned delegation tool.
-    const gap = findSessionMutationGap(
-      generation?.preflight.requiredCapabilityGaps ?? [],
+    const diagnostic = generation?.preflight.hostSurfaceGapDiagnostics.find(
+      (entry) => entry.capability === SESSION_SURFACE,
     );
-    expect(gap?.capabilityId).toBe(CAPABILITY);
-    expect(controller.evaluateSessionMutationGate().isErr()).toBe(true);
+    expect(diagnostic?.mode).toBe("health-only");
+    expect(diagnostic?.probeResult).toBe(
+      "unavailable:required-surface-missing",
+    );
   });
 
-  it("blocks mutating commands in health-only while keeping read-only and cleanup available", async () => {
-    const controller = (
-      await controllerWith(sessionApiGapReport())
-    )._unsafeUnwrap();
+  it("stays ready when every required probe passes, so deep-module coverage survives", async () => {
+    const controller = new PiExtensionController({
+      safeInitializer: new PiSafeInitializer({
+        delegationAuthority: () => ({ status: "ready" as const }),
+        hostPackageReader: FakeHostPackageReader.ok({
+          name: HOST_PACKAGE_NAME,
+          version: "0.83.0",
+        }),
+        capabilityProber: new FixedProber(allOkProbes()),
+        configActivator: fakeConfigActivator(),
+      }),
+      idGenerator: new FakeIdGenerator(),
+      clock: new FakeClock(),
+      logger: new RecordingLogger(),
+    });
+    const activated = await controller.activate(
+      trustedTuiSession() as never,
+      ALL_OWNED_COMMANDS,
+      descriptorSafeReport(),
+    );
+    expect(activated.isOk()).toBe(true);
+    const generation = controller.getCurrentGeneration();
+    expect(
+      findSessionMutationGap(
+        generation?.preflight.requiredCapabilityGaps ?? [],
+      ),
+    ).toBeUndefined();
+    expect(controller.evaluateSessionMutationGate().isOk()).toBe(true);
+  });
+
+  it("blocks every mutating and cleanup command while keeping read-only commands available", async () => {
+    const controller = (await controllerWith(pathOnlyReport()))._unsafeUnwrap();
     for (const name of [
       "weave:start",
       "weave:run",
@@ -276,14 +345,14 @@ describe("delegated-specialist-execution: activation", () => {
       "weave:resume",
       "weave:artifact",
       "weave:recover-children",
+      "weave:abort",
+      "weave:clear-children",
     ] as const) {
       const decision = controller.evaluateCommandGate(name)._unsafeUnwrap();
       expect(decision.allowed).toBe(false);
-      expect(decision.reason).toBe("health-only-mode");
-    }
-    for (const name of ["weave:abort", "weave:clear-children"] as const) {
-      const decision = controller.evaluateCommandGate(name)._unsafeUnwrap();
-      expect(decision.allowed).toBe(true);
+      expect(decision.reason).toBe(
+        `required-capability-unavailable:${CAPABILITY}`,
+      );
     }
     for (const name of [
       "weave:status",
@@ -304,7 +373,7 @@ describe("delegated-specialist-execution: activation", () => {
     // old contract: mutating blocked, cleanup still allowed.
     const controller = new PiExtensionController({
       safeInitializer: new PiSafeInitializer({
-        nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
+        delegationAuthority: () => ({ status: "ready" as const }),
         hostPackageReader: FakeHostPackageReader.ok({
           name: HOST_PACKAGE_NAME,
           version: "0.83.0",
@@ -325,7 +394,7 @@ describe("delegated-specialist-execution: activation", () => {
     const activated = await controller.activate(
       trustedTuiSession() as never,
       ALL_OWNED_COMMANDS,
-      allNativeReport(),
+      descriptorSafeReport(),
     );
     expect(activated.isOk()).toBe(true);
     expect(controller.getCurrentGeneration()?.healthOnlyMode).toBe(true);
@@ -344,26 +413,98 @@ describe("delegated-specialist-execution: activation", () => {
 });
 
 describe("delegated-specialist-execution: zero-side-effect routes", () => {
-  it("weave_delegate no longer short-circuits on a tool-level session-mutation gate", async () => {
-    const calls: string[] = [];
-    const tool = buildDelegationToolRegistration({
+  const blocked = createBlockedSessionMutationGate(PATH_ONLY);
+
+  function spyingDelegationDeps(calls: string[]) {
+    return {
       targets: [
         { agentName: "shuttle", description: "worker", categoryName: "mini" },
       ] as never,
+      sessionMutationGate: blocked,
       getController: () => {
         calls.push("getController");
         return undefined;
       },
-      getInvocationContext: () => undefined,
+      getInvocationContext: () => {
+        calls.push("getInvocationContext");
+        return undefined;
+      },
       parentId: "root",
       parentDepth: 0,
       parentAgentName: "loom",
-      idGenerator: { next: () => "child-1" },
-      buildBootstrap: () => ({}),
-      buildEnv: () => ({}),
+      idGenerator: {
+        next: () => {
+          calls.push("idGenerator");
+          return "child-1";
+        },
+      },
+      buildBootstrap: () => {
+        calls.push("buildBootstrap");
+        return {};
+      },
+      buildEnv: () => {
+        calls.push("buildEnv");
+        return {};
+      },
       getParentSessionState: () => {
         calls.push("getParentSessionState");
         return { persistence: "persistent" as const };
+      },
+    };
+  }
+
+  async function runDelegate(params: unknown, calls: string[]) {
+    const tool = buildDelegationToolRegistration(
+      spyingDelegationDeps(calls) as never,
+    );
+    const result = await tool.execute(
+      "call-1",
+      params as never,
+      undefined as never,
+      undefined as never,
+      undefined as never,
+    );
+    return JSON.parse(
+      (result.content[0] as { type: "text"; text: string }).text,
+    ) as { ok: boolean; error: string };
+  }
+
+  it("weave_delegate start returns RequiredCapabilityUnavailable with no downstream call", async () => {
+    const calls: string[] = [];
+    const payload = await runDelegate(
+      { kind: "start", agent: "shuttle", task: "do the thing" },
+      calls,
+    );
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toBe("RequiredCapabilityUnavailable");
+    expect(calls).toEqual([]);
+  });
+
+  it("weave_delegate retry, continue, steering, and follow-up all fail before any controller call", async () => {
+    for (const params of [
+      { kind: "retry", threadId: "thread-1" },
+      { kind: "continue", threadId: "thread-1", instruction: "keep going" },
+      { kind: "steer", threadId: "thread-1", instruction: "change course" },
+      { kind: "follow_up", threadId: "thread-1", instruction: "one more" },
+    ]) {
+      const calls: string[] = [];
+      const payload = await runDelegate(params, calls);
+      expect(payload.ok).toBe(false);
+      expect(payload.error).toBe("RequiredCapabilityUnavailable");
+      expect(calls).toEqual([]);
+    }
+  });
+
+  it("a relayed child weave_delegate fails before reaching its runtime", async () => {
+    const calls: string[] = [];
+    const tool = buildRelayedDelegationToolRegistration({
+      targets: [
+        { agentName: "shuttle", description: "worker", categoryName: "mini" },
+      ] as never,
+      sessionMutationGate: blocked,
+      getRuntime: () => {
+        calls.push("getRuntime");
+        return undefined;
       },
     } as never);
     const result = await tool.execute(
@@ -377,8 +518,8 @@ describe("delegated-specialist-execution: zero-side-effect routes", () => {
       (result.content[0] as { type: "text"; text: string }).text,
     ) as { ok: boolean; error: string };
     expect(payload.ok).toBe(false);
-    expect(payload.error).not.toBe("RequiredCapabilityUnavailable");
-    expect(calls).toContain("getParentSessionState");
+    expect(payload.error).toBe("RequiredCapabilityUnavailable");
+    expect(calls).toEqual([]);
   });
 
   it("an unwired gate fails closed exactly like a real capability gap", () => {
@@ -394,7 +535,6 @@ describe("delegated-specialist-execution: zero-side-effect routes", () => {
   });
 
   it("CLI delete fails before touching the children port, while list, show, and doctor stay available", async () => {
-    const blocked = createBlockedSessionMutationGate(PATH_ONLY);
     const calls: string[] = [];
     const children: PiAdapterChildrenPort = {
       list: () => {
@@ -446,7 +586,7 @@ describe("delegated-specialist-execution: zero-side-effect routes", () => {
   });
 });
 
-describe("delegated-specialist-execution: gate internals", () => {
+describe("descriptor-relative-native-session-io: gate internals", () => {
   it("derives gaps from probe-lowered effective readiness", () => {
     const report = buildAdapterHealthReport({
       harness: HOST_PACKAGE_NAME,

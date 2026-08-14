@@ -146,6 +146,7 @@ class RecordingFs implements PiNativeSessionFsPort {
 function storeFor(fs: PiNativeSessionFsPort): PiNativeSessionStore {
   return new PiNativeSessionStore({
     root: ROOT,
+    launch: { mode: "read-only" },
     fs,
     host: new ForbiddenHost(),
   });

@@ -106,7 +106,7 @@ describe("host surface inventory", () => {
     expect(Object.isFrozen(report.probes)).toBe(true);
   });
 
-  it("returns a native row for every declared surface when the public namespace is complete", async () => {
+  it("returns a native row for every declared surface the host can prove when the public namespace is complete", async () => {
     const reader = new DefaultPiHostSurfaceReader();
     const result = await reader.read({
       api: { appendEntry: () => undefined } as never,
@@ -125,9 +125,13 @@ describe("host surface inventory", () => {
     });
     const report = readHostSurfaceReport(result._unsafeUnwrap());
     expect(report.probes).toHaveLength(PI_HOST_SURFACE_IDS.length);
-    expect(report.probes.every((probe) => probe.status === "native")).toBe(
-      true,
-    );
+    // A complete public namespace on a supported version proves every
+    // required surface, including Pi's real path-addressed session API.
+    expect(
+      report.probes
+        .filter((probe) => probe.status !== "native")
+        .map((probe) => probe.surfaceId),
+    ).toEqual([]);
     expect(report.probes.map((probe) => probe.surfaceId)).toEqual([
       ...PI_HOST_SURFACE_IDS,
     ]);
@@ -150,6 +154,7 @@ describe("host surface inventory", () => {
       report.probes.slice(0, 6).every((probe) => probe.status === "fallback"),
     ).toBe(true);
     expect(report.probes[6]?.status).toBe("native");
+    // Rendering exports never affect required-surface readiness.
     expect(report.requiredGaps).toEqual([]);
   });
 

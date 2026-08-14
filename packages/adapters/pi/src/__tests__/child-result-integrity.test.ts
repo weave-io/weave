@@ -74,6 +74,7 @@ class ForbiddenHost implements PiNativeSessionHostPort {
 
 function storeFor(fs: PiNativeSessionFsPort): PiNativeSessionStore {
   return new PiNativeSessionStore({
+    launch: { mode: "read-only" },
     root: ROOT,
     fs,
     host: new ForbiddenHost(),
@@ -725,6 +726,7 @@ class WritingHost implements PiNativeSessionHostPort {
         id: IDENTITY.nativeSessionId,
         cwd: "/repo",
         parentSession: PARENT,
+        timestamp: "2026-01-01T00:00:00.000Z",
       }),
       getEntries: () => [],
       isPersisted: () => true,
@@ -768,6 +770,7 @@ describe("a commit is acceptable only from the leaf it was bound to", () => {
       }
     };
     const store = new PiNativeSessionStore({
+      launch: { mode: "read-only" },
       root: ROOT,
       fs: memory as unknown as PiNativeSessionFsPort,
       host,

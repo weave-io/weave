@@ -17,7 +17,7 @@ import {
   errAsync,
   ok,
   okAsync,
-  type Result,
+  Result,
   ResultAsync,
 } from "neverthrow";
 import {
@@ -32,7 +32,7 @@ import {
   failedDoctorCheck,
   passedDoctorCheck,
 } from "./child-doctor.js";
-import { BunEnvPort, buildDefaultPiChildCommand } from "./child-env.js";
+import type { PiDelegationAuthorityReadiness } from "./capability-prober.js";
 import {
   BunPiChildMetadataCacheFs,
   openPiChildMetadataCache,
@@ -45,17 +45,20 @@ import {
 } from "./child-native-sessions.js";
 import { BunPiChildProcessPort } from "./child-process-port.js";
 import { createNativeChildRefSourceAuthority } from "./child-session-refs.js";
+import {
+  createPiChildSessionStorageAuthority,
+  provePiChildSessionRoot,
+} from "./child-session-storage-authority.js";
+import {
+  makeRequiredCapabilityUnavailableFailure,
+  type PiAdapterFailure,
+} from "./errors.js";
 import { createBunPiNativeSessionFs } from "./native-session-fs.js";
 import {
   createPiNativeSessionHost,
   isPiSessionManagerStatic,
   type PiSessionManagerStatic,
 } from "./native-session-host.js";
-import {
-  createPiNativeSessionReadinessProbe,
-  type PiNativeSessionReadiness,
-  type PiNativeSessionReadinessProbe,
-} from "./native-session-readiness.js";
 import {
   createSessionMutationGate,
   type PiSessionMutationGate,
@@ -115,10 +118,13 @@ export interface CreateProductionPiAdapterCommandPortsOptions {
    */
   readonly accessMode?: PiProductionAdapterAccessMode;
   /**
-   * Proves Pi-native session/root/process readiness for the mutating route.
-   * Production defaults to the real probe; tests inject a controlled one.
+   * This generation's spawn-authority verdict, read from the same session
+   * authority every launch path consumes. Production defaults to a real
+   * authority built over the installed host, the proven adapter-owned session
+   * root, and the child process launch surface; tests inject a controlled
+   * verdict.
    */
-  readonly readinessProbe?: PiNativeSessionReadinessProbe;
+  readonly delegationAuthority?: () => PiDelegationAuthorityReadiness;
 }
 
 /**
@@ -131,7 +137,7 @@ export interface CreateProductionPiAdapterCommandPortsOptions {
  */
 function mutationGateFor(
   accessMode: PiProductionAdapterAccessMode,
-  readiness: PiNativeSessionReadiness | undefined,
+  readiness: PiDelegationAuthorityReadiness | undefined,
 ): PiSessionMutationGate {
   if (accessMode === "read") {
     return createSessionMutationGate(() => [
@@ -141,12 +147,14 @@ function mutationGateFor(
       },
     ]);
   }
-  if (readiness === undefined || !readiness.ready) {
+  if (readiness === undefined || readiness.status !== "ready") {
     return createSessionMutationGate(() => [
       {
         capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
         reason:
-          readiness?.ready === false ? readiness.reason : "readiness-unproven",
+          readiness?.status === "unavailable"
+            ? readiness.reason
+            : "readiness-unproven",
       },
     ]);
   }
@@ -162,43 +170,47 @@ function isMutationGateOpen(gate: PiSessionMutationGate): boolean {
 }
 
 /**
- * Runs the readiness probe only for the mutating access mode, so a read route
- * never initializes a root. A probe that throws despite its `never` error type
- * fails closed; the thrown value is discarded.
+ * Reads the spawn-authority verdict only for the mutating access mode, so a
+ * read route never proves - and never initializes - a session root. An
+ * injected verdict that throws fails closed; the thrown value is discarded.
  */
 function readReadinessFor(
   accessMode: PiProductionAdapterAccessMode,
   options: CreateProductionPiAdapterCommandPortsOptions,
-): ResultAsync<PiNativeSessionReadiness | undefined, never> {
+): ResultAsync<PiDelegationAuthorityReadiness | undefined, never> {
   if (accessMode === "read") return okAsync(undefined);
-  const probe =
-    options.readinessProbe ??
-    createPiNativeSessionReadinessProbe({
-      processPort: new BunPiChildProcessPort(),
-      childCommand: buildDefaultPiChildCommand(new BunEnvPort()),
-      ...(options.SessionManager === undefined
-        ? {}
-        : { SessionManager: options.SessionManager }),
-      ...(options.env === undefined ? {} : { env: options.env }),
-      ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
-    });
-  return ResultAsync.fromSafePromise(
-    Promise.resolve()
-      .then(() => probe.probe())
-      .then((result) =>
-        result.match(
-          (readiness): PiNativeSessionReadiness | undefined => readiness,
-          (): PiNativeSessionReadiness | undefined => ({
-            ready: false,
-            reason: "pi-session-api-unavailable",
-          }),
-        ),
-      )
-      .catch((): PiNativeSessionReadiness | undefined => ({
-        ready: false,
-        reason: "pi-session-api-unavailable",
-      })),
-  );
+  const injected = options.delegationAuthority;
+  if (injected !== undefined) {
+    return okAsync(
+      Result.fromThrowable(
+        () => injected(),
+        (): PiDelegationAuthorityReadiness => ({
+          status: "unavailable",
+          reason: "pi-session-api-unavailable",
+        }),
+      )().match(
+        (readiness) => readiness,
+        (fallback) => fallback,
+      ),
+    );
+  }
+  return provePiChildSessionRoot({
+    fs: createBunPiNativeSessionFs(),
+    ...(options.env === undefined ? {} : { env: options.env }),
+    ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
+  }).map((sessionRoot) => {
+    const reason = createPiChildSessionStorageAuthority({
+      SessionManager:
+        options.SessionManager ??
+        (PiPublicExports as { SessionManager?: unknown }).SessionManager,
+      sessionRoot,
+      processLaunch: new BunPiChildProcessPort(),
+      scopeId: "pi-adapter-cli",
+    }).readinessReason();
+    return reason === undefined
+      ? ({ status: "ready" } as const)
+      : ({ status: "unavailable", reason } as const);
+  });
 }
 
 const CLI_SOURCE_PARENT = "weave-cli";
@@ -248,6 +260,38 @@ function resolveHost(
     });
   }
   return ok(createPiNativeSessionHost(candidate));
+}
+
+/**
+ * Capability gate for health-only `children delete`.
+ *
+ * Delete performs a persistent session mutation, so it runs only on a host
+ * that exposes the real Pi session create/open API. Otherwise it returns
+ * `RequiredCapabilityUnavailable` with `pi-session-api-unavailable`. Callers
+ * must invoke this **before** {@link createProductionPorts} so delete never
+ * opens a cache, ref store, or session root.
+ */
+export function evaluateProductionChildrenDeleteGate(
+  options: Pick<
+    CreateProductionPiAdapterCommandPortsOptions,
+    "SessionManager"
+  > = {},
+): Result<void, PiAdapterFailure> {
+  const candidate =
+    options.SessionManager ??
+    (PiPublicExports as { SessionManager?: unknown }).SessionManager;
+  // This gate answers one narrow question - does the installed host expose
+  // the public session create/open API - because the CLI resolves and proves
+  // its own session root later, on the delete path itself.
+  if (!isPiSessionManagerStatic(candidate)) {
+    return err(
+      makeRequiredCapabilityUnavailableFailure(
+        SESSION_MUTATION_REQUIRED_CAPABILITY,
+        "pi-session-api-unavailable",
+      ),
+    );
+  }
+  return ok(undefined);
 }
 
 /**
@@ -339,6 +383,9 @@ function openWithSessionRoot(
     root: sessionRoot,
     fs: createBunPiNativeSessionFs(),
     host,
+    // The CLI inspects sessions; it never launches a child, so it states
+    // read-only explicitly and cannot mint a launch grant at all.
+    launch: { mode: "read-only" },
   });
   const authority = createNativeChildRefSourceAuthority(sessions);
   const accessMode = options.accessMode ?? "read";
@@ -356,7 +403,7 @@ function openWithSessionRoot(
         PiProductionAdapterCommandError
       >({
         children: unavailableChildrenPort(
-          `child mutation unavailable: ${readiness?.ready === false ? readiness.reason : "readiness-unproven"}`,
+          `child mutation unavailable: ${readiness?.status === "unavailable" ? readiness.reason : "readiness-unproven"}`,
         ),
         doctor: createPiDoctorPort({
           ports: createStoreBackedDoctorCheckPorts({
@@ -489,7 +536,13 @@ export function accessModeForAdapterAction(
 }
 
 /** Why the CLI refused to open production ports for an adapter action. */
-export type PiProductionAdapterCliOpenError = PiProductionAdapterCommandError;
+export type PiProductionAdapterCliOpenError =
+  | PiProductionAdapterCommandError
+  | {
+      readonly type: "RequiredCapabilityUnavailable";
+      readonly capabilityId: string;
+      readonly reason: string;
+    };
 
 export interface ResolveProductionAdapterCliRegistryInput
   extends CreateProductionPiAdapterCommandPortsOptions {
@@ -497,10 +550,33 @@ export interface ResolveProductionAdapterCliRegistryInput
   readonly action: string;
 }
 
-/** CLI dispatch seam for production adapter commands. */
+/**
+ * CLI dispatch seam: gate mutating delete **before**
+ * {@link createProductionPorts}, then open ports in the access mode the
+ * action itself earns.
+ */
 export function resolveProductionAdapterCliRegistry(
   input: ResolveProductionAdapterCliRegistryInput,
 ): ResultAsync<AdapterCommandRegistry, PiProductionAdapterCliOpenError> {
+  if (input.action === "children.delete") {
+    const gated = evaluateProductionChildrenDeleteGate({
+      ...(input.SessionManager === undefined
+        ? {}
+        : { SessionManager: input.SessionManager }),
+    });
+    if (gated.isErr()) {
+      const correlation = gated.error.correlation;
+      const reason =
+        correlation !== undefined && typeof correlation.reason === "string"
+          ? correlation.reason
+          : "capability-unavailable";
+      return errAsync({
+        type: "RequiredCapabilityUnavailable",
+        capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
+        reason,
+      });
+    }
+  }
   const { action, accessMode: _requested, ...portOptions } = input;
   // The action alone decides access. A caller cannot widen a read route, and
   // cannot narrow `children.delete` into a mode that could never complete it.

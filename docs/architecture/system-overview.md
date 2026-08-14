@@ -76,7 +76,7 @@ flowchart TD
 Configuration is where users declare what they want the agent system to be:
 
 - agents and their roles
-- categories and routing hints
+- categories with their descriptions and exact trigger strings
 - workflows and gates
 - prompt text or prompt references
 - model preferences
@@ -105,9 +105,10 @@ The engine answers: **what should exist?**
 It takes normalized configuration and produces higher-level Weave concepts such as:
 
 - normalized agent descriptors
-- **Composed Prompts** — final prompt text assembled from each agent's prompt source, a generated `## Delegation` section derived from `triggers` config, and any `prompt_append` text
-- generated category shuttle agents
+- **Composed Prompts** — final prompt text assembled from each agent's prompt source, a generated `## Delegation` section derived from the ordered `triggers` strings in config, and any `prompt_append` text
+- generated category shuttle agents, routed by description and trigger strings rather than by file patterns
 - model preference intent
+- neutral provider-acceleration intent, carried as the optional literal `fast: true`
 - skill matching decisions from adapter-provided skill context
 - abstract policy and lifecycle decisions
 - workflow execution intent

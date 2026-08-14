@@ -36,6 +36,7 @@ import {
 } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import type { PiChildRefRecord } from "../child-session-refs.js";
+import { createPiChildSessionStorageAuthority } from "../child-session-storage-authority.js";
 import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
@@ -50,6 +51,7 @@ import {
   createPiExtension,
   PI_SHARED_LOG_PATH,
   type PiExtensionDeps,
+  type PiExtensionInstance,
   parsePiSkillsFromSystemPrompt,
   readOverlaySessionEntryPage,
   resolveDirectStepBadgeAgent,
@@ -64,6 +66,7 @@ import {
 } from "../host-inventory.js";
 import { FakePathContainmentPort } from "../path-containment.js";
 import { FakePiPlanCatalogPort } from "../plan-catalog.js";
+import type { ProviderFastPublicSnapshot } from "../provider-fast-activation.js";
 import type {
   PiRecoveryPointerStore,
   PiWeaveRecoveryPointerV1,
@@ -96,6 +99,10 @@ import {
   removeRealTempRoot,
   reserveRealTempPath,
 } from "./fakes/real-temp-root.js";
+import {
+  createTestOnlyObservedSessionStorageAuthority,
+  TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+} from "./fakes/test-only-session-storage-authority.js";
 
 const EMPTY_CONFIG = {
   agents: {},
@@ -694,7 +701,7 @@ function installExtension(
   host: RecordingFakePiHost,
   hostVersion = "0.81.1",
   overrides: Partial<PiExtensionDeps> = {},
-) {
+): PiExtensionInstance {
   const factory = createPiExtension({
     hostPackageReader: FakeHostPackageReader.ok({
       name: HOST_PACKAGE_NAME,
@@ -724,9 +731,13 @@ function installExtension(
     // shortcut registration can be modelled independently of editor
     // ownership. Absent unless a test sets `effectiveKeybindingConfig`.
     hostKeybindings: () => host.hostKeybindingsForTest(),
-    // Model an all-native host by default so tests stay ready under the fake
-    // host. Production host probing is out of scope for these fixtures.
+    // Model a descriptor-safe host by default. The production reader can never
+    // report `descriptor-relative-native-session-io` as native, so without an
+    // explicit reader every test would collapse into health-only mode and
+    // lose its deep-module coverage. Tests that assert real host-surface
+    // behaviour override this.
     hostSurfaceReader: hostSurfaceReader(),
+    sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     ...overrides,
   });
   factory(host.api);
@@ -756,7 +767,10 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
         },
       },
     ]);
+    // No provider request/header/response hook is registered: the adapter
+    // sends no acceleration control and reads no provider response.
     expect(host.onCalls.map((call) => call.event).sort()).toEqual([
+      "agent_settled",
       "agent_start",
       "before_agent_start",
       "input",
@@ -832,6 +846,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
         version: "0.81.1",
       }),
       capabilityProber: allOkCapabilityProber(),
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       idGenerator: new FakeIdGenerator(),
       clock: new FakeClock(),
       logger: new RecordingLogger(),
@@ -851,7 +866,9 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
         new Map(),
         ok("/fake/project"),
       ),
-      // Model an all-native host so this fixture reaches ready under fakes.
+      // Model a descriptor-safe host: the production reader always reports
+      // `descriptor-relative-native-session-io` unavailable, which is a
+      // required capability and would force health-only mode.
       hostSurfaceReader: hostSurfaceReader(),
     });
     factory(host.api);
@@ -1118,6 +1135,15 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     const ctx = await host.invokeCommand("weave:start");
     expect(host.notifyCalls.at(-1)?.message).toContain("health-only mode");
     expect(ctx.mode).toBe("tui");
+    const turn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(turn.systemPrompt).toBe("native");
+    expect(
+      host.statusCalls.filter(
+        (call) => call.key === "weave-agent" && call.value === "◆ WEAVE · LOOM",
+      ),
+    ).toHaveLength(0);
   });
 
   it("still allows weave:health and weave:status and weave:abort while in health-only mode", async () => {
@@ -1400,6 +1426,50 @@ describe("strict boot primary activation", () => {
     expect(
       host.statusCalls.filter((call) => call.key === "weave-agent").at(-1),
     ).toEqual(committedBadge);
+  });
+
+  it("appends the committed prompt for a fast primary without changing UI or activation", async () => {
+    const catalogModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+    };
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [catalogModel],
+    });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({
+              models: ["anthropic/claude-sonnet-4-5#high"],
+              fast: true,
+            }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+
+    await host.triggerSessionStart();
+    const turn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+
+    expect(turn.systemPrompt).toContain("You are Loom, the main orchestrator.");
+    expect(host.activationCalls).toEqual([
+      { kind: "model", model: catalogModel },
+      { kind: "thinking", level: "high" },
+    ]);
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+    expect(host.statusCalls).toContainEqual({ key: "weave", value: "ready" });
   });
 
   it("reads the boot skill catalog from the session context and resolves skills before the first turn", async () => {
@@ -2353,6 +2423,80 @@ describe("createPiExtension: config activation, materialization consumption, pri
     });
   });
 
+  it("keeps the committed prompt after a failed Alt+A switch in both fast directions", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({ fast: true }),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor({ mode: "subagent" }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+    await host.invokeShortcut("alt+a");
+    const afterFailedFastSwitch = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(afterFailedFastSwitch.systemPrompt).toContain(
+      "You are Loom, the main orchestrator.",
+    );
+    expect(afterFailedFastSwitch.systemPrompt).not.toContain(
+      "You are Tapestry, the workflow orchestrator.",
+    );
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+  });
+
+  it("keeps the committed non-fast prompt after a failed switch to a fast ineligible agent", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor({ mode: "subagent", fast: true }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+    await host.invokeShortcut("alt+a");
+    const afterFailedAbsentSwitch = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(afterFailedAbsentSwitch.systemPrompt).toContain(
+      "You are Loom, the main orchestrator.",
+    );
+    expect(afterFailedAbsentSwitch.systemPrompt).not.toContain(
+      "You are Tapestry, the workflow orchestrator.",
+    );
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+  });
+
   it("never shows a primary badge when the first activation fails", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host, "0.81.1", {
@@ -3253,7 +3397,189 @@ describe("createPiExtension: config activation, materialization consumption, pri
     ]);
   });
 
-  it("retains reconstruction and recovery on a ready host", async () => {
+  it("skips startup recovery for an interrupted ref when session storage is path-only", async () => {
+    const interrupted = eligibleOrdinaryRecoveryRecord({
+      childId: "legacy-interrupted",
+      threadId: "legacy-interrupted",
+      nativeSessionId: "native-legacy-interrupted",
+      sessionRef: "children/legacy-interrupted/session.jsonl",
+      originEntryId: "entry-legacy-interrupted",
+      title: "loom",
+      status: "running",
+    });
+    const history = mutableChildRefSource(interrupted);
+    const refBytesBefore = JSON.stringify(history.records);
+    let restores = 0;
+    let refAppends = 0;
+    let cacheCalls = 0;
+    let sessionMutations = 0;
+    const refs = history.sources.refs as {
+      appendNewChild: typeof history.sources.refs.appendNewChild;
+      appendLifecycle: typeof history.sources.refs.appendLifecycle;
+    };
+    const originalAppendNew = refs.appendNewChild.bind(history.sources.refs);
+    const originalLifecycle = refs.appendLifecycle.bind(history.sources.refs);
+    refs.appendNewChild = ((input) => {
+      refAppends += 1;
+      return originalAppendNew(input);
+    }) as typeof refs.appendNewChild;
+    refs.appendLifecycle = ((record, patch) => {
+      refAppends += 1;
+      return originalLifecycle(record, patch);
+    }) as typeof refs.appendLifecycle;
+    const cache = history.sources.cache as {
+      upsertRef: PiThreadCachePort["upsertRef"];
+    };
+    const originalUpsert = cache.upsertRef.bind(history.sources.cache);
+    cache.upsertRef = ((ref, workspaceKey) => {
+      cacheCalls += 1;
+      return originalUpsert(ref, workspaceKey);
+    }) as typeof cache.upsertRef;
+    const sessions = history.sources.sessions as {
+      createChildSession: PiThreadSessionPort["createChildSession"];
+      establishThreadLeaf: PiThreadSessionPort["establishThreadLeaf"];
+      appendTombstone: PiThreadSessionPort["appendTombstone"];
+    };
+    const originalCreate = sessions.createChildSession.bind(
+      history.sources.sessions,
+    );
+    const originalLeaf = sessions.establishThreadLeaf.bind(
+      history.sources.sessions,
+    );
+    const originalTombstone = sessions.appendTombstone.bind(
+      history.sources.sessions,
+    );
+    sessions.createChildSession = ((input) => {
+      sessionMutations += 1;
+      return originalCreate(input);
+    }) as typeof sessions.createChildSession;
+    sessions.establishThreadLeaf = ((ref, metadata, expectedParent) => {
+      sessionMutations += 1;
+      return originalLeaf(ref, metadata, expectedParent);
+    }) as typeof sessions.establishThreadLeaf;
+    sessions.appendTombstone = ((record) => {
+      sessionMutations += 1;
+      return originalTombstone(record);
+    }) as typeof sessions.appendTombstone;
+    const storage = createPiChildSessionStorageAuthority();
+    expect(storage.requireNativeSessionAuthority()._unsafeUnwrapErr()).toEqual({
+      type: "SessionStorageUnavailable",
+      reason: "pi-session-api-unavailable",
+    });
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Recover now");
+    installRecoveryExtension(
+      host,
+      history,
+      () => {
+        restores += 1;
+        return okAsync({
+          finalOutput: "must-not-restore",
+          interventionCount: 0,
+        });
+      },
+      { recovery_countdown_seconds: 0 },
+      { sessionStorageAuthority: storage },
+    );
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    expect(host.selectCalls).toHaveLength(0);
+    expect(refAppends).toBe(0);
+    expect(history.updates).toHaveLength(0);
+    expect(restores).toBe(0);
+    expect(sessionMutations).toBe(0);
+    expect(cacheCalls).toBe(0);
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(
+      host.notifyCalls.some((call) =>
+        call.message.includes("Interrupted Weave children"),
+      ),
+    ).toBe(false);
+    expect(
+      host.notifyCalls.filter(
+        (call) =>
+          call.message === "Child recovery is unavailable in this session.",
+      ),
+    ).toHaveLength(0);
+    expect(JSON.stringify(history.records)).toBe(refBytesBefore);
+    await flushBackgroundWork();
+    expect(cacheCalls).toBe(0);
+    expect(refAppends).toBe(0);
+    expect(sessionMutations).toBe(0);
+    expect(restores).toBe(0);
+  });
+
+  it("checks path-only session storage before factory open and skips reconstruct/upsert/recovery", async () => {
+    const order: string[] = [];
+    const interrupted = eligibleOrdinaryRecoveryRecord({
+      childId: "path-only-gated",
+      threadId: "path-only-gated",
+      nativeSessionId: "native-path-only-gated",
+      sessionRef: "children/path-only-gated/session.jsonl",
+      originEntryId: "entry-path-only-gated",
+      title: "loom",
+      status: "running",
+    });
+    const history = mutableChildRefSource(interrupted);
+    let upsertCalls = 0;
+    let restores = 0;
+    const cache = history.sources.cache as {
+      upsertRef: PiThreadCachePort["upsertRef"];
+    };
+    const originalUpsert = cache.upsertRef.bind(history.sources.cache);
+    cache.upsertRef = ((ref, workspaceKey) => {
+      upsertCalls += 1;
+      order.push("upsert");
+      return originalUpsert(ref, workspaceKey);
+    }) as typeof cache.upsertRef;
+    const storage = await createTestOnlyObservedSessionStorageAuthority({
+      granted: false,
+      onCheck: () => {
+        order.push("authority");
+      },
+    });
+    const factory: PiThreadSourceFactory = (input) => {
+      order.push(
+        input.readOnly === true ? "factory-readonly" : "factory-mutating",
+      );
+      return history.factory(input);
+    };
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Recover now");
+    installRecoveryExtension(
+      host,
+      history,
+      () => {
+        restores += 1;
+        order.push("spawn");
+        return okAsync({
+          finalOutput: "must-not-restore",
+          interventionCount: 0,
+        });
+      },
+      { recovery_countdown_seconds: 0 },
+      {
+        sessionStorageAuthority: storage,
+        threadSourceFactory: factory,
+      },
+    );
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+
+    expect(order[0]).toBe("authority");
+    expect(order).toContain("factory-readonly");
+    expect(order.indexOf("authority")).toBeLessThan(
+      order.indexOf("factory-readonly"),
+    );
+    expect(order).not.toContain("factory-mutating");
+    expect(order).not.toContain("upsert");
+    expect(order).not.toContain("spawn");
+    expect(upsertCalls).toBe(0);
+    expect(restores).toBe(0);
+    expect(host.selectCalls).toHaveLength(0);
+  });
+
+  it("retains reconstruction and recovery on a descriptor-safe ready host", async () => {
     const order: string[] = [];
     const interrupted = eligibleOrdinaryRecoveryRecord({
       childId: "ready-reconstruct",
@@ -3276,6 +3602,12 @@ describe("createPiExtension: config activation, materialization consumption, pri
       order.push("upsert");
       return originalUpsert(ref, workspaceKey);
     }) as typeof cache.upsertRef;
+    const storage = await createTestOnlyObservedSessionStorageAuthority({
+      granted: true,
+      onCheck: () => {
+        order.push("authority");
+      },
+    });
     const factory: PiThreadSourceFactory = (input) => {
       order.push(
         input.readOnly === true ? "factory-readonly" : "factory-mutating",
@@ -3300,15 +3632,20 @@ describe("createPiExtension: config activation, materialization consumption, pri
       },
       { recovery_countdown_seconds: 0 },
       {
+        sessionStorageAuthority: storage,
         threadSourceFactory: factory,
       },
     );
     await host.triggerSessionStart();
     await flushBackgroundWork();
 
+    expect(order[0]).toBe("authority");
     expect(order).toContain("factory-mutating");
     expect(order).toContain("upsert");
     expect(order).toContain("spawn");
+    expect(order.indexOf("authority")).toBeLessThan(
+      order.indexOf("factory-mutating"),
+    );
     expect(order.indexOf("factory-mutating")).toBeLessThan(
       order.indexOf("upsert"),
     );
@@ -3327,6 +3664,12 @@ describe("createPiExtension: config activation, materialization consumption, pri
       deleteValue: () => undefined,
     };
     const order: string[] = [];
+    const storage = await createTestOnlyObservedSessionStorageAuthority({
+      granted: false,
+      onCheck: () => {
+        order.push("authority");
+      },
+    });
     let openDatabaseCalls = 0;
     const production = createProductionPiThreadSourceFactory();
     const factory: PiThreadSourceFactory = (
@@ -3346,9 +3689,10 @@ describe("createPiExtension: config activation, materialization consumption, pri
     };
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host, "0.81.1", {
-      // Health-only: a required Pi session capability is absent.
-      hostSurfaceReader: hostSurfaceReader(["custom-session-directory"]),
+      // Health-only: the required Pi session surface is absent.
+      hostSurfaceReader: hostSurfaceReader(["session-restore"]),
       envPort,
+      sessionStorageAuthority: storage,
       threadSourceFactory: factory,
       runtimeStoreFactory: {
         open: () => okAsync(createInMemoryRuntimeStore()),
@@ -3375,6 +3719,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
     await host.invokeCommand("weave:doctor");
     await flushBackgroundWork();
 
+    expect(order[0]).toBe("authority");
     expect(order).toContain("factory-readonly");
     expect(order).not.toContain("factory-mutating");
     expect(order).not.toContain("openDatabase");
@@ -4485,6 +4830,44 @@ describe("createPiExtension: persistent-parent guard on production weave_delegat
     expect(headerReads).toBeGreaterThan(0);
     expect(opened).toEqual(["header-stable"]);
     expect(opened).not.toContain("runtime-boot-2");
+  });
+});
+
+describe("createPiExtension: restart and resume read committed fast intent", () => {
+  it("re-activates a fast primary from the persisted header session after restart", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: {
+        getSessionId: () => "runtime-boot-2",
+        getSessionFile: () => "/sessions/a.jsonl",
+        isPersisted: () => true,
+        getHeader: () => ({ type: "session", id: "header-stable" }),
+      },
+    });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({ fast: true }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+    const turn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(turn.systemPrompt).toContain("You are Loom, the main orchestrator.");
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+    expect(host.statusCalls).toContainEqual({ key: "weave", value: "ready" });
   });
 });
 
@@ -8640,5 +9023,441 @@ describe("readOverlaySessionEntryPage: extension source boundary", () => {
     );
     expect(result.isOk()).toBe(true);
     expect(calls).toEqual([{ ref: "ref-9", parent: "parent-7", limit: 10 }]);
+  });
+});
+
+const PROVIDER_FAST_SECRET = "sk-proj-fast-secret-value-DO-NOT-ECHO-9f3c2a1b";
+const PROVIDER_FAST_AUTHORIZATION = `Bearer ${PROVIDER_FAST_SECRET}`;
+
+const UNSUPPORTED_FAST_SNAPSHOT: ProviderFastPublicSnapshot = {
+  state: "unsupported",
+  evidenceKind: "none",
+  evidenceOutcome: "absent",
+  reason: "harness-seam-unavailable",
+};
+
+function expectSanitizedProviderFast(
+  snapshot: ProviderFastPublicSnapshot | undefined,
+  expected: ProviderFastPublicSnapshot | undefined,
+): void {
+  expect(snapshot).toEqual(expected);
+  const serialized = JSON.stringify(snapshot);
+  expect(serialized).not.toContain(PROVIDER_FAST_SECRET);
+  expect(serialized).not.toContain("sk-proj");
+  expect(serialized).not.toContain("applied");
+  expect(serialized).not.toContain("requested");
+  expect(serialized).not.toContain("Authorization");
+}
+
+function defineOwnData(target: object, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+describe("createPiExtension: provider fast intent", () => {
+  const openaiModel = {
+    provider: "openai",
+    id: "gpt-5.6-sol",
+    api: "openai-responses",
+    baseUrl: "https://api.openai.com/v1",
+  };
+  const anthropicModel = {
+    provider: "anthropic",
+    id: "claude-opus-5",
+    api: "anthropic-messages",
+    baseUrl: "https://api.anthropic.com/v1",
+  };
+
+  function installFastPrimary(
+    host: RecordingFakePiHost,
+    extras: {
+      readonly model?: typeof openaiModel;
+      readonly fast?: true;
+      readonly name?: string;
+      readonly second?: {
+        readonly name: string;
+        readonly model: typeof openaiModel;
+        readonly fast?: true;
+      };
+      readonly overrides?: Partial<PiExtensionDeps>;
+    } = {},
+  ): PiExtensionInstance {
+    const model = extras.model ?? openaiModel;
+    const agents = [
+      {
+        agentName: extras.name ?? "loom",
+        source: "explicit" as const,
+        descriptor: loomDescriptor({
+          name: extras.name ?? "loom",
+          models: [`${model.provider}/${model.id}`],
+          ...(extras.fast === true ? { fast: true as const } : {}),
+        }),
+      },
+    ];
+    if (extras.second !== undefined) {
+      agents.push({
+        agentName: extras.second.name,
+        source: "explicit",
+        descriptor: tapestryDescriptor({
+          name: extras.second.name,
+          models: [`${extras.second.model.provider}/${extras.second.model.id}`],
+          ...(extras.second.fast === true ? { fast: true as const } : {}),
+        }),
+      });
+    }
+    return installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents,
+        errors: [],
+      }),
+      ...extras.overrides,
+    });
+  }
+
+  function journalRecordingOverrides(
+    sink: unknown[],
+  ): Partial<PiExtensionDeps> {
+    return {
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      telemetryJournal: {
+        write: (entry) => {
+          sink.push(entry);
+          return okAsync(undefined);
+        },
+      },
+      telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+    };
+  }
+
+  function providerFastEvents(entries: readonly unknown[]): string[] {
+    return entries
+      .map((entry) =>
+        typeof entry === "object" && entry !== null && "eventType" in entry
+          ? String((entry as { eventType?: unknown }).eventType)
+          : "",
+      )
+      .filter((eventType) => eventType.startsWith("provider-fast."));
+  }
+
+  it("registers no provider request or header mutation at all", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    installFastPrimary(host, { fast: true });
+    await host.triggerSessionStart();
+
+    expect(host.registeredEventHandlerCount("before_provider_headers")).toBe(0);
+    expect(host.registeredEventHandlerCount("before_provider_request")).toBe(0);
+    expect(host.registeredEventHandlerCount("after_provider_response")).toBe(0);
+  });
+
+  it.each([
+    ["openai", openaiModel],
+    ["anthropic", anthropicModel],
+  ] as const)("leaves a fast-declaring %s primary's payload and headers exactly unchanged", async (_provider, model) => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [model],
+    });
+    const extension = installFastPrimary(host, { model, fast: true });
+    // A foreign extension still owns its own edits; Weave adds nothing.
+    host.api.on("before_provider_headers", (event) => {
+      const headers = (event as { headers: Record<string, string> }).headers;
+      headers["x-prior"] = "keep-me";
+    });
+    await host.triggerSessionStart();
+
+    const headers: Record<string, string> = {
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+      "x-request-id": "req-1",
+    };
+    await host.triggerBeforeProviderHeaders(headers);
+    expect(headers).toEqual({
+      Authorization: PROVIDER_FAST_AUTHORIZATION,
+      "x-request-id": "req-1",
+      "x-prior": "keep-me",
+    });
+    expect(Object.keys(headers)).not.toContain("anthropic-beta");
+
+    const payload = {
+      model: model.id,
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const originalPayload = { ...payload };
+    const replaced = await host.triggerBeforeProviderRequest(payload);
+    // Identity, not just deep equality: no copy, no added field.
+    expect(replaced).toBe(payload);
+    expect(payload).toEqual(originalPayload);
+    expect(Object.keys(payload)).not.toContain("service_tier");
+    expect(Object.keys(payload)).not.toContain("speed");
+
+    await host.triggerAfterProviderResponse(200, { "retry-after": "1" });
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+  });
+
+  it("leaves a no-intent primary's payload and headers untouched and emits no state", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const extension = installFastPrimary(host);
+    await host.triggerSessionStart();
+    const headers = { Authorization: PROVIDER_FAST_AUTHORIZATION };
+    await host.triggerBeforeProviderHeaders(headers);
+    const payload = { model: "gpt-5.6-sol" };
+    const replaced = await host.triggerBeforeProviderRequest(payload);
+    expect(headers).toEqual({ Authorization: PROVIDER_FAST_AUTHORIZATION });
+    expect(replaced).toBe(payload);
+    expect(extension.providerFastLatestForTest()).toBeUndefined();
+  });
+
+  it("cannot be raised out of unsupported by any response event", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const extension = installFastPrimary(host, { fast: true });
+    await host.triggerSessionStart();
+    for (const status of [200, 201, 400, 429, 500]) {
+      await host.triggerAfterProviderResponse(status, {
+        "anthropic-fast-limit": "ok",
+      });
+      expectSanitizedProviderFast(
+        extension.providerFastLatestForTest(),
+        UNSUPPORTED_FAST_SNAPSHOT,
+      );
+    }
+  });
+
+  it("ignores hostile provider event descriptors without invoking getters", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const extension = installFastPrimary(host, { fast: true });
+    await host.triggerSessionStart();
+
+    let headerReads = 0;
+    const hostileHeaders = {};
+    defineOwnData(hostileHeaders, "type", "before_provider_headers");
+    Object.defineProperty(hostileHeaders, "headers", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        headerReads += 1;
+        throw new Error("headers getter must not run");
+      },
+    });
+    await host.triggerEvent("before_provider_headers", hostileHeaders);
+    expect(headerReads).toBe(0);
+
+    let payloadReads = 0;
+    const hostilePayload = {};
+    defineOwnData(hostilePayload, "type", "before_provider_request");
+    Object.defineProperty(hostilePayload, "payload", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        payloadReads += 1;
+        throw new Error("payload getter must not run");
+      },
+    });
+    await host.triggerEvent("before_provider_request", hostilePayload);
+    expect(payloadReads).toBe(0);
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+  });
+
+  it("reports unsupported on the status line for a fast primary", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    installFastPrimary(host, { fast: true });
+    await host.triggerSessionStart();
+    await host.invokeCommand("weave:status");
+    const message = host.notifyCalls.at(-1)?.message ?? "";
+    expect(message).toContain("fast: unsupported (harness-seam-unavailable)");
+    expect(message).not.toContain("applied");
+    expect(message).not.toContain("fast: requested");
+    expect(message).not.toContain("fast: declared");
+    expect(message).not.toMatch(/(?<!not-)confirmed/);
+    expect(message).not.toContain(PROVIDER_FAST_SECRET);
+    expect(message).not.toContain("gpt-5.6-sol");
+  });
+
+  it("omits the status fast line when there is no intent", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    installFastPrimary(host);
+    await host.triggerSessionStart();
+    await host.invokeCommand("weave:status");
+    const message = host.notifyCalls.at(-1)?.message ?? "";
+    expect(message).toContain("health-only: false");
+    expect(message).not.toContain("fast:");
+    expect(message).not.toContain("applied");
+  });
+
+  it("stops reporting a fast primary's state after switching to a non-fast primary", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel, anthropicModel],
+    });
+    const extension = installFastPrimary(host, {
+      fast: true,
+      second: { name: "tapestry", model: anthropicModel },
+    });
+    await host.triggerSessionStart();
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+
+    await host.invokeShortcut("alt+a");
+    expect(extension.providerFastLatestForTest()).toBeUndefined();
+    await host.invokeCommand("weave:status");
+    expect(host.notifyCalls.at(-1)?.message ?? "").not.toContain("fast:");
+  });
+
+  it("persists exactly one sanitized terminal unsupported record per session", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    installFastPrimary(host, {
+      fast: true,
+      overrides: journalRecordingOverrides(journalEntries),
+    });
+    await host.triggerSessionStart();
+    await host.triggerEvent("agent_settled");
+    await host.triggerEvent("agent_settled");
+    await flushBackgroundWork();
+
+    expect(providerFastEvents(journalEntries)).toEqual([
+      "provider-fast.unsupported",
+    ]);
+    const serialized = JSON.stringify(journalEntries);
+    expect(serialized).not.toContain(PROVIDER_FAST_SECRET);
+    expect(serialized).not.toContain("Authorization");
+    expect(serialized).not.toContain("applied");
+    expect(serialized).not.toContain("requested");
+    expect(serialized).not.toContain("not-confirmed");
+    expect(serialized).not.toContain("gpt-5.6-sol");
+  });
+
+  it("persists nothing for a session with no fast intent", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    installFastPrimary(host, {
+      overrides: journalRecordingOverrides(journalEntries),
+    });
+    await host.triggerSessionStart();
+    await host.triggerEvent("agent_settled");
+    await flushBackgroundWork();
+    expect(providerFastEvents(journalEntries)).toEqual([]);
+  });
+
+  it("degrades a failing provider-fast journal write without leaking it", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const extension = installFastPrimary(host, {
+      fast: true,
+      overrides: {
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+        telemetryJournal: {
+          write: (entry) => {
+            const eventType =
+              typeof entry === "object" &&
+              entry !== null &&
+              "eventType" in entry
+                ? String((entry as { eventType?: unknown }).eventType)
+                : "";
+            if (eventType.startsWith("provider-fast.")) {
+              return errAsync({
+                type: "journal_write",
+                message: PROVIDER_FAST_SECRET,
+              } as RuntimeStoreError);
+            }
+            return okAsync(undefined);
+          },
+        },
+        telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+      },
+    });
+    await host.triggerSessionStart();
+    const payload = { model: "gpt-5.6-sol" };
+    expect(await host.triggerBeforeProviderRequest(payload)).toBe(payload);
+    await host.triggerEvent("agent_settled");
+    await flushBackgroundWork();
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+    expect(JSON.stringify(host.notifyCalls)).not.toContain(
+      PROVIDER_FAST_SECRET,
+    );
+    expect(JSON.stringify(host.notifyCalls)).not.toContain("applied");
+  });
+
+  it("records the replacement session's own outcome after a session reset", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [openaiModel],
+    });
+    const extension = installFastPrimary(host, {
+      fast: true,
+      overrides: journalRecordingOverrides(journalEntries),
+    });
+    await host.triggerSessionStart();
+    await host.triggerEvent("agent_settled");
+    await flushBackgroundWork();
+    await host.triggerSessionStart();
+    await host.triggerEvent("agent_settled");
+    await flushBackgroundWork();
+
+    expect(providerFastEvents(journalEntries)).toEqual([
+      "provider-fast.unsupported",
+      "provider-fast.unsupported",
+    ]);
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
   });
 });

@@ -312,7 +312,9 @@ likewise MUST NOT leak validated filesystem paths.
 | Closed unavailable reasons (exact) | `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, `pi-process-unavailable` |
 | Remove | `requireDescriptorSafeSessionIo`, `descriptor-relative-native-session-io`, blanket `path-only-session-api`, any public `contained-native-session-io` |
 | Overrides | None. No env/config flag may fake readiness |
-| Storage authority | Must not return unconditional `ok`. Mint only after real API/root/process readiness checks; re-check before spawn/mutation. Test-only doubles stay under `__tests__/` |
+| Storage authority | Must not return unconditional `ok`, and must not accept an asserted fact. The session API is checked on the host object; the root is proven by a real no-follow open plus a descriptor-relative probe and delivered as an opaque proof no caller can forge or read a path from; the process surface is checked for a callable `spawn`. Mint only after those checks; re-check before spawn/mutation. The authority is mandatory in readiness probing, thread sources, the store, controllers, and transports: an absent verdict reads as unavailable. Test-only doubles stay under `__tests__/` |
+| Launch grants | Mint only from a session record the store itself validated and returned (provenance by object identity), after reopening the proven ref and revalidating the complete header and identity. A store declares `read-only` or `authorized` explicitly; there is no default |
+| Header validation | One strict, complete Pi v3 validator guards create, reopen, restore, descriptor reads, paging, and grant mint |
 | Disclosure | Map probe failures only to the four closed path-free reasons. Raw host messages, causes, paths, method names, and payloads stay private (§5.5) |
 
 ## 6. Module seam (Task 11 target)

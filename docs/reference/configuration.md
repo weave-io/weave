@@ -29,14 +29,83 @@ Configuration is assembled from three layers in priority order (lowest → highe
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Scalar** (string, number, boolean, enum)   | Last-defined wins — project overrides global overrides builtin                                                                                                            |
 | **Object** (e.g. `agents`, `tool_policy`)    | Recursive deep-merge — only keys present in the override are updated; all other keys are preserved from lower layers                                                      |
-| **Array** (e.g. `models`, `disabled.agents`) | Union-merge — override entries come first, then base entries not already present (deduped by `JSON.stringify` equality); order reflects priority (highest-priority first) |
+| **Array** (e.g. `models`, `triggers`, `disabled.agents`) | Union-merge — override entries come first, then base entries not already present (deduped by `JSON.stringify` equality); order reflects priority (highest-priority first) |
 | **Workflow** (when `extends` is set)         | Step-aware merge — see [Workflow Extension](#workflow-extension) below                                                                                                    |
 
 **Example:** a project config with `agent loom { temperature 0.5 }` leaves all other loom fields (models, prompt_file, tool_policy) intact from the builtin layer.
 
-**Immutability:** Inputs are never mutated. Each merge a new object.
+`fast` follows the scalar rule, but its only valid value is `true`. A higher-priority layer can opt in with `fast true`. Omission preserves a lower-priority declaration and cannot cancel it. Omit `fast` at every layer to preserve provider defaults.
+
+Trigger arrays use exact string equality. For builtin `["review code", "fix tests"]`, global `["fix tests", "audit APIs"]`, and project `["ship patch", "review code"]`, the effective order is:
+
+```text
+["ship patch", "review code", "fix tests", "audit APIs"]
+```
+
+The merge does not trim, case-fold, sort, or interpret trigger text.
+
+**Immutability:** Inputs are never mutated. Each merge creates a new object.
 
 See [`packages/config/src/merge.ts`](../../packages/config/src/merge.ts) for the implementation.
+
+## Category-generated agents
+
+A category produces `shuttle-{category}` after config merge. The generated agent uses the category's final ordered trigger list and does not inherit the base `shuttle` triggers. An explicit category `fast true` takes precedence over the base `shuttle` intent. If the category omits `fast`, the generated agent inherits the base intent.
+
+Categories have no file-pattern field. Descriptions and trigger strings guide delegation; Weave does not perform deterministic file routing.
+
+## Breaking migration contract
+
+This contract intentionally has no runtime compatibility aliases or optional pattern metadata.
+
+| Legacy source | Deterministic outcome |
+| --- | --- |
+| Handwritten `.weave` | Strict parsing rejects structured trigger objects, category `patterns`, `fast false`, and `service_class`, `speed`, `variant`, or `priority` aliases. Replace trigger objects with strings, delete patterns, and use only `fast true` when opting in. |
+| Legacy JSONC through `weave init migrate` | For each trigger object, emit its nonblank `routing_hint`, otherwise its nonblank `trigger`. Preserve source order and remove exact duplicates. Warn for discarded fields. Drop valid or malformed category patterns with a warning and no replacement metadata. Convert a category only when it has a nonblank description. Never infer `fast`. |
+| Shipped builtins | Maintainers convert triggers with the same hint-then-trigger rule, deduplicate in source order, and delete every category pattern. Builtins use the same strict parser as user config. |
+| Exported core, engine, and adapter consumers | Replace structured trigger values with `string[]`, remove category pattern fields, and accept optional `fast?: true`. Removed public shapes have no deprecated aliases; stale typed consumers fail compilation and stale untyped values fail validation. |
+
+For example, this legacy trigger:
+
+```jsonc
+{ "domain": "Review", "trigger": "Review code", "routing_hint": "Use for pull request review" }
+```
+
+converts to this DSL entry:
+
+```weave
+triggers ["Use for pull request review"]
+```
+
+If `routing_hint` is blank or absent, the converter uses `"Review code"`. It never retains `domain` as hidden metadata.
+
+A legacy category converts the same way. This input:
+
+```jsonc
+{ "description": "Backend APIs", "patterns": ["src/api/**"] }
+```
+
+produces this DSL block plus one dropped-pattern warning:
+
+```weave
+category backend {
+  description "Backend APIs"
+}
+```
+
+There is no replacement field. Route the category with `description` and `triggers [...]` instead:
+
+```weave
+category backend {
+  description "Backend APIs and persistence"
+  triggers ["Use for API contracts, services, and persistence"]
+  fast true
+}
+```
+
+A handwritten `.weave` file gets no such best-effort conversion: each old form is a hard validation error you must fix by hand.
+
+Declaring `fast true` is safe to migrate today. Every shipped adapter reports the `provider-fast-activation` capability as unsupported and sends no provider control, so the declaration changes nothing about your requests. See [Adapter Capabilities](adapter-capabilities.md#current-provider-fast-support) and the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#breaking-dsl-merge-and-migration-contract) for the full cross-layer contract.
 
 ## Harness adapter settings
 

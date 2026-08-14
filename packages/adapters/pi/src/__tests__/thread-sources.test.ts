@@ -13,8 +13,10 @@ import type {
   PiChildRefAppendPort,
   PiChildRefEntryReadPort,
 } from "../child-session-refs.js";
+import { createPiChildSessionStorageAuthority } from "../child-session-storage-authority.js";
 import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 import { openPiThreadSources } from "../thread-sources.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 const ROOT = "/data/weave/adapters/pi/sessions";
 const CACHE_ROOT = "/data/weave/adapters/pi/cache";
@@ -109,6 +111,7 @@ describe("openPiThreadSources", () => {
       parentSessionId: PARENT,
       append: parent,
       read: parent,
+      storageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       sessionRoot: ROOT,
       fs: historyFs,
       host: new MemoryHost(),
@@ -142,6 +145,7 @@ describe("openPiThreadSources", () => {
       parentSessionId: PARENT,
       append: parent,
       read: parent,
+      storageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       sessionRoot: ROOT,
       fs: memoryFs(),
       host: new MemoryHost(),
@@ -179,6 +183,7 @@ describe("openPiThreadSources", () => {
       parentSessionId: "",
       append: parent,
       read: parent,
+      storageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       sessionRoot: ROOT,
       fs: memoryFs(),
       host: new MemoryHost(),
@@ -191,13 +196,16 @@ describe("openPiThreadSources", () => {
     });
   });
 
-  test("fails closed when the session root cannot be resolved", async () => {
+  test("fails closed when the authority proved no session root", async () => {
     const parent = new FakeParentEntries();
     const result = await openPiThreadSources({
       workspaceKey: WORKSPACE,
       parentSessionId: PARENT,
       append: parent,
       read: parent,
+      // An authority that proved nothing cannot hand sources a root, so no
+      // store is built over an asserted path.
+      storageAuthority: createPiChildSessionStorageAuthority(),
       env: { XDG_DATA_HOME: "relative-xdg", HOME: "" },
       host: new MemoryHost(),
       cacheRoot: CACHE_ROOT,
@@ -213,6 +221,7 @@ describe("openPiThreadSources", () => {
       parentSessionId: PARENT,
       append: parent,
       read: parent,
+      storageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       sessionRoot: ROOT,
       fs: memoryFs(),
       cacheRoot: CACHE_ROOT,
@@ -232,6 +241,7 @@ describe("openPiThreadSources", () => {
       parentSessionId: PARENT,
       append: parent,
       read: parent,
+      storageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       sessionRoot: ROOT,
       fs: memoryFs(),
       host: new MemoryHost(),
@@ -264,6 +274,7 @@ describe("openPiThreadSources", () => {
       parentSessionId: PARENT,
       append: parent,
       read: parent,
+      storageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       sessionRoot: ROOT,
       fs: memoryFs(),
       host: new MemoryHost(),

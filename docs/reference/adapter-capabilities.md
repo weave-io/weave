@@ -37,6 +37,20 @@ An adapter returns one ordered `AdapterCapabilityContract`. Each entry has:
 
 The closed ID vocabulary and current required/optional profile live in [`packages/engine/src/capability-contract.ts`](../../packages/engine/src/capability-contract.ts). Do not copy the list into adapter code or documentation; import it so additions cannot drift.
 
+`provider-fast-activation` is the optional provider-acceleration capability. When `runtimeStatus` is present, the exported contract accepts only the bounded evidence tokens from that module. Other capabilities keep sanitized freeform status strings. A descriptor without `fast true` does not require this capability and emits no requested or applied state.
+
+### Current provider-fast support
+
+No shipped adapter can prove that a provider applied acceleration, so every adapter declares `unsupported` and sends no acceleration control:
+
+| Adapter | Readiness | Runtime status | Missing seam |
+| --- | --- | --- | --- |
+| Pi | `unsupported` | `unsupported` (`harness-seam-unavailable`) | Pi's public extension contract cannot bind the effective transport or the response body of one prepared provider request, so the adapter registers no provider request or header hook. |
+| OpenCode | `unsupported` | `unsupported` (`response-proof-unavailable`) | OpenCode's plugin surface can mutate a request, but no correlated official response-body proof exists for the same attempt. |
+| Claude Code | `unsupported` | `unsupported` (`harness-seam-unavailable`) | Static file materialization owns no per-invocation request seam and no response evidence. Claude Code's own `/fast` and Agent SDK controls are outside the adapter's surface. |
+
+These are optional-capability gaps. They warn, and they never enter health-only mode, block descriptor materialization, agent activation, prompts, models, tools, or delegation. `fast true` still travels through the config, descriptor, and Pi child-bootstrap layers as neutral intent; it is simply never translated into a provider control. See the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#truthful-states-and-transitions) for the state vocabulary and the evidence threshold that `applied` requires.
+
 ## Effective evaluation
 
 A safe initializer supplies exactly one `CapabilityProbeResult` for every known capability. Evaluation:
@@ -79,7 +93,9 @@ The Pi adapter declares three severities:
 
 Its native child-session storage adds four `required-for-delegation` probes — `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` — plus the `overlay-only` `child-overlay-lifecycle` surface. A missing session read surface is never treated as overlay-only, because reading recorded child work must not silently disappear.
 
-Pi native-session readiness is not a public capability or host-surface ID. Before activation, the adapter proves the real `SessionManager.create` and `SessionManager.open` API, its private session root, and the Pi process launch surface. It maps a failure to one closed, path-free reason: `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, or `pi-process-unavailable`. No environment variable or descriptor capability can raise readiness.
+Every required surface gap reduces to one closed, path-free readiness reason on `delegated-specialist-execution`: `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, or `pi-process-unavailable`. Raw host messages, causes, filesystem paths, and method names never reach an operator surface.
+
+Pi native-session readiness is not a public capability or host-surface ID. Before activation, the adapter proves the real `SessionManager.create` and `SessionManager.open` API, its private session root, and the Pi process launch surface. No environment variable or descriptor capability can raise readiness.
 
 A gap reports the stable surface ID and a remediation string. See [Pi Adapter](../adapters/pi.md#host-surface-probes).
 
@@ -100,11 +116,13 @@ Health-only mode may expose health and other read-only diagnostics. It blocks ag
 
 ### Persistent session mutation
 
-Pi uses path-addressed native sessions. The adapter contains those paths behind its own Pi-specific boundary: Pi's `SessionManager` creates and opens the session identity, the adapter validates the generated immediate-child path under its fixed private root, and no path enters an engine capability, health report, lifecycle record, or model result.
+Persistent session mutation depends on the required `delegated-specialist-execution` capability. A harness that addresses sessions by path proves containment inside its own adapter: the adapter owns the session root, hands the harness that exact directory, and accepts only a canonical immediate child of it. No path enters an engine capability, health report, lifecycle record, or model result.
 
-`delegated-specialist-execution` becomes ready only after the native session API, private root, and process surface pass the generation preflight. If they do not, the generation enters health-only mode before any child spawn or persistent mutation. Mutation routes use the same readiness proof. Read-only status, health, history, inspection, doctor, list, and show routes stay read-only.
+When that capability is unavailable for one of the four closed session-readiness reasons, every route that would perform a persistent session mutation fails with a typed `RequiredCapabilityUnavailable` result before it calls a controller, session service, filesystem, metadata cache, execution lease, or child process. That covers delegation, direct workflow dispatch, retry, continue, steering, follow-up, cancellation, clear, recovery, and the adapter CLI's delete command. Read-only status, health, history, inspection, doctor, list, and show routes stay available and perform no mutation.
 
-The adapter CLI also gates `children.delete` on this proof before it opens writable diagnostics. Delete removes the verified terminal child session and appends its tombstone. List, show, and doctor never inherit write access.
+The adapter CLI gates `children.delete` on the same proof before it opens writable diagnostics. Delete removes the verified terminal child session and appends its tombstone. List, show, and doctor never inherit write access.
+
+Unlike an ordinary health-only gap, an unproven session store also blocks idempotent cleanup: cleanup still writes to persistent session state, and the adapter cannot prove where that write would land.
 
 ## Adapter responsibilities
 

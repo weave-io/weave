@@ -10,7 +10,6 @@ import {
   type HostPackageInfo,
   type HostPackageReader,
 } from "../host-compatibility.js";
-import { createReadyPiNativeSessionReadinessProbe } from "../native-session-readiness.js";
 import { PiSafeInitializer } from "../safe-initializer.js";
 import type { PiCommandInfo } from "../types.js";
 import { FakeHostPackageReader } from "./fakes/fake-host-package-reader.js";
@@ -56,7 +55,7 @@ function degradedProbes(): CapabilityProbeResult[] {
 
 function makeController(probes: readonly CapabilityProbeResult[]) {
   const safeInitializer = new PiSafeInitializer({
-    nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
+    delegationAuthority: () => ({ status: "ready" as const }),
     hostPackageReader: FakeHostPackageReader.ok({
       name: HOST_PACKAGE_NAME,
       version: "0.81.1",
@@ -205,7 +204,7 @@ describe("PiExtensionController generation replacement and staleness", () => {
     };
     const controller = new PiExtensionController({
       safeInitializer: new PiSafeInitializer({
-        nativeSessionReadiness: createReadyPiNativeSessionReadinessProbe(),
+        delegationAuthority: () => ({ status: "ready" as const }),
         hostPackageReader,
         capabilityProber: new FixedProber(allOkProbes()),
         configActivator: fakeConfigActivator(),

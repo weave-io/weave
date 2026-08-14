@@ -46,6 +46,7 @@ export {
   accessModeForAdapterAction,
   createProductionPiAdapterCommandRegistry,
   createProductionPorts,
+  evaluateProductionChildrenDeleteGate,
   openProductionPiAdapterCommandPorts,
   resolveProductionAdapterCliRegistry,
 } from "./adapter-cli-production.js";
@@ -313,6 +314,7 @@ export type {
   PiNativeSessionFileStat,
   PiNativeSessionFsError,
   PiNativeSessionFsPort,
+  PiNativeSessionGrantRefusal,
   PiNativeSessionHandle,
   PiNativeSessionHeader,
   PiNativeSessionHostPort,
@@ -321,6 +323,7 @@ export type {
   PiNativeSessionRootViolation,
   PiNativeSessionState,
   PiNativeSessionStorageUnavailable,
+  PiNativeSessionStoreLaunchMode,
   PiNativeSessionStoreOptions,
   PiNativeSessionTombstone,
   PiNativeThreadMetadata,
@@ -580,6 +583,14 @@ export {
   serializeChildRefEnvelope,
 } from "./child-session-refs.js";
 export {
+  CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
+  createPiChildSessionStorageAuthority,
+  describeChildSessionStorageUnavailable,
+  type PiChildSessionRootProof,
+  type PiChildSessionStorageAuthority,
+  provePiChildSessionRoot,
+} from "./child-session-storage-authority.js";
+export {
   DEFAULT_HANDSHAKE_TIMEOUT_MS,
   DEFAULT_REPLY_TIMEOUT_MS,
   DEFAULT_SETTLEMENT_TIMEOUT_MS,
@@ -778,6 +789,11 @@ export {
   MemoryPiNativeSessionFs,
 } from "./native-session-fs.js";
 export type {
+  PiNativeSessionHeaderViolation,
+  PiValidatedSessionHeader,
+} from "./native-session-header.js";
+export { validatePiNativeSessionHeader } from "./native-session-header.js";
+export type {
   PiSessionManagerInstance,
   PiSessionManagerStatic,
 } from "./native-session-host.js";
@@ -787,17 +803,6 @@ export {
   isPiSessionManagerStatic,
 } from "./native-session-host.js";
 export type {
-  PiExecutableResolverPort,
-  PiNativeSessionReadiness,
-  PiNativeSessionReadinessProbe,
-} from "./native-session-readiness.js";
-export {
-  createBlockedPiNativeSessionReadinessProbe,
-  createBunPiExecutableResolver,
-  createPiNativeSessionReadinessProbe,
-  createReadyPiNativeSessionReadinessProbe,
-} from "./native-session-readiness.js";
-export type {
   PiActivePrimary,
   PiParentMutationOperation,
   PiParentSessionProbePort,
@@ -805,7 +810,10 @@ export type {
   PiPrimaryActivationContext,
   PiPrimaryActivationError,
   PiPrimaryCapabilityWarning,
+  PiPrimaryFastIntent,
+  PiPrimaryRequestSnapshot,
   PiPrimarySessionDeps,
+  PiPrimarySnapshotStale,
 } from "./primary-session.js";
 export {
   appendWeaveBlockOnce,
@@ -914,7 +922,10 @@ export type {
   Clock,
   IdGenerator,
   PiAdapterLogger,
+  PiAfterProviderResponseEvent,
   PiBeforeAgentStartEvent,
+  PiBeforeProviderHeadersEvent,
+  PiBeforeProviderRequestEvent,
   PiBuildSystemPromptOptions,
   PiCommandHandler,
   PiCommandInfo,
@@ -923,6 +934,9 @@ export type {
   PiExtensionApi,
   PiMode,
   PiModelRegistry,
+  PiProviderEventProjection,
+  PiProviderEventProjectionError,
+  PiProviderHookName,
   PiResourceOrigin,
   PiResourceScope,
   PiSessionContext,
@@ -937,3 +951,4 @@ export type {
   PiUiNotifyLevel,
   PiUiPort,
 } from "./types.js";
+export { projectPiProviderEvent } from "./types.js";

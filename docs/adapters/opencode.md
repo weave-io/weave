@@ -36,7 +36,15 @@ The config hook:
 4. maps each valid descriptor to an OpenCode agent;
 5. reports descriptor failures without inventing fallback intent.
 
-Category shuttles remain ordinary normalized descriptors. The adapter never reparses DSL intent or builds prompts itself.
+Category shuttles remain ordinary normalized descriptors, routed by their description and ordered trigger strings. Categories have no file patterns, so the adapter performs no deterministic file routing. The adapter never reparses DSL intent or builds prompts itself.
+
+## Provider acceleration is unsupported
+
+A descriptor's `fast true` is neutral intent. OpenCode's plugin surface can mutate a request through `chat.params` and `chat.headers`, but its public plugin event and assistant-message contracts expose no correlated official response-body proof — no OpenAI `service_tier` and no Anthropic `usage.speed` — for a successful call. A successful status, error data, or ordinary token usage is not evidence.
+
+The adapter therefore sends no acceleration control and mutates no request option or header. `provider-fast-activation` declares `unsupported` with runtime status `unsupported` and the bounded reason `response-proof-unavailable`. Materialized agent configuration is never presented as evidence of acceleration.
+
+This is an optional-capability gap: it warns and never blocks descriptor materialization, agent mapping, commands, or lifecycle. Raising OpenCode above `unsupported` requires a plugin contract that exposes correlated official response-body evidence for the same attempt, plus real-harness proof under [Adapter Verification](../testing/adapter-verification.md). Mocked unit coverage is not that proof.
 
 ## Commands and execution
 

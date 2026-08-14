@@ -41,6 +41,7 @@ import {
   PiChildSessionRefStore,
 } from "../child-session-refs.js";
 import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
+import { TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY } from "./fakes/test-only-session-storage-authority.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -108,6 +109,7 @@ function refStore(
 ): PiChildSessionRefStore {
   let entryId = 0;
   return new PiChildSessionRefStore({
+    storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     parentSessionId,
     append: session,
     read: session,
@@ -504,6 +506,7 @@ describe("fail-closed, bounded, metadata-only", () => {
       appendEntry: () => undefined,
     };
     const store = new PiChildSessionRefStore({
+      storage: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
       parentSessionId: SOURCE_PARENT,
       append: throwingSession,
       read: throwingSession,

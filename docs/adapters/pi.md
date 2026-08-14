@@ -59,6 +59,18 @@ Alt+A cycles healthy `primary` and `all` descriptors in materialization order wh
 
 The badge tints the agent name with a stable background drawn only from theme background tokens Pi itself supports. The choice is deterministic: the normalized agent name (trimmed, whitespace-collapsed, case-folded) always selects the same token in every session and on every machine, with no stored assignment, so you learn one color per agent. Distinct agents may share a color; the same agent never changes color. The agent name keeps its accent foreground. If the active theme exposes no background helper, the badge renders foreground-only — accent, bold agent name, no tint — rather than substituting a different color.
 
+### Provider acceleration is unsupported
+
+A descriptor's `fast true` reaches Pi as neutral intent, and the adapter carries it on the active primary and inside authenticated ordinary and direct-step child bootstraps. It is never translated into a provider control.
+
+Pi's public extension contract exposes `before_provider_headers`, `before_provider_request`, and `after_provider_response`, but none of them binds the effective transport of one prepared request or that request's response body to the same attempt. `ctx.model.baseUrl` is declared configuration that auth resolution may replace, and `ctx.modelRegistry.getProviderAuth()` performs a fresh resolution rather than reporting the resolution the held request used. Without that proof an allowlist match would be a guess, so even `requested` would be untrue.
+
+The adapter therefore registers **no** provider request, header, or response handler. Every provider payload reference and header map is left exactly as other extensions left it; no `service_tier`, `speed`, or `anthropic-beta` value is ever written. The `provider-fast-activation` capability declares `unsupported` with runtime status `unsupported` and the bounded reason `harness-seam-unavailable`.
+
+The adapter records that outcome when a turn settles (`agent_settled`). A bounded in-memory dedupe window collapses repeats of the same state and reason to one durable journal record, and the key is claimed before the write so two settled turns cannot persist it twice. A failed write releases the claim, so a later settled turn may record it again. The window is in-memory only: it is cleared on session start, after a successful primary switch, and on shutdown or a failed boot activation, so the new active intent owner records its own outcome. Durable journal events already written are never removed by that reset.
+
+This is an optional-capability gap. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or bootstrap. `/weave:status` may show `fast: unsupported (harness-seam-unavailable)`; it never says applied, active, or confirmed. Raising Pi above `unsupported` requires a documented host seam that reports the effective transport of one prepared request plus correlated official response-body evidence for that same request, proven in a fresh real harness under [Adapter Verification](../testing/adapter-verification.md). Unit confidence is not that proof.
+
 The registered `weave_delegate` schema is static because Pi requires it at registration time. Each invocation still resolves the live primary identity and that descriptor's current eligible targets, so switching primary agents cannot reuse stale authority.
 
 ## User surface
@@ -277,7 +289,7 @@ Each row resolves its title by precedence: explicit title, then the task's first
 
 In the TUI, `/weave:inspect` opens the inspector, `/weave:history` prints the bounded child list for this workspace including tombstoned rows, `/weave:doctor` prints the doctor status and each check, `/weave:clear-children` clears terminal child records for the session, and `/weave:recover-children` recovers interrupted top-level children.
 
-Outside the TUI, the same adapter-owned data is reachable through `weave adapter pi children list|show|delete` and `weave adapter pi doctor`. Those commands travel over the engine's opaque adapter-command dispatch: the engine validates the envelope and routes it, while command names, payloads, and results stay adapter-owned. The CLI loads production ports through the thin `@weaveio/weave-adapter-pi/cli` entry and bundles that surface at build time; it does not take a published runtime dependency on the Pi adapter package. Delete resolves the child's immutable origin parent from list metadata (or `--parent-session` when the same child id exists under two parents) and rejects forged parent scopes. List pages are 50 children; entry pages are 100 entries with a cursor. Filesystem paths appear only under `--diagnostic`; otherwise every absolute path is replaced with `[path omitted]`. See [CLI](../reference/cli.md#weave-adapter).
+Outside the TUI, the same adapter-owned data is reachable through `weave adapter pi children list|show|delete` and `weave adapter pi doctor`. Those commands travel over the engine's opaque adapter-command dispatch: the engine validates the envelope and routes it, while command names, payloads, and results stay adapter-owned. The CLI loads production ports through the thin `@weaveio/weave-adapter-pi/cli` entry and bundles that surface at build time; it does not take a published runtime dependency on the Pi adapter package. Delete resolves the child's immutable origin parent from list metadata (or `--parent-session` when the same child id exists under two parents) and rejects forged parent scopes. List pages are 50 children; entry pages are 100 entries with a cursor. No command returns an absolute session path, with or without `--diagnostic`; `children show --diagnostic` adds only the bounded root-relative session reference. Any other absolute path is replaced with `[path omitted]` unless `--diagnostic` is set. See [CLI](../reference/cli.md#weave-adapter).
 
 ### Doctor
 
@@ -434,18 +446,40 @@ Static capability declarations are ceilings. Activation probes every closed capa
 
 Health-only mode exposes health and safe diagnostics but blocks materialization, workflow mutation, and delegation. Pi/tool-owner authorization remains in force regardless of mode.
 
-## Pi-native readiness
+## Pi-native path sessions
 
-Pi 0.84.1 exposes path-addressed native sessions through `SessionManager.create` and `SessionManager.open`. Weave does not claim a descriptor capability or accept an unsafe override. Instead, the Pi adapter owns and validates the concrete path boundary described above, then exposes the existing emulated `delegated-specialist-execution` capability.
+Pi addresses native sessions by filesystem path. Containment is therefore proven by the adapter, not claimed from the host:
 
-Before config activation, the adapter proves four facts against the real host: the create/open API is present, the private session root can initialize, that root has safe ownership and permissions, and the Pi executable can launch through the process surface. A failed proof enters health-only mode before materialization, session mutation, lease creation, or spawn. Health uses only these path-free reasons:
+1. The adapter resolves its fixed session root under the trusted XDG data base, creates a private `0700` child directory, and hands that exact directory to `SessionManager.create`.
+2. It validates Pi's generated leaf as a canonical immediate child of that directory, never a path prefix, and validates the generated v3 header, session ID, parent link, and `cwd`.
+3. Because Pi defers the first write, the adapter exclusively creates the absent `0600` leaf with Pi's exact generated header bytes plus a newline. It never invents, alters, or reorders a header field.
+4. It reopens the leaf through `SessionManager.open` and revalidates path, directory, header, session ID, parent, `cwd`, and persistence before any spawn.
+5. The session store mints an opaque launch grant for that validated session and for the exact child that will start. A grant is minted only from a session record the store itself validated and returned; provenance is object identity, so a structurally identical record built by a caller, copied, or produced by another store carries no proof and is refused. Before minting, the store reopens the proven reference and revalidates the complete header, and it refuses the grant when the reopened identity differs from the one it validated.
+6. The grant is bound to the generation's validated root, the validated child directory, the validated session file, the root-relative reference, the session identity, the child id that will launch, the active leaf, and the optional checkpoint cursor.
+7. The RPC child redeems the grant, then receives both `--session <validated file>` and `--session-dir <validated directory>`. The launch environment drops any inherited `PI_CODING_AGENT_SESSION_DIR` so the explicit argument stays the sole authority.
 
-- `pi-session-api-unavailable`;
-- `pi-session-root-unavailable`;
-- `pi-session-root-unsafe`;
-- `pi-process-unavailable`.
+There is no path-carrying spawn mode. A caller that presents an absolute path, a caller-built session record, a hand-built grant look-alike, a grant minted by another generation, or a grant naming another child is refused before the argument vector exists and before any process starts. A store states whether it may launch at all: a read-only store - diagnostics, history, doctor, inspection - cannot mint a grant.
 
-Raw exceptions, method names, environment values, and paths do not enter health, status, doctor, CLI, logs, lifecycle metadata, or model output. The mutating `children.delete` route repeats this readiness gate. Read routes never open writable ports.
+One strict validator checks the complete Pi v3 header on every lifecycle path: create, the reopen that follows the exclusive header write, the host-backed open used by thread and restore paths, the descriptor-safe whole-session read, the bounded paging read, and the grant mint. An unknown, inherited, accessor, symbol-keyed, non-enumerable, wrongly typed, or missing field fails the session closed instead of being dropped, and an exotic prototype is refused outright. The persisted bytes are therefore always exactly the header Pi generated.
+
+Callers, models, and the engine never supply a path, and no path crosses the adapter boundary into Results, logs, health, status, doctor, CLI output, lifecycle metadata, or model content.
+
+Delegation readiness is reported through the required `delegated-specialist-execution` capability. One generation-scoped authority proves three facts and accepts no asserted substitute for any of them:
+
+- Pi's public session API, checked on the host object itself;
+- the adapter-owned session root, *proven* by really opening it with `openat(O_NOFOLLOW)` through the production filesystem port and probing it descriptor-relatively, so an absent, uncreatable, symlinked, wrongly typed, permissively moded, or swapped root is a refusal rather than a resolved string. The proof is opaque: a caller cannot read the root off it, and a caller-built look-alike proves nothing;
+- the child process launch surface, checked by looking for a callable `spawn` on the launch port rather than trusting a boolean.
+
+That same object feeds capability probing, the session sources, the session store that mints grants, the delegation controller, direct dispatch, and every child launch. It is mandatory everywhere: readiness probing requires a verdict and treats an absent one as unavailable, and thread sources refuse to build storage over a root the authority did not prove. Readiness therefore cannot disagree with launch: a ready generation holds the authority its spawns consume. When any fact is missing, the generation stays health-only before spawn and reports exactly one closed, path-free reason: `pi-session-api-unavailable`, `pi-session-root-unavailable`, `pi-session-root-unsafe`, or `pi-process-unavailable`. No environment variable or configuration setting can raise it.
+
+While the capability is unavailable for one of those reasons, the adapter fails every persistent session mutation with a typed `RequiredCapabilityUnavailable` result before it reaches a controller, session service, filesystem, metadata cache, execution lease, or child process:
+
+- `weave_delegate` (start, retry, continue, steer, follow-up) and relayed child delegation;
+- direct workflow dispatch, `/weave:start`, `/weave:run`, `/weave:advance`, `/weave:resume`, `/weave:artifact`;
+- cancellation and cleanup: `/weave:abort`, `/weave:clear-children`, `/weave:recover-children`;
+- the adapter CLI `children delete` command.
+
+`/weave:status`, `/weave:health`, `/weave:plan`, `/weave:inspect`, `/weave:history`, `/weave:doctor`, and the CLI `list`, `show`, and `doctor` commands stay available and perform no mutation. `/weave:health` and the status line name the unavailable capability and its reason without printing a path or a prompt.
 
 ## Verification
 

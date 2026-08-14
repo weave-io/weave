@@ -49,6 +49,7 @@ import { BunPiArtifactProvider } from "./artifact-provider.js";
 import {
   DefaultPiCapabilityProber,
   type PiCapabilityProbeSource,
+  type PiDelegationAuthorityReadiness,
   WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
 } from "./capability-prober.js";
 import {
@@ -173,6 +174,11 @@ import {
   renderReconstructedStatusLines,
 } from "./child-session-reconstruction.js";
 import {
+  createPiChildSessionStorageAuthority,
+  type PiChildSessionStorageAuthority,
+  provePiChildSessionRoot,
+} from "./child-session-storage-authority.js";
+import {
   applyTreeControlKey,
   EMPTY_USAGE_AGGREGATE,
   extractAssistantStopReason,
@@ -242,10 +248,7 @@ import {
   PiModelResolver,
   type PiThinkingApplyPort,
 } from "./model-resolution.js";
-import {
-  createPiNativeSessionReadinessProbe,
-  type PiNativeSessionReadinessProbe,
-} from "./native-session-readiness.js";
+import { createBunPiNativeSessionFs } from "./native-session-fs.js";
 import {
   BunPathContainmentPort,
   type PathContainmentPort,
@@ -276,12 +279,20 @@ import {
   promptTransferNackReason,
 } from "./prompt-chunking.js";
 import {
+  classifyProviderFastIntent,
+  type ProviderFastPublicSnapshot,
+} from "./provider-fast-activation.js";
+import {
   activeInstanceFromRecoveryPointer,
   BunJsonlRecoveryPointerStore,
   isPointerEligibleForExplicitResume,
   type PiRecoveryPointerStore,
 } from "./recovery-pointer.js";
-import { findSessionMutationGap } from "./required-capability-gate.js";
+import {
+  createSessionMutationGate,
+  findSessionMutationGap,
+  SESSION_MUTATION_REQUIRED_CAPABILITY,
+} from "./required-capability-gate.js";
 import type { PiChildPrivateOutputCapture } from "./rpc-child.js";
 import {
   type PiRuntimeStoreFactory,
@@ -309,6 +320,7 @@ import {
   type PiTelemetry,
   type PiTelemetryUiPort,
   type PiUsagePort,
+  renderProviderFastStatusLine,
 } from "./telemetry.js";
 import {
   createProductionPiThreadSourceFactory,
@@ -550,6 +562,11 @@ export interface PiExtensionDeps {
   readonly hmacPort: HmacPort;
   readonly processPort: PiChildProcessPort;
   /**
+   * Test-only descriptor-safe host authority. Production omits this and the
+   * controller keeps its fail-closed path-only-session default.
+   */
+  readonly sessionStorageAuthority?: PiChildSessionStorageAuthority;
+  /**
    * The private RPC child's default spawn command (Pi adapter contract finding
    * 1): the exact executable that launched this host process, never a bare
    * `"pi"` a spawner would have to re-resolve via `PATH` (which can
@@ -632,14 +649,6 @@ export interface PiExtensionDeps {
    */
   readonly threadSourceFactory: PiThreadSourceFactory | undefined;
   /**
-   * Proves the real Pi session API, canonical private session root, and
-   * process launch surface before this generation may activate a primary,
-   * materialize descriptors, mutate a session, take an execution lease, build a
-   * child transport, or spawn a process. Omitting it fails closed to
-   * health-only; production always supplies the real probe.
-   */
-  readonly nativeSessionReadiness?: PiNativeSessionReadinessProbe;
-  /**
    * Optional post-settlement response-drain budget forwarded to
    * `PiDelegationController`. Absent keeps the production default.
    * Tests that exercise session-transition cancellation set a short value
@@ -709,17 +718,6 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     processPort: new BunPiChildProcessPort(),
     childCommand: buildDefaultPiChildCommand(envPort),
     childOutputPort: new StdoutChildOutputPort(),
-    // Delegation readiness is proved against the same process port and base
-    // command a child would actually be spawned with, never inferred from
-    // static command or usage surfaces.
-    nativeSessionReadiness: createPiNativeSessionReadinessProbe({
-      processPort: new BunPiChildProcessPort(),
-      childCommand: buildDefaultPiChildCommand(envPort),
-      env: {
-        XDG_DATA_HOME: envPort.read("XDG_DATA_HOME"),
-        HOME: envPort.read("HOME"),
-      },
-    }),
     runtimeStoreFactory: new SqliteRuntimeStoreFactory(),
     pathContainmentPort: new BunPathContainmentPort(),
     planCatalogPort: new BunPiPlanCatalogPort(),
@@ -827,6 +825,8 @@ interface PiChildBootstrapCommon {
   readonly context: PiDelegationContext;
   /** Present only when the parent itself resolved a concrete model identity (root-level delegation, live `ctx.modelRegistry`); absent means this child must resolve against its own authenticated catalog (Pi adapter contract). */
   readonly resolvedModel?: PiModelInfo;
+  /** Literal provider-acceleration intent. Omission preserves the provider default. */
+  readonly fast?: true;
   /** Core-owned thinking intent selected alongside the transport model identity. */
   readonly thinkingLevel?: ThinkingLevelDecl;
 }
@@ -1096,6 +1096,23 @@ export function readOverlaySessionEntryPage(
     );
 }
 
+function copyDelegationTargets(
+  targets: readonly DelegationTarget[],
+): DelegationTarget[] {
+  return targets.map((target) => ({
+    name: target.name,
+    ...(target.description === undefined
+      ? {}
+      : { description: target.description }),
+    triggers: [...target.triggers],
+    isCategory: target.isCategory,
+  }));
+}
+
+function copyBootstrapModels(models: readonly string[]): string[] {
+  return [...models];
+}
+
 export function buildChildBootstrapBody(
   descriptorsByName: ReadonlyMap<string, AgentDescriptor>,
   target: DelegationTarget,
@@ -1131,7 +1148,7 @@ export function buildChildBootstrapBody(
       full === undefined
         ? ""
         : (prepareComposedPrompt?.(full) ?? full.composedPrompt),
-    models: full?.models ?? [],
+    models: copyBootstrapModels(full?.models ?? []),
     // Target catalogs can exceed one authenticated control body. The child
     // uses a generic relay tool; the parent authorizes every requested name
     // against this descriptor's full catalog.
@@ -1139,6 +1156,7 @@ export function buildChildBootstrapBody(
     correlationId: childId,
     context,
     ...(resolvedModel === undefined ? {} : { resolvedModel }),
+    ...(full?.fast === true ? { fast: true as const } : {}),
     ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
   };
   return bootstrap as unknown as JsonValue;
@@ -1160,12 +1178,19 @@ function parseChildBootstrapBody(
   const common = {
     agentName: parsed.value.agentName,
     composedPrompt: parsed.value.composedPrompt,
-    models: parsed.value.models,
-    delegationTargets: parsed.value.delegationTargets ?? [],
+    models: copyBootstrapModels(parsed.value.models),
+    delegationTargets: copyDelegationTargets(
+      parsed.value.delegationTargets ?? [],
+    ),
     correlationId: parsed.value.correlationId,
     context: parsed.value.context,
-    resolvedModel: parsed.value.resolvedModel,
-    thinkingLevel: parsed.value.thinkingLevel,
+    ...(parsed.value.resolvedModel === undefined
+      ? {}
+      : { resolvedModel: parsed.value.resolvedModel }),
+    ...(parsed.value.fast === true ? { fast: true as const } : {}),
+    ...(parsed.value.thinkingLevel === undefined
+      ? {}
+      : { thinkingLevel: parsed.value.thinkingLevel }),
   };
   if (parsed.value.mode === "direct-step") {
     return {
@@ -1192,6 +1217,15 @@ interface PiChildModeState {
   childId: string;
   agentName: string;
   composedPrompt: string;
+  /** Authenticated descriptor intent committed with the bootstrap state. */
+  fast: true | undefined;
+  /**
+   * Incremented once per committed bootstrap. Provider hooks use it as this
+   * child's intent generation, so an attempt cannot survive a re-bootstrap.
+   */
+  bootstrapGeneration: number;
+  /** Defensive copy of the authenticated delegation policy committed with the bootstrap state. */
+  delegationTargets: readonly DelegationTarget[];
   promptAppended: boolean;
   /** True only once the bootstrap descriptor and model have been applied and acked. */
   bootstrapApplied: boolean;
@@ -1239,6 +1273,9 @@ function createChildModeState(): PiChildModeState {
     childId: "",
     agentName: "",
     composedPrompt: "",
+    fast: undefined,
+    bootstrapGeneration: 0,
+    delegationTargets: [],
     promptAppended: false,
     bootstrapApplied: false,
     runtime: undefined,
@@ -1461,7 +1498,10 @@ async function applyChildBootstrap(
   // model applied - is bootstrap safe to acknowledge.
   state.agentName = parsed.agentName;
   state.composedPrompt = parsed.composedPrompt;
+  state.fast = parsed.fast === true ? true : undefined;
+  state.delegationTargets = copyDelegationTargets(parsed.delegationTargets);
   state.bootstrapApplied = true;
+  state.bootstrapGeneration += 1;
   state.directStep =
     parsed.mode === "direct-step"
       ? {
@@ -1914,6 +1954,7 @@ function renderStatusMessage(
   _activeSession: PiActiveSession | undefined,
   delegationController?: PiDelegationController,
   reconstructed?: PiChildReconstructionSummary | undefined,
+  providerFastLatest?: ProviderFastPublicSnapshot,
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
@@ -1925,6 +1966,10 @@ function renderStatusMessage(
     `mode: ${generation.preflight.mode}`,
     `health-only: ${effectiveHealthOnly(generation)}`,
   ];
+  const fastLine = renderProviderFastStatusLine(providerFastLatest);
+  if (fastLine.isOk() && fastLine.value !== undefined) {
+    lines.push(fastLine.value);
+  }
   const tree = delegationController?.snapshotTree() ?? [];
   // A returning source parent has an empty live tree but may still own
   // settled children in its own authoritative refs. Counting both is what
@@ -2218,9 +2263,15 @@ class WeaveChildTreeEditor extends CustomEditor {
  * returns. It never loads project config, opens the Runtime Store, starts a
  * timer, or launches a child process at factory time.
  */
+export type PiExtensionInstance = ((pi: PiExtensionApi) => void) & {
+  readonly providerFastLatestForTest: () =>
+    | ProviderFastPublicSnapshot
+    | undefined;
+};
+
 export function createPiExtension(
   overrides: Partial<PiExtensionDeps> = {},
-): (pi: PiExtensionApi) => void {
+): PiExtensionInstance {
   const defaults = createDefaultPiExtensionDeps();
   const deps: PiExtensionDeps = {
     ...defaults,
@@ -2247,6 +2298,31 @@ export function createPiExtension(
   // The generation the held controller belongs to stays beside the instance
   // so replacement and authority checks can never drift apart.
   const delegationControllerCell = createDelegationControllerCell();
+  /**
+   * The single generation-scoped native-session authority (Spec 33 §5.6).
+   *
+   * It is built once per `session_start`, before preflight, from three real
+   * facts: Pi's public `SessionManager`, the resolved Weave session root, and
+   * the child process launch surface. The *same object* then feeds capability
+   * probing, thread sources, the session store that mints launch grants, the
+   * delegation controller, direct dispatch, and every `PiRpcChild`. Because
+   * readiness and every launch consult one authority, a generation can no
+   * longer report delegation ready while each spawn refuses.
+   */
+  const sessionAuthorityCell: {
+    authority: PiChildSessionStorageAuthority | undefined;
+  } = { authority: undefined };
+  const readDelegationAuthorityReadiness =
+    (): PiDelegationAuthorityReadiness => {
+      const authority = sessionAuthorityCell.authority;
+      if (authority === undefined) {
+        return { status: "unavailable", reason: "pi-session-api-unavailable" };
+      }
+      const reason = authority.readinessReason();
+      return reason === undefined
+        ? { status: "ready" }
+        : { status: "unavailable", reason };
+    };
   const sessionTransitionNoticeCell = createSessionTransitionNoticeCell();
   /**
    * Generation-scoped thread sources: the parent ref store (Task 5), the
@@ -2335,12 +2411,29 @@ export function createPiExtension(
     },
     healthOnly: () => doctorHealthOnlyCell.value,
   });
+  /**
+   * The one required-capability gate every mutating route consults before it
+   * reaches a delegation controller, session service, filesystem, metadata
+   * cache, execution lease, or child process. It reads the live controller
+   * generation, so it always reflects the current activation, and it fails
+   * closed when no generation is active.
+   */
+  const sessionMutationGate = createSessionMutationGate(
+    () =>
+      controller.getCurrentGeneration()?.preflight.requiredCapabilityGaps ?? [
+        {
+          capabilityId: SESSION_MUTATION_REQUIRED_CAPABILITY,
+          reason: "no-active-generation",
+        },
+      ],
+  );
   const adapterCommandHandlersCell: {
     handlers: Readonly<Record<string, AdapterCommandHandler>>;
   } = {
     handlers: createPiAdapterCommandHandlers({
       children: unavailableChildrenPort,
       doctor: doctorPort,
+      sessionMutationGate,
     }),
   };
   const refreshAdapterCommandHandlers = (
@@ -2349,6 +2442,7 @@ export function createPiExtension(
     adapterCommandHandlersCell.handlers = createPiAdapterCommandHandlers({
       children,
       doctor: doctorPort,
+      sessionMutationGate,
     });
   };
   const workflowControllerCell: {
@@ -2450,6 +2544,86 @@ export function createPiExtension(
    */
   let latestSessionCtx: PiSessionContext | undefined;
   /**
+   * The owner whose committed neutral intent applies to this session: an
+   * authenticated child bootstrap in child mode, otherwise the committed
+   * primary of the current generation. Activation-time model state is never
+   * consulted, because the model cannot change this adapter's outcome.
+   */
+  const activeProviderFastIntentOwner = (): unknown => {
+    if (childModeState.active) {
+      if (
+        !childModeState.bootstrapApplied ||
+        childModeState.agentName.length === 0
+      ) {
+        return undefined;
+      }
+      return childModeState;
+    }
+    const session = activeSession;
+    const generation = controller.getCurrentGeneration();
+    if (
+      session === undefined ||
+      generation === undefined ||
+      session.generationId !== generation.id ||
+      effectiveHealthOnly(generation)
+    ) {
+      return undefined;
+    }
+    return session.primarySession.captureRequestSnapshot();
+  };
+
+  /**
+   * The sanitized acceleration state for this session. Pi cannot carry fast
+   * intent, so a declaring owner reports the terminal unsupported outcome and
+   * an owner without intent reports no state at all. No provider request or
+   * header is inspected or changed to reach this answer.
+   */
+  const resolveProviderFastState = ():
+    | ProviderFastPublicSnapshot
+    | undefined => {
+    const resolve = Result.fromThrowable(
+      (): ProviderFastPublicSnapshot | undefined => {
+        const classified = classifyProviderFastIntent(
+          activeProviderFastIntentOwner(),
+        );
+        return classified.kind === "unsupported"
+          ? classified.snapshot
+          : undefined;
+      },
+      () => undefined,
+    );
+    return resolve().unwrapOr(undefined);
+  };
+
+  /**
+   * Persist the one bounded terminal outcome for a declaring owner. The
+   * telemetry dedupe window keeps this to a single durable record per
+   * state/reason, so repeated turns do not grow the journal.
+   */
+  const reportProviderFastIntent = (): void => {
+    const snapshot = resolveProviderFastState();
+    if (snapshot === undefined) {
+      return;
+    }
+    const telemetry = telemetryCell.telemetry;
+    if (telemetry === undefined) {
+      return;
+    }
+    void telemetry.recordProviderFastTransition(snapshot).orElse((failure) => {
+      telemetry.recordDegradation(failure);
+      return okAsync(undefined);
+    });
+  };
+
+  /**
+   * Drop the in-memory reporting dedupe so a replaced session or a new
+   * primary records its own terminal outcome. Durable journal events stay as
+   * bounded audit facts.
+   */
+  const resetProviderFastReporting = (): void => {
+    telemetryCell.telemetry?.resetProviderFastReporting();
+  };
+  /**
    * The most recent session context *per generation*. Pi replaces
    * `ctx.sessionManager` across a session load, so a context captured at
    * `session_start` can stop reporting the parent's entries while the session
@@ -2527,9 +2701,8 @@ export function createPiExtension(
       capabilityProber: deps.capabilityProber,
       configActivator: deps.configActivator,
       pathContainmentPort: deps.pathContainmentPort,
-      ...(deps.nativeSessionReadiness === undefined
-        ? {}
-        : { nativeSessionReadiness: deps.nativeSessionReadiness }),
+      // Probing reads the same authority object every launch path consumes.
+      delegationAuthority: readDelegationAuthorityReadiness,
       chooseInvalidChildInspectionSettings: (issues) => {
         const ui = childInspectionSettingsUi.ui;
         if (ui === undefined) return okAsync("health-only" as const);
@@ -2566,6 +2739,7 @@ export function createPiExtension(
         return [
           buildDelegationToolRegistration({
             targets,
+            sessionMutationGate,
             getInvocationContext: () =>
               resolveDelegationInvocationContext(
                 activeSession === undefined
@@ -3050,6 +3224,7 @@ export function createPiExtension(
           activeSession,
           delegationControllerCell.controller,
           currentChildReconstruction(),
+          resolveProviderFastState(),
         ),
         "info",
       );
@@ -3465,6 +3640,7 @@ export function createPiExtension(
           session.pendingPrimaryName = descriptor.name;
           session.primaryActivationAttempted = true;
           session.primaryActivationFailure = undefined;
+          resetProviderFastReporting();
           setActiveAgentStatus(ctx, descriptor.name);
           return undefined;
         })
@@ -3873,6 +4049,7 @@ export function createPiExtension(
     },
     closePlanTaskOverlay,
     shutdownExtensionController: () => {
+      resetProviderFastReporting();
       controller.shutdown();
     },
     clearBootActivationFailure: () => {
@@ -3916,7 +4093,9 @@ export function createPiExtension(
     },
   });
 
-  return function piAdapterExtension(pi: PiExtensionApi): void {
+  const piAdapterExtension = function piAdapterExtension(
+    pi: PiExtensionApi,
+  ): void {
     pi.registerShortcut?.(PI_PRIMARY_AGENT_CYCLE_SHORTCUT, {
       description: "Cycle Weave primary agent",
       handler: async (ctx: PiSessionContext) => {
@@ -3996,6 +4175,18 @@ export function createPiExtension(
       },
     });
 
+    // No provider request or header hook is registered. Pi cannot bind a
+    // transport proof or a response proof to one prepared request, so the
+    // adapter sends no acceleration control and leaves every provider payload
+    // and header exactly as other handlers left it.
+    //
+    // A settled turn is the point where the session's committed intent is
+    // known and stable, so the bounded terminal unsupported outcome is
+    // recorded here. Telemetry dedupes it to one durable record.
+    pi.on("agent_settled", () => {
+      reportProviderFastIntent();
+    });
+
     // Parent-chat/workflow concurrency (Pi adapter contract): an ordinary prompt
     // arriving while a direct-step child is active must never be silently
     // interleaved with the workflow's own mutation. Ask first; only a
@@ -4046,6 +4237,7 @@ export function createPiExtension(
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
       latestSessionCtx = ctx;
+      resetProviderFastReporting();
       // Revoke the prior generation synchronously, before the first await.
       // Overlays settle first, then the startup sequence bumps, then every
       // live authority cell is dropped so a retained tool registration or
@@ -4121,6 +4313,34 @@ export function createPiExtension(
         () => emptyHostSurfaceReport(),
       );
       if (!startupStillCurrent()) return;
+      // Built before preflight so capability probing, and every later launch
+      // consumer, share one authority. The root is *proven* here, once, by
+      // really opening it no-follow through the production filesystem port;
+      // the raw violation never leaves `provePiChildSessionRoot`.
+      const injectedAuthority = deps.sessionStorageAuthority;
+      const sessionRootProof =
+        injectedAuthority === undefined
+          ? await provePiChildSessionRoot({
+              env: {
+                XDG_DATA_HOME: deps.envPort.read("XDG_DATA_HOME"),
+                HOME: deps.envPort.read("HOME"),
+              },
+              fs: createBunPiNativeSessionFs(),
+            }).unwrapOr(undefined)
+          : undefined;
+      if (!startupStillCurrent()) return;
+      sessionAuthorityCell.authority =
+        injectedAuthority ??
+        createPiChildSessionStorageAuthority({
+          SessionManager: (PiPublicExports as { SessionManager?: unknown })
+            .SessionManager,
+          ...(sessionRootProof === undefined
+            ? {}
+            : { sessionRoot: sessionRootProof }),
+          processLaunch: deps.processPort,
+          scopeId: `pi-startup-${startupSequence}`,
+        });
+      const sessionAuthority = sessionAuthorityCell.authority;
       const activation = await controller.activate(
         ctx,
         commands.value,
@@ -4177,25 +4397,6 @@ export function createPiExtension(
         !generation.preflight.modeSupported ||
         !generation.preflight.hostSupported
       ) {
-        return;
-      }
-
-      // Unproved Pi-native session/process readiness blocks this generation
-      // exactly like an unsupported mode or host: preflight already withheld
-      // config activation, so nothing downstream may be built. Paint the
-      // health-only status and stop before any descriptor, transport, lease, or
-      // process can exist. The reason itself stays inside the closed readiness
-      // set carried by the health report.
-      const nativeReadiness = generation.preflight.nativeSessionReadiness;
-      if (nativeReadiness !== undefined && !nativeReadiness.ready) {
-        ctx.ui.setStatus(
-          "weave",
-          "health-only - run /weave:health for details",
-        );
-        deps.logger.warn(
-          { reason: nativeReadiness.reason },
-          "pi-native session readiness unproven; delegation unavailable this session",
-        );
         return;
       }
 
@@ -4293,6 +4494,7 @@ export function createPiExtension(
             return;
           }
           lastBootActivationFailure = booted.error;
+          resetProviderFastReporting();
           activeSession = undefined;
           controller.shutdown();
           clearThreadSources(threadSourcesCell);
@@ -4336,6 +4538,7 @@ export function createPiExtension(
             error instanceof Error ? error : new Error(String(error)),
         );
         if (registerTools().isErr()) {
+          resetProviderFastReporting();
           activeSession = undefined;
           controller.shutdown();
           clearThreadSources(threadSourcesCell);
@@ -4402,10 +4605,24 @@ export function createPiExtension(
         };
         let allowDelegationController = !effectiveHealthOnly(generation);
         const parentForSources = session.primarySession.getParentSession();
-        // Health-only generations open non-creating read-only sources and skip
-        // every write path. Session/root/process readiness stays at the
-        // capability and initializer boundary.
-        const useReadOnlyThreadSources = effectiveHealthOnly(generation);
+        // The native-session authority is checked before mutation-capable
+        // thread sources, cache create/open, reconstruction, recovery
+        // prompting, or upsert. A host without the public session
+        // create/open API refuses with `pi-session-api-unavailable`;
+        // health-only and refused generations open non-creating read-only
+        // sources only and skip every write path.
+        const sessionStorage = sessionAuthority;
+        const sessionStorageDecision = Result.fromThrowable(
+          () => sessionStorage.requireNativeSessionAuthority(),
+          () => ({
+            type: "SessionStorageUnavailable" as const,
+            reason: "pi-session-api-unavailable" as const,
+          }),
+        )();
+        const nativeSessionAuthorityGranted =
+          sessionStorageDecision.isOk() && sessionStorageDecision.value.isOk();
+        const useReadOnlyThreadSources =
+          !nativeSessionAuthorityGranted || effectiveHealthOnly(generation);
         if (
           deps.threadSourceFactory !== undefined &&
           parentForSources.persistence === "persistent"
@@ -4436,6 +4653,7 @@ export function createPiExtension(
               XDG_DATA_HOME: deps.envPort.read("XDG_DATA_HOME"),
               HOME: deps.envPort.read("HOME"),
             },
+            storageAuthority: sessionStorage,
             ...(useReadOnlyThreadSources ? { readOnly: true as const } : {}),
           });
           if (!startupOwnsGeneration()) {
@@ -4591,6 +4809,7 @@ export function createPiExtension(
             idGenerator: deps.idGenerator,
             logger: deps.logger,
             processPort: deps.processPort,
+            sessionStorageAuthority: sessionAuthority,
             randomPort: deps.randomPort,
             hmacPort: deps.hmacPort,
             handshakeTimeoutMs:
@@ -4826,10 +5045,19 @@ export function createPiExtension(
 
         // Child recovery is generation-scoped. Construct it only after the
         // child-ref ledger is open, then prompt exactly once for this stable
-        // parent session. Health-only generations skip without prompting.
-        // Ref reads stay ungated.
+        // parent session.
+        //
+        // Recovery mutates the child-ref ledger and spawns a restored child,
+        // so it requires the same native-session authority already checked
+        // before source construction. Refused and health-only generations
+        // skip without prompting. Lower
+        // ref-mutation checks stay independent, and ref reads stay ungated.
         const recoveryRefs = threadSourcesCell.refs;
-        if (recoveryRefs !== undefined && !useReadOnlyThreadSources) {
+        if (
+          recoveryRefs !== undefined &&
+          !useReadOnlyThreadSources &&
+          nativeSessionAuthorityGranted
+        ) {
           const historyPort = {
             list: () => recoveryRefs.readRefs().map((scan) => scan.refs),
             updateStatus: (
@@ -4988,6 +5216,7 @@ export function createPiExtension(
               createDirectDispatchTransport(
                 {
                   processPort: deps.processPort,
+                  sessionStorageAuthority: sessionAuthority,
                   randomPort: deps.randomPort,
                   hmacPort: deps.hmacPort,
                   logger: deps.logger,
@@ -5739,7 +5968,11 @@ export function createPiExtension(
         undefined,
         session.generationId,
       );
-      if (session.primarySession.getCurrent() === undefined) return undefined;
+      // Prompt append, badge, and later request mapping all read the same
+      // committed snapshot. A pending or failed switch has no snapshot.
+      if (session.primarySession.captureRequestSnapshot() === undefined) {
+        return undefined;
+      }
 
       return {
         systemPrompt: session.primarySession.appendToSystemPrompt(
@@ -5814,6 +6047,9 @@ export function createPiExtension(
       await sessionTransitionRuntime.runBoundedShutdown(ctx);
     });
   };
+  piAdapterExtension.providerFastLatestForTest = () =>
+    resolveProviderFastState();
+  return piAdapterExtension;
 }
 
 export default createPiExtension();

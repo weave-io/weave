@@ -73,7 +73,6 @@ describe("single category → shuttle generation", () => {
       agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
       category client-frontend {
         description "Client-side frontend layer"
-        patterns ["src/4.Presentation/DST.Client/**"]
         models ["gpt-4o"]
       }
     `);
@@ -86,7 +85,6 @@ describe("single category → shuttle generation", () => {
       agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
       category client-frontend {
         description "Client frontend implementation work"
-        patterns ["src/4.Presentation/DST.Client/**"]
       }
     `);
 
@@ -100,19 +98,17 @@ describe("single category → shuttle generation", () => {
       agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] mode all }
       category client-frontend {
         description "Client frontend implementation work"
-        patterns ["src/4.Presentation/DST.Client/**"]
       }
     `);
 
     expect(result["shuttle-client-frontend"]?.config.mode).toBe("subagent");
   });
 
-  it("(d) categoryMeta carries correct name, description, and patterns", () => {
+  it("(d) categoryMeta carries correct name and description", () => {
     const result = shuttles(`
       agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
       category client-frontend {
         description "Client-side frontend layer"
-        patterns ["src/4.Presentation/DST.Client/**", "**/*.tsx"]
         models ["gpt-4o"]
       }
     `);
@@ -120,7 +116,6 @@ describe("single category → shuttle generation", () => {
     expect(result["shuttle-client-frontend"]?.categoryMeta).toEqual({
       name: "client-frontend",
       description: "Client-side frontend layer",
-      patterns: ["src/4.Presentation/DST.Client/**", "**/*.tsx"],
       isCategory: true,
     });
   });
@@ -130,7 +125,6 @@ describe("single category → shuttle generation", () => {
       agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
       category client-frontend {
         description "Client frontend implementation work"
-        patterns ["src/4.Presentation/DST.Client/**"]
       }
     `);
 
@@ -144,7 +138,6 @@ describe("single category → shuttle generation", () => {
       agent shuttle { prompt "I am the base shuttle." models ["claude-sonnet-4-5"] }
       category client-frontend {
         description "Client frontend implementation work"
-        patterns ["src/4.Presentation/DST.Client/**"]
       }
     `);
 
@@ -158,7 +151,6 @@ describe("single category → shuttle generation", () => {
       agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
       category client-frontend {
         description "Client frontend implementation work"
-        patterns ["src/4.Presentation/DST.Client/**"]
         models ["gpt-4o"]
       }
     `);
@@ -182,7 +174,6 @@ describe("single category → shuttle generation", () => {
       }
       category client-frontend {
         description "Client frontend implementation work"
-        patterns ["src/4.Presentation/DST.Client/**"]
       }
     `);
 
@@ -207,7 +198,6 @@ describe("single category → shuttle generation", () => {
       }
       category client-frontend {
         description "Client frontend implementation work"
-        patterns ["src/4.Presentation/DST.Client/**"]
         tool_policy {
           write allow
           delegate deny
@@ -233,17 +223,14 @@ describe("multiple categories → multiple shuttles", () => {
     agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
     category client-frontend {
       description "Client UI layer"
-      patterns ["src/4.Presentation/DST.Client/**"]
       models ["gpt-4o"]
     }
     category backend-api {
       description "Backend API layer"
-      patterns ["src/2.Application/**", "src/3.Domain/**"]
       models ["claude-sonnet-4-5"]
     }
     category infrastructure {
       description "Infrastructure and persistence"
-      patterns ["src/1.Infrastructure/**"]
     }
   `;
 
@@ -256,19 +243,27 @@ describe("multiple categories → multiple shuttles", () => {
     ]);
   });
 
-  it("(b) each generated shuttle has the correct patterns for its category", () => {
+  it("(b) each generated shuttle carries isolated category metadata", () => {
     const result = shuttles(DSL);
 
-    expect(result["shuttle-client-frontend"]?.categoryMeta.patterns).toEqual([
-      "src/4.Presentation/DST.Client/**",
-    ]);
-    expect(result["shuttle-backend-api"]?.categoryMeta.patterns).toEqual([
-      "src/2.Application/**",
-      "src/3.Domain/**",
-    ]);
-    expect(result["shuttle-infrastructure"]?.categoryMeta.patterns).toEqual([
-      "src/1.Infrastructure/**",
-    ]);
+    expect(result["shuttle-client-frontend"]?.categoryMeta).toEqual({
+      name: "client-frontend",
+      description: "Client UI layer",
+      isCategory: true,
+    });
+    expect(result["shuttle-backend-api"]?.categoryMeta).toEqual({
+      name: "backend-api",
+      description: "Backend API layer",
+      isCategory: true,
+    });
+    expect(result["shuttle-infrastructure"]?.categoryMeta).toEqual({
+      name: "infrastructure",
+      description: "Infrastructure and persistence",
+      isCategory: true,
+    });
+    expect(
+      "patterns" in (result["shuttle-client-frontend"]?.categoryMeta ?? {}),
+    ).toBe(false);
   });
 
   it("(c) each shuttle carries isCategory: true", () => {
@@ -303,7 +298,7 @@ describe("disabled category shuttle exclusion", () => {
   it("(a) disabled shuttle-{name} is excluded from generation", () => {
     const result = shuttles(`
       agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
-      category client-frontend { description "Client frontend implementation work" patterns ["src/4.Presentation/DST.Client/**"] }
+      category client-frontend { description "Client frontend implementation work" }
       disable agents ["shuttle-client-frontend"]
     `);
 
@@ -313,8 +308,8 @@ describe("disabled category shuttle exclusion", () => {
   it("(b) disabling one shuttle does not affect siblings", () => {
     const result = shuttles(`
       agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
-      category client-frontend { description "Client frontend implementation work" patterns ["src/4.Presentation/DST.Client/**"] }
-      category backend-api { description "Backend API implementation work" patterns ["src/2.Application/**"] }
+      category client-frontend { description "Client frontend implementation work" }
+      category backend-api { description "Backend API implementation work" }
       disable agents ["shuttle-client-frontend"]
     `);
 
@@ -325,8 +320,8 @@ describe("disabled category shuttle exclusion", () => {
   it("(c) disabling base shuttle suppresses ALL category shuttles", () => {
     const result = shuttles(`
       agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
-      category client-frontend { description "Client frontend implementation work" patterns ["src/4.Presentation/DST.Client/**"] }
-      category backend-api { description "Backend API implementation work" patterns ["src/2.Application/**"] }
+      category client-frontend { description "Client frontend implementation work" }
+      category backend-api { description "Backend API implementation work" }
       disable agents ["shuttle"]
     `);
 
@@ -344,8 +339,8 @@ describe("disabled category shuttle exclusion", () => {
           tool_policy { delegate allow }
         }
         agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
-        category client-frontend { description "Client frontend implementation work" patterns ["src/4.Presentation/DST.Client/**"] }
-        category backend-api { description "Backend API implementation work" patterns ["src/2.Application/**"] }
+        category client-frontend { description "Client frontend implementation work" }
+        category backend-api { description "Backend API implementation work" }
         disable agents ["shuttle-client-frontend"]
       `,
     );
@@ -368,7 +363,6 @@ describe("composeAgentDescriptor for category shuttle", () => {
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
         category client-frontend {
           description "Client UI"
-          patterns ["src/4.Presentation/DST.Client/**"]
           models ["gpt-4o"]
         }
       `,
@@ -378,14 +372,13 @@ describe("composeAgentDescriptor for category shuttle", () => {
     expect(desc.mode).toBe("subagent");
   });
 
-  it("(b) descriptor carries category metadata with correct patterns", async () => {
+  it("(b) descriptor carries category metadata without patterns", async () => {
     const desc = await descriptor(
       "shuttle-client-frontend",
       `
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
         category client-frontend {
           description "Client UI"
-          patterns ["src/4.Presentation/DST.Client/**", "**/*.tsx"]
           models ["gpt-4o"]
         }
       `,
@@ -394,7 +387,6 @@ describe("composeAgentDescriptor for category shuttle", () => {
     expect(desc.category).toEqual({
       name: "client-frontend",
       description: "Client UI",
-      patterns: ["src/4.Presentation/DST.Client/**", "**/*.tsx"],
     });
   });
 
@@ -414,7 +406,6 @@ describe("composeAgentDescriptor for category shuttle", () => {
         }
         category client-frontend {
           description "Client frontend implementation work"
-          patterns ["src/4.Presentation/DST.Client/**"]
         }
       `,
     );
@@ -432,7 +423,6 @@ describe("composeAgentDescriptor for category shuttle", () => {
         agent shuttle { prompt "You are the base shuttle." models ["claude-sonnet-4-5"] }
         category client-frontend {
           description "Client frontend implementation work"
-          patterns ["src/4.Presentation/DST.Client/**"]
         }
       `,
     );
@@ -447,7 +437,6 @@ describe("composeAgentDescriptor for category shuttle", () => {
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
         category client-frontend {
           description "Client frontend implementation work"
-          patterns ["src/4.Presentation/DST.Client/**"]
           prompt_append "Focus on the Blazor component architecture."
         }
       `,
@@ -466,7 +455,6 @@ describe("composeAgentDescriptor for category shuttle", () => {
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
         category client-frontend {
           description "Client frontend implementation work"
-          patterns ["src/4.Presentation/DST.Client/**"]
           models ["gpt-4o"]
         }
       `,
@@ -491,11 +479,9 @@ describe("delegation targets include category shuttles with isCategory: true", (
     agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
     category client-frontend {
       description "Client UI layer"
-      patterns ["src/4.Presentation/DST.Client/**"]
     }
     category backend-api {
       description "Backend API layer"
-      patterns ["src/2.Application/**"]
     }
   `;
 
@@ -537,7 +523,7 @@ describe("delegation targets include category shuttles with isCategory: true", (
           mode subagent
         }
         agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
-        category client-frontend { description "Client frontend implementation work" patterns ["src/4.Presentation/DST.Client/**"] }
+        category client-frontend { description "Client frontend implementation work" }
       `,
     );
 
@@ -569,62 +555,60 @@ describe("delegation targets include category shuttles with isCategory: true", (
 });
 
 // ---------------------------------------------------------------------------
-// 6. Pattern inheritance integrity
+// 6. Category metadata isolation
 // ---------------------------------------------------------------------------
 
-describe("pattern inheritance", () => {
-  it("(a) patterns from category are carried verbatim to categoryMeta", () => {
+describe("category metadata isolation", () => {
+  it("(a) categoryMeta carries the source category name and description", () => {
     const result = shuttles(`
       agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
       category client-frontend {
         description "Client frontend implementation work"
-        patterns [
-          "src/4.Presentation/DST.Client/**",
-          "src/4.Presentation/DST.Client.Tests/**",
-          "**/*.razor",
-          "**/*.razor.cs"
-        ]
       }
     `);
 
-    expect(result["shuttle-client-frontend"]?.categoryMeta.patterns).toEqual([
-      "src/4.Presentation/DST.Client/**",
-      "src/4.Presentation/DST.Client.Tests/**",
-      "**/*.razor",
-      "**/*.razor.cs",
-    ]);
+    expect(result["shuttle-client-frontend"]?.categoryMeta).toEqual({
+      name: "client-frontend",
+      description: "Client frontend implementation work",
+      isCategory: true,
+    });
+    expect(
+      "patterns" in (result["shuttle-client-frontend"]?.categoryMeta ?? {}),
+    ).toBe(false);
   });
 
-  it("(b) category patterns are carried verbatim — schema requires at least one entry", () => {
-    // The DSL schema enforces at least one pattern per category.
-    // Verify a single-pattern category is reflected exactly in categoryMeta.patterns.
+  it("(b) a category with only a description still generates isolated metadata", () => {
     const result = shuttles(`
       agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
       category client-frontend {
-        description "Frontend with minimal pattern"
-        patterns ["src/4.Presentation/**"]
+        description "Frontend with semantic routing only"
       }
     `);
 
-    expect(result["shuttle-client-frontend"]?.categoryMeta.patterns).toEqual([
-      "src/4.Presentation/**",
-    ]);
+    expect(result["shuttle-client-frontend"]?.categoryMeta).toEqual({
+      name: "client-frontend",
+      description: "Frontend with semantic routing only",
+      isCategory: true,
+    });
   });
 
-  it("(c) patterns do not bleed between sibling categories", () => {
+  it("(c) sibling category metadata does not bleed", () => {
     const result = shuttles(`
       agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
-      category client-frontend { description "Client frontend implementation work" patterns ["src/4.Presentation/DST.Client/**"] }
-      category backend-api { description "Backend API implementation work" patterns ["src/2.Application/**", "src/3.Domain/**"] }
+      category client-frontend { description "Client frontend implementation work" }
+      category backend-api { description "Backend API implementation work" }
     `);
 
-    expect(result["shuttle-client-frontend"]?.categoryMeta.patterns).toEqual([
-      "src/4.Presentation/DST.Client/**",
-    ]);
-    expect(result["shuttle-backend-api"]?.categoryMeta.patterns).toEqual([
-      "src/2.Application/**",
-      "src/3.Domain/**",
-    ]);
+    expect(result["shuttle-client-frontend"]?.categoryMeta).toEqual({
+      name: "client-frontend",
+      description: "Client frontend implementation work",
+      isCategory: true,
+    });
+    expect(result["shuttle-backend-api"]?.categoryMeta).toEqual({
+      name: "backend-api",
+      description: "Backend API implementation work",
+      isCategory: true,
+    });
   });
 });
 
@@ -646,7 +630,6 @@ describe("category shuttle delegation targets in composed descriptor", () => {
         agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
         category client-frontend {
           description "Frontend UI"
-          patterns ["src/4.Presentation/DST.Client/**"]
         }
       `,
     );
@@ -675,11 +658,9 @@ describe("category shuttle delegation targets in composed descriptor", () => {
         }
         category mini {
           description "Small, surgical edits in a single file"
-          patterns ["src/**"]
         }
         category tests {
           description "Test authoring and coverage work"
-          patterns ["**/*.test.ts"]
         }
       `,
     );
@@ -711,7 +692,6 @@ describe("category shuttle delegation targets in composed descriptor", () => {
         }
         category mini {
           description "Small, surgical edits in a single file"
-          patterns ["src/**"]
         }
       `,
     );
@@ -732,11 +712,9 @@ describe("category shuttle delegation targets in composed descriptor", () => {
         agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
         category client-frontend {
           description "Client UI layer"
-          patterns ["src/4.Presentation/DST.Client/**"]
         }
         category backend-api {
           description "Backend API layer"
-          patterns ["src/2.Application/**", "src/3.Domain/**"]
         }
       `,
     );
@@ -784,11 +762,9 @@ describe("category shuttle delegation targets in composed descriptor", () => {
         agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
         category client-frontend {
           description "Frontend UI"
-          patterns ["src/4.Presentation/DST.Client/**"]
         }
         category backend-api {
           description "Backend API layer"
-          patterns ["src/2.Application/**"]
         }
         disable agents ["shuttle-client-frontend"]
       `,
@@ -818,7 +794,6 @@ describe("category shuttle delegation targets in composed descriptor", () => {
         agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
         category client-frontend {
           description "Frontend UI"
-          patterns ["src/4.Presentation/DST.Client/**"]
         }
       `,
     );
@@ -839,7 +814,6 @@ describe("category shuttle delegation targets in composed descriptor", () => {
         agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
         category client-frontend {
           description "Frontend UI"
-          patterns ["src/4.Presentation/DST.Client/**"]
         }
       `,
     );
@@ -860,17 +834,15 @@ describe("generated category shuttles do not inherit base shuttle triggers", () 
       prompt "Base."
       models ["claude-sonnet-4-5"]
       triggers [
-        { domain "Uncategorized Implementation" trigger "Files no category claims" routing_hint "Use only when no listed category shuttle clearly matches the files" }
-        { domain "Repository Tooling" trigger "Build and script files" routing_hint "Use for build, script, CI, and manifest files" }
+        "Use only when no listed category shuttle clearly matches the work"
+        "Use for build, script, CI, and manifest files"
       ]
     }
     category mini {
       description "Small, surgical edits in a single file"
-      patterns ["src/**"]
     }
     category tests {
       description "Test authoring and coverage work"
-      patterns ["**/*.test.ts"]
     }
   `;
 
@@ -914,44 +886,204 @@ describe("generated category shuttles do not inherit base shuttle triggers", () 
     expect(generic?.triggers).toHaveLength(2);
   });
 
-  it("(d) Loom's delegation section renders no routing hints under category entries", async () => {
-    // Mirrors the loom.md delegation block: name/description plus one bullet
-    // per trigger routing_hint.
+  it("(d) category triggers copy in declared order and generic shuttle keeps its own", async () => {
+    // Task 5 proof stays at generation and composed-descriptor level.
+    // Prompt-context string rendering belongs to Task 6.
+    const source = `
+      agent loom {
+        prompt "I am loom."
+        models ["claude-sonnet-4-5"]
+        mode primary
+        tool_policy { delegate allow }
+      }
+      agent shuttle {
+        description "Shuttle (Domain Specialist)"
+        prompt "Base."
+        models ["claude-sonnet-4-5"]
+        triggers ["generic fallback"]
+      }
+      category mini {
+        description "Small, surgical edits in a single file"
+        triggers ["tiny localized change", "single-file fix"]
+      }
+      category tests {
+        description "Test authoring and coverage work"
+      }
+    `;
+    const config = cfg(source);
+    const categoryTriggers = config.categories.mini?.triggers;
+    const shuttleTriggers = config.agents.shuttle?.triggers;
+    expect(categoryTriggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
+    ]);
+    expect(shuttleTriggers).toEqual(["generic fallback"]);
+
+    const generated = generateCategoryShuttles(config);
+    if (generated.isErr()) throw new Error(generated.error.message);
+    const generatedMini = generated.value["shuttle-mini"]?.config.triggers;
+    const generatedTests = generated.value["shuttle-tests"]?.config.triggers;
+    expect(generatedMini).toEqual(["tiny localized change", "single-file fix"]);
+    expect(generatedMini).not.toBe(categoryTriggers);
+    expect(generatedTests).toEqual([]);
+    expect(config.agents.shuttle?.triggers).toEqual(["generic fallback"]);
+
+    const desc = await descriptor("loom", source);
+    const mini = desc.delegationTargets.find((t) => t.name === "shuttle-mini");
+    const tests = desc.delegationTargets.find(
+      (t) => t.name === "shuttle-tests",
+    );
+    const generic = desc.delegationTargets.find((t) => t.name === "shuttle");
+
+    expect(mini?.triggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
+    ]);
+    expect(mini?.triggers).not.toBe(categoryTriggers);
+    expect(mini?.triggers).not.toBe(generatedMini);
+    expect(tests?.triggers).toEqual([]);
+    expect(generic?.triggers).toEqual(["generic fallback"]);
+    expect(generic?.triggers).not.toBe(shuttleTriggers);
+
+    categoryTriggers?.push("mutated category");
+    shuttleTriggers?.push("mutated shuttle");
+    generatedMini?.push("mutated generated");
+    expect(mini?.triggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
+    ]);
+    expect(generic?.triggers).toEqual(["generic fallback"]);
+    expect(generated.value["shuttle-mini"]?.config.triggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
+      "mutated generated",
+    ]);
+    expect(config.categories.mini?.triggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
+      "mutated category",
+    ]);
+    expect(config.agents.shuttle?.triggers).toEqual([
+      "generic fallback",
+      "mutated shuttle",
+    ]);
+  });
+
+  it("(e) category triggers appear on the generated shuttle and generic shuttle keeps its own", async () => {
     const desc = await descriptor(
       "loom",
       `
         agent loom {
-          prompt "{{#delegation.targets}}\\n- **{{name}}** — {{description}}{{#triggers}}\\n  - {{routing_hint}}{{/triggers}}\\n{{/delegation.targets}}"
+          prompt "I am loom."
           models ["claude-sonnet-4-5"]
           mode primary
           tool_policy { delegate allow }
         }
-        ${BASE_WITH_TRIGGERS}
+        agent shuttle {
+          description "Shuttle (Domain Specialist)"
+          prompt "Base."
+          models ["claude-sonnet-4-5"]
+          triggers ["generic fallback"]
+        }
+        category mini {
+          description "Small, surgical edits in a single file"
+          triggers ["tiny localized change", "single-file fix"]
+        }
       `,
     );
 
-    const lines = desc.composedPrompt.split("\n");
-    const hintsFor = (target: string): string[] => {
-      const start = lines.findIndex((l) => l.startsWith(`- **${target}** —`));
-      expect(start).toBeGreaterThanOrEqual(0);
-      const hints: string[] = [];
-      for (let i = start + 1; i < lines.length; i++) {
-        const line = lines[i] ?? "";
-        if (!line.startsWith("  - ")) break;
-        hints.push(line);
+    const mini = desc.delegationTargets.find((t) => t.name === "shuttle-mini");
+    const generic = desc.delegationTargets.find((t) => t.name === "shuttle");
+
+    expect(mini?.triggers).toEqual([
+      "tiny localized change",
+      "single-file fix",
+    ]);
+    expect(generic?.triggers).toEqual(["generic fallback"]);
+  });
+
+  it("(f) mutating a generated shuttle models/skills/triggers does not mutate composed delegation targets", async () => {
+    const source = `
+      agent loom {
+        prompt "I am loom."
+        models ["claude-sonnet-4-5"]
+        mode primary
+        tool_policy { delegate allow }
       }
-      return hints;
-    };
+      agent shuttle {
+        description "Shuttle (Domain Specialist)"
+        prompt "Base."
+        models ["claude-sonnet-4-5"]
+        skills ["review", "summarize"]
+        triggers ["generic fallback"]
+      }
+      category mini {
+        description "Small, surgical edits in a single file"
+        models ["gpt-5"]
+        triggers ["tiny localized change"]
+      }
+      category tests {
+        description "Test authoring and coverage work"
+      }
+    `;
+    const config = cfg(source);
+    const generated = generateCategoryShuttles(config);
+    if (generated.isErr()) throw new Error(generated.error.message);
+    const generatedMini = generated.value["shuttle-mini"]?.config;
+    const generatedTests = generated.value["shuttle-tests"]?.config;
+    if (generatedMini === undefined || generatedTests === undefined) {
+      throw new Error("expected generated category shuttles");
+    }
 
-    expect(hintsFor("shuttle-mini")).toEqual([]);
-    expect(hintsFor("shuttle-tests")).toEqual([]);
-    expect(hintsFor("shuttle").length).toBe(2);
+    const desc = await descriptor("loom", source);
+    const mini = desc.delegationTargets.find((t) => t.name === "shuttle-mini");
+    const tests = desc.delegationTargets.find(
+      (t) => t.name === "shuttle-tests",
+    );
+    const generic = desc.delegationTargets.find((t) => t.name === "shuttle");
 
-    // The base shuttle's hint text appears exactly once — under generic shuttle.
-    const occurrences =
-      desc.composedPrompt.split(
-        "Use only when no listed category shuttle clearly matches the files",
-      ).length - 1;
-    expect(occurrences).toBe(1);
+    generatedMini.models?.push("mutated-mini-model");
+    generatedMini.skills?.push("mutated-mini-skill");
+    generatedMini.triggers?.push("mutated-mini-trigger");
+    generatedTests.models?.push("mutated-tests-model");
+    generatedTests.skills?.push("mutated-tests-skill");
+    generatedTests.triggers?.push("mutated-tests-trigger");
+    config.agents.shuttle?.models?.push("mutated-base-model");
+    config.agents.shuttle?.skills?.push("mutated-base-skill");
+    config.agents.shuttle?.triggers?.push("mutated-base-trigger");
+    config.categories.mini?.models?.push("mutated-category-model");
+    config.categories.mini?.triggers?.push("mutated-category-trigger");
+
+    expect(mini?.triggers).toEqual(["tiny localized change"]);
+    expect(tests?.triggers).toEqual([]);
+    expect(generic?.triggers).toEqual(["generic fallback"]);
+    expect(config.agents.shuttle?.models).toEqual([
+      "claude-sonnet-4-5",
+      "mutated-base-model",
+    ]);
+    expect(config.agents.shuttle?.skills).toEqual([
+      "review",
+      "summarize",
+      "mutated-base-skill",
+    ]);
+    expect(generatedMini.models).toEqual(["gpt-5", "mutated-mini-model"]);
+    expect(generatedMini.skills).toEqual([
+      "review",
+      "summarize",
+      "mutated-mini-skill",
+    ]);
+    expect(generatedTests.models).toEqual([
+      "claude-sonnet-4-5",
+      "mutated-tests-model",
+    ]);
+    expect(generatedTests.skills).toEqual([
+      "review",
+      "summarize",
+      "mutated-tests-skill",
+    ]);
+    expect(config.categories.mini?.models).toEqual([
+      "gpt-5",
+      "mutated-category-model",
+    ]);
   });
 });

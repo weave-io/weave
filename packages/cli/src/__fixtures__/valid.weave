@@ -9,7 +9,7 @@ agent helper {
 category docs {
   description "Documentation"
   models ["claude-sonnet-4-5"]
-  patterns ["docs/**", "**/*.md"]
+  triggers ["Use for documentation and Markdown"]
   prompt_append "Keep docs clear."
 }
 

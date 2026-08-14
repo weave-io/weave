@@ -491,12 +491,13 @@ function deepMerge2Result(
  * Typical call order: `mergeConfigsResult(builtins, globalConfig, projectConfig)`.
  *
  * **Merge rules per value type:**
- * - *Scalars* (string, number, boolean, enum): last-defined wins
- * - *Objects* (e.g. `agents`, `tool_policy`): recursive deep-merge — only
+ * - *Scalars* (string, number, boolean, enum, including `fast true`): last-defined wins.
+ *   Omission in a higher-priority layer preserves a lower-priority `fast true`.
+ * - *Objects* (e.g. `agents`, `categories`, `tool_policy`): recursive deep-merge — only
  *   keys present in the override are updated; all other keys are preserved
- * - *Arrays* (e.g. `models`, `disabled.agents`): union-merge — override
+ * - *Arrays* (e.g. `models`, `disabled.agents`, string `triggers`): union-merge — override
  *   entries come first, then base entries not already present (deduped by
- *   `JSON.stringify` equality); order reflects priority (highest first)
+ *   `JSON.stringify` equality, which is exact string equality for triggers); order reflects priority (highest first)
  * - *Workflows*: step-aware merge — same-name replacement, anchored insertion,
  *   append; `extends` chain is resolved across the merged workflow map
  *
@@ -551,12 +552,13 @@ export function mergeConfigsResult(
  * Typical call order: `mergeConfigs(builtins, globalConfig, projectConfig)`.
  *
  * **Merge rules per value type:**
- * - *Scalars* (string, number, boolean, enum): last-defined wins
- * - *Objects* (e.g. `agents`, `tool_policy`): recursive deep-merge — only
+ * - *Scalars* (string, number, boolean, enum, including `fast true`): last-defined wins.
+ *   Omission in a higher-priority layer preserves a lower-priority `fast true`.
+ * - *Objects* (e.g. `agents`, `categories`, `tool_policy`): recursive deep-merge — only
  *   keys present in the override are updated; all other keys are preserved
- * - *Arrays* (e.g. `models`, `disabled.agents`): union-merge — override
+ * - *Arrays* (e.g. `models`, `disabled.agents`, string `triggers`): union-merge — override
  *   entries come first, then base entries not already present (deduped by
- *   `JSON.stringify` equality); order reflects priority (highest first)
+ *   `JSON.stringify` equality, which is exact string equality for triggers); order reflects priority (highest first)
  * - *Workflows*: step-aware merge — same-name replacement, anchored insertion,
  *   append; `extends` chain is resolved across the merged workflow map
  *

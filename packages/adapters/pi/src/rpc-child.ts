@@ -21,7 +21,7 @@
  * while the final inspectable `status` (`"failed"` vs `"completed"` vs
  * `"cancelled"`) is preserved rather than clobbered by later cleanup.
  */
-import { basename, dirname, isAbsolute } from "node:path";
+import { isAbsolute } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
@@ -72,6 +72,17 @@ import {
   PiExtensionUiResponseSchema,
   parsePiChildSessionEvent,
 } from "./child-session-events.js";
+import {
+  describePiChildSessionLaunchRejection,
+  type PiChildSessionLaunchAuthority,
+  type PiChildSessionLaunchDetails,
+  type PiChildSessionLaunchGrant,
+  redeemPiChildSessionLaunchGrant,
+} from "./child-session-launch.js";
+import {
+  describeChildSessionStorageUnavailable,
+  type PiChildSessionStorageAuthority,
+} from "./child-session-storage-authority.js";
 import {
   DEFAULT_CANCEL_GRACE_MS,
   DEFAULT_CHILD_RUNTIME_BUDGET_MS,
@@ -172,6 +183,14 @@ export interface PiChildSessionObserver {
 
 export interface PiRpcChildDeps {
   readonly processPort: PiChildProcessPort;
+  /**
+   * Storage authority consulted before anything else this child does. There
+   * is no default: every construction site must state, explicitly and by
+   * name, which authority governs this launch. The production authority
+   * ({@link createPiChildSessionStorageAuthority}) always refuses, and no
+   * environment variable or configuration key relaxes it.
+   */
+  readonly sessionStorageAuthority: PiChildSessionStorageAuthority;
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly timerPort?: TimerPort;
@@ -258,15 +277,21 @@ export interface PiRpcChildDeps {
   readonly onInterventionCountChanged?: (count: number) => void;
 }
 
+/**
+ * How this child's transcript is stored.
+ *
+ * There is no caller-constructed path mode. A persistent child launches only
+ * against an opaque, store-minted {@link PiChildSessionLaunchGrant} bound to
+ * the generation's validated session root, the validated child directory, the
+ * exact validated session file, and this child's identity (Spec 33 §5.3 /
+ * R5). A public caller therefore cannot ask Weave to launch `pi` against an
+ * arbitrary absolute path, however well-formed that path looks.
+ */
 export type PiRpcChildSpawnSession =
   | { readonly mode: "ephemeral" }
-  | { readonly mode: "new"; readonly sessionDir: string }
   | {
-      readonly mode: "restore";
-      readonly sessionDir: string;
-      readonly sessionPath: string;
-      readonly activeLeafId: string;
-      readonly checkpointCursor?: number;
+      readonly mode: "native";
+      readonly grant: PiChildSessionLaunchGrant;
     };
 
 export interface PiRpcChildSpawnInput {
@@ -304,6 +329,12 @@ const SESSION_FLAGS = [
   "--resume",
   "--fork",
 ] as const;
+/**
+ * Pi's own session-directory environment variable. Inherited values, whether
+ * from the parent process or a caller-supplied environment, must not redirect
+ * a child away from the validated `--session-dir`.
+ */
+const PI_INHERITED_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 const MAX_SPAWN_SESSION_ID_BYTES = 256;
 const MAX_SPAWN_CHECKPOINT_CURSOR = Number.MAX_SAFE_INTEGER;
 const MAX_LIVE_RPC_ID_LENGTH = 256;
@@ -311,13 +342,8 @@ const MAX_LIVE_RPC_MESSAGE_LENGTH = 64 * 1024;
 const MAX_GET_ENTRIES = 256;
 const MAX_GET_ENTRIES_BYTES = 512 * 1024;
 const MAX_LIVE_JSON_DEPTH = 8;
-/** Safe regular `.jsonl` basename (same character class as native session components). */
-const SAFE_SPAWN_SESSION_BASENAME = /^[A-Za-z0-9._-]+\.jsonl$/;
-const PI_CODING_AGENT_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 
-type SpawnSessionValidationResult = Result<readonly string[], string>;
-
-function invalidSpawnSession(reason: string): SpawnSessionValidationResult {
+function invalidSpawnSession<T>(reason: string): Result<T, string> {
   return err(`invalid session spawn configuration: ${reason}`);
 }
 
@@ -359,10 +385,21 @@ function validateSpawnSessionId(value: unknown): Result<string, string> {
   return ok(value);
 }
 
+interface SpawnSessionPlan {
+  readonly command: readonly string[];
+  readonly launch?: PiChildSessionLaunchDetails;
+}
+
+type SpawnSessionPlanResult = Result<SpawnSessionPlan, string>;
+
 function buildSpawnCommand(
   baseCommand: readonly string[],
   session: PiRpcChildSpawnSession | undefined,
-): SpawnSessionValidationResult {
+  identity: {
+    readonly childId: string;
+    readonly authority: PiChildSessionLaunchAuthority;
+  },
+): SpawnSessionPlanResult {
   for (const argument of baseCommand) {
     if (
       typeof argument !== "string" ||
@@ -379,61 +416,74 @@ function buildSpawnCommand(
     return invalidSpawnSession("session must be an object");
   }
   if (selected.mode === "ephemeral") {
-    return ok([...baseCommand, "--no-session"]);
+    return ok({ command: [...baseCommand, "--no-session"] });
   }
-
-  const sessionDir = validateAbsoluteSpawnPath(
-    selected.sessionDir,
-    "sessionDir",
-  );
-  if (sessionDir.isErr()) return invalidSpawnSession(sessionDir.error);
-
-  if (selected.mode === "new") {
-    return ok([...baseCommand, "--session-dir", sessionDir.value]);
-  }
-
-  if (selected.mode !== "restore") {
+  if (selected.mode !== "native") {
     return invalidSpawnSession("unknown session mode");
   }
 
+  // The only path authority: an opaque grant this process minted through the
+  // store, bound to the generation's validated root and to this child. A
+  // caller-supplied path, however well-formed, has no grant and stops here.
+  const launch = redeemPiChildSessionLaunchGrant(selected.grant, {
+    childId: identity.childId,
+    authority: identity.authority,
+  });
+  if (launch.isErr()) {
+    return err(describePiChildSessionLaunchRejection(launch.error));
+  }
+  const details = launch.value;
+
+  // Defence in depth: the grant was validated at mint time, and is validated
+  // again here so the exact argv this transport emits is proven independently
+  // of the minting path.
+  const sessionDir = validateAbsoluteSpawnPath(
+    details.sessionDir,
+    "sessionDir",
+  );
+  if (sessionDir.isErr()) return invalidSpawnSession(sessionDir.error);
   const sessionPath = validateAbsoluteSpawnPath(
-    selected.sessionPath,
+    details.sessionPath,
     "sessionPath",
   );
   if (sessionPath.isErr()) return invalidSpawnSession(sessionPath.error);
-  const sessionFileName = basename(sessionPath.value);
-  if (
-    !SAFE_SPAWN_SESSION_BASENAME.test(sessionFileName) ||
-    sessionFileName === ".jsonl"
-  ) {
-    return invalidSpawnSession("sessionPath basename is unsafe");
+  if (!sessionPath.value.endsWith(".jsonl")) {
+    return invalidSpawnSession("sessionPath must end in .jsonl");
   }
-  // Exact immediate-parent equality — not a containment prefix. Nested or
-  // model-chosen paths under sessionDir must fail closed before spawn.
-  if (dirname(sessionPath.value) !== sessionDir.value) {
+  // Containment is canonical immediate-child equality, never a prefix: a
+  // prefix test also accepts `<dir>/nested/leaf.jsonl`, which is not the leaf
+  // the adapter validated and handed to Pi's own `SessionManager`.
+  const directory = sessionDir.value.replace(/\/+$/, "") || "/";
+  const separator = sessionPath.value.lastIndexOf("/");
+  const parent = separator <= 0 ? "/" : sessionPath.value.slice(0, separator);
+  const basename = sessionPath.value.slice(separator + 1);
+  if (parent !== directory || basename.length === 0) {
     return invalidSpawnSession(
-      "sessionPath must be the immediate child of sessionDir",
+      "sessionPath must be an immediate child of sessionDir",
     );
   }
 
-  const activeLeafId = validateSpawnSessionId(selected.activeLeafId);
+  const activeLeafId = validateSpawnSessionId(details.activeLeafId);
   if (activeLeafId.isErr()) return invalidSpawnSession(activeLeafId.error);
   if (
-    selected.checkpointCursor !== undefined &&
-    (!Number.isSafeInteger(selected.checkpointCursor) ||
-      selected.checkpointCursor < 0 ||
-      selected.checkpointCursor > MAX_SPAWN_CHECKPOINT_CURSOR)
+    details.checkpointCursor !== undefined &&
+    (!Number.isSafeInteger(details.checkpointCursor) ||
+      details.checkpointCursor < 0 ||
+      details.checkpointCursor > MAX_SPAWN_CHECKPOINT_CURSOR)
   ) {
     return invalidSpawnSession("checkpointCursor is out of bounds");
   }
 
-  return ok([
-    ...baseCommand,
-    "--session-dir",
-    sessionDir.value,
-    "--session",
-    sessionPath.value,
-  ]);
+  return ok({
+    command: [
+      ...baseCommand,
+      "--session-dir",
+      sessionDir.value,
+      "--session",
+      sessionPath.value,
+    ],
+    launch: details,
+  });
 }
 
 /** Native Pi commands, kept outside the authenticated private envelope kinds. */
@@ -703,6 +753,7 @@ export class PiRpcChild {
   private readonly agentName: string;
   private readonly depth: number;
   private readonly processPort: PiChildProcessPort;
+  private readonly sessionStorageAuthority: PiChildSessionStorageAuthority;
   private readonly randomPort: RandomPort;
   private readonly hmacPort: HmacPort;
   private readonly timerPort: TimerPort;
@@ -860,9 +911,7 @@ export class PiRpcChild {
   private readonly cancelGraceMs: number;
   private readonly baseEnv: Readonly<Record<string, string>>;
   /** The restore selector used by the actual spawn; never inferred from task input. */
-  private restoreSession:
-    | Extract<PiRpcChildSpawnSession, { readonly mode: "restore" }>
-    | undefined;
+  private restoreSession: PiChildSessionLaunchDetails | undefined;
 
   constructor(
     childId: string,
@@ -878,6 +927,7 @@ export class PiRpcChild {
     this.agentName = agentName;
     this.depth = depth;
     this.processPort = deps.processPort;
+    this.sessionStorageAuthority = deps.sessionStorageAuthority;
     this.randomPort = deps.randomPort;
     this.hmacPort = deps.hmacPort;
     this.timerPort = deps.timerPort ?? new SystemTimerPort();
@@ -947,19 +997,54 @@ export class PiRpcChild {
     };
   }
 
+  /**
+   * Storage-authority preflight. The first externally observable action of
+   * every launch: it runs before the argument vector is built, before any
+   * session path is read or interpreted, before the secret is generated,
+   * before any environment or bootstrap value is assembled, and before the
+   * process port is touched. A refusal is mapped onto the closed transport
+   * failure carrying the same bounded, path-free reason.
+   */
+  private requireSessionStorageAuthority(): Result<
+    PiChildSessionLaunchAuthority,
+    PiAdapterFailure
+  > {
+    return this.sessionStorageAuthority
+      .requireNativeSessionAuthority()
+      .andThen(() => this.sessionStorageAuthority.requireLaunchAuthority())
+      .mapErr((unavailable) =>
+        makeChildSpawnFailedFailure(
+          this.childId,
+          describeChildSessionStorageUnavailable(unavailable),
+        ),
+      );
+  }
+
   /** Spawns the process, injects the secret via environment only, and awaits the authenticated handshake before returning. */
   spawnAndHandshake(
     input: PiRpcChildSpawnInput,
   ): ResultAsync<void, PiAdapterFailure> {
-    const command = buildSpawnCommand(this.command, input.session);
-    if (command.isErr()) {
-      const failure = makeChildSpawnFailedFailure(this.childId, command.error);
+    // Storage authority first: `input` is not read at all until this passes,
+    // so a hostile or malformed session path is never interpreted and no
+    // argument, lease, control channel, or process exists to clean up.
+    const authority = this.requireSessionStorageAuthority();
+    if (authority.isErr()) {
+      this.failOutstanding(authority.error);
+      return errAsync(authority.error);
+    }
+
+    const plan = buildSpawnCommand(this.command, input.session, {
+      childId: this.childId,
+      authority: authority.value,
+    });
+    if (plan.isErr()) {
+      const failure = makeChildSpawnFailedFailure(this.childId, plan.error);
       this.failOutstanding(failure);
       return errAsync(failure);
     }
+    const command = plan.value.command;
 
-    this.restoreSession =
-      input.session?.mode === "restore" ? { ...input.session } : undefined;
+    this.restoreSession = plan.value.launch;
     this.startedAtMs = this.now();
     // The absolute budget covers the child's entire wall-clock lifetime,
     // including the pre-handshake window, and is armed exactly once here.
@@ -997,11 +1082,12 @@ export class PiRpcChild {
       [WEAVE_CHILD_AGENT_NAME_ENV]: this.agentName,
       [WEAVE_CHILD_DEPTH_ENV]: String(this.depth),
     };
-    // Explicit CLI `--session-dir` is the authority; strip conflicting inherited
-    // Pi session-dir so settings/env cannot redirect child storage.
-    delete env[PI_CODING_AGENT_SESSION_DIR_ENV];
+    // The explicit `--session-dir` argument is the sole authority over child
+    // session storage. An inherited or caller-supplied session directory is
+    // untrusted for that choice, so it never reaches the child environment.
+    delete env[PI_INHERITED_SESSION_DIR_ENV];
     return this.processPort
-      .spawn({ command: command.value, env, cwd: input.cwd })
+      .spawn({ command, env, cwd: input.cwd })
       .mapErr((spawnError) =>
         makeChildSpawnFailedFailure(this.childId, spawnError.reason),
       )

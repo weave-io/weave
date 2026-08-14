@@ -53,6 +53,18 @@ Press `Alt+T` to open the read-only plan-task list. It reads the same active pla
 
 When no plan is available or Weave cannot read the plan or workflow, the list reports a short notice instead of opening a stale or empty view.
 
+## Provider acceleration is unsupported
+
+An agent's `fast true` is neutral intent in Pi. The adapter carries that intent on the active agent and on authenticated child sessions, and never turns it into a provider control.
+
+Pi's extension contract exposes provider header, request, and response hooks, but none of them proves the effective transport of one prepared request together with that same request's official response body. Without that evidence, an acceleration claim would be a guess.
+
+The adapter therefore registers no provider header, request, or response handler. It mutates no provider request payload and no header, and it never writes `service_tier`, `speed`, or `anthropic-beta`. The `provider-fast-activation` capability reports `unsupported` with the bounded reason `harness-seam-unavailable`.
+
+This is an optional-capability gap. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or child bootstrap. `/weave:status` may show `fast: unsupported (harness-seam-unavailable)`; it never reports acceleration as applied, active, or confirmed.
+
+Support can be enabled only after Pi exposes a documented seam that reports the effective transport of one prepared request plus correlated official response-body evidence for that same request, proven in a fresh real harness. Unit coverage is not that proof.
+
 ## Private children
 
 Pi can run private child agents for delegated work and direct workflow steps. Child sessions inherit the authenticated configuration and count toward the configured parallel-child limit. Finished children release that capacity.

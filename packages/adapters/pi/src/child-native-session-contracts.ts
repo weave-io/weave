@@ -121,6 +121,10 @@ export type PiNativeSessionError =
     }
   | { readonly type: "SessionConfirmationRequired"; readonly ref: string }
   | {
+      readonly type: "SessionGrantRefused";
+      readonly reason: PiNativeSessionGrantRefusal;
+    }
+  | {
       readonly type: "TombstoneAppendFailed";
       readonly reason: "io" | "unavailable" | "permission";
     }
@@ -135,15 +139,67 @@ export type PiNativeSessionError =
     };
 
 /**
+ * Why a launch grant was refused. Bounded and path-free.
+ *
+ * `unproven-session` is the important one: the caller presented a session
+ * record this store never validated - a structural look-alike built by a
+ * public caller, a record from another store or generation, or a copy. The
+ * store mints only from records it produced itself.
+ */
+export type PiNativeSessionGrantRefusal =
+  /** The presented record is not one this store validated and returned. */
+  | "unproven-session"
+  /** This store holds no generation-scoped launch authority. */
+  | "authority-unavailable"
+  /** The authority's validated root is not this store's root. */
+  | "authority-mismatch"
+  /** Reopening the proven ref no longer yields the validated identity. */
+  | "identity-mismatch"
+  /** The child id, active leaf, ref, or checkpoint failed its bounds. */
+  | "invalid-launch-identity";
+
+/**
  * Why native session storage is unavailable. Bounded and path-free: a
  * diagnostic never carries a filesystem path, a prompt, or transcript bytes.
  */
-export type PiNativeSessionStorageUnavailableReason = "filesystem-unavailable";
+export type PiNativeSessionStorageUnavailableReason =
+  /**
+   * The installed Pi host does not expose the public `SessionManager`
+   * create/open constructors this adapter mints sessions through, so no
+   * mutating path may run.
+   */
+  | "pi-session-api-unavailable"
+  /**
+   * The adapter-owned session root could not be resolved or created, so no
+   * session may be minted and no child may be launched.
+   */
+  | "pi-session-root-unavailable"
+  /**
+   * The resolved session root exists but failed a safety check (foreign
+   * owner, group/world-writable base, symlink, wrong kind).
+   */
+  | "pi-session-root-unsafe"
+  /** The child process launch surface is not available this generation. */
+  | "pi-process-unavailable"
+  /** The verified storage tree itself could not be reached or canonicalized. */
+  | "filesystem-unavailable";
 
 /** Human-readable, path-free description of a storage-unavailable reason. */
 export function describePiNativeSessionStorageUnavailable(
-  _reason: PiNativeSessionStorageUnavailableReason,
+  reason: PiNativeSessionStorageUnavailableReason,
 ): string {
+  if (reason === "pi-session-api-unavailable") {
+    return "the installed Pi host does not expose the public session create/open API";
+  }
+  if (reason === "pi-session-root-unavailable") {
+    return "the Weave-owned native session root is unavailable";
+  }
+  if (reason === "pi-session-root-unsafe") {
+    return "the Weave-owned native session root failed its safety checks";
+  }
+  if (reason === "pi-process-unavailable") {
+    return "the child process launch surface is unavailable";
+  }
   return "native session storage is unavailable";
 }
 
@@ -175,6 +231,12 @@ export type PiNativeSessionFsError =
   | { readonly type: "identity-changed" }
   | { readonly type: "invalid-range" }
   | { readonly type: "permissive-mode"; readonly kind: "directory" | "file" }
+  /**
+   * An adapter-owned node is owned by another user. Reported separately from
+   * `permissive-mode` because a foreign owner can re-loosen a mode at will,
+   * so the mode alone proves nothing.
+   */
+  | { readonly type: "foreign-owner"; readonly kind: "directory" | "file" }
   | { readonly type: "wrong-kind"; readonly kind: "directory" | "file" }
   /**
    * Exclusive create lost a race: the leaf appeared between the absence check
@@ -361,6 +423,7 @@ export function fromFsError(
     case "missing":
       return { type: "SessionMissing", ref };
     case "permissive-mode":
+    case "foreign-owner":
       return { type: "SessionPermissionError", kind: error.kind };
     case "wrong-kind":
       return { type: "SessionCorrupt", ref, reason: "unreadable" };
@@ -381,7 +444,11 @@ export function fromFsError(
 // Host session port
 // ---------------------------------------------------------------------------
 
-/** Header fields this module reads from a native Pi v3 session. */
+/**
+ * Header fields read from a native Pi v3 session. Declared here, with the rest
+ * of the shared contracts, and consumed by the strict validator in
+ * `native-session-header.ts` so every lifecycle path shares one header shape.
+ */
 export interface PiNativeSessionHeader {
   readonly id: string;
   readonly cwd: string;

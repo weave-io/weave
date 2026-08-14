@@ -31,6 +31,7 @@ Weave's responsibility is to describe **what agent system should exist** and pro
 - categories and generated category shuttle descriptors
 - abstract tool/capability policy
 - ordered model preferences
+- neutral provider-acceleration intent (`fast true`), carried without any provider term
 - skill references and resolution
 - workflow intent (for explicitly invoked workflows — see [product model](product-vision.md); ordinary usage is Loom-led, not workflow-driven)
 - **composition APIs** that accept harness context (available models, loaded skills, etc.) and return resolved agent descriptors, prompts, and configurations

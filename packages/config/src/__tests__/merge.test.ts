@@ -1734,3 +1734,155 @@ describe("mergeConfigsResult — delegation limits", () => {
     });
   });
 });
+
+describe("mergeConfigs — fast intent and string triggers", () => {
+  it("preserves lower-layer agent fast true when a higher layer omits fast", () => {
+    const builtin = cfg(`
+      agent shuttle {
+        prompt "Implement scoped changes"
+        models ["claude-sonnet-4-5"]
+        fast true
+      }
+    `);
+    const project = cfg(`
+      agent shuttle {
+        temperature 0.4
+      }
+    `);
+    const merged = mergeConfigs(builtin, project);
+    expect(merged.agents.shuttle?.fast).toBe(true);
+    expect(merged.agents.shuttle?.temperature).toBe(0.4);
+  });
+
+  it("lets a higher-layer agent fast true win over a lower-layer omission", () => {
+    const builtin = cfg(`
+      agent shuttle {
+        prompt "Implement scoped changes"
+        models ["claude-sonnet-4-5"]
+      }
+    `);
+    const project = cfg(`
+      agent shuttle {
+        fast true
+      }
+    `);
+    const merged = mergeConfigs(builtin, project);
+    expect(merged.agents.shuttle?.fast).toBe(true);
+  });
+
+  it("preserves lower-layer category fast true when a higher layer omits fast", () => {
+    const global = cfg(`
+      category backend {
+        description "Backend APIs"
+        fast true
+      }
+    `);
+    const project = cfg(`
+      category backend {
+        description "Backend APIs"
+        temperature 0.3
+      }
+    `);
+    const merged = mergeConfigs(global, project);
+    expect(merged.categories.backend?.fast).toBe(true);
+    expect(merged.categories.backend?.temperature).toBe(0.3);
+  });
+
+  it("covers category and base shuttle inputs for later generated-agent fast inheritance", () => {
+    const builtin = cfg(`
+      agent shuttle {
+        prompt "Implement scoped changes"
+        models ["claude-sonnet-4-5"]
+        fast true
+      }
+      category backend {
+        description "Backend APIs"
+      }
+    `);
+    const global = cfg(`
+      category backend {
+        description "Backend APIs"
+        fast true
+      }
+    `);
+    const project = cfg(`
+      category frontend {
+        description "Frontend UI"
+      }
+    `);
+    const merged = mergeConfigs(builtin, global, project);
+    expect(merged.agents.shuttle?.fast).toBe(true);
+    expect(merged.categories.backend?.fast).toBe(true);
+    expect(merged.categories.frontend?.fast).toBeUndefined();
+  });
+
+  it("unions string triggers higher-priority-first and removes only exact duplicates", () => {
+    const builtin = cfg(`
+      agent shuttle {
+        prompt "Implement scoped changes"
+        models ["claude-sonnet-4-5"]
+        triggers ["review code", "fix tests"]
+      }
+    `);
+    const global = cfg(`
+      agent shuttle {
+        triggers ["fix tests", "audit APIs"]
+      }
+    `);
+    const project = cfg(`
+      agent shuttle {
+        triggers ["ship patch", "review code"]
+      }
+    `);
+    const merged = mergeConfigs(builtin, global, project);
+    expect(merged.agents.shuttle?.triggers).toEqual([
+      "ship patch",
+      "review code",
+      "fix tests",
+      "audit APIs",
+    ]);
+  });
+
+  it("keeps case-sensitive trigger text and does not trim during merge", () => {
+    const base = cfg(`
+      agent shuttle {
+        prompt "Implement scoped changes"
+        models ["claude-sonnet-4-5"]
+        triggers ["Review code", "fix tests "]
+      }
+    `);
+    const override = cfg(`
+      agent shuttle {
+        triggers ["review code", "fix tests"]
+      }
+    `);
+    const merged = mergeConfigs(base, override);
+    expect(merged.agents.shuttle?.triggers).toEqual([
+      "review code",
+      "fix tests",
+      "Review code",
+      "fix tests ",
+    ]);
+  });
+
+  it("unions category triggers in the same higher-priority-first order", () => {
+    const global = cfg(`
+      category backend {
+        description "Backend APIs"
+        triggers ["Use for persistence", "Use for APIs"]
+      }
+    `);
+    const project = cfg(`
+      category backend {
+        description "Backend APIs"
+        triggers ["Use for APIs", "Use for migrations"]
+      }
+    `);
+    const merged = mergeConfigs(global, project);
+    expect(merged.categories.backend?.triggers).toEqual([
+      "Use for APIs",
+      "Use for migrations",
+      "Use for persistence",
+    ]);
+  });
+});

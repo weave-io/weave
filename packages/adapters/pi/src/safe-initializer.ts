@@ -11,6 +11,7 @@ import {
   buildBlockedProbeSet,
   type PiCandidatePlanContext,
   type PiCapabilityProbeSource,
+  type PiDelegationAuthorityReadiness,
   sanitizeCapabilityProbeResults,
 } from "./capability-prober.js";
 import {
@@ -44,11 +45,6 @@ import {
   selectsCustomEditorFallback,
 } from "./host-inventory.js";
 import { PiModelResolver } from "./model-resolution.js";
-import {
-  createBlockedPiNativeSessionReadinessProbe,
-  type PiNativeSessionReadiness,
-  type PiNativeSessionReadinessProbe,
-} from "./native-session-readiness.js";
 import {
   isDirectoryContainmentSafeWith,
   NullPathContainmentPort,
@@ -118,19 +114,6 @@ export interface PiPreflightResult {
   readonly childInspection: PiChildInspectionEffectiveSettings;
   readonly hostSurface: PiHostSurfaceReport;
   /**
-   * Proved Pi-native session/process readiness for this generation.
-   *
-   * `undefined` means readiness was deliberately not probed because the
-   * generation is already health-only for an earlier reason (unsupported
-   * mode/host, withheld project trust, or a missing required host surface). In
-   * that state nothing downstream may run anyway, and probing would perform
-   * root initialization a health-only generation must never do.
-   *
-   * When present and not `ready`, `reason` is one closed, path-free readiness
-   * reason and the generation is health-only.
-   */
-  readonly nativeSessionReadiness?: PiNativeSessionReadiness;
-  /**
    * One strong-debug diagnostic per host-surface gap (Spec 33 §16). Every
    * entry names the capability, host version, contract, probe result,
    * resulting mode, and remediation. Empty when no surface is missing.
@@ -173,18 +156,6 @@ export interface PiSafeInitializerDeps {
    */
   readonly pathContainmentPort?: PathContainmentPort;
   /**
-   * Proves the real Pi session API, canonical private session root, and
-   * process launch surface before this generation may activate a primary,
-   * materialize descriptors, mutate a session, take a lease, build a child
-   * transport, or spawn a process.
-   *
-   * Defaults to a fail-closed probe (mirroring `pathContainmentPort`'s
-   * `NullPathContainmentPort` default) so omitting this dependency can never
-   * silently promote a generation to ready. Production wiring in
-   * `extension.ts` MUST supply the real probe explicitly.
-   */
-  readonly nativeSessionReadiness?: PiNativeSessionReadinessProbe;
-  /**
    * Resolves invalid Pi-local settings exactly once for this activation. A
    * missing resolver fails closed to health-only mode; it never applies
    * defaults implicitly.
@@ -192,6 +163,18 @@ export interface PiSafeInitializerDeps {
   readonly chooseInvalidChildInspectionSettings?: (
     issues: readonly PiChildInspectionSettingsIssue[],
   ) => ResultAsync<PiChildInspectionSettingsChoice, never>;
+  /**
+   * Reads this generation's real spawn-authority verdict from the single
+   * session authority every launch path consumes (Spec 33 §5.6).
+   *
+   * Mandatory. While it was optional, an embedding that wired no authority
+   * kept the candidate-plan verdict, so `delegated-specialist-execution`
+   * could report ready in a generation where every spawn would refuse -
+   * exactly the disagreement the single authority exists to remove. An
+   * embedding that genuinely cannot delegate says so by returning
+   * `{ status: "unavailable", reason }`.
+   */
+  readonly delegationAuthority: () => PiDelegationAuthorityReadiness;
 }
 
 interface HostOutcome {
@@ -206,34 +189,14 @@ interface CandidatePlanOutcome {
   readonly toolRegistrations: readonly PiToolRegistration[];
 }
 
-/**
- * The single shared reason every blocked probe reports. Mode and host outrank
- * native readiness because they are evaluated first; a readiness block reports
- * its own closed, path-free reason verbatim.
- */
-function resolveBlockedReason(
-  modeSupported: boolean,
-  hostSupported: boolean,
-  readiness: PiNativeSessionReadiness | undefined,
-): string {
-  if (!modeSupported) return "interactive-tui-required";
-  if (!hostSupported) return "host-incompatible";
-  if (readiness !== undefined && !readiness.ready) return readiness.reason;
-  return "host-incompatible";
-}
-
 export class PiSafeInitializer {
   private readonly contract: AdapterCapabilityContract;
   private readonly pathContainmentPort: PathContainmentPort;
-  private readonly nativeSessionReadiness: PiNativeSessionReadinessProbe;
 
   constructor(private readonly deps: PiSafeInitializerDeps) {
     this.contract = deps.capabilityContract ?? PI_ADAPTER_CAPABILITY_CONTRACT;
     this.pathContainmentPort =
       deps.pathContainmentPort ?? new NullPathContainmentPort();
-    this.nativeSessionReadiness =
-      deps.nativeSessionReadiness ??
-      createBlockedPiNativeSessionReadinessProbe();
   }
 
   preflight(
@@ -250,150 +213,85 @@ export class PiSafeInitializer {
     const trust: PiTrustState = session.isProjectTrusted()
       ? "trusted"
       : "withheld";
+    // Read once per preflight, from the same authority object the delegation
+    // controller, direct dispatch, and every RPC child will consume.
+    const delegationAuthority = Result.fromThrowable(
+      () => this.deps.delegationAuthority(),
+      (): PiDelegationAuthorityReadiness => ({
+        status: "unavailable",
+        reason: "pi-session-api-unavailable",
+      }),
+    )().match(
+      (readiness) => readiness,
+      (fallback) => fallback,
+    );
 
     return this.readHost().andThen((hostOutcome) => {
       const hostSupported = hostOutcome.compatibility.isOk();
-      const modeHostBlocked = !modeSupported || !hostSupported;
-      // A generation that is already health-only for an earlier reason never
-      // probes native readiness: it may not run anything downstream, and the
-      // probe's one-time root initialization must not touch a pristine data
-      // root on a health-only startup.
-      const alreadyHealthOnly =
-        modeHostBlocked ||
-        trust !== "trusted" ||
-        normalizedHostSurface.requiredGaps.length > 0;
+      const blocked = !modeSupported || !hostSupported;
+      const blockedReason = !modeSupported
+        ? "interactive-tui-required"
+        : "host-incompatible";
 
-      return this.readNativeSessionReadiness(!alreadyHealthOnly).andThen(
-        (readiness) =>
-          this.completePreflight({
-            mode,
-            modeSupported,
-            hostSupported,
-            hostOutcome,
-            trust,
-            commands,
-            cwd: session.cwd,
-            modelRegistry: session.modelRegistry,
-            normalizedHostSurface,
-            readiness,
-          }),
+      return this.buildCandidatePlan(
+        blocked,
+        session.cwd,
+        trust,
+        session.modelRegistry,
+      ).andThen((candidate) =>
+        this.resolveChildInspectionSettings(candidate.activation).andThen(
+          (childInspection) =>
+            this.computeProbes(blocked, blockedReason, {
+              mode,
+              trust,
+              commands,
+              candidatePlan: candidate.probeContext,
+              hostSurface: normalizedHostSurface,
+              ...(delegationAuthority === undefined
+                ? {}
+                : { delegationAuthority }),
+            }).andThen((probes) => {
+              const healthReport = buildAdapterHealthReport({
+                harness: HOST_PACKAGE_NAME,
+                capabilityContract: this.contract,
+                probeResults: probes,
+              });
+
+              const result: PiPreflightResult = {
+                mode,
+                modeSupported,
+                host: hostOutcome.info,
+                hostSupported,
+                trust,
+                configActivation: candidate.activation,
+                configActivationFailure: candidate.failure,
+                toolRegistrations: candidate.toolRegistrations,
+                healthReport,
+                requiredCapabilityGaps:
+                  collectRequiredCapabilityGaps(healthReport),
+                healthOnlyMode:
+                  blocked ||
+                  trust === "withheld" ||
+                  healthReport.healthOnlyMode ||
+                  childInspection.mode === "health-only" ||
+                  normalizedHostSurface.requiredGaps.length > 0,
+                childInspection,
+                hostSurface: normalizedHostSurface,
+                hostSurfaceGapDiagnostics: buildHostSurfaceGapDiagnostics(
+                  normalizedHostSurface,
+                  hostOutcome.info?.version ?? UNKNOWN_HOST_VERSION,
+                ),
+                childInspectionFallback: selectsCustomEditorFallback(
+                  normalizedHostSurface,
+                )
+                  ? "custom-editor"
+                  : "native-overlay",
+              };
+              return ok(result);
+            }),
+        ),
       );
     });
-  }
-
-  /**
-   * Consults the injected readiness port exactly once, and only when this
-   * generation could otherwise be ready. A port that throws or rejects despite
-   * its `never` error type fails closed to an unavailable session API; the
-   * thrown value itself is discarded, never inspected or reported.
-   */
-  private readNativeSessionReadiness(
-    shouldProbe: boolean,
-  ): ResultAsync<PiNativeSessionReadiness | undefined, PiAdapterFailure> {
-    if (!shouldProbe) return okAsync(undefined);
-    return safelyAwaitPortResult(
-      () => this.nativeSessionReadiness.probe(),
-      (): PiNativeSessionReadiness => ({
-        ready: false,
-        reason: "pi-session-api-unavailable",
-      }),
-    ).orElse((fallback) =>
-      okAsync<PiNativeSessionReadiness, PiAdapterFailure>(fallback),
-    );
-  }
-
-  private completePreflight(input: {
-    readonly mode: PiMode;
-    readonly modeSupported: boolean;
-    readonly hostSupported: boolean;
-    readonly hostOutcome: HostOutcome;
-    readonly trust: PiTrustState;
-    readonly commands: readonly PiCommandInfo[];
-    readonly cwd: string;
-    readonly modelRegistry: PiModelRegistry;
-    readonly normalizedHostSurface: PiHostSurfaceReport;
-    readonly readiness: PiNativeSessionReadiness | undefined;
-  }): ResultAsync<PiPreflightResult, PiAdapterFailure> {
-    const {
-      mode,
-      modeSupported,
-      hostSupported,
-      hostOutcome,
-      trust,
-      commands,
-      normalizedHostSurface,
-      readiness,
-    } = input;
-    const readinessBlocked = readiness !== undefined && !readiness.ready;
-    // Unproved native readiness blocks preflight exactly as an unsupported
-    // mode or host does: config is never loaded or materialized, no probe
-    // claims support, no primary is committed, and no transport, lease, or
-    // process can exist for this generation.
-    const blocked = !modeSupported || !hostSupported || readinessBlocked;
-    const blockedReason = resolveBlockedReason(
-      modeSupported,
-      hostSupported,
-      readiness,
-    );
-
-    return this.buildCandidatePlan(
-      blocked,
-      input.cwd,
-      trust,
-      input.modelRegistry,
-    ).andThen((candidate) =>
-      this.resolveChildInspectionSettings(candidate.activation).andThen(
-        (childInspection) =>
-          this.computeProbes(blocked, blockedReason, {
-            mode,
-            trust,
-            commands,
-            candidatePlan: candidate.probeContext,
-            hostSurface: normalizedHostSurface,
-          }).andThen((probes) => {
-            const healthReport = buildAdapterHealthReport({
-              harness: HOST_PACKAGE_NAME,
-              capabilityContract: this.contract,
-              probeResults: probes,
-            });
-
-            const result: PiPreflightResult = {
-              mode,
-              modeSupported,
-              host: hostOutcome.info,
-              hostSupported,
-              trust,
-              configActivation: candidate.activation,
-              configActivationFailure: candidate.failure,
-              toolRegistrations: candidate.toolRegistrations,
-              healthReport,
-              requiredCapabilityGaps:
-                collectRequiredCapabilityGaps(healthReport),
-              healthOnlyMode:
-                blocked ||
-                trust === "withheld" ||
-                healthReport.healthOnlyMode ||
-                childInspection.mode === "health-only" ||
-                normalizedHostSurface.requiredGaps.length > 0,
-              childInspection,
-              hostSurface: normalizedHostSurface,
-              ...(readiness === undefined
-                ? {}
-                : { nativeSessionReadiness: readiness }),
-              hostSurfaceGapDiagnostics: buildHostSurfaceGapDiagnostics(
-                normalizedHostSurface,
-                hostOutcome.info?.version ?? UNKNOWN_HOST_VERSION,
-              ),
-              childInspectionFallback: selectsCustomEditorFallback(
-                normalizedHostSurface,
-              )
-                ? "custom-editor"
-                : "native-overlay",
-            };
-            return ok(result);
-          }),
-      ),
-    );
   }
 
   private resolveChildInspectionSettings(
@@ -578,6 +476,7 @@ export class PiSafeInitializer {
       commands: readonly PiCommandInfo[];
       candidatePlan?: PiCandidatePlanContext;
       hostSurface?: PiHostSurfaceReport;
+      delegationAuthority?: PiDelegationAuthorityReadiness;
     },
   ): Result<CapabilityProbeResult[], PiAdapterFailure> {
     return Result.fromThrowable(

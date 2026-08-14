@@ -1,16 +1,21 @@
 /**
- * Required-capability gate for persistent session mutation routes.
+ * Required-capability gate (Spec 33 §16).
  *
- * Session mutation readiness follows the Pi-native path/session contract:
- * `delegated-specialist-execution` is available only when real Pi session API,
- * session root, and process surfaces are ready. Without that readiness the
- * adapter stays health-only before spawn, so mutating routes fail before they
- * reach a delegation controller, session service, filesystem, cache, execution
- * lease, or child process.
+ * One required capability — `delegated-specialist-execution` — models whether
+ * this generation may run a delegated child at all. Its readiness is proven by
+ * the real Pi session/process host surfaces and the adapter-owned session
+ * root, so without it the adapter cannot prove where a persistent session
+ * mutation would land. Every mutating adapter route must therefore fail
+ * **before** it reaches a delegation controller, session service, filesystem,
+ * cache, execution lease, or child process.
  *
- * This module owns only the top-level boundary decision from the generation's
- * health report. It performs no I/O, reads no environment variable, and has no
- * override.
+ * This module owns only the top-level boundary decision. It answers one
+ * question — "may this generation perform a persistent session mutation?" —
+ * from the generation's own health report. It performs no I/O, reads no
+ * environment variable, and has no override: a capability gap can only be
+ * cleared by a host whose real session and process surfaces probe ready.
+ *
+ * Lower-level host, store, and RPC guards live with their owning modules.
  */
 import {
   type AdapterHealthReport,
@@ -26,7 +31,8 @@ import {
 /**
  * The required capability every persistent session mutation depends on.
  *
- * Observed through effective readiness for delegated specialist execution.
+ * The adapter observes it through the real Pi host surface probes and the
+ * adapter-owned session root, never from static knowledge alone.
  */
 export const SESSION_MUTATION_REQUIRED_CAPABILITY: CapabilityId =
   "delegated-specialist-execution";
@@ -89,12 +95,32 @@ export function collectRequiredCapabilityGaps(
   return Object.freeze(gaps);
 }
 
+/**
+ * The closed set of readiness reasons that mean native session storage itself
+ * is unproven. Only these block a persistent session mutation; an ordinary
+ * health-only gap (a missing plan, an unloaded config) leaves idempotent
+ * cleanup available exactly as before.
+ */
+const SESSION_STORAGE_UNPROVEN_REASONS: ReadonlySet<string> = new Set([
+  "pi-session-api-unavailable",
+  "pi-session-root-unavailable",
+  "pi-session-root-unsafe",
+  "pi-process-unavailable",
+  // Fail-closed reasons minted by this module when no generation or gate
+  // exists at all.
+  "no-active-generation",
+  "capability-read-failed",
+  "capability-gate-unwired",
+]);
+
 /** Find the session-mutation capability gap, if the generation has one. */
 export function findSessionMutationGap(
   gaps: readonly PiRequiredCapabilityGap[],
 ): PiRequiredCapabilityGap | undefined {
   return gaps.find(
-    (gap) => gap.capabilityId === SESSION_MUTATION_REQUIRED_CAPABILITY,
+    (gap) =>
+      gap.capabilityId === SESSION_MUTATION_REQUIRED_CAPABILITY &&
+      SESSION_STORAGE_UNPROVEN_REASONS.has(gap.reason),
   );
 }
 

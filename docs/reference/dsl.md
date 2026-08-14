@@ -57,7 +57,7 @@ Plan files are always stored under `.weave/plans/`. Plan-related learnings and e
 
 ## Agents
 
-Agents are the primary declaration unit. Each agent block declares a named agent with its prompt source, model preferences, mode hint, tool policy, and optional delegation triggers.
+Agents are the primary declaration unit. Each agent block declares a named agent with its prompt source, model preferences, mode hint, tool policy, optional delegation triggers, and optional provider acceleration intent.
 
 ```weave
 agent loom {
@@ -66,6 +66,7 @@ agent loom {
   models ["claude-sonnet-4-5", "gpt-4o"]
   mode primary
   temperature 0.1
+  fast true
 
   tool_policy {
     read allow
@@ -76,8 +77,8 @@ agent loom {
   }
 
   triggers [
-    { domain "Orchestration" trigger "Complex multi-step tasks" routing_hint "Use for work spanning multiple files or components" }
-    { domain "Architecture" trigger "System design and planning" routing_hint "Use when design decisions need to be made before implementation" }
+    "Use for work spanning multiple files or components"
+    "Use when design decisions must precede implementation"
   ]
 
   skills ["tdd", "code-review"]
@@ -104,11 +105,69 @@ agent my-helper {
 | `models` | string[] | Ordered model preference list. Adapters translate to concrete harness model fields. |
 | `mode` | `primary` \| `subagent` \| `all` | Adapter-facing context hint. `primary` = main/user-facing; `subagent` = delegated specialist; `all` = usable in both. |
 | `temperature` | number | Sampling temperature hint passed to adapters. |
+| `fast` | literal `true` | Optional neutral request for provider acceleration. Only `fast true` is valid. Omit it to preserve provider defaults. See [Fast intent](#fast-intent). |
 | `tool_policy` | block | Abstract capability map. See [Tool Policy](#tool-policy). |
-| `triggers` | array | Delegation metadata for router agents. Each entry: `{ domain "…" trigger "…" routing_hint "…" }`. The `routing_hint` field is optional and provides prescriptive "Use when..." guidance for delegation routing. |
+| `triggers` | string[] | Optional ordered routing guidance shown to delegating agents. Each entry is a nonblank string. |
 | `skills` | string[] | Skill names to load for this agent. |
 | `review_models` | string[] | Optional. One or more model identifiers materialized as independent reviewer variants when config is loaded/composed. Loom/Tapestry prompts route review requests to the base agent plus each generated variant. See [Review Models](#review-models). |
 | `delegation` | block | Optional per-agent narrowing of `max_children` and `max_concurrency`. Values may not exceed project settings. |
+
+### Fast intent
+
+`fast true` asks an adapter to request provider acceleration when its current provider, endpoint, model, transport, and harness seam support the request. It does not select a provider or model and does not prove that the provider applied acceleration.
+
+```weave
+agent shuttle {
+  fast true
+  triggers ["Implement bounded changes with an established local pattern"]
+}
+```
+
+Omit `fast` to preserve provider defaults. These forms are invalid:
+
+```weave
+agent invalid-false {
+  fast false
+}
+
+agent invalid-aliases {
+  service_class "fast"
+  speed "fast"
+  variant "fast"
+  priority true
+}
+```
+
+There is no `false` form, unset operator, or alias. A higher-priority config layer can add `fast true`, but omission cannot cancel a lower-priority declaration. Adapters report acceleration separately as `declared`, `requested`, `applied`, `not-confirmed`, or `unsupported`; only exact provider response evidence permits `applied`. See the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#truthful-states-and-transitions).
+
+Today every shipped adapter — Pi, OpenCode, and Claude Code — reports `unsupported` and sends no provider control, because none of them can bind official response evidence to the request it made. Declaring `fast true` is safe and changes nothing about your requests; it is valid intent that a future adapter seam may act on. See [Adapter Capabilities](adapter-capabilities.md#current-provider-fast-support).
+
+### Delegation triggers
+
+Triggers are portable text, not a structured routing language:
+
+```weave
+agent loom {
+  triggers ["Coordinate work that spans multiple components"]
+}
+```
+
+Structured entries from the former contract are invalid:
+
+```weave
+agent invalid-trigger {
+  triggers [
+    { domain "Review" trigger "Review code" routing_hint "Use for pull request review" }
+  ]
+}
+
+category invalid-category-trigger {
+  description "Review work"
+  triggers [{ domain "Review" trigger "Review code" }]
+}
+```
+
+Weave preserves trigger order. Across config layers, arrays use ordered union merge: higher-priority entries come first, followed by lower-priority entries not already present by exact string equality. Weave does not interpret domains, file paths, or other structure from the text.
 
 ### Model thinking-level suffixes
 
@@ -122,7 +181,7 @@ agent shuttle {
 
 category backend {
   description "Backend APIs and services"
-  patterns ["src/server/**"]
+  triggers ["Use for backend APIs and persistence"]
   models ["anthropic/claude-sonnet-4-5#minimal"]
 }
 ```
@@ -192,13 +251,14 @@ See [review-model contract: Review Models](models.md) for the full behavioral co
 
 ## Categories
 
-Categories define domain routing — glob patterns that direct work to specialised shuttle agents. Each category automatically generates a `shuttle-{name}` agent descriptor that inherits from the base `shuttle` agent with category-specific overrides.
+Categories define named specialist domains. Each category automatically generates a `shuttle-{name}` agent descriptor that inherits from the base `shuttle` agent with category-specific overrides. Routing uses the category description and optional trigger strings. Categories do not match files.
 
 ```weave
 category backend {
   description "Backend APIs, services, persistence"
   models ["anthropic/claude-sonnet-4-5"]
-  patterns ["src/api/**", "src/server/**", "src/db/**", "**/*.go"]
+  triggers ["Use for API contracts, services, and persistence"]
+  fast true
   prompt_append "Focus on API contracts, data integrity, and backwards compatibility."
   temperature 0.2
 
@@ -212,7 +272,7 @@ category backend {
 category frontend {
   description "Frontend UI, styling, accessibility"
   models ["openai/gpt-5"]
-  patterns ["src/components/**", "src/pages/**", "**/*.tsx", "**/*.css"]
+  triggers ["Use for UI, styling, and accessibility"]
   prompt_append "Preserve accessibility, responsive behavior, and design-system consistency."
 }
 ```
@@ -223,7 +283,8 @@ category frontend {
 | --- | --- | --- |
 | `description` | string | **Required and non-blank.** Routing metadata for the generated `shuttle-{category}` agent. It appears wherever that agent is shown, including the delegation tables of Loom and Tapestry, so describe the category's domain and when to select it. |
 | `models` | string[] | Model preference list for this category's shuttle agent |
-| `patterns` | string[] | Glob patterns that route files to this category |
+| `triggers` | string[] | Optional ordered routing guidance copied to the generated category agent |
+| `fast` | literal `true` | Optional neutral provider acceleration intent for the generated category agent |
 | `prompt_append` | string | Text appended to the base shuttle prompt for this category |
 | `prompt_append_file` | string | File path appended to the base shuttle prompt |
 | `temperature` | number | Temperature hint for this category's shuttle agent |
@@ -233,7 +294,20 @@ Generated shuttle agent names follow the pattern `shuttle-{category-name}` (e.g.
 
 Requiring `description` is a breaking config change. Every existing `category` block must add a non-blank routing description. `weave init migrate` skips legacy categories without descriptions and reports a warning rather than writing invalid DSL.
 
-Generated category shuttles never inherit the base shuttle's `triggers`. Delegation triggers describe the generic fallback worker, so a generated shuttle is routed by its category `description` and `patterns` alone; its delegation target carries an empty trigger list, and delegator prompts render no routing hints beneath it. Declare the base `shuttle` triggers for work that no category claims.
+A generated category shuttle uses the category's merged trigger list. It never inherits the base `shuttle` triggers. If the category omits triggers, its generated agent has no triggers. Declare triggers on the base `shuttle` for generic fallback work.
+
+An explicit category `fast true` takes precedence over the base `shuttle` value. If the category omits `fast`, its generated agent inherits the base `shuttle` intent. Omission cannot cancel an inherited `fast true`.
+
+The following former category syntax is invalid. Delete it; there is no replacement file-routing field:
+
+```weave
+category invalid-patterns {
+  description "Backend files"
+  patterns ["src/server/**"]
+}
+```
+
+`patterns` is not optional metadata. Strict validation rejects it.
 
 ---
 
@@ -508,8 +582,7 @@ You are {{agent.name}}.
 | `{{#delegation.targets}}` | array | Iterate over eligible delegation targets |
 | `{{name}}` | string | Target agent name (inside `delegation.targets`) |
 | `{{description}}` | string? | Target description (inside `delegation.targets`) |
-| `{{domains}}` | string[] | Deduplicated trigger domains (inside `delegation.targets`) |
-| `{{#triggers}}` | array | Iterate over triggers (inside `delegation.targets`) |
+| `{{#triggers}}` | string[] | Iterate over ordered trigger strings (inside `delegation.targets`); use `{{.}}` for each value |
 
 ### Unsupported Features
 

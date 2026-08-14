@@ -74,8 +74,21 @@ rejected, and a bound leaf that is renamed, replaced, or truncated fails closed.
 The adapter rejects rather than repairing or normalizing a hostile path. The same
 containment applies to the cache file and to tombstone appends.
 
-**Owner.** `path-containment.ts` (primitives); `child-native-sessions.ts` and
-`child-metadata-cache.ts` (all I/O routed through those primitives).
+Containment covers the whole adapter-owned suffix, not only the final directory.
+Every component from `weave/adapters/pi` down — the marker components, the
+storage root, and each directory below it — is proven through the descriptor the
+no-follow walk just opened: it must be a real directory, owned by the current
+user where the platform reports ownership, and carry exactly `0700`. This holds
+for components the adapter creates and for components it finds already present,
+so a planted or loosened intermediate ancestor fails the open before the root
+proof or a launch grant is minted. Components *above* the marker belong to the
+user and are proven instead by the trusted-data-root canonicalizer
+(`trusted-data-root.ts`). Refusals stay path-free: readiness reports
+`pi-session-root-unsafe`.
+
+**Owner.** `path-containment.ts` (primitives); `native-session-fs.ts` (the
+no-follow chain and the adapter-owned ancestor proof); `child-native-sessions.ts`
+and `child-metadata-cache.ts` (all I/O routed through those primitives).
 
 ### T4 — Cache poisoning
 

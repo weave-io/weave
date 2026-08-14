@@ -43,15 +43,11 @@ import {
 import { createNativeChildRefSourceAuthority } from "../child-session-refs.js";
 import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 import { createBunPiNativeSessionFs } from "../native-session-fs.js";
-import {
-  createBlockedPiNativeSessionReadinessProbe,
-  createReadyPiNativeSessionReadinessProbe,
-} from "../native-session-readiness.js";
+import { createPiNativeSessionHost } from "../native-session-host.js";
 import {
   makeRealTempRoot,
   removeRealTempRoot,
 } from "./fakes/real-temp-root.js";
-import { createTestOnlyDescriptorSafeNativeSessionHost } from "./fakes/test-only-descriptor-safe-host.js";
 
 const WORKSPACE = "/tmp/weave-workspace-delete";
 const PARENT_SESSION = "weave-cli";
@@ -93,9 +89,10 @@ async function seedChild(
     })
   )._unsafeUnwrap();
   const store = new PiNativeSessionStore({
+    launch: { mode: "read-only" },
     root,
     fs: createBunPiNativeSessionFs(),
-    host: createTestOnlyDescriptorSafeNativeSessionHost(SessionManager),
+    host: createPiNativeSessionHost(SessionManager),
   });
   const record = (
     await store.createChildSession({
@@ -193,9 +190,10 @@ describe("production children.delete is readiness-gated and really dispatches", 
       homeDir: xdg,
       SessionManager,
       accessMode: "write" as const,
-      readinessProbe: createBlockedPiNativeSessionReadinessProbe(
-        "pi-session-root-unsafe",
-      ),
+      delegationAuthority: () => ({
+        status: "unavailable" as const,
+        reason: "pi-session-root-unsafe" as const,
+      }),
     };
     const ports = (await createProductionPorts(portOptions))._unsafeUnwrap();
     const gate = ports.sessionMutationGate.evaluate();
@@ -257,9 +255,10 @@ describe("production children.delete is readiness-gated and really dispatches", 
         homeDir: xdg,
         SessionManager,
         accessMode: "write" as const,
-        readinessProbe: createBlockedPiNativeSessionReadinessProbe(
-          "pi-process-unavailable",
-        ),
+        delegationAuthority: () => ({
+          status: "unavailable" as const,
+          reason: "pi-process-unavailable" as const,
+        }),
       })
     )._unsafeUnwrap();
 
@@ -296,7 +295,7 @@ describe("production children.delete is readiness-gated and really dispatches", 
         env: { XDG_DATA_HOME: xdg, HOME: xdg },
         homeDir: xdg,
         SessionManager,
-        readinessProbe: createReadyPiNativeSessionReadinessProbe(),
+        delegationAuthority: () => ({ status: "ready" as const }),
       })
     )._unsafeUnwrap();
 
@@ -352,7 +351,7 @@ describe("production children.delete is readiness-gated and really dispatches", 
         env: { XDG_DATA_HOME: xdg, HOME: xdg },
         homeDir: xdg,
         SessionManager,
-        readinessProbe: createReadyPiNativeSessionReadinessProbe(),
+        delegationAuthority: () => ({ status: "ready" as const }),
       })
     )._unsafeUnwrap();
 
@@ -417,7 +416,7 @@ describe("production children.delete is readiness-gated and really dispatches", 
         env: { XDG_DATA_HOME: xdg, HOME: xdg },
         homeDir: xdg,
         SessionManager,
-        readinessProbe: createReadyPiNativeSessionReadinessProbe(),
+        delegationAuthority: () => ({ status: "ready" as const }),
       })
     )._unsafeUnwrap();
 
@@ -446,7 +445,7 @@ describe("production children.delete is readiness-gated and really dispatches", 
         env: { XDG_DATA_HOME: xdg, HOME: xdg },
         homeDir: xdg,
         SessionManager,
-        readinessProbe: createReadyPiNativeSessionReadinessProbe(),
+        delegationAuthority: () => ({ status: "ready" as const }),
       })
     )._unsafeUnwrap();
     const payloadJson = JSON.stringify({
@@ -513,7 +512,7 @@ describe("production children.delete is readiness-gated and really dispatches", 
         env: { XDG_DATA_HOME: xdg, HOME: xdg },
         homeDir: xdg,
         SessionManager,
-        readinessProbe: createReadyPiNativeSessionReadinessProbe(),
+        delegationAuthority: () => ({ status: "ready" as const }),
       })
     )._unsafeUnwrap();
 
@@ -589,7 +588,7 @@ describe("production children.delete is readiness-gated and really dispatches", 
         env: { XDG_DATA_HOME: xdg, HOME: xdg },
         homeDir: xdg,
         SessionManager,
-        readinessProbe: createReadyPiNativeSessionReadinessProbe(),
+        delegationAuthority: () => ({ status: "ready" as const }),
       })
     )._unsafeUnwrap();
 
@@ -711,7 +710,7 @@ describe("production children.delete is readiness-gated and really dispatches", 
         env: { XDG_DATA_HOME: xdg, HOME: xdg },
         homeDir: xdg,
         SessionManager,
-        readinessProbe: createReadyPiNativeSessionReadinessProbe(),
+        delegationAuthority: () => ({ status: "ready" as const }),
       })
     )._unsafeUnwrap();
 

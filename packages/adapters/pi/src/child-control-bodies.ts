@@ -20,7 +20,8 @@ import {
   MAX_CONTROL_BODY_BYTES,
   type PiControlKind,
 } from "./child-envelope.js";
-import type { JsonValue } from "./strict-json.js";
+import { PI_TRANSPORT_LIMITS } from "./errors.js";
+import { canonicalizeToBytes, type JsonValue } from "./strict-json.js";
 import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
 
 export const MAX_NAME_LENGTH = 256;
@@ -71,6 +72,7 @@ const boundedSettlementOutput = z
   );
 const MAX_MODELS = 32;
 export const MAX_DELEGATION_TARGETS = 64;
+export const MAX_DELEGATION_TRIGGERS = 64;
 /** Bounds the bootstrap `context.cwd` field - a real filesystem path, not name-length text. */
 export const MAX_CWD_LENGTH = 4_096;
 /** Bounds `context.parentDepth` - mirrors Pi adapter contract's own depth-limit universe generously; a value outside this is always malformed, never a legitimate deep tree. */
@@ -95,19 +97,17 @@ const MAX_COMPOSED_PROMPT_LENGTH = MAX_CONTROL_BODY_BYTES / 2;
 const NameSchema = z.string().min(1).max(MAX_NAME_LENGTH);
 const EmptyBodySchema = z.object({}).strict();
 
-const DelegationTriggerSchema = z
-  .object({
-    domain: z.string().max(MAX_NAME_LENGTH),
-    trigger: z.string().max(MAX_NAME_LENGTH),
-    routing_hint: z.string().max(1_024).optional(),
-  })
-  .strict();
+/** One trigger is an exact, nonblank guidance string. There is no structure. */
+const TriggerTextSchema = z
+  .string()
+  .max(MAX_NAME_LENGTH)
+  .refine((value) => value.trim().length > 0, "must not be blank");
 
 const DelegationTargetBodySchema = z
   .object({
     name: NameSchema,
     description: z.string().max(1_024).optional(),
-    triggers: z.array(DelegationTriggerSchema).max(64),
+    triggers: z.array(TriggerTextSchema).max(MAX_DELEGATION_TRIGGERS),
     isCategory: z.boolean(),
   })
   .strict();
@@ -200,6 +200,8 @@ const BootstrapCommonShape = {
   context: TaskContextBodySchema,
   /** Present only when the parent itself resolved a concrete model identity (Pi adapter contract); absent means the child must resolve against its own authenticated catalog. */
   resolvedModel: ModelIdentityBodySchema.optional(),
+  /** Literal provider-acceleration intent. Omission preserves the provider default. */
+  fast: z.literal(true).optional(),
   /** The core-owned model thinking intent selected alongside `resolvedModel`, when one was requested. */
   thinkingLevel: ThinkingLevelSchema.optional(),
 } as const;
@@ -452,12 +454,240 @@ export type ControlBodyValidationError = {
  * this is the sole parsing path every control-body consumer (parent- and
  * child-side) MUST use instead of ad hoc unsafe field reads/casts.
  */
+type SafeJsonCopy =
+  | { readonly ok: true; readonly value: JsonValue }
+  | { readonly ok: false };
+
+const MAX_SAFE_GRAPH_DEPTH = 64;
+const MAX_SAFE_GRAPH_NODES = 4_096;
+const MAX_SAFE_GRAPH_PROPERTIES = 4_096;
+const MAX_SAFE_GRAPH_PROPERTIES_PER_OBJECT = 512;
+// Every ordinary control body travels inside one signed envelope, so this
+// graph-copy bound only has to stay generously above MAX_CONTROL_BODY_BYTES.
+const MAX_SAFE_GRAPH_STRING_LENGTH = 256 * 1024;
+// A delegate-request task is the one control string the transport chunks and
+// reassembles instead of carrying whole, so its ceiling is the assembler's
+// aggregate payload budget - not the envelope body limit. UTF-16 code units
+// never outnumber UTF-8 bytes, so the assembler's byte bound is a sound unit
+// bound here and a task the assembler accepted can always be copied.
+const MAX_SAFE_GRAPH_TRANSFERRED_STRING_LENGTH =
+  PI_TRANSPORT_LIMITS.transferAggregateBytes;
+const MAX_SAFE_GRAPH_ARRAY_LENGTH = 512;
+
+interface SafeJsonGraphBudget {
+  nodesRemaining: number;
+  propertiesRemaining: number;
+  stringUnitsRemaining: number;
+  maxStringLength: number;
+}
+
+function makeSafeJsonGraphBudget(maxStringLength: number): SafeJsonGraphBudget {
+  return {
+    nodesRemaining: MAX_SAFE_GRAPH_NODES,
+    propertiesRemaining: MAX_SAFE_GRAPH_PROPERTIES,
+    stringUnitsRemaining: maxStringLength,
+    maxStringLength,
+  };
+}
+
+function consumeSafeGraphNode(budget: SafeJsonGraphBudget): boolean {
+  if (budget.nodesRemaining === 0) return false;
+  budget.nodesRemaining -= 1;
+  return true;
+}
+
+function consumeSafeGraphString(
+  value: string,
+  budget: SafeJsonGraphBudget,
+): boolean {
+  if (
+    value.length > budget.maxStringLength ||
+    value.length > budget.stringUnitsRemaining
+  ) {
+    return false;
+  }
+  budget.stringUnitsRemaining -= value.length;
+  return true;
+}
+
+function consumeSafeGraphProperties(
+  count: number,
+  budget: SafeJsonGraphBudget,
+): boolean {
+  if (count > budget.propertiesRemaining) return false;
+  budget.propertiesRemaining -= count;
+  return true;
+}
+
+function copySafeJsonGraph(
+  value: unknown,
+  active: WeakSet<object> = new WeakSet<object>(),
+  budget: SafeJsonGraphBudget = makeSafeJsonGraphBudget(
+    MAX_SAFE_GRAPH_STRING_LENGTH,
+  ),
+  depth = 0,
+): SafeJsonCopy {
+  try {
+    if (depth > MAX_SAFE_GRAPH_DEPTH || !consumeSafeGraphNode(budget)) {
+      return { ok: false };
+    }
+    if (value === null) return { ok: true, value: null };
+    if (typeof value === "string") {
+      return consumeSafeGraphString(value, budget)
+        ? { ok: true, value }
+        : { ok: false };
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return { ok: true, value };
+    }
+    if (typeof value !== "object" || active.has(value)) {
+      return { ok: false };
+    }
+
+    const isArray = Array.isArray(value);
+    const prototype = Object.getPrototypeOf(value);
+    if (
+      isArray
+        ? prototype !== Array.prototype
+        : prototype !== Object.prototype && prototype !== null
+    ) {
+      return { ok: false };
+    }
+
+    active.add(value);
+    try {
+      if (isArray) {
+        const lengthDescriptor = Object.getOwnPropertyDescriptor(
+          value,
+          "length",
+        );
+        if (
+          lengthDescriptor === undefined ||
+          !("value" in lengthDescriptor) ||
+          typeof lengthDescriptor.value !== "number" ||
+          !Number.isSafeInteger(lengthDescriptor.value) ||
+          lengthDescriptor.value < 0 ||
+          lengthDescriptor.value > MAX_SAFE_GRAPH_ARRAY_LENGTH ||
+          lengthDescriptor.enumerable !== false ||
+          lengthDescriptor.configurable !== false ||
+          lengthDescriptor.writable !== true
+        ) {
+          return { ok: false };
+        }
+        const length = lengthDescriptor.value;
+        const ownKeys = Reflect.ownKeys(value);
+        if (
+          ownKeys.length !== length + 1 ||
+          !consumeSafeGraphProperties(ownKeys.length, budget)
+        ) {
+          return { ok: false };
+        }
+        const copy: JsonValue[] = [];
+        for (let index = 0; index < length; index += 1) {
+          const key = String(index);
+          if (ownKeys[index] !== key) return { ok: false };
+          const descriptor = Object.getOwnPropertyDescriptor(value, key);
+          if (
+            descriptor === undefined ||
+            !("value" in descriptor) ||
+            descriptor.enumerable !== true ||
+            descriptor.configurable !== true ||
+            descriptor.writable !== true
+          ) {
+            return { ok: false };
+          }
+          const copied = copySafeJsonGraph(
+            descriptor.value,
+            active,
+            budget,
+            depth + 1,
+          );
+          if (!copied.ok) return copied;
+          copy.push(copied.value);
+        }
+        if (ownKeys[length] !== "length") return { ok: false };
+        return { ok: true, value: copy };
+      }
+
+      const ownKeys = Reflect.ownKeys(value);
+      if (
+        ownKeys.length > MAX_SAFE_GRAPH_PROPERTIES_PER_OBJECT ||
+        !consumeSafeGraphProperties(ownKeys.length, budget)
+      ) {
+        return { ok: false };
+      }
+      const copy: Record<string, JsonValue> = Object.create(null) as Record<
+        string,
+        JsonValue
+      >;
+      for (const key of ownKeys) {
+        if (typeof key !== "string" || !consumeSafeGraphString(key, budget)) {
+          return { ok: false };
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (
+          descriptor === undefined ||
+          !("value" in descriptor) ||
+          descriptor.enumerable !== true ||
+          descriptor.configurable !== true ||
+          descriptor.writable !== true
+        ) {
+          return { ok: false };
+        }
+        const copied = copySafeJsonGraph(
+          descriptor.value,
+          active,
+          budget,
+          depth + 1,
+        );
+        if (!copied.ok) return copied;
+        Object.defineProperty(copy, key, {
+          value: copied.value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      }
+      return { ok: true, value: copy };
+    } finally {
+      active.delete(value);
+    }
+  } catch {
+    return { ok: false };
+  }
+}
+
 export function parseControlBody<K extends PiControlKind>(
   kind: K,
-  body: JsonValue,
+  body: unknown,
 ): { ok: true; value: ControlBodyFor<K> } | { ok: false; issueCount: number } {
+  const copied = copySafeJsonGraph(
+    body,
+    undefined,
+    makeSafeJsonGraphBudget(
+      kind === "delegate-request"
+        ? MAX_SAFE_GRAPH_TRANSFERRED_STRING_LENGTH
+        : MAX_SAFE_GRAPH_STRING_LENGTH,
+    ),
+  );
+  if (!copied.ok) return { ok: false, issueCount: 1 };
+
+  // Incoming envelopes already enforce this bound during authentication. Keep
+  // the same bound at the direct parser boundary so tests and internal callers
+  // cannot validate a bootstrap body that the authenticated transport would
+  // reject later.
+  if (kind === "bootstrap") {
+    const canonical = canonicalizeToBytes(copied.value);
+    if (
+      canonical.isErr() ||
+      canonical.value.byteLength > MAX_CONTROL_BODY_BYTES
+    ) {
+      return { ok: false, issueCount: 1 };
+    }
+  }
+
   const schema = CONTROL_BODY_SCHEMAS[kind];
-  const parsed = schema.safeParse(body);
+  const parsed = schema.safeParse(copied.value);
   if (!parsed.success) {
     return { ok: false, issueCount: parsed.error.issues.length };
   }

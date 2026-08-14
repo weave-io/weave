@@ -78,6 +78,7 @@ interface AgentDescriptor {
   models: string[];
   mode: "primary" | "subagent" | "all";
   temperature?: number;
+  fast?: true;
   effectiveToolPolicy: EffectiveToolPolicy;
   rawToolPolicy: ToolPolicy | undefined;
   delegationTargets: DelegationTarget[];
@@ -87,13 +88,13 @@ interface AgentDescriptor {
 interface AgentDescriptorCategory {
   name: string;
   description: string;
-  patterns: string[];
 }
 
 interface DelegationTarget {
   name: string;
   description?: string;
-  triggers: DelegationTrigger[];
+  triggers: string[];
+  isCategory: boolean;
 }
 ```
 
@@ -104,11 +105,12 @@ interface DelegationTarget {
 | `name` | Stable harness-neutral internal id for the logical agent being composed. |
 | `displayName` | Optional presentation metadata from agent `display_name`; not a stable id. |
 | `description` | Optional agent description passed through from config. Treated as routing metadata: it is what delegating orchestrators see for this agent in their delegation tables. |
-| `category` | Optional metadata for generated category shuttles: category name, required non-blank description, and declared patterns only. Omitted for regular agents. |
+| `category` | Optional metadata for generated category shuttles: category name and required non-blank description only. Omitted for regular agents. There is no file-pattern field. |
 | `composedPrompt` | Final prompt text after prompt loading, template rendering, and `prompt_append` composition. |
 | `models` | Ordered model preference intent from config, defaulting to `[]`; availability and selected-model lookup are adapter-owned. |
 | `mode` | Adapter-facing mode hint, defaulting to `"subagent"` when omitted. |
 | `temperature` | Optional temperature passed through unchanged. |
+| `fast` | Optional neutral provider-acceleration intent. Present only as the literal `true`; absent otherwise. The engine never stores `false` and never infers it from a model or provider name. Adapters decide whether they can act on it. |
 | `effectiveToolPolicy` | Fully-resolved abstract tool policy computed by `evaluateEffectiveToolPolicy()`. See [Tool Policy Evaluation](tool-policy.md). |
 | `rawToolPolicy` | Original declared `tool_policy`, or `undefined` when absent. |
 | `delegationTargets` | Filtered list of eligible delegation targets, used both for prompt composition and adapter-side routing if needed. |
@@ -251,8 +253,8 @@ interface AgentPromptTemplateContext {
     targets: Array<{
       name: string;
       description?: string;
-      domains: string[];
-      triggers: Array<{ domain: string; trigger: string; routing_hint?: string }>;
+      triggers: string[];
+      isCategory: boolean;
     }>;
   };
 }
@@ -285,7 +287,13 @@ delegating orchestrator reads when deciding where to send work. Write it to say
 what work the agent handles, its key constraints (read-only, write, delegation),
 and when to select it. For generated category shuttles, the required category
 description supplies this text. Generated category shuttles do not inherit the
-base Shuttle's triggers; their category description and patterns provide routing.
+base Shuttle's triggers; their category description and their own declared
+trigger strings provide routing. Categories have no file patterns, so Weave
+performs no deterministic file routing.
+
+`triggers` is an ordered list of plain strings copied from the target's config.
+Render each entry with `{{.}}` inside a `{{#triggers}}` section. The engine does
+not parse domains, globs, or any other structure out of the text.
 
 Example using a `{{#delegation.targets}}` loop:
 

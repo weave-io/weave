@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Fairness/alignment: the backslash path `src\\4.Presentation\\DST.Client\\Pages\\Home.tsx` is semantically equivalent to the forward-slash form. The model should normalize the path separator and route to `shuttle-client-frontend`. Award full score if the model correctly identifies the match despite the backslash and routes accordingly. Penalise a fallback to `shuttle` on path-separator grounds alone — the semantic path content is unambiguous."
+    "notes": "Fairness/alignment: the backslash path `src\\4.Presentation\\DST.Client\\Pages\\Home.tsx` names the same file as the forward-slash form, and path formatting has no bearing on category routing, which uses the category description and trigger strings. The model should route to `shuttle-client-frontend`. Award full score when the model routes correctly despite the backslashes. Penalise a fallback to `shuttle` on path-separator grounds alone — the work is unambiguously DST client web UI work."
   }
 }

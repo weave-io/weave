@@ -835,3 +835,180 @@ describe("BunPiNativeSessionFs — real no-follow range I/O", () => {
     directory.close();
   });
 });
+
+/**
+ * Adversarial proofs for the adapter-owned ancestor chain.
+ *
+ * A no-follow open that only inspects the *final* directory says nothing about
+ * the components the walk traversed to reach it. An attacker who can plant or
+ * loosen `weave`, `adapters`, `pi`, or the session root itself owns everything
+ * the adapter later writes below it, so every adapter-owned component must be
+ * proven before the root proof or a launch grant may be minted.
+ *
+ * Ownership is proven in production against the open descriptor's `uid`. These
+ * tests cannot exercise a foreign owner without privileges the runner does not
+ * have, so they prove the mode, kind, symlink, and identity-swap rules and
+ * leave the ownership branch to code review.
+ */
+describe("BunPiNativeSessionFs — adapter-owned ancestor proof", () => {
+  let root: string;
+  let sessions: string;
+
+  const owned = (...parts: readonly string[]): string =>
+    join(root, "share/weave/adapters/pi", ...parts);
+
+  beforeEach(async () => {
+    root = await makeRealTempRoot("weave-anc");
+    sessions = owned("sessions");
+    await $`mkdir -p ${sessions}`.quiet();
+    await $`chmod -R 700 ${join(root, "share")}`.quiet();
+  });
+
+  afterEach(async () => {
+    await removeRealTempRoot(root);
+  });
+
+  test("creates every adapter-owned component with exactly 0700", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const fresh = join(root, "fresh/weave/adapters/pi/sessions/child-1");
+    await $`mkdir -p ${join(root, "fresh")}`.quiet();
+    await $`chmod 700 ${join(root, "fresh")}`.quiet();
+
+    const directory = (await fs.openDirectory(fresh, true))._unsafeUnwrap();
+    directory.close();
+
+    for (const created of [
+      join(root, "fresh/weave"),
+      join(root, "fresh/weave/adapters"),
+      join(root, "fresh/weave/adapters/pi"),
+      join(root, "fresh/weave/adapters/pi/sessions"),
+      fresh,
+    ]) {
+      const stat = await Bun.file(created).stat();
+      expect(stat.mode & 0o7777).toBe(0o700);
+    }
+  });
+
+  test("rejects a group-readable pre-existing intermediate ancestor", async () => {
+    const fs = createBunPiNativeSessionFs();
+    await $`chmod 750 ${owned()}`.quiet();
+
+    expect((await fs.openDirectory(sessions, true))._unsafeUnwrapErr()).toEqual(
+      {
+        type: "permissive-mode",
+        kind: "directory",
+      },
+    );
+  });
+
+  test("rejects a world-writable pre-existing intermediate ancestor", async () => {
+    const fs = createBunPiNativeSessionFs();
+    await $`chmod 777 ${join(root, "share/weave/adapters")}`.quiet();
+
+    expect((await fs.openDirectory(sessions, true))._unsafeUnwrapErr()).toEqual(
+      {
+        type: "permissive-mode",
+        kind: "directory",
+      },
+    );
+  });
+
+  test("rejects a loosened marker ancestor even for a deeper child directory", async () => {
+    const fs = createBunPiNativeSessionFs();
+    await $`chmod 755 ${join(root, "share/weave")}`.quiet();
+
+    expect(
+      (
+        await fs.openDirectory(join(sessions, "child-1"), true)
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "permissive-mode", kind: "directory" });
+    // The hostile ancestor is refused before anything is created below it.
+    expect(await Bun.file(join(sessions, "child-1")).exists()).toBe(false);
+  });
+
+  test("rejects an adapter-owned ancestor planted as a symlink", async () => {
+    const fs = createBunPiNativeSessionFs();
+    await $`rm -rf ${join(root, "share/weave/adapters/pi")}`.quiet();
+    await $`mkdir -p ${join(root, "elsewhere")}`.quiet();
+    await $`chmod 700 ${join(root, "elsewhere")}`.quiet();
+    await $`ln -s ${join(root, "elsewhere")} ${join(root, "share/weave/adapters/pi")}`.quiet();
+
+    expect((await fs.openDirectory(sessions, true))._unsafeUnwrapErr()).toEqual(
+      {
+        type: "symlink-rejected",
+      },
+    );
+  });
+
+  test("rejects an adapter-owned ancestor that is not a directory", async () => {
+    const fs = createBunPiNativeSessionFs();
+    await $`rm -rf ${join(root, "share/weave/adapters")}`.quiet();
+    await Bun.write(join(root, "share/weave/adapters"), "x");
+    await $`chmod 700 ${join(root, "share/weave/adapters")}`.quiet();
+
+    expect((await fs.openDirectory(sessions, true))._unsafeUnwrapErr()).toEqual(
+      {
+        type: "symlink-rejected",
+      },
+    );
+  });
+
+  test("a user-owned ancestor above the marker keeps its own mode", async () => {
+    const fs = createBunPiNativeSessionFs();
+    // `share` sits above `weave/adapters/pi`: it belongs to the user and is
+    // proven by the trusted-data-root canonicalizer, not by this chain.
+    await $`chmod 755 ${join(root, "share")}`.quiet();
+
+    const directory = (await fs.openDirectory(sessions, true))._unsafeUnwrap();
+    expect(directory.path).toBe(sessions);
+    directory.close();
+  });
+
+  test("an ancestor loosened after open fails every later operation", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(sessions, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    await $`chmod 777 ${join(root, "share/weave/adapters")}`.quiet();
+
+    expect((await directory.statFile(FILE))._unsafeUnwrapErr()).toEqual({
+      type: "permissive-mode",
+      kind: "directory",
+    });
+    expect(
+      (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrapErr(),
+    ).toEqual({ type: "permissive-mode", kind: "directory" });
+    directory.close();
+  });
+
+  test("an ancestor swapped for a fresh tree after open fails closed", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(sessions, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    // Same path, same modes, different inodes all the way down: only a
+    // re-walked identity comparison can catch this.
+    await $`mv ${join(root, "share/weave")} ${join(root, "share/weave-old")}`.quiet();
+    await $`mkdir -p ${sessions}`.quiet();
+    await $`chmod -R 700 ${join(root, "share/weave")}`.quiet();
+
+    expect((await directory.statFile(FILE))._unsafeUnwrapErr()).toEqual({
+      type: "identity-changed",
+    });
+    directory.close();
+  });
+
+  test("an ancestor swapped for a symlink after open fails closed", async () => {
+    const fs = createBunPiNativeSessionFs();
+    const directory = (await fs.openDirectory(sessions, true))._unsafeUnwrap();
+    (await directory.appendFile(FILE, PAYLOAD, 0o600))._unsafeUnwrap();
+
+    await $`mv ${join(root, "share/weave/adapters")} ${join(root, "share/adapters-real")}`.quiet();
+    await $`ln -s ${join(root, "share/adapters-real")} ${join(root, "share/weave/adapters")}`.quiet();
+
+    expect((await directory.statFile(FILE))._unsafeUnwrapErr()).toEqual({
+      type: "symlink-rejected",
+    });
+    directory.close();
+  });
+});

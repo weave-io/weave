@@ -40,8 +40,9 @@ const referenceHref = withBaseUrl(base, 'docs/reference/cli/');
 const description =
   'A single .weave file describes prompts, agents, workflows, model preferences, and policy once. Weave validates that config, composes prompts, and connects that intent to OpenCode, Claude Code, and Pi adapter surfaces.';
 
-// Verbatim inner HTML of the prototype's `#dslCode` <pre> (landing-static.html
-// line 265). Rendered via `set:html` so Astro does not interpret the literal
+// Inner HTML of the prototype's `#dslCode` <pre> (landing-static.html line
+// 265), kept in sync with the current `.weave` category schema. Rendered via
+// `set:html` so Astro does not interpret the literal
 // `{`/`}` punctuation tokens as JSX expression delimiters — they must survive
 // as `<span class="pn">{</span>` to match the prototype exactly.
 const currentDslCode = [
@@ -54,8 +55,9 @@ const currentDslCode = [
   '<span class="l"><span class="pn">}</span></span>',
   '<span class="l"></span>',
   '<span class="l"><span class="kw">category</span> <span class="id">frontend</span> <span class="pn">{</span></span>',
-  '<span class="l">  <span class="kw">description</span> <span class="str">"UI, UX, styling"</span></span>',
-  '<span class="l">  <span class="kw">patterns</span> <span class="pn">[</span><span class="str">"src/components/**"</span><span class="pn">,</span> <span class="str">"**/*.tsx"</span><span class="pn">]</span></span>',
+  '<span class="l">  <span class="kw">description</span> <span class="str">"Frontend UI, styling, accessibility"</span></span>',
+  '<span class="l">  <span class="kw">triggers</span> <span class="pn">[</span><span class="str">"Use for UI, styling, and accessibility"</span><span class="pn">]</span></span>',
+  '<span class="l">  <span class="kw">fast</span> <span class="id">true</span></span>',
   '<span class="l">  <span class="kw">prompt_append</span> <span class="str">"Preserve accessibility."</span></span>',
   '<span class="l"><span class="pn">}</span></span>',
   '<span class="l"></span>',

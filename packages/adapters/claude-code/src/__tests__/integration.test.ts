@@ -280,6 +280,82 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Optional capability gap: fast intent must not change or block materialization
+// ---------------------------------------------------------------------------
+
+describe("ClaudeCodeAdapter — unsupported provider acceleration", () => {
+  const fastLoom: AgentDescriptor = {
+    ...loomDescriptor,
+    fast: true,
+    delegationTargets: [
+      {
+        name: "shuttle-backend",
+        description: "Backend APIs",
+        triggers: ["ship patch", "review code"],
+        isCategory: true,
+      },
+    ],
+  };
+
+  it("still materializes every artifact when fast intent is declared", async () => {
+    const written: Record<string, string> = {};
+    const adapter = makeAdapter(written);
+
+    await adapter.init();
+    const spawnResult = await adapter.spawnSubagent(fastLoom);
+    const flushResult = await adapter.flush();
+
+    expect(spawnResult.isOk()).toBe(true);
+    expect(flushResult.isOk()).toBe(true);
+
+    const pluginKey = Object.keys(written).find((k) =>
+      k.endsWith("plugin.json"),
+    );
+    const settingsKey = Object.keys(written).find((k) =>
+      k.endsWith("settings.json"),
+    );
+    const agentKey = Object.keys(written).find(
+      (k) => k.includes("agents") && k.endsWith("loom.md"),
+    );
+    expect(pluginKey).toBeDefined();
+    expect(settingsKey).toBeDefined();
+    expect(agentKey).toBeDefined();
+
+    const fm = parseFrontmatter(written[agentKey!]!);
+    expect(fm.name).toBe("loom");
+    expect(typeof fm.model).toBe("string");
+    expect(fm.fast).toBeUndefined();
+    expect(fm.fastMode).toBeUndefined();
+    expect(fm.triggers).toBeUndefined();
+    expect(fm.patterns).toBeUndefined();
+  });
+
+  it("writes byte-identical output with and without fast intent", async () => {
+    const { fast: _declaredFast, ...noIntentLoom } = fastLoom;
+
+    const baseline: Record<string, string> = {};
+    const baselineAdapter = makeAdapter(baseline);
+    await baselineAdapter.init();
+    await baselineAdapter.spawnSubagent(noIntentLoom);
+    await baselineAdapter.flush();
+
+    const withFast: Record<string, string> = {};
+    const fastAdapter = makeAdapter(withFast);
+    await fastAdapter.init();
+    await fastAdapter.spawnSubagent(fastLoom);
+    await fastAdapter.flush();
+
+    expect(withFast).toEqual(baseline);
+    for (const content of Object.values(withFast)) {
+      expect(content).not.toContain("fastMode");
+      expect(content).not.toContain("service_tier");
+      expect(content).not.toContain("anthropic-beta");
+      expect(content).not.toContain("ship patch");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Negative case: no loom agent → settings.json must NOT be written
 // ---------------------------------------------------------------------------
 

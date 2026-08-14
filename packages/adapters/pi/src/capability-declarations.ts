@@ -118,6 +118,16 @@ export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       readiness: "emulated",
     },
     {
+      id: "provider-fast-activation",
+      description: "Request provider acceleration and report bounded evidence",
+      readiness: "unsupported",
+      runtimeStatus: "unsupported",
+      notes:
+        "Pi's public extension contract cannot bind an effective-transport proof or a response-body proof to the same prepared provider request, so the adapter sends no acceleration control and leaves every provider payload and header unchanged. Declared intent is reported as unsupported and agents still activate.",
+      remediationHint:
+        "Keep reporting unsupported until the host exposes both the transport of one prepared request and correlated official response-body evidence for that same request.",
+    },
+    {
       id: "idle-continuation",
       description: "Resuming idle work within one live generation",
       readiness: "emulated",

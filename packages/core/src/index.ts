@@ -20,8 +20,8 @@ export type {
   DisableDirective,
   ExtendBeforePlanDirective,
   IdentifierValue,
-  NumberValue,
   NullValue,
+  NumberValue,
   Property,
   SettingAssignment,
   SourcePos,
@@ -30,13 +30,15 @@ export type {
   WorkflowBlock,
 } from "./ast.js";
 // ---------------------------------------------------------------------------
-// Model thinking syntax
+// End-to-end pipeline
 // ---------------------------------------------------------------------------
-export type {
-  ModelIntentEntry,
-  ModelIntentParseError,
-} from "./model-thinking-syntax.js";
-export { parseModelIntentEntry } from "./model-thinking-syntax.js";
+export {
+  CONFIG_ERRORS_TRUNCATED,
+  MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+  MAX_CONFIG_ERROR_FIELD_LENGTH,
+  MAX_CONFIG_ERROR_ISSUES,
+  MAX_CONFIG_ERROR_PATH_LENGTH,
+} from "./config-error-policy.js";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -52,8 +54,13 @@ export { formatError } from "./errors.js";
 // ---------------------------------------------------------------------------
 export { tokenize } from "./lexer.js";
 // ---------------------------------------------------------------------------
-// End-to-end pipeline
+// Model thinking syntax
 // ---------------------------------------------------------------------------
+export type {
+  ModelIntentEntry,
+  ModelIntentParseError,
+} from "./model-thinking-syntax.js";
+export { parseModelIntentEntry } from "./model-thinking-syntax.js";
 export { parseConfig } from "./parse-config.js";
 export { parse } from "./parser.js";
 // ---------------------------------------------------------------------------
@@ -66,10 +73,9 @@ export type {
   CategoryConfig,
   CompletionMethod,
   DelegationSettings,
-  DelegationTrigger,
-  JsonValue,
   ExtendBeforePlan,
   ExtensionPoints,
+  JsonValue,
   LogLevel,
   OnReject,
   ReconciliationHandler,
@@ -106,10 +112,9 @@ export {
   DEFAULT_RUNTIME_SETTINGS,
   DEFAULT_RUNTIME_USAGE_SETTINGS,
   DelegationSettingsSchema,
-  DelegationTriggerSchema,
-  JsonValueSchema,
   ExtendBeforePlanSchema,
   ExtensionPointsSchema,
+  JsonValueSchema,
   LogLevelSchema,
   OnRejectSchema,
   ReconciliationHandlerListSchema,
@@ -121,8 +126,8 @@ export {
   RuntimeSettingsSchema,
   RuntimeUsageSettingsSchema,
   SettingsConfigSchema,
-  ThinkingLevelSchema,
   THINKING_LEVEL_VALUES,
+  ThinkingLevelSchema,
   ToolPermissionSchema,
   ToolPolicySchema,
   WeaveConfigSchema,

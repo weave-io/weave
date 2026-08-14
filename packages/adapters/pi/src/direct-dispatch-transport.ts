@@ -27,6 +27,10 @@ import type {
   PiChildRefRecord,
 } from "./child-session-refs.js";
 import {
+  describeChildSessionStorageUnavailable,
+  type PiChildSessionStorageAuthority,
+} from "./child-session-storage-authority.js";
+import {
   PI_CHILD_TITLE_PROVENANCE,
   resolveDurableChildTitle,
 } from "./child-title.js";
@@ -63,9 +67,23 @@ import type { IdGenerator, PiAdapterLogger } from "./types.js";
 
 const DIRECT_DISPATCH_PARENT_ID = ROOT_NODE_ID;
 const DIRECT_DISPATCH_DEPTH = 0;
+/**
+ * Scope used when the storage-authority preflight refuses. No child id has
+ * been drawn yet - drawing one would itself be an observable side effect - so
+ * the failure names the dispatch path rather than a child that never existed.
+ */
+const DIRECT_DISPATCH_UNAUTHORIZED_CHILD_ID = "direct-step";
 
 export interface PiDirectDispatchTransportDeps {
   readonly processPort: PiChildProcessPort;
+  /**
+   * The generation-scoped authority handed to the direct-step child. Direct
+   * dispatch deliberately bypasses `PiDelegationController`'s budget and
+   * tree, so it must name this authority explicitly. It is required, with no
+   * default: a silent fallback would let readiness report ready while every
+   * direct-step spawn refuses.
+   */
+  readonly sessionStorageAuthority: PiChildSessionStorageAuthority;
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly logger: PiAdapterLogger;
@@ -133,7 +151,7 @@ export interface PiDirectDispatchTransportDeps {
 
 /** A direct step's provisioned native session and its parent ref record. */
 interface ProvisionedDirectSession {
-  readonly session: PiDirectRestoreSession;
+  readonly session: PiDirectNativeSession;
   readonly record: PiNativeSessionRecord;
   /**
    * Opaque native-session ref used to persist complete private output onto the
@@ -155,45 +173,30 @@ interface ProvisionedDirectSession {
 }
 
 /** The only spawn session shape a production direct step may ever use. */
-export type PiDirectRestoreSession = Extract<
+export type PiDirectNativeSession = Extract<
   PiRpcChildSpawnSession,
-  { readonly mode: "restore" }
+  { readonly mode: "native" }
 >;
 
 /**
- * Validates the restore selector this transport built before it can reach a
- * spawn. `PiRpcChild` re-validates the same selector at command construction;
- * this is the earlier, transport-level refusal the workflow layer needs so an
- * unusable session never reaches a process at all.
+ * Validates the store-minted launch selector this transport built before it
+ * can reach a spawn. `PiRpcChild` redeems the same grant at command
+ * construction; this is the earlier, transport-level refusal the workflow
+ * layer needs so an unusable session never reaches a process at all.
  *
- * A non-restore mode (ephemeral), a directory-only selection (no session file),
- * a missing active leaf, or a session file that does not live directly in the
- * selected directory are all rejected. The failure carries a closed reason and
- * never the candidate path.
+ * An absent selector or a non-native mode (ephemeral) is rejected. The failure
+ * carries a closed reason and never a filesystem path.
  */
-export function validateDirectRestoreSession(
+export function validateDirectNativeSession(
   childId: string,
   session: PiRpcChildSpawnSession | undefined,
-): Result<PiDirectRestoreSession, PiAdapterFailure> {
+): Result<PiDirectNativeSession, PiAdapterFailure> {
   if (session === undefined) {
     return err(makeChildSpawnFailedFailure(childId, "direct-session-absent"));
   }
-  if (session.mode !== "restore") {
+  if (session.mode !== "native") {
     return err(
       makeChildSpawnFailedFailure(childId, "direct-session-not-restorable"),
-    );
-  }
-  if (session.sessionDir.length === 0 || session.sessionPath.length === 0) {
-    return err(
-      makeChildSpawnFailedFailure(childId, "direct-session-incomplete"),
-    );
-  }
-  if (session.activeLeafId.length === 0) {
-    return err(makeChildSpawnFailedFailure(childId, "direct-session-no-leaf"));
-  }
-  if (dirname(session.sessionPath) !== session.sessionDir) {
-    return err(
-      makeChildSpawnFailedFailure(childId, "direct-session-outside-directory"),
     );
   }
   return ok(session);
@@ -244,6 +247,8 @@ export interface PiDirectStepBootstrap {
   readonly composedPrompt: string;
   readonly models: readonly string[];
   readonly delegationTargets: readonly DelegationTarget[];
+  /** Literal provider-acceleration intent. Omission preserves the provider default. */
+  readonly fast?: true;
   readonly workflowInstanceId: string;
   readonly leaseId: string;
   readonly stepName: string;
@@ -266,9 +271,24 @@ export function createDirectDispatchTransport(
   deps: PiDirectDispatchTransportDeps,
   generationId: string,
 ): DirectDispatchTransport {
+  const sessionStorageAuthority = deps.sessionStorageAuthority;
   return (
     input: PiDirectDispatchInput,
   ): ResultAsync<DirectDispatchSettlement, PiAdapterFailure> => {
+    // Storage authority first: before an id is drawn, before the transport
+    // object exists, before the bootstrap or model resolution is computed,
+    // before the inspection registry is written, and before any spawn. The
+    // dispatch input is not read at all until this passes.
+    const authority = sessionStorageAuthority.requireNativeSessionAuthority();
+    if (authority.isErr()) {
+      return errAsync(
+        makeChildSpawnFailedFailure(
+          DIRECT_DISPATCH_UNAUTHORIZED_CHILD_ID,
+          describeChildSessionStorageUnavailable(authority.error),
+        ),
+      );
+    }
+
     const childId = `direct-${input.workflowInstanceId}-${input.stepName}-${deps.idGenerator.next()}`;
     /**
      * Complete private terminal output captured by `PiRpcChild` before the
@@ -294,6 +314,7 @@ export function createDirectDispatchTransport(
       DIRECT_DISPATCH_DEPTH,
       {
         processPort: deps.processPort,
+        sessionStorageAuthority,
         randomPort: deps.randomPort,
         hmacPort: deps.hmacPort,
         logger: deps.logger,
@@ -381,7 +402,7 @@ export function createDirectDispatchTransport(
       mode: "direct-step",
       agentName: input.agentName,
       composedPrompt: input.composedPrompt,
-      models: input.models,
+      models: [...input.models],
       // Large catalogs stay parent-authoritative instead of consuming one
       // signed bootstrap envelope.
       delegationTargets: [],
@@ -406,6 +427,7 @@ export function createDirectDispatchTransport(
         cwd: input.cwd,
       },
       ...(resolvedModel === undefined ? {} : { resolvedModel }),
+      ...(input.fast === true ? { fast: true as const } : {}),
       ...(resolution.resolved && resolution.thinkingLevel !== undefined
         ? { thinkingLevel: resolution.thinkingLevel }
         : {}),
@@ -528,34 +550,46 @@ export function createDirectDispatchTransport(
                     "thread-ref-write-failed",
                   );
                 })
-                .andThen((refRecord) => {
-                  // The selector is validated here, before it can reach a
-                  // spawn: an ephemeral or directory-only selection never
-                  // becomes a launched child.
-                  const validated = validateDirectRestoreSession(childId, {
-                    mode: "restore",
-                    sessionDir: dirname(record.path),
-                    sessionPath: record.path,
-                    activeLeafId: leaf.leafId,
-                  });
-                  if (validated.isErr()) {
-                    tombstone(sessions, record);
-                    return errAsync<
-                      ProvisionedDirectSession | undefined,
-                      PiAdapterFailure
-                    >(validated.error);
-                  }
-                  return okAsync<
-                    ProvisionedDirectSession | undefined,
-                    PiAdapterFailure
-                  >({
-                    session: validated.value,
-                    record,
-                    ref: record.ref,
-                    refRecord,
-                    parentSession,
-                  });
-                }),
+                .andThen((refRecord) =>
+                  // The launch selector is minted by the store that validated
+                  // this session, so no path-carrying selector ever exists.
+                  sessions
+                    .mintLaunchGrant({
+                      childId,
+                      record,
+                      activeLeafId: leaf.leafId,
+                    })
+                    .mapErr(() => {
+                      tombstone(sessions, record);
+                      return makeChildSpawnFailedFailure(
+                        childId,
+                        "thread-launch-grant-unavailable",
+                      );
+                    })
+                    .andThen((grant) => {
+                      const validated = validateDirectNativeSession(childId, {
+                        mode: "native",
+                        grant,
+                      });
+                      if (validated.isErr()) {
+                        tombstone(sessions, record);
+                        return errAsync<
+                          ProvisionedDirectSession | undefined,
+                          PiAdapterFailure
+                        >(validated.error);
+                      }
+                      return okAsync<
+                        ProvisionedDirectSession | undefined,
+                        PiAdapterFailure
+                      >({
+                        session: validated.value,
+                        record,
+                        ref: record.ref,
+                        refRecord,
+                        parentSession,
+                      });
+                    }),
+                ),
             ),
         );
     };

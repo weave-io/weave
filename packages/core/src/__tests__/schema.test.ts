@@ -1039,11 +1039,232 @@ describe("AgentConfigSchema — prompt_append_file", () => {
 // CategoryConfigSchema — description (required, non-blank)
 // ---------------------------------------------------------------------------
 
+describe("exported schema input boundaries", () => {
+  it("copies input before Zod can read Object.prototype fields", () => {
+    let getterExecutions = 0;
+    try {
+      Object.defineProperty(Object.prototype, "description", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          getterExecutions += 1;
+          return "inherited description";
+        },
+      });
+
+      expect(CategoryConfigSchema.safeParse({}).success).toBe(false);
+      expect(getterExecutions).toBe(0);
+    } finally {
+      delete (Object.prototype as { description?: unknown }).description;
+    }
+  });
+
+  it.each([
+    ["root agents", WeaveConfigSchema, "agents", {}],
+    ["agent fast", AgentConfigSchema, "fast", true],
+    ["agent triggers", AgentConfigSchema, "triggers", ["owned"]],
+    ["category fast", CategoryConfigSchema, "fast", true],
+    ["category triggers", CategoryConfigSchema, "triggers", ["owned"]],
+    ["category description", CategoryConfigSchema, "description", "inherited"],
+  ])("rejects prototype-provided %s", (_case, schema, key, value) => {
+    const input = Object.create({ [key]: value }) as Record<string, unknown>;
+    if (schema === CategoryConfigSchema && key !== "description") {
+      input.description = "Owned description";
+    }
+    expect(schema.safeParse(input).success).toBe(false);
+  });
+
+  it.each([
+    [AgentConfigSchema, "fast"],
+    [AgentConfigSchema, "triggers"],
+    [CategoryConfigSchema, "description"],
+    [WeaveConfigSchema, "agents"],
+  ])("rejects %s accessors without executing getters", (schema, key) => {
+    let getterExecutions = 0;
+    const input: Record<string, unknown> = {};
+    if (schema === CategoryConfigSchema && key !== "description") {
+      input.description = "Owned description";
+    }
+    Object.defineProperty(input, key, {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return key === "triggers" ? ["unsafe"] : true;
+      },
+    });
+
+    expect(schema.safeParse(input).success).toBe(false);
+    expect(getterExecutions).toBe(0);
+  });
+
+  it("rejects callable values without executing getters", () => {
+    let getterExecutions = 0;
+    const callable = () => undefined;
+    Object.defineProperty(callable, "type", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return "unsafe";
+      },
+    });
+
+    expect(AgentConfigSchema.safeParse({ models: [callable] }).success).toBe(
+      false,
+    );
+    expect(getterExecutions).toBe(0);
+  });
+
+  it("rejects unexpected prototypes and unsafe data descriptors", () => {
+    class AgentInput {}
+    const classInput = new AgentInput();
+    Object.defineProperty(classInput, "fast", {
+      value: true,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    expect(AgentConfigSchema.safeParse(classInput).success).toBe(false);
+
+    const readonlyInput: Record<string, unknown> = {};
+    Object.defineProperty(readonlyInput, "fast", {
+      value: true,
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    });
+    expect(AgentConfigSchema.safeParse(readonlyInput).success).toBe(false);
+  });
+
+  it("accepts own data properties on plain and null-prototype records", () => {
+    expect(
+      AgentConfigSchema.safeParse({ fast: true, triggers: ["plain"] }).success,
+    ).toBe(true);
+
+    const category = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(category, "description", {
+      value: "Safe category",
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(category, "fast", {
+      value: true,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(category, "triggers", {
+      value: ["safe trigger"],
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    const parsed = CategoryConfigSchema.safeParse(category);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.description).toBe("Safe category");
+      expect(parsed.data.triggers).toEqual(["safe trigger"]);
+    }
+  });
+});
+
+describe("AgentConfigSchema and CategoryConfigSchema — fast intent and triggers", () => {
+  const schemas = [
+    ["agent", AgentConfigSchema, {}],
+    ["category", CategoryConfigSchema, { description: "Bounded work" }],
+  ] as const;
+
+  for (const [kind, schema, base] of schemas) {
+    it(`${kind} accepts literal fast true and ordered non-blank triggers`, () => {
+      const result = schema.safeParse({
+        ...base,
+        fast: true,
+        triggers: ["First trigger", "Second trigger"],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.fast).toBe(true);
+        expect(result.data.triggers).toEqual([
+          "First trigger",
+          "Second trigger",
+        ]);
+      }
+    });
+
+    it(`${kind} preserves omission of fast and triggers`, () => {
+      const result = schema.safeParse(base);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.fast).toBeUndefined();
+        expect(result.data.triggers).toBeUndefined();
+      }
+    });
+
+    it(`${kind} rejects false and wrong scalar fast values`, () => {
+      for (const fast of [false, "true", 1, null]) {
+        expect(schema.safeParse({ ...base, fast }).success).toBe(false);
+      }
+    });
+
+    it(`${kind} rejects empty, blank, non-string, and structured triggers`, () => {
+      for (const triggers of [
+        [],
+        [""],
+        ["   "],
+        [42],
+        [{ domain: "Orchestration", trigger: "Plan work" }],
+      ]) {
+        expect(schema.safeParse({ ...base, triggers }).success).toBe(false);
+      }
+    });
+
+    it(`${kind} rejects provider acceleration aliases`, () => {
+      for (const alias of [
+        "service_class",
+        "speed",
+        "variant",
+        "priority",
+      ] as const) {
+        expect(schema.safeParse({ ...base, [alias]: true }).success).toBe(
+          false,
+        );
+      }
+    });
+  }
+
+  it("exports public agent and category types with the new shapes", () => {
+    const agent: import("@weaveio/weave-core").AgentConfig = {
+      fast: true,
+      triggers: ["Plan work"],
+    };
+    const category: import("@weaveio/weave-core").CategoryConfig = {
+      description: "Bounded work",
+      fast: true,
+      triggers: ["Small changes"],
+    };
+    expect(agent).toEqual({ fast: true, triggers: ["Plan work"] });
+    expect(category).toEqual({
+      description: "Bounded work",
+      fast: true,
+      triggers: ["Small changes"],
+    });
+  });
+
+  it("rejects removed category patterns", () => {
+    const result = CategoryConfigSchema.safeParse({
+      description: "Backend work",
+      patterns: ["src/**"],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("CategoryConfigSchema — description", () => {
   it("accepts a category with a non-blank description", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "Frontend components and styling",
-      patterns: ["src/components/**"],
     });
     expect(r.success).toBe(true);
     if (r.success) {
@@ -1054,16 +1275,13 @@ describe("CategoryConfigSchema — description", () => {
   it("preserves surrounding whitespace verbatim when content is present", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "  Backend services  ",
-      patterns: ["src/server/**"],
     });
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.description).toBe("  Backend services  ");
   });
 
   it("rejects a category with no description at all", () => {
-    const r = CategoryConfigSchema.safeParse({
-      patterns: ["src/**"],
-    });
+    const r = CategoryConfigSchema.safeParse({});
     expect(r.success).toBe(false);
     if (!r.success) {
       const issue = r.error.issues.find(
@@ -1077,7 +1295,6 @@ describe("CategoryConfigSchema — description", () => {
   it("rejects an empty-string description with the non-empty message", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "",
-      patterns: ["src/**"],
     });
     expect(r.success).toBe(false);
     if (!r.success) {
@@ -1093,7 +1310,6 @@ describe("CategoryConfigSchema — description", () => {
   it("rejects a whitespace-only description with the non-empty message", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "   \t\n  ",
-      patterns: ["src/**"],
     });
     expect(r.success).toBe(false);
     if (!r.success) {
@@ -1109,7 +1325,6 @@ describe("CategoryConfigSchema — description", () => {
   it("rejects a non-string description", () => {
     const r = CategoryConfigSchema.safeParse({
       description: 42,
-      patterns: ["src/**"],
     });
     expect(r.success).toBe(false);
     if (!r.success) {
@@ -1128,7 +1343,6 @@ describe("CategoryConfigSchema — description", () => {
 describe("CategoryConfigSchema — prompt_append_file", () => {
   const baseCategory = {
     description: "TypeScript source edits",
-    patterns: ["src/**/*.ts"],
   };
 
   it("accepts prompt_append_file with a valid relative path", () => {
@@ -2125,7 +2339,6 @@ describe("model thinking suffix validation", () => {
   it("accepts plain, suffixed, and escaped category model entries", () => {
     const result = CategoryConfigSchema.safeParse({
       description: "Source tree work",
-      patterns: ["src/**"],
       models: ["plain-category", "category-model#max", "category\\#model"],
     });
     expect(result.success).toBe(true);
@@ -2171,7 +2384,6 @@ describe("model thinking suffix validation", () => {
   it("rejects an invalid category model suffix with a readable indexed error", () => {
     const result = CategoryConfigSchema.safeParse({
       description: "Source tree work",
-      patterns: ["src/**"],
       models: ["plain-category", "category-model#bad"],
     });
     expect(result.success).toBe(false);

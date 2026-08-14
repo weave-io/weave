@@ -28,7 +28,7 @@
  *                                 Always computed locally; injected scorer's routing score is ignored.
  *   - `delegationCorrectness`   — rationale quality (route justification).
  *                                 Computed by injected scorer when present; local heuristic otherwise.
- *   - `executionCompleteness`   — path evidence present (file patterns, context).
+ *   - `executionCompleteness`   — task evidence present (task wording, cited files, domain terms).
  *                                 Computed by injected scorer when present; local heuristic otherwise.
  *   - `rationaleQuality`        — generic shuttle fallback appropriateness.
  *                                 Computed by injected scorer when present; local heuristic otherwise.
@@ -559,8 +559,12 @@ export function scoreRoutingCorrectness(
  * Score `delegationCorrectness` (rationale quality for routing decision).
  *
  * Checks whether the model provided a rationale for why it chose the
- * specific category shuttle. Heuristic: looks for file-path patterns,
- * category keywords, or domain phrases in the content.
+ * specific category shuttle. Heuristic: looks for explanatory phrases that
+ * tie the task to a category description or trigger string.
+ *
+ * Routing correctness itself is decided by category descriptions and exact
+ * trigger strings. Cited task evidence is input evidence only; it never makes
+ * a route correct on its own.
  */
 export function scoreDelegationCorrectness(
   content: string,
@@ -611,16 +615,20 @@ export function scoreDelegationCorrectness(
 }
 
 /**
- * Score `executionCompleteness` (path/context evidence present).
+ * Score `executionCompleteness` (task evidence present).
  *
- * Checks whether the model referenced file patterns, directory paths, or
- * domain-specific evidence to justify the category routing. Recognizes:
+ * Checks whether the model grounded its routing decision in evidence taken
+ * from the task: files or directories the task names, or domain terms the
+ * task uses. This is input evidence for a description- and trigger-based
+ * routing decision. It is never a file-matching rule, and citing a file does
+ * not by itself select a category.
+ *
+ * Recognized evidence forms:
  *   - Windows absolute paths (`C:\app\screen.tsx`)
  *   - Windows relative paths (`src\components\Button.tsx`)
  *   - Unix forward-slash paths (`src/components/Button.tsx`)
- *   - Glob patterns (`*.tsx`, `**\/components\/**`)
  *   - Ordinary filenames with extensions (`screen.tsx`, `server.go`)
- *   - Domain keywords (`frontend`, `backend`, `api`, etc.)
+ *   - Domain terms (`frontend`, `backend`, `api`, etc.)
  */
 export function scoreExecutionCompleteness(
   content: string,
@@ -629,20 +637,19 @@ export function scoreExecutionCompleteness(
   if (analysis.classification === "extraction-miss") {
     return {
       score: 0.0,
-      rationale: "No routing decision to evaluate path evidence for.",
+      rationale: "No routing decision to evaluate task evidence for.",
       applicable: true,
     };
   }
 
   const lower = content.toLowerCase();
 
-  // File path patterns: Unix forward-slash paths, Windows backslash paths,
-  // glob patterns, and ordinary filenames with extensions.
-  const pathPatterns = [
+  // Task evidence shapes: Unix forward-slash paths, Windows backslash paths,
+  // ordinary filenames with extensions, and domain terms.
+  const evidenceShapes = [
     /\b\w+\/\w+/, // Unix path segment (src/api)
     /\b\w+\\\w+/, // Windows backslash path segment (src\api)
     /[A-Za-z]:\\\S+/, // Windows absolute path (C:\app\screen.tsx)
-    /\*\.\w{1,6}/, // glob *.ext
     /\b\w+\.\w{1,6}\b/, // filename.ext
     /\bsrc\b/,
     /\bcomponents?\b/,
@@ -656,13 +663,13 @@ export function scoreExecutionCompleteness(
     /\bclient\b/,
   ];
 
-  const hasPathEvidence = pathPatterns.some((pattern) => pattern.test(lower));
+  const hasTaskEvidence = evidenceShapes.some((shape) => shape.test(lower));
 
-  if (hasPathEvidence) {
+  if (hasTaskEvidence) {
     return {
       score: 1.0,
       rationale:
-        "Model referenced file patterns or domain context to justify routing.",
+        "Model cited task evidence (named files or domain terms) to support its routing decision.",
       applicable: true,
     };
   }
@@ -670,7 +677,7 @@ export function scoreExecutionCompleteness(
   return {
     score: 0.5,
     rationale:
-      "Model made a routing decision but no file path or domain evidence found.",
+      "Model made a routing decision but cited no task evidence to support it.",
     applicable: true,
   };
 }
@@ -702,7 +709,7 @@ export function scoreRationaleQuality(
         return {
           score: 1.0,
           rationale:
-            "Falling back to generic shuttle is correct here: no category pattern matched or the matching category is disabled.",
+            "Falling back to generic shuttle is correct here: no category description or trigger string covers the task, or the matching category is disabled.",
           applicable: true,
         };
       }
@@ -1172,7 +1179,7 @@ export interface TapestryCategoryRoutingRunRequest {
  * Evaluates Tapestry's category shuttle routing fidelity WITHOUT canonicalizing
  * `shuttle-{category}` names to `shuttle`. Category fidelity is scored on four
  * dimensions: routing correctness (exact/alternate/fallback/wrong), delegation
- * correctness (rationale quality), execution completeness (path evidence), and
+ * correctness (rationale quality), execution completeness (task evidence), and
  * rationale quality (fallback appropriateness).
  *
  * ## Scorer integration
