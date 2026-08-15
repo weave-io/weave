@@ -63,6 +63,7 @@ User-facing tutorials and product reference live in the [public docs package](..
 | Spec | Status |
 | --- | --- |
 | [33 — Pi private child sessions](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) | Active; amended for private child inspection |
+| [33 — Weave UI design record](specs/33-spec-pi-adapter/33-weave-ui-design.md) | Active; delegation card, child inspector, and Plan Rail |
 
 ## Architecture Decision Records
 

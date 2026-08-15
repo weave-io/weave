@@ -55,7 +55,7 @@ During `session_start`, the adapter reads Pi's host-owned skill catalog from the
 
 If boot activation fails, the adapter remains unavailable and does not retry when a message arrives. The later `before_agent_start` event only appends the committed agent's delimited prompt block without replacing Pi or other-extension context. A native model change after boot governs the active period until an explicit agent switch applies new model intent.
 
-Alt+A cycles healthy `primary` and `all` descriptors in materialization order while Pi is idle. It skips subagents and switches atomically. The footer shows `◆ WEAVE · <NORMALIZED-NAME>`, follows a direct workflow agent while it runs, restores the primary after settlement, and clears in health-only mode or at shutdown.
+Alt+A cycles healthy `primary` and `all` descriptors in materialization order while Pi is idle. It skips subagents and switches atomically. The [Plan Rail](#plan-rail) above the editor shows `◆ WEAVE · <NORMALIZED-NAME>`, follows a direct workflow agent while it runs, restores the primary after settlement, and clears in health-only mode or at shutdown. When the host cannot mount a widget, the same name falls back to Pi's status line.
 
 The badge tints the agent name with a stable background drawn only from theme background tokens Pi itself supports. The choice is deterministic: the normalized agent name (trimmed, whitespace-collapsed, case-folded) always selects the same token in every session and on every machine, with no stored assignment, so you learn one color per agent. Distinct agents may share a color; the same agent never changes color. The agent name keeps its accent foreground. If the active theme exposes no background helper, the badge renders foreground-only — accent, bold agent name, no tint — rather than substituting a different color.
 
@@ -98,15 +98,26 @@ Only an explicit user command authorizes work. Session start, idle, settlement, 
 
 `/weave:start` is the only plan-execution command. It confirms an existing plan and submits it as one visible foreground Pi turn; it creates no durable workflow state and starts no engine-managed workflow. `/weave:run` does one separate thing: it explicitly starts a named engine-managed durable workflow through the engine lifecycle surface, and it never runs a plan on `/weave:start`'s behalf. `/weave:resume` also calls the engine lifecycle surface. Neither command implies the other.
 
-### Plan-task footer
+### Plan Rail
 
-While a durable workflow is active, Pi renders one `weave-task` status entry: `▸ task N/M · <id>. <title>`, bounded to 56 terminal display columns with a single ellipsis when the text is longer. The footer shows exactly one active task, selected by the engine from the same plan snapshot the plan widget and the Alt+T list read, so those surfaces cannot disagree.
+The **Plan Rail** is the single owner of ambient parent context. It mounts as a widget above the real Pi editor, survives `Esc`, and is the only surface that names the active plan task. There is no separate task footer beside it.
 
-The footer clears when nothing is active: no tracked workflow, no readable plan task, a completed, failed, or cancelled workflow, or an unreadable lookup. It never freezes the last snapshot on screen. When the session tracks no workflow but an eligible recovered pointer exists, the footer may show that paused plan as read-only state. Showing a recovered plan authorizes nothing; only `/weave:resume`, with its own confirmation and lease recheck, continues that work.
+Its rows are fixed:
+
+1. `◆ WEAVE · <AGENT>` · `Alt+A cycle` · plan name;
+2. spaced task marks and the ordinal (`3/8`);
+3. `┃ now` and the active task;
+4. `┗ next` and the following task.
+
+The rail degrades through measured width bands, never guessed ones: `wide` at 96 columns or more, `mid` at 68 or more, `tight` at 46 or more, and `micro` below that. Pieces leave in one fixed order — the plan name first, then the `next` row, then the descriptive word `cycle`. `Alt+A` is the last hint standing, and the selected agent name is the last thing the rail can lose. The cycle hint appears only when there is another primary agent to cycle to.
+
+The rail names the running direct workflow step's own agent while one is active, and otherwise only the committed primary; a merely pending selection is never named. It reads parent-side facts only, and its fact type has **no field** for a child id, token count, cost, elapsed time, active tool, or queue depth. Those exclusions are structural, so the rail is byte-identical in every child state; child telemetry belongs to the inspector's Status Matrix rail. Task marks are bounded to 40, after which the row states the position with its ordinal alone.
+
+The rail is removed, not frozen, when there is nothing to name: no Weave primary agent, no tracked workflow, no readable plan task, or a completed, failed, or cancelled workflow. Row 1 still shows the agent when no plan is active, because the plan half is a structural absence rather than a row of blanks. When the session tracks no workflow but an eligible recovered pointer exists, the rail may show that paused plan as read-only state. Showing a recovered plan authorizes nothing; only `/weave:resume`, with its own confirmation and lease recheck, continues that work.
 
 ### Alt+T plan-task list
 
-`Alt+T` opens a read-only, scrollable list of the active plan's parent tasks. It reads the same active-plan and recovery source as the footer, marks each task `[ ]`, `[~]`, or `[x]`, points a cursor at the active task, and opens on that task rather than at the top. The viewport is bounded on both ends, so a small terminal still scrolls and a tall terminal does not become a full-screen takeover; when tasks are hidden the last line says how many.
+`Alt+T` opens a read-only, scrollable list of the active plan's parent tasks. It reads the same active-plan and recovery source as the Plan Rail, marks each task `[ ]`, `[~]`, or `[x]`, points a cursor at the active task, and opens on that task rather than at the top. The viewport is bounded on both ends, so a small terminal still scrolls and a tall terminal does not become a full-screen takeover; when tasks are hidden the last line says how many.
 
 Navigation uses your configured Pi keybindings, not fixed bytes: `tui.select.up` and `tui.select.down` scroll, `tui.select.cancel` closes. The hint line names the keys you actually have bound. If a binding is unbound, the list says so rather than silently restoring a default.
 
@@ -182,7 +193,7 @@ Cleanup is explicit only. The adapter runs no retention timer, prunes nothing on
 
 Production `children.delete` is available only after the same Pi-native readiness proof used for delegation. The command resolves a selected terminal child through its immutable origin record, removes its verified session, and appends a tombstone record to `tombstones.jsonl` at the session-tree root. The tombstone file is append-only: there is no rewrite or truncate path. A tombstoned child stays listed, marked `tombstoned`, so a removal is visible rather than silent. List, show, doctor, history, and inspect stay read-only.
 
-A child whose parent session is gone becomes an orphan. Orphans stay readable and stay listed; the overlay marks them `Read-only orphan — mutations disabled` and refuses steering, follow-up, retry, and continue. `ChildOrphanReadOnly` is the corresponding failure code. The adapter does not delete orphans.
+A child whose parent session is gone becomes an orphan. Orphans stay readable and stay listed; the inspector marks them `read-only — this child was orphaned` and refuses steering, follow-up, retry, and continue. `ChildOrphanReadOnly` is the corresponding failure code. The adapter does not delete orphans.
 
 #### No migration from the JSONL store
 
@@ -200,39 +211,58 @@ Recovery is deliberately narrow: it may recover an interrupted ordinary top-leve
 
 The inspection view renders with Pi's own chat components, so a streamed child reads like a native Pi session: user and task blocks, markdown answer text, italic reasoning, and Pi's tool-execution blocks with real diffs and bash output. Tool calls render through Pi's builtin tool definitions, so a row reads `read <path>` rather than a bare tool name. The adapter injects those components through a narrow port (`PiTranscriptComponentFactory`); the transcript reducer and its dependency-free fallback renderer stay pure, and the fallback text still renders when a component cannot be built. Bookkeeping facts Pi never shows — usage, queue, status, retry, extension-UI requests, and unknown events — are suppressed instead of printed as event prose.
 
-A pinned header names the child and its runtime: status, the concrete model, the reasoning level it was bootstrapped with, turn and queue counts, and token cost. Messages sit one blank row apart. Below the header the transcript scrolls: PageUp and PageDown move a page, Shift+Up and Shift+Down a line, Home jumps to the oldest output, and End follows the live tail again. If the newest page still fits the overlay but older history exists, PageUp and Home load that older page and leave live tail so the prepended rows become visible. The overlay matches these keys by identity, so legacy terminal frames, Kitty event-aware frames, and SS3 `ESC O H` / `ESC O F` all work, and it ignores Kitty release frames. While scrolled back, the view says how many newer lines wait below. Escape leaves the view without cancelling anything, and leaving returns the tree editor to the root so typing goes to the parent session again, not to the child.
+The two-row session header names identity and parent context only; every number lives on the Status Matrix rail. Messages sit one blank row apart. Below the header the transcript scrolls: PageUp and PageDown move a page, Shift+Up and Shift+Down a line, Home jumps to the oldest output, and End follows the live tail again. If the newest page still fits the overlay but older history exists, PageUp and Home load that older page and leave live tail so the prepended rows become visible. The overlay matches these keys by identity, so legacy terminal frames, Kitty event-aware frames, and SS3 `ESC O H` / `ESC O F` all work, and it ignores Kitty release frames. While scrolled back, the view says how many newer lines wait below. Escape leaves the view without cancelling anything, and leaving returns the tree editor to the root so typing goes to the parent session again, not to the child.
 
 The session editor is a single shared Pi surface, so Weave never claims it away from another extension. If a foreign editor factory (for example `pi-vim`'s modal editor) is already installed, Weave leaves it in place for the rest of the generation and does not reassert its own on `session_start`, `before_agent_start`, or `agent_start`. If a foreign factory appears after Weave activated, Weave yields on the next lifecycle event instead of reclaiming. Child inspection still works because the overlay carries its own local editor. It never borrows, replaces, or restores the primary session editor during mount or teardown. Root-level child-tree keys are the only optional convenience lost when Weave yields.
 
-#### Compact delegation block
+#### Delegation card
 
-A running `weave_delegate` call renders as exactly three collapsed lines, in every state, for every child:
+Each `weave_delegate` run renders one framed **delegation card** in the parent's own Pi transcript. The registered tool draws it through `renderResult` with `renderShell: "self"`, so Pi puts the component in a bare container and no second box or tint is drawn around the card's own frame. The adapter appends no transcript entry and registers no entry renderer for it.
 
 ```
-Shuttle gpt-5.6-terra high
-<latest activity>
-run 2 · editing
+╭─ weave_delegate ──────────────────────────────────────────╮
+▌ RUNNING │ Rewrite the Pi adapter's user-facing UI docs.
+ shuttle   │ ⏵ edit docs/adapters/pi.md
+ 1m 12s    │
+╰─ run 1 · streaming · 1m 12s ─── Ctrl+O expand · Alt+I inspect child ─╯
 ```
 
-Line one names the child, its concrete model, and its reasoning level. Line two is the latest whitespace-normalized activity, bounded to 240 code points; expanding the entry reveals the current item up to 4 KiB. Line three names the run number and the current action, so a retried or continued thread shows which run you are watching.
+The card is one frame: exactly one top edge, exactly one bottom edge, and no corner glyph inside it. Its collapsed height is four to six rows at every width and does **not** change at settlement.
 
-The block is fail-closed: invalid state or a render failure produces a degraded three-line block rather than a partial or missing entry. Chrome lines never echo opaque thread ids, session paths, or native session ids. The reducer keeps at most 64 runs per thread and 128 items per run; older runs stay frozen exactly as they last rendered.
+- **Status-first rail.** A ten-column left rail carries the upper-case state word behind a toned bar, then the child agent name, then elapsed. The drop order is mechanical: the state word and the child name survive every width, elapsed is the only droppable cell, and below the minimum body width identity folds and the rail disappears.
+- **Assignment.** The top body row is one imperative sentence in the parent's own words — no provenance prefix, acceptance clause, scope field, or routing rationale. When the parent recorded none, the row reads `no assignment recorded`.
+- **Native Line.** Beneath the assignment there is exactly one line: a semantic glyph plus the single most meaningful thing the child has produced. Whitespace-only and control-only fragments are skipped, and reasoning appears as a bounded summary only. The `✓` glyph belongs to the settlement-named output, so a collapsed row can never imply an answer the settlement has not published.
+- **Balanced edge footer.** The bottom edge carries the run and the lifecycle phase plus elapsed, tokens, and cost on the left, and `Ctrl+O expand · Alt+I inspect child` on the right. It never prints the status word the rail already owns. The action side is measured first, so an affordance always outlives a number, telemetry never outlives `Ctrl+O`, and `Alt+I` is the last hint standing.
 
-Every 64-run bound in the adapter — the compact reducer, the overlay descriptor, and the parent child ref — is a bounded newest-last **window**, not a ceiling on how many times a thread may run. A ref carries the cumulative `totalRuns` alongside its window, so run 65 and run 1,001 append normally, the run ordinal keeps counting after a restart, and only the finite one-million ordinal ceiling can refuse an append.
+`Ctrl+O` is Pi's own tool-expand action and `Alt+I` is the existing Weave picker action. The card registers **no** keybinding and prints both as hints only. The expand verb is `expand` while running, `details` once settled, and `collapse` while expanded. Expanded, the card adds one interior rule and a fixed-height child viewport: one status strip reading `LIVE · following bottom` while the child can still act and `AT BOTTOM · child settled` once it cannot, plus `↑ N rows above` when scrollback exists, over exactly nine literal bottom transcript rows. Nothing in the viewport is summarized, grouped, or relabelled.
 
-#### True child overlay
+Settlement is **native and authoritative**. The authoritative settlement rewrites the rail state word, the Native Line, and the footer verb, and adds no row, banner, border verdict, or action deck. A `message_end` never produces a completed card or a success glyph, so an ended-but-unsettled assistant message cannot claim completion. The card never offers retry, steer, resume, or cancel, in any state. A failed card prints the already-redacted reason and names recovery only where the failure class is documented as recoverable; a cancelled card names the initiator in safe terms, says the partial work was kept and that nothing was verified, and never claims success.
 
-Opening a child mounts a centered, bordered Pi overlay above the parent UI. The parent stays visible around it. The overlay uses Pi's native transcript components and a fresh Weave-owned `CustomEditor`, so it never replaces or borrows the primary editor. Its row budget matches Pi's `86%` maximum-height and margin rules, and Pi hides the overlay instead of corrupting it below 44 columns or 12 rows. On short terminals it reduces transcript rows first, which keeps the draft editor and bottom border visible.
+The card is fail-closed and bounded. The reducer keeps at most 64 runs per thread and 128 items per run, and older runs stay frozen exactly as they last rendered. Its persisted `details` payload is versioned, bounded, and strictly parsed, and a foreign, older, or oversized payload degrades to a bounded four-row card that says `delegation card unavailable`, prints the bounded reason, keeps the `Alt+I` hint, and claims no state, telemetry, or outcome. Re-rendering from persisted details after replay or restart reproduces the final live frame; a render failure never affects the child run. Every child-sourced string is sanitized before it becomes a segment, and box-drawing glyphs are reachable only through the frame primitive, so child text structurally cannot forge a frame. The card exposes no filesystem path, native session id, or opaque thread id, and the model-visible `content[0].text` stays a bounded activity line with no card chrome. Nested delegation uses the same renderer; each run gets a new card, and a prior run's card is frozen and never rewritten.
 
-The surface has four regions. One titled frame carries the child's lifecycle marker. The Session Header states identity and parent context only: agent, model, role, bounded task title, delegating agent, and the parent's plan breadcrumb. The Status Matrix rail on the right states every operational fact — lifecycle, work, queue, and spend — and folds into dense rows above the transcript when the terminal is too narrow for a rail. The prompt panel below the transcript holds the editor and one key row.
+Every 64-run bound in the adapter — the card reducer, the overlay descriptor, and the parent child ref — is a bounded newest-last **window**, not a ceiling on how many times a thread may run. A ref carries the cumulative `totalRuns` alongside its window, so run 65 and run 1,001 append normally, the run ordinal keeps counting after a restart, and only the finite one-million ordinal ceiling can refuse an append.
 
-The local editor owns cursor movement, deletion, multiline text, and draft state. `Enter` steers the active child, and `Alt+Enter` queues a follow-up. Settled and orphan children hide the editor and remain read-only. The overlay owns pagination through recorded history, search, live tail, and per-child view state, and it isolates input: while mounted, no key reaches Pi or the primary editor.
+#### Child inspector
 
-The rail's SPEND group reports the focused child's runtime tokens and cost. The values come only from the host's own bounded usage reports; the overlay keeps the latest report per child and never sums runs. Any field the host did not report shows `—`. Nothing is estimated, so an unreported count stays `—` rather than becoming `0`. The header carries no telemetry and no child ID.
+Opening a child mounts the **child inspector**: a centered, bordered Pi overlay above the parent UI. The parent stays visible around it. There is exactly one instance — opening another child, including a nested one, swaps the content instead of stacking. The overlay uses Pi's native transcript components and a fresh Weave-owned `CustomEditor`, so it never replaces or borrows the primary editor. Its row budget matches Pi's `86%` maximum-height and margin rules, and Pi hides the overlay instead of corrupting it below 44 columns or 12 rows. On short terminals it reduces transcript rows first, which keeps the draft editor and bottom border visible.
 
-`Ctrl+O` switches the focused child between the full transcript and a compact one-line-per-entry view. Compact is a render-time projection: no entry is dropped or rewritten, the draft and search state survive the toggle, and the viewport stays anchored on the same entry even though the row count changes. The mode is per child and defaults to full.
+The finalized surface is one high-contrast titled outer frame — ` WEAVE · CHILD INSPECTOR ` — carrying the child's state marker. Nothing is drawn outside it, and no second frame, fake transcript, editor, or footer exists. Inside it, in order:
 
-Historical pages adapt native session entries directly through the host's read API. Live output flows through the same parser and compact pipeline as the collapsed block, so the two views cannot disagree. A terminal assistant `stopReason: "error"` also flows through one bounded sanitizer and renderer: safe 429, 5xx, connection, and timeout facts can appear, while unavailable or unsafe facts show `assistant error · details unavailable`. Full, compact, historical, fallback, and parent-summary surfaces use the same canonical line, and the rail states the classification rather than repeating that sentence. A later successful assistant terminal event clears a stale error; tool failure alone does not create one. PageUp, PageDown, Shift+Up, Shift+Down, Home, and End scroll the transcript. Scroll keys are matched by key identity rather than by raw bytes, so legacy, Kitty event-aware, and SS3 encodings of the same key all scroll, and a Kitty release frame never repeats a page. Pi does not enable terminal mouse reporting (including SGR-1006 and modes 1002/1003), so mouse-wheel events cannot reach the component. Mouse-wheel scrolling remains unavailable until Pi exposes a mouse input surface.
+- **Session header, row 1.** An inverse ` CHILD ` badge, the child agent name, its model, its role, and its bounded task title, all left-aligned. The model sits immediately after the name and appears **exactly once**. The header grows to two rows before it drops the title.
+- **Session header, row 2.** `delegated by <PARENT>` followed by the plan › task › subtask breadcrumb, shedding subtask first, then plan.
+- **Transcript.** A Pi-native pane on the left: role gutters, understated read / edit / bash calls and results, reasoning as a bounded summary only, and plain streaming and final assistant responses. Raw chain-of-thought is never rendered. The originating prompt comes first, then user messages, assistant text, reasoning summaries, tool calls and results, errors, retry dividers, and images.
+- **Status Matrix rail.** An aligned key/value matrix on the right, grouped lifecycle · work · spend, with an inverse alert pair above the matrix when a tool fails. Below the width at which the rail and the transcript minimum both fit, it folds to its compact matrix form rather than disappearing.
+- **Prompt panel.** A primary-like bordered editor over one muted key row. A disabled key prints an explicit `✕` rather than only dim colour, so a settled child reads as unactionable on a monochrome terminal. The key row sheds ordinary notes, then the danger note, then whole chips in ladder order — `/ search`, then `Alt+Enter queue`, then `q cancel` — with `Enter` and `Esc` as the floor.
+
+The header carries **no telemetry row and no child ID**: its fact type has no field for either. The child ID appears in exactly one place, the transcript's bootstrap row, and is never a raw opaque ID or a secret.
+
+The local editor owns cursor movement, deletion, multiline text, and draft state. `Enter` steers the active child, and `Alt+Enter` queues a follow-up. Settled and orphan children get the same editor, read-only and caretless, and a cancelled child is settled exactly like a completed one. The overlay owns pagination through recorded history, search, live tail, and per-child draft and scroll state, and it isolates input: while mounted, no key reaches Pi or the primary editor.
+
+The rail is the sole telemetry surface for the focused child: provider, model, context percentage, input and output token counts, elapsed, queue depth, turn, and spend. The values come only from the host's own bounded, parser-approved usage reports; the overlay keeps the latest report per child and never sums runs. Any field the host did not report, or reported outside its pinned bounds, shows `—`. Nothing is estimated, so a missing context window means no percentage rather than `0%`.
+
+Settlement adds no chrome at all. The authoritative final response, the safe failure line, the cancellation record, and the retry record are ordinary transcript events; the frame marker and the rail carry the state word. There is no banner band, rail verdict section, transcript checkpoint block, or action deck. Failure text reaches the screen only through the sanitizer, which strips ANSI, removes stack frames, redacts credential-shaped tokens and long opaque IDs, and hides absolute paths.
+
+Historical pages adapt native session entries directly through the host's read API, with cursors in both directions, so the overlay never loads an entire large transcript. Live output flows through the same parser and card pipeline as the delegation card, so the two surfaces cannot disagree. A terminal assistant `stopReason: "error"` also flows through one bounded sanitizer and renderer: safe 429, 5xx, connection, and timeout facts can appear, while unavailable or unsafe facts show `assistant error · details unavailable`. The card, the live and historical inspector, the fallback path, and the parent-facing summary use the same canonical line, and the rail states the classification rather than repeating that sentence. A later successful assistant terminal event clears a stale error; tool failure alone does not create one. PageUp, PageDown, Shift+Up, Shift+Down, Home, and End scroll the transcript. Scroll keys are matched by key identity rather than by raw bytes, so legacy, Kitty event-aware, and SS3 encodings of the same key all scroll, and a Kitty release frame never repeats a page. Pi does not enable terminal mouse reporting (including SGR-1006 and modes 1002/1003), so mouse-wheel events cannot reach the component. Mouse-wheel scrolling remains unavailable until Pi exposes a mouse input surface.
 
 When the host does not provide the `child-overlay-lifecycle` surface, the overlay degrades to the existing custom-editor inspection path instead of disappearing. Delegation itself is unaffected: overlay gaps never trigger health-only mode.
 
@@ -244,27 +274,64 @@ Overlay controls are named actions with defaults, not fixed bytes:
 | --- | --- |
 | `weave.child.picker.open` | `alt+i` |
 | `weave.child.slot.1` … `weave.child.slot.9` | `alt+1` … `alt+9` |
-| `weave.child.sibling.previous` | `alt+left`, `alt+h` |
-| `weave.child.sibling.next` | `alt+right`, `alt+l` |
-| Compact view toggle (in-overlay, not a host shortcut) | `ctrl+o` |
+| `weave.child.sibling.previous` | `alt+h`, then `alt+left` |
+| `weave.child.sibling.next` | `alt+l`, then `alt+right` |
+
+The sibling defaults lead with `alt+h` / `alt+l` on purpose: Pi binds `alt+left` / `alt+right` to its own tree folding and pi-tui binds them to word motion, so the arrow forms are second candidates that conflict detection normally skips and reports. `alt+h` and `alt+l` are the keys you can actually press.
 
 Override them under `settings.adapters.pi.child_inspection.keys`, keyed by action id, with a single key string or up to four keys per action. The map is strict: an unknown action id or malformed key syntax is a validation error, never a silent drop.
 
-Every key is checked against your effective Pi keybindings before it is claimed. A key that is already bound stays with its existing owner; the adapter skips its own binding and reports it once as `weave overlay action <id> skipped key <key>: already bound to <owner>`. Weave never overwrites a binding you or another extension already have.
+Every key is checked against your effective Pi keybindings before it is claimed. A key that is already bound stays with its existing owner; the adapter skips its own binding and reports it once as `weave overlay action <id> skipped key <key>: already bound to <owner>`. Weave never overwrites a binding you or another extension already have, and a skipped affordance is not advertised in the key row.
+
+The rest of the overlay's keys are consumed only while it is mounted and focused. They are never registered as Pi shortcuts, so they keep their ordinary meaning everywhere else:
+
+| Key | While the overlay is mounted |
+| --- | --- |
+| `Escape` | Leaves search when search is open, dismisses the cancel confirmation when it is open, otherwise closes the overlay |
+| `Backspace` | Edits the draft; on an empty draft focuses the parent child or closes the overlay |
+| `PageUp`, `PageDown`, `Shift+Up`, `Shift+Down`, `Home`, `End` | Scroll the transcript; `End` re-engages the live tail |
+| `Enter` | Steers the focused live child (accepts the match while search is open) |
+| `Alt+Enter` | Queues a follow-up for the focused live child |
+| `/` | Opens rail search, empty draft only |
+| `Ctrl+F` | Opens rail search at any draft, only when the host does not own the key |
+| `n`, `N` (aliases `j`, `k`, `Down`, `Up`) | Next and previous match, while search is open |
+| `q`, `Q` | Opens the cancel-subtree confirmation, empty draft over a live child only |
+| `y`, `n` | Confirm and dismiss, while the cancel confirmation is open |
 
 Escape closes child inspection. One press closes the overlay, returns focus to the parent, and leaves the inspected child running. It never cancels a child and never reaches Pi while the overlay is mounted. In search mode it leaves search instead.
 
-Cancelling is explicit and separate. With an empty overlay draft, `q` or `Q` opens a confirmation whose choices are `Keep running` and `Cancel subtree`, defaulting to `Keep running`. Only choosing `Cancel subtree` cancels; dismissing the modal, or any other outcome, leaves the child running. With a non-empty draft, `q` types a character as usual, and a settled or orphan child opens no confirmation at all. `q` is never registered as a Pi shortcut, so it keeps its ordinary meaning everywhere else.
-
-`Ctrl+O` is checked against your effective Pi keybindings like every other overlay key. If the host already binds it, the toggle is skipped and reported as `weave overlay compact view skipped key ctrl+o: already bound to <owner>`, and the compact help row is not shown.
+Cancelling is explicit and separate. With an empty overlay draft, `q` or `Q` opens a confirmation whose choices are `Keep running` and `Cancel subtree`, defaulting to `Keep running`. The overlay answers the question itself: while it is open only `y` (confirm), `n` and `Escape` (dismiss) are read, and every other key is swallowed rather than guessed at. Only an explicit `Cancel subtree` cancels; dismissal, an absent choice, or a select failure leaves the child running. With a non-empty draft, `q` types a character as usual, and a settled, orphan, or absent target reports no target instead of prompting for nothing. `q` and `Q` are matched semantically and are never registered as Pi shortcuts, so `q` keeps its ordinary meaning everywhere else.
 
 Backspace edits at the owned editor's cursor when its draft is non-empty. On an empty editor draft it moves focus to the parent child, or closes the overlay when the focused child is already a direct child of the session.
 
-#### Transcript search
+The transcript scrolls with PageUp, PageDown, Shift+Up, Shift+Down, Home, and End, matched by key identity rather than by raw bytes, so legacy, Kitty event-aware, and SS3 encodings of the same key all scroll. `Enter` steers the focused live child and `Alt+Enter` queues a follow-up; a settled or orphan child accepts neither.
 
-`Ctrl+F` opens a search prompt inside the focused overlay. Type a query and press Enter to run it; the header then shows the query and the current match position, `n` moves to the next match, `N` to the previous one, and Escape leaves search and clears the query. Search owns the keyboard while the prompt is open: no key reaches the draft editor, the overlay key actions, or Pi, and Escape closes search rather than the overlay. A settled or orphan child stays read-only throughout, so search can never steer or follow up.
+Key precedence inside the overlay is stated once and never reordered: **cancel confirmation › search › overlay keys › draft editor**. A key release is dropped before any of it, so one physical press never acts twice.
 
-Searching scans every page within the overlay's bounded historical page budget, not just the first page that contains a hit, and merges the matches from all of them in transcript order without duplicates. A match that the bounded window has since trimmed still counts toward the reported total, so the match count is the real total rather than the visible one. `Ctrl+F` is checked against your effective Pi keybindings like every other overlay key: if the host already binds it, the route is disabled and reported as `weave overlay search skipped key ctrl+f: already bound to <owner>` instead of taking the key over.
+Two keys are deliberately **not** claimed while the overlay is mounted. `Ctrl+O` is Pi's own tool-expand action for the delegation card; the inspector has one view, so Weave plans no action for it and registers no binding. `Alt+A` and `Alt+T` are Weave's own agent and plan shortcuts, and Pi dispatches extension shortcuts outside a focused `ui.custom` component, so they do not route while the overlay owns input. Closing the overlay restores them.
+
+#### Rail search
+
+Search opens on `/` while the overlay draft is empty. A slash typed into a non-empty steer keeps belonging to the draft; the empty-draft gate is the whole guarantee. `Ctrl+F` is a conflict-safe alias that works whatever the draft holds — but only when the host does not already own the key. Pi normally binds `Ctrl+F` to `tui.editor.cursorRight`, so the alias is usually skipped and reported once as `weave overlay search skipped key ctrl+f: already bound to <owner> (usually tui.editor.cursorRight); / still opens search on an empty draft`. Losing the alias never loses search.
+
+Search is **rail search**. Opening it prepends a SEARCH section to the Status Matrix rail and gives the transcript a two-column marker gutter. Type a query and press `Enter` to run it and latch the anchor; the rail then reports the committed query and the current match position, while a query still being typed is reported as typed. `n` moves to the next match and `N` to the previous one, with `j` / `k` and Down / Up as aliases, and the transcript window follows the rail cursor. `Escape` leaves search only, and the overlay stays mounted. The match list is built from an ANSI-free twin render, so no byte of transcript colour can paint the search rail, and prompt facts cannot reach navigation facts, so the prompt is byte-identical with search open and closed.
+
+Search owns the keyboard while it is open: no key reaches the draft editor, the overlay key actions, or Pi. Control sequences never edit the query, the query is bounded, and a settled or orphan child stays read-only throughout, so search can never steer or follow up. `/`, `n`, and `N` are never registered as Pi shortcuts.
+
+Searching scans every page within the overlay's bounded historical page budget, not just the first page that contains a hit, and merges the matches from all of them in transcript order without duplicates. A match that the bounded window has since trimmed still counts toward the reported total, so the match count is the real total rather than the visible one.
+
+#### Removed surfaces
+
+Four earlier surfaces are gone. If you are upgrading, expect them to be absent rather than hidden behind a setting:
+
+| Removed surface | Replacement |
+| --- | --- |
+| The three-line compact `weave_delegate` block, with its name/model/level line, activity line, and `run N · action` line. | One framed [delegation card](#delegation-card) per run, with a status-first rail, an assignment row, a Native Line, a balanced edge footer, and a nine-row expanded child viewport. |
+| The per-child `full` / `compact` overlay view mode and its in-overlay toggle. | Removed outright. The inspector has one view, and `Ctrl+O` is Pi's own tool-expand action for the card, which Weave never registers. |
+| The overlay header's telemetry row (status, model, reasoning level, turn and queue counts, token cost). | The Status Matrix rail, which is the only place child telemetry appears. The header carries identity and parent context only. |
+| The duplicate `weave-task` plan-task footer beside the plan widget. | The [Plan Rail](#plan-rail), the single owner of ambient parent context. |
+
+The `child_inspection.keys` map declares no view-toggle action, so a config that names one is a validation error. See the [Weave UI design record](../specs/33-spec-pi-adapter/33-weave-ui-design.md) for why each surface was dropped.
 
 #### Why an inspection opened in the fallback editor
 
@@ -313,27 +380,19 @@ For troubleshooting, start with `/weave:health`, then `/weave:doctor`, then the 
 
 ### Settlement and output
 
-The delegation tool entry names its child on the call line and shows the child's
-latest output below a rule:
+The [delegation card](#delegation-card) is the tool entry. Its rail names the
+child and its state, and its Native Line carries the child's latest meaningful
+output. The model and reasoning level come from the same resolution the child's
+bootstrap carries, so the card names what the child will actually run on before
+it exists.
 
-```
-Shuttle gpt-5.6-terra high
-──────────────────────────────────────────────────
-<latest thought or answer text>
-```
-
-The model and reasoning level come from the same resolution the child's
-bootstrap carries, so the entry names what the child will actually run on before
-it exists. When no output has streamed yet, the body shows the child's status.
-
-While a child runs, `weave_delegate` updates its tool entry from Pi's streamed
-`message_update` events. Before answer text starts, the entry shows the latest
-bounded `thinking_delta` preview so a reasoning child does not look frozen.
-Once a `text_delta` arrives, answer text replaces the thinking preview and
-remains authoritative. Both previews are transient, capped at 4 KiB, and never
-persisted. The collapsed tool entry shows the latest whitespace-normalized 240
-code points; expanding it reveals the full bounded preview. The status line also
-shows the child's current tool. Spawn failures return the typed code plus the adapter-owned safe message,
+While a child runs, `weave_delegate` updates the card from Pi's streamed
+`message_update` events. Before answer text starts, the Native Line shows the
+latest bounded `thinking_delta` summary so a reasoning child does not look
+frozen. Once a `text_delta` arrives, answer text replaces the thinking summary
+and remains authoritative. Both previews are transient, capped at 4 KiB, and
+never persisted. The collapsed Native Line shows the latest whitespace-normalized
+240 code points; `Ctrl+O` expands the card to nine literal transcript rows. Spawn failures return the typed code plus the adapter-owned safe message,
 closed reason when available, retryability, and recovery hint; raw host errors
 and environment values never enter the result.
 

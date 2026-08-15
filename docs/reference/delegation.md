@@ -63,6 +63,8 @@ A delegation call addresses a *thread*: one logical unit of delegated work that 
 
 `instruction` applies only to `retry`; `start` and `continue` ignore it. A `retry` or `continue` on a thread that is still running is refused rather than queued twice. Each run gets its own run number, and the previous run's rendering is frozen rather than rewritten.
 
+How a run is drawn is the adapter's concern. In Pi, each run renders as one framed [delegation card](../adapters/pi.md#delegation-card) whose footer prints `Ctrl+O expand · Alt+I inspect child`, and `Alt+I` opens the [child inspector](../adapters/pi.md#child-inspector). The card offers no retry, steer, resume, or cancel action: a thread action is a `weave_delegate` call, never a keypress.
+
 A retried or continued thread reuses its existing conversation, so capacity accounting follows the same rules as a fresh start: it consumes active capacity while it runs and releases it on settlement.
 
 ## Result contract

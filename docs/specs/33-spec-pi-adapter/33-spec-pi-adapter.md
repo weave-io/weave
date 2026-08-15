@@ -414,6 +414,9 @@ existing user keybindings are reported as a diagnostic and are never overwritten
 | Select active child | `Alt+1`..`Alt+9` | Indexes active children in stable tree order |
 | Sibling navigation | `Alt+Left` / `Alt+Right`, `Alt+H` / `Alt+L` | Moves between siblings |
 | Parent navigation | empty `Backspace` | Moves to parent, or closes the overlay when opened directly |
+| Scroll the transcript | `PageUp` / `PageDown`, `Shift+Up` / `Shift+Down`, `Home` / `End` | Matched semantically in legacy, Kitty, and SS3 encodings |
+| Steer the focused child | `Enter` | Submits the draft to a live child |
+| Queue a follow-up | `Alt+Enter` | Queues the draft behind the current turn |
 | Close inspection | `Escape` | Closes the overlay and leaves the child running |
 | Cancel subtree | empty-draft `q` / `Q` | Opens the in-overlay cancel-subtree confirmation |
 | Open rail search | empty-draft `/` | Prepends the SEARCH section to the rail and shows the marker gutter |
@@ -431,14 +434,25 @@ confirmation. With search open, `Escape` leaves search only; with both closed,
 `Escape` is consumed by the overlay and must never fall through to Pi while the
 overlay is mounted. It closes inspection and never cancels.
 
-The overlay claims no search key that the host owns. `Ctrl+F` belongs to Pi's
-own editor action and must not be taken; rail search is reached through the
-empty-draft `/` route instead.
+The overlay claims no search key that the host owns. Rail search is always
+reachable through the empty-draft `/` route. `Ctrl+F` is offered as a
+conflict-safe alias that opens search whatever the draft holds, and it is
+routed only when the same conflict port reports the key free. Pi normally binds
+`Ctrl+F` to `tui.editor.cursorRight`, so the alias is normally skipped and
+reported once, naming the current owner, the usual owner, and the surviving `/`
+route. Losing the alias never removes search.
 
-`Ctrl+O` is Pi's own tool-expand action. Weave registers no binding for it: it
-expands the §6 delegation card in the parent transcript and is printed on the
-card footer as a hint only. `Alt+A` is the existing primary-agent cycle shortcut
-and belongs to the Plan Rail widget, not to the overlay.
+`Ctrl+O` is Pi's own tool-expand action. Weave declares no overlay action for it
+and registers no binding: it expands the §6 delegation card in the parent
+transcript and is printed on the card footer as a hint only. `Alt+A` and `Alt+T`
+are Weave's own primary-agent and plan-task shortcuts. They belong to the parent
+surfaces, and because Pi dispatches extension shortcuts outside a focused
+`ui.custom` component, they do not route while the overlay owns input; closing
+the overlay restores them.
+
+A key release is dropped before any route runs, so one physical press never acts
+twice. Below the confirmation and search, the remaining order is overlay keys,
+then the overlay's own draft editor.
 
 `q` and `Q` are matched semantically and are never registered as host shortcuts,
 so typing `q` outside the overlay, or into a non-empty overlay draft, keeps its
@@ -750,7 +764,8 @@ implementation may apply a superseded rule alongside its replacement.
 | Render each delegation run as a fixed three-line compact tool block with an expanded current item. | One framed inline delegation card with a status-first rail, an assignment row, a Native Line, a balanced edge footer, and a nine-row expanded child viewport (§6). |
 | Offer a per-child overlay view mode of `full` or `compact`, toggled in-overlay by `Ctrl+O`. | Removed. The overlay has one view; `Ctrl+O` is Pi's own tool-expand action for the §6 card and is never registered by Weave (§7, §8.1). |
 | Render a header telemetry row for the focused child in the overlay. | Telemetry lives only on the Status Matrix rail; the header carries identity and parent context (§7). |
-| Reach in-overlay search through `Ctrl+F`. | Rail search through empty-draft `/`, with `n` / `N` movement and `Enter` accept (§7, §8.1). |
+| Reach in-overlay search through `Ctrl+F` as the primary opener. | Rail search through empty-draft `/`, with `n` / `N` movement and `Enter` accept. `Ctrl+F` survives only as a conflict-checked alias that is normally skipped (§7, §8.1). |
+| Publish a `weave-task` plan-task footer beside the plan widget. | The Plan Rail above the parent editor is the single owner of ambient parent context (§7, design record §4). |
 | Cancel a child subtree with a double `Escape` within `750 ms`. | `Escape` closes inspection only; empty-draft `q` / `Q` opens the cancel confirmation (§7, §8.1). |
 | Blanket prohibition on private-child auto-resume. | Explicit thread retry and continue with ownership, capacity, and integrity semantics (§9). |
 | Settings `persist_history`, `max_bytes_per_child`, `max_bytes_total`, `orphan_retention_days`, `recovery_enabled`, `recovery_countdown_seconds`. | Removed. Storage is native, unquota'd, and cleaned up explicitly. |

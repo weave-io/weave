@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 302 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~32,600 tokens. Without it, AI exploration would cost ~97,400 tokens. **Saves ~64,700 tokens per conversation.**
-> **Last scanned:** 2026-08-14 23:00 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 301 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~32,600 tokens. Without it, AI exploration would cost ~97,100 tokens. **Saves ~64,500 tokens per conversation.**
+> **Last scanned:** 2026-08-15 00:18 — re-run after significant changes
 
 ---
 
@@ -154,12 +154,12 @@
   - _...36 more_
 - `packages/adapters/pi/src/child-compact-render.ts`
   - function createChildCompactState: (threadId) => ChildCompactState
-  - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
   - function sanitizeChildCompactText: (value) => string
   - function mapPiChildSessionEventToCompactInput: (event, itemId) => NeverthrowResult<ChildCompactReducerInput | undefined, ChildCompactError>
   - function reduceChildCompact: (state, input) => NeverthrowResult<ChildCompactState, ChildCompactError>
   - function reduceChildCompactSafe: (state, input) => ChildCompactState
-  - _...27 more_
+  - function childCompactChromeIsClean: (chrome, state) => boolean
+  - _...19 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function makeCancelBody: (reason) => void
@@ -278,13 +278,12 @@
   - function openPiChildMetadataCacheReadOnly: (options) => ResultAsync<PiChildMetadataCacheOpenOutcome, never>
   - _...31 more_
 - `packages/adapters/pi/src/child-native-components.ts`
-  - function renderPiChildCompactComponent: (output, options, theme) => NeverthrowResult<
   - function degradedPiChildCardComponent: (reason) => PiToolRenderComponent
   - function renderPiChildCardComponent: (facts, options, theme) => NeverthrowResult<
   - function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory
   - interface PiNativeTranscriptComponentDeps
   - interface PiChildCardComponentOptions
-  - _...2 more_
+  - const CHILD_CARD_NATIVE_RENDER_FAILED
 - `packages/adapters/pi/src/child-native-results.ts`
   - function readNativeResultGroup: (expected, entries) => PiNativeResultGroupState
   - function planResultGroupWrite: (output) => Result<PiNativeResultWritePlan, PiNativeSessionError>
@@ -325,7 +324,7 @@
   - function formatOverlayCost: (cost) => string | undefined
   - function childOverlaySettlementFacts: (view) => OverlaySettlementFacts
   - function childOverlayName: (view) => string
-  - _...7 more_
+  - _...4 more_
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string
@@ -357,7 +356,7 @@
   - function overlaySectionHead: (paint, title, width) => string
   - function headerIdentityRow: (paint, facts, width) => HeaderRow
   - function headerContextRow: (paint, facts, width) => HeaderRow | undefined
-  - _...55 more_
+  - _...56 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
@@ -410,7 +409,7 @@
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
   - interface ChildOverlayConfig
-  - _...37 more_
+  - _...34 more_
 - `packages/adapters/pi/src/child-overlay-window.ts`
   - function emptySaved: (threadId, touched) => SavedChildState
   - function isReadOnly: (child) => boolean
@@ -716,7 +715,14 @@
   - class FakePiPlanCatalogPort
   - interface PiPlanCatalogPort
 - `packages/adapters/pi/src/plan-provider.ts` — function createPiPlanStateProvider: (projectRoot) => PlanStateProvider, const PI_PLAN_COORDINATOR_AGENT
-- `packages/adapters/pi/src/plan-render.ts` — function renderPlanWidgetLines: (snapshot) => string[]
+- `packages/adapters/pi/src/plan-render.ts`
+  - function planRailTier: (width) => PlanRailTier
+  - function buildPlanRailFacts: (input) => PlanRailFacts | undefined
+  - function renderPlanRailWidgetLines: (facts, width, paint) => void
+  - interface PlanRailPlanFacts
+  - interface PlanRailFacts
+  - type PlanRailMarkState
+  - _...2 more_
 - `packages/adapters/pi/src/plan-task-list.ts`
   - function planTaskListVisibleRows: (rows) => number
   - function planTaskListRowBudget: (terminalRows) => number
@@ -888,11 +894,6 @@
   - interface PiStartWorkflowInput
   - interface PiResumeWorkflowInput
   - _...2 more_
-- `packages/adapters/pi/src/workflow-task-status.ts`
-  - function renderWorkflowTaskFooter: (input) => string | undefined
-  - interface RenderWorkflowTaskFooterInput
-  - const WEAVE_WORKFLOW_TASK_STATUS_KEY
-  - const WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -1862,7 +1863,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/adapters/pi/src/types.ts` — imported by **49** files
+- `packages/adapters/pi/src/types.ts` — imported by **48** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/adapters/pi/src/strict-json.ts` — imported by **28** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
@@ -1875,17 +1876,17 @@
 - `packages/adapters/pi/src/child-tree.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
 - `packages/adapters/pi/src/child-session-events.ts` — imported by **15** files
+- `packages/adapters/pi/src/ui-paint.ts` — imported by **15** files
 - `packages/adapters/pi/src/rpc-child.ts` — imported by **15** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
 - `packages/adapters/pi/src/child-timer.ts` — imported by **14** files
-- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **14** files
 
 ## Import Map (who imports what)
 
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +44 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +43 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-response-contract.test.ts` +23 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
@@ -1916,7 +1917,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 327 test files found
+> 325 test files found
 
 ---
 

@@ -60,11 +60,16 @@ The surfaces a proof must name are:
   `delegated by <PARENT>` · plan › task › subtask); a Pi-native transcript pane
   left; a Status Matrix rail right grouped lifecycle · work · spend; and a
   primary-like editor with one muted key row below.
-- **Keys** (§8.1): `Alt+I` picker, `Alt+1..9`, sibling and parent navigation,
-  empty-draft `q` cancel confirmation answered in-overlay, empty-draft `/` rail
-  search with `n` / `N` (`j` / `k`) and `Enter` accept, and `Escape` following
-  the precedence **cancel confirmation › search › overlay**. `Ctrl+O` belongs to
-  Pi's own tool expand and is never registered by Weave.
+- **Keys** (§8.1): `Alt+I` picker, `Alt+1..9`, sibling navigation on `Alt+H` /
+  `Alt+L` with the arrow forms normally skipped by conflict detection, empty
+  `Backspace` parent-or-close, the six scroll keys, `Enter` steer and
+  `Alt+Enter` follow-up, empty-draft `q` cancel confirmation answered
+  in-overlay with `y` / `n`, empty-draft `/` rail search with `n` / `N`
+  (`j` / `k`) and `Enter` accept, and `Escape` following the precedence
+  **cancel confirmation › search › overlay**. The `Ctrl+F` search alias is
+  routed only when the host does not already own the key. `Ctrl+O` belongs to
+  Pi's own tool expand and is never registered by Weave, and `Alt+A` / `Alt+T`
+  do not route while the overlay owns input.
 - **Plan Rail** (design record §4): the widget above the parent editor carrying
   `◆ WEAVE · <AGENT>`, the `Alt+A cycle` hint, the plan name, task marks with
   the ordinal, `┃ now`, and `┗ next`, with no duplicate task footer beside it.
@@ -92,18 +97,21 @@ one child that produces enough output to overflow the viewport, and open it with
    `weave runtime status` and confirm the child's lease is still held. Reopen the
    child and confirm it is still `running`.
 4. **`q` confirm (`S073`).** With an empty overlay draft, press `q`. Expect a
-   confirmation whose first and default choice is `Keep running`. Choose
-   `Keep running`; expect the child to keep running. Press `q` again and dismiss
-   the modal with `Escape`; expect the child to keep running. Press `q` a third
-   time and choose `Cancel subtree`; expect the child to settle as `cancelled`
-   and the lease to release.
+   confirmation whose first and default choice is `Keep running`, answered
+   inside the overlay. Press `n`; expect the child to keep running. Press `q`
+   again and dismiss with `Escape`; expect the child to keep running and the
+   overlay to stay mounted. Press `q` a third time and press `y` for
+   `Cancel subtree`; expect the child to settle as `cancelled` and the lease to
+   release. Confirm any other key is swallowed while the question is open.
 5. **`q` draft and read-only (`S074`).** Type `hi` into the overlay draft, then
    press `q`. Expect `hiq` in the draft and no confirmation. Open a settled
    child, clear the draft, and press `q`. Expect no confirmation.
 6. **Telemetry (`S075`).** On a live child that has reported usage, read the
-   header meta row. Expect `provider · model · ctx N% · X in / Y out` with real
-   values. Open a child with no usage report and expect `—` in each unreported
-   field, with no `0%` and no invented model.
+   Status Matrix rail. Expect the lifecycle, work, and spend groups to carry
+   real provider, model, context percentage, token, elapsed, queue, turn, and
+   spend values. Confirm the session header shows the model exactly once and
+   carries no telemetry row and no child ID. Open a child with no usage report
+   and expect `—` in each unreported field, with no `0%` and no invented model.
 7. **Rail search (`S076`).** With an empty overlay draft, press `/`. Expect a
    SEARCH section prepended to the Status Matrix and a marker gutter beside the
    transcript. Press `n` and `N` (then `j` and `k`) and expect the rail cursor and
@@ -115,7 +123,9 @@ one child that produces enough output to overflow the viewport, and open it with
 8. **Conflict (`S077`).** Bind an overlay key in Pi's own keybindings, restart,
    and open a child. Expect the route to be skipped, the affordance to be absent
    from the key row, and one bounded diagnostic naming the existing owner.
-   Confirm Weave registers no binding for `ctrl+o`.
+   Confirm Weave registers no binding for `ctrl+o`. On a stock keymap, confirm
+   the `ctrl+f` search alias is reported as skipped and that `/` still opens
+   rail search on an empty draft.
 9. **Delegation card (`S078`).** In the parent transcript, watch one
    `weave_delegate` call from bootstrap through reasoning, a tool call, and a
    tool result. Expect exactly one framed card with one top and one bottom edge,

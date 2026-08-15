@@ -143,12 +143,12 @@
   - _...36 more_
 - `packages/adapters/pi/src/child-compact-render.ts`
   - function createChildCompactState: (threadId) => ChildCompactState
-  - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
   - function sanitizeChildCompactText: (value) => string
   - function mapPiChildSessionEventToCompactInput: (event, itemId) => NeverthrowResult<ChildCompactReducerInput | undefined, ChildCompactError>
   - function reduceChildCompact: (state, input) => NeverthrowResult<ChildCompactState, ChildCompactError>
   - function reduceChildCompactSafe: (state, input) => ChildCompactState
-  - _...27 more_
+  - function childCompactChromeIsClean: (chrome, state) => boolean
+  - _...19 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function makeCancelBody: (reason) => void
@@ -267,13 +267,12 @@
   - function openPiChildMetadataCacheReadOnly: (options) => ResultAsync<PiChildMetadataCacheOpenOutcome, never>
   - _...31 more_
 - `packages/adapters/pi/src/child-native-components.ts`
-  - function renderPiChildCompactComponent: (output, options, theme) => NeverthrowResult<
   - function degradedPiChildCardComponent: (reason) => PiToolRenderComponent
   - function renderPiChildCardComponent: (facts, options, theme) => NeverthrowResult<
   - function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory
   - interface PiNativeTranscriptComponentDeps
   - interface PiChildCardComponentOptions
-  - _...2 more_
+  - const CHILD_CARD_NATIVE_RENDER_FAILED
 - `packages/adapters/pi/src/child-native-results.ts`
   - function readNativeResultGroup: (expected, entries) => PiNativeResultGroupState
   - function planResultGroupWrite: (output) => Result<PiNativeResultWritePlan, PiNativeSessionError>
@@ -314,7 +313,7 @@
   - function formatOverlayCost: (cost) => string | undefined
   - function childOverlaySettlementFacts: (view) => OverlaySettlementFacts
   - function childOverlayName: (view) => string
-  - _...7 more_
+  - _...4 more_
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string
@@ -346,7 +345,7 @@
   - function overlaySectionHead: (paint, title, width) => string
   - function headerIdentityRow: (paint, facts, width) => HeaderRow
   - function headerContextRow: (paint, facts, width) => HeaderRow | undefined
-  - _...55 more_
+  - _...56 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
@@ -399,7 +398,7 @@
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
   - interface ChildOverlayConfig
-  - _...37 more_
+  - _...34 more_
 - `packages/adapters/pi/src/child-overlay-window.ts`
   - function emptySaved: (threadId, touched) => SavedChildState
   - function isReadOnly: (child) => boolean
@@ -705,7 +704,14 @@
   - class FakePiPlanCatalogPort
   - interface PiPlanCatalogPort
 - `packages/adapters/pi/src/plan-provider.ts` — function createPiPlanStateProvider: (projectRoot) => PlanStateProvider, const PI_PLAN_COORDINATOR_AGENT
-- `packages/adapters/pi/src/plan-render.ts` — function renderPlanWidgetLines: (snapshot) => string[]
+- `packages/adapters/pi/src/plan-render.ts`
+  - function planRailTier: (width) => PlanRailTier
+  - function buildPlanRailFacts: (input) => PlanRailFacts | undefined
+  - function renderPlanRailWidgetLines: (facts, width, paint) => void
+  - interface PlanRailPlanFacts
+  - interface PlanRailFacts
+  - type PlanRailMarkState
+  - _...2 more_
 - `packages/adapters/pi/src/plan-task-list.ts`
   - function planTaskListVisibleRows: (rows) => number
   - function planTaskListRowBudget: (terminalRows) => number
@@ -877,11 +883,6 @@
   - interface PiStartWorkflowInput
   - interface PiResumeWorkflowInput
   - _...2 more_
-- `packages/adapters/pi/src/workflow-task-status.ts`
-  - function renderWorkflowTaskFooter: (input) => string | undefined
-  - interface RenderWorkflowTaskFooterInput
-  - const WEAVE_WORKFLOW_TASK_STATUS_KEY
-  - const WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
