@@ -38,7 +38,6 @@ import {
 import {
   anchorFromScroll,
   applyMeasuredExtent,
-  captureViewportForLayoutChange,
   clearTailGrowth,
   markTailGrowth,
   maxScrollRows,
@@ -84,10 +83,8 @@ import {
   type ChildOverlaySourceError,
   type ChildOverlaySourcePort,
   type ChildOverlayView,
-  type ChildOverlayViewMode,
   clampPageSize,
   clampWindowCap,
-  DEFAULT_CHILD_OVERLAY_VIEW_MODE,
   OverlayTextSchema,
 } from "./child-overlay-types.js";
 import {
@@ -473,11 +470,10 @@ export class ChildOverlayController {
     if (usage.isOk()) state.usage = usage.value;
 
     // Project first so the transcript reduce can be told which overlay entry
-    // this event belongs to. Reducing first would label full-layout rows with
-    // reducer-local ids (`thinking-0`) while the compact layout uses overlay
-    // ids (`live-thinking-0`), and a live full<->compact toggle would lose the
-    // viewport anchor. Projection is pure, so ordering it earlier changes
-    // nothing else.
+    // this event belongs to. Reducing first would label rendered rows with
+    // reducer-local ids (`thinking-0`) while the overlay window uses overlay
+    // ids (`live-thinking-0`), and the viewport anchor would lose its entry.
+    // Projection is pure, so ordering it earlier changes nothing else.
     // Real Pi 0.84 assistant lifecycle identity. `AssistantMessage` has no
     // `id`, and `state.entries.length` changes between `message_start` and
     // `message_end`, so one stable overlay id is allocated at start and reused
@@ -626,33 +622,6 @@ export class ChildOverlayController {
           expanded: state.globalExpanded,
         })),
       };
-      return this.toView(child, state);
-    });
-  }
-
-  /**
-   * Flips this child between the full transcript and the compact one-line
-   * projection.
-   *
-   * Entry state is untouched: compact is a render-time projection, so nothing
-   * is dropped or rewritten here.
-   *
-   * The two layouts do not share a row coordinate system — full can render many
-   * rows for an entry that compact renders in one — so the current rendered-row
-   * offset is meaningless in the target layout and is never carried over. The
-   * logical viewport (the entry at the viewport bottom, plus the row inside it)
-   * is captured instead and re-placed once the target layout has been measured.
-   * The measured extent and spans are discarded to force that re-measure, and
-   * any pending tail adjustment is dropped because its delta would no longer
-   * isolate tail growth.
-   */
-  toggleViewMode(): Result<ChildOverlayView, ChildOverlayError> {
-    return this.mutateOpen((child, state) => {
-      state.viewMode = state.viewMode === "compact" ? "full" : "compact";
-      clearTailGrowth(state);
-      captureViewportForLayoutChange(state);
-      state.anchor = state.pendingViewportAnchor ?? state.anchor;
-      state.scrollExtent = undefined;
       return this.toView(child, state);
     });
   }
@@ -1041,7 +1010,6 @@ export class ChildOverlayController {
       width: state.width,
       height: state.height,
       anchor: state.anchor,
-      viewMode: state.viewMode,
       compact: state.compact,
       transcript: state.transcript,
       telemetry: deriveChildOverlayTelemetry(state.usage, child),

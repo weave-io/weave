@@ -25,13 +25,11 @@ import {
   NO_TERMINAL_ERROR_EVIDENCE,
   pageEvidence,
 } from "./child-overlay-telemetry.js";
-import {
-  type ChildOverlayAnchor,
-  type ChildOverlayChild,
-  type ChildOverlayEntry,
-  type ChildOverlayPage,
-  type ChildOverlayViewMode,
-  DEFAULT_CHILD_OVERLAY_VIEW_MODE,
+import type {
+  ChildOverlayAnchor,
+  ChildOverlayChild,
+  ChildOverlayEntry,
+  ChildOverlayPage,
 } from "./child-overlay-types.js";
 import type { PiChildUsageReport } from "./child-session-events.js";
 import {
@@ -58,11 +56,11 @@ export interface SavedChildState extends OverlayScrollState {
   hasOlderFlag: boolean;
   hasNewerFlag: boolean;
   /**
-   * Per-child render mode. Saved beside the rest of the child's view state so
-   * it survives focus switches within this controller, stays isolated per
-   * child, and is gone when the controller (and its LRU) is discarded.
+   * Shared bounded run/item reducer state. Saved beside the rest of the child's
+   * view state so it survives focus switches within this controller, stays
+   * isolated per child, and is gone when the controller (and its LRU) is
+   * discarded.
    */
-  viewMode: ChildOverlayViewMode;
   compact: ChildCompactState;
   usage: PiChildUsageReport | undefined;
   evidence: ChildTerminalErrorEvidence;
@@ -109,7 +107,6 @@ export function emptySaved(threadId: string, touched: number): SavedChildState {
     layoutSpans: undefined,
     pendingViewportAnchor: undefined,
     pendingViewportLiveTail: false,
-    viewMode: DEFAULT_CHILD_OVERLAY_VIEW_MODE,
     compact: createChildCompactState(threadId),
     usage: undefined,
     evidence: NO_TERMINAL_ERROR_EVIDENCE,

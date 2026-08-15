@@ -1,13 +1,14 @@
 /**
- * Compact `weave_delegate` block reducer and renderer (Pi adapter contract §6).
+ * Compact `weave_delegate` state reducer (Pi adapter contract §6).
  *
- * Pure, adapter-owned core for Task 11. Maps parser-approved child event data
- * into a bounded reducer input union without importing UI types. Output is three
- * sanitized strings (plus an optional expanded current item) for later wiring
- * through Pi theme / native components.
+ * Pure, adapter-owned core. Maps parser-approved child event data into a
+ * bounded reducer input union without importing UI types, then folds those
+ * inputs into bounded run/item state. The delegation card model consumes the
+ * same inputs, the same sanitizer, and the same id bounds, so both surfaces
+ * correlate one child event under exactly one key.
  *
- * Never throws on expected paths: invalid reduce/render input yields a typed
- * degraded three-line block.
+ * Never throws on expected paths: invalid reduce input is a typed error and
+ * leaves prior state untouched.
  */
 import { err, type Result as NeverthrowResult, ok, Result } from "neverthrow";
 import {
@@ -30,10 +31,6 @@ import type { JsonValue } from "./strict-json.js";
 // Bounds
 // ---------------------------------------------------------------------------
 
-/** Collapsed activity line code-point budget (matches delegation-tool preview). */
-export const CHILD_COMPACT_COLLAPSED_CODE_POINTS = 240;
-/** Expanded current-item code-point budget. */
-export const CHILD_COMPACT_EXPANDED_CODE_POINTS = 4_096;
 /** Maximum run blocks retained per logical thread in reducer state. */
 export const CHILD_COMPACT_MAX_RUNS = 64;
 /** Maximum tracked items per run block. */
@@ -48,27 +45,15 @@ export const CHILD_COMPACT_MAX_QUEUE_SIZE = 10_000;
 /** Largest accepted retry attempt number. Anything larger is absent. */
 export const CHILD_COMPACT_MAX_ATTEMPT = 1_000;
 
-const COLLAPSED_LINE_COUNT = 3;
-const DEGRADED_LINES = [
-  "weave_delegate",
-  "render unavailable",
-  "",
-] as const satisfies readonly [string, string, string];
-
 // ---------------------------------------------------------------------------
-// Errors / degraded
+// Errors
 // ---------------------------------------------------------------------------
 
 export type ChildCompactError = {
   readonly type: "ChildCompactFailed";
-  readonly operation: "reduce" | "render" | "map";
+  readonly operation: "reduce" | "map";
   readonly detail: string;
 };
-
-export type ChildCompactDegradedReason =
-  | "invalid_input"
-  | "reduce_failed"
-  | "render_failed";
 
 // ---------------------------------------------------------------------------
 // Reducer input (adapter-owned; maps parser-approved session events)
@@ -226,19 +211,6 @@ export interface ChildCompactState {
   readonly currentRunNumber: number | undefined;
 }
 
-export interface ChildCompactRenderOutput {
-  /** Exactly three collapsed lines for every state. */
-  readonly lines: readonly [string, string, string];
-  /** Bounded expanded text for the current activity item, when present. */
-  readonly expandedCurrentItem: string | undefined;
-  readonly degraded: boolean;
-  readonly degradedReason?: ChildCompactDegradedReason;
-}
-
-export interface ChildCompactRenderOptions {
-  readonly expanded?: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // Public constructors
 // ---------------------------------------------------------------------------
@@ -248,17 +220,6 @@ export function createChildCompactState(threadId: string): ChildCompactState {
     threadId: boundOpaqueId(threadId),
     runs: [],
     currentRunNumber: undefined,
-  };
-}
-
-export function degradedChildCompactRender(
-  reason: ChildCompactDegradedReason = "render_failed",
-): ChildCompactRenderOutput {
-  return {
-    lines: DEGRADED_LINES,
-    expandedCurrentItem: undefined,
-    degraded: true,
-    degradedReason: reason,
   };
 }
 
@@ -347,8 +308,6 @@ function stableErrorDetail(
       return "map_failed";
     case "reduce":
       return "reduce_failed";
-    case "render":
-      return "render_failed";
     default:
       return "compact_failed";
   }
@@ -950,142 +909,22 @@ function reduceSettle(
 }
 
 // ---------------------------------------------------------------------------
-// Render
+// Leakage guard
 // ---------------------------------------------------------------------------
 
-export function renderChildCompact(
-  state: ChildCompactState,
-  options: ChildCompactRenderOptions = {},
-): NeverthrowResult<ChildCompactRenderOutput, ChildCompactError> {
-  return Result.fromThrowable(
-    () => renderChildCompactUnchecked(state, options),
-    (cause) => ({
-      type: "ChildCompactFailed" as const,
-      operation: "render" as const,
-      detail: stableErrorDetail("render", cause),
-    }),
-  )();
-}
-
 /**
- * Always returns exactly three sanitized lines. Invalid state / render failures
- * become a typed degraded block (never throws).
+ * Chrome text must never echo the opaque thread id, a session path, or a native
+ * id carried in reducer state. Assistant activity text is caller content and is
+ * never scanned here.
+ *
+ * Returns `false` when the chrome leaks; callers degrade rather than paint.
  */
-export function renderChildCompactSafe(
-  state: unknown,
-  options: ChildCompactRenderOptions = {},
-): ChildCompactRenderOutput {
-  if (!isChildCompactState(state)) {
-    return degradedChildCompactRender("invalid_input");
-  }
-  return renderChildCompact(state, options).match(
-    (output) => output,
-    () => degradedChildCompactRender("render_failed"),
-  );
-}
-
-/**
- * Reduce then render with full isolation: never throws; failures degrade.
- */
-export function projectChildCompact(
+export function childCompactChromeIsClean(
+  chrome: string,
   state: ChildCompactState,
-  input: unknown,
-  options: ChildCompactRenderOptions = {},
-): ChildCompactRenderOutput {
-  const parsed = parseReducerInput(input);
-  if (parsed.isErr()) return degradedChildCompactRender("invalid_input");
-  const reduced = reduceChildCompact(state, parsed.value);
-  if (reduced.isErr()) return degradedChildCompactRender("reduce_failed");
-  return renderChildCompactSafe(reduced.value, options);
-}
-
-function renderChildCompactUnchecked(
-  state: ChildCompactState,
-  options: ChildCompactRenderOptions,
-): ChildCompactRenderOutput {
-  const run = currentRun(state);
-  const agent = run?.agentName ?? "delegate";
-  const status = run?.status ?? "running";
-  const runNumber = run?.runNumber ?? 1;
-  const action = run?.action ?? "start";
-
-  const activity = selectActivityText(run);
-  const collapsedActivity = collapseActivity(activity);
-
-  const line1 = sanitizeChildCompactText(
-    `weave_delegate · ${agent} · ${status}`,
-  );
-  const line2 = collapsedActivity;
-  const line3 = sanitizeChildCompactText(`run ${runNumber} · ${action}`);
-
-  const lines: [string, string, string] = [
-    line1 || "weave_delegate",
-    line2,
-    line3 || `run ${runNumber}`,
-  ];
-
-  const expandedCurrentItem = options.expanded
-    ? boundExpanded(activity)
-    : undefined;
-
-  assertNoLeakage(lines, expandedCurrentItem, state);
-
-  return {
-    lines,
-    expandedCurrentItem,
-    degraded: false,
-  };
-}
-
-function selectActivityText(
-  run: ChildCompactRunBlock | undefined,
-): string | undefined {
-  if (run === undefined) return undefined;
-  if (run.status === "completed") {
-    return run.finalResponse;
-  }
-  if (run.status === "failed" || run.status === "cancelled") {
-    return run.errorSummary;
-  }
-  // Running: latest meaningful assistant fragment only — never thinking/tool.
-  return run.latestMeaningfulFragment;
-}
-
-function collapseActivity(text: string | undefined): string {
-  if (text === undefined || text.length === 0) return "…";
-  const clean = sanitizeChildCompactText(text);
-  if (clean.length === 0) return "…";
-  const codePoints = [...clean];
-  if (codePoints.length <= CHILD_COMPACT_COLLAPSED_CODE_POINTS) return clean;
-  return `…${codePoints
-    .slice(-(CHILD_COMPACT_COLLAPSED_CODE_POINTS - 1))
-    .join("")}`;
-}
-
-function boundExpanded(text: string | undefined): string | undefined {
-  if (text === undefined) return undefined;
-  const clean = sanitizeChildCompactText(text);
-  if (clean.length === 0) return undefined;
-  const codePoints = [...clean];
-  if (codePoints.length <= CHILD_COMPACT_EXPANDED_CODE_POINTS) return clean;
-  return `${codePoints.slice(0, CHILD_COMPACT_EXPANDED_CODE_POINTS - 1).join("")}…`;
-}
-
-/**
- * Chrome lines must never echo opaque thread ids, session paths, or native ids
- * from state metadata. Assistant activity text is caller content and is not
- * scanned here.
- */
-function assertNoLeakage(
-  lines: readonly [string, string, string],
-  expanded: string | undefined,
-  state: ChildCompactState,
-): void {
-  const chrome = `${lines[0]}\n${lines[2]}`;
-  if (state.threadId.length > 0 && chrome.includes(state.threadId)) {
-    throw new Error("thread_id_leakage");
-  }
-  void expanded;
+): boolean {
+  if (state.threadId.length === 0) return true;
+  return !chrome.includes(state.threadId);
 }
 
 // ---------------------------------------------------------------------------
@@ -1377,7 +1216,10 @@ function parseSettlement(value: unknown): PiChildSettlement | undefined {
   return undefined;
 }
 
-function isChildCompactState(value: unknown): value is ChildCompactState {
+/** Structural guard for state that crossed an untyped boundary. */
+export function isChildCompactState(
+  value: unknown,
+): value is ChildCompactState {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
@@ -1462,13 +1304,4 @@ function extendDedupKeys(
  */
 export function boundChildCompactId(value: string): string {
   return boundOpaqueId(value);
-}
-
-/** Exact collapsed line count invariant helper for tests and callers. */
-export function childCompactLineCount(
-  output: ChildCompactRenderOutput,
-): number {
-  return output.lines.length === COLLAPSED_LINE_COUNT
-    ? COLLAPSED_LINE_COUNT
-    : output.lines.length;
 }

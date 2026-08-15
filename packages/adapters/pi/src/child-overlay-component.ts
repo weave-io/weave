@@ -39,7 +39,6 @@ import {
   childOverlayPromptFacts,
   childOverlayRailFacts,
   childOverlaySettlementFacts,
-  compactChildOverlayLines,
 } from "./child-overlay-facts.js";
 import {
   answerOverlayCancelConfirm,
@@ -185,9 +184,9 @@ export interface OverlayRenderedTranscript {
  *
  * Rows replayed from the overlay window carry the overlay entry's own id, and
  * one overlay entry can fan out into several transcript entries (an assistant
- * message plus its tool calls). Grouping on that id keeps full-layout spans in
- * the same identity space compact spans use, so a viewport anchor survives a
- * layout toggle. Live rows without it fall back to the transcript entry id.
+ * message plus its tool calls). Grouping on that id keeps a span in the same
+ * identity space the viewport anchor uses, so the anchor survives a re-measure.
+ * Live rows without it fall back to the transcript entry id.
  */
 export function spansFromRows(
   rows: readonly PiChildTranscriptRenderedRow[],
@@ -573,12 +572,11 @@ export function createChildOverlayCustomComponent(
   };
 
   /**
-   * Paint the transcript for the active layout and report how many rendered
-   * rows each entry occupies.
+   * Paint the transcript and report how many rendered rows each entry occupies.
    *
    * The spans are what let the controller keep a logical viewport across a
-   * layout change: compact renders exactly one row per entry while full can
-   * render many, so the two layouts share no row coordinate system.
+   * width or content change: one entry can render many rows, so a rendered-row
+   * offset alone cannot name the entry a reader is looking at.
    */
   const renderTranscriptLines = (
     view: ChildOverlayView,
@@ -588,20 +586,6 @@ export function createChildOverlayCustomComponent(
       view.terminalError === undefined
         ? undefined
         : fitLineToWidth(formatPiChildProviderError(view.terminalError), width);
-    if (view.viewMode === "compact") {
-      // Render-time projection of the same bounded entries; the native
-      // transcript model is left untouched so toggling back is lossless.
-      const entryLines = compactChildOverlayLines(view.entries, width);
-      return ok({
-        lines:
-          terminalErrorLine === undefined
-            ? entryLines
-            : [...entryLines, terminalErrorLine],
-        spans: view.entries
-          .slice(0, entryLines.length)
-          .map((entry) => ({ entryId: entry.id, rows: 1 })),
-      });
-    }
     return Result.fromThrowable(
       (): OverlayRenderedTranscript => {
         const rendered = transcriptRenderer.render(view.transcript, width, {

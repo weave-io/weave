@@ -23,7 +23,6 @@ import {
   degradedDelegationCard,
   renderDelegationCard,
 } from "./child-card-render.js";
-import type { ChildCompactRenderOutput } from "./child-compact-render.js";
 import type {
   PiTranscriptComponent,
   PiTranscriptComponentFactory,
@@ -31,10 +30,6 @@ import type {
 } from "./child-transcript.js";
 import type { PiToolRenderComponent, PiUiThemePort } from "./types.js";
 import { makePaint, plainPaint } from "./ui-paint.js";
-
-/** Stable code reported when compact native theming fails. */
-export const CHILD_COMPACT_NATIVE_RENDER_FAILED =
-  "ChildCompactRenderFailed" as const;
 
 /** Stable code reported when the delegation card cannot be drawn. */
 export const CHILD_CARD_NATIVE_RENDER_FAILED = "ChildCardRenderFailed" as const;
@@ -225,44 +220,6 @@ const FALLBACK_MARKDOWN_THEME: MarkdownTheme = {
   strikethrough: (text) => text,
   underline: (text) => text,
 };
-
-/**
- * Themes the §6 compact three-line block (and optional expanded current item)
- * into a Pi `Text` component. Theme or helper failures become a typed Err with
- * a stable code — callers (tool `renderResult`) degrade and log without
- * affecting execution.
- */
-export function renderPiChildCompactComponent(
-  output: ChildCompactRenderOutput,
-  options: { readonly expanded: boolean },
-  theme: PiUiThemePort,
-): NeverthrowResult<
-  PiToolRenderComponent,
-  typeof CHILD_COMPACT_NATIVE_RENDER_FAILED
-> {
-  return Result.fromThrowable(
-    (): PiToolRenderComponent => {
-      const line1 = theme.fg("toolTitle", theme.bold(output.lines[0]));
-      const line2 = theme.fg("toolOutput", output.lines[1]);
-      const line3 = theme.fg("muted", output.lines[2]);
-      const collapsed = `${line1}\n${line2}\n${line3}`;
-      if (
-        options.expanded &&
-        typeof output.expandedCurrentItem === "string" &&
-        output.expandedCurrentItem.length > 0
-      ) {
-        return new Text(
-          `${collapsed}\n${theme.fg("toolOutput", output.expandedCurrentItem)}`,
-          0,
-          0,
-        );
-      }
-      return new Text(collapsed, 0, 0);
-    },
-    (): typeof CHILD_COMPACT_NATIVE_RENDER_FAILED =>
-      CHILD_COMPACT_NATIVE_RENDER_FAILED,
-  )();
-}
 
 /** What the card component needs beyond the facts themselves. */
 export interface PiChildCardComponentOptions {

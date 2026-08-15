@@ -2,15 +2,12 @@ import { describe, expect, it } from "bun:test";
 import {
   type ChildCompactReducerInput,
   type ChildCompactState,
-  childCompactLineCount,
+  childCompactChromeIsClean,
   createChildCompactState,
-  degradedChildCompactRender,
+  isChildCompactState,
   mapPiChildSessionEventToCompactInput,
-  projectChildCompact,
   reduceChildCompact,
   reduceChildCompactSafe,
-  renderChildCompact,
-  renderChildCompactSafe,
   sanitizeChildCompactText,
 } from "../child-compact-render.js";
 import { formatPiChildProviderError } from "../child-provider-error-render.js";
@@ -50,16 +47,24 @@ function mustReduce(
   return result._unsafeUnwrap();
 }
 
-function linesOf(state: ChildCompactState, expanded = false) {
-  const rendered = renderChildCompactSafe(state, { expanded });
-  expect(rendered.degraded).toBe(false);
-  expect(childCompactLineCount(rendered)).toBe(3);
-  expect(rendered.lines).toHaveLength(3);
-  return rendered;
+/**
+ * The one fact both surfaces read off a run: the text a reader would see as the
+ * child's current activity. Settlement outranks the running preview.
+ */
+function activityOf(state: ChildCompactState): string | undefined {
+  const run = state.runs.find(
+    (candidate) => candidate.runNumber === state.currentRunNumber,
+  );
+  if (run === undefined) return undefined;
+  if (run.status === "completed") return run.finalResponse;
+  if (run.status === "failed" || run.status === "cancelled") {
+    return run.errorSummary;
+  }
+  return run.latestMeaningfulFragment;
 }
 
 describe("child-compact-render", () => {
-  it("starts a run with a running 3-line block", () => {
+  it("starts a run in the running state", () => {
     const state = mustReduce(
       createChildCompactState("thread-opaque-1"),
       start(),
@@ -68,14 +73,11 @@ describe("child-compact-render", () => {
     expect(state.runs).toHaveLength(1);
     expect(state.runs[0]?.status).toBe("running");
     expect(state.runs[0]?.frozen).toBe(false);
-
-    const rendered = linesOf(state);
-    expect(rendered.lines[0]).toContain("weave_delegate");
-    expect(rendered.lines[0]).toContain("shuttle");
-    expect(rendered.lines[0]).toContain("running");
-    expect(rendered.lines[1]).toBe("…");
-    expect(rendered.lines[2]).toContain("run 1");
-    expect(rendered.lines[2]).toContain("start");
+    expect(state.runs[0]?.agentName).toBe("shuttle");
+    expect(state.runs[0]?.action).toBe("start");
+    expect(state.runs[0]?.runNumber).toBe(1);
+    // A fresh run has nothing to say yet, and says nothing rather than "".
+    expect(activityOf(state)).toBeUndefined();
   });
 
   it("adds, replaces, and dedups meaningful assistant fragments", () => {
@@ -96,9 +98,7 @@ describe("child-compact-render", () => {
       fragment("replaced", "assistant", "d3", "replace"),
     );
     expect(state.runs[0]?.latestMeaningfulFragment).toBe("replaced");
-
-    const rendered = linesOf(state);
-    expect(rendered.lines[1]).toBe("replaced");
+    expect(activityOf(state)).toBe("replaced");
   });
 
   it("represents out-of-order end-before-start with a placeholder", () => {
@@ -138,14 +138,11 @@ describe("child-compact-render", () => {
       "thinking",
       "tool",
     ]);
-
-    const rendered = linesOf(state);
-    expect(rendered.lines[1]).toBe("…");
-    expect(rendered.lines[1]).not.toContain("thinking");
-    expect(rendered.lines[1]).not.toContain("tool");
+    // Recorded, but never promoted to activity.
+    expect(activityOf(state)).toBeUndefined();
   });
 
-  it("renders the canonical provider error in the parent compact summary", () => {
+  it("carries the canonical provider error as the run error summary", () => {
     let state = mustReduce(createChildCompactState("t1"), start());
     state = mustReduce(state, fragment("raw provider preview"));
     const reason = formatPiChildProviderError({
@@ -159,12 +156,12 @@ describe("child-compact-render", () => {
       settlement: { outcome: "failed", reason },
     });
 
-    const rendered = linesOf(state).lines.join("\n");
-    expect(rendered).toContain(
+    const activity = activityOf(state) ?? "";
+    expect(activity).toContain(
       "assistant error · rate limit · HTTP 429 · rate_limit_error · Provider rate limit exceeded. Retry later.",
     );
-    expect(rendered).not.toContain("raw provider preview");
-    expect(rendered).not.toContain("undefined");
+    expect(activity).not.toContain("raw provider preview");
+    expect(activity).not.toContain("undefined");
   });
 
   it("settles success, error, and cancel only from Task 8 settlement", () => {
@@ -188,7 +185,7 @@ describe("child-compact-render", () => {
     expect(okState.runs[0]?.status).toBe("completed");
     expect(okState.runs[0]?.finalResponse).toBe("final answer");
     expect(okState.runs[0]?.frozen).toBe(true);
-    expect(linesOf(okState).lines[1]).toBe("final answer");
+    expect(activityOf(okState)).toBe("final answer");
     // Settlement authority: not the running preview when final differs
     expect(okState.runs[0]?.latestMeaningfulFragment).toBe("preview noise");
 
@@ -199,8 +196,8 @@ describe("child-compact-render", () => {
       settlement: failSettlement,
     });
     expect(failState.runs[0]?.status).toBe("failed");
-    expect(linesOf(failState).lines[1]).toBe("boom");
-    expect(linesOf(failState).lines[1]).not.toBe("still running text");
+    expect(activityOf(failState)).toBe("boom");
+    expect(activityOf(failState)).not.toBe("still running text");
 
     let cancelState = mustReduce(createChildCompactState("t3"), start());
     cancelState = mustReduce(cancelState, {
@@ -208,7 +205,7 @@ describe("child-compact-render", () => {
       settlement: cancelSettlement,
     });
     expect(cancelState.runs[0]?.status).toBe("cancelled");
-    expect(linesOf(cancelState).lines[1]).toBe("cancelled");
+    expect(activityOf(cancelState)).toBe("cancelled");
   });
 
   it("freezes the prior run block when a retry starts", () => {
@@ -239,13 +236,11 @@ describe("child-compact-render", () => {
     expect(state.runs[0]?.latestMeaningfulFragment).toBe(frozenFragment);
     expect(state.runs[0]?.errorSummary).toBe(frozenError);
     expect(state.runs[1]?.latestMeaningfulFragment).toBe("retry attempt text");
-
-    const rendered = linesOf(state);
-    expect(rendered.lines[1]).toBe("retry attempt text");
-    expect(rendered.lines[2]).toContain("retry");
+    expect(activityOf(state)).toBe("retry attempt text");
+    expect(state.runs[1]?.action).toBe("retry");
   });
 
-  it("nested delegation has the same compact render parity", () => {
+  it("nested delegation reduces to the same run facts", () => {
     const apply = (threadId: string) => {
       let state = mustReduce(
         createChildCompactState(threadId),
@@ -256,7 +251,11 @@ describe("child-compact-render", () => {
         kind: "settle",
         settlement: { outcome: "completed", assistantOutput: "nested-ok" },
       });
-      return linesOf(state).lines;
+      return {
+        activity: activityOf(state),
+        status: state.runs[0]?.status,
+        action: state.runs[0]?.action,
+      };
     };
 
     expect(apply("parent-thread")).toEqual(apply("nested-child-thread"));
@@ -281,10 +280,10 @@ describe("child-compact-render", () => {
       state,
       fragment(`${csi} hi\n\nthere ${osc}`, "assistant", "ansi1"),
     );
-    const rendered = linesOf(state);
-    expect(rendered.lines[1]).toBe("RED hi there secret");
-    expect(rendered.lines.join("\n")).not.toContain("\u001b");
-    expect(rendered.lines.join("\n")).not.toContain("\u0007");
+    const activity = activityOf(state) ?? "";
+    expect(activity).toBe("RED hi there secret");
+    expect(activity).not.toContain("\u001b");
+    expect(activity).not.toContain("\u0007");
   });
 
   it("settles completed runs from assistantOutput only, never completionCandidate", () => {
@@ -299,9 +298,9 @@ describe("child-compact-render", () => {
     });
     expect(state.runs[0]?.status).toBe("completed");
     expect(state.runs[0]?.finalResponse).toBeUndefined();
-    expect(linesOf(state).lines[1]).toBe("…");
-    expect(JSON.stringify(linesOf(state))).not.toContain("completionCandidate");
-    expect(JSON.stringify(linesOf(state))).not.toContain("secret");
+    expect(activityOf(state)).toBeUndefined();
+    expect(JSON.stringify(state.runs[0])).not.toContain("completionCandidate");
+    expect(JSON.stringify(state.runs[0])).not.toContain("secret");
 
     let withOutput = mustReduce(createChildCompactState("t2"), start());
     withOutput = mustReduce(withOutput, {
@@ -313,51 +312,23 @@ describe("child-compact-render", () => {
       },
     });
     expect(withOutput.runs[0]?.finalResponse).toBe("authoritative");
-    expect(linesOf(withOutput).lines[1]).toBe("authoritative");
-    expect(linesOf(withOutput).lines[1]).not.toContain("ignored-candidate");
+    expect(activityOf(withOutput)).toBe("authoritative");
+    expect(activityOf(withOutput)).not.toContain("ignored-candidate");
   });
 
-  it("always renders exactly 3 collapsed lines", () => {
-    const cases: ChildCompactState[] = [];
-    cases.push(createChildCompactState("empty"));
-    cases.push(mustReduce(createChildCompactState("t1"), start()));
-    let running = mustReduce(createChildCompactState("t2"), start());
-    running = mustReduce(running, fragment("x"));
-    cases.push(running);
-    let settled = mustReduce(createChildCompactState("t3"), start());
-    settled = mustReduce(settled, {
-      kind: "settle",
-      settlement: { outcome: "completed", assistantOutput: "done" },
-    });
-    cases.push(settled);
-
-    for (const state of cases) {
-      const rendered = renderChildCompactSafe(state);
-      expect(rendered.lines).toHaveLength(3);
-      expect(childCompactLineCount(rendered)).toBe(3);
-    }
-  });
-
-  it("exposes a bounded expanded current item", () => {
+  it("bounds a long fragment to the sanitizer's own projection cap", () => {
     let state = mustReduce(createChildCompactState("t1"), start());
-    const long = "word ".repeat(200).trim();
+    const long = "word ".repeat(2_000).trim();
     state = mustReduce(state, fragment(long, "assistant", "long1", "replace"));
 
-    const collapsed = linesOf(state, false);
-    expect(collapsed.expandedCurrentItem).toBeUndefined();
-    expect(
-      collapsed.lines[1].startsWith("…") || collapsed.lines[1].length <= 240,
-    ).toBe(true);
-
-    const expanded = linesOf(state, true);
-    expect(expanded.expandedCurrentItem).toBeDefined();
-    expect(expanded.expandedCurrentItem?.includes("word")).toBe(true);
-    expect(
-      [...(expanded.expandedCurrentItem ?? "")].length,
-    ).toBeLessThanOrEqual(4_096);
+    const activity = activityOf(state) ?? "";
+    expect(activity.length).toBeGreaterThan(0);
+    expect(activity.startsWith("word")).toBe(true);
+    // Retained text never exceeds the shared 4 KiB projection.
+    expect(Buffer.byteLength(activity, "utf8")).toBeLessThanOrEqual(4_096);
   });
 
-  it("does not leak path, session, or native ids in chrome lines", () => {
+  it("does not leak path, session, or native ids in chrome text", () => {
     const sessionPath = "/Users/jose/.pi/agent/sessions/native-abc123.jsonl";
     const nativeId = "sess_native_9f3c";
     let state = mustReduce(
@@ -373,44 +344,51 @@ describe("child-compact-render", () => {
       },
     });
 
-    const rendered = linesOf(state);
-    const chrome = `${rendered.lines[0]}\n${rendered.lines[2]}`;
+    // The chrome a surface builds from run facts carries no opaque id.
+    const run = state.runs[0];
+    const chrome = `weave_delegate · ${run?.agentName} · ${run?.status}\nrun ${run?.runNumber} · ${run?.action}`;
+    expect(childCompactChromeIsClean(chrome, state)).toBe(true);
     expect(chrome).not.toContain(sessionPath);
     expect(chrome).not.toContain(nativeId);
     expect(chrome).not.toContain("/Users/");
     expect(chrome).not.toContain("sessions/");
-    expect(JSON.stringify(rendered)).not.toContain("composedPrompt");
-    expect(JSON.stringify(rendered)).not.toContain("reasoning");
+    expect(JSON.stringify(run)).not.toContain("composedPrompt");
+    expect(JSON.stringify(run)).not.toContain("reasoning");
+
+    // And a surface that *did* echo the opaque id is caught, not painted.
+    expect(childCompactChromeIsClean(`run 1 · ${sessionPath}`, state)).toBe(
+      false,
+    );
   });
 
-  it("isolates invalid reduce/render input as a degraded 3-line block", () => {
-    const degraded = renderChildCompactSafe(null);
-    expect(degraded.degraded).toBe(true);
-    expect(degraded.degradedReason).toBe("invalid_input");
-    expect(degraded.lines).toHaveLength(3);
-    expect(degraded.lines).toEqual(degradedChildCompactRender().lines);
+  it("isolates invalid reduce input and leaves state untouched", () => {
+    const base = mustReduce(createChildCompactState("t1"), start());
 
-    const projected = projectChildCompact(createChildCompactState("t1"), {
+    // Unknown kind: typed error, prior state returned unchanged.
+    const unknownKind = reduceChildCompactSafe(base, {
       kind: "not-a-real-kind",
     });
-    expect(projected.degraded).toBe(true);
-    expect(projected.lines).toHaveLength(3);
+    expect(unknownKind).toBe(base);
 
-    const unchanged = reduceChildCompactSafe(createChildCompactState("t1"), {
-      kind: "settle",
-      settlement: { outcome: "weird" },
-    });
-    expect(unchanged.runs).toHaveLength(0);
+    const badSettlement = reduceChildCompactSafe(
+      createChildCompactState("t1"),
+      {
+        kind: "settle",
+        settlement: { outcome: "weird" },
+      },
+    );
+    expect(badSettlement.runs).toHaveLength(0);
 
-    // Render Result path also maps errors to degraded via Safe
-    const badState = {
-      threadId: "t",
-      runs: "not-an-array",
-      currentRunNumber: 1,
-    };
-    const fromBad = renderChildCompactSafe(badState);
-    expect(fromBad.degraded).toBe(true);
-    expect(fromBad.lines).toHaveLength(3);
+    // Structural guard for state that crossed an untyped boundary.
+    expect(isChildCompactState(base)).toBe(true);
+    expect(isChildCompactState(null)).toBe(false);
+    expect(
+      isChildCompactState({
+        threadId: "t",
+        runs: "not-an-array",
+        currentRunNumber: 1,
+      }),
+    ).toBe(false);
   });
 
   it("maps parser-approved session events without selecting thinking as activity", () => {
@@ -441,8 +419,8 @@ describe("child-compact-render", () => {
       state = mustReduce(state, thinkingInput);
     }
     expect(state.runs[0]?.latestMeaningfulFragment).toBe("streamed");
-    expect(linesOf(state).lines[1]).toBe("streamed");
-    expect(linesOf(state).lines.join("\n")).not.toContain(
+    expect(activityOf(state)).toBe("streamed");
+    expect(JSON.stringify(state.runs[0])).not.toContain(
       "secret chain of thought",
     );
   });
@@ -456,14 +434,13 @@ describe("child-compact-render", () => {
       fragment("\u001b[31m\u001b[0m", "assistant", "ctrl"),
     );
     expect(state.runs[0]?.latestMeaningfulFragment).toBeUndefined();
-    expect(linesOf(state).lines[1]).toBe("…");
+    expect(activityOf(state)).toBeUndefined();
   });
 
-  it("renderChildCompact Result path succeeds for valid state", () => {
-    const state = mustReduce(createChildCompactState("t1"), start());
-    const result = renderChildCompact(state);
+  it("reduceChildCompact Result path succeeds for valid input", () => {
+    const result = reduceChildCompact(createChildCompactState("t1"), start());
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().lines).toHaveLength(3);
+    expect(result._unsafeUnwrap().runs).toHaveLength(1);
   });
 
   it("maps tool events with toolCallId as the stable item id", () => {
@@ -583,7 +560,7 @@ describe("child-compact-render", () => {
       "control",
       "control",
     ]);
-    // Operational facts never become collapsed activity.
-    expect(renderChildCompactSafe(state).lines[1]).toBe("…");
+    // Operational facts never become activity.
+    expect(activityOf(state)).toBeUndefined();
   });
 });

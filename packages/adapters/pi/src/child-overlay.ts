@@ -410,13 +410,10 @@ export {
   createChildOverlayController,
 } from "./child-overlay-controller.js";
 export {
-  CHILD_OVERLAY_COMPACT_BADGE,
   childOverlayHeaderFacts,
   childOverlayPromptFacts,
   childOverlayRailFacts,
   childOverlaySettlementFacts,
-  compactChildOverlayEntryLine,
-  compactChildOverlayLines,
 } from "./child-overlay-facts.js";
 export {
   mapNativeSessionEntryToOverlay,

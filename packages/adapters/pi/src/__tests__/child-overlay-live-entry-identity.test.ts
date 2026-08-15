@@ -1,17 +1,17 @@
 /**
- * Overlay entry identity across view-mode toggles for a *live* child.
+ * Overlay entry identity for a *live* child.
  *
- * The settled/historical sibling of this file replays persisted entries, whose
- * transcript is rebuilt through `transcriptFromOverlayEntries` and therefore
- * always carries the overlay entry id. The live path is different: the
- * controller reduces one parser-approved event into the transcript and then
- * projects the window entry. Reducing first left full-layout rows labelled with
- * reducer-owned ids (`thinking-0`, `tool-1`) while the compact layout reported
- * overlay ids (`live-thinking-0`, `call-1`), so a live full <-> compact toggle
- * matched no anchor and moved the reader.
+ * Historical children replay persisted entries, whose transcript is rebuilt
+ * through `transcriptFromOverlayEntries` and therefore always carries the
+ * overlay entry id. The live path is different: the controller reduces one
+ * parser-approved event into the transcript and then projects the window entry.
+ * Reducing first left rendered rows labelled with reducer-owned ids
+ * (`thinking-0`, `tool-1`) while the window held overlay ids
+ * (`live-thinking-0`, `call-1`), so the viewport anchor matched nothing and the
+ * reader was moved.
  *
  * These tests drive the real mounted component with real live-event ingestion:
- * real render, real Ctrl+O input path, real controller.
+ * real render, real input path, real controller.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -171,20 +171,6 @@ async function press(mounted: MountedOverlay, data: string): Promise<void> {
   mounted.component.render(WIDTH);
 }
 
-/**
- * Flip the layout without pressing a key.
- *
- * The overlay has no compact-view key route: `Ctrl+O` stays Pi's own
- * tool-expand action, so the toggle is driven through the controller and the
- * component is invalidated exactly as a controller outcome would.
- */
-async function toggleViewMode(mounted: MountedOverlay): Promise<void> {
-  expect(mounted.controller.toggleViewMode().isOk()).toBe(true);
-  mounted.component.invalidate();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  mounted.component.render(WIDTH);
-}
-
 const MARKER = /#E(\d+)#/g;
 
 /** Index of the turn that owns the last painted line. */
@@ -201,7 +187,6 @@ function bottomTurnIndex(lines: readonly string[]): number {
 }
 
 interface Observation {
-  readonly viewMode: string;
   readonly bottomTurn: number;
   readonly scrollOffset: number;
   readonly anchorEntryId: string | undefined;
@@ -211,14 +196,13 @@ function observe(mounted: MountedOverlay): Observation {
   const lines = mounted.component.render(WIDTH);
   const view = mounted.controller.view()._unsafeUnwrap();
   return {
-    viewMode: view.viewMode,
     bottomTurn: bottomTurnIndex(lines),
     scrollOffset: view.scrollOffset,
     anchorEntryId: view.anchor?.entryId,
   };
 }
 
-describe("mounted live-child overlay identity across view modes", () => {
+describe("mounted live-child overlay entry identity", () => {
   it("labels live transcript entries with the overlay entry ids the window holds", async () => {
     const mounted = await mount();
     const view = mounted.controller.view()._unsafeUnwrap();
@@ -327,72 +311,6 @@ describe("mounted live-child overlay identity across view modes", () => {
     expect(
       new Set(assistantTranscript.map((entry) => entry.overlayEntryId)).size,
     ).toBe(1);
-  });
-
-  it("keeps the same bottom turn through full → compact → full while live", async () => {
-    const mounted = await mount();
-
-    // Scroll away from the tail through the real component input path.
-    await press(mounted, SCROLL_KEYS.pageUp);
-    await press(mounted, SCROLL_KEYS.pageUp);
-
-    const full = observe(mounted);
-    expect(full.viewMode).toBe("full");
-    expect(full.scrollOffset).toBeGreaterThan(0);
-    // Mid-window: far enough from both ends that neither layout has to clamp.
-    expect(full.bottomTurn).toBeGreaterThan(0);
-    expect(full.bottomTurn).toBeLessThan(TURN_COUNT - 1);
-    expect(full.anchorEntryId).toBeDefined();
-
-    await toggleViewMode(mounted);
-    const compact = observe(mounted);
-    expect(compact.viewMode).toBe("compact");
-    // The live regression: full-layout spans reported reducer-owned ids the
-    // compact layout never uses, so the anchor matched nothing and the
-    // viewport silently clamped toward the tail.
-    expect(compact.bottomTurn).toBe(full.bottomTurn);
-    expect(compact.scrollOffset).toBeGreaterThan(0);
-
-    await toggleViewMode(mounted);
-    const back = observe(mounted);
-    expect(back.viewMode).toBe("full");
-    expect(back.bottomTurn).toBe(full.bottomTurn);
-    expect(back.scrollOffset).toBeGreaterThan(0);
-  });
-
-  it("holds the bottom turn across repeated live toggles", async () => {
-    const mounted = await mount();
-    await press(mounted, SCROLL_KEYS.pageUp);
-    await press(mounted, SCROLL_KEYS.pageUp);
-
-    const start = observe(mounted);
-    expect(start.bottomTurn).toBeGreaterThan(0);
-
-    for (let round = 0; round < 3; round += 1) {
-      await toggleViewMode(mounted);
-      expect(observe(mounted).bottomTurn).toBe(start.bottomTurn);
-      await toggleViewMode(mounted);
-      expect(observe(mounted).bottomTurn).toBe(start.bottomTurn);
-    }
-  });
-
-  it("keeps following the live tail across a toggle", async () => {
-    const mounted = await mount();
-    const before = observe(mounted);
-    expect(before.scrollOffset).toBe(0);
-    expect(before.bottomTurn).toBe(TURN_COUNT - 1);
-
-    await toggleViewMode(mounted);
-    const compact = observe(mounted);
-    expect(compact.viewMode).toBe("compact");
-    expect(compact.scrollOffset).toBe(0);
-    expect(compact.bottomTurn).toBe(TURN_COUNT - 1);
-
-    await toggleViewMode(mounted);
-    const back = observe(mounted);
-    expect(back.viewMode).toBe("full");
-    expect(back.scrollOffset).toBe(0);
-    expect(back.bottomTurn).toBe(TURN_COUNT - 1);
   });
 });
 
@@ -609,48 +527,34 @@ describe("real Pi 0.84 assistant lifecycle identity", () => {
 });
 
 /**
- * The mounted full <-> compact proof for a real Pi 0.84 lifecycle: one compact
- * assistant row, the same span identity in both layouts, and a viewport that
- * does not move across a round trip.
+ * The mounted proof for a real Pi 0.84 lifecycle: the viewport anchor names an
+ * overlay entry the window actually holds, and one assistant lifecycle is one
+ * overlay entry.
  */
-describe("mounted real Pi 0.84 lifecycle across view modes", () => {
-  it("shares span identity and holds the viewport through full → compact → full", async () => {
+describe("mounted real Pi 0.84 lifecycle identity", () => {
+  it("anchors the viewport on an overlay entry the window holds", async () => {
     const mounted = await mount();
 
     await press(mounted, SCROLL_KEYS.pageUp);
     await press(mounted, SCROLL_KEYS.pageUp);
 
-    const full = observe(mounted);
-    expect(full.viewMode).toBe("full");
-    expect(full.scrollOffset).toBeGreaterThan(0);
-    expect(full.anchorEntryId).toBeDefined();
+    const scrolled = observe(mounted);
+    expect(scrolled.scrollOffset).toBeGreaterThan(0);
+    expect(scrolled.anchorEntryId).toBeDefined();
 
-    // The full-layout anchor is an id the compact layout also holds: compact
-    // spans come from the same overlay entries.
+    // Rendered spans come from the same overlay entries the window holds, so
+    // the anchor is always an id the controller can find again.
     const view = mounted.controller.view()._unsafeUnwrap();
     const overlayIds = new Set(view.entries.map((entry) => entry.id));
-    expect(overlayIds.has(full.anchorEntryId as string)).toBe(true);
+    expect(overlayIds.has(scrolled.anchorEntryId as string)).toBe(true);
 
-    // One compact row per assistant lifecycle, under the allocated id.
+    // One overlay entry per assistant lifecycle, under the allocated id.
     const assistantIds = view.entries
       .filter((entry) => entry.kind === "assistant")
       .map((entry) => entry.id);
     expect(assistantIds).toEqual(
       Array.from({ length: TURN_COUNT }, (_, i) => `live-assistant-${i}`),
     );
-
-    await toggleViewMode(mounted);
-    const compact = observe(mounted);
-    expect(compact.viewMode).toBe("compact");
-    expect(compact.bottomTurn).toBe(full.bottomTurn);
-    expect(compact.anchorEntryId).toBeDefined();
-    expect(overlayIds.has(compact.anchorEntryId as string)).toBe(true);
-
-    await toggleViewMode(mounted);
-    const back = observe(mounted);
-    expect(back.viewMode).toBe("full");
-    expect(back.bottomTurn).toBe(full.bottomTurn);
-    expect(back.scrollOffset).toBeGreaterThan(0);
   });
 });
 
@@ -964,32 +868,7 @@ describe("mounted real assistantMessageEvent missing-start regression", () => {
       expect(windowIds.has(entry.overlayEntryId as string)).toBe(true);
     }
 
-    // Compact and full agree on that identity, and a round trip holds it.
-    expect(controller.toggleViewMode().isOk()).toBe(true);
-    component.invalidate();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const compactLines = component.render(WIDTH);
-    expect(compactLines.join("\n")).toContain("#E0#");
-    const compactView = controller.view()._unsafeUnwrap();
-    expect(compactView.viewMode).toBe("compact");
-    expect(
-      compactView.entries
-        .filter((entry) => entry.kind === "assistant")
-        .map((entry) => entry.id),
-    ).toEqual(["live-assistant-0"]);
-
-    expect(controller.toggleViewMode().isOk()).toBe(true);
-    component.invalidate();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    component.render(WIDTH);
-    const backView = controller.view()._unsafeUnwrap();
-    expect(backView.viewMode).toBe("full");
-    expect(
-      backView.entries
-        .filter((entry) => entry.kind === "assistant")
-        .map((entry) => entry.id),
-    ).toEqual(["live-assistant-0"]);
-    for (const entry of backView.transcript.entries) {
+    for (const entry of view.transcript.entries) {
       expect(entry.overlayEntryId).toBe("live-assistant-0");
     }
   });

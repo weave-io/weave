@@ -6,7 +6,6 @@ import {
   createPiNativeTranscriptComponentFactory,
   degradedPiChildCardComponent,
   renderPiChildCardComponent,
-  renderPiChildCompactComponent,
 } from "../child-native-components.js";
 import type { PiChildSessionEvent } from "../child-session-events.js";
 import {
@@ -288,74 +287,6 @@ describe("Pi native transcript components", () => {
     ).toBe(true);
     expect(answerIndex - thinkingIndex).toBe(2);
     expect(blank(rendered.lines.at(-1) ?? "x")).toBe(true);
-  });
-});
-
-describe("renderPiChildCompactComponent", () => {
-  const theme: PiUiThemePort = {
-    fg: (_color, text) => text,
-    bold: (text) => text,
-  };
-
-  it("renders exactly three collapsed lines and the expanded item when requested", () => {
-    const collapsed = renderPiChildCompactComponent(
-      {
-        lines: [
-          "weave_delegate · shuttle · running",
-          "latest fragment",
-          "run 1 · start",
-        ],
-        expandedCurrentItem: "latest fragment expanded",
-        degraded: false,
-      },
-      { expanded: false },
-      theme,
-    );
-    expect(collapsed.isOk()).toBe(true);
-    const collapsedText = collapsed._unsafeUnwrap().render(80).join("\n");
-    expect(
-      collapsedText.split("\n").filter((line) => line.length > 0),
-    ).toHaveLength(3);
-    expect(collapsedText).not.toContain("expanded");
-
-    const expanded = renderPiChildCompactComponent(
-      {
-        lines: [
-          "weave_delegate · shuttle · running",
-          "latest fragment",
-          "run 1 · start",
-        ],
-        expandedCurrentItem: "latest fragment expanded",
-        degraded: false,
-      },
-      { expanded: true },
-      theme,
-    );
-    expect(expanded.isOk()).toBe(true);
-    expect(expanded._unsafeUnwrap().render(80).join("\n")).toContain(
-      "latest fragment expanded",
-    );
-  });
-
-  it("returns a stable Err code when theme throws (no path leakage)", () => {
-    const throwing: PiUiThemePort = {
-      fg: () => {
-        throw new Error("/secret/session.jsonl");
-      },
-      bold: (text) => text,
-    };
-    const rendered = renderPiChildCompactComponent(
-      {
-        lines: ["a", "b", "c"],
-        expandedCurrentItem: undefined,
-        degraded: false,
-      },
-      { expanded: false },
-      throwing,
-    );
-    expect(rendered.isErr()).toBe(true);
-    expect(rendered._unsafeUnwrapErr()).toBe("ChildCompactRenderFailed");
-    expect(JSON.stringify(rendered)).not.toContain("/secret");
   });
 });
 

@@ -30,14 +30,11 @@ import {
   type OverlaySettlementPhase,
   overlaySettlementFacts,
 } from "./child-overlay-layout.js";
-import { boundText } from "./child-overlay-replay.js";
 import type {
-  ChildOverlayEntry,
   ChildOverlayStatus,
   ChildOverlayView,
 } from "./child-overlay-types.js";
 import type { PiChildProviderError } from "./child-provider-error.js";
-import { fitLineToWidth } from "./render-width.js";
 
 /**
  * What the header calls a child whose agent name and title are both unknown.
@@ -270,72 +267,4 @@ export function childOverlayPromptFacts(
         ? "read-only — this child was orphaned"
         : undefined,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Compact view projection (Task 7)
-// ---------------------------------------------------------------------------
-
-/** Header marker shown while a child renders in compact mode. */
-export const CHILD_OVERLAY_COMPACT_BADGE = "COMPACT" as const;
-
-/** Characters kept from one entry's text before the width fit trims further. */
-const COMPACT_SUMMARY_MAX = 160;
-
-/** Stable one-character kind marks; never a path, id, or free-form label. */
-const COMPACT_KIND_MARKS: Readonly<Record<string, string>> = Object.freeze({
-  prompt: "›",
-  user: "›",
-  steering: "›",
-  "follow-up": "›",
-  assistant: "•",
-  thinking: "~",
-  tool: "⚙",
-  error: "!",
-  retry: "↻",
-  image: "▣",
-  status: "·",
-  unknown: "?",
-});
-
-/**
- * Collapse one bounded overlay entry into a single summary line.
- *
- * Pure and render-time only: the entry itself is never rewritten, so toggling
- * back to full view restores the untouched transcript. Run dividers keep their
- * own shape so the run structure survives the condensation.
- */
-export function compactChildOverlayEntryLine(
-  entry: ChildOverlayEntry,
-  width: number,
-): string {
-  const flattened = boundText(entry.text)
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, COMPACT_SUMMARY_MAX);
-  if (entry.kind === "run-divider") {
-    const numbered =
-      entry.runNumber !== undefined ? `run ${entry.runNumber}` : "run";
-    const label = flattened.length > 0 ? flattened : numbered;
-    return fitLineToWidth(`── ${label} ──`, width);
-  }
-  const mark = COMPACT_KIND_MARKS[entry.kind] ?? COMPACT_KIND_MARKS.unknown;
-  const run = entry.runNumber !== undefined ? `r${entry.runNumber} ` : "";
-  return fitLineToWidth(
-    `${mark} ${run}${entry.kind}${flattened.length > 0 ? `: ${flattened}` : ""}`,
-    width,
-  );
-}
-
-/**
- * Project the loaded entry window into compact summary rows, in order.
- *
- * This is the compact counterpart of the native transcript render and reads
- * the same bounded entries the controller already holds.
- */
-export function compactChildOverlayLines(
-  entries: readonly ChildOverlayEntry[],
-  width: number,
-): readonly string[] {
-  return entries.map((entry) => compactChildOverlayEntryLine(entry, width));
 }

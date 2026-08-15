@@ -1091,7 +1091,7 @@ export function resolveChildOverlaySearchRoute(
  * would otherwise read as a bug:
  *
  * - `Ctrl+O` is Pi's own tool-expand action. The overlay has a single view, so
- *   there is no compact toggle to bind it to and Weave never registers it.
+ *   there is no second layout to bind it to and Weave never registers it.
  * - `Alt+A` / `Alt+T` are Weave's own agent / plan shortcuts, and Pi dispatches
  *   extension shortcuts outside a focused `ui.custom` component, so they do not
  *   route while the overlay is mounted. Closing the overlay restores them.

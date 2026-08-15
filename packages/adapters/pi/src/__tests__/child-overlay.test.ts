@@ -2966,7 +2966,7 @@ describe("createChildOverlayCustomComponent", () => {
     };
   };
 
-  it("renders and searches the canonical provider error in full and compact views", async () => {
+  it("renders and searches the canonical provider error at any width", async () => {
     const { component, controller } = await mount({ status: "live" });
     controller.applyLiveEvent({
       type: "message_start",
@@ -3013,14 +3013,16 @@ describe("createChildOverlayCustomComponent", () => {
       (await controller.search("rate limit"))._unsafeUnwrap().searchMatches,
     ).toHaveLength(1);
 
-    // Compact is a controller-owned layout, not a key route: Ctrl+O stays Pi's.
-    controller.toggleViewMode()._unsafeUnwrap();
+    // A narrow terminal still names the failure — on the rail when the
+    // transcript row is out of view — still fits, and still leaks nothing the
+    // projection stripped.
     component.invalidate();
     await flush();
-    const compact = component.render(40);
-    expect(compact.some((line) => line.includes("assistant error"))).toBe(true);
-    expect(compact.every((line) => visibleWidth(line) <= 40)).toBe(true);
-    const joined = compact.join("\n");
+    const narrow = component.render(40);
+    expect(narrow.every((line) => visibleWidth(line) <= 40)).toBe(true);
+    const joined = narrow.join("\n");
+    expect(joined).toContain("rate-limit");
+    expect(joined).toContain("HTTP 429");
     for (const sentinel of [
       "raw-secret",
       "/private/tmp/key",
@@ -3922,17 +3924,17 @@ describe("mapPiDelegationFailureToOverlaySourceError", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Compact view mode (Task 7)
+// Deliberate non-claims
 // ---------------------------------------------------------------------------
 
 /** Pi's own tool-expand key. Weave claims it nowhere. */
 const CTRL_O = "\x0f";
 
-describe("child overlay compact view mode", () => {
+describe("child overlay unclaimed keys", () => {
   const flush = (): Promise<void> =>
     new Promise((resolve) => setTimeout(resolve, 0));
 
-  const mountCompact = async (
+  const mountOverlay = async (
     options: {
       readonly entryCount?: number;
       readonly status?: "live" | "settled" | "orphan";
@@ -3940,15 +3942,15 @@ describe("child overlay compact view mode", () => {
   ) => {
     const source = createMemoryChildOverlaySource([
       child({
-        childId: "vm-mount",
+        childId: "unclaimed-mount",
         status: options.status ?? "live",
         generationId: "gen-1",
-        title: "compact-child",
+        title: "unclaimed-child",
         entries: entries(options.entryCount ?? 6),
       }),
     ]);
     const controller = createChildOverlayController(source, { pageSize: 10 });
-    await mustOpen(controller, "vm-mount");
+    await mustOpen(controller, "unclaimed-mount");
     const component = createChildOverlayCustomComponent(
       { requestRender: () => {} } as never,
       {} as never,
@@ -3963,17 +3965,6 @@ describe("child overlay compact view mode", () => {
     return { component, controller };
   };
 
-  it("defaults to full and toggles full → compact → full", async () => {
-    const source = createMemoryChildOverlaySource([
-      child({ childId: "vm-1", entries: entries(6) }),
-    ]);
-    const overlay = createChildOverlayController(source, { pageSize: 10 });
-    const opened = await mustOpen(overlay, "vm-1");
-    expect(opened.viewMode).toBe("full");
-    expect(overlay.toggleViewMode()._unsafeUnwrap().viewMode).toBe("compact");
-    expect(overlay.toggleViewMode()._unsafeUnwrap().viewMode).toBe("full");
-  });
-
   it("never claims ctrl+o: the controller leaves the key to Pi", async () => {
     const source = createMemoryChildOverlaySource([
       child({
@@ -3986,185 +3977,27 @@ describe("child overlay compact view mode", () => {
     const overlay = createChildOverlayController(source, { pageSize: 10 });
     await mustOpen(overlay, "vm-key");
     const outcome = (await overlay.handleInput(CTRL_O))._unsafeUnwrap();
-    // Consumed while mounted, but it toggles nothing and types nothing.
+    // Consumed while mounted, but it changes nothing and types nothing.
     expect(outcome).toEqual({ kind: "consumed" });
-    expect(overlay.view()._unsafeUnwrap().viewMode).toBe("full");
     expect(overlay.view()._unsafeUnwrap().draft).toBe("");
   });
 
-  it("keeps view mode per child and across focus switches", async () => {
-    const source = createMemoryChildOverlaySource([
-      child({ childId: "vm-a", entries: entries(4) }),
-      child({ childId: "vm-b", entries: entries(4, "b") }),
-    ]);
-    const overlay = createChildOverlayController(source, { pageSize: 10 });
-    await mustOpen(overlay, "vm-a");
-    overlay.toggleViewMode()._unsafeUnwrap();
-    expect(overlay.view()._unsafeUnwrap().viewMode).toBe("compact");
-
-    // Isolation: the second child keeps the default.
-    const b = await mustOpen(overlay, "vm-b");
-    expect(b.viewMode).toBe("full");
-
-    // Persistence: returning to the first child restores compact.
-    const backToA = await mustOpen(overlay, "vm-a");
-    expect(backToA.viewMode).toBe("compact");
-    expect((await mustOpen(overlay, "vm-b")).viewMode).toBe("full");
-  });
-
-  it("resets to full on a new controller (teardown drops saved view modes)", async () => {
-    const children = [child({ childId: "vm-t", entries: entries(4) })];
-    const first = createChildOverlayController(
-      createMemoryChildOverlaySource(children),
-      { pageSize: 10 },
-    );
-    await mustOpen(first, "vm-t");
-    first.toggleViewMode()._unsafeUnwrap();
-    expect(first.view()._unsafeUnwrap().viewMode).toBe("compact");
-    first.close()._unsafeUnwrap();
-
-    const second = createChildOverlayController(
-      createMemoryChildOverlaySource(children),
-      { pageSize: 10 },
-    );
-    expect((await mustOpen(second, "vm-t")).viewMode).toBe("full");
-  });
-
-  it("does not fork entry state: entries are identical across a round trip", async () => {
-    const source = createMemoryChildOverlaySource([
-      child({ childId: "vm-entries", entries: entries(6) }),
-    ]);
-    const overlay = createChildOverlayController(source, { pageSize: 10 });
-    const before = (await mustOpen(overlay, "vm-entries")).entries;
-    const compact = overlay.toggleViewMode()._unsafeUnwrap().entries;
-    const after = overlay.toggleViewMode()._unsafeUnwrap().entries;
-    expect(compact.map((entry) => entry.id)).toEqual(
-      before.map((entry) => entry.id),
-    );
-    expect(after).toEqual(before);
-  });
-
-  it("preserves the draft across a compact round trip", async () => {
-    const source = createMemoryChildOverlaySource([
-      child({
-        childId: "vm-draft",
-        status: "live",
-        generationId: "gen-1",
-        entries: entries(4),
-      }),
-    ]);
-    const overlay = createChildOverlayController(source, { pageSize: 10 });
-    await mustOpen(overlay, "vm-draft");
-    overlay.updateDraft("keep me")._unsafeUnwrap();
-    expect(overlay.toggleViewMode()._unsafeUnwrap().draft).toBe("keep me");
-    expect(overlay.toggleViewMode()._unsafeUnwrap().draft).toBe("keep me");
-  });
-
-  it("preserves search query and matches across a compact round trip", async () => {
-    const source = createMemoryChildOverlaySource([
-      child({ childId: "vm-search", entries: entries(8) }),
-    ]);
-    const overlay = createChildOverlayController(source, { pageSize: 20 });
-    await mustOpen(overlay, "vm-search");
-    const searched = (await overlay.search("e-text-3"))._unsafeUnwrap();
-    expect(searched.searchMatches.length).toBeGreaterThan(0);
-    const compact = overlay.toggleViewMode()._unsafeUnwrap();
-    expect(compact.searchQuery).toBe("e-text-3");
-    expect(compact.searchMatches).toEqual(searched.searchMatches);
-    const full = overlay.toggleViewMode()._unsafeUnwrap();
-    expect(full.searchQuery).toBe("e-text-3");
-    expect(full.searchMatches).toEqual(searched.searchMatches);
-  });
-
-  it("still searches the whole loaded window while compact", async () => {
-    const source = createMemoryChildOverlaySource([
-      child({ childId: "vm-search-2", entries: entries(8) }),
-    ]);
-    const overlay = createChildOverlayController(source, { pageSize: 20 });
-    await mustOpen(overlay, "vm-search-2");
-    overlay.toggleViewMode()._unsafeUnwrap();
-    const searched = (await overlay.search("e-text-"))._unsafeUnwrap();
-    expect(searched.viewMode).toBe("compact");
-    expect(searched.searchMatches.length).toBe(searched.entries.length);
-  });
-
-  it("discards the measured extent on toggle so the next render re-measures", async () => {
-    const source = createMemoryChildOverlaySource([
-      child({ childId: "vm-extent", entries: entries(20) }),
-    ]);
-    const overlay = createChildOverlayController(source, { pageSize: 20 });
-    await mustOpen(overlay, "vm-extent");
-    overlay.setScrollExtent(120)._unsafeUnwrap();
-    expect(overlay.view()._unsafeUnwrap().scrollExtent).toBe(120);
-    const toggled = overlay.toggleViewMode()._unsafeUnwrap();
-    // Rows-per-entry changes everywhere, so the stale row extent is dropped and
-    // the entry count is the only bound until the component measures again.
-    expect(toggled.scrollExtent).toBe(toggled.entries.length);
-    expect(overlay.setScrollExtent(19)._unsafeUnwrap().scrollExtent).toBe(19);
-  });
-
-  it("keeps the viewport anchor stable across a large row-count change", async () => {
-    const source = createMemoryChildOverlaySource([
-      child({ childId: "vm-anchor", entries: entries(20) }),
-    ]);
-    const overlay = createChildOverlayController(source, { pageSize: 20 });
-    await mustOpen(overlay, "vm-anchor");
-    overlay.setScrollExtent(200)._unsafeUnwrap();
-    overlay.setScrollOffset(8)._unsafeUnwrap();
-    const before = overlay.view()._unsafeUnwrap();
-    expect(before.anchor?.entryId).toBeDefined();
-
-    const compact = overlay.toggleViewMode()._unsafeUnwrap();
-    expect(compact.anchor?.entryId).toBe(before.anchor?.entryId);
-    // The offset never scales with the row-count change; it only clamps.
-    expect(compact.scrollOffset).toBeLessThanOrEqual(before.scrollOffset);
-    expect(compact.liveTail).toBe(false);
-
-    const full = overlay.toggleViewMode()._unsafeUnwrap();
-    expect(full.anchor?.entryId).toBe(before.anchor?.entryId);
-  });
-
-  it("keeps following the tail across a toggle when the viewport is live", async () => {
-    const source = createMemoryChildOverlaySource([
-      child({ childId: "vm-tail", entries: entries(10) }),
-    ]);
-    const overlay = createChildOverlayController(source, { pageSize: 20 });
-    await mustOpen(overlay, "vm-tail");
-    const compact = overlay.toggleViewMode()._unsafeUnwrap();
-    expect(compact.scrollOffset).toBe(0);
-    expect(compact.liveTail).toBe(true);
-  });
-
-  it("renders one summary row per entry", async () => {
-    const { component, controller } = await mountCompact({ entryCount: 6 });
-
-    controller.toggleViewMode()._unsafeUnwrap();
-    component.invalidate();
-    await flush();
-    expect(controller.view()._unsafeUnwrap().viewMode).toBe("compact");
-    const compactLines = component.render(80);
-    const joined = compactLines.join("\n");
-    expect(joined).toContain("e-text-0");
-    expect(joined).not.toContain("/Users/");
-    // Compact rows never wrap, so each admitted entry costs exactly one row.
-    for (const entry of controller.view()._unsafeUnwrap().entries) {
-      expect(
-        compactLines.some((line) =>
-          line.includes(`e-text-${entry.id.slice(1)}`),
-        ),
-      ).toBe(true);
-    }
-  });
-
   it("leaves ctrl+o to the host: the mounted overlay never routes it", async () => {
-    const { component, controller } = await mountCompact();
+    const { component, controller } = await mountOverlay();
     const rendered = component.render(80).join("\n");
     expect(rendered).not.toContain("Ctrl+O");
     component.handleInput(CTRL_O);
     await flush();
-    // Not routed to the controller: the child stays in full view.
-    expect(controller.view()._unsafeUnwrap().viewMode).toBe("full");
-    // And it is not typed into the draft either.
+    // Not routed to the controller, and not typed into the draft either.
     expect(controller.view()._unsafeUnwrap().draft).toBe("");
+  });
+
+  it("keeps every entry addressable in the single transcript layout", async () => {
+    const { component, controller } = await mountOverlay({ entryCount: 6 });
+    const lines = component.render(80);
+    const joined = lines.join("\n");
+    expect(joined).toContain("e-text-0");
+    expect(joined).not.toContain("/Users/");
+    expect(controller.view()._unsafeUnwrap().entries.length).toBeGreaterThan(0);
   });
 });

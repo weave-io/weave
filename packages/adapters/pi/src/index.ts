@@ -81,13 +81,10 @@ export {
   sanitizeCapabilityProbeResults,
 } from "./capability-prober.js";
 export type {
-  ChildCompactDegradedReason,
   ChildCompactError,
   ChildCompactItem,
   ChildCompactItemKind,
   ChildCompactReducerInput,
-  ChildCompactRenderOptions,
-  ChildCompactRenderOutput,
   ChildCompactRunAction,
   ChildCompactRunBlock,
   ChildCompactRunStatus,
@@ -95,21 +92,16 @@ export type {
 } from "./child-compact-render.js";
 export {
   boundChildCompactId,
-  CHILD_COMPACT_COLLAPSED_CODE_POINTS,
-  CHILD_COMPACT_EXPANDED_CODE_POINTS,
   CHILD_COMPACT_MAX_DEDUP_KEYS,
   CHILD_COMPACT_MAX_ITEMS,
   CHILD_COMPACT_MAX_RUNS,
-  childCompactLineCount,
+  childCompactChromeIsClean,
   createChildCompactState,
-  degradedChildCompactRender,
+  isChildCompactState,
   mapPiChildSessionEventToCompactInput,
   parseReducerInput,
-  projectChildCompact,
   reduceChildCompact,
   reduceChildCompactSafe,
-  renderChildCompact,
-  renderChildCompactSafe,
   sanitizeChildCompactText,
 } from "./child-compact-render.js";
 export {
@@ -283,11 +275,9 @@ export type {
 } from "./child-native-components.js";
 export {
   CHILD_CARD_NATIVE_RENDER_FAILED,
-  CHILD_COMPACT_NATIVE_RENDER_FAILED,
   createPiNativeTranscriptComponentFactory,
   degradedPiChildCardComponent,
   renderPiChildCardComponent,
-  renderPiChildCompactComponent,
 } from "./child-native-components.js";
 export type {
   CreateNativeChildSessionInput,
