@@ -307,6 +307,37 @@ describe("buildPlanRailFacts", () => {
     });
   });
 
+  it("falls back to the first pending parent when none is in_progress", () => {
+    const source = snapshot(
+      [
+        parent({ id: "1", title: "Alpha", state: "completed" }),
+        parent({ id: "2", title: "Bravo", state: "completed" }),
+        parent({ id: "3", title: "Charlie", state: "pending" }),
+        parent({ id: "4", title: "Delta", state: "pending" }),
+      ],
+      { planName: "paused-plan" },
+    );
+    const active = activeTaskOf(source);
+
+    expect(active?.taskId).toBe("3");
+    expect(active?.taskState).toBe("pending");
+    expect(active?.parentOrdinal).toBe(3);
+    expect(
+      buildPlanRailFacts({
+        agentName: "loom",
+        cycleCandidateCount: 2,
+        snapshot: source,
+        activeTask: active,
+      })?.plan,
+    ).toEqual({
+      plan: "paused-plan",
+      marks: ["done", "done", "active", "pending"],
+      ordinal: "3/4",
+      task: "Charlie",
+      nextTask: "Delta",
+    });
+  });
+
   it("bounds the marks a pathologically long plan contributes", () => {
     const parents = Array.from({ length: 200 }, (_, index) =>
       parent({
