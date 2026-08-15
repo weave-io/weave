@@ -12,9 +12,10 @@
  * 2. The live prompt bypassed the locked panel and showed Pi's own editor
  *    chrome: one bare rule above the caret and one below, with no border, no
  *    label and no relationship to the surface above it (§2.10).
- * 3. The body was budgeted against the CANVAS instead of its content, so a
- *    short transcript was stretched to the full overlay height and the prompt
- *    was stranded at the bottom of it.
+ * 3. The composed body drifted from the prototype's own budget. The locked
+ *    composition (`bodyRightRail`) gives the body every row the header and the
+ *    prompt did not reserve, and both the transcript window and the rail pad
+ *    themselves to it, so the surface is one full frame at every height.
  *
  * The assertions are deliberately structural — order of facts, panel glyphs,
  * row budgets — rather than golden bytes, so they keep failing for the drift
@@ -38,7 +39,6 @@ import { overlayUsableRows } from "../child-overlay-component.js";
 import { childOverlayHeaderFacts } from "../child-overlay-facts.js";
 import {
   OVERLAY_CHILD_BADGE,
-  OVERLAY_MIN_BODY_ROWS,
   overlayEditorBodyRows,
   overlayPaneGeometry,
 } from "../child-overlay-layout.js";
@@ -277,25 +277,25 @@ describe("child inspector composed body", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. The body is budgeted against its content, not the canvas
+// 4. The body takes the whole canvas, exactly as the prototype composes it
 // ---------------------------------------------------------------------------
 
 describe("child inspector vertical budget", () => {
-  it("does not stretch a short transcript over the whole canvas", async () => {
+  it("fills the row budget even when the transcript is short", async () => {
     const rows = 50;
     const { component } = await mount({ entries: entries(2) }, rows);
     const rendered = component.render(220);
-    const budget = overlayUsableRows({ terminal: { rows } });
-    expect(rendered.length).toBeLessThan(budget);
-    // The prompt stays attached to the content above it, and the frame still
-    // closes underneath it.
+    // `bodyRightRail` budgets the CANVAS: the transcript window and the rail
+    // both pad to the rows the header and the prompt left, so a short child is
+    // one full frame rather than a shrunken one.
+    expect(rendered.length).toBe(overlayUsableRows({ terminal: { rows } }));
     const key = rendered.findIndex((line) => line.includes("Esc close"));
     expect(key).toBe(rendered.length - 2);
     expect(rendered.at(-1)?.startsWith("╰")).toBe(true);
     expect(rendered[0]?.startsWith("╭")).toBe(true);
   });
 
-  it("still spends the whole budget on a transcript that has the rows", async () => {
+  it("spends the same budget on a transcript that has the rows", async () => {
     const rows = 50;
     const { component } = await mount({ entries: entries(400) }, rows);
     const rendered = component.render(220);
@@ -304,10 +304,10 @@ describe("child inspector vertical budget", () => {
   });
 
   it("keeps a usable reading window for a nearly empty child", async () => {
-    const { component } = await mount({ entries: entries(1) }, 50);
+    const rows = 50;
+    const { component } = await mount({ entries: entries(1) }, rows);
     const rendered = component.render(220);
-    // Frame, header rows, body floor, prompt: enough to read and to act.
-    expect(rendered.length).toBeGreaterThanOrEqual(OVERLAY_MIN_BODY_ROWS);
+    expect(rendered.length).toBe(overlayUsableRows({ terminal: { rows } }));
     for (const line of rendered) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(220);
     }

@@ -3638,7 +3638,8 @@ describe("createChildOverlayCustomComponent", () => {
     });
     component.render(80);
     component.handleInput("\x06");
-    // Search lives on the rail now: its own section, its query and its counter.
+    // Search lives on the rail: its own section, its query and the prototype's
+    // bare `current/total` counter on the matrix's `match` row.
     expect(component.render(80).join("\n")).toContain("SEARCH");
     for (const key of "e-text-1") component.handleInput(key);
     expect(component.render(80).join("\n")).toContain("e-text-1");
@@ -3649,17 +3650,17 @@ describe("createChildOverlayCustomComponent", () => {
     // e-text-1 plus e-text-10..e-text-19 in a 40-entry window.
     expect(view.searchMatches.length).toBe(11);
     const header = component.render(80).join("\n");
-    expect(header).toContain("1/11 matches");
+    expect(header).toContain("match    1/11");
     const firstOffset = controller.view()._unsafeUnwrap().scrollOffset;
     component.handleInput("n");
     await flush();
-    expect(component.render(80).join("\n")).toContain("2/11 matches");
+    expect(component.render(80).join("\n")).toContain("match    2/11");
     expect(controller.view()._unsafeUnwrap().scrollOffset).not.toBe(
       firstOffset,
     );
     component.handleInput("N");
     await flush();
-    expect(component.render(80).join("\n")).toContain("1/11 matches");
+    expect(component.render(80).join("\n")).toContain("match    1/11");
     expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(firstOffset);
   });
 
@@ -3691,19 +3692,19 @@ describe("createChildOverlayCustomComponent", () => {
     await flush();
     const view = controller.view()._unsafeUnwrap();
     expect(view.searchMatches).toEqual(["e21", "e42", "e55"]);
-    expect(component.render(80).join("\n")).toContain("1/3 matches");
+    expect(component.render(80).join("\n")).toContain("match    1/3");
     const firstOffset = controller.view()._unsafeUnwrap().scrollOffset;
     component.handleInput("n");
     await flush();
-    expect(component.render(80).join("\n")).toContain("2/3 matches");
+    expect(component.render(80).join("\n")).toContain("match    2/3");
     const secondOffset = controller.view()._unsafeUnwrap().scrollOffset;
     expect(secondOffset).not.toBe(firstOffset);
     component.handleInput("n");
     await flush();
-    expect(component.render(80).join("\n")).toContain("3/3 matches");
+    expect(component.render(80).join("\n")).toContain("match    3/3");
     component.handleInput("N");
     await flush();
-    expect(component.render(80).join("\n")).toContain("2/3 matches");
+    expect(component.render(80).join("\n")).toContain("match    2/3");
     expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(secondOffset);
   });
 

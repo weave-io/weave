@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 301 lib files | 40 env vars | 10 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~32,600 tokens. Without it, AI exploration would cost ~97,100 tokens. **Saves ~64,500 tokens per conversation.**
-> **Last scanned:** 2026-08-15 02:16 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 301 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~32,600 tokens. Without it, AI exploration would cost ~97,300 tokens. **Saves ~64,700 tokens per conversation.**
+> **Last scanned:** 2026-08-15 03:09 — re-run after significant changes
 
 ---
 
@@ -356,7 +356,7 @@
   - function overlaySectionHead: (paint, title, width) => string
   - function headerIdentityRow: (paint, facts, width) => HeaderRow
   - function headerContextRow: (paint, facts, width) => HeaderRow | undefined
-  - _...61 more_
+  - _...59 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void
@@ -1873,10 +1873,10 @@
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
+- `packages/adapters/pi/src/ui-paint.ts` — imported by **16** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
 - `packages/adapters/pi/src/child-session-events.ts` — imported by **15** files
-- `packages/adapters/pi/src/ui-paint.ts` — imported by **15** files
 - `packages/adapters/pi/src/rpc-child.ts` — imported by **15** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **15** files
@@ -1908,6 +1908,7 @@
 - `\x1b[1;2:1A` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
 - `\x1b[1;2:3A` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
 - `\x1b[1;2:1B` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
+- `navFacts.counter` [event] — `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts`
 - `\x1b[5~` [event] — `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`
 - `\x1b[6~` [event] — `packages/adapters/pi/src/__tests__/child-overlay-terminal-input.test.ts`
 - `session_start` [event] — `prototypes/weave-delegate-tool-grilling.ts`
@@ -1917,7 +1918,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 326 test files found
+> 327 test files found
 
 ---
 

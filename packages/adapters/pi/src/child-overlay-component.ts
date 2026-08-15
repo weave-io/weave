@@ -61,7 +61,6 @@ import {
   type OverlayFrameChrome,
   type OverlayNavFacts,
   type OverlayNavMatch,
-  overlayComposedBodyRows,
   overlayEditorBodyRows,
   overlayPaneGeometry,
   overlayRuleRow,
@@ -560,7 +559,7 @@ export function createChildOverlayCustomComponent(
       total,
       current,
       currentMatch: current === 0 ? undefined : matches[current - 1],
-      counter: `${current}/${total} match${total === 1 ? "" : "es"}`,
+      counter: `${current}/${total}`,
       summary:
         total === 0
           ? "no match in this transcript"
@@ -1046,44 +1045,32 @@ export function createChildOverlayCustomComponent(
           );
     const foldedRail =
       folded.length > 0 ? [...folded, overlayRuleRow(paint, inner)] : [];
-    // The window pads its own rows, so the rows that EXIST are counted here.
-    const composedRows = overlayComposedBodyRows({
-      transcript:
-        Math.min(end, contentBudget) + (pane.length > contentBudget ? 1 : 0),
-      foldedRail: foldedRail.length,
-      rail: railLines.length,
-      room,
-    });
+    // The prototype's body owns every row the header and the prompt did not
+    // reserve: the transcript window and the rail both pad themselves to it, so
+    // the rail reads as one full column beside the transcript rather than as a
+    // block that stops early. Budgeting the CANVAS, not the content, is the
+    // locked composition (`bodyRightRail`).
     const main =
       railWidth === undefined
-        ? [
-            ...foldedRail,
-            ...pane.slice(0, Math.max(1, composedRows - foldedRail.length)),
-          ]
+        ? [...foldedRail, ...pane]
         : joinColumns(
             [
               { lines: pane, width: geometry.pane },
               { lines: fitTo(railLines, room, "head"), width: railWidth },
             ],
-            composedRows,
+            room,
             paint.rule("\u2502"),
           );
 
-    // Only the rows the body kept are reserved, so the frame closes under the
-    // prompt rather than around empty space.
-    const composedHeight = Math.min(
-      innerHeight,
-      head.length + main.length + prompt.length,
-    );
     // Overflow is taken out of the transcript block, never out of the prompt,
     // so a starved terminal can still act on the child.
     const above = squeezeBody(
       paint,
       [...head, ...main],
-      Math.max(1, composedHeight - prompt.length),
+      Math.max(1, innerHeight - prompt.length),
       inner,
     );
-    return fitTo([...above, ...prompt], composedHeight, "tail");
+    return fitTo([...above, ...prompt], innerHeight, "tail");
   };
 
   return {

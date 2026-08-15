@@ -345,7 +345,7 @@
   - function overlaySectionHead: (paint, title, width) => string
   - function headerIdentityRow: (paint, facts, width) => HeaderRow
   - function headerContextRow: (paint, facts, width) => HeaderRow | undefined
-  - _...61 more_
+  - _...59 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void

@@ -1865,9 +1865,15 @@ describe("mounted overlay input precedence", () => {
     for (const byte of NEEDLE) await harness.press(byte);
     await harness.press("\r");
 
-    /** The rail's `current/total` counter, which is what `n` / `N` move. */
+    /**
+     * The rail's `current/total` counter, which is what `n` / `N` move.
+     *
+     * The prototype prints the bare fraction (`navFacts.counter`), so the
+     * pattern is anchored on the SEARCH section's `match` key rather than on a
+     * trailing word the rail does not print.
+     */
     const counter = (): string => {
-      const match = /(\d+)\/(\d+) match/.exec(harness.render());
+      const match = /match\s+(\d+)\/(\d+)/.exec(harness.render());
       expect(match).not.toBeNull();
       const found = match as RegExpExecArray;
       return `${found[1]}/${found[2]}`;

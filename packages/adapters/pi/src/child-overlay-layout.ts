@@ -409,19 +409,14 @@ export function overlaySectionHead(
 }
 
 /**
- * Cuts a FIXED-FIELD cell flush, without a cut mark.
+ * Cuts a rail cell, marking the cut with the one-column ellipsis.
  *
- * One line, one `…`. The transcript pane and the Status Matrix rail share a
- * line, so if both marked their own cut the reader would see two marks for one
- * line. Prose keeps the mark, because prose is where lost words matter;
- * the rail's key/value cells and its match list — bounded, repeated, and one
- * resize away from being whole again — cut flush instead.
- *
- * Only ever called with already-sanitized, ANSI-free text, which is what makes
- * {@link truncatePlainToWidth} the right cutter here.
+ * The locked composition cuts every rail cell the same way it cuts prose: a
+ * value the rail could not print whole says so. Only ever called with
+ * already-sanitized, ANSI-free text.
  */
 function fitFieldToWidth(text: string, width: number): string {
-  return truncatePlainToWidth(text, width, "");
+  return truncatePlainToWidth(text, width);
 }
 
 /** The value an absent operational fact prints. */
@@ -1050,7 +1045,7 @@ export function searchRailSections(
         ? paint.inv(
             paint.acc(
               cell(
-                ` ▸ ${fitFieldToWidth(plain, Math.max(1, rail - 4))} `,
+                ` ▸ ${fitFieldToWidth(plain, Math.max(1, rail - 3))} `,
                 rail,
               ),
             ),
@@ -1669,39 +1664,6 @@ export interface OverlayPaneGeometry {
   readonly transcript: number;
   /** The Status Matrix rail, or `undefined` when the rail folds. */
   readonly rail: number | undefined;
-}
-
-/**
- * Rows the composed body keeps even when it has less to say.
- *
- * The body shrinks to its content so the prompt stays attached to the
- * hierarchy above it, but it never shrinks to a peephole: a reader opening an
- * inspector on a child that has barely started still gets a usable transcript
- * window, and the surface does not resize on every one of its first events.
- */
-export const OVERLAY_MIN_BODY_ROWS = 12;
-
-/**
- * How many rows the composed body actually takes.
- *
- * It is what the body HAS to say — the transcript rows that exist, plus a
- * folded rail above them, or the side rail's own natural height — held between
- * {@link OVERLAY_MIN_BODY_ROWS} and the rows the caller can spare. Budgeting
- * the content rather than the canvas is what keeps a short transcript from
- * stranding the prompt at the bottom of a mostly empty overlay.
- */
-export function overlayComposedBodyRows(input: {
-  readonly transcript: number;
-  readonly foldedRail: number;
-  readonly rail: number;
-  readonly room: number;
-}): number {
-  const need = Math.max(
-    OVERLAY_MIN_BODY_ROWS,
-    input.foldedRail + input.transcript,
-    input.rail,
-  );
-  return Math.max(1, Math.min(input.room, need));
 }
 
 export function overlayPaneGeometry(
