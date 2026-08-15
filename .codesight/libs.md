@@ -313,7 +313,7 @@
   - function formatOverlayCost: (cost) => string | undefined
   - function childOverlaySettlementFacts: (view) => OverlaySettlementFacts
   - function childOverlayName: (view) => string
-  - _...4 more_
+  - _...5 more_
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string
@@ -345,7 +345,7 @@
   - function overlaySectionHead: (paint, title, width) => string
   - function headerIdentityRow: (paint, facts, width) => HeaderRow
   - function headerContextRow: (paint, facts, width) => HeaderRow | undefined
-  - _...56 more_
+  - _...61 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void

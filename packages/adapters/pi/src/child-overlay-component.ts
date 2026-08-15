@@ -54,16 +54,18 @@ import {
   composeSessionHeader,
   frameOverlay,
   identitySafetyRow,
-  keyLine,
   markSearchGutter,
   OVERLAY_FRAME_ROWS,
   OVERLAY_FRAME_TITLE,
+  OVERLAY_PROMPT_PANEL_INSET,
   type OverlayFrameChrome,
   type OverlayNavFacts,
   type OverlayNavMatch,
+  overlayComposedBodyRows,
+  overlayEditorBodyRows,
   overlayPaneGeometry,
   overlayRuleRow,
-  promptKeys,
+  promptEditorPanel,
   renderPromptGroup,
   renderRailStatusMatrix,
   searchRailSections,
@@ -455,15 +457,19 @@ export function createChildOverlayCustomComponent(
     if (draftEditor.getText() !== nextText) draftEditor.setText(nextText);
   };
 
+  /** The live editor's text rows, already fitted to the panel's body width. */
   const renderEditorLines = (width: number, readOnly: boolean): string[] => {
     if (readOnly) return [];
     const rendered = Result.fromThrowable(
       () => draftEditor.render(width),
       () => "editor_render_failed" as const,
     )().unwrapOr([]);
-    return Array.isArray(rendered) && rendered.length > 0
-      ? rendered
-      : [`> ${draftEditor.getText()}`];
+    return overlayEditorBodyRows(
+      Array.isArray(rendered) && rendered.length > 0
+        ? rendered
+        : [`> ${draftEditor.getText()}`],
+      width,
+    );
   };
 
   /**
@@ -484,8 +490,9 @@ export function createChildOverlayCustomComponent(
    * The layout renders the settled and cancel-confirmation forms itself, since
    * both are pure text. A live child instead gets the real {@link CustomEditor}
    * as the panel body, because a live draft is a component with a caret and
-   * multi-line editing, not a string the layout could paint. The key row below
-   * it still comes from the layout, so the two forms advertise the same keys.
+   * multi-line editing, not a string the layout could paint. The panel, its
+   * label and the key row still come from the layout, so a live prompt and a
+   * settled one are the same bordered surface rather than two different ones.
    */
   const promptRegion = (view: ChildOverlayView, width: number): string[] => {
     const facts = childOverlayPromptFacts(view, {
@@ -497,12 +504,13 @@ export function createChildOverlayCustomComponent(
     if (facts.settled || facts.confirmingCancel) {
       return renderPromptGroup(paint, facts, width);
     }
-    return [
-      ...renderEditorLines(width, false).map((line) =>
-        cell(fitLineToWidth(line, width), width),
-      ),
-      cell(keyLine(paint, promptKeys(facts), width), width),
-    ];
+    const body = Math.max(1, width - OVERLAY_PROMPT_PANEL_INSET);
+    return promptEditorPanel(
+      paint,
+      facts,
+      renderEditorLines(body, false),
+      width,
+    );
   };
 
   /**
@@ -1026,44 +1034,56 @@ export function createChildOverlayCustomComponent(
     ];
 
     const railWidth = geometry.rail;
+    const railLines =
+      railWidth === undefined
+        ? []
+        : renderRailStatusMatrix(
+            paint,
+            railFacts,
+            railWidth,
+            room,
+            nav.open ? searchRailSections(paint, nav, railWidth) : [],
+          );
+    const foldedRail =
+      folded.length > 0 ? [...folded, overlayRuleRow(paint, inner)] : [];
+    // The window pads its own rows, so the rows that EXIST are counted here.
+    const composedRows = overlayComposedBodyRows({
+      transcript:
+        Math.min(end, contentBudget) + (pane.length > contentBudget ? 1 : 0),
+      foldedRail: foldedRail.length,
+      rail: railLines.length,
+      room,
+    });
     const main =
       railWidth === undefined
         ? [
-            ...folded,
-            ...(folded.length > 0 ? [overlayRuleRow(paint, inner)] : []),
-            ...pane,
+            ...foldedRail,
+            ...pane.slice(0, Math.max(1, composedRows - foldedRail.length)),
           ]
         : joinColumns(
             [
               { lines: pane, width: geometry.pane },
-              {
-                lines: fitTo(
-                  renderRailStatusMatrix(
-                    paint,
-                    railFacts,
-                    railWidth,
-                    room,
-                    nav.open ? searchRailSections(paint, nav, railWidth) : [],
-                  ),
-                  room,
-                  "head",
-                ),
-                width: railWidth,
-              },
+              { lines: fitTo(railLines, room, "head"), width: railWidth },
             ],
-            room,
+            composedRows,
             paint.rule("\u2502"),
           );
 
+    // Only the rows the body kept are reserved, so the frame closes under the
+    // prompt rather than around empty space.
+    const composedHeight = Math.min(
+      innerHeight,
+      head.length + main.length + prompt.length,
+    );
     // Overflow is taken out of the transcript block, never out of the prompt,
     // so a starved terminal can still act on the child.
     const above = squeezeBody(
       paint,
       [...head, ...main],
-      Math.max(1, innerHeight - prompt.length),
+      Math.max(1, composedHeight - prompt.length),
       inner,
     );
-    return fitTo([...above, ...prompt], innerHeight, "tail");
+    return fitTo([...above, ...prompt], composedHeight, "tail");
   };
 
   return {

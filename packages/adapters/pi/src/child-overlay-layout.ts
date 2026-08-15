@@ -1305,6 +1305,15 @@ function panelBottom(paint: Paint, width: number): string {
   );
 }
 
+/**
+ * Columns the panel's own border and left gutter take from a body row.
+ *
+ * A caller that renders its own component into the panel — the live Pi editor
+ * — must render at `width - OVERLAY_PROMPT_PANEL_INSET`, or the panel would
+ * clip it. Exported so the geometry is stated once rather than rediscovered.
+ */
+export const OVERLAY_PROMPT_PANEL_INSET = 3;
+
 /** Widths at or above this can afford the editor label's queue hint. */
 const PROMPT_WIDE_LABEL = 78;
 
@@ -1335,9 +1344,73 @@ export function promptPrimaryEditor(
   facts: OverlayPromptFacts,
   width: number,
 ): string[] {
+  return promptEditorPanel(
+    paint,
+    facts,
+    [
+      promptField(
+        paint,
+        facts,
+        Math.max(1, width - OVERLAY_PROMPT_PANEL_INSET),
+      ),
+    ],
+    width,
+  );
+}
+
+/**
+ * Is this one of the bare rules Pi's own editor draws above and below itself?
+ *
+ * A rule sanitizes to nothing at all. The editor's SCROLL edges
+ * (`─── ↑ 3 more ───`) keep their words and are therefore not rules: they are
+ * content, and the panel keeps them.
+ */
+function isEditorRuleRow(line: string): boolean {
+  return safeTrim(line).length === 0;
+}
+
+/**
+ * One host editor render, reduced to the text rows the prompt panel may hold.
+ *
+ * Pi 0.83's editor draws `[rule, ...text rows, rule]` and this overlay gives it
+ * no autocomplete, so its own chrome is exactly the first and last rows. The
+ * panel owns the prompt's border, so those rules are removed rather than drawn
+ * twice. Both guards keep at least one row, so an unexpected shape degrades to
+ * the editor's own output inside the panel rather than to an empty prompt.
+ */
+export function overlayEditorBodyRows(
+  rendered: readonly string[],
+  width: number,
+): string[] {
+  const rows = [...rendered];
+  if (rows.length > 1 && isEditorRuleRow(rows[0] as string)) rows.shift();
+  if (rows.length > 1 && isEditorRuleRow(rows.at(-1) as string)) rows.pop();
+  return rows.map((line) => fitLineToWidth(line, width));
+}
+
+/**
+ * The same locked panel, wrapped around body rows the caller painted.
+ *
+ * Production's live child types into Pi's own editor, which draws a bare rule
+ * above and below its text and no side rails at all. Handing those rows to
+ * this function is what keeps the live prompt the SAME bordered, labelled
+ * panel a settled child gets, instead of an unlabelled underline at the bottom
+ * of the overlay. The panel is drawn in the muted rule colour, so the overlay
+ * still owns exactly one high-contrast frame.
+ *
+ * Body rows must already be painted at
+ * `width - `{@link OVERLAY_PROMPT_PANEL_INSET} columns.
+ */
+export function promptEditorPanel(
+  paint: Paint,
+  facts: OverlayPromptFacts,
+  body: readonly string[],
+  width: number,
+): string[] {
+  const rows = body.length > 0 ? body : [""];
   return [
     panelTop(paint, promptLabel(facts, width), width),
-    panelRow(paint, promptField(paint, facts, Math.max(1, width - 3)), width),
+    ...rows.map((line) => panelRow(paint, line, width)),
     panelBottom(paint, width),
     cell(
       keyLine(
@@ -1596,6 +1669,39 @@ export interface OverlayPaneGeometry {
   readonly transcript: number;
   /** The Status Matrix rail, or `undefined` when the rail folds. */
   readonly rail: number | undefined;
+}
+
+/**
+ * Rows the composed body keeps even when it has less to say.
+ *
+ * The body shrinks to its content so the prompt stays attached to the
+ * hierarchy above it, but it never shrinks to a peephole: a reader opening an
+ * inspector on a child that has barely started still gets a usable transcript
+ * window, and the surface does not resize on every one of its first events.
+ */
+export const OVERLAY_MIN_BODY_ROWS = 12;
+
+/**
+ * How many rows the composed body actually takes.
+ *
+ * It is what the body HAS to say — the transcript rows that exist, plus a
+ * folded rail above them, or the side rail's own natural height — held between
+ * {@link OVERLAY_MIN_BODY_ROWS} and the rows the caller can spare. Budgeting
+ * the content rather than the canvas is what keeps a short transcript from
+ * stranding the prompt at the bottom of a mostly empty overlay.
+ */
+export function overlayComposedBodyRows(input: {
+  readonly transcript: number;
+  readonly foldedRail: number;
+  readonly rail: number;
+  readonly room: number;
+}): number {
+  const need = Math.max(
+    OVERLAY_MIN_BODY_ROWS,
+    input.foldedRail + input.transcript,
+    input.rail,
+  );
+  return Math.max(1, Math.min(input.room, need));
 }
 
 export function overlayPaneGeometry(

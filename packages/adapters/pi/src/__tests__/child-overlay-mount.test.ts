@@ -53,6 +53,8 @@ initTheme("default");
 const CHILD_ID = "overlay-mount-1";
 const EDITOR_BORDER_START = "\x1b[35m";
 const EDITOR_BORDER_END = "\x1b[39m";
+/** Pi's own editor paints its caret inverse; nothing else in the overlay does. */
+const EDITOR_CARET = "\x1b[7m";
 const TEST_THEME: PiUiThemePort = {
   fg: (color, text) =>
     color === "border"
@@ -370,7 +372,11 @@ describe("child overlay steering field", () => {
     const lines = component.render(80);
     const joined = lines.join("\n");
     expect(joined.includes("steer the child")).toBe(true);
-    expect(joined).toContain(EDITOR_BORDER_START);
+    // The real editor paints an inverse caret; the bounded string fallback
+    // paints `> `. Its own bare top and bottom rules are NOT expected: the
+    // prompt panel owns the prompt's border now, so the editor contributes
+    // text rows only.
+    expect(joined).toContain(EDITOR_CARET);
     expect(joined).not.toContain("> steer the child");
     for (const line of lines) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(80);

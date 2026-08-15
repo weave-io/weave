@@ -35,6 +35,7 @@ import type {
   ChildOverlayView,
 } from "./child-overlay-types.js";
 import type { PiChildProviderError } from "./child-provider-error.js";
+import { resolveDurableChildTitle } from "./child-title.js";
 
 /**
  * What the header calls a child whose agent name and title are both unknown.
@@ -180,22 +181,70 @@ function planCrumb(view: ChildOverlayView): string | undefined {
 }
 
 /**
+ * Is this stored title nothing but the child's own durable identity label?
+ *
+ * A durable title is `<identity label>-<opaque suffix>` derived by
+ * {@link resolveDurableChildTitle} from the agent name and the thread or child
+ * id. It is storage bookkeeping, not a semantic fact: it repeats the name the
+ * header already prints and trails an opaque id fragment the header may never
+ * print at all. The check is an equality against every title that function
+ * could have produced for THIS child, so it recognizes a derived title by
+ * construction rather than by guessing at its shape.
+ */
+function isDurableIdentityTitle(
+  view: ChildOverlayView,
+  title: string,
+): boolean {
+  const agentName = view.identity?.agentName;
+  const derived = new Set<string>();
+  for (const threadId of [view.child.threadId, view.child.childId]) {
+    derived.add(resolveDurableChildTitle({ threadId }));
+    if (agentName !== undefined && agentName.length > 0) {
+      derived.add(resolveDurableChildTitle({ agentName, threadId }));
+    }
+  }
+  derived.add(resolveDurableChildTitle({}));
+  if (agentName !== undefined && agentName.length > 0) {
+    derived.add(resolveDurableChildTitle({ agentName }));
+  }
+  return derived.has(title);
+}
+
+/**
+ * The header's last identity fact: WHAT this child was given, in product words.
+ *
+ * The authoritative assignment comes first when a privacy-safe source names
+ * one. A stored title is admitted only while it says something the header does
+ * not already say: a title equal to the child's name, or a durable identity
+ * title such as `shuttle-1d33e680`, is bookkeeping wearing a semantic slot and
+ * is dropped outright. An absent fact prints nothing, which is honest; a
+ * thread-like id in the header is not.
+ */
+export function childOverlayBoundedAssignment(view: ChildOverlayView): string {
+  const assignment = (view.identity?.assignment ?? "").trim();
+  if (assignment.length > 0) return assignment;
+  const title = (view.child.title ?? "").trim();
+  if (title.length === 0) return "";
+  if (title === childOverlayName(view)) return "";
+  return isDurableIdentityTitle(view, title) ? "" : title;
+}
+
+/**
  * Identity and provenance, and nothing else.
  *
- * The bounded title is dropped only when it is already the name, so the header
- * never says the same thing twice. Dispatched task text never appears: the
- * thread-lifecycle privacy contract keeps the assignment out of this view.
+ * The bounded slot carries the child's assignment, never its storage title:
+ * see {@link childOverlayBoundedAssignment}. Dispatched task text never
+ * reaches it either — the thread-lifecycle privacy contract keeps an
+ * unauthenticated assignment out of every descriptor this view is built from.
  */
 export function childOverlayHeaderFacts(
   view: ChildOverlayView,
 ): OverlayHeaderFacts {
-  const agent = view.identity?.agentName;
-  const title = view.child.title ?? "";
   return {
     name: childOverlayName(view),
     model: view.identity?.model ?? view.telemetry?.model,
     role: view.identity?.role,
-    boundedTitle: agent !== undefined && agent.length > 0 ? title : "",
+    boundedTitle: childOverlayBoundedAssignment(view),
     parent: view.identity?.parentAgentName,
     plan: view.planContext?.planName,
     taskCrumb: planCrumb(view),
