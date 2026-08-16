@@ -468,7 +468,11 @@ export class ChildOverlayController {
       if (text.length === 0) return okAsync(this.toView(child, state));
       const needle = text.toLowerCase();
       // Seed from the loaded window; older pages prepend ahead of it.
-      state.searchMatchIds = matchingEntryIds(state.entries, needle);
+      state.searchMatchIds = matchingEntryIds(
+        state.entries,
+        needle,
+        state.renderedSearchText,
+      );
       return this.searchFetchPages(child, state, needle, 0);
     });
   }
@@ -613,6 +617,25 @@ export class ChildOverlayController {
    * layout change; callers that cannot measure it (tests of pure row
    * bookkeeping) may omit it and keep the previous row-only behaviour.
    */
+  /**
+   * Adopt the ANSI-free text of the rows the component just painted, so a
+   * query is matched against what the reader can actually read.
+   *
+   * This is the same handoff as {@link ChildOverlayController.setScrollExtent}
+   * and for the same reason: only the component knows what the current width
+   * and row budget left on screen. Search matches this index in addition to
+   * the window entry's own short text projection, so nothing that matched
+   * before stops matching.
+   */
+  setRenderedSearchText(
+    index: ReadonlyMap<string, string>,
+  ): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      state.renderedSearchText = index;
+      return this.toView(child, state);
+    });
+  }
+
   setScrollExtent(
     extent: number,
     spans?: readonly OverlayLayoutSpan[],
@@ -1053,7 +1076,7 @@ export class ChildOverlayController {
         : mergeMatchIds(
             mergeMatchIds(
               state.searchMatchIds,
-              matchingEntryIds(state.entries, needle),
+              matchingEntryIds(state.entries, needle, state.renderedSearchText),
             ),
             terminalErrorMatches,
           );

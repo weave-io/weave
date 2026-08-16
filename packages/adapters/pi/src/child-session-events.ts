@@ -615,12 +615,46 @@ const nativeToolEndIsError = (record: Record<string, unknown>): boolean => {
   return nested["isError"] === true || nested["is_error"] === true;
 };
 
+/**
+ * Real Pi 0.84 queue reporting.
+ *
+ * `AgentSession` emits `{ type: "queue_update", steering: string[], followUp:
+ * string[] }` — never the `queue_change` / `size` shape this adapter's schema
+ * declares. Reading only `queue_change` meant a parent that steered or queued
+ * a live child saw `queue 0` on the rail and never reached the card's
+ * `steered` frame, because the one authoritative event that reports the
+ * queue was discarded as unknown. Normalizing it here keeps every downstream
+ * consumer — the compact reducer, the card, the overlay rail — on one queue
+ * fact, exactly as the native tool events above are normalized.
+ *
+ * The queue is REPORTED, never inferred: an absent or malformed array
+ * contributes nothing, and the size is the count of the entries the host
+ * actually named.
+ */
+const normalizeQueueUpdateEvent = (
+  record: Record<string, unknown>,
+): unknown => {
+  const items: string[] = [];
+  for (const key of ["steering", "followUp"] as const) {
+    const list = record[key];
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (typeof item !== "string") continue;
+      if (items.length >= MAX_CHILD_EVENT_ITEMS) break;
+      items.push(item.slice(0, MAX_CHILD_EVENT_STRING));
+    }
+  }
+  return { type: "queue_change", size: items.length, queue: items };
+};
+
 const normalizeNativeToolEvent = (value: unknown): unknown => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return value;
   }
   const record = value as Record<string, unknown>;
   switch (record["type"]) {
+    case "queue_update":
+      return normalizeQueueUpdateEvent(record);
     case "tool_execution_start":
       return {
         type: "tool_call",

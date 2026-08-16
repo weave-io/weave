@@ -200,6 +200,12 @@ export interface OverlayTranscriptInput extends OverlayPiNativeInput {
 export interface OverlayTranscriptRender {
   readonly lines: readonly string[];
   readonly spans: readonly OverlayPiNativeSpan[];
+  /**
+   * The ANSI-free text of those same rows, per entry: the search index the
+   * controller matches queries against. It is produced here because only the
+   * render knows what actually fit on screen.
+   */
+  readonly searchIndex: ReadonlyMap<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -811,6 +817,51 @@ export function renderOverlayPiNative(
 }
 
 /**
+ * THE SEARCH INDEX: what the reader can actually read, per entry.
+ *
+ * Search used to match the overlay WINDOW entry's `text`, which is a short
+ * projection — a tool entry carries only its tool name there. A reader who
+ * searched for text plainly on screen (`bash(timeout: 180)`, a tool result, a
+ * queued item) was told `no match in this transcript`, because the rows they
+ * were reading had never been indexed.
+ *
+ * The index is therefore grouped straight out of the pane's own ANSI-FREE
+ * twin, which {@link renderOverlayPiNative} already produces beside the
+ * painted rows: same renderer, same width, same bounds, same sanitization, no
+ * second render. Text the pane truncated is text the reader cannot see, so it
+ * is deliberately absent from the index too.
+ *
+ * Keys are the entry identity the viewport anchor and the search gutter
+ * already use (`overlayEntryId ?? id`), so a match maps straight onto a window
+ * entry and a rendered row span.
+ */
+export function overlayTranscriptSearchIndex(
+  pane: Pick<OverlayPiNativePane, "plain" | "spans">,
+): Map<string, string> {
+  const index = new Map<string, string>();
+  let row = 0;
+  for (const span of pane.spans) {
+    const rows = pane.plain.slice(row, row + span.rows);
+    row += span.rows;
+    // Rows are joined with a space, not a newline: the shared `boundText`
+    // sanitizer drops control characters, so a newline separator would
+    // silently glue the last word of one row to the first of the next and
+    // invent a match that is nowhere on screen.
+    const text = rows
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .join(" ");
+    if (text.length === 0) continue;
+    const existing = index.get(span.entryId);
+    index.set(
+      span.entryId,
+      existing === undefined ? text : `${existing} ${text}`,
+    );
+  }
+  return index;
+}
+
+/**
  * The transcript block the inspector actually mounts.
  *
  * `renderOverlayPiNative` owns the design; this adds the two whole-view facts
@@ -841,7 +892,13 @@ export function renderOverlayTranscript(
     failureRow === undefined || input.terminalErrorStated
       ? rendered.painted
       : [...rendered.painted, failureRow];
-  if (lines.length > 0) return { lines, spans: rendered.spans };
+  if (lines.length > 0) {
+    return {
+      lines,
+      spans: rendered.spans,
+      searchIndex: overlayTranscriptSearchIndex(rendered),
+    };
+  }
   // Nothing the pane can draw yet (a window of bookkeeping-only entries, or
   // history that predates strict replay mapping). The bounded overlay entry
   // text still names the kinds, which beats an empty inspector.
@@ -863,5 +920,8 @@ export function renderOverlayTranscript(
   return {
     lines: failureRow === undefined ? fallback : [...fallback, failureRow],
     spans: input.windowEntries.map((entry) => ({ entryId: entry.id, rows: 1 })),
+    // The fallback prints the window entry's own text, which search already
+    // matches directly, so it contributes no second index.
+    searchIndex: new Map<string, string>(),
   };
 }

@@ -48,6 +48,18 @@ export interface SavedChildState extends OverlayScrollState {
    * list is authoritative and is rebuilt on each `search` call.
    */
   searchMatchIds: string[];
+  /**
+   * The ANSI-free text of the rows the component last PAINTED, keyed by the
+   * same entry identity the viewport anchors on.
+   *
+   * Search matches this as well as the window entry's own short `text`
+   * projection, because they are not the same thing: a tool window entry
+   * carries only its tool name, while the reader is looking at
+   * `bash(timeout: 180)` and its result. Only the component knows what fit on
+   * screen at the current width, so — exactly like the measured scroll extent
+   * — it is reported to the controller rather than derived here.
+   */
+  renderedSearchText: ReadonlyMap<string, string>;
   globalExpanded: boolean;
   activeRun: number | undefined;
   activeBranchId: string | undefined;
@@ -92,6 +104,7 @@ export function emptySaved(threadId: string, touched: number): SavedChildState {
     draft: "",
     searchQuery: "",
     searchMatchIds: [],
+    renderedSearchText: new Map(),
     scrollOffset: 0,
     scrollExtent: undefined,
     liveTail: true,

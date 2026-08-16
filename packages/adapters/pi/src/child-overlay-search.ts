@@ -29,14 +29,30 @@ export function stripPathLike(value: string): string {
  * order given. Matching uses the same {@link stripPathLike} normalization the
  * window applies, so a page scanned before it is merged matches exactly what
  * the reader sees afterwards.
+ *
+ * `rendered` is the ANSI-free transcript index keyed by the same entry
+ * identity (see `overlayTranscriptSearchIndex`). It is what makes search agree
+ * with the screen: the window entry's own `text` is a short projection — a
+ * tool entry carries only its tool name — while the reader is looking at the
+ * rendered rows. Both are matched, so nothing that matched before stops
+ * matching and everything on screen starts matching.
  */
 export function matchingEntryIds(
   entries: readonly { readonly id: string; readonly text: string }[],
   needle: string,
+  rendered?: ReadonlyMap<string, string>,
 ): string[] {
   const result: string[] = [];
   for (const entry of entries) {
     if (stripPathLike(entry.text).toLowerCase().includes(needle)) {
+      result.push(entry.id);
+      continue;
+    }
+    const visible = rendered?.get(entry.id);
+    if (
+      visible !== undefined &&
+      stripPathLike(visible).toLowerCase().includes(needle)
+    ) {
       result.push(entry.id);
     }
   }

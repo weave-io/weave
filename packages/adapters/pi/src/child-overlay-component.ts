@@ -165,6 +165,8 @@ const OVERLAY_MIN_TRANSCRIPT_ROWS = 3;
 export interface OverlayRenderedTranscript {
   readonly lines: readonly string[];
   readonly spans: readonly OverlayLayoutSpan[];
+  /** ANSI-free text of those rows, per entry: the controller's search index. */
+  readonly searchIndex: ReadonlyMap<string, string>;
 }
 
 /**
@@ -938,12 +940,23 @@ export function createChildOverlayCustomComponent(
         : ok<OverlayRenderedTranscript, ChildOverlayFallbackRequired>({
             lines: [],
             spans: [],
+            searchIndex: new Map(),
           });
     if (transcript.isErr()) {
       emitFallback(transcript.error);
       return undefined;
     }
 
+    // Search matches what the reader can read, so the painted rows' ANSI-free
+    // twin is reported to the controller exactly like the measured extent
+    // below. It is reported only while search is open: a closed search matches
+    // nothing, and an inspector repaints on every streamed event.
+    if (search.mode !== "off") {
+      controller.setRenderedSearchText(transcript.value.searchIndex).match(
+        () => undefined,
+        () => undefined,
+      );
+    }
     const nav = navFacts(view, transcript.value.spans);
     const painted = nav.open
       ? markSearchGutter(paint, nav, transcript.value.lines, geometry.pane)

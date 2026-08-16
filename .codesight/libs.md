@@ -361,7 +361,7 @@
   - function overlayToolResultText: (value) => string
   - function overlayToolTarget: (entry) => string
   - function overlayToolArgs: (entry) => string
-  - _...13 more_
+  - _...14 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
   - function mergeReplaySteps: (existing, incoming) => Result<
@@ -380,7 +380,7 @@
   - _...12 more_
 - `packages/adapters/pi/src/child-overlay-search.ts`
   - function stripPathLike: (value) => string
-  - function matchingEntryIds: (entries, needle) => string[]
+  - function matchingEntryIds: (entries, needle, rendered?, string>) => string[]
   - function matchingTerminalErrorEntryIds: (entries, error, needle) => string[]
   - function mergeMatchIds: (older, newer) => string[]
 - `packages/adapters/pi/src/child-overlay-stream.ts`

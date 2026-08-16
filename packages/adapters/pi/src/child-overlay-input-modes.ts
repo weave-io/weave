@@ -155,13 +155,20 @@ export function stepOverlaySearch(
     // Every other key stays consumed: search owns the keyboard until Escape.
     return claimed(state, { kind: "none" });
   }
-  if (SEARCH_KEYS.commit.includes(data as never)) {
+  // Enter and Backspace are matched SEMANTICALLY as well as by byte. Pi 0.84
+  // negotiates the Kitty keyboard protocol, so a real terminal can deliver
+  // Enter as `ESC [ 13 ; 1 u` and Backspace as `ESC [ 127 ; 1 u`; a byte-only
+  // comparison then swallows them and search never leaves the typing mode.
+  if (SEARCH_KEYS.commit.includes(data as never) || matchesKey(data, "enter")) {
     return claimed(
       { ...state, mode: "navigate", matchIndex: 0, accepted: true },
       { kind: "run", query: state.query },
     );
   }
-  if (SEARCH_KEYS.backspace.includes(data as never)) {
+  if (
+    SEARCH_KEYS.backspace.includes(data as never) ||
+    matchesKey(data, "backspace")
+  ) {
     return claimed(
       { ...state, query: state.query.slice(0, -1) },
       { kind: "repaint" },
