@@ -13,8 +13,11 @@ dist hashes, package provenance, Pi version, commands, observations, and cleanup
 
 Rows citing [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md)
 were proven on Pi `0.84.2` under an explicit user-approved version deviation,
-because Pi `0.83` was unavailable. `Partial` means part of the row was observed
-live and the rest was not; the proof record names exactly which part.
+because Pi `0.83` was unavailable. That record has two attempts: the retry ran
+at subject `7596103` and proves sixteen of its seventeen matrix items; the
+failed-settlement item is carried over from the first attempt at `600bd88` and
+is marked as such wherever it is cited. `Partial` means part of the row was
+observed live and the rest was not; the proof record names exactly which part.
 
 ## Pi 0.84.1 native-session contract
 
@@ -168,15 +171,15 @@ including their formerly passing mutation rows.
 | ID | Requirement | Spec | Result | Proof |
 |---|---|---|---|---|
 | S040 | The delegation card shows the status-first rail, the assignment row, and one Native Line carrying the latest meaningful activity while running | §6 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `a` |
-| S041 | The authoritative settlement rewrites the rail word, the Native Line, and the footer verb without changing the row count or adding chrome, and freezes prior-run cards | §6 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `c`, `d`, `e` |
+| S041 | The authoritative settlement rewrites the rail word, the Native Line, and the footer verb without changing the row count or adding chrome, and freezes prior-run cards | §6 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `c`, `e` at the retry bytes; item `d` carried over from the first attempt at `600bd88` |
 | S042 | The card renders safely at narrow widths keeping state, assignment and `Alt+I`, sanitizes terminal control sequences, and degrades instead of failing | §6 | Partial | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `g` proves the 48-column render; control-sequence sanitization was not exercised live |
-| S043 | The child inspector's titled outer frame leaves the parent UI visible, renders the live child transcript with the Status Matrix rail, and supports live-tail, resize, and PageUp/PageDown/Shift+Up/Shift+Down/Home/End with Kitty press frames but no release repeats | §7 | Partial | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `h` proves the frame, transcript, and rail; item `i` records that no scroll key moved the transcript |
+| S043 | The child inspector's titled outer frame leaves the parent UI visible, renders the live child transcript with the Status Matrix rail, and supports live-tail, resize, and PageUp/PageDown/Shift+Up/Shift+Down/Home/End with Kitty press frames but no release repeats | §7 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `h` proves the frame, transcript, and rail; item `i` proves all six scroll gestures, including the Kitty event-type shift arrows |
 | S044 | The owned native editor shows its cursor and border, supports cursor movement and multiline input, steers with `Enter`, and queues a follow-up with `Alt+Enter` | §7 | Pass | [`33-true-overlay-owned-editor-proof.md`](33-proofs/33-true-overlay-owned-editor-proof.md) |
-| S045 | Overlay renders a historical child after parent restart with bounded pagination and search | §7 | Pending | historical: [`33-task20-c-historical-restart-pagination-search-proof.md`](33-proofs/33-task20-c-historical-restart-pagination-search-proof.md) |
+| S045 | Overlay renders a historical child after parent restart with bounded pagination and search | §7 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `o` |
 | S046 | A terminal of 12 rows or fewer keeps the owned editor and bottom border visible; settled children remain read-only and focused input never reaches the primary editor | §7 | Pass | [`33-true-overlay-owned-editor-proof.md`](33-proofs/33-true-overlay-owned-editor-proof.md) |
 | S047 | Renderer failure uses the custom-editor fallback; normal overlay mount and unmount never replace the primary editor, and pi-vim remains usable after close | §7, §16 | Pending | [`33-true-overlay-owned-editor-proof.md`](33-proofs/33-true-overlay-owned-editor-proof.md) passes coexistence and teardown; no live renderer failure was injected |
 | S048 | Picker lists all statuses with title precedence and active-first, newest-settled ordering | §8.2 | Pending | historical: [`33-task20-d-picker-navigation-proof.md`](33-proofs/33-task20-d-picker-navigation-proof.md) |
-| S049 | Named keys route correctly: `Alt+I`, `Alt+1..9`, sibling keys, empty `Backspace` parent-or-close | §8.1 | Pending | historical: [`33-task20-d-picker-navigation-proof.md`](33-proofs/33-task20-d-picker-navigation-proof.md), [`33-task20-m-pi-vim-coexistence-proof.md`](33-proofs/33-task20-m-pi-vim-coexistence-proof.md) |
+| S049 | Named keys route correctly: `Alt+I`, `Alt+1..9`, sibling keys, empty `Backspace` parent-or-close | §8.1 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `h`, `k` |
 | S050 | Keybinding conflicts are reported and never overwrite user bindings | §8.1 | Pass | [`33-task20-m-pi-vim-coexistence-proof.md`](33-proofs/33-task20-m-pi-vim-coexistence-proof.md) |
 | S051 | `Escape` closes child inspection, never falls through to Pi, and leaves the child running | §7, §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
 | S052 | Retry a retryable failed thread and a cancelled thread; new block per run, divider metadata recorded | §9 | Pending | historical: [`33-task20-f-retry-continue-frozen-block-proof.md`](33-proofs/33-task20-f-retry-continue-frozen-block-proof.md) |
@@ -203,11 +206,11 @@ including their formerly passing mutation rows.
 | S073 | Empty-draft `q` opens the cancel confirmation; **Cancel subtree** cancels, and dismissal or **Keep running** leaves the child running | §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
 | S074 | Non-empty draft `q` types into the draft and opens no confirmation; a settled child reports no target | §8.1 | Pass | [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) |
 | S075 | The Status Matrix rail shows lifecycle, work, and spend for a reporting child, and `—` for every field the host did not report; the session header shows the model once and carries no telemetry row and no child ID | §7 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `h` |
-| S076 | Empty-draft `/` opens rail search with the transcript marker gutter; `n`/`N` and `j`/`k` move, `Enter` latches the jump, and `Escape` closes search before the overlay, on live and historical children | §7, §8.1 | Partial | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `j` proves that `/` opens rail search and `Esc` closes search before the overlay; every query reported `match 0/0`, so `n`/`N` and `Enter` jump remain unproven |
+| S076 | Empty-draft `/` opens rail search with the transcript marker gutter; `n`/`N` and `j`/`k` move, `Enter` latches the jump, and `Escape` closes search before the overlay, on live and historical children | §7, §8.1 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `j` (live) and `o` (historical). Search matches the ANSI-free rendered rows, so text that exists only in a tool row matches |
 | S077 | A host that already owns an overlay key keeps it: the route is skipped, unadvertised, and reported once; Weave registers no binding for `Ctrl+O` | §8.1 | Pending | superseded surface; [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) records the removed `Ctrl+O` conflict route |
 | S078 | The delegation card is one framed card with one top and one bottom edge at every width, expands to a status strip over nine literal bottom transcript rows, and prints `Ctrl+O expand · Alt+I inspect child` | §6 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `b`, `g` |
-| S079 | Completed, failed, and cancelled cards keep the running row count, print the authoritative settlement text, expose no stack frame, path, or provider payload, and never claim unverified success | §6, §10 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `c`, `d`, `e` |
-| S080 | The Plan Rail above the parent editor shows agent, `Alt+A cycle`, plan, task marks, `now`, and `next`; `Alt+A` cycles; it survives `Escape`; and it prints no child-operational fact and no duplicate task footer | §7 | Partial | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `q` proves the agent row, the `Alt+A cycle` hint, `Alt+A` cycling, and the absence of a duplicate footer; plan, marks, `now`, and `next` were not proven because no plan was active |
+| S079 | Completed, failed, and cancelled cards keep the running row count, print the authoritative settlement text, expose no stack frame, path, or provider payload, and never claim unverified success | §6, §10 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `c`, `e` at the retry bytes; the failed card is item `d`, carried over from the first attempt at `600bd88` |
+| S080 | The Plan Rail above the parent editor shows agent, `Alt+A cycle`, plan, task marks, `now`, and `next`; `Alt+A` cycles; it survives `Escape`; and it prints no child-operational fact and no duplicate task footer | §7 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `q` proves the plan name, marks, ordinal, `now`, `next`, `Alt+A` cycling, and the absence of a duplicate footer |
 
 A passing report must record artifact SHA-256, subject SHA, exact host version,
 checklist version, run attempt, `childSettlementMissingCount: 0`, and, for each
@@ -218,11 +221,13 @@ pane. Every proof cited above records those fields.
 no live scenario for them, and their automated coverage alone cannot close a
 live row.
 
-`S040`–`S043` and `S075`–`S080` are `Pending` for a version-7 reason: they name
-the delegation card, the child inspector, rail search, and the Plan Rail, and no
-recorded proof observed those surfaces. Their cited records remain accurate
-evidence for the superseded compact block and overlay chrome, and cannot close
-the replacement rows.
+`S040`–`S043`, `S045`, `S049`, and `S075`–`S080` are closed by the Pi `0.84.2`
+redesign proof, whose retry ran at subject `7596103`. One qualification stands:
+the failed-settlement card (`S041`, `S079`) was observed only in that record's
+first attempt, at subject `600bd88`; the retry could not induce a genuine
+terminal provider failure and says so. `S042` stays `Partial` because
+control-sequence sanitization was never exercised live, and `S077` stays
+`Pending` because its `Ctrl+O` conflict route was removed with the old chrome.
 
 `S051` and `S070`–`S074` cite the exact-subject evidence and the overlay key
 matrix in `33-proofs/33-overlay-ux-live-proof.md`.
