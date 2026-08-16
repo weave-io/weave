@@ -87,6 +87,7 @@ import { z } from "zod";
 import {
   MAX_CHILD_EVENT_ITEMS,
   MAX_CHILD_EVENT_STRING,
+  type PiAssistantUsageFacts,
   type PiChildSessionEvent,
   PiChildSessionEventSchema,
   PiExtensionUiResponseSchema,
@@ -884,10 +885,19 @@ const projectMessage = (
   copyString(message, source, "stopReason", 32);
   copyString(message, source, "text");
   copyNumber(message, source, "timestamp");
+  // A `message_end` can carry a pi-ai `ToolResultMessage` rather than an
+  // assistant turn, and its correlation lives on the MESSAGE. Dropping these
+  // three fields left the reducer with an answer it could not attribute, so a
+  // finished call kept printing `running` and the answer's own text appeared
+  // under an assistant reply header instead.
+  copyString(message, source, "toolCallId", 256);
+  copyString(message, source, "toolName", 128);
+  copyBoolean(message, source, "isError");
   const content = projectContent(ownDataField(source, "content"));
   if (content !== undefined) message.content = content;
   const usageFacts = projectAssistantUsageFacts(source);
-  if (usageFacts?.usage !== undefined) message.usage = usageFacts.usage;
+  const usage = assistantUsagePayload(usageFacts);
+  if (usage !== undefined) message.usage = usage;
   if (usageFacts?.contextUsage !== undefined)
     message.contextUsage = usageFacts.contextUsage;
   if (usageFacts?.model !== undefined) message.model = usageFacts.model;
@@ -895,6 +905,25 @@ const projectMessage = (
   if (projected.isOk())
     message[CHILD_PROVIDER_ERROR_REPLAY_FIELD] = projected.value;
   return message;
+};
+
+/**
+ * The `usage` payload a rebuilt event carries: the bounded token counts plus
+ * the host's own `cost.total`, in the exact nesting pi-ai uses, so the shared
+ * usage narrow reads a replayed report the same way it reads a live one.
+ */
+const assistantUsagePayload = (
+  facts: PiAssistantUsageFacts | undefined,
+): Record<string, unknown> | undefined => {
+  if (facts === undefined) return undefined;
+  if (facts.usage === undefined && facts.costTotal === undefined)
+    return undefined;
+  return {
+    ...(facts.usage ?? {}),
+    ...(facts.costTotal === undefined
+      ? {}
+      : { cost: { total: facts.costTotal } }),
+  };
 };
 
 const projectDelta = (value: unknown): Record<string, unknown> | undefined => {
@@ -927,7 +956,8 @@ const projectUsageEvent = (
     model: ownDataField(source, "model") ?? ownDataField(rawUsage, "model"),
   });
   const event: Record<string, unknown> = { type: "usage" };
-  if (facts?.usage !== undefined) event.usage = facts.usage;
+  const usage = assistantUsagePayload(facts);
+  if (usage !== undefined) event.usage = usage;
   if (facts?.contextUsage !== undefined) {
     const usage = asRecord(event.usage) ?? {};
     event.usage = { ...usage, context: facts.contextUsage };
@@ -1138,14 +1168,15 @@ export function historicalAssistantMessageFields(
   message: unknown,
 ): Record<string, unknown> {
   return guardValue<Record<string, unknown>>(() => {
-    const usage = projectAssistantUsageFacts(message);
+    const usageFacts = projectAssistantUsageFacts(message);
+    const usage = assistantUsagePayload(usageFacts);
     const facts = historicalProviderErrorFacts(message);
     return {
-      ...(usage?.usage === undefined ? {} : { usage: usage.usage }),
-      ...(usage?.contextUsage === undefined
+      ...(usage === undefined ? {} : { usage }),
+      ...(usageFacts?.contextUsage === undefined
         ? {}
-        : { contextUsage: usage.contextUsage }),
-      ...(usage?.model === undefined ? {} : { model: usage.model }),
+        : { contextUsage: usageFacts.contextUsage }),
+      ...(usageFacts?.model === undefined ? {} : { model: usageFacts.model }),
       ...(facts === undefined ? {} : { stopReason: facts.stopReason }),
       ...(facts?.providerError === undefined
         ? {}

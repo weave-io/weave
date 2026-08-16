@@ -190,7 +190,11 @@ describe("child overlay usage report parsing", () => {
       totalTokens: 1_682,
       contextTokens: 8_000,
       contextWindow: 200_000,
-      // `model` wins over `responseModel`; cost is money, never projected.
+      // Money is READ from the one field pi-ai puts it in, never derived from
+      // the token counts beside it. Only the host's own total is a fact any
+      // surface prints; the breakdown's components are not.
+      costTotal: 0.3,
+      // `model` wins over `responseModel`.
       model: "anthropic/claude-sonnet-5",
     });
   });
@@ -511,6 +515,7 @@ describe("child overlay telemetry projection", () => {
       contextTokens: 4_000,
       contextWindow: 16_000,
       contextPercent: 25,
+      costTotal: 0.42,
     });
   });
 

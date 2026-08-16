@@ -4,6 +4,7 @@
  * The overlay runtime is intentionally layered:
  *
  *   child-overlay-types  →  child-overlay-scroll   →  child-overlay-window
+ *                        →  child-overlay-native-parts
  *                        →  child-overlay-replay   →  child-overlay-controller
  *                        →  child-overlay-stream   →  child-overlay-pi-native
  *                        →  child-overlay-facts    →  child-overlay-component
@@ -24,6 +25,7 @@ const LAYERS = [
   "child-overlay-types.ts",
   "child-overlay-telemetry.ts",
   "child-overlay-scroll.ts",
+  "child-overlay-native-parts.ts",
   "child-overlay-replay.ts",
   "child-overlay-window.ts",
   "child-overlay-controller.ts",

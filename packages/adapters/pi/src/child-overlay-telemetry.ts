@@ -367,6 +367,7 @@ export function deriveChildOverlayTelemetry(
     contextTokens,
     contextWindow,
     contextPercent,
+    costTotal: usage?.costTotal,
   };
   return Object.values(telemetry).some((value) => value !== undefined)
     ? telemetry

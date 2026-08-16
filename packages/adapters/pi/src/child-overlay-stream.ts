@@ -263,6 +263,11 @@ export class ChildOverlayLiveStream {
    * Late answers are discarded rather than applied. If the stream was disposed,
    * the host generation was replaced, or the reader moved to another child
    * while the source was answering, the refresh settles nothing.
+   *
+   * The transcript is reconciled against the authoritative session in the same
+   * step, before the final frame: the live window holds whatever events
+   * reached this listener, and settlement is the moment the session file
+   * becomes the complete record of what the child actually did.
    */
   private async refreshThenSettle(childId: string): Promise<void> {
     const refreshed = await this.controller.refreshOpenChild();
@@ -277,6 +282,16 @@ export class ChildOverlayLiveStream {
     if (refreshed.isErr() || stillClaimsLive) {
       this.controller.markOpenChildReadOnly();
     }
+    // The run is over, so the session file is now the complete record of it.
+    // A reconcile that fails or answers nothing leaves the mounted transcript
+    // untouched, so this can only ever add the facts the live window missed.
+    await this.controller.reconcileOpenChild().match(
+      () => undefined,
+      () => undefined,
+    );
+    if (this.disposed) return;
+    if (this.currentGenerationId() !== this.generationId) return;
+    if (this.controller.currentChildId() !== childId) return;
     this.settle(childId);
   }
 

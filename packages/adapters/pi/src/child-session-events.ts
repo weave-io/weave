@@ -48,6 +48,7 @@ const ToolCall = event("tool_call", {
 });
 const ToolPartialResult = event("tool_partial_result", {
   toolCallId: boundedString.optional(),
+  arguments: boundedJson.optional(),
   partialResult: boundedJson.optional(),
   content: boundedJson.optional(),
 });
@@ -114,6 +115,16 @@ const UsageTokenCountSchema = z
   .min(0)
   .max(MAX_CHILD_USAGE_TOKENS);
 
+/**
+ * Ceiling on one report's money figure.
+ *
+ * Cost is money, not tokens, so it is read as a finite non-negative number
+ * rather than an integer, and an absurd figure is absent rather than printed.
+ */
+export const MAX_CHILD_USAGE_COST = 1_000_000;
+
+const UsageCostSchema = z.number().finite().min(0).max(MAX_CHILD_USAGE_COST);
+
 /** Model labels are bounded the same way run-divider model labels are. */
 export const MAX_CHILD_USAGE_MODEL_LENGTH = 128;
 
@@ -135,6 +146,13 @@ export interface PiChildUsageReport {
   readonly contextTokens?: number;
   /** `ContextUsage.contextWindow` — the host-reported context limit. */
   readonly contextWindow?: number;
+  /**
+   * `Usage.cost.total` — what the host itself charged for this report.
+   *
+   * Money is only ever READ, never derived from token counts, and only from
+   * the exact places pi-ai puts it.
+   */
+  readonly costTotal?: number;
   /** `AssistantMessage.model`, when the host reports it beside the usage. */
   readonly model?: string;
 }
@@ -171,6 +189,23 @@ const modelLabel = (value: unknown): string | undefined => {
   return parsed.success ? parsed.data : undefined;
 };
 
+/**
+ * The money figure a host `Usage` payload carries.
+ *
+ * pi-ai reports a breakdown object (`{ input, output, cacheRead, cacheWrite,
+ * total }`); some recorded sessions carry a bare number instead. Anything
+ * else is absent rather than zero.
+ */
+const costTotalOf = (usage: Record<string, unknown>): number | undefined => {
+  const cost = ownDataProperty(usage, "cost");
+  const bare = UsageCostSchema.safeParse(cost);
+  if (bare.success) return bare.data;
+  const record = recordOrUndefined(cost);
+  if (record === undefined) return undefined;
+  const total = UsageCostSchema.safeParse(ownDataProperty(record, "total"));
+  return total.success ? total.data : undefined;
+};
+
 const firstDefined = <T>(
   ...values: readonly (T | undefined)[]
 ): T | undefined => values.find((value) => value !== undefined);
@@ -193,6 +228,7 @@ function usageReportFrom(
       tokenCount(context["contextTokens"]),
     ),
     contextWindow: tokenCount(context["contextWindow"]),
+    costTotal: costTotalOf(tokens),
     model,
   };
 }
@@ -309,6 +345,8 @@ const USAGE_TOKEN_FIELDS = [
 export interface PiAssistantUsageFacts {
   /** Bounded, non-negative integer token counts, keyed by pi-ai field name. */
   readonly usage?: Readonly<Record<string, number>>;
+  /** `Usage.cost.total`, bounded. Read only, never derived from tokens. */
+  readonly costTotal?: number;
   /** Bounded context facts, keyed by Pi's ContextUsage field names. */
   readonly contextUsage?: Readonly<{
     readonly tokens?: number;
@@ -322,8 +360,10 @@ export interface PiAssistantUsageFacts {
  * payload-free record.
  *
  * Historical telemetry comes from native session entries, which store the same
- * pi-ai `AssistantMessage`. Only the known token fields and the model label are
- * copied, so no raw host payload, cost figure, or path can travel with them.
+ * pi-ai `AssistantMessage`. Only the known token fields, the host's own
+ * `cost.total` and the model label are copied, so no raw host payload or path
+ * can travel with them. The money figure is READ from the one field pi-ai puts
+ * it in and is never derived from the token counts beside it.
  * `undefined` means the message carried no usable usage fact.
  */
 export function projectAssistantUsageFacts(
@@ -365,12 +405,14 @@ export function projectAssistantUsageFacts(
               ...(contextTokens === undefined ? {} : { tokens: contextTokens }),
               ...(contextWindow === undefined ? {} : { contextWindow }),
             };
+      const costTotal = tokens === undefined ? undefined : costTotalOf(tokens);
       const model = firstDefined(
         modelLabel(ownDataProperty(record, "model")),
         modelLabel(ownDataProperty(record, "responseModel")),
       );
       if (
         Object.keys(usage).length === 0 &&
+        costTotal === undefined &&
         contextUsage === undefined &&
         model === undefined
       ) {
@@ -378,6 +420,7 @@ export function projectAssistantUsageFacts(
       }
       return {
         ...(payload === undefined ? {} : { usage }),
+        ...(costTotal === undefined ? {} : { costTotal }),
         ...(contextUsage === undefined ? {} : { contextUsage }),
         ...(model === undefined ? {} : { model }),
       };
@@ -586,10 +629,15 @@ const normalizeNativeToolEvent = (value: unknown): unknown => {
         arguments: boundNativeToolValue(record["args"]),
       };
     case "tool_execution_update":
+      // `ToolExecutionUpdateEvent` repeats the call's own `args`. Dropping
+      // them meant a call whose opening event never reached this listener
+      // printed `bash()` for the rest of the run even though every later
+      // event still named the arguments.
       return {
         type: "tool_partial_result",
         toolCallId: record["toolCallId"],
         toolName: record["toolName"],
+        arguments: boundNativeToolValue(record["args"]),
         partialResult: boundNativeToolValue(record["partialResult"]),
       };
     case "tool_execution_end":

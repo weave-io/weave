@@ -525,6 +525,13 @@ export interface ChildOverlayTelemetry {
   readonly contextWindow?: number;
   /** Present only when the host reported both context tokens and window. */
   readonly contextPercent?: number;
+  /**
+   * `Usage.cost.total` of the same report, in the host's own money.
+   *
+   * Read, never derived: a report that states tokens but no cost leaves this
+   * absent rather than pricing the tokens itself.
+   */
+  readonly costTotal?: number;
 }
 
 /**

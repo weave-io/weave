@@ -2200,10 +2200,13 @@ describe("child provider error retention in the overlay", () => {
       { type: "text", text: "live terminal text" },
     ]);
     expect(endMessage.stopReason).toBe("error");
+    // The host's own `cost.total` survives; every other key the hostile cost
+    // object carried, including the sentinel beside it, does not.
     expect(endMessage.usage).toEqual({
       input: 8,
       output: 2,
       totalTokens: 10,
+      cost: { total: 999 },
     });
     expect(endMessage.model).toBe("claude-sonnet-5");
     expect(endMessage.contextUsage).toEqual({
@@ -2291,6 +2294,7 @@ describe("child provider error retention in the overlay", () => {
       input: 5,
       output: 6,
       cacheRead: 7,
+      cost: { total: 999 },
     });
     expect(endMessage.model).toBe("claude-sonnet-5");
     expect(endMessage[CHILD_PROVIDER_ERROR_REPLAY_FIELD]).toEqual({

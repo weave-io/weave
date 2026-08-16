@@ -349,6 +349,276 @@ function isPendingToolEntry(entry: PiChildTranscriptEntry): boolean {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Tool facts a MESSAGE carries
+// ---------------------------------------------------------------------------
+
+/**
+ * The role a carried pi-ai message names, or `undefined` when it names none.
+ *
+ * `message_start` / `message_end` carry an `AgentMessage`, and that union is
+ * wider than an assistant turn: a `ToolResultMessage` travels the same two
+ * events. Reading the role is the whole difference between a transcript that
+ * shows a tool's answer under its call and one that shows the tool's own text
+ * under a `● <child> · reply` header the child never wrote.
+ */
+function messageRole(message: RecordValue | undefined): string | undefined {
+  return message === undefined ? undefined : stringValue(message.role);
+}
+
+/** Does this carried message describe an assistant turn? */
+function isAssistantMessage(message: RecordValue | undefined): boolean {
+  const role = messageRole(message);
+  return role === undefined || role === "assistant";
+}
+
+/** One call named by an assistant message's own `toolCall` content block. */
+interface CarriedToolCall {
+  readonly toolCallId: string;
+  readonly toolName?: string;
+  readonly arguments?: unknown;
+  readonly hasArguments: boolean;
+}
+
+const TOOL_CALL_BLOCK_TYPES: ReadonlySet<string> = new Set([
+  "toolCall",
+  "tool_call",
+  "tool_use",
+]);
+
+/**
+ * The calls an assistant message states in its own content.
+ *
+ * A real pi-ai tool-use turn IS this: `content: [{ type: "toolCall", id, name,
+ * arguments }]` and no prose at all. Both carriers of a run's history — the
+ * live `message_end` and the persisted session entry — name the call here, so
+ * reading it is what lets a replayed page and a live stream reach the same
+ * call rows, with the same arguments, under the same ids.
+ */
+function carriedToolCalls(
+  message: RecordValue | undefined,
+): readonly CarriedToolCall[] {
+  if (message === undefined || !isAssistantMessage(message)) return [];
+  const content = message.content;
+  if (!Array.isArray(content)) return [];
+  const calls: CarriedToolCall[] = [];
+  for (const block of content) {
+    const record = recordValue(block);
+    if (record === undefined) continue;
+    const type = stringValue(record.type);
+    if (type === undefined || !TOOL_CALL_BLOCK_TYPES.has(type)) continue;
+    const toolCallId = toolIdFrom(record);
+    if (toolCallId === undefined) continue;
+    const args = firstDefinedValue(record.arguments, record.input, record.args);
+    calls.push({
+      toolCallId,
+      toolName: stringValue(record.name) ?? stringValue(record.toolName),
+      arguments: args,
+      hasArguments: args !== undefined,
+    });
+  }
+  return calls;
+}
+
+/** The answer a carried pi-ai `ToolResultMessage` states. */
+interface CarriedToolResult {
+  readonly toolCallId: string;
+  readonly toolName?: string;
+  readonly isError: boolean;
+  readonly content: unknown;
+  readonly text?: string;
+}
+
+/**
+ * The tool answer a message carries, or `undefined` when it carries none.
+ *
+ * Structural throughout: the message must name the `toolResult` role AND the
+ * call it answers. Nothing is inferred from the answer's prose, so a child
+ * that genuinely writes the words a tool would write still reaches the screen
+ * as its own reply.
+ */
+function carriedToolResult(
+  message: RecordValue | undefined,
+): CarriedToolResult | undefined {
+  if (message === undefined) return undefined;
+  if (messageRole(message) !== "toolResult") return undefined;
+  const toolCallId = toolIdFrom(message);
+  if (toolCallId === undefined) return undefined;
+  return {
+    toolCallId,
+    toolName: stringValue(message.toolName) ?? stringValue(message.name),
+    isError: message.isError === true || message.is_error === true,
+    content: message.content,
+    text: messageText(message.content),
+  };
+}
+
+function firstDefinedValue(...values: readonly unknown[]): unknown {
+  return values.find((value) => value !== undefined);
+}
+
+/** What a message-carried fact does to the call it names. */
+interface CarriedToolFacts {
+  readonly toolCallId: string;
+  readonly toolName?: string;
+  readonly arguments?: unknown;
+  readonly hasArguments: boolean;
+  readonly terminal?:
+    | { readonly kind: "result"; readonly result: unknown }
+    | { readonly kind: "error"; readonly error?: string };
+}
+
+/**
+ * Applies one call's message-carried facts to the entry that call owns.
+ *
+ * Two rules make this safe to run on every carrier of the same fact:
+ *
+ * - Arguments are ADOPTED and never cleared. A call's arguments are the same
+ *   fact whichever event names them, so a later carrier may fill them in but
+ *   may never take them away.
+ * - A terminal answer settles the call exactly once, and only while the call
+ *   is still pending. Replaying the same answer changes nothing, and an answer
+ *   that arrives for a call which already answered belongs to a different call
+ *   and never overwrites the first.
+ */
+/** The state a call reaches once the carried facts are applied. */
+function carriedToolState(
+  terminal: CarriedToolFacts["terminal"],
+): PiChildTranscriptToolEntry["state"] {
+  if (terminal === undefined) return "called";
+  return terminal.kind === "error" ? "error" : "result";
+}
+
+function mergeCarriedToolFacts(
+  state: PiChildTranscriptState,
+  facts: CarriedToolFacts,
+  eventType: PiChildSessionEvent["type"],
+  sequence: number,
+): Result<PiChildTranscriptState, PiChildTranscriptError> {
+  const index = state.entries.findIndex(
+    (entry) => entry.kind === "tool" && entry.toolCallId === facts.toolCallId,
+  );
+  const settledState = carriedToolState(facts.terminal);
+
+  if (index < 0) {
+    const toolName = facts.toolName ?? "unknown tool";
+    const entry: PiChildTranscriptToolEntry = {
+      ...baseEntry(
+        nextEntryId(state, "tool", sequence),
+        sequence,
+        state.selectedBranchId,
+        eventType,
+      ),
+      kind: "tool",
+      toolCallId: facts.toolCallId,
+      toolName,
+      knownTool: KNOWN_TOOL_NAMES.has(toolName),
+      argumentsKnown: facts.hasArguments,
+      arguments: facts.hasArguments ? facts.arguments : undefined,
+      partialResults: [],
+      result:
+        facts.terminal?.kind === "result" ? facts.terminal.result : undefined,
+      error:
+        facts.terminal?.kind === "error" ? facts.terminal.error : undefined,
+      imageIds: [],
+      state: settledState,
+    };
+    return addEntry(state, entry);
+  }
+
+  const current = state.entries[index];
+  if (current?.kind !== "tool") {
+    return err({
+      type: "TranscriptInvalidAction",
+      operation: "merge_carried_tool_facts",
+    });
+  }
+  const settles = facts.terminal !== undefined && isPendingToolEntry(current);
+  const toolName =
+    current.toolName === "unknown tool"
+      ? (facts.toolName ?? current.toolName)
+      : current.toolName;
+  const updated: PiChildTranscriptToolEntry = {
+    ...addEventType(current, eventType),
+    toolName,
+    knownTool: KNOWN_TOOL_NAMES.has(toolName),
+    argumentsKnown: facts.hasArguments || current.argumentsKnown,
+    arguments: facts.hasArguments ? facts.arguments : current.arguments,
+    result:
+      settles && facts.terminal?.kind === "result"
+        ? facts.terminal.result
+        : current.result,
+    error:
+      settles && facts.terminal?.kind === "error"
+        ? facts.terminal.error
+        : current.error,
+    state: settles ? settledState : current.state,
+  };
+  return ok(withUpdatedEntry(state, index, updated));
+}
+
+/**
+ * Applies the tool facts a NON-assistant carried message states.
+ *
+ * Only a `ToolResultMessage` says anything the transcript can use; every other
+ * carried role contributes nothing and opens no entry. Idempotent, so a
+ * `message_start` and its `message_end` may both state the same answer.
+ */
+function applyCarriedMessage(
+  state: PiChildTranscriptState,
+  message: RecordValue | undefined,
+  eventType: PiChildSessionEvent["type"],
+  sequence: number,
+): Result<PiChildTranscriptState, PiChildTranscriptError> {
+  const answer = carriedToolResult(message);
+  if (answer === undefined) return ok(state);
+  return mergeCarriedToolFacts(
+    state,
+    {
+      toolCallId: answer.toolCallId,
+      ...(answer.toolName === undefined ? {} : { toolName: answer.toolName }),
+      hasArguments: false,
+      terminal: answer.isError
+        ? {
+            kind: "error",
+            ...(answer.text === undefined ? {} : { error: answer.text }),
+          }
+        : { kind: "result", result: answer.content },
+    },
+    eventType,
+    sequence,
+  );
+}
+
+/**
+ * Applies every tool fact one carried ASSISTANT message states, in content
+ * order.
+ */
+function applyCarriedToolFacts(
+  state: PiChildTranscriptState,
+  message: RecordValue | undefined,
+  eventType: PiChildSessionEvent["type"],
+  sequence: number,
+): Result<PiChildTranscriptState, PiChildTranscriptError> {
+  let next = state;
+  for (const call of carriedToolCalls(message)) {
+    const merged = mergeCarriedToolFacts(
+      next,
+      {
+        toolCallId: call.toolCallId,
+        ...(call.toolName === undefined ? {} : { toolName: call.toolName }),
+        arguments: call.arguments,
+        hasArguments: call.hasArguments,
+      },
+      eventType,
+      sequence,
+    );
+    if (merged.isErr()) return merged;
+    next = merged.value;
+  }
+  return ok(next);
+}
+
 /**
  * Concatenates the text of a pi-ai content-block array.
  *
@@ -649,6 +919,12 @@ function applyEventBody(
 
   if (eventType === "message_start") {
     const message = recordValue(event.message);
+    // A carried message that is not an assistant turn opens no reply. It may
+    // still carry the only correlation a tool answer has, so its facts are
+    // applied to the call they name before the event is done.
+    if (!isAssistantMessage(message)) {
+      return applyCarriedMessage(next, message, eventType, sequence);
+    }
     const messageId =
       messageIdFrom(message) ?? nextEntryId(next, "assistant", sequence);
     const branchId = stringValue(message?.branchId) ?? next.selectedBranchId;
@@ -665,11 +941,18 @@ function applyEventBody(
     };
     const added = addEntry(next, entry);
     if (added.isErr()) return added;
+    const withCalls = applyCarriedToolFacts(
+      added.value,
+      message,
+      eventType,
+      sequence,
+    );
+    if (withCalls.isErr()) return withCalls;
     return ok({
-      ...added.value,
-      ...registerBranch(added.value, branchId),
+      ...withCalls.value,
+      ...registerBranch(withCalls.value, branchId),
       activeMessageId: messageId,
-      selectedMessageId: added.value.selectedMessageId ?? messageId,
+      selectedMessageId: withCalls.value.selectedMessageId ?? messageId,
     });
   }
 
@@ -681,6 +964,9 @@ function applyEventBody(
       eventType === "message_end"
         ? recordValue(eventRecord.message)
         : undefined;
+    if (eventType === "message_end" && !isAssistantMessage(message)) {
+      return applyCarriedMessage(next, message, eventType, sequence);
+    }
     const messageId =
       messageIdFrom(message) ?? parts.messageId ?? next.activeMessageId;
     let index = assistantEntryIndex(next.entries, messageId);
@@ -746,6 +1032,9 @@ function applyEventBody(
       messageId: current.messageId,
     };
     next = withUpdatedEntry(next, index, updated);
+    const withCalls = applyCarriedToolFacts(next, message, eventType, sequence);
+    if (withCalls.isErr()) return withCalls;
+    next = withCalls.value;
     return ok({
       ...next,
       activeMessageId: current.messageId,
@@ -819,10 +1108,12 @@ function applyEventBody(
         toolCallId: toolId,
         toolName,
         knownTool: KNOWN_TOOL_NAMES.has(toolName),
-        argumentsKnown:
-          eventType === "tool_call" && eventRecord.arguments !== undefined,
-        arguments:
-          eventType === "tool_call" ? eventRecord.arguments : undefined,
+        // A call's arguments are the same fact whichever event names them.
+        // Reading them from the opening event alone meant a call whose
+        // `tool_call` never reached this listener printed `bash()` forever,
+        // even while every later event still carried them.
+        argumentsKnown: eventRecord.arguments !== undefined,
+        arguments: eventRecord.arguments,
         partialResults:
           eventType === "tool_partial_result"
             ? [eventRecord.partialResult ?? eventRecord.content]
@@ -856,12 +1147,12 @@ function applyEventBody(
         knownTool: KNOWN_TOOL_NAMES.has(
           stringValue(eventRecord.toolName) ?? current.toolName,
         ),
+        // Adopted, never cleared: a terminal event that carries no arguments
+        // must not erase the ones the call already stated.
         argumentsKnown:
-          eventType === "tool_call" && eventRecord.arguments !== undefined
-            ? true
-            : current.argumentsKnown,
+          eventRecord.arguments !== undefined || current.argumentsKnown,
         arguments:
-          eventType === "tool_call" && eventRecord.arguments !== undefined
+          eventRecord.arguments !== undefined
             ? eventRecord.arguments
             : current.arguments,
         partialResults:

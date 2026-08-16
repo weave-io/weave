@@ -211,24 +211,74 @@ function finiteNumber(value: unknown): number | undefined {
 }
 
 /**
- * The run's own spend, and never one message's share of it.
+ * The run's spend, from the LATEST authoritative host report.
  *
- * Two carriers report token accounting and they do NOT mean the same thing:
+ * Every turn a child takes re-sends the whole conversation, so a per-turn
+ * `Usage` is not a slice of the run that could be added up — it is the run so
+ * far, priced again. A real 0.84.2 report makes that plain: `input 2, output
+ * 22, cacheRead 38798, totalTokens 38909, cost.total 0.0205`, where the two
+ * tiny figures are the turn's new tokens and `cacheRead` is the whole context
+ * the host re-read. The host's own `totalTokens` is therefore the run's token
+ * count, and the parent's delegation card prints exactly that.
  *
- * - The delegation tree's aggregate (`identity.usage`) is the whole child's
- *   total. It is the figure the parent's delegation card prints, so preferring
- *   it is what makes the two surfaces agree.
- * - A standalone `usage` event carries Pi's own `UsageTotals` accumulator,
- *   which is cumulative for the session, so it is an honest fallback. The
- *   reducer merges ONLY that event into `transcript.usage`, which is why this
- *   reads the reducer's aggregate rather than the latest usage report.
+ * Summing reports double-counts the context once per turn; taking `input` and
+ * `output` alone reports a fraction of it. So the input-side figure is
+ * whatever `totalTokens` does not attribute to output, which keeps the two
+ * printed numbers adding back up to the host's own total.
  *
- * `ChildOverlayTelemetry` is deliberately not consulted: it holds the latest
- * `message_end.message.usage`, which is ONE assistant message's accounting.
- * Printing it as a run total showed `in 2 · out 101` for a long run, and
- * summing those figures would be worse, since every turn re-sends the whole
- * context. An unknown total prints `—`.
+ * The delegation tree's aggregate and Pi's cumulative `UsageTotals` remain the
+ * FALLBACKS, for a window that has seen no report of its own. An unknown
+ * prints `—`; nothing here prices tokens or estimates a total.
  */
+interface OverlaySpendFacts {
+  readonly tokensIn?: number;
+  readonly tokensOut?: number;
+  readonly cost?: number;
+}
+
+/** The latest report's own figures, or `undefined` when it stated none. */
+function latestReportSpend(
+  view: ChildOverlayView,
+): OverlaySpendFacts | undefined {
+  const telemetry = view.telemetry;
+  if (telemetry === undefined) return undefined;
+  const output = telemetry.outputTokens;
+  const total = telemetry.totalTokens;
+  // The input side is everything the host counted that was not output: new
+  // input tokens plus the cache read and cache write it accounted for.
+  const inputSide =
+    total !== undefined
+      ? Math.max(0, total - (output ?? 0))
+      : sumDefined(
+          telemetry.inputTokens,
+          telemetry.cacheReadTokens,
+          telemetry.cacheWriteTokens,
+        );
+  const spend: OverlaySpendFacts = {
+    tokensIn: inputSide,
+    tokensOut: output,
+    cost: telemetry.costTotal,
+  };
+  return spend.tokensIn === undefined &&
+    spend.tokensOut === undefined &&
+    spend.cost === undefined
+    ? undefined
+    : spend;
+}
+
+/** The sum of the reported components, or `undefined` when none was reported. */
+function sumDefined(
+  ...values: readonly (number | undefined)[]
+): number | undefined {
+  const reported = values.filter(
+    (value): value is number => value !== undefined,
+  );
+  return reported.length === 0
+    ? undefined
+    : reported.reduce((total, value) => total + value, 0);
+}
+
+/** The fallback aggregate, used only where no report of its own exists. */
 function aggregateTokens(
   view: ChildOverlayView,
   key: "inputTokens" | "outputTokens",
@@ -238,6 +288,27 @@ function aggregateTokens(
   if (descriptor !== undefined) return descriptor;
   const cumulative: Record<string, unknown> = { ...view.transcript.usage };
   return finiteNumber(cumulative[key]) ?? finiteNumber(cumulative[eventKey]);
+}
+
+/**
+ * The SPEND group's three figures, from the one authority that has them.
+ *
+ * The latest host report wins outright when it exists: it is the same figure
+ * the parent's delegation card prints, and a delegation-tree aggregate that
+ * summed per-turn full-context reports disagrees with the host by an order of
+ * magnitude. Each figure falls back independently, so a report that stated
+ * tokens but no cost still leaves cost to the aggregate rather than to `—`.
+ */
+function overlaySpend(view: ChildOverlayView): OverlaySpendFacts {
+  const latest = latestReportSpend(view);
+  const fallbackCost =
+    view.identity?.usage?.cost ?? aggregateCost({ ...view.transcript.usage });
+  return {
+    tokensIn: latest?.tokensIn ?? aggregateTokens(view, "inputTokens", "input"),
+    tokensOut:
+      latest?.tokensOut ?? aggregateTokens(view, "outputTokens", "output"),
+    cost: latest?.cost ?? fallbackCost,
+  };
 }
 
 function aggregateCost(usage: Record<string, unknown>): number | undefined {
@@ -472,7 +543,6 @@ export function childOverlayRailFacts(
   view: ChildOverlayView,
 ): OverlayRailFacts {
   const settlement = childOverlaySettlementFacts(view);
-  const usage = view.identity?.usage;
   const transcript = view.transcript;
   const tool = latestToolEntry(transcript);
   const toolTone = tool === undefined ? "mute" : overlayToolTone(tool);
@@ -493,7 +563,7 @@ export function childOverlayRailFacts(
   const args = tool === undefined ? "" : overlayToolArgs(tool);
   const queue = latestQueue(transcript);
   const turn = childOverlayTurn(view);
-  const cost = usage?.cost ?? aggregateCost({ ...transcript.usage });
+  const spend = overlaySpend(view);
   return {
     status: statusWords(view),
     tone: settlement.tone,
@@ -511,13 +581,9 @@ export function childOverlayRailFacts(
     ...(errorDetail === undefined ? {} : { errorDetail }),
     queueCount: queue?.size ?? view.identity?.queueDepth ?? 0,
     ...(queue?.first === undefined ? {} : { firstQueued: queue.first }),
-    tokensIn: formatOverlayTokenCount(
-      aggregateTokens(view, "inputTokens", "input"),
-    ),
-    tokensOut: formatOverlayTokenCount(
-      aggregateTokens(view, "outputTokens", "output"),
-    ),
-    cost: formatOverlayCost(cost),
+    tokensIn: formatOverlayTokenCount(spend.tokensIn),
+    tokensOut: formatOverlayTokenCount(spend.tokensOut),
+    cost: formatOverlayCost(spend.cost),
   };
 }
 

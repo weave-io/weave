@@ -374,13 +374,22 @@ describe("non-conversation events render nothing", () => {
       {
         type: "message_end",
         message: assistant(
-          [{ type: "toolCall", id: CALL_ID, name: "bash" }],
+          [
+            {
+              type: "toolCall",
+              id: CALL_ID,
+              name: "bash",
+              arguments: { command: "bun test" },
+            },
+          ],
           "toolUse",
         ),
       },
     ]);
+    // The turn's reply IS the call it made, so the call is the only thing on
+    // screen: no empty header, and no bare message with nothing under it.
     expect(rows.join("\n")).not.toContain("· reply");
-    expect(rows).toEqual([]);
+    expect(rows).toEqual(["⚙ bash(command: bun test)", "  ⎿ running", ""]);
   });
 
   it("still prints a reply that has prose, and its reasoning summary", () => {
@@ -452,12 +461,13 @@ describe("the prompt and the rail state the same live facts", () => {
     expect(String(prompt.turn)).toBe(rail.turn ?? "");
   });
 
-  it("never prints one message's accounting as the run's spend", async () => {
-    // Real Pi carries `usage` on every terminal assistant message. It is that
-    // MESSAGE's accounting, and each turn re-sends the whole context, so
-    // neither the latest figure nor a sum of them is the run's total. This
-    // runs through the controller, because that is where the latest usage
-    // report is retained and turned into view telemetry.
+  it("states the latest host report as the run's spend", async () => {
+    // Real Pi carries `usage` on every terminal assistant message, and each
+    // turn re-sends the whole context, so a report is the run SO FAR priced
+    // again — not a slice that could be added up. The latest one is therefore
+    // the run's own figure, and summing them would count the context once per
+    // turn. This runs through the controller, because that is where the latest
+    // usage report is retained and turned into view telemetry.
     const source = settlingSource();
     const controller = createChildOverlayController(source.port);
     (await controller.open("settle-child"))._unsafeUnwrap();
@@ -473,25 +483,31 @@ describe("the prompt and the rail state the same live facts", () => {
           role: "assistant",
           content: [{ type: "text", text: "done" }],
           stopReason: "stop",
-          usage: { input: 2, output: 101, totalTokens: 103 },
+          usage: {
+            input: 2,
+            output: 101,
+            cacheRead: 4_000,
+            totalTokens: 4_103,
+            cost: { total: 0.0205 },
+          },
         },
       },
     ]) {
       controller.applyLiveEvent(event)._unsafeUnwrap();
     }
     const view = controller.view()._unsafeUnwrap();
-    // The per-message report is still retained — it is what names the model
-    // and the context window — it just never becomes the run's spend.
     expect(view.telemetry?.inputTokens).toBe(2);
     const rail = childOverlayRailFacts(view);
-    expect(rail.tokensIn).toBeUndefined();
-    expect(rail.tokensOut).toBeUndefined();
-    expect(rail.cost).toBeUndefined();
+    // The input side carries the host's cache accounting, so the two printed
+    // figures add back up to the host's own `totalTokens`.
+    expect(rail.tokensIn).toBe("4k");
+    expect(rail.tokensOut).toBe("101");
+    expect(rail.cost).toBe("$0.0205");
   });
 
-  it("prints the delegation tree's own aggregate when it has one", () => {
-    // The aggregate the parent's delegation card prints, on the rail beside
-    // the transcript that produced it.
+  it("falls back to the delegation tree's aggregate when no report exists", () => {
+    // The aggregate the parent's delegation card prints, on the rail beside a
+    // transcript whose own turns reported no usage at all.
     const state = transcriptOf([
       {
         type: "message_start",
@@ -504,7 +520,6 @@ describe("the prompt and the rail state the same live facts", () => {
           role: "assistant",
           content: [{ type: "text", text: "done" }],
           stopReason: "stop",
-          usage: { input: 2, output: 101 },
         },
       },
     ]);

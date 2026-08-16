@@ -346,6 +346,14 @@
   - function headerIdentityRow: (paint, facts, width) => HeaderRow
   - function headerContextRow: (paint, facts, width) => HeaderRow | undefined
   - _...59 more_
+- `packages/adapters/pi/src/child-overlay-native-parts.ts`
+  - function safeEntryId: (value, fallback) => string
+  - function boundText: (value) => string
+  - function messageText: (message) => void
+  - function recordOf: (value) => Record<string, unknown> | undefined
+  - function nonEmptyString: (value) => string | undefined
+  - function boundLabel: (value) => string
+  - _...5 more_
 - `packages/adapters/pi/src/child-overlay-pi-native.ts`
   - function normalizeOverlayPayload: (value, stripBookkeeping, depth) => unknown
   - function summarizeOverlayValue: (value, depth) => string
@@ -355,13 +363,13 @@
   - function overlayToolArgs: (entry) => string
   - _...13 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
-  - function boundText: (value) => string
-  - function messageText: (message) => void
-  - function recordOf: (value) => Record<string, unknown> | undefined
-  - function nonEmptyString: (value) => string | undefined
-  - function boundLabel: (value) => string
   - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
-  - _...10 more_
+  - function mergeReplaySteps: (existing, incoming) => Result<
+  - function mapNativeSessionEntryToOverlay: (entry, sequence) => Result<ChildOverlayEntry | undefined, ChildOverlayMappingError>
+  - function transcriptFromOverlayEntries: (entries) => PiChildTranscriptState
+  - function degradedCapacityEntry: (id, sequence, error) => ChildOverlayEntry
+  - function projectLiveEntry: (event, sequence, expanded, assistantEntryId?) => ChildOverlayEntry | undefined
+  - _...4 more_
 - `packages/adapters/pi/src/child-overlay-scroll.ts`
   - function setLayoutSpans: (state, spans) => void
   - function captureViewportAnchor: (state) => ChildOverlayAnchor | undefined
@@ -480,7 +488,7 @@
   - function parsePiChildSessionEvent
   - interface PiChildUsageReport
   - interface PiAssistantUsageFacts
-  - _...11 more_
+  - _...12 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority

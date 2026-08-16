@@ -425,14 +425,15 @@ describe("the Status Matrix rail updates from live events", () => {
       ._unsafeUnwrap();
     const spent = rail(controller);
     expect(spent.turn).toBe("1");
-    // SPEND is a RUN total. A `message_end` carries the accounting of ONE
-    // assistant message, and each turn re-sends the whole context, so neither
-    // the latest figure nor a sum of them is the run's spend. The rail
-    // therefore prints `—` until the delegation tree's own aggregate — the
-    // same figure the parent's delegation card prints — names one.
-    expect(spent.tokensIn).toBeUndefined();
-    expect(spent.tokensOut).toBeUndefined();
-    expect(spent.cost).toBeUndefined();
+    // SPEND is a RUN total, and the host's LATEST report is one: every turn
+    // re-sends the whole context, so a report is the run so far priced again
+    // rather than a slice to be added up. The rail states that report, which
+    // is the same figure the parent's delegation card prints. This message
+    // stated no `totalTokens`, so the input side is the components it did
+    // state.
+    expect(spent.tokensIn).toBe("1.2k");
+    expect(spent.tokensOut).toBe("3.4k");
+    expect(spent.cost).toBe("$0.4200");
   });
 });
 

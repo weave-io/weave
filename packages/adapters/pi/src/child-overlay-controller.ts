@@ -318,6 +318,73 @@ export class ChildOverlayController {
   }
 
   /**
+   * Re-reads the open child's transcript from the authoritative session.
+   *
+   * A live window is assembled from whatever events reached this listener, and
+   * that is not the same thing as the run. A real 0.84.2 child wrote three
+   * calls and three separately correlated answers into its session file while
+   * the mounted window kept only the synthetic terminal events that happened
+   * to survive, so two finished calls still read `running` and a deliberate
+   * failure carried no error at all. The session file is the authority for
+   * what the child actually did, so at settlement the transcript is rebuilt
+   * from it through exactly the path a freshly opened settled child takes:
+   * one bounded newest page, mapped, deduped, bounded and replayed.
+   *
+   * Deliberately conservative in three ways:
+   *
+   * - A page with no entries reconciles NOTHING. An unwritten, empty, or
+   *   unreadable session may not erase a transcript the reader watched arrive.
+   * - A source failure is not an error here. The mounted transcript stays
+   *   exactly as it was and the caller still settles.
+   * - Focus is re-checked after the read, so a late answer can never rewrite
+   *   the child now on screen.
+   *
+   * Reading position is preserved: the reader keeps their scroll offset,
+   * anchor, expansion and search, because reconciliation replaces the facts
+   * under the window, not the window.
+   */
+  reconcileOpenChild(): ResultAsync<ChildOverlayView, ChildOverlayError> {
+    const open = this.openChild;
+    if (open === undefined) return errAsync({ type: "OverlayNotOpen" });
+    const childId = open.childId;
+    return this.source
+      .loadNewest(childId, this.pageSize)
+      .orElse(() =>
+        okAsync<ChildOverlayPage, ChildOverlaySourceError>({
+          entries: [],
+          olderCursor: undefined,
+          newerCursor: undefined,
+          hasOlder: false,
+          hasNewer: false,
+        }),
+      )
+      .mapErr((error): ChildOverlayError => error)
+      .andThen((page) => {
+        const child = this.openChild;
+        if (child === undefined || child.childId !== childId) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayNotOpen",
+          });
+        }
+        const state = this.saved.get(childId);
+        if (state === undefined) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayNotOpen",
+          });
+        }
+        if (page.entries.length === 0) {
+          return okAsync(this.toView(child, state));
+        }
+        const scrollOffset = state.scrollOffset;
+        const anchor = state.anchor;
+        this.applyPage(state, page, "replace");
+        state.scrollOffset = scrollOffset;
+        state.anchor = anchor;
+        return okAsync(this.toView(child, state));
+      });
+  }
+
+  /**
    * Fails the open child closed to read-only history without claiming success.
    *
    * Used when the delegation tree says the child is gone but the source cannot
