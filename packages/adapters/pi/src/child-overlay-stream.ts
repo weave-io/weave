@@ -110,6 +110,13 @@ export class ChildOverlayLiveStream {
   private refreshingChildId: string | undefined;
   /** The in-flight refresh, exposed only so a caller can await settlement. */
   private settlementSignal: Promise<void> | undefined;
+  /**
+   * A descriptor re-read for a child that is still running.
+   *
+   * At most one is in flight: a tree change is frequent, and a queue of
+   * overlapping describes would answer out of order.
+   */
+  private liveRefreshInFlight = false;
   private disposed = false;
 
   constructor(config: ChildOverlayLiveStreamConfig) {
@@ -214,7 +221,14 @@ export class ChildOverlayLiveStream {
       this.settle();
       return;
     }
-    if (this.resolveLiveThreadId(child.childId) !== undefined) return;
+    if (this.resolveLiveThreadId(child.childId) !== undefined) {
+      // Still running. The tree is nonetheless the authority for elapsed time,
+      // turn count and aggregate spend, and the open descriptor is the
+      // snapshot taken when the reader opened the child, so those rail facts
+      // are re-read on the same tree change the parent's card repaints on.
+      this.refreshLiveDescriptor();
+      return;
+    }
     // One refresh per child. A repeated tree change while it is in flight is a
     // no-op, so the final frame is still published exactly once.
     if (this.refreshingChildId === child.childId) return;
@@ -264,6 +278,29 @@ export class ChildOverlayLiveStream {
       this.controller.markOpenChildReadOnly();
     }
     this.settle(childId);
+  }
+
+  /**
+   * Re-reads a RUNNING child's authoritative descriptor.
+   *
+   * Deliberately weaker than the settlement refresh below: a failed or superseded
+   * read here proves nothing about liveness, so it never marks the child
+   * read-only and never publishes a final frame. It only lets the rail's
+   * tree-owned facts move with the run.
+   */
+  private refreshLiveDescriptor(): void {
+    if (this.liveRefreshInFlight) return;
+    this.liveRefreshInFlight = true;
+    void this.controller.refreshOpenChild().match(
+      () => {
+        this.liveRefreshInFlight = false;
+        if (this.disposed || this.isSettled()) return;
+        this.coalescer.request("coalesced");
+      },
+      () => {
+        this.liveRefreshInFlight = false;
+      },
+    );
   }
 
   private paint(): void {

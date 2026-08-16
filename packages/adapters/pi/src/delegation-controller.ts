@@ -778,11 +778,22 @@ export class PiDelegationController {
   }
 
   /**
-   * Maps a live run child id to its logical thread id when this generation
-   * still tracks the child. Undefined for historical-only or unknown ids.
+   * Maps a RUNNING run child id to its logical thread id.
+   *
+   * Liveness, not mere acquaintance, is the contract. A thread outlives the
+   * run that opened it — it stays in this generation's map so it can be
+   * resumed — so answering from the map alone reported every settled child as
+   * live forever. The child inspector treats this as its settlement signal:
+   * with a thread id still coming back, a settled child kept an open overlay
+   * on `LIVE`, with a frozen elapsed time and an editable prompt, while the
+   * parent's own card already said `COMPLETED`.
+   *
+   * Undefined for a settled, cancelled, tombstoned, historical-only, or
+   * unknown id.
    */
   resolveThreadIdForLiveChild(childId: string): string | undefined {
-    return this.findLiveThreadState(childId)?.threadId;
+    const state = this.findLiveThreadState(childId);
+    return state?.running === true ? state.threadId : undefined;
   }
 
   /** Requests one delegated child. Resolves immediately if denied, queues if over budget, spawns once authorized. */
@@ -1635,20 +1646,21 @@ export class PiDelegationController {
     if (outcome.isErr()) {
       state.status = "failed";
       state.lastRetryable = outcome.error.retryable;
-      return;
-    }
-    if (outcome.value.outcome === "completed") {
+    } else if (outcome.value.outcome === "completed") {
       state.status = "completed";
       state.lastRetryable = false;
-      return;
-    }
-    if (outcome.value.outcome === "cancelled") {
+    } else if (outcome.value.outcome === "cancelled") {
       state.status = "cancelled";
       state.lastRetryable = true;
-      return;
+    } else {
+      state.status = "failed";
+      state.lastRetryable = true;
     }
-    state.status = "failed";
-    state.lastRetryable = true;
+    // The run's own terminal state is a tree change: it is the moment the
+    // child stops being live, and every surface projected from the tree — the
+    // delegation card AND a mounted child inspector — must be told once, here,
+    // rather than waiting for the next refresh tick that may never come.
+    this.notifyTreeChanged();
   }
 
   /**

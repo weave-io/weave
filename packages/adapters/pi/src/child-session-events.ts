@@ -528,16 +528,48 @@ const nativeToolErrorMessage = (value: unknown): string | undefined => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return undefined;
   }
-  const content = (value as Record<string, unknown>)["content"];
-  if (!Array.isArray(content)) return undefined;
-  for (const item of content) {
-    if (typeof item !== "object" || item === null || Array.isArray(item)) {
-      continue;
+  const record = value as Record<string, unknown>;
+  const content = record["content"];
+  if (Array.isArray(content)) {
+    for (const item of content) {
+      if (typeof item === "string")
+        return item.slice(0, MAX_CHILD_EVENT_STRING);
+      if (typeof item !== "object" || item === null || Array.isArray(item)) {
+        continue;
+      }
+      const text = (item as Record<string, unknown>)["text"];
+      if (typeof text === "string")
+        return text.slice(0, MAX_CHILD_EVENT_STRING);
     }
-    const text = (item as Record<string, unknown>)["text"];
-    if (typeof text === "string") return text.slice(0, MAX_CHILD_EVENT_STRING);
+  }
+  if (typeof content === "string")
+    return content.slice(0, MAX_CHILD_EVENT_STRING);
+  // A tool that reports its own failure prose rather than a content block.
+  for (const key of ["error", "message", "output"] as const) {
+    const text = record[key];
+    if (typeof text === "string" && text.length > 0)
+      return text.slice(0, MAX_CHILD_EVENT_STRING);
   }
   return undefined;
+};
+
+/**
+ * Did this `tool_execution_end` report a FAILED tool?
+ *
+ * Pi carries the flag twice: on the event, and on the pi-ai
+ * `ToolResultMessage` it wraps (`{ role: "toolResult", …, isError }`). Only
+ * the event-level flag was read, so a host that reports the failure on the
+ * message alone produced an ordinary success row and the deliberate failure
+ * had no `⎿` outcome at all. Either authority is enough; neither is invented.
+ */
+const nativeToolEndIsError = (record: Record<string, unknown>): boolean => {
+  if (record["isError"] === true) return true;
+  const result = record["result"];
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    return false;
+  }
+  const nested = result as Record<string, unknown>;
+  return nested["isError"] === true || nested["is_error"] === true;
 };
 
 const normalizeNativeToolEvent = (value: unknown): unknown => {
@@ -561,7 +593,7 @@ const normalizeNativeToolEvent = (value: unknown): unknown => {
         partialResult: boundNativeToolValue(record["partialResult"]),
       };
     case "tool_execution_end":
-      if (record["isError"] === true) {
+      if (nativeToolEndIsError(record)) {
         return {
           type: "tool_error",
           toolCallId: record["toolCallId"],

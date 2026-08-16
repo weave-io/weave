@@ -310,7 +310,43 @@ function messageIdFrom(value: unknown): string | undefined {
 function toolIdFrom(value: unknown): string | undefined {
   const record = recordValue(value);
   if (record === undefined) return undefined;
-  return stringValue(record.toolCallId) ?? stringValue(record.id);
+  return (
+    stringValue(record.toolCallId) ??
+    stringValue(record.tool_call_id) ??
+    stringValue(record.toolUseId) ??
+    stringValue(record.tool_use_id) ??
+    stringValue(record.id)
+  );
+}
+
+/**
+ * The call a real terminal tool event belongs to.
+ *
+ * Pi reports the correlation id on the event, and pi-ai repeats it inside the
+ * `ToolResultMessage` the event carries (`{ role: "toolResult", toolCallId,
+ * … }`). Reading only the event meant a host that omitted the outer id — or a
+ * projection that could not reproduce it — lost the call the answer belonged
+ * to, and the transcript kept printing `⎿ running` for a tool that had
+ * already finished. Both carriers are consulted; nothing is guessed from the
+ * tool name alone.
+ */
+function toolEventCallId(event: RecordValue): string | undefined {
+  return (
+    toolIdFrom(event) ??
+    toolIdFrom(event.result) ??
+    toolIdFrom(event.partialResult) ??
+    toolIdFrom(event.content)
+  );
+}
+
+/** Is this call still waiting for the event that ends it? */
+function isPendingToolEntry(entry: PiChildTranscriptEntry): boolean {
+  return (
+    entry.kind === "tool" &&
+    (entry.state === "called" ||
+      entry.state === "partial" ||
+      entry.state === "placeholder")
+  );
 }
 
 /**
@@ -522,10 +558,32 @@ function assistantEntryIndex(
   );
 }
 
-function lastToolIndex(entries: readonly PiChildTranscriptEntry[]): number {
-  for (let index = entries.length - 1; index >= 0; index -= 1)
-    if (entries[index]?.kind === "tool") return index;
-  return -1;
+/**
+ * The newest call an un-correlated terminal event may settle.
+ *
+ * Preference order is exact tool name, then any still-pending call. A call
+ * that already reached a terminal state is never re-settled: a second answer
+ * belongs to a different call, and overwriting the first would make the
+ * transcript disagree with the run. `-1` means nothing here can own the event
+ * and the caller opens a fresh entry instead.
+ */
+function pendingToolIndex(
+  entries: readonly PiChildTranscriptEntry[],
+  toolName: string | undefined,
+): number {
+  let anyPending = -1;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry === undefined || !isPendingToolEntry(entry)) continue;
+    if (anyPending < 0) anyPending = index;
+    if (
+      toolName !== undefined &&
+      (entry as PiChildTranscriptToolEntry).toolName === toolName
+    ) {
+      return index;
+    }
+  }
+  return anyPending;
 }
 
 function makeInputEntry(
@@ -722,14 +780,24 @@ function applyEventBody(
     eventType === "tool_error"
   ) {
     const eventRecord = event as unknown as RecordValue;
+    const eventToolName =
+      stringValue(eventRecord.toolName) ?? stringValue(eventRecord.name);
+    const correlationId = toolEventCallId(eventRecord);
+    // Correlate by id first. Only an event that names no call at all falls
+    // back to the newest PENDING call, which is the one a terminal event can
+    // legitimately belong to; the previous fallback took the newest tool entry
+    // outright and could re-open a call that had already answered.
+    const fallbackIndex =
+      correlationId === undefined
+        ? (() => {
+            const pending = pendingToolIndex(next.entries, eventToolName);
+            return eventType === "tool_call" ? -1 : pending;
+          })()
+        : -1;
     const toolId =
-      toolIdFrom(eventRecord) ??
-      (lastToolIndex(next.entries) >= 0
-        ? (
-            next.entries[
-              lastToolIndex(next.entries)
-            ] as PiChildTranscriptToolEntry
-          ).toolCallId
+      correlationId ??
+      (fallbackIndex >= 0
+        ? (next.entries[fallbackIndex] as PiChildTranscriptToolEntry).toolCallId
         : undefined) ??
       nextEntryId(next, "tool-placeholder", sequence);
     let index = next.entries.findIndex(

@@ -175,7 +175,7 @@ function observedTurns(transcript: PiChildTranscriptState): number {
 }
 
 /**
- * The turn the rail prints.
+ * The turn this child has reached, as ONE fact for every surface.
  *
  * Two authorities count the same thing and neither sees all of it: the
  * descriptor snapshot knows the turn the run had reached when the reader
@@ -184,22 +184,25 @@ function observedTurns(transcript: PiChildTranscriptState): number {
  * lower bound either can support — taking the observed count alone reported
  * `1` for a child opened at turn 9, and taking the snapshot alone froze the
  * row for the whole run.
+ *
+ * It is exported and shared because the prompt used to read the descriptor
+ * turn directly while the rail read this: one frame printed `turn 3` under
+ * `turn 7`, and a reader has no way to tell which of two disagreeing turn
+ * counters describes the child they are steering.
  */
-function overlayTurnWord(
-  observed: number,
-  reported: number | undefined,
-): string | undefined {
-  if (reported === undefined)
-    return observed > 0 ? String(observed) : undefined;
-  return String(Math.max(observed, reported));
+export function childOverlayTurn(view: ChildOverlayView): number | undefined {
+  const observed = observedTurns(view.transcript);
+  const reported = view.identity?.turn;
+  if (reported === undefined) return observed > 0 ? observed : undefined;
+  return Math.max(observed, reported);
 }
 
 /**
- * Reported spend, from whichever authoritative shape the host used.
+ * Reported spend, from whichever authoritative shape the aggregate used.
  *
- * Pi reports `usage.cost` as a breakdown object (`{ input, output, total }`),
- * older recorded sessions report a bare number, and some hosts report
- * `costUsd`. Anything else is unavailable rather than zero.
+ * Pi reports `cost` as a breakdown object (`{ input, output, total }`), older
+ * recorded sessions report a bare number, and some hosts report `costUsd`.
+ * Anything else is unavailable rather than zero.
  */
 function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
@@ -207,8 +210,37 @@ function finiteNumber(value: unknown): number | undefined {
     : undefined;
 }
 
-function reportedCost(transcript: PiChildTranscriptState): number | undefined {
-  const usage: Record<string, unknown> = { ...transcript.usage };
+/**
+ * The run's own spend, and never one message's share of it.
+ *
+ * Two carriers report token accounting and they do NOT mean the same thing:
+ *
+ * - The delegation tree's aggregate (`identity.usage`) is the whole child's
+ *   total. It is the figure the parent's delegation card prints, so preferring
+ *   it is what makes the two surfaces agree.
+ * - A standalone `usage` event carries Pi's own `UsageTotals` accumulator,
+ *   which is cumulative for the session, so it is an honest fallback. The
+ *   reducer merges ONLY that event into `transcript.usage`, which is why this
+ *   reads the reducer's aggregate rather than the latest usage report.
+ *
+ * `ChildOverlayTelemetry` is deliberately not consulted: it holds the latest
+ * `message_end.message.usage`, which is ONE assistant message's accounting.
+ * Printing it as a run total showed `in 2 · out 101` for a long run, and
+ * summing those figures would be worse, since every turn re-sends the whole
+ * context. An unknown total prints `—`.
+ */
+function aggregateTokens(
+  view: ChildOverlayView,
+  key: "inputTokens" | "outputTokens",
+  eventKey: "input" | "output",
+): number | undefined {
+  const descriptor = view.identity?.usage?.[key];
+  if (descriptor !== undefined) return descriptor;
+  const cumulative: Record<string, unknown> = { ...view.transcript.usage };
+  return finiteNumber(cumulative[key]) ?? finiteNumber(cumulative[eventKey]);
+}
+
+function aggregateCost(usage: Record<string, unknown>): number | undefined {
   const direct = usage.cost;
   const bare = finiteNumber(direct);
   if (bare !== undefined) return bare;
@@ -460,13 +492,13 @@ export function childOverlayRailFacts(
   const target = tool === undefined ? "" : overlayToolTarget(tool);
   const args = tool === undefined ? "" : overlayToolArgs(tool);
   const queue = latestQueue(transcript);
-  const turns = observedTurns(transcript);
-  const cost = reportedCost(transcript) ?? usage?.cost;
+  const turn = childOverlayTurn(view);
+  const cost = usage?.cost ?? aggregateCost({ ...transcript.usage });
   return {
     status: statusWords(view),
     tone: settlement.tone,
     elapsed: formatOverlayElapsed(view.identity?.elapsedMs),
-    turn: overlayTurnWord(turns, view.identity?.turn),
+    turn: turn === undefined ? undefined : String(turn),
     run: view.activeRun === undefined ? undefined : `run ${view.activeRun}`,
     branch: view.activeBranchId,
     live: liveActivity(view),
@@ -480,10 +512,10 @@ export function childOverlayRailFacts(
     queueCount: queue?.size ?? view.identity?.queueDepth ?? 0,
     ...(queue?.first === undefined ? {} : { firstQueued: queue.first }),
     tokensIn: formatOverlayTokenCount(
-      view.telemetry?.inputTokens ?? usage?.inputTokens,
+      aggregateTokens(view, "inputTokens", "input"),
     ),
     tokensOut: formatOverlayTokenCount(
-      view.telemetry?.outputTokens ?? usage?.outputTokens,
+      aggregateTokens(view, "outputTokens", "output"),
     ),
     cost: formatOverlayCost(cost),
   };
@@ -503,7 +535,8 @@ export function childOverlayPromptFacts(
   const settlement = childOverlaySettlementFacts(view);
   return {
     target: childOverlayName(view),
-    turn: view.identity?.turn,
+    // The same live fact the rail states. See {@link childOverlayTurn}.
+    turn: childOverlayTurn(view),
     settled: view.readOnly,
     failed: view.terminalError !== undefined,
     queueCount: view.identity?.queueDepth ?? 0,

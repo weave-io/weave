@@ -36,7 +36,11 @@
 import { boundText } from "./child-overlay-replay.js";
 import { stripPathLike } from "./child-overlay-search.js";
 import type { ChildOverlayEntry } from "./child-overlay-types.js";
-import type { PiChildProviderError } from "./child-provider-error.js";
+import {
+  type PiChildProviderError,
+  TOOL_ERROR_DETAILS_UNAVAILABLE,
+  TOOL_RESULT_DETAILS_UNAVAILABLE,
+} from "./child-provider-error.js";
 import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import type {
   PiChildTranscriptAssistantEntry,
@@ -96,6 +100,49 @@ const PI_NATIVE_VALUE_DEPTH = 2;
 
 /** Keys of one summarized object. */
 const PI_NATIVE_VALUE_KEYS = 4;
+
+/** Nesting depth {@link normalizeOverlayPayload} walks before it gives up. */
+const PI_NATIVE_NORMALIZE_DEPTH = 6;
+
+/**
+ * The sentences the closed reducer projection substitutes for a value it may
+ * not reproduce.
+ *
+ * They are a PRIVACY outcome, not a fact about the run, so they are dropped
+ * here rather than printed: a reader learns nothing from
+ * `bash(command: Tool result details unavailable.)`, and the row reads as if
+ * the child had run that literal command.
+ */
+const PI_NATIVE_WITHHELD_TEXT: ReadonlySet<string> = new Set([
+  TOOL_RESULT_DETAILS_UNAVAILABLE,
+  TOOL_ERROR_DETAILS_UNAVAILABLE,
+]);
+
+/**
+ * Keys of a real Pi tool answer that carry correlation, not information.
+ *
+ * A Pi 0.83/0.84 `tool_execution_end` reports a pi-ai `ToolResultMessage`:
+ * `{ role, toolCallId, toolName, content, isError, timestamp }`. Every field
+ * but `content` is bookkeeping the inspector already states in the call row
+ * it hangs under, and printing them spends the whole result column on
+ * `role: toolResult, toolCallId: …, toolName: bash, content: …`. They are
+ * dropped from a RESULT only; a tool's arguments keep every key, because
+ * there the shape is the information.
+ */
+const PI_NATIVE_RESULT_BOOKKEEPING_KEYS: ReadonlySet<string> = new Set([
+  "role",
+  "type",
+  "id",
+  "toolCallId",
+  "tool_use_id",
+  "toolUseId",
+  "toolName",
+  "name",
+  "isError",
+  "is_error",
+  "timestamp",
+  "addedToolNames",
+]);
 
 // ---------------------------------------------------------------------------
 // Input / output
@@ -167,6 +214,71 @@ export interface OverlayTranscriptRender {
  * like this: depth-limited, key-limited, character-limited, sanitized, and
  * with anything that looks like a storage location replaced.
  */
+/**
+ * The text of one pi-ai content block, or `undefined` when it carries none.
+ *
+ * `content` on every real tool answer, assistant message and partial result is
+ * an array of `{ type: "text"; text: string }` blocks. Summarizing the block
+ * itself prints its SHAPE — `type: text, text: …` — which is the one thing a
+ * reader cannot use, so a block is normalized to the prose it wraps.
+ */
+function contentBlockText(record: Record<string, unknown>): string | undefined {
+  if (typeof record.type !== "string") return undefined;
+  for (const key of ["text", "thinking"] as const) {
+    const value = record[key];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
+/**
+ * A payload with its host wrappers removed and its withheld parts dropped.
+ *
+ * Returns `undefined` for a value with nothing left to say, which is how a
+ * caller distinguishes "the child reported nothing readable" from "the child
+ * reported an empty string". Bounded by construction: the parser already
+ * capped the input's breadth, and the walk stops at
+ * {@link PI_NATIVE_NORMALIZE_DEPTH}.
+ */
+export function normalizeOverlayPayload(
+  value: unknown,
+  stripBookkeeping = false,
+  depth = 0,
+): unknown {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") {
+    const clean = safeTrim(value);
+    if (clean.length === 0) return undefined;
+    return PI_NATIVE_WITHHELD_TEXT.has(clean) ? undefined : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value !== "object") return undefined;
+  if (depth >= PI_NATIVE_NORMALIZE_DEPTH) return undefined;
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => normalizeOverlayPayload(item, stripBookkeeping, depth + 1))
+      .filter((item) => item !== undefined);
+    if (items.length === 0) return undefined;
+    // A normalized content-block array is prose, so it reads as prose.
+    return items.every((item) => typeof item === "string")
+      ? (items as string[]).join(" ")
+      : items;
+  }
+  const record = value as Record<string, unknown>;
+  const blockText = contentBlockText(record);
+  if (blockText !== undefined) {
+    return normalizeOverlayPayload(blockText, stripBookkeeping, depth + 1);
+  }
+  const normalized: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record)) {
+    if (stripBookkeeping && PI_NATIVE_RESULT_BOOKKEEPING_KEYS.has(key))
+      continue;
+    const next = normalizeOverlayPayload(item, stripBookkeeping, depth + 1);
+    if (next !== undefined) normalized[key] = next;
+  }
+  return Object.keys(normalized).length === 0 ? undefined : normalized;
+}
+
 export function summarizeOverlayValue(value: unknown, depth = 0): string {
   if (value === undefined) return "";
   if (value === null) return "null";
@@ -198,7 +310,20 @@ export function summarizeOverlayValue(value: unknown, depth = 0): string {
 
 /** {@link summarizeOverlayValue}, bounded and stripped of storage locations. */
 export function overlayPayloadText(value: unknown): string {
-  const summary = summarizeOverlayValue(unwrapSoleContent(value));
+  return boundedPayloadText(normalizeOverlayPayload(value, false));
+}
+
+/**
+ * A tool's ANSWER in one bounded line: content blocks resolved to their prose,
+ * correlation bookkeeping dropped, withheld parts absent.
+ */
+export function overlayToolResultText(value: unknown): string {
+  return boundedPayloadText(normalizeOverlayPayload(value, true));
+}
+
+function boundedPayloadText(normalized: unknown): string {
+  if (normalized === undefined) return "";
+  const summary = summarizeOverlayValue(unwrapSoleContent(normalized));
   if (summary.length === 0) return "";
   return stripPathLike(summary).slice(0, PI_NATIVE_VALUE_CHARS).trim();
 }
@@ -234,9 +359,9 @@ export function overlayToolTarget(entry: PiChildTranscriptToolEntry): string {
     return "";
   }
   for (const value of Object.values(args as Record<string, unknown>)) {
-    if (typeof value === "string" && safeTrim(value).length > 0) {
-      return overlayPayloadText(value);
-    }
+    if (typeof value !== "string") continue;
+    const text = overlayPayloadText(value);
+    if (text.length > 0) return text;
   }
   return "";
 }
@@ -255,20 +380,24 @@ export function overlayToolArgs(entry: PiChildTranscriptToolEntry): string {
 export function overlayToolOutcome(
   entry: PiChildTranscriptToolEntry,
 ): string | undefined {
-  if (entry.error !== undefined) {
-    const detail = safeTrim(entry.error);
+  // A TERMINAL phase always states an outcome, and never states `running`.
+  // The reducer settles a call the moment its own terminal event lands, so a
+  // row that still says `running` after one is the surest sign the inspector
+  // is describing a call it lost track of.
+  if (entry.state === "error" || entry.error !== undefined) {
+    const detail = overlayToolResultText(entry.error ?? entry.result);
     return detail.length === 0 ? "failed" : stripPathLike(detail);
   }
-  if (entry.result !== undefined) {
-    const text = overlayPayloadText(entry.result);
+  if (entry.state === "result" || entry.result !== undefined) {
+    const text = overlayToolResultText(entry.result);
     return text.length === 0 ? "done" : text;
   }
   const partial = entry.partialResults[entry.partialResults.length - 1];
   if (partial !== undefined) {
-    const text = overlayPayloadText(partial);
+    const text = overlayToolResultText(partial);
     return text.length === 0 ? "running" : text;
   }
-  if (entry.state === "called") return "running";
+  if (entry.state === "called" || entry.state === "partial") return "running";
   return undefined;
 }
 
@@ -372,6 +501,23 @@ function replyLabel(
   return finalResponse ? "final response" : "reply";
 }
 
+/**
+ * Does this assistant entry have anything for a reader to look at?
+ *
+ * Streaming is visible even while empty, because the caret is the message: it
+ * is what says the child is answering right now. A settled pane has no caret,
+ * so the same entry becomes invisible once its lifecycle produced no prose.
+ */
+function assistantEntryHasVisibleRows(
+  entry: PiChildTranscriptAssistantEntry,
+  settled: boolean,
+): boolean {
+  if (entry.streaming && !settled) return true;
+  if (entry.stopReason === "error") return true;
+  if (entry.thinkingVisible && safeTrim(entry.thinking).length > 0) return true;
+  return safeTrim(entry.text || entry.markdown).length > 0;
+}
+
 function promptLabel(kind: "task" | "steering" | "follow_up"): string {
   if (kind === "steering") return "steering prompt";
   if (kind === "follow_up") return "follow-up prompt";
@@ -450,6 +596,12 @@ function renderEntryRows(
     }
 
     case "assistant": {
+      // A tool-use turn is an assistant message with no prose of its own: the
+      // reply IS the tool rows below it. A bare `● shuttle · reply` header over
+      // nothing states a message the reader cannot read, so an entry with no
+      // visible text, no visible reasoning, no caret and no classified failure
+      // renders nothing at all.
+      if (!assistantEntryHasVisibleRows(entry, input.settled)) return [];
       const rows: string[] = [];
       // The reasoning that produced this reply is stated as a SUMMARY line
       // above it, exactly as the prototype orders them, and it is bounded so a
@@ -583,14 +735,13 @@ function renderEntryRows(
       ];
     }
 
-    case "extension_ui": {
-      return [
-        headRow(
-          `${gutter(paint, "sys", "mute")} ${dim("child ui")} ${paint.muted(safeTrim(entry.requestType))}`,
-          width,
-        ),
-      ];
-    }
+    // A child's status line, working indicator or notification is a request to
+    // paint the HOST's chrome. It is not conversation, and `· child ui widget`
+    // is bookkeeping wearing a transcript row, so it is kept out of the
+    // product transcript entirely. The reducer still retains the request in
+    // `extensionUi`, where the response correlation needs it.
+    case "extension_ui":
+      return [];
 
     // An unrecognised host event carries nothing a reader can act on, and its
     // payload is exactly the raw shape this pane may not print.

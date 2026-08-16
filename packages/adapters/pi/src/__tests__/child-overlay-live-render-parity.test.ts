@@ -424,13 +424,14 @@ describe("the Status Matrix rail updates from live events", () => {
       })
       ._unsafeUnwrap();
     const spent = rail(controller);
-    expect(spent.tokensIn).toBe("1.2k");
-    expect(spent.tokensOut).toBe("3.4k");
     expect(spent.turn).toBe("1");
-    // Money is deliberately NOT projected out of a live host usage report
-    // (`projectAssistantUsageFacts`), so spend stays unknown until the
-    // delegation tree's own aggregate names one. Unknown prints `—`; it is
-    // never derived from tokens.
+    // SPEND is a RUN total. A `message_end` carries the accounting of ONE
+    // assistant message, and each turn re-sends the whole context, so neither
+    // the latest figure nor a sum of them is the run's spend. The rail
+    // therefore prints `—` until the delegation tree's own aggregate — the
+    // same figure the parent's delegation card prints — names one.
+    expect(spent.tokensIn).toBeUndefined();
+    expect(spent.tokensOut).toBeUndefined();
     expect(spent.cost).toBeUndefined();
   });
 });

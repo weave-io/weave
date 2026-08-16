@@ -2708,6 +2708,41 @@ describe("PiDelegationController", () => {
     const settled = await controller.resolveOverlayChild(childId);
     expect(settled.isOk()).toBe(true);
     expect(settled._unsafeUnwrap().status).toBe("settled");
+    // A thread outlives the run that opened it so it can be resumed, but a
+    // settled child is NOT live. The mounted inspector treats this answer as
+    // its settlement signal, so a thread id here kept an open overlay on
+    // `LIVE` — with a frozen elapsed time and an editable prompt — while the
+    // parent's own card already said `COMPLETED`.
+    expect(controller.resolveThreadIdForLiveChild(childId)).toBeUndefined();
+    controller.disposeAll();
+  });
+
+  it("announces one tree change carrying the settled thread state", async () => {
+    const port = new FakeChildProcessPort();
+    const liveAtChange: (string | undefined)[] = [];
+    let childId = "";
+    const controller = makeController(config(GENEROUS), port, {
+      onTreeChanged: () => {
+        if (childId.length === 0) return;
+        liveAtChange.push(controller.resolveThreadIdForLiveChild(childId));
+      },
+    });
+    const promise = controller.delegate(request({ agentName: "shuttle" }));
+    await flush();
+    const child = spawnedAt(port, 0);
+    await sendChildToRunning(child, port, "gen-1");
+    childId = childIdOf(child, port);
+
+    await settleRunningChild(child, port, "gen-1", 3);
+    expect((await promise).isOk()).toBe(true);
+    await flush();
+
+    // Settlement itself must announce a tree change whose state is already
+    // terminal. Waiting for the next refresh tick left the last tree change a
+    // reader could observe reporting a still-live child, and a tick that never
+    // comes left a mounted inspector `LIVE` forever.
+    expect(liveAtChange.length).toBeGreaterThan(0);
+    expect(liveAtChange[liveAtChange.length - 1]).toBeUndefined();
     controller.disposeAll();
   });
 
