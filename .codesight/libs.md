@@ -311,9 +311,9 @@
   - function formatOverlayElapsed: (elapsedMs) => string | undefined
   - function formatOverlayFailureSummary: (error) => string | undefined
   - function formatOverlayCost: (cost) => string | undefined
+  - function childOverlayTranscriptInput: (view) => OverlayTranscriptInput
   - function childOverlaySettlementFacts: (view) => OverlaySettlementFacts
-  - function childOverlayName: (view) => string
-  - _...5 more_
+  - _...6 more_
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string
@@ -346,6 +346,14 @@
   - function headerIdentityRow: (paint, facts, width) => HeaderRow
   - function headerContextRow: (paint, facts, width) => HeaderRow | undefined
   - _...59 more_
+- `packages/adapters/pi/src/child-overlay-pi-native.ts`
+  - function summarizeOverlayValue: (value, depth) => string
+  - function overlayPayloadText: (value) => string
+  - function overlayToolTarget: (entry) => string
+  - function overlayToolArgs: (entry) => string
+  - function overlayToolOutcome: (entry) => string | undefined
+  - function overlayToolTone: (entry) => Tone
+  - _...11 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function boundText: (value) => string
   - function messageText: (message) => void

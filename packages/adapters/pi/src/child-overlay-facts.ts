@@ -30,12 +30,25 @@ import {
   type OverlaySettlementPhase,
   overlaySettlementFacts,
 } from "./child-overlay-layout.js";
+import {
+  type OverlayTranscriptInput,
+  overlayPayloadText,
+  overlayToolArgs,
+  overlayToolOutcome,
+  overlayToolTarget,
+  overlayToolTone,
+} from "./child-overlay-pi-native.js";
 import type {
   ChildOverlayStatus,
   ChildOverlayView,
 } from "./child-overlay-types.js";
 import type { PiChildProviderError } from "./child-provider-error.js";
 import { resolveDurableChildTitle } from "./child-title.js";
+import type {
+  PiChildTranscriptState,
+  PiChildTranscriptToolEntry,
+} from "./child-transcript.js";
+import { safeTrim } from "./ui-rows.js";
 
 /**
  * What the header calls a child whose agent name and title are both unknown.
@@ -124,6 +137,167 @@ function liveViewportWords(view: ChildOverlayView): string | undefined {
   return view.liveTail
     ? "following output"
     : `parked ${view.scrollOffset} row(s) back`;
+}
+
+// ---------------------------------------------------------------------------
+// The live projection the WORK and SPEND groups are read from
+// ---------------------------------------------------------------------------
+
+/**
+ * Why the rail reads the TRANSCRIPT and not the descriptor.
+ *
+ * A descriptor is a snapshot taken when the reader opened the child, and the
+ * overlay refreshes it exactly once, at settlement. Projecting the rail from
+ * it meant every WORK fact printed `—` for the whole life of the run and every
+ * queue depth, turn count and token total stayed at its open-time value however
+ * many events arrived. The transcript reducer, by contrast, is fed by
+ * `applyLiveEvent` on every parser-approved event AND rebuilt from replay steps
+ * when history is paged, so both paths reach the same facts — which is what
+ * makes a replayed window and a live stream agree on the rail.
+ *
+ * The descriptor is still consulted, but only as the fallback for a fact no
+ * event has reported yet. An unknown stays unknown; nothing here estimates.
+ */
+function latestToolEntry(
+  transcript: PiChildTranscriptState,
+): PiChildTranscriptToolEntry | undefined {
+  for (let i = transcript.entries.length - 1; i >= 0; i -= 1) {
+    const entry = transcript.entries[i];
+    if (entry?.kind === "tool") return entry;
+  }
+  return undefined;
+}
+
+/** Assistant messages observed so far: the child's own conversation turns. */
+function observedTurns(transcript: PiChildTranscriptState): number {
+  return transcript.entries.filter((entry) => entry.kind === "assistant")
+    .length;
+}
+
+/**
+ * The turn the rail prints.
+ *
+ * Two authorities count the same thing and neither sees all of it: the
+ * descriptor snapshot knows the turn the run had reached when the reader
+ * opened it, and the transcript knows every assistant message this window has
+ * loaded or watched arrive. Both only ever grow, so the LARGER is the best
+ * lower bound either can support — taking the observed count alone reported
+ * `1` for a child opened at turn 9, and taking the snapshot alone froze the
+ * row for the whole run.
+ */
+function overlayTurnWord(
+  observed: number,
+  reported: number | undefined,
+): string | undefined {
+  if (reported === undefined)
+    return observed > 0 ? String(observed) : undefined;
+  return String(Math.max(observed, reported));
+}
+
+/**
+ * Reported spend, from whichever authoritative shape the host used.
+ *
+ * Pi reports `usage.cost` as a breakdown object (`{ input, output, total }`),
+ * older recorded sessions report a bare number, and some hosts report
+ * `costUsd`. Anything else is unavailable rather than zero.
+ */
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function reportedCost(transcript: PiChildTranscriptState): number | undefined {
+  const usage: Record<string, unknown> = { ...transcript.usage };
+  const direct = usage.cost;
+  const bare = finiteNumber(direct);
+  if (bare !== undefined) return bare;
+  if (typeof direct === "object" && direct !== null) {
+    const total = finiteNumber((direct as Record<string, unknown>).total);
+    if (total !== undefined) return total;
+  }
+  return finiteNumber(usage.costUsd);
+}
+
+/** The newest queue report, or `undefined` when the child reported none. */
+function latestQueue(
+  transcript: PiChildTranscriptState,
+): { readonly size: number; readonly first?: string } | undefined {
+  for (let i = transcript.entries.length - 1; i >= 0; i -= 1) {
+    const entry = transcript.entries[i];
+    if (entry?.kind !== "queue") continue;
+    const first = overlayPayloadText(entry.queue[0]);
+    return { size: entry.size, ...(first.length === 0 ? {} : { first }) };
+  }
+  return undefined;
+}
+
+/**
+ * What the child is doing right now, in its own reported words.
+ *
+ * Read from the newest transcript entry, so it moves with the run instead of
+ * describing the reader's scrollback. When nothing has happened yet the row
+ * falls back to the viewport state, which is still an honest live fact.
+ */
+function liveActivity(view: ChildOverlayView): string | undefined {
+  if (view.readOnly) return undefined;
+  const entries = view.transcript.entries;
+  const newest = entries[entries.length - 1];
+  if (newest !== undefined) {
+    if (newest.kind === "assistant" && newest.streaming) {
+      return "streaming reply";
+    }
+    if (newest.kind === "tool") {
+      const name = safeTrim(newest.toolName) || "tool";
+      if (newest.state === "error") return `${name} failed`;
+      if (newest.state === "result") return `${name} done`;
+      return `running ${name}`;
+    }
+    if (newest.kind === "thinking") return "reasoning";
+    if (newest.kind === "queue" && newest.size > 0) {
+      return `${newest.size} queued`;
+    }
+  }
+  return liveViewportWords(view);
+}
+
+/**
+ * The lifecycle word, plus whatever status the child last reported.
+ *
+ * The lifecycle word is authoritative and never replaced: settlement is the
+ * only completion authority. A reported status refines it rather than
+ * overriding it, so `LIVE · working` still says the run is live.
+ */
+function statusWords(view: ChildOverlayView): string {
+  const lifecycle = view.child.status.toUpperCase();
+  const reported = safeTrim(view.transcript.status ?? "");
+  if (reported.length === 0 || view.readOnly) return lifecycle;
+  return `${lifecycle} · ${reported}`;
+}
+
+/**
+ * The pane's own facts, projected once so the transcript and the rail can
+ * never disagree about which child they describe.
+ */
+export function childOverlayTranscriptInput(
+  view: ChildOverlayView,
+): OverlayTranscriptInput {
+  const parent = view.identity?.parentAgentName;
+  return {
+    entries: view.transcript.entries,
+    childName: childOverlayName(view),
+    ...(parent === undefined || parent.length === 0
+      ? {}
+      : { parentName: parent }),
+    settled: view.readOnly,
+    ...(view.terminalError === undefined
+      ? {}
+      : { terminalError: view.terminalError }),
+    windowEntries: view.entries,
+    terminalErrorStated: view.transcript.entries.some(
+      (entry) => entry.kind === "assistant" && entry.stopReason === "error",
+    ),
+  };
 }
 
 function settlementPhase(status: ChildOverlayStatus): OverlaySettlementPhase {
@@ -255,38 +429,63 @@ export function childOverlayHeaderFacts(
 /**
  * Every operational fact, on the one surface that owns them.
  *
- * `live` reports the reader's own viewport state — following the tail or
- * parked in the scrollback — because that is the operational fact the overlay
- * can state without guessing at what the child is doing between events.
+ * The LIFECYCLE and WORK groups are projected from the transcript reducer,
+ * which every live event and every replayed page feeds, so the rail moves with
+ * the run instead of repeating the descriptor snapshot taken when the reader
+ * opened the child. The descriptor is the fallback for facts no event has
+ * reported. Nothing here is estimated: an unreported fact is absent, and the
+ * layout prints it as unknown.
  */
 export function childOverlayRailFacts(
   view: ChildOverlayView,
 ): OverlayRailFacts {
   const settlement = childOverlaySettlementFacts(view);
-  const failed = view.terminalError !== undefined;
   const usage = view.identity?.usage;
+  const transcript = view.transcript;
+  const tool = latestToolEntry(transcript);
+  const toolTone = tool === undefined ? "mute" : overlayToolTone(tool);
+  // A terminal provider error is a failure of the RUN; a failed tool is a
+  // failure of the current WORK. Either raises the rail's alert pair, and the
+  // run-level classification wins the detail line when both exist.
+  const providerFailure = formatOverlayFailureSummary(view.terminalError);
+  const toolOutcome = tool === undefined ? undefined : overlayToolOutcome(tool);
+  const failed = providerFailure !== undefined || toolTone === "bad";
+  // A run-level classification outranks the tool line on the alert pair.
+  const outcome = providerFailure ?? toolOutcome;
+  // The alert pair already prints `outcome`. A detail row that repeats it word
+  // for word spends a rail row on nothing, so it is stated only when the two
+  // authorities actually say different things.
+  const captured = toolTone === "bad" ? toolOutcome : undefined;
+  const errorDetail = captured === outcome ? undefined : captured;
+  const target = tool === undefined ? "" : overlayToolTarget(tool);
+  const args = tool === undefined ? "" : overlayToolArgs(tool);
+  const queue = latestQueue(transcript);
+  const turns = observedTurns(transcript);
+  const cost = reportedCost(transcript) ?? usage?.cost;
   return {
-    status: view.child.status.toUpperCase(),
+    status: statusWords(view),
     tone: settlement.tone,
     elapsed: formatOverlayElapsed(view.identity?.elapsedMs),
-    turn:
-      view.identity?.turn === undefined
-        ? undefined
-        : String(view.identity.turn),
+    turn: overlayTurnWord(turns, view.identity?.turn),
     run: view.activeRun === undefined ? undefined : `run ${view.activeRun}`,
     branch: view.activeBranchId,
-    live: liveViewportWords(view),
-    toolOutcome: formatOverlayFailureSummary(view.terminalError),
-    toolTone: failed ? "bad" : "mute",
+    live: liveActivity(view),
+    ...(tool === undefined ? {} : { tool: safeTrim(tool.toolName) || "tool" }),
+    ...(target.length === 0 ? {} : { target }),
+    ...(args.length === 0 ? {} : { args }),
+    ...(outcome === undefined ? {} : { toolOutcome: outcome }),
+    toolTone: providerFailure === undefined ? toolTone : "bad",
     failed,
-    queueCount: view.identity?.queueDepth ?? 0,
+    ...(errorDetail === undefined ? {} : { errorDetail }),
+    queueCount: queue?.size ?? view.identity?.queueDepth ?? 0,
+    ...(queue?.first === undefined ? {} : { firstQueued: queue.first }),
     tokensIn: formatOverlayTokenCount(
       view.telemetry?.inputTokens ?? usage?.inputTokens,
     ),
     tokensOut: formatOverlayTokenCount(
       view.telemetry?.outputTokens ?? usage?.outputTokens,
     ),
-    cost: formatOverlayCost(usage?.cost),
+    cost: formatOverlayCost(cost),
   };
 }
 

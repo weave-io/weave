@@ -694,9 +694,12 @@ export function matrixRow(
 }
 
 function queueText(facts: OverlayRailFacts): string {
-  return facts.queueCount === 0
-    ? "queue empty"
-    : `queue ${facts.queueCount} · ${factValue(facts.firstQueued)}`;
+  if (facts.queueCount === 0) return "queue empty";
+  // The depth is the fact; the first item is a bonus the child may not have
+  // reported. Printing `queue 2 · —` spends a column saying nothing.
+  return facts.firstQueued === undefined
+    ? `queue ${facts.queueCount}`
+    : `queue ${facts.queueCount} · ${facts.firstQueued}`;
 }
 
 /**

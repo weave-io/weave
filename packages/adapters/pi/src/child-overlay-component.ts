@@ -29,16 +29,14 @@ import {
   Result,
   type ResultAsync,
 } from "neverthrow";
-import {
-  createPiNativeTranscriptComponentFactory,
-  type PiNativeTranscriptComponentDeps,
-} from "./child-native-components.js";
+import type { PiNativeTranscriptComponentDeps } from "./child-native-components.js";
 import type { ChildOverlayController } from "./child-overlay-controller.js";
 import {
   childOverlayHeaderFacts,
   childOverlayPromptFacts,
   childOverlayRailFacts,
   childOverlaySettlementFacts,
+  childOverlayTranscriptInput,
 } from "./child-overlay-facts.js";
 import {
   answerOverlayCancelConfirm,
@@ -71,11 +69,11 @@ import {
   squeezeBody,
   transcriptWindow,
 } from "./child-overlay-layout.js";
+import { renderOverlayTranscript } from "./child-overlay-pi-native.js";
 import { boundText } from "./child-overlay-replay.js";
 import type { OverlayLayoutSpan } from "./child-overlay-scroll.js";
 import { normalizeChildOverlayScrollFrame } from "./child-overlay-terminal-input.js";
 import {
-  type ChildOverlayEntry,
   type ChildOverlayError,
   type ChildOverlayFallbackReason,
   type ChildOverlayFallbackRequired,
@@ -83,13 +81,7 @@ import {
   type ChildOverlayView,
   SCROLL_KEYS,
 } from "./child-overlay-types.js";
-import { formatPiChildProviderError } from "./child-provider-error-render.js";
-import {
-  createPiChildTranscriptRenderer,
-  isAssistantTerminalProviderErrorRow,
-  type PiChildTranscriptRenderedRow,
-  type PiTranscriptComponentFactory,
-} from "./child-transcript.js";
+import type { PiChildTranscriptRenderedRow } from "./child-transcript.js";
 import { fitLineToWidth } from "./render-width.js";
 import type { PiUiThemePort } from "./types.js";
 import { makePaint, type Paint, plainPaint } from "./ui-paint.js";
@@ -339,7 +331,17 @@ export function createChildOverlayCustomComponent(
   controller: ChildOverlayController,
   done: () => void,
   onFallback: (fallback: ChildOverlayFallbackRequired) => void,
-  nativeDeps?: Omit<PiNativeTranscriptComponentDeps, "tui">,
+  /**
+   * Retained for call-site compatibility and deliberately unused.
+   *
+   * The inspector once painted its pane with Pi's native message components.
+   * They render the HOST's transcript — with its shell-integration markers and
+   * its own width contract — and they carry no queue, status, retry or tool
+   * outcome row, so a reader watching a child saw neither the prototype's
+   * design nor half of what the child was doing. The pane is now the ported
+   * `renderPiNative`, fed from the reducer's own entries.
+   */
+  _nativeDeps?: Omit<PiNativeTranscriptComponentDeps, "tui">,
   /**
    * Task 13 owns the keyboard first. Anything it consumes never reaches the
    * Task 12 input path below, and nothing here ever forwards a key to Pi or
@@ -377,7 +379,6 @@ export function createChildOverlayCustomComponent(
   // editor-component installer, so a foreign editor such as `pi-vim` keeps the
   // primary editor across the whole overlay lifetime.
   draftEditor.focused = true;
-  const transcriptRenderer = createPiChildTranscriptRenderer();
   const paint = childOverlayPaint(theme);
   /** The frame's title and lifecycle marker, refreshed by every composition. */
   let chrome: OverlayFrameChrome = {
@@ -385,7 +386,6 @@ export function createChildOverlayCustomComponent(
     marker: "",
     markerTone: "mute",
   };
-  let componentFactory: PiTranscriptComponentFactory | undefined;
   let dirty = true;
   let lines: string[] = [];
   let lastWidth = -1;
@@ -430,15 +430,6 @@ export function createChildOverlayCustomComponent(
       () => undefined,
     );
     finish();
-  };
-
-  const factory = (): PiTranscriptComponentFactory => {
-    componentFactory ??= createPiNativeTranscriptComponentFactory({
-      ...nativeDeps,
-      cwd: nativeDeps?.cwd ?? ".",
-      tui,
-    });
-    return componentFactory;
   };
 
   const usableRows = (): number => overlayUsableRows(tui);
@@ -588,53 +579,17 @@ export function createChildOverlayCustomComponent(
   const renderTranscriptLines = (
     view: ChildOverlayView,
     width: number,
-  ): Result<OverlayRenderedTranscript, ChildOverlayFallbackRequired> => {
-    const terminalErrorLine =
-      view.terminalError === undefined
-        ? undefined
-        : fitLineToWidth(formatPiChildProviderError(view.terminalError), width);
-    return Result.fromThrowable(
-      (): OverlayRenderedTranscript => {
-        const rendered = transcriptRenderer.render(view.transcript, width, {
-          componentFactory: factory(),
-        });
-        if (rendered.lines.length > 0) {
-          const hasAssistantTerminalProviderError = rendered.rows.some(
-            isAssistantTerminalProviderErrorRow,
-          );
-          return {
-            lines:
-              terminalErrorLine === undefined ||
-              hasAssistantTerminalProviderError
-                ? rendered.lines
-                : [...rendered.lines, terminalErrorLine],
-            spans: spansFromRows(rendered.rows),
-          };
-        }
-        // Native factory may suppress bookkeeping rows; fall back to overlay
-        // entry text so kinds remain visible in the bounded window.
-        const lines = view.entries.map((entry) =>
-          boundText(
-            entry.expanded || entry.text.length <= 120
-              ? `[${entry.kind}] ${entry.text}`
-              : `[${entry.kind}] ${entry.text.slice(0, 117)}…`,
-          ),
-        );
-        return {
-          lines:
-            terminalErrorLine === undefined
-              ? lines
-              : [...lines, terminalErrorLine],
-          spans: view.entries.map((entry) => ({
-            entryId: entry.id,
-            rows: 1,
-          })),
-        };
-      },
+  ): Result<OverlayRenderedTranscript, ChildOverlayFallbackRequired> =>
+    Result.fromThrowable(
+      (): OverlayRenderedTranscript =>
+        renderOverlayTranscript(
+          paint,
+          childOverlayTranscriptInput(view),
+          width,
+        ),
       (): ChildOverlayFallbackRequired =>
         controller.requireFallback("render-failed"),
     )();
-  };
 
   const requestPaint = (): void => {
     dirty = true;

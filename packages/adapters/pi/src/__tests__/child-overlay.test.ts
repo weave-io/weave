@@ -3392,8 +3392,13 @@ describe("createChildOverlayCustomComponent", () => {
       pageSize: 50,
       sourceEntries: tall,
     });
+    // The TRANSCRIPT column only. The rail beside it is a live projection —
+    // its `live` row reports what the child is doing — so comparing whole
+    // frame lines would assert that a live event changed nothing at all.
     const bodyRows = (frame: readonly string[]): string[] =>
-      frame.filter((line) => line.includes("entry-"));
+      frame
+        .filter((line) => line.includes("entry-"))
+        .map((line) => line.split("\u2502")[1] ?? line);
 
     component.render(80);
     for (let press = 0; press < 4; press += 1) {
