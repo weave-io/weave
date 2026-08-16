@@ -13,6 +13,10 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 import {
+  PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+  PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
+} from "./child-native-results.js";
+import {
   boundLabel,
   boundText,
   messageText,
@@ -472,7 +476,14 @@ export function mapNativeSessionEntryToOverlay(
         replay: dividerSteps,
       });
     }
-    if (customType === "weave.child.thread") {
+    // Adapter-owned storage/transport bookkeeping is never user-visible: the
+    // thread pointer and the durable result-chunk/commit group are internal
+    // records, not control facts the operator steered or observed.
+    if (
+      customType === "weave.child.thread" ||
+      customType === PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE ||
+      customType === PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE
+    ) {
       return ok(undefined);
     }
     const inputKind = customInputKind(customType);
