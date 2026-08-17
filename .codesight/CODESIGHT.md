@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 307 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~33,400 tokens. Without it, AI exploration would cost ~98,900 tokens. **Saves ~65,400 tokens per conversation.**
-> **Last scanned:** 2026-08-17 20:22 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 308 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~33,600 tokens. Without it, AI exploration would cost ~99,100 tokens. **Saves ~65,500 tokens per conversation.**
+> **Last scanned:** 2026-08-17 20:47 — re-run after significant changes
 
 ---
 
@@ -689,9 +689,9 @@
   - function isSupportedHostVersion: (version) => boolean
   - function checkHostCompatibility: (info) => Result<HostPackageInfo, PiAdapterFailure>
   - function renderHostCapabilityGapDiagnostic: (diagnostic) => string
-  - class BunHostPackageReader
-  - interface HostCapabilityGapDiagnostic
-  - _...7 more_
+  - function resolveReportedHostIdentity: (input) => ReportedHostIdentity
+  - function renderHostRuntimeHealthLine: (input) => string
+  - _...14 more_
 - `packages/adapters/pi/src/host-inventory.ts`
   - function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>
   - function readHostSurfaceReport: (raw) => PiHostSurfaceReport
@@ -704,10 +704,10 @@
   - function escapeExactPathRegExp: (value) => string
   - function exactPathLoadFilter: (exactPath) => RegExp
   - function deriveHostPackageRoot: (cliEntryPath) => Result<string,
+  - function renderHostModuleProofLine: (outcome) => string
+  - function maybeWriteHostModuleProofLine: (outcome, options?) => boolean
   - function resolveHostModules: (env, options?) => ResultAsync<PiHostModuleOutcome, never>
-  - function recordHostModuleOutcome: (outcome) => void
-  - function getHostModuleOutcome: () => PiHostModuleOutcome | undefined
-  - _...12 more_
+  - _...18 more_
 - `packages/adapters/pi/src/host-module-redirect.ts`
   - function hostEntrySpecifierFor: (specifier) => string
   - function isSafeAbsoluteHostPath: (value) => boolean
@@ -1673,6 +1673,14 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts/pi/verify-host-singleton.ts`
+  - function parseVerifyArgs: (argv) => Result<VerifyArgs, VerifyFailure>
+  - function decideSkip: (presence, allowSkip) => SkipDecision
+  - function parseHostPackageIdentity: (value) => Result<
+  - function parseProofLine: (line) => Result<ParsedHostModuleProof, VerifyFailure>
+  - function extractProofLineFromOutput: (output) => Result<ParsedHostModuleProof, VerifyFailure>
+  - function parseLsofFnOutput: (output) => readonly string[]
+  - _...31 more_
 - `scripts/release/acceptance-manifest.ts`
   - function validateAcceptanceManifestStructure: (candidate) => Result<AcceptanceManifest, AcceptanceManifestError[]>
   - function verifyAcceptanceManifestEvidence: (manifest, deps, TestEvidence>>;
@@ -1966,7 +1974,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 339 test files found
+> 341 test files found
 
 ---
 

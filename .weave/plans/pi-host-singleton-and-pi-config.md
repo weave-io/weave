@@ -152,7 +152,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - Tests prove: proven version wins over a mismatched imported `VERSION`; health text for both single-copy and duplicate states; proof line emitted only with the env var set; proof line parses as JSON.
     - No new required capability is declared, and `capability-declarations.test.ts` remains green.
 
-- [ ] 5. Add the real-process host-singleton proof script
+- [x] 5. Add the real-process host-singleton proof script
   - **What**: A Bun script that starts a real Pi process with the built extension, asserts a single Pi runtime copy, and fails when the redirect is disabled.
   - **Files**: `scripts/pi/verify-host-singleton.ts`, `scripts/pi/__tests__/verify-host-singleton.test.ts`, `package.json` (add `verify:pi-host-singleton` script)
   - **Depends on**: Tasks 3 and 4

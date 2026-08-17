@@ -678,9 +678,9 @@
   - function isSupportedHostVersion: (version) => boolean
   - function checkHostCompatibility: (info) => Result<HostPackageInfo, PiAdapterFailure>
   - function renderHostCapabilityGapDiagnostic: (diagnostic) => string
-  - class BunHostPackageReader
-  - interface HostCapabilityGapDiagnostic
-  - _...7 more_
+  - function resolveReportedHostIdentity: (input) => ReportedHostIdentity
+  - function renderHostRuntimeHealthLine: (input) => string
+  - _...14 more_
 - `packages/adapters/pi/src/host-inventory.ts`
   - function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>
   - function readHostSurfaceReport: (raw) => PiHostSurfaceReport
@@ -693,10 +693,10 @@
   - function escapeExactPathRegExp: (value) => string
   - function exactPathLoadFilter: (exactPath) => RegExp
   - function deriveHostPackageRoot: (cliEntryPath) => Result<string,
+  - function renderHostModuleProofLine: (outcome) => string
+  - function maybeWriteHostModuleProofLine: (outcome, options?) => boolean
   - function resolveHostModules: (env, options?) => ResultAsync<PiHostModuleOutcome, never>
-  - function recordHostModuleOutcome: (outcome) => void
-  - function getHostModuleOutcome: () => PiHostModuleOutcome | undefined
-  - _...12 more_
+  - _...18 more_
 - `packages/adapters/pi/src/host-module-redirect.ts`
   - function hostEntrySpecifierFor: (specifier) => string
   - function isSafeAbsoluteHostPath: (value) => boolean
@@ -1662,6 +1662,14 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts/pi/verify-host-singleton.ts`
+  - function parseVerifyArgs: (argv) => Result<VerifyArgs, VerifyFailure>
+  - function decideSkip: (presence, allowSkip) => SkipDecision
+  - function parseHostPackageIdentity: (value) => Result<
+  - function parseProofLine: (line) => Result<ParsedHostModuleProof, VerifyFailure>
+  - function extractProofLineFromOutput: (output) => Result<ParsedHostModuleProof, VerifyFailure>
+  - function parseLsofFnOutput: (output) => readonly string[]
+  - _...31 more_
 - `scripts/release/acceptance-manifest.ts`
   - function validateAcceptanceManifestStructure: (candidate) => Result<AcceptanceManifest, AcceptanceManifestError[]>
   - function verifyAcceptanceManifestEvidence: (manifest, deps, TestEvidence>>;
