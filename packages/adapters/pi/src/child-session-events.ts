@@ -680,62 +680,44 @@ const strictOwnEnumerableDataValue = (
   return descriptor.value;
 };
 
+/** Keys that must never be copied: assignment into `{}` would mutate authority. */
+const isPrototypePollutionKey = (key: string): boolean =>
+  key === "__proto__" || key === "constructor" || key === "prototype";
+
+const emptyMaterializedRecord = (): Record<string, unknown> =>
+  Object.create(null) as Record<string, unknown>;
+
 /**
- * Is this value plain data all the way down, judged by DESCRIPTORS alone?
+ * Define one own enumerable writable configurable DATA property.
  *
- * The preserved payload is validated afterwards by `boundedJson`, and Zod
- * reads its members the ordinary way - through `get`. Proving first that the
- * value carries no accessor anywhere is what keeps that read from running the
- * observed payload's own code. Anything exotic (an accessor, a non-plain
- * prototype, a descriptor that throws, a depth past the cap) is not plain
- * data, so the field it belongs to states nothing and is dropped.
+ * Assignment is never used: `target["__proto__"] = value` on an ordinary
+ * object retargets `[[Prototype]]` instead of creating an own key. Pollution
+ * keys are rejected so later Zod or `{}` assignment cannot inherit them.
  */
-const isPlainDataValue = (value: unknown, depth: number): boolean => {
-  if (value === null) return true;
-  const type = typeof value;
-  if (type === "string" || type === "number" || type === "boolean") return true;
-  if (type !== "object") return false;
-  if (depth >= MAX_PRESERVED_PAYLOAD_DEPTH) return false;
-
-  const prototype = Result.fromThrowable(
-    () => Object.getPrototypeOf(value) as unknown,
-    () => undefined,
+const defineCopiedDataProperty = (
+  target: object,
+  key: string,
+  value: unknown,
+): Result<void, OwnValueRejection> => {
+  if (isPrototypePollutionKey(key)) return err("malformed");
+  return Result.fromThrowable(
+    (): void => {
+      Object.defineProperty(target, key, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    },
+    (): OwnValueRejection => "unreadable",
   )();
-  if (prototype.isErr()) return false;
-  const arrayShaped = isArrayValue(value);
-  if (arrayShaped.isErr()) return false;
-  const isArray = arrayShaped.value;
-  if (isArray) {
-    if (prototype.value !== Array.prototype) return false;
-  } else if (prototype.value !== Object.prototype && prototype.value !== null) {
-    return false;
-  }
-
-  const target = value as object;
-  const keys = Result.fromThrowable(
-    () => Object.keys(target),
-    () => undefined,
-  )();
-  if (keys.isErr()) return false;
-  // The schema's own bounds, applied before the walk so an oversized node is
-  // rejected rather than traversed.
-  if (keys.value.length > MAX_CHILD_EVENT_ITEMS) return false;
-  for (const key of keys.value) {
-    const member = ownEnumerableDataValue(target, key);
-    if (member.isErr()) return false;
-    if (!isPlainDataValue(member.value, depth + 1)) return false;
-  }
-  // A sparse array reads as a hole rather than as data.
-  if (isArray && keys.value.length !== (value as unknown[]).length) {
-    return false;
-  }
-  return true;
 };
 
 /**
- * Copy one already-located own enumerable data value into a fresh plain
- * object or array. Descriptors only: a later `get` cannot invent a different
- * member. Anything exotic is a rejection so the caller can drop that field.
+ * Copy one already-located own enumerable data value into a fresh null-
+ * prototype record or dense array. Descriptors only: a later `get` cannot
+ * invent a different member. Anything exotic is a rejection so the caller can
+ * drop that field. Pollution keys are omitted rather than assigned.
  */
 const materializePlainDataValue = (
   value: unknown,
@@ -798,13 +780,15 @@ const materializePlainDataValue = (
     return ok(items);
   }
 
-  const copy: Record<string, unknown> = {};
+  const copy = emptyMaterializedRecord();
   for (const key of keys.value) {
+    if (isPrototypePollutionKey(key)) continue;
     const member = ownEnumerableDataValue(target, key);
     if (member.isErr()) return err(member.error);
     const nested = materializePlainDataValue(member.value, depth + 1);
     if (nested.isErr()) return err(nested.error);
-    copy[key] = nested.value;
+    const defined = defineCopiedDataProperty(copy, key, nested.value);
+    if (defined.isErr()) return err(defined.error);
   }
   return ok(copy);
 };
@@ -812,11 +796,12 @@ const materializePlainDataValue = (
 /**
  * The only record schema validation and the native-tool normalizer may see.
  *
- * Own enumerable DATA fields are copied into a fresh plain object. `type` is
- * forced to the already-captured descriptor-safe primitive string, so a proxy
- * whose `get` trap names a different kind cannot select a known parser.
- * Accessors, inherited values, non-enumerable fields and values that are not
- * plain data are omitted rather than read.
+ * Own enumerable DATA fields are copied into a fresh null-prototype record
+ * with `Object.defineProperty`. `type` is forced to the already-captured
+ * descriptor-safe primitive string, so a proxy whose `get` trap names a
+ * different kind cannot select a known parser. Accessors, inherited values,
+ * non-enumerable fields, pollution keys, and values that are not plain data
+ * are omitted rather than read.
  */
 const materializeObservedEventRecord = (
   record: object,
@@ -824,17 +809,24 @@ const materializeObservedEventRecord = (
 ): Result<Record<string, unknown>, OwnValueRejection> => {
   const keys = ownEnumerableKeys(record);
   if (keys.isErr()) return err(keys.error);
-  const materialized: Record<string, unknown> = { type: eventType };
+  const materialized = emptyMaterializedRecord();
+  const typed = defineCopiedDataProperty(materialized, "type", eventType);
+  if (typed.isErr()) return err(typed.error);
   for (const key of keys.value) {
-    if (key === "type") continue;
+    if (key === "type" || isPrototypePollutionKey(key)) continue;
     if (Object.keys(materialized).length - 1 >= MAX_CHILD_EVENT_KEYS) break;
     const boundedName = key.slice(0, 256);
-    if (!boundedName) continue;
+    if (!boundedName || isPrototypePollutionKey(boundedName)) continue;
     const member = ownEnumerableDataValue(record, key);
     if (member.isErr()) continue;
     const nested = materializePlainDataValue(member.value, 0);
     if (nested.isErr()) continue;
-    materialized[boundedName] = nested.value;
+    const defined = defineCopiedDataProperty(
+      materialized,
+      boundedName,
+      nested.value,
+    );
+    if (defined.isErr()) return err(defined.error);
   }
   return ok(materialized);
 };
@@ -842,9 +834,10 @@ const materializeObservedEventRecord = (
 /**
  * Convert an unrecognised host record into the bounded unknown variant.
  *
- * Fields are read through their own property descriptors and only when they
- * are plain data, so preserving an event never invokes an accessor the
- * observed payload defined and never throws on a hostile proxy.
+ * Fields are materialized through their own property descriptors before Zod
+ * reads them, so preserving an event never invokes an accessor the observed
+ * payload defined, never assigns a pollution key, and never throws on a
+ * hostile proxy.
  */
 export function preserveUnknownChildEvent(value: unknown): PiChildSessionEvent {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -858,19 +851,27 @@ export function preserveUnknownChildEvent(value: unknown): PiChildSessionEvent {
   const declaredType = strictOwnEnumerableDataValue(record, "type");
   const rawType = typeof declaredType === "string" ? declaredType : "missing";
   const originalType = rawType.slice(0, 256) || "missing";
-  const payload: Record<string, unknown> = {};
+  const payload = emptyMaterializedRecord();
   for (const key of Object.keys(record)) {
-    if (key === "type" || Object.keys(payload).length >= MAX_CHILD_EVENT_KEYS)
+    if (
+      key === "type" ||
+      isPrototypePollutionKey(key) ||
+      Object.keys(payload).length >= MAX_CHILD_EVENT_KEYS
+    ) {
       continue;
+    }
     const boundedName = key.slice(0, 256);
-    if (!boundedName) continue;
+    if (!boundedName || isPrototypePollutionKey(boundedName)) continue;
     const member = strictOwnEnumerableDataValue(record, key);
     // An accessor field states nothing: running it would execute the observed
     // payload's own code inside the parser.
     if (member === ABSENT_MEMBER) continue;
-    if (!isPlainDataValue(member, 0)) continue;
-    const parsed = boundedJson.safeParse(member);
-    if (parsed.success) payload[boundedName] = parsed.data;
+    const nested = materializePlainDataValue(member, 0);
+    if (nested.isErr()) continue;
+    const parsed = boundedJson.safeParse(nested.value);
+    if (!parsed.success) continue;
+    const defined = defineCopiedDataProperty(payload, boundedName, parsed.data);
+    if (defined.isErr()) continue;
   }
   return { type: "unknown", originalType, payload };
 }
@@ -915,13 +916,16 @@ const boundNativeToolValue = (value: unknown, depth = 0): unknown => {
   }
   if (typeof value !== "object") return undefined;
 
-  const bounded: Record<string, unknown> = {};
+  const bounded = emptyMaterializedRecord();
   for (const [key, item] of Object.entries(value)) {
     if (Object.keys(bounded).length >= MAX_CHILD_EVENT_KEYS) break;
+    if (isPrototypePollutionKey(key)) continue;
     const boundedKey = key.slice(0, 256);
+    if (!boundedKey || isPrototypePollutionKey(boundedKey)) continue;
     const boundedItem = boundNativeToolValue(item, depth + 1);
-    if (boundedKey && boundedItem !== undefined)
-      bounded[boundedKey] = boundedItem;
+    if (boundedItem === undefined) continue;
+    const defined = defineCopiedDataProperty(bounded, boundedKey, boundedItem);
+    if (defined.isErr()) continue;
   }
   return bounded;
 };
@@ -965,14 +969,22 @@ const nativeToolErrorMessage = (value: unknown): string | undefined => {
  * message alone produced an ordinary success row and the deliberate failure
  * had no `⎿` outcome at all. Either authority is enough; neither is invented.
  */
+const ownTrueFlag = (record: object, key: string): boolean => {
+  const flag = ownEnumerableDataValue(record, key);
+  return flag.isOk() && flag.value === true;
+};
+
 const nativeToolEndIsError = (record: Record<string, unknown>): boolean => {
-  if (record["isError"] === true) return true;
-  const result = record["result"];
-  if (typeof result !== "object" || result === null || Array.isArray(result)) {
-    return false;
-  }
-  const nested = result as Record<string, unknown>;
-  return nested["isError"] === true || nested["is_error"] === true;
+  if (ownTrueFlag(record, "isError")) return true;
+  const result = ownEnumerableDataValue(record, "result");
+  if (result.isErr()) return false;
+  if (typeof result.value !== "object" || result.value === null) return false;
+  const arrayShaped = isArrayValue(result.value);
+  if (arrayShaped.isErr() || arrayShaped.value) return false;
+  return (
+    ownTrueFlag(result.value, "isError") ||
+    ownTrueFlag(result.value, "is_error")
+  );
 };
 
 /**

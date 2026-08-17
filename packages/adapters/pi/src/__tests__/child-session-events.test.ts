@@ -657,3 +657,164 @@ describe("Pi child session event type authority", () => {
     if (preserved.success) expect(preserved.data.type).toBe("unknown");
   });
 });
+
+/**
+ * Materialization must not turn `__proto__`, `constructor`, or `prototype`
+ * into inherited event authority. Assignment of those keys into `{}` retargets
+ * the copy and lets Zod or the tool normalizer read forged `type` / `size` /
+ * `queue` / `isError` fields the host never stated as own data.
+ */
+describe("Pi child session event prototype pollution", () => {
+  const POLLUTION_KEYS = ["__proto__", "constructor", "prototype"] as const;
+
+  const expectUnchangedGlobalPrototype = (): void => {
+    expect(Object.hasOwn(Object.prototype, "type")).toBe(false);
+    expect(Object.hasOwn(Object.prototype, "size")).toBe(false);
+    expect(Object.hasOwn(Object.prototype, "queue")).toBe(false);
+    expect(Object.hasOwn(Object.prototype, "isError")).toBe(false);
+    expect(Object.hasOwn(Object.prototype, "is_error")).toBe(false);
+    const sample: Record<string, unknown> = {};
+    expect(sample.type).toBeUndefined();
+    expect(sample.size).toBeUndefined();
+    expect(sample.queue).toBeUndefined();
+    expect(sample.isError).toBeUndefined();
+    expect(Object.getPrototypeOf(sample)).toBe(Object.prototype);
+  };
+
+  const parsePollution = (value: unknown) => {
+    expect(() => parsePiChildSessionEvent(value)).not.toThrow();
+    const parsed = parsePiChildSessionEvent(value);
+    expectUnchangedGlobalPrototype();
+    return parsed;
+  };
+
+  it("does not grant queue_change authority from a top-level pollution key", () => {
+    for (const key of POLLUTION_KEYS) {
+      const parsed = parsePollution(
+        JSON.parse(
+          `{"type":"forged_unknown_kind","${key}":{"type":"queue_change","size":5,"queue":["forged-queue"]}}`,
+        ),
+      );
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      expect(parsed.data.type).not.toBe("queue_change");
+      expect(JSON.stringify(parsed.data)).not.toContain("queue_change");
+      expect(JSON.stringify(parsed.data)).not.toContain("forged-queue");
+    }
+
+    for (const key of POLLUTION_KEYS) {
+      const parsed = parsePollution(
+        JSON.parse(
+          `{"type":"queue_change","${key}":{"size":5,"queue":["forged-queue"]}}`,
+        ),
+      );
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      expect(parsed.data).toMatchObject({ type: "queue_change" });
+      expect(parsed.data).not.toMatchObject({
+        size: 5,
+        queue: ["forged-queue"],
+      });
+      expect(JSON.stringify(parsed.data)).not.toContain("forged-queue");
+    }
+  });
+
+  it("does not grant queue_change authority from a nested pollution key", () => {
+    for (const key of POLLUTION_KEYS) {
+      const parsed = parsePollution(
+        JSON.parse(
+          `{"type":"queue_change","size":0,"queue":[],"payload":{"kept":true,"${key}":{"type":"queue_change","size":5,"queue":["forged-queue"]}}}`,
+        ),
+      );
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      expect(parsed.data).toMatchObject({
+        type: "queue_change",
+        size: 0,
+        queue: [],
+      });
+      expect(JSON.stringify(parsed.data)).not.toContain("forged-queue");
+      if ("payload" in parsed.data) {
+        const payload = (parsed.data as { payload?: unknown }).payload;
+        expect(payload).toMatchObject({ kept: true });
+        expect(payload).not.toMatchObject({
+          size: 5,
+          queue: ["forged-queue"],
+        });
+      }
+    }
+  });
+
+  it("does not grant tool_execution_end isError from a top-level pollution key", () => {
+    for (const key of POLLUTION_KEYS) {
+      const parsed = parsePollution(
+        JSON.parse(
+          `{"type":"tool_execution_end","toolCallId":"call-1","toolName":"read","result":{"content":"ok"},"${key}":{"isError":true}}`,
+        ),
+      );
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      expect(parsed.data.type).toBe("tool_result");
+      expect(parsed.data).toMatchObject({
+        type: "tool_result",
+        toolCallId: "call-1",
+        toolName: "read",
+        result: { content: "ok" },
+      });
+      expect(JSON.stringify(parsed.data)).not.toContain("tool_error");
+    }
+  });
+
+  it("does not grant tool_execution_end.result.isError from a nested pollution key", () => {
+    for (const key of POLLUTION_KEYS) {
+      const parsed = parsePollution(
+        JSON.parse(
+          `{"type":"tool_execution_end","toolCallId":"call-1","toolName":"read","result":{"content":"ok","${key}":{"isError":true}}}`,
+        ),
+      );
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      expect(parsed.data.type).toBe("tool_result");
+      expect(parsed.data).toMatchObject({
+        type: "tool_result",
+        toolCallId: "call-1",
+        toolName: "read",
+        result: { content: "ok" },
+      });
+      expect(JSON.stringify(parsed.data)).not.toContain('"isError":true');
+    }
+  });
+
+  it("still accepts an explicit own queue zero and an own tool error", () => {
+    const queued = parsePollution({
+      type: "queue_update",
+      steering: [],
+      followUp: [],
+    });
+    expect(queued.success).toBe(true);
+    if (queued.success) {
+      expect(queued.data).toMatchObject({
+        type: "queue_change",
+        size: 0,
+        queue: [],
+      });
+    }
+
+    const failed = parsePollution({
+      type: "tool_execution_end",
+      toolCallId: "call-2",
+      toolName: "bash",
+      result: "command failed",
+      isError: true,
+    });
+    expect(failed.success).toBe(true);
+    if (failed.success) {
+      expect(failed.data).toEqual({
+        type: "tool_error",
+        toolCallId: "call-2",
+        toolName: "bash",
+        error: "command failed",
+      });
+    }
+  });
+});
