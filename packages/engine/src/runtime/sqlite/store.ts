@@ -2297,6 +2297,25 @@ class SqliteAdapterPreferenceRepository implements AdapterPreferenceRepository {
     );
   }
 
+  listAll(
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError> {
+    const clamped = clampAdapterPreferenceListLimit(limit);
+    // `namespace` and `key` are TEXT columns with SQLite's default BINARY
+    // collation, so this order matches the in-memory comparator exactly.
+    return ResultAsync.fromPromise(
+      this.db
+        .selectFrom("adapter_preferences")
+        .selectAll()
+        .orderBy("namespace", "asc")
+        .orderBy("key", "asc")
+        .limit(clamped)
+        .execute()
+        .then((rows) => rows.map(rowToAdapterPreference)),
+      (cause) => queryError("Failed to list adapter preferences", cause),
+    );
+  }
+
   remove(namespace: string, key: string): ResultAsync<void, RuntimeStoreError> {
     const identity = validateAdapterPreferenceIdentity(namespace, key);
     if (identity.isErr()) return errAsync(identity.error);
@@ -3263,6 +3282,12 @@ class LazyAdapterPreferenceRepository implements AdapterPreferenceRepository {
     limit?: number,
   ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError> {
     return this.repo().andThen((r) => r.list(namespace, limit));
+  }
+
+  listAll(
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError> {
+    return this.repo().andThen((r) => r.listAll(limit));
   }
 
   remove(namespace: string, key: string): ResultAsync<void, RuntimeStoreError> {

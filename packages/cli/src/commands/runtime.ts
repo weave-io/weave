@@ -2,7 +2,7 @@
  * Read-only runtime inspection commands.
  *
  * Implements `weave runtime status`, `weave runtime journal --limit <n>`, and
- * `weave runtime preferences --namespace <ns> [--limit <n>]`.
+ * `weave runtime preferences [--namespace <ns>] [--limit <n>]`.
  *
  * Every subcommand opens the default Runtime Store path in read-only inspection
  * mode. If the store does not exist, they report a friendly message and exit 0
@@ -50,11 +50,9 @@ export interface RuntimeCommandContext {
   /** --limit flag for journal (default: 50) and preferences (default: 100). */
   limit?: number;
   /**
-   * --namespace flag for `preferences`.
+   * Optional --namespace filter for `preferences`.
    *
-   * The Runtime Store preference repository is namespace-scoped: `list` takes
-   * one namespace and there is no cross-namespace enumeration. The CLI does
-   * not invent one, so this flag is required for `preferences`.
+   * When absent, the command lists bounded rows across every namespace.
    */
   namespace?: string;
   /** Project root directory (defaults to cwd). */
@@ -412,10 +410,14 @@ async function runRuntimeJournal(
 // ---------------------------------------------------------------------------
 
 /**
- * List stored adapter preferences for one namespace.
+ * List stored adapter preferences.
  *
- * Read-only: the command opens the existing store, calls `list`, and closes it.
- * It never writes, creates, or migrates anything.
+ * Without `--namespace`, this enumerates every namespace through the
+ * repository's bounded `listAll`. With `--namespace`, it lists that one
+ * namespace through `list`.
+ *
+ * Read-only: the command opens the existing store, reads, and closes it. It
+ * never writes, creates, or migrates anything.
  */
 async function runRuntimePreferences(
   ctx: RuntimeCommandContext,
@@ -425,23 +427,11 @@ async function runRuntimePreferences(
   const { terminal, theme } = ctx;
   const namespace = ctx.namespace;
 
-  // The preference repository lists one namespace at a time and exposes no
-  // namespace enumeration, so there is no honest "all namespaces" listing to
-  // print. Say so instead of guessing a namespace or implying the store is empty.
-  if (namespace === undefined) {
-    terminal.stderr(
-      [
-        `${theme.boldYellow("Usage:")} weave runtime preferences --namespace <ns> [--limit <n>]`,
-        "",
-        `  ${theme.dim("Preferences are stored per namespace and are listed one namespace at a time.")}`,
-      ].join("\n"),
-    );
-    await store.close();
-    return ok(1);
-  }
-
   const limit = clampAdapterPreferenceListLimit(ctx.limit);
-  const recordsResult = await store.preferences.list(namespace, limit);
+  const recordsResult =
+    namespace === undefined
+      ? await store.preferences.listAll(limit)
+      : await store.preferences.list(namespace, limit);
 
   if (recordsResult.isErr()) {
     terminal.stderr(
@@ -453,15 +443,20 @@ async function runRuntimePreferences(
 
   const records = recordsResult.value.slice(0, limit);
 
+  const scopeLabel =
+    namespace === undefined ? "all namespaces" : `namespace: ${namespace}`;
+
   const lines: string[] = [
     "",
-    `${theme.boldCyan("Adapter Preferences")} ${theme.dim(`(namespace: ${namespace}, limit: ${limit}, showing: ${records.length})`)}`,
+    `${theme.boldCyan("Adapter Preferences")} ${theme.dim(`(${scopeLabel}, limit: ${limit}, showing: ${records.length})`)}`,
     "",
   ];
 
   if (records.length === 0) {
     lines.push(
-      `  ${theme.dim(`No preferences stored in namespace "${namespace}".`)}`,
+      namespace === undefined
+        ? `  ${theme.dim("No preferences stored.")}`
+        : `  ${theme.dim(`No preferences stored in namespace "${namespace}".`)}`,
     );
     lines.push("");
   } else {

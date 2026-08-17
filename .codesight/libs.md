@@ -1572,13 +1572,13 @@
   - class SqliteRuntimeStore
   - interface SqliteRuntimeStoreOptions
 - `packages/engine/src/runtime/store.ts`
+  - function compareAdapterPreferenceRecords: (left, right) => number
   - function clampAdapterPreferenceListLimit: (limit?) => number
   - function validateAdapterPreferenceNamespace: (namespace) => Result<void, RuntimeStoreError>
   - function validateAdapterPreferenceKey: (key) => Result<void, RuntimeStoreError>
   - function validateAdapterPreferenceValue: (valueJson) => Result<void, RuntimeStoreError>
   - function validateAdapterPreferenceIdentity: (namespace, key) => Result<void, RuntimeStoreError>
-  - interface CreateWorkflowInstanceInput
-  - _...16 more_
+  - _...17 more_
 - `packages/engine/src/runtime/types.ts`
   - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
   - function createExecutionLeaseId: (raw) => ExecutionLeaseId

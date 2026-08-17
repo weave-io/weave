@@ -119,7 +119,7 @@ export async function run(
             "",
             `  ${theme.cyan("weave runtime status")}              ${theme.dim("Show runtime store status")}`,
             `  ${theme.cyan("weave runtime journal")} ${theme.dim("[--limit <n>]")}  ${theme.dim("Show recent journal entries")}`,
-            `  ${theme.cyan("weave runtime preferences")} ${theme.dim("--namespace <ns> [--limit <n>]")}  ${theme.dim("Show stored adapter preferences")}`,
+            `  ${theme.cyan("weave runtime preferences")} ${theme.dim("[--namespace <ns>] [--limit <n>]")}  ${theme.dim("Show stored adapter preferences")}`,
           ].join("\n"),
         );
         return ok(1);

@@ -451,11 +451,30 @@ export const ADAPTER_PREFERENCE_KEY_MAX_CHARS = 128;
 export const ADAPTER_PREFERENCE_VALUE_MAX_BYTES = 16 * 1024;
 
 /**
- * Default and maximum number of rows returned by `AdapterPreferenceRepository.list`.
+ * Default and maximum number of rows returned by `AdapterPreferenceRepository.list`
+ * and `AdapterPreferenceRepository.listAll`.
  * Callers may pass a smaller limit. Larger or non-finite values are clamped
  * to this bound.
  */
 export const ADAPTER_PREFERENCE_LIST_LIMIT = 100;
+
+/**
+ * Order two preference records by `(namespace, key)` using UTF-16 code-unit
+ * comparison.
+ *
+ * This reproduces SQLite's default `BINARY` collation, so the in-memory store
+ * and the SQLite store return `listAll` rows in exactly the same order.
+ */
+export function compareAdapterPreferenceRecords(
+  left: AdapterPreferenceRecord,
+  right: AdapterPreferenceRecord,
+): number {
+  if (left.namespace !== right.namespace) {
+    return left.namespace < right.namespace ? -1 : 1;
+  }
+  if (left.key === right.key) return 0;
+  return left.key < right.key ? -1 : 1;
+}
 
 /**
  * Clamp a `list` limit to `[0, ADAPTER_PREFERENCE_LIST_LIMIT]`.
@@ -633,6 +652,21 @@ export interface AdapterPreferenceRepository {
    */
   list(
     namespace: string,
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError>;
+
+  /**
+   * List preferences across every namespace, ordered by namespace then key.
+   *
+   * Ordering uses UTF-16 code-unit comparison in every implementation, so the
+   * returned rows are byte-deterministic and identical across stores. `limit`
+   * defaults to {@link ADAPTER_PREFERENCE_LIST_LIMIT} and is clamped to that
+   * maximum, so the result is always bounded.
+   *
+   * This is the read-only enumeration a caller needs when it has no namespace
+   * to scope by; it does not replace {@link AdapterPreferenceRepository.list}.
+   */
+  listAll(
     limit?: number,
   ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError>;
 

@@ -663,6 +663,9 @@ class StubAdapterPreferenceRepository implements AdapterPreferenceRepository {
   list() {
     return okAsync([]);
   }
+  listAll() {
+    return okAsync([]);
+  }
   remove() {
     return okAsync(undefined);
   }

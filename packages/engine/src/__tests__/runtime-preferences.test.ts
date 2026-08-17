@@ -109,6 +109,49 @@ async function expectPreferenceContract(
   expect(removeMissing.isOk()).toBe(true);
 }
 
+/**
+ * Cross-namespace enumeration: ordered by namespace then key with code-unit
+ * comparison, bounded by the clamped limit, and identical in every store.
+ */
+async function expectListAllContract(store: RuntimeStore): Promise<void> {
+  const empty = await store.preferences.listAll();
+  expect(empty.isOk()).toBe(true);
+  expect(empty._unsafeUnwrap()).toEqual([]);
+
+  // Written out of order across three namespaces.
+  await store.preferences.set("beta", "b", "2");
+  await store.preferences.set("alpha", "z", "26");
+  await store.preferences.set("Beta", "a", "1");
+  await store.preferences.set("alpha", "a", "1");
+  await store.preferences.set("beta", "a", "1");
+
+  const all = await store.preferences.listAll();
+  expect(all.isOk()).toBe(true);
+  expect(
+    all._unsafeUnwrap().map((row) => `${row.namespace}/${row.key}`),
+  ).toEqual([
+    // Uppercase sorts before lowercase under code-unit ordering.
+    "Beta/a",
+    "alpha/a",
+    "alpha/z",
+    "beta/a",
+    "beta/b",
+  ]);
+
+  const limited = await store.preferences.listAll(2);
+  expect(limited._unsafeUnwrap().map((row) => row.namespace)).toEqual([
+    "Beta",
+    "alpha",
+  ]);
+
+  const zero = await store.preferences.listAll(0);
+  expect(zero._unsafeUnwrap()).toEqual([]);
+
+  // A namespace-scoped list still sees only its own rows.
+  const scoped = await store.preferences.list("alpha");
+  expect(scoped._unsafeUnwrap().map((row) => row.key)).toEqual(["a", "z"]);
+}
+
 async function expectPreferenceBounds(store: RuntimeStore): Promise<void> {
   const overNamespace = await store.preferences.set(
     "n".repeat(ADAPTER_PREFERENCE_NAMESPACE_MAX_CHARS + 1),
@@ -297,6 +340,39 @@ describe("adapter preferences — memory store", () => {
     expect(zero._unsafeUnwrap()).toHaveLength(0);
   });
 
+  it("lists across namespaces in deterministic order with a clamped limit", async () => {
+    const store = createInMemoryRuntimeStore();
+    await expectListAllContract(store);
+  });
+
+  it("clamps listAll to the documented default maximum", async () => {
+    const store = createInMemoryRuntimeStore();
+    for (let index = 0; index < ADAPTER_PREFERENCE_LIST_LIMIT + 1; index += 1) {
+      const namespace = `ns${String(index).padStart(3, "0")}`;
+      const result = await store.preferences.set(namespace, "k", "1");
+      expect(result.isOk()).toBe(true);
+    }
+    const defaultList = await store.preferences.listAll();
+    expect(defaultList._unsafeUnwrap()).toHaveLength(
+      ADAPTER_PREFERENCE_LIST_LIMIT,
+    );
+    const clamped = await store.preferences.listAll(10_000);
+    expect(clamped._unsafeUnwrap()).toHaveLength(ADAPTER_PREFERENCE_LIST_LIMIT);
+    const negative = await store.preferences.listAll(-5);
+    expect(negative._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it("surfaces an injected list failure from listAll", async () => {
+    const store = createInMemoryRuntimeStore({
+      failOn: {
+        preferenceList: { type: "query", message: "boom" },
+      },
+    });
+    const failed = await store.preferences.listAll();
+    expect(failed.isErr()).toBe(true);
+    expect(failed._unsafeUnwrapErr().message).toBe("boom");
+  });
+
   it("rolls back preference writes when a transaction fails", async () => {
     const store = createInMemoryRuntimeStore();
     const txResult = await store.transaction((tx) =>
@@ -325,6 +401,49 @@ describe("adapter preferences — sqlite store", () => {
     });
     await expectPreferenceContract(store, clock);
     await expectPreferenceBounds(store);
+    await store.close();
+  });
+
+  it("lists across namespaces in the same order as the memory store", async () => {
+    const dir = join(tmpdir(), `weave-pref-all-${crypto.randomUUID()}`);
+    Bun.spawnSync(["mkdir", "-p", dir]);
+    const store = createSqliteRuntimeStore({
+      dbPath: join(dir, "weave.db"),
+      projectRoot: dir,
+    });
+    await expectListAllContract(store);
+
+    // Byte-for-byte parity with the in-memory store for the same writes.
+    const memory = createInMemoryRuntimeStore();
+    await expectListAllContract(memory);
+    const fromSqlite = await store.preferences.listAll();
+    const fromMemory = await memory.preferences.listAll();
+    expect(
+      fromSqlite._unsafeUnwrap().map((row) => `${row.namespace}/${row.key}`),
+    ).toEqual(
+      fromMemory._unsafeUnwrap().map((row) => `${row.namespace}/${row.key}`),
+    );
+    await store.close();
+  });
+
+  it("clamps listAll to the documented default maximum", async () => {
+    const dir = join(tmpdir(), `weave-pref-all-limit-${crypto.randomUUID()}`);
+    Bun.spawnSync(["mkdir", "-p", dir]);
+    const store = createSqliteRuntimeStore({
+      dbPath: join(dir, "weave.db"),
+      projectRoot: dir,
+    });
+    for (let index = 0; index < ADAPTER_PREFERENCE_LIST_LIMIT + 1; index += 1) {
+      const namespace = `ns${String(index).padStart(3, "0")}`;
+      const result = await store.preferences.set(namespace, "k", "1");
+      expect(result.isOk()).toBe(true);
+    }
+    const defaultList = await store.preferences.listAll();
+    expect(defaultList._unsafeUnwrap()).toHaveLength(
+      ADAPTER_PREFERENCE_LIST_LIMIT,
+    );
+    const clamped = await store.preferences.listAll(10_000);
+    expect(clamped._unsafeUnwrap()).toHaveLength(ADAPTER_PREFERENCE_LIST_LIMIT);
     await store.close();
   });
 

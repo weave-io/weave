@@ -38,6 +38,7 @@ import type {
 } from "./store.js";
 import {
   clampAdapterPreferenceListLimit,
+  compareAdapterPreferenceRecords,
   validateAdapterPreferenceIdentity,
   validateAdapterPreferenceNamespace,
   validateAdapterPreferenceValue,
@@ -128,7 +129,7 @@ export interface InMemoryRuntimeStoreFailureConfig {
   preferenceSet?: RuntimeStoreError;
   /** Injected error for `AdapterPreferenceRepository.get`. */
   preferenceGet?: RuntimeStoreError;
-  /** Injected error for `AdapterPreferenceRepository.list`. */
+  /** Injected error for `AdapterPreferenceRepository.list` and `listAll`. */
   preferenceList?: RuntimeStoreError;
   /** Injected error for `AdapterPreferenceRepository.remove`. */
   preferenceRemove?: RuntimeStoreError;
@@ -1113,6 +1114,20 @@ class InMemoryAdapterPreferenceRepository
     const entries = Array.from(this.store.values())
       .filter((entry) => entry.namespace === namespace)
       .sort((left, right) => left.key.localeCompare(right.key))
+      .slice(0, clamped);
+    return okAsync(entries);
+  }
+
+  listAll(
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError> {
+    if (this.failures.preferenceList) {
+      return errAsync(this.failures.preferenceList);
+    }
+    const clamped = clampAdapterPreferenceListLimit(limit);
+    // Code-unit ordering, matching SQLite's default BINARY collation.
+    const entries = Array.from(this.store.values())
+      .sort(compareAdapterPreferenceRecords)
       .slice(0, clamped);
     return okAsync(entries);
   }

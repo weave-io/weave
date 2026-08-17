@@ -414,22 +414,144 @@ describe("runtime preferences", () => {
     expect(terminal.out.join("\n")).not.toContain("Adapter Preferences");
   });
 
-  it("default listing without --namespace explains the namespace-scoped contract and exits 1", async () => {
-    // The Runtime Store preference repository lists one namespace at a time and
-    // exposes no namespace enumeration, so the command must not imply that an
-    // unscoped listing exists or that the store is empty.
+  it("lists every namespace by default, ordered by namespace then key", async () => {
     const store = createInMemoryRuntimeStore();
+    // Seeded out of order across three namespaces.
     await seedPreference(store, "adapter-pi", "child-extensions", { a: 1 });
+    await seedPreference(store, "adapter-other", "other-key", { b: 2 });
+    await seedPreference(store, "adapter-pi", "another-key", { c: 3 });
+
+    const { terminal, ctx } = makeContextWithStore("preferences", store);
+    const result = await runRuntime(ctx);
+
+    expect(result._unsafeUnwrap()).toBe(0);
+    const out = terminal.out.join("\n");
+    expect(out).toContain("Adapter Preferences");
+    expect(out).toContain("all namespaces");
+    expect(out).toContain("showing: 3");
+    const rows = out.split("\n").filter((line) => line.startsWith("adapter-"));
+    expect(rows.map((row) => row.split("  ").slice(0, 2).join("/"))).toEqual([
+      "adapter-other/other-key",
+      "adapter-pi/another-key",
+      "adapter-pi/child-extensions",
+    ]);
+  });
+
+  it("produces the same default listing on repeated runs", async () => {
+    const store = createInMemoryRuntimeStore();
+    await seedPreference(store, "zeta", "b", { b: 1 });
+    await seedPreference(store, "alpha", "z", { z: 1 });
+    await seedPreference(store, "zeta", "a", { a: 1 });
+
+    const { terminal: t1, ctx: ctx1 } = makeContextWithStore(
+      "preferences",
+      store,
+    );
+    await runRuntime(ctx1);
+    const { terminal: t2, ctx: ctx2 } = makeContextWithStore(
+      "preferences",
+      store,
+    );
+    await runRuntime(ctx2);
+
+    expect(t1.out.join("\n")).toBe(t2.out.join("\n"));
+    const rows = t1.out
+      .join("\n")
+      .split("\n")
+      .filter(
+        (line) => line.startsWith("alpha  ") || line.startsWith("zeta  "),
+      );
+    expect(rows.map((row) => row.split("  ").slice(0, 2).join("/"))).toEqual([
+      "alpha/z",
+      "zeta/a",
+      "zeta/b",
+    ]);
+  });
+
+  it("clamps an oversized --limit in the default cross-namespace listing", async () => {
+    const store = createInMemoryRuntimeStore();
+    for (let i = 0; i < 105; i++) {
+      await seedPreference(store, `ns-${String(i).padStart(3, "0")}`, "key", {
+        i,
+      });
+    }
+
+    const { terminal, ctx } = makeContextWithStore("preferences", store, {
+      limit: 500,
+    });
+    const result = await runRuntime(ctx);
+
+    expect(result._unsafeUnwrap()).toBe(0);
+    const out = terminal.out.join("\n");
+    expect(out).toContain("limit: 100");
+    expect(out).toContain("showing: 100");
+    const rows = out.split("\n").filter((line) => line.startsWith("ns-"));
+    expect(rows).toHaveLength(100);
+    // Bounded from the start of the deterministic order.
+    expect(rows[0]).toStartWith("ns-000  key  ");
+    expect(rows[99]).toStartWith("ns-099  key  ");
+  });
+
+  it("reports an empty default listing clearly and exits 0", async () => {
+    const { terminal, ctx } = makeContext("preferences");
+    const result = await runRuntime(ctx);
+
+    expect(result._unsafeUnwrap()).toBe(0);
+    const out = terminal.out.join("\n");
+    expect(out).toContain("No preferences stored.");
+    expect(out).toContain("showing: 0");
+    expect(terminal.err.join("\n")).toBe("");
+  });
+
+  it("reports no runtime store found for the default listing and exits 0", async () => {
+    const terminal = new BufferTerminal();
+    const ctx: RuntimeCommandContext = {
+      terminal,
+      theme,
+      subcommand: "preferences",
+      dbExists: async () => false,
+      storeFactory: () => {
+        throw new Error("store should not be created");
+      },
+    };
+    const result = await runRuntime(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    expect(terminal.out.join("\n")).toContain("No runtime store found at");
+    expect(terminal.out.join("\n")).not.toContain("Adapter Preferences");
+  });
+
+  it("truncates a long value preview in the default listing too", async () => {
+    const store = createInMemoryRuntimeStore();
+    await seedPreference(store, "adapter-pi", "long", {
+      note: "é".repeat(400),
+    });
+
+    const { terminal, ctx } = makeContextWithStore("preferences", store);
+    const result = await runRuntime(ctx);
+
+    expect(result._unsafeUnwrap()).toBe(0);
+    const rows = terminal.out
+      .join("\n")
+      .split("\n")
+      .filter((line) => line.startsWith("adapter-pi  long  "));
+    expect(rows).toHaveLength(1);
+    const preview = rows[0].split("  ")[3];
+    expect(preview.endsWith("\u2026")).toBe(true);
+    expect(byteLength(preview)).toBeLessThanOrEqual(123);
+    expect(preview).not.toContain("\uFFFD");
+  });
+
+  it("surfaces a repository failure in the default listing and exits 1", async () => {
+    const store = createInMemoryRuntimeStore({
+      failOn: { preferenceList: { type: "query", message: "listAll boom" } },
+    });
 
     const { terminal, ctx } = makeContextWithStore("preferences", store);
     const result = await runRuntime(ctx);
 
     expect(result._unsafeUnwrap()).toBe(1);
-    const err = terminal.err.join("\n");
-    expect(err).toContain("weave runtime preferences --namespace <ns>");
-    expect(err).toContain("listed one namespace at a time");
-    // No listing was printed and no record leaked to stdout.
-    expect(terminal.out.join("\n")).not.toContain("child-extensions");
+    expect(terminal.err.join("\n")).toContain("Error querying preferences");
+    expect(terminal.out.join("\n")).not.toContain("Adapter Preferences");
   });
 
   it("lists stored preferences as namespace, key, updated_at, value preview", async () => {
@@ -622,6 +744,17 @@ describe("runtime preferences", () => {
     expect(after._unsafeUnwrap()).toHaveLength(1);
     const other = await store.preferences.list("adapter-other");
     expect(other._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it("does not mutate the store in the default listing either", async () => {
+    const store = createInMemoryRuntimeStore();
+    await seedPreference(store, "adapter-pi", "only", { a: 1 });
+
+    const { ctx } = makeContextWithStore("preferences", store);
+    await runRuntime(ctx);
+
+    const all = await store.preferences.listAll();
+    expect(all._unsafeUnwrap().map((row) => row.key)).toEqual(["only"]);
   });
 
   it("produces deterministic output for the same records", async () => {
@@ -898,6 +1031,21 @@ describe("runtime — CLI router integration", () => {
         "--namespace",
         "adapter-pi",
       ],
+      terminal,
+      colorEnabled: false,
+    });
+    expect(result._unsafeUnwrap()).toBe(0);
+    const out = terminal.out.join("\n");
+    const hasExpectedOutput =
+      out.includes("Adapter Preferences") ||
+      out.includes("No runtime store found");
+    expect(hasExpectedOutput).toBe(true);
+  });
+
+  it("routes 'runtime preferences' without --namespace through the CLI router", async () => {
+    const terminal = new BufferTerminal();
+    const result = await run({
+      argv: ["bun", "weave", "runtime", "preferences"],
       terminal,
       colorEnabled: false,
     });

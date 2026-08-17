@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 308 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~33,600 tokens. Without it, AI exploration would cost ~99,100 tokens. **Saves ~65,500 tokens per conversation.**
-> **Last scanned:** 2026-08-17 21:14 — re-run after significant changes
+> **Last scanned:** 2026-08-17 21:25 — re-run after significant changes
 
 ---
 
@@ -1583,13 +1583,13 @@
   - class SqliteRuntimeStore
   - interface SqliteRuntimeStoreOptions
 - `packages/engine/src/runtime/store.ts`
+  - function compareAdapterPreferenceRecords: (left, right) => number
   - function clampAdapterPreferenceListLimit: (limit?) => number
   - function validateAdapterPreferenceNamespace: (namespace) => Result<void, RuntimeStoreError>
   - function validateAdapterPreferenceKey: (key) => Result<void, RuntimeStoreError>
   - function validateAdapterPreferenceValue: (valueJson) => Result<void, RuntimeStoreError>
   - function validateAdapterPreferenceIdentity: (namespace, key) => Result<void, RuntimeStoreError>
-  - interface CreateWorkflowInstanceInput
-  - _...16 more_
+  - _...17 more_
 - `packages/engine/src/runtime/types.ts`
   - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
   - function createExecutionLeaseId: (raw) => ExecutionLeaseId
