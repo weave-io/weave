@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 311 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~34,100 tokens. Without it, AI exploration would cost ~99,900 tokens. **Saves ~65,800 tokens per conversation.**
-> **Last scanned:** 2026-08-17 22:43 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 312 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~34,200 tokens. Without it, AI exploration would cost ~100,200 tokens. **Saves ~66,000 tokens per conversation.**
+> **Last scanned:** 2026-08-17 23:09 — re-run after significant changes
 
 ---
 
@@ -607,7 +607,7 @@
   - type WeaveCommandName
   - type WeaveCommandClassification
   - const WEAVE_INSPECT_COMMAND_NAME
-  - _...7 more_
+  - _...8 more_
 - `packages/adapters/pi/src/config-activation-diagnostics.ts` — function projectConfigLoadIssues: (errors, projectRoot) => readonly string[]
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
@@ -758,6 +758,14 @@
   - class BunPathContainmentPort
   - class NullPathContainmentPort
   - _...11 more_
+- `packages/adapters/pi/src/pi-config-ui.ts`
+  - function buildPiConfigRows: (entries) => readonly PiConfigRow[]
+  - function initialPiConfigSelection: (record, entries) => PiConfigSelectionState
+  - function buildPiConfigSaveIntent: (input) => Result<PiConfigSaveIntent, PiConfigSaveError>
+  - function piConfigRowBudget: (terminalRows) => number
+  - function piConfigVisibleRows: (rows) => number
+  - function piConfigMaxScroll: (rowCount, rows) => number
+  - _...18 more_
 - `packages/adapters/pi/src/pi-extension-inventory-port.ts`
   - function createBunPiExtensionInventoryPort: (host) => PiExtensionInventoryPort
   - function createPiReadOnlyPackageManager: (input, unknown>>;
@@ -1959,9 +1967,9 @@
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/adapters/pi/src/rpc-child.ts` — imported by **16** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **16** files
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **16** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
-- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 
@@ -1999,7 +2007,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 346 test files found
+> 348 test files found
 
 ---
 

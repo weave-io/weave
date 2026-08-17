@@ -655,7 +655,8 @@ export type PiPaletteActionId =
   | "weave.health"
   | "weave.resume"
   | "weave.plan"
-  | "weave.artifact";
+  | "weave.artifact"
+  | "weave.pi-config";
 
 export interface PiPaletteAction {
   readonly id: PiPaletteActionId;
@@ -722,6 +723,14 @@ export function buildPaletteActions(input: {
       id: "weave.artifact",
       label: "Weave: Decide Artifact",
       visible: input.hasPendingArtifact,
+      disabledReason,
+    },
+    {
+      // Always visible: configuring which extensions a child loads does not
+      // depend on whether a workflow is running.
+      id: "weave.pi-config",
+      label: "Weave: Configure Child Extensions",
+      visible: true,
       disabledReason,
     },
   ];

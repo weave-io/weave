@@ -596,7 +596,7 @@
   - type WeaveCommandName
   - type WeaveCommandClassification
   - const WEAVE_INSPECT_COMMAND_NAME
-  - _...7 more_
+  - _...8 more_
 - `packages/adapters/pi/src/config-activation-diagnostics.ts` — function projectConfigLoadIssues: (errors, projectRoot) => readonly string[]
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
@@ -747,6 +747,14 @@
   - class BunPathContainmentPort
   - class NullPathContainmentPort
   - _...11 more_
+- `packages/adapters/pi/src/pi-config-ui.ts`
+  - function buildPiConfigRows: (entries) => readonly PiConfigRow[]
+  - function initialPiConfigSelection: (record, entries) => PiConfigSelectionState
+  - function buildPiConfigSaveIntent: (input) => Result<PiConfigSaveIntent, PiConfigSaveError>
+  - function piConfigRowBudget: (terminalRows) => number
+  - function piConfigVisibleRows: (rows) => number
+  - function piConfigMaxScroll: (rowCount, rows) => number
+  - _...18 more_
 - `packages/adapters/pi/src/pi-extension-inventory-port.ts`
   - function createBunPiExtensionInventoryPort: (host) => PiExtensionInventoryPort
   - function createPiReadOnlyPackageManager: (input, unknown>>;

@@ -159,16 +159,39 @@ describe("DefaultPiCapabilityProber", () => {
     });
   });
 
-  it("reports command-entrypoints ok when all twelve commands are exclusively owned", () => {
+  it("reports command-entrypoints ok when every command is exclusively owned", () => {
     const probes = prober.probe({
       mode: "tui",
       trust: "trusted",
       commands: ALL_OWNED_COMMANDS,
     });
-    const entry = probes.find(
-      (probe) => probe.capabilityId === "command-entrypoints",
+    // Count-free wording: the catalog grows, and a details string naming a
+    // fixed number goes stale the moment a command is added.
+    expect(
+      probes.find((probe) => probe.capabilityId === "command-entrypoints"),
+    ).toEqual({
+      capabilityId: "command-entrypoints",
+      probeStatus: "ok",
+      details: "all-commands-exclusively-owned",
+    });
+  });
+
+  it("requires the child-extension configuration command to be owned", () => {
+    const missingPiConfig = ALL_OWNED_COMMANDS.filter(
+      (command) => command.name !== "weave:pi-config",
     );
-    expect(entry?.probeStatus).toBe("ok");
+    const probes = prober.probe({
+      mode: "tui",
+      trust: "trusted",
+      commands: missingPiConfig,
+    });
+    expect(
+      probes.find((probe) => probe.capabilityId === "command-entrypoints"),
+    ).toEqual({
+      capabilityId: "command-entrypoints",
+      probeStatus: "unavailable",
+      details: "command-collision-or-missing:weave:pi-config",
+    });
   });
 
   it("reports command-entrypoints unavailable when a command is missing", () => {
@@ -274,7 +297,7 @@ describe("DefaultPiCapabilityProber", () => {
     ).toEqual({
       capabilityId: "command-entrypoints",
       probeStatus: "ok",
-      details: "all-twelve-commands-present-local-provenance-disabled",
+      details: "all-commands-present-local-provenance-disabled",
     });
   });
 

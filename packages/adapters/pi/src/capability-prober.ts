@@ -409,8 +409,8 @@ function evaluateCommandEntrypoints(
     capabilityId: "command-entrypoints",
     probeStatus: "ok",
     details: enforceCommandProvenance
-      ? "all-twelve-commands-exclusively-owned"
-      : "all-twelve-commands-present-local-provenance-disabled",
+      ? "all-commands-exclusively-owned"
+      : "all-commands-present-local-provenance-disabled",
   };
 }
 

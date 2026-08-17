@@ -1,8 +1,8 @@
 import type { PiSourceInfo } from "./types.js";
 
 /**
- * The twelve `/weave:*` direct commands (Pi adapter contract), including child
- * inspection commands.
+ * The `/weave:*` direct commands (Pi adapter contract), including the child
+ * inspection commands and the child-extension configuration surface.
  */
 export const WEAVE_INSPECT_COMMAND_NAME = "weave:inspect" as const;
 export const WEAVE_HISTORY_COMMAND_NAME = "weave:history" as const;
@@ -11,6 +11,8 @@ export const WEAVE_CLEAR_CHILDREN_COMMAND_NAME =
   "weave:clear-children" as const;
 /** @deprecated Use the canonical entry in WEAVE_COMMAND_NAMES. */
 export const WEAVE_RECOVERY_COMMAND_NAME = "weave:recover-children" as const;
+/** Configures which Pi extensions a Weave RPC child loads. */
+export const WEAVE_PI_CONFIG_COMMAND_NAME = "weave:pi-config" as const;
 
 export const WEAVE_COMMAND_NAMES = [
   "weave:start",
@@ -27,6 +29,7 @@ export const WEAVE_COMMAND_NAMES = [
   WEAVE_DOCTOR_COMMAND_NAME,
   WEAVE_CLEAR_CHILDREN_COMMAND_NAME,
   WEAVE_RECOVERY_COMMAND_NAME,
+  WEAVE_PI_CONFIG_COMMAND_NAME,
 ] as const;
 export type WeaveCommandName = (typeof WEAVE_COMMAND_NAMES)[number];
 
@@ -49,6 +52,9 @@ const MUTATING_COMMANDS: ReadonlySet<WeaveCommandName> = new Set([
   "weave:resume",
   "weave:artifact",
   WEAVE_RECOVERY_COMMAND_NAME,
+  // Writes a durable preference that changes how every future child is
+  // spawned, so health-only mode blocks it exactly as it blocks delegation.
+  WEAVE_PI_CONFIG_COMMAND_NAME,
 ]);
 
 const IDEMPOTENT_CLEANUP_COMMANDS: ReadonlySet<WeaveCommandName> = new Set([

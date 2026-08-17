@@ -278,7 +278,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - Tests prove: default argv unchanged; explicit selection produces `--no-extensions -e <weave> -e <selected>...` in order; session flags still rejected; oversized or malformed arg lists fail closed; direct-dispatch and delegation paths both apply the provider.
     - Existing spawn tests remain green.
 
-- [ ] 12. Add the `/weave:pi-config` command and TUI
+- [x] 12. Add the `/weave:pi-config` command and TUI
   - **What**: A polished native Pi TUI that shows mandatory versus optional extensions, current selection, validation, and save/cancel, and registers as a first-class `/weave:*` command.
   - **Files**: `packages/adapters/pi/src/commands.ts`, `packages/adapters/pi/src/pi-config-ui.ts`, `packages/adapters/pi/src/extension-impl.ts`, `packages/adapters/pi/src/capability-prober.ts` (inventory message), `packages/adapters/pi/src/__tests__/pi-config-ui.test.ts`, `packages/adapters/pi/src/__tests__/commands.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`
   - **Depends on**: Tasks 9, 10, 11

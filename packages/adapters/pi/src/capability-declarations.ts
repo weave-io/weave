@@ -45,7 +45,7 @@ export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
   capabilities: [
     {
       id: "command-entrypoints",
-      description: "Exclusive ownership of the twelve /weave:* direct commands",
+      description: "Exclusive ownership of every /weave:* direct command",
       readiness: "native",
     },
     {

@@ -4671,18 +4671,19 @@ describe("createPiExtension: config activation, materialization consumption, pri
     });
   });
 
-  it("registers fourteen described commands once across extension reloads", async () => {
+  it("registers every described command once across extension reloads", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host);
     installExtension(host);
-    // Two installs × (14 /weave:* commands + /weave palette) = 30 registrations.
-    expect(host.registerCommandCalls).toHaveLength(30);
+    // Two installs × (15 /weave:* commands + /weave palette) = 32 registrations.
+    expect(host.registerCommandCalls).toHaveLength(32);
     const directNames = new Set(
       host.registerCommandCalls
         .map((call) => call.name)
         .filter((name) => name !== "weave"),
     );
-    expect(directNames.size).toBe(14);
+    expect(directNames).toContain("weave:pi-config");
+    expect(directNames.size).toBe(15);
     expect(
       host.registerCommandCalls.every(
         (call) => (call.registration.description ?? "").trim().length > 0,

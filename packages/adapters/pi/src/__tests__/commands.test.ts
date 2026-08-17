@@ -8,6 +8,7 @@ import {
   WEAVE_CLEAR_CHILDREN_COMMAND_NAME,
   WEAVE_COMMAND_NAMES,
   WEAVE_INSPECT_COMMAND_NAME,
+  WEAVE_PI_CONFIG_COMMAND_NAME,
   WEAVE_RECOVERY_COMMAND_NAME,
 } from "../commands.js";
 
@@ -32,8 +33,9 @@ describe("Pi command, history, and picker integration proof", () => {
       "weave:doctor",
       "weave:clear-children",
       "weave:recover-children",
+      "weave:pi-config",
     ]);
-    expect(new Set(WEAVE_COMMAND_NAMES).size).toBe(14);
+    expect(new Set(WEAVE_COMMAND_NAMES).size).toBe(15);
     expect(classifyWeaveCommand("weave:inspect")).toBe("read-only");
     expect(classifyWeaveCommand("weave:history")).toBe("read-only");
     expect(classifyWeaveCommand("weave:doctor")).toBe("read-only");
@@ -43,7 +45,14 @@ describe("Pi command, history, and picker integration proof", () => {
     expect(classifyWeaveCommand("weave:recover-children")).toBe("mutating");
   });
 
-
+  it("classifies child-extension configuration as mutating", async () => {
+    await Promise.resolve();
+    // The command writes a durable preference that changes how every future
+    // child is spawned, so health-only mode must block it.
+    expect(WEAVE_PI_CONFIG_COMMAND_NAME).toBe("weave:pi-config");
+    expect(WEAVE_COMMAND_NAMES).toContain(WEAVE_PI_CONFIG_COMMAND_NAME);
+    expect(classifyWeaveCommand(WEAVE_PI_CONFIG_COMMAND_NAME)).toBe("mutating");
+  });
 
   it("builds inspect options from trusted live and history breadcrumbs only", async () => {
     await Promise.resolve();
@@ -154,5 +163,4 @@ describe("Pi command, history, and picker integration proof", () => {
     });
     expect(result.isErr()).toBe(true);
   });
-
 });

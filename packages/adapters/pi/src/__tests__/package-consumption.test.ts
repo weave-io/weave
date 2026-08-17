@@ -17,7 +17,7 @@ describe("public package entry points", () => {
     expect(pkg.HOST_PACKAGE_NAME).toBe("@earendil-works/pi-coding-agent");
     expect(pkg.HOST_VERSION_FLOOR).toBe("0.81.1");
     expect("HOST_VERSION_CEILING" in pkg).toBe(false);
-    expect(pkg.WEAVE_COMMAND_NAMES).toHaveLength(14);
+    expect(pkg.WEAVE_COMMAND_NAMES).toHaveLength(15);
     expect(pkg.WEAVE_INSPECT_COMMAND_NAME).toBe("weave:inspect");
     expect(pkg.WEAVE_CLEAR_CHILDREN_COMMAND_NAME).toBe("weave:clear-children");
     expect(pkg.WEAVE_RECOVERY_COMMAND_NAME).toBe("weave:recover-children");
@@ -47,6 +47,7 @@ describe("public package entry points", () => {
       "weave:doctor",
       "weave:clear-children",
       "weave:recover-children",
+      "weave:pi-config",
     ]);
 
     const slots = new pkg.PiChildSlots();

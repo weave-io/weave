@@ -82,6 +82,12 @@ import {
   sanitizedBaseEnv,
   WEAVE_CHILD_SECRET_ENV,
 } from "./child-env.js";
+import {
+  CHILD_EXTENSION_SELECTION_KEY,
+  decodeChildExtensionSelection,
+  encodeChildExtensionSelection,
+  PI_PREFERENCE_NAMESPACE,
+} from "./child-extension-selection.js";
 import { createChildInspectionCustomComponent } from "./child-inspection-custom.js";
 import {
   createChildInspectionEditor,
@@ -266,6 +272,16 @@ import {
   type PathContainmentPort,
 } from "./path-containment.js";
 import {
+  createPiConfigComponent,
+  type PiConfigKeybindingsPort,
+  type PiConfigSaveIntent,
+  type PiConfigThemePort,
+} from "./pi-config-ui.js";
+import type {
+  PiExtensionInventory,
+  PiExtensionInventoryDegradation,
+} from "./pi-extension-inventory.js";
+import {
   type ChildExtensionArgsResolution,
   collectPiExtensionInventoryFromHost,
   resolveChildExtensionSpawnArgs,
@@ -356,6 +372,7 @@ import type {
   PiModelInfo,
   PiSessionContext,
   PiSkillInfo,
+  PiTrustState,
 } from "./types.js";
 import { makePaint, plainPaint } from "./ui-paint.js";
 import {
@@ -620,6 +637,16 @@ export interface PiExtensionDeps {
    * `InMemoryRuntimeStoreFactory`/`FailingRuntimeStoreFactory`.
    */
   readonly runtimeStoreFactory: PiRuntimeStoreFactory;
+  /**
+   * Collects the host's extension inventory for `/weave:pi-config` - injected
+   * so no test scans the developer's real `~/.pi/agent/extensions` directory.
+   * Production wiring uses `collectPiExtensionInventoryFromHost`.
+   */
+  readonly piExtensionInventory?: (input: {
+    readonly api: PiExtensionApi;
+    readonly trust: PiTrustState;
+    readonly cwd: string;
+  }) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>;
   /** Stable identity supplied by the host; unlike a generation ID it survives reload. */
   readonly parentSessionId?: (ctx: PiSessionContext) => string;
   /** Injectable ordinary-child recovery seam. Production falls back to the
@@ -2014,6 +2041,8 @@ function commandDescription(name: WeaveCommandName): string {
       return "Clear terminal Weave child history";
     case "weave:recover-children":
       return "Recover interrupted Weave children";
+    case "weave:pi-config":
+      return "Choose which Pi extensions Weave children load";
   }
 }
 
@@ -2795,6 +2824,22 @@ export function createPiExtension(
    */
   const planTaskOverlayCell: { close: (() => void) | undefined } = {
     close: undefined,
+  };
+
+  /** Same single-settlement handle for the `/weave:pi-config` overlay. */
+  const piConfigOverlayCell: { close: (() => void) | undefined } = {
+    close: undefined,
+  };
+
+  /**
+   * This generation's open Runtime Store, when the trusted project has one.
+   *
+   * `/weave:pi-config` writes a durable preference, so it needs the same store
+   * the generation already opened rather than opening a second connection of
+   * its own.
+   */
+  const runtimeStoreCell: { store: RuntimeStore | undefined } = {
+    store: undefined,
   };
 
   /**
@@ -3714,6 +3759,13 @@ export function createPiExtension(
       ctx.ui.notify(recoveryMessage, result.isErr() ? "warning" : "info");
       return;
     }
+    // Configuring the child's extension set depends on the Runtime Store and
+    // the host's extension inventory, never on a workflow, so it is handled
+    // before the workflow tracker and controller are required.
+    if (name === "weave:pi-config") {
+      await openPiConfig(pi, ctx);
+      return;
+    }
     const tracker: PiActiveWorkflowTracker = buildWorkflowTracker(ctx.cwd);
     if (name === "weave:start") {
       const operation = controller.beginOperation();
@@ -4280,6 +4332,216 @@ export function createPiExtension(
     );
   }
 
+  /**
+   * Persists one `/weave:pi-config` outcome.
+   *
+   * `inherit-all` removes the row rather than storing a record that says
+   * "default": an absent row is what every other code path already treats as
+   * the default, and keeping one representation avoids a second decode rule.
+   */
+  async function persistPiConfigIntent(
+    store: RuntimeStore,
+    intent: PiConfigSaveIntent,
+  ): Promise<Result<void, "write-failed" | "encode-failed">> {
+    if (intent.kind === "inherit-all") {
+      const removed = await store.preferences.remove(
+        PI_PREFERENCE_NAMESPACE,
+        CHILD_EXTENSION_SELECTION_KEY,
+      );
+      return removed.isOk() ? ok(undefined) : err("write-failed" as const);
+    }
+    const encoded = encodeChildExtensionSelection(intent.record);
+    if (encoded.isErr()) return err("encode-failed" as const);
+    const written = await store.preferences.set(
+      PI_PREFERENCE_NAMESPACE,
+      CHILD_EXTENSION_SELECTION_KEY,
+      encoded.value,
+    );
+    return written.isOk() ? ok(undefined) : err("write-failed" as const);
+  }
+
+  /**
+   * Opens the `/weave:pi-config` overlay: which Pi extensions a Weave RPC
+   * child loads.
+   *
+   * Every unavailable path says why rather than opening an empty overlay: a
+   * non-TUI session, a session with no Runtime Store, and a generation that
+   * has already been replaced each produce their own message. A degraded
+   * inventory still opens, read-only, because an incomplete list saved as a
+   * selection would read as "the user deselected everything missing".
+   *
+   * The selection deliberately does not affect this generation's already
+   * resolved spawn arguments; the notice says so.
+   */
+  async function openPiConfig(
+    pi: PiExtensionApi,
+    ctx: PiSessionContext,
+  ): Promise<void> {
+    if (childModeState.active) return;
+    const session = activeSession;
+    const generation = controller.getCurrentGeneration();
+    const operation = controller.beginOperation();
+    if (
+      session === undefined ||
+      generation === undefined ||
+      session.generationId !== generation.id ||
+      operation.isErr()
+    ) {
+      ctx.ui.notify(
+        "Weave child-extension configuration is unavailable in this session.",
+        "info",
+      );
+      return;
+    }
+    const handle = operation.value;
+    const authorityIsCurrent = (): boolean =>
+      activeSession?.generationId === session.generationId &&
+      handle.assertStillCurrent().isOk();
+
+    if (ctx.mode !== "tui" || ctx.ui.custom === undefined) {
+      ctx.ui.notify(
+        "Weave child-extension configuration requires Pi TUI mode.",
+        "info",
+      );
+      return;
+    }
+    const store = runtimeStoreCell.store;
+    if (store === undefined) {
+      ctx.ui.notify(
+        "The Weave Runtime Store is unavailable in this session, so the child-extension selection cannot be read or changed.",
+        "warning",
+      );
+      return;
+    }
+
+    const stored = await store.preferences.get(
+      PI_PREFERENCE_NAMESPACE,
+      CHILD_EXTENSION_SELECTION_KEY,
+    );
+    if (!authorityIsCurrent()) return;
+    if (stored.isErr()) {
+      ctx.ui.notify(
+        "Could not read the stored Weave child-extension selection.",
+        "warning",
+      );
+      return;
+    }
+    const decoded = decodeChildExtensionSelection(stored.value?.valueJson);
+
+    // Exactly the collection the spawn path uses, so the overlay can never
+    // offer an extension a child could not actually load.
+    const collect =
+      deps.piExtensionInventory ??
+      ((input: {
+        readonly api: PiExtensionApi;
+        readonly trust: PiTrustState;
+        readonly cwd: string;
+      }) =>
+        collectPiExtensionInventoryFromHost({
+          api: input.api,
+          rootExports: PiPublicExports as unknown as Readonly<
+            Record<string, unknown>
+          >,
+          trust: input.trust,
+          cwd: input.cwd,
+        }));
+    const collected = await collect({
+      api: pi,
+      trust: generation.preflight.trust,
+      cwd: ctx.cwd,
+    }).match(
+      (inventory) => ({ inventory, degraded: false }),
+      (degradation) => ({ inventory: degradation.inventory, degraded: true }),
+    );
+    if (!authorityIsCurrent()) return;
+    const readOnly = collected.degraded || collected.inventory.truncated;
+
+    // Opening replaces any overlay still mounted: the prior promise settles
+    // first, so at most one pi-config overlay is ever outstanding.
+    const previous = piConfigOverlayCell.close;
+    piConfigOverlayCell.close = undefined;
+    previous?.();
+
+    await ctx.ui.custom<void>(
+      (tui, theme, keybindings, done) => {
+        const host = tui as PiCustomOverlayTui;
+        let settled = false;
+        // The single settlement path: save, cancel, a refused payload, a stale
+        // generation, and replacement all funnel through it, and only the
+        // first caller ever reaches `done()`.
+        const settle = (): void => {
+          if (settled) return;
+          settled = true;
+          if (piConfigOverlayCell.close === settle) {
+            piConfigOverlayCell.close = undefined;
+          }
+          done(undefined);
+        };
+        piConfigOverlayCell.close = settle;
+        const component = createPiConfigComponent({
+          entries: collected.inventory.entries,
+          record: decoded.record,
+          ...(readOnly ? { readOnly: true } : {}),
+          theme: theme as PiConfigThemePort | undefined,
+          keybindings: keybindings as PiConfigKeybindingsPort | undefined,
+          getTerminalRows: () => overlayTerminalRows(tui),
+          isCurrent: authorityIsCurrent,
+          onStale: settle,
+          onCancel: () => {
+            const wasSettled = settled;
+            settle();
+            if (wasSettled || !authorityIsCurrent()) return;
+            ctx.ui.notify("Weave child-extension selection unchanged.", "info");
+          },
+          onRejected: (rejection) => {
+            deps.logger.warn(
+              { reason: rejection.reason },
+              "pi-config save payload rejected",
+            );
+            ctx.ui.notify(
+              "Weave could not save that child-extension selection.",
+              "warning",
+            );
+          },
+          onSave: (intent) => {
+            settle();
+            // The write outlives the overlay: `ctx.ui.custom()` settles first
+            // so the user is never held in a surface waiting on a database.
+            void persistPiConfigIntent(store, intent).then((written) => {
+              if (!authorityIsCurrent()) return;
+              if (written.isErr()) {
+                ctx.ui.notify(
+                  "Weave could not save the child-extension selection.",
+                  "warning",
+                );
+                return;
+              }
+              ctx.ui.notify(
+                intent.kind === "inherit-all"
+                  ? "Weave children will inherit every Pi extension again. This applies to children spawned after this session's next start, never to running children."
+                  : `Weave children will load ${intent.record.entries.length} selected extension${intent.record.entries.length === 1 ? "" : "s"} plus Weave. This applies to children spawned after this session's next start, never to running children.`,
+                "info",
+              );
+            });
+          },
+          onChange: () => {
+            host.requestRender?.();
+          },
+        });
+        return {
+          render: (width: number) => component.render(width),
+          handleInput: (data: string) => {
+            component.handleInput(data);
+          },
+          invalidate: () => {
+            component.invalidate();
+          },
+        };
+      },
+      { overlay: true },
+    );
+  }
+
   async function cyclePrimaryAgent(
     pi: PiExtensionApi,
     ctx: PiSessionContext,
@@ -4770,6 +5032,7 @@ export function createPiExtension(
       // Open the trusted project's Runtime Store once and share it between
       // telemetry and workflow lifecycle.
       let runtimeStore: RuntimeStore | undefined;
+      runtimeStoreCell.store = undefined;
       if (
         !generation.healthOnlyMode &&
         generation.preflight.trust === "trusted"
@@ -4787,6 +5050,9 @@ export function createPiExtension(
           );
         } else {
           runtimeStore = opened.value;
+          // `/weave:pi-config` reads and writes through this generation's own
+          // store rather than opening a second connection.
+          runtimeStoreCell.store = opened.value;
         }
       }
 
