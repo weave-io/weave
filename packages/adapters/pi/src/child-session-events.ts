@@ -213,6 +213,12 @@ const isArrayValue = Result.fromThrowable(
   (): OwnValueRejection => "unreadable",
 );
 
+/** `Object.keys` as a value: a proxy `ownKeys` trap can throw. */
+const ownEnumerableKeys = Result.fromThrowable(
+  (target: object): string[] => Object.keys(target),
+  (): OwnValueRejection => "unreadable",
+);
+
 /**
  * The value of an own, enumerable DATA property.
  *
@@ -727,6 +733,113 @@ const isPlainDataValue = (value: unknown, depth: number): boolean => {
 };
 
 /**
+ * Copy one already-located own enumerable data value into a fresh plain
+ * object or array. Descriptors only: a later `get` cannot invent a different
+ * member. Anything exotic is a rejection so the caller can drop that field.
+ */
+const materializePlainDataValue = (
+  value: unknown,
+  depth: number,
+): Result<unknown, OwnValueRejection> => {
+  if (value === null) return ok(null);
+  const type = typeof value;
+  if (type === "string" || type === "number" || type === "boolean") {
+    return ok(value);
+  }
+  if (type !== "object") return err("malformed");
+  if (depth >= MAX_PRESERVED_PAYLOAD_DEPTH) return err("malformed");
+
+  const prototype = Result.fromThrowable(
+    () => Object.getPrototypeOf(value) as unknown,
+    (): OwnValueRejection => "unreadable",
+  )();
+  if (prototype.isErr()) return err(prototype.error);
+
+  const arrayShaped = isArrayValue(value);
+  if (arrayShaped.isErr()) return err(arrayShaped.error);
+  const isArray = arrayShaped.value;
+  if (isArray) {
+    if (prototype.value !== Array.prototype) return err("malformed");
+  } else if (prototype.value !== Object.prototype && prototype.value !== null) {
+    return err("malformed");
+  }
+
+  const target = value as object;
+  const keys = ownEnumerableKeys(target);
+  if (keys.isErr()) return err(keys.error);
+  if (keys.value.length > MAX_CHILD_EVENT_ITEMS) return err("malformed");
+
+  if (isArray) {
+    const lengthDescriptor = ownDescriptor(target, "length");
+    if (lengthDescriptor.isErr()) return err(lengthDescriptor.error);
+    const found = lengthDescriptor.value;
+    if (
+      found === undefined ||
+      !("value" in found) ||
+      found.enumerable === true
+    ) {
+      return err("malformed");
+    }
+    const size = found.value;
+    if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) {
+      return err("malformed");
+    }
+    if (size > MAX_CHILD_EVENT_ITEMS) return err("malformed");
+    if (keys.value.length !== size) return err("malformed");
+    const items: unknown[] = [];
+    for (let index = 0; index < size; index += 1) {
+      if (keys.value[index] !== String(index)) return err("malformed");
+      const element = ownEnumerableDataValue(target, String(index));
+      if (element.isErr()) return err(element.error);
+      const nested = materializePlainDataValue(element.value, depth + 1);
+      if (nested.isErr()) return err(nested.error);
+      items.push(nested.value);
+    }
+    return ok(items);
+  }
+
+  const copy: Record<string, unknown> = {};
+  for (const key of keys.value) {
+    const member = ownEnumerableDataValue(target, key);
+    if (member.isErr()) return err(member.error);
+    const nested = materializePlainDataValue(member.value, depth + 1);
+    if (nested.isErr()) return err(nested.error);
+    copy[key] = nested.value;
+  }
+  return ok(copy);
+};
+
+/**
+ * The only record schema validation and the native-tool normalizer may see.
+ *
+ * Own enumerable DATA fields are copied into a fresh plain object. `type` is
+ * forced to the already-captured descriptor-safe primitive string, so a proxy
+ * whose `get` trap names a different kind cannot select a known parser.
+ * Accessors, inherited values, non-enumerable fields and values that are not
+ * plain data are omitted rather than read.
+ */
+const materializeObservedEventRecord = (
+  record: object,
+  eventType: string,
+): Result<Record<string, unknown>, OwnValueRejection> => {
+  const keys = ownEnumerableKeys(record);
+  if (keys.isErr()) return err(keys.error);
+  const materialized: Record<string, unknown> = { type: eventType };
+  for (const key of keys.value) {
+    if (key === "type") continue;
+    if (Object.keys(materialized).length - 1 >= MAX_CHILD_EVENT_KEYS) break;
+    const boundedName = key.slice(0, 256);
+    if (!boundedName) continue;
+    const member = ownEnumerableDataValue(record, key);
+    if (member.isErr()) continue;
+    const nested = materializePlainDataValue(member.value, 0);
+    if (nested.isErr()) continue;
+    materialized[boundedName] = nested.value;
+  }
+  return ok(materialized);
+};
+
+/**
  * Convert an unrecognised host record into the bounded unknown variant.
  *
  * Fields are read through their own property descriptors and only when they
@@ -977,18 +1090,24 @@ const parseChildSessionEvent = (value: unknown) => {
   const typeRead = ownEventTypeString(record);
   if (typeRead.isErr()) return unreadableChildEvent();
   const eventType = typeRead.value;
+  // After this copy, Zod and the normalizer never see the observed object.
+  const materialized = materializeObservedEventRecord(record, eventType);
+  if (materialized.isErr()) return unreadableChildEvent();
   if (eventType.length > 256) {
     return {
       success: true as const,
-      data: preserveUnknownChildEvent(value),
+      data: preserveUnknownChildEvent(materialized.value),
     };
   }
 
-  const normalized = normalizeNativeToolEvent(record, eventType);
+  const normalized = normalizeNativeToolEvent(materialized.value, eventType);
   const parsed = PiChildSessionEventSchema.safeParse(normalized);
   if (parsed.success) return parsed;
   if (!KNOWN_CHILD_EVENT_TYPES.has(eventType)) {
-    return { success: true as const, data: preserveUnknownChildEvent(value) };
+    return {
+      success: true as const,
+      data: preserveUnknownChildEvent(materialized.value),
+    };
   }
   return parsed;
 };
@@ -1019,13 +1138,15 @@ const unreadableChildEvent = () =>
  * the schema reaches it.
  *
  * Those throws are reachable from every step of this parser, not just one:
- * the descriptor-safe `type` read, normalization enumerating tool payloads,
- * schema validation reading every member the shapes name, and unknown-event
- * preservation enumerating the whole record. Guarding one step would leave
- * the others open, so the complete unit of work is wrapped and a hostile
- * input becomes the ordinary typed parser failure every caller already
- * handles — the overlay controller ignores the event, the replay mapper skips
- * the entry, and the RPC reader rejects the frame.
+ * the descriptor-safe `type` read, materializing own enumerable data fields,
+ * normalization enumerating tool payloads, schema validation reading every
+ * member the shapes name, and unknown-event preservation enumerating the
+ * whole record. Guarding one step would leave the others open, so the
+ * complete unit of work is wrapped and a hostile input becomes the ordinary
+ * typed parser failure every caller already handles — the overlay controller
+ * ignores the event, the replay mapper skips the entry, and the RPC reader
+ * rejects the frame. After the type is captured, only the materialized plain
+ * record is handed to the normalizer and Zod.
  *
  * Bounded, descriptor-safe semantics are unchanged: a parser-approved real Pi
  * event still parses exactly as before, since the guard only intercepts the

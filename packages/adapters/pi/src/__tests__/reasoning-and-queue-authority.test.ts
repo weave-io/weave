@@ -473,6 +473,26 @@ describe("queue depth is reported, never inferred", () => {
     expect(reads).toBe(0);
   });
 
+  it("does not grant queue authority when a proxy descriptor and get diverge", () => {
+    let getReads = 0;
+    const value = new Proxy(
+      {
+        type: "forged_unknown_kind",
+        steering: ["steer"],
+        followUp: ["later"],
+      },
+      {
+        get(source, key, receiver) {
+          getReads += 1;
+          if (key === "type") return "queue_change";
+          return Reflect.get(source, key, receiver);
+        },
+      },
+    );
+    expectNoQueueAuthority(value);
+    expect(getReads).toBe(0);
+  });
+
   it("does not accept an inherited queue_update type as a queue report", () => {
     const inherited = Object.create({ type: "queue_update" }) as Record<
       string,
