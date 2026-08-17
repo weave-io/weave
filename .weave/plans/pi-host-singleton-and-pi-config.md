@@ -319,7 +319,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - `bun run docs:check-links` passes.
     - `bun run changeset:check` passes.
 
-- [ ] 14. Run full repository validation
+- [x] 14. Run full repository validation
   - **What**: Prove the whole workspace is green after all repository changes.
   - **Depends on**: Tasks 1–13
   - **Implementation outline**:
