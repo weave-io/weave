@@ -425,6 +425,64 @@ describe("queue depth is reported, never inferred", () => {
     expect(parsed(inherited).type).toBe("unknown");
   });
 
+  const expectNoQueueAuthority = (value: unknown): void => {
+    expect(() => parsePiChildSessionEvent(value)).not.toThrow();
+    const result = parsePiChildSessionEvent(value);
+    if (result.success) {
+      expect(result.data.type).not.toBe("queue_change");
+      expect(serialized(result.data)).not.toContain("queue_change");
+      const state = reduceAll([value]);
+      expect(state.queue).toBeUndefined();
+      expect(
+        state.entries.find((candidate) => candidate.kind === "queue"),
+      ).toBeUndefined();
+      expect(renderPiChildTranscriptLines(state, 80).join("\n")).not.toContain(
+        "queue:",
+      );
+      const entry = projectLiveEntry(result.data, 0, false);
+      expect(entry?.kind).not.toBe("queue");
+      const rebuilt = transcriptFromOverlayEntries(
+        entry === undefined ? [] : [entry],
+      );
+      expect(rebuilt.queue).toBeUndefined();
+      expect(
+        rebuilt.entries.find((candidate) => candidate.kind === "queue"),
+      ).toBeUndefined();
+      return;
+    }
+    expect(result.success).toBe(false);
+    const empty = transcriptFromOverlayEntries([]);
+    expect(empty.queue).toBeUndefined();
+  };
+
+  it("does not invoke a type getter and never states a queue from it", () => {
+    let reads = 0;
+    const value: Record<string, unknown> = {
+      steering: ["steer"],
+      followUp: ["later"],
+    };
+    Object.defineProperty(value, "type", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        reads += 1;
+        return "queue_update";
+      },
+    });
+    expectNoQueueAuthority(value);
+    expect(reads).toBe(0);
+  });
+
+  it("does not accept an inherited queue_update type as a queue report", () => {
+    const inherited = Object.create({ type: "queue_update" }) as Record<
+      string,
+      unknown
+    >;
+    inherited.steering = ["steer"];
+    inherited.followUp = ["later"];
+    expectNoQueueAuthority(inherited);
+  });
+
   it("carries a partial report as unknown through the transcript, its render and a rebuilt replay", () => {
     const partial = { type: "queue_update", steering: [] };
     const state = reduceAll([partial]);

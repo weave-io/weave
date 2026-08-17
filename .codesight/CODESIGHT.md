@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 306 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~33,300 tokens. Without it, AI exploration would cost ~98,600 tokens. **Saves ~65,300 tokens per conversation.**
-> **Last scanned:** 2026-08-17 19:13 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 305 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~33,200 tokens. Without it, AI exploration would cost ~98,300 tokens. **Saves ~65,100 tokens per conversation.**
+> **Last scanned:** 2026-08-17 19:32 — re-run after significant changes
 
 ---
 
@@ -600,7 +600,6 @@
   - type WeaveCommandClassification
   - const WEAVE_INSPECT_COMMAND_NAME
   - _...7 more_
-- `packages/adapters/pi/src/config-activation-diagnostics.ts` — function projectConfigLoadIssues: (errors, projectRoot) => readonly string[]
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -608,7 +607,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...8 more_
+  - _...7 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
