@@ -737,6 +737,33 @@ export class BunPiHostModuleEnvironment implements PiHostModuleEnvironmentPort {
   }
 }
 
+let recordedExtensionEntryPath: string | undefined;
+
+/**
+ * Set-once record of the loader entry's own absolute path.
+ *
+ * The thin entry is the only module that knows where Pi actually loaded this
+ * adapter from, and it is the only caller. The fact is stored, never derived:
+ * a caller that passes a non-string (a host whose module loader does not
+ * expose one) or an unsafe path records nothing, and a later call can never
+ * replace a fact already latched. Consumers treat an absent value as "no
+ * loader fact", which is exactly how the inventory refuses to guess.
+ *
+ * The value is a filesystem path, so it must never reach health output or a
+ * log line.
+ */
+export function recordPiExtensionEntryPath(path: unknown): void {
+  if (recordedExtensionEntryPath !== undefined) return;
+  if (typeof path !== "string") return;
+  if (!isSafeAbsoluteHostPath(path)) return;
+  recordedExtensionEntryPath = path;
+}
+
+/** The loader entry path recorded by the extension entry, if any. */
+export function getPiExtensionEntryPath(): string | undefined {
+  return recordedExtensionEntryPath;
+}
+
 let recordedHostModuleOutcome: PiHostModuleOutcome | undefined;
 
 /**

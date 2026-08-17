@@ -11,10 +11,12 @@ import {
   deriveHostPackageRoot,
   escapeExactPathRegExp,
   exactPathLoadFilter,
+  getPiExtensionEntryPath,
   PI_HOST_MODULE_REDIRECT_DISABLED_REASON,
   type PiHostModuleEnvironmentError,
   type PiHostModuleEnvironmentPort,
   type PiHostModuleOutcome,
+  recordPiExtensionEntryPath,
   resolveHostModules,
   WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT_ENV,
 } from "../host-module-loader.js";
@@ -412,5 +414,45 @@ describe("resolveHostModules", () => {
       "host-root-unproven",
       "host-root-unproven",
     ]);
+  });
+});
+
+/**
+ * The latch is process-wide by design, and a sibling suite legitimately
+ * records into it. Every assertion here is therefore written against the
+ * value observed on entry, so the suite proves the same rules whichever file
+ * runs first.
+ */
+describe("recordPiExtensionEntryPath", () => {
+  const FIRST = "/opt/weave/dist/extension.js";
+  const LATER = "/tmp/other/dist/extension.js";
+
+  it("records nothing for a value that is not a safe absolute path", () => {
+    const before = getPiExtensionEntryPath();
+    for (const unusable of [
+      undefined,
+      null,
+      42,
+      "",
+      "dist/extension.js",
+      "/opt/weave/../weave/dist/extension.js",
+      "/opt/weave/./dist/extension.js",
+      "/opt/weave/dist/exten\0sion.js",
+      "C:\\weave\\dist\\extension.js",
+    ]) {
+      recordPiExtensionEntryPath(unusable);
+    }
+    expect(getPiExtensionEntryPath()).toBe(before);
+  });
+
+  it("latches the first safe path and ignores every later one", () => {
+    const before = getPiExtensionEntryPath();
+    recordPiExtensionEntryPath(FIRST);
+    const latched = getPiExtensionEntryPath();
+    expect(latched).toBe(before ?? FIRST);
+
+    // A second load, a moved copy, or a hostile caller cannot replace it.
+    recordPiExtensionEntryPath(LATER);
+    expect(getPiExtensionEntryPath()).toBe(latched);
   });
 });

@@ -2,32 +2,35 @@
  * The impure edge of the child-extension selection stack (Pi adapter
  * contract).
  *
- * Two things live here, and nothing else:
+ * Three things live here, and nothing else:
  *
  * - {@link createBunPiExtensionInventoryPort}, the concrete read-only host
- *   port `collectPiExtensionInventory` consumes. It reads loaded command and
- *   tool provenance through injected host accessors and scans the agent and
- *   project extension directories with `Bun.Glob`. It never loads, evaluates,
- *   installs, updates, or network-resolves an extension.
+ *   port `collectPiExtensionInventory` consumes. It forwards loaded command
+ *   and tool provenance plus configured-package evidence through injected
+ *   host accessors, and scans the agent and project extension directories
+ *   with `Bun.Glob`.
+ * - {@link collectPiExtensionInventoryFromHost}, the production assembly:
+ *   it builds those accessors from Pi's own public surfaces and proves which
+ *   inventory path is this loader's own entry file.
  * - {@link resolveChildExtensionSpawnArgs}, the once-per-generation resolution
  *   that turns the stored preference plus that inventory into the argv slice
  *   `PiRpcChild` appends to a child spawn.
  *
- * The port deliberately omits `configuredPackages`/`installedPackagePath`.
- * Pi's `DefaultPackageManager` is constructible only with a `SettingsManager`
- * instance this extension is never handed, and building a second one would
- * duplicate host state to gain evidence the loaded-source scan already
- * provides for every package extension that registers a command or a tool.
- * The omission surfaces as an ordinary inventory degradation reason, not an
- * error.
+ * Package evidence comes from Pi's exported `SettingsManager` and
+ * `DefaultPackageManager`, constructed read-only for the current project and
+ * used for exactly two calls: `listConfiguredPackages()` and
+ * `getInstalledPath()`. Nothing here resolves, installs, updates, removes, or
+ * writes settings, and nothing reaches the network. A host that does not
+ * export those surfaces simply degrades, as it always did.
  *
- * Everything fallible returns `Result`/`ResultAsync`, nothing throws on an
- * expected path, and nothing here logs: the caller decides what surfaces.
- * Diagnostics carry counts and closed reason codes, never ids or paths.
+ * Nothing here loads or evaluates another extension. Everything fallible
+ * returns `Result`/`ResultAsync`, nothing throws on an expected path, and
+ * nothing here logs: the caller decides what surfaces. Diagnostics carry
+ * counts and closed reason codes, never ids or paths.
  */
 import { join } from "node:path";
 import type { RuntimeStore } from "@weaveio/weave-engine";
-import { okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
 import {
   CHILD_EXTENSION_SELECTION_KEY,
   type ChildExtensionPlan,
@@ -37,16 +40,20 @@ import {
   PI_PREFERENCE_NAMESPACE,
   resolveChildExtensionPlan,
 } from "./child-extension-selection.js";
-import type {
-  PiExtensionInventory,
-  PiExtensionInventoryDegradation,
-  PiExtensionInventoryDegradationReason,
-  PiExtensionInventoryDirectoryEntry,
-  PiExtensionInventoryPort,
-  PiExtensionInventoryPortError,
-  PiExtensionInventoryToolInfo,
+import { getPiExtensionEntryPath } from "./host-module-loader.js";
+import {
+  collectPiExtensionInventory,
+  type PiExtensionInventory,
+  type PiExtensionInventoryConfiguredPackage,
+  type PiExtensionInventoryDegradation,
+  type PiExtensionInventoryDegradationReason,
+  type PiExtensionInventoryDirectoryEntry,
+  type PiExtensionInventoryPort,
+  type PiExtensionInventoryPortError,
+  type PiExtensionInventoryToolInfo,
+  WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
 } from "./pi-extension-inventory.js";
-import type { PiCommandInfo } from "./types.js";
+import type { PiCommandInfo, PiToolInfo, PiTrustState } from "./types.js";
 
 /** Bound on names read from one directory before the listing is cut short. */
 const MAX_SCANNED_DIRECTORY_NAMES = 256;
@@ -59,8 +66,24 @@ const MAX_SCANNED_DIRECTORY_NAMES = 256;
 export interface BunPiExtensionInventoryHost {
   /** `pi.getCommands()`. */
   readonly commands?: () => readonly PiCommandInfo[];
-  /** `ctx.getAllTools()`, projected to provenance only. */
+  /** `pi.getAllTools()`, projected to provenance only. */
   readonly tools?: () => readonly PiExtensionInventoryToolInfo[];
+  /**
+   * `PackageManager.listConfiguredPackages()`. `undefined` means the host
+   * answered with something this adapter cannot read, which is a failure,
+   * not an empty list.
+   */
+  readonly configuredPackages?: () =>
+    | readonly PiExtensionInventoryConfiguredPackage[]
+    | undefined;
+  /**
+   * `PackageManager.getInstalledPath(source, scope)`. `undefined` is the
+   * ordinary "configured but not installed" answer, never a failure.
+   */
+  readonly installedPackagePath?: (
+    source: string,
+    scope: "user" | "project",
+  ) => string | undefined;
   /** `getAgentDir()`. */
   readonly agentDirectory?: () => string;
 }
@@ -139,13 +162,396 @@ export function createBunPiExtensionInventoryPort(
       );
     },
   };
-  const { commands, tools, agentDirectory } = host;
+  const {
+    commands,
+    tools,
+    configuredPackages,
+    installedPackagePath,
+    agentDirectory,
+  } = host;
   if (commands !== undefined) port.commands = () => callHost(commands);
   if (tools !== undefined) port.tools = () => callHost(tools);
+  if (configuredPackages !== undefined) {
+    port.configuredPackages = () =>
+      callHost(configuredPackages).andThen((value) =>
+        value === undefined
+          ? errAsync<never, PiExtensionInventoryPortError>({
+              type: "HostCallFailed",
+            })
+          : okAsync(value),
+      );
+  }
+  if (installedPackagePath !== undefined) {
+    port.installedPackagePath = (source, scope) =>
+      callHost(() => installedPackagePath(source, scope)).andThen((value) =>
+        value === undefined
+          ? errAsync<never, PiExtensionInventoryPortError>({ type: "NotFound" })
+          : okAsync(value),
+      );
+  }
   if (agentDirectory !== undefined) {
     port.agentDirectory = () => callHost(agentDirectory);
   }
   return port;
+}
+
+// ---------------------------------------------------------------------------
+// Production host surfaces
+// ---------------------------------------------------------------------------
+
+/** Pi root export names this module reads. Read-only, never invoked blindly. */
+const PI_SETTINGS_MANAGER_EXPORT = "SettingsManager";
+const PI_PACKAGE_MANAGER_EXPORT = "DefaultPackageManager";
+const PI_AGENT_DIRECTORY_EXPORT = "getAgentDir";
+
+/**
+ * The two read-only `PackageManager` members this adapter is allowed to use.
+ * Naming only these keeps `resolve`, `install`, `update`, `remove`, and every
+ * settings mutation unreachable from this module by construction.
+ */
+export interface PiReadOnlyPackageManager {
+  listConfiguredPackages(): unknown;
+  getInstalledPath(source: string, scope: "user" | "project"): unknown;
+}
+
+/** The extension-API members the inventory reads. Both are optional. */
+export interface PiInventoryExtensionApi {
+  getCommands?: () => readonly PiCommandInfo[];
+  getAllTools?: () => readonly PiToolInfo[];
+}
+
+export interface PiExtensionInventoryHostInput {
+  /** The extension API object Pi handed this extension. */
+  readonly api: PiInventoryExtensionApi;
+  /** Pi's public root exports (`import * as ...`), read only. */
+  readonly rootExports?: Readonly<Record<string, unknown>>;
+  /** Absolute project root; scopes settings and project package lookups. */
+  readonly cwd: string;
+  /** Project trust exactly as this generation proved it. */
+  readonly trust: PiTrustState;
+}
+
+type HostFunction = (...args: readonly unknown[]) => unknown;
+
+/** Reads one callable member from an object or class, prototype included. */
+function readHostFunction(
+  target: unknown,
+  name: string,
+): HostFunction | undefined {
+  if (target === null) return undefined;
+  if (typeof target !== "object" && typeof target !== "function") {
+    return undefined;
+  }
+  const value = (target as Record<string, unknown>)[name];
+  return typeof value === "function" ? (value as HostFunction) : undefined;
+}
+
+/** Calls a host function once, defensively, and keeps a throw off the stack. */
+function callHostFunction(
+  target: unknown,
+  call: HostFunction,
+  args: readonly unknown[],
+): unknown {
+  return Result.fromThrowable(
+    () => call.apply(target, [...args]),
+    () => undefined,
+  )().unwrapOr(undefined);
+}
+
+/**
+ * Reads `getAgentDir()` once. The value is needed eagerly for the package
+ * manager, so a host that lacks the export or answers with a non-string is
+ * reported as an absent surface rather than a failing one.
+ */
+function readAgentDirectory(
+  rootExports: Readonly<Record<string, unknown>> | undefined,
+): string | undefined {
+  if (rootExports === undefined) return undefined;
+  const getAgentDir = readHostFunction(rootExports, PI_AGENT_DIRECTORY_EXPORT);
+  if (getAgentDir === undefined) return undefined;
+  const value = callHostFunction(rootExports, getAgentDir, []);
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Builds Pi's own package manager for read-only questions.
+ *
+ * `SettingsManager.create` reads the global and project settings files, and
+ * `DefaultPackageManager`'s constructor only stores what it is given, so this
+ * duplicates no host lifecycle and mutates nothing. Project trust is passed
+ * through unchanged: an untrusted project must not have its settings adopted
+ * as trusted here.
+ */
+export function createPiReadOnlyPackageManager(input: {
+  readonly rootExports?: Readonly<Record<string, unknown>>;
+  readonly cwd: string;
+  readonly agentDir: string;
+  readonly trust: PiTrustState;
+}): PiReadOnlyPackageManager | undefined {
+  const rootExports = input.rootExports;
+  if (rootExports === undefined) return undefined;
+  const settingsManagerClass = rootExports[PI_SETTINGS_MANAGER_EXPORT];
+  const create = readHostFunction(settingsManagerClass, "create");
+  const packageManagerClass = rootExports[PI_PACKAGE_MANAGER_EXPORT];
+  if (create === undefined || typeof packageManagerClass !== "function") {
+    return undefined;
+  }
+
+  const settingsManager = callHostFunction(settingsManagerClass, create, [
+    input.cwd,
+    input.agentDir,
+    { projectTrusted: input.trust === "trusted" },
+  ]);
+  if (settingsManager === undefined || settingsManager === null) {
+    return undefined;
+  }
+
+  const constructed = Result.fromThrowable(
+    () =>
+      Reflect.construct(
+        packageManagerClass as new (
+          options: unknown,
+        ) => unknown,
+        [
+          {
+            cwd: input.cwd,
+            agentDir: input.agentDir,
+            settingsManager,
+          },
+        ],
+      ) as unknown,
+    () => undefined,
+  )();
+  if (constructed.isErr()) return undefined;
+  const manager = constructed.value;
+  const list = readHostFunction(manager, "listConfiguredPackages");
+  const installedPath = readHostFunction(manager, "getInstalledPath");
+  if (list === undefined || installedPath === undefined) return undefined;
+  return {
+    listConfiguredPackages: () => list.call(manager),
+    getInstalledPath: (source, scope) =>
+      installedPath.call(manager, source, scope),
+  };
+}
+
+/** Projects Pi's `ConfiguredPackage[]`; `undefined` marks an unreadable answer. */
+export function projectConfiguredPackages(
+  value: unknown,
+): readonly PiExtensionInventoryConfiguredPackage[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const packages: PiExtensionInventoryConfiguredPackage[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const record = item as Record<string, unknown>;
+    const source = record.source;
+    const scope = record.scope;
+    if (typeof source !== "string") continue;
+    if (scope !== "user" && scope !== "project") continue;
+    const installedPath = record.installedPath;
+    packages.push({
+      source,
+      scope,
+      ...(typeof installedPath === "string" ? { installedPath } : {}),
+    });
+  }
+  return packages;
+}
+
+/**
+ * Builds every host accessor the inventory can have from Pi's public
+ * surfaces. A surface Pi does not expose is left out, which the collector
+ * reports as an ordinary degradation reason instead of an error.
+ */
+export function createPiExtensionInventoryHost(
+  input: PiExtensionInventoryHostInput,
+): BunPiExtensionInventoryHost {
+  const host: {
+    commands?: () => readonly PiCommandInfo[];
+    tools?: () => readonly PiExtensionInventoryToolInfo[];
+    configuredPackages?: () =>
+      | readonly PiExtensionInventoryConfiguredPackage[]
+      | undefined;
+    installedPackagePath?: (
+      source: string,
+      scope: "user" | "project",
+    ) => string | undefined;
+    agentDirectory?: () => string;
+  } = {};
+
+  const api = input.api;
+  const getCommands = api.getCommands;
+  if (typeof getCommands === "function") {
+    host.commands = () => getCommands.call(api);
+  }
+  const getAllTools = api.getAllTools;
+  if (typeof getAllTools === "function") {
+    host.tools = () => getAllTools.call(api);
+  }
+
+  const agentDir = readAgentDirectory(input.rootExports);
+  if (agentDir !== undefined) host.agentDirectory = () => agentDir;
+
+  const packageManager =
+    agentDir === undefined
+      ? undefined
+      : createPiReadOnlyPackageManager({
+          ...(input.rootExports === undefined
+            ? {}
+            : { rootExports: input.rootExports }),
+          cwd: input.cwd,
+          agentDir,
+          trust: input.trust,
+        });
+  if (packageManager !== undefined) {
+    host.configuredPackages = () =>
+      projectConfiguredPackages(packageManager.listConfiguredPackages());
+    host.installedPackagePath = (source, scope) => {
+      const path = packageManager.getInstalledPath(source, scope);
+      return typeof path === "string" ? path : undefined;
+    };
+  }
+
+  return host;
+}
+
+// ---------------------------------------------------------------------------
+// Own-entry identity
+// ---------------------------------------------------------------------------
+
+/** Bound on candidate paths probed for filesystem identity in one collection. */
+export const MAX_OWN_ENTRY_IDENTITY_PROBES = 64;
+
+/**
+ * Opaque filesystem identity of one path, following symlinks. Two paths with
+ * the same identity are the same file.
+ */
+export type PiExtensionFileIdentity = string;
+
+export type PiExtensionFileIdentifier = (
+  path: string,
+) => Promise<PiExtensionFileIdentity | undefined>;
+
+/** Production identity: device plus inode, resolved through symlinks. */
+export const identifyExtensionFile: PiExtensionFileIdentifier = async (
+  path,
+) => {
+  const stat = await Bun.file(path)
+    .stat()
+    .catch(() => undefined);
+  if (stat === undefined) return undefined;
+  const { dev, ino } = stat;
+  if (!Number.isFinite(dev) || !Number.isFinite(ino)) return undefined;
+  return `${dev}:${ino}`;
+};
+
+/**
+ * Resolves the loader's own entry path *as the host reports it*.
+ *
+ * Pi records the path it discovered — under the local development setup that
+ * is the symlinked `<agentDir>/extensions/...` path — while the loader knows
+ * only the path its own module resolved to. Comparing the two by filesystem
+ * identity proves sameness without guessing, so the override-based mandatory
+ * mark lands on the entry the inventory actually holds. When nothing is
+ * proven, the recorded path is returned unchanged and exact matching applies.
+ */
+export async function resolveOwnExtensionEntryPath(input: {
+  readonly recordedEntryPath?: string;
+  readonly candidatePaths: readonly string[];
+  readonly identify: PiExtensionFileIdentifier;
+}): Promise<string | undefined> {
+  const recorded = input.recordedEntryPath;
+  if (recorded === undefined) return undefined;
+  if (!isSafeChildExtensionPath(recorded)) return undefined;
+
+  const candidates: string[] = [];
+  for (const path of input.candidatePaths) {
+    if (path === recorded) return recorded;
+    if (!isSafeChildExtensionPath(path)) continue;
+    if (candidates.includes(path)) continue;
+    candidates.push(path);
+    if (candidates.length >= MAX_OWN_ENTRY_IDENTITY_PROBES) break;
+  }
+  if (candidates.length === 0) return recorded;
+
+  const ownIdentity = await input.identify(recorded).catch(() => undefined);
+  if (ownIdentity === undefined) return recorded;
+  for (const candidate of candidates) {
+    const identity = await input.identify(candidate).catch(() => undefined);
+    if (identity !== undefined && identity === ownIdentity) return candidate;
+  }
+  return recorded;
+}
+
+function hostCandidatePaths(host: BunPiExtensionInventoryHost): string[] {
+  const paths: string[] = [];
+  const commands = host.commands;
+  if (commands !== undefined) {
+    const value = callHostFunction(host, commands, []);
+    if (Array.isArray(value)) {
+      for (const command of value as readonly PiCommandInfo[]) {
+        const path = command?.sourceInfo?.path;
+        if (typeof path === "string") paths.push(path);
+      }
+    }
+  }
+  const tools = host.tools;
+  if (tools !== undefined) {
+    const value = callHostFunction(host, tools, []);
+    if (Array.isArray(value)) {
+      for (const tool of value as readonly PiExtensionInventoryToolInfo[]) {
+        const path = tool?.sourceInfo?.path;
+        if (typeof path === "string") paths.push(path);
+      }
+    }
+  }
+  return paths;
+}
+
+export interface CollectPiExtensionInventoryFromHostInput
+  extends PiExtensionInventoryHostInput {
+  /** Isolated environment table. Production reads `Bun.env`. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Test seam for the loader fact. Production reads the set-once accessor. */
+  readonly ownEntryPath?: string;
+  /** Test seam for filesystem identity. Production stats the real file. */
+  readonly identify?: PiExtensionFileIdentifier;
+}
+
+/**
+ * The production collection: Pi's public surfaces, this loader's own entry
+ * fact, and the bounded read-only scans, assembled once.
+ *
+ * The identity probes run only while the unsafe provenance override is
+ * exactly `1`; with ordinary provenance enforcement the adapter proves itself
+ * from `sourceInfo` alone and no path comparison is needed.
+ */
+export function collectPiExtensionInventoryFromHost(
+  input: CollectPiExtensionInventoryFromHostInput,
+): ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation> {
+  const host = createPiExtensionInventoryHost(input);
+  const port = createBunPiExtensionInventoryPort(host);
+  const env = input.env ?? Bun.env;
+  const recordedEntryPath = input.ownEntryPath ?? getPiExtensionEntryPath();
+  const overrideActive =
+    env[WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV] === "1";
+  const ownEntryPath = overrideActive
+    ? ResultAsync.fromSafePromise(
+        resolveOwnExtensionEntryPath({
+          ...(recordedEntryPath === undefined ? {} : { recordedEntryPath }),
+          candidatePaths: hostCandidatePaths(host),
+          identify: input.identify ?? identifyExtensionFile,
+        }).catch(() => recordedEntryPath),
+      )
+    : okAsync(recordedEntryPath);
+
+  return ownEntryPath.andThen((entryPath) =>
+    collectPiExtensionInventory(port, {
+      trust: input.trust,
+      cwd: input.cwd,
+      ...(entryPath === undefined ? {} : { ownEntryPath: entryPath }),
+      ...(input.env === undefined ? {} : { env: input.env }),
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------

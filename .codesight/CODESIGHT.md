@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 311 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~34,000 tokens. Without it, AI exploration would cost ~99,900 tokens. **Saves ~65,900 tokens per conversation.**
-> **Last scanned:** 2026-08-17 22:14 — re-run after significant changes
+> **Token savings:** this file is ~34,100 tokens. Without it, AI exploration would cost ~99,900 tokens. **Saves ~65,800 tokens per conversation.**
+> **Last scanned:** 2026-08-17 22:43 — re-run after significant changes
 
 ---
 
@@ -715,7 +715,7 @@
   - function renderHostModuleProofLine: (outcome) => string
   - function maybeWriteHostModuleProofLine: (outcome, options?) => boolean
   - function resolveHostModules: (env, options?) => ResultAsync<PiHostModuleOutcome, never>
-  - _...18 more_
+  - _...20 more_
 - `packages/adapters/pi/src/host-module-redirect.ts`
   - function hostEntrySpecifierFor: (specifier) => string
   - function isSafeAbsoluteHostPath: (value) => boolean
@@ -760,12 +760,13 @@
   - _...11 more_
 - `packages/adapters/pi/src/pi-extension-inventory-port.ts`
   - function createBunPiExtensionInventoryPort: (host) => PiExtensionInventoryPort
-  - function renderChildExtensionArgs: (plan) => readonly string[]
-  - function resolveChildExtensionSpawnArgs: (input) => ResultAsync<ChildExtensionArgsResolution, never>
-  - interface BunPiExtensionInventoryHost
-  - interface ChildExtensionArgsDiagnostics
-  - interface ChildExtensionArgsResolution
-  - _...2 more_
+  - function createPiReadOnlyPackageManager: (input, unknown>>;
+  readonly cwd) => PiReadOnlyPackageManager | undefined
+  - function projectConfiguredPackages: (value) => readonly PiExtensionInventoryConfiguredPackage[] | undefined
+  - function createPiExtensionInventoryHost: (input) => BunPiExtensionInventoryHost
+  - function resolveOwnExtensionEntryPath: (input) => Promise<string | undefined>
+  - function collectPiExtensionInventoryFromHost: (input) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
+  - _...15 more_
 - `packages/adapters/pi/src/pi-extension-inventory.ts`
   - function collectPiExtensionInventory: (port, options) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
   - interface PiExtensionInventoryDirectoryEntry
@@ -924,7 +925,7 @@
   - interface PiModelInfo
   - interface PiModelRegistry
   - interface PiSkillInfo
-  - _...38 more_
+  - _...39 more_
 - `packages/adapters/pi/src/ui-paint.ts`
   - function makePaint: (theme) => Paint
   - function plainPaint: () => Paint

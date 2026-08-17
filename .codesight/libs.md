@@ -704,7 +704,7 @@
   - function renderHostModuleProofLine: (outcome) => string
   - function maybeWriteHostModuleProofLine: (outcome, options?) => boolean
   - function resolveHostModules: (env, options?) => ResultAsync<PiHostModuleOutcome, never>
-  - _...18 more_
+  - _...20 more_
 - `packages/adapters/pi/src/host-module-redirect.ts`
   - function hostEntrySpecifierFor: (specifier) => string
   - function isSafeAbsoluteHostPath: (value) => boolean
@@ -749,12 +749,13 @@
   - _...11 more_
 - `packages/adapters/pi/src/pi-extension-inventory-port.ts`
   - function createBunPiExtensionInventoryPort: (host) => PiExtensionInventoryPort
-  - function renderChildExtensionArgs: (plan) => readonly string[]
-  - function resolveChildExtensionSpawnArgs: (input) => ResultAsync<ChildExtensionArgsResolution, never>
-  - interface BunPiExtensionInventoryHost
-  - interface ChildExtensionArgsDiagnostics
-  - interface ChildExtensionArgsResolution
-  - _...2 more_
+  - function createPiReadOnlyPackageManager: (input, unknown>>;
+  readonly cwd) => PiReadOnlyPackageManager | undefined
+  - function projectConfiguredPackages: (value) => readonly PiExtensionInventoryConfiguredPackage[] | undefined
+  - function createPiExtensionInventoryHost: (input) => BunPiExtensionInventoryHost
+  - function resolveOwnExtensionEntryPath: (input) => Promise<string | undefined>
+  - function collectPiExtensionInventoryFromHost: (input) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
+  - _...15 more_
 - `packages/adapters/pi/src/pi-extension-inventory.ts`
   - function collectPiExtensionInventory: (port, options) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
   - interface PiExtensionInventoryDirectoryEntry
@@ -913,7 +914,7 @@
   - interface PiModelInfo
   - interface PiModelRegistry
   - interface PiSkillInfo
-  - _...38 more_
+  - _...39 more_
 - `packages/adapters/pi/src/ui-paint.ts`
   - function makePaint: (theme) => Paint
   - function plainPaint: () => Paint

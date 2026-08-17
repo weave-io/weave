@@ -265,10 +265,9 @@ import {
   BunPathContainmentPort,
   type PathContainmentPort,
 } from "./path-containment.js";
-import { collectPiExtensionInventory } from "./pi-extension-inventory.js";
 import {
   type ChildExtensionArgsResolution,
-  createBunPiExtensionInventoryPort,
+  collectPiExtensionInventoryFromHost,
   resolveChildExtensionSpawnArgs,
 } from "./pi-extension-inventory-port.js";
 import {
@@ -4803,17 +4802,20 @@ export function createPiExtension(
         const resolved: ChildExtensionArgsResolution =
           await resolveChildExtensionSpawnArgs({
             store: runtimeStore,
+            // Every public host surface the inventory can read is wired
+            // here: loaded commands and tools, Pi's own configured-package
+            // evidence, the agent directory, and this loader's own entry
+            // fact. A surface the host does not expose degrades; a surface it
+            // does expose is never left unread.
             collectInventory: () =>
-              collectPiExtensionInventory(
-                createBunPiExtensionInventoryPort({
-                  commands: () => pi.getCommands(),
-                  agentDirectory: () => PiPublicExports.getAgentDir(),
-                }),
-                {
-                  trust: generation.preflight.trust,
-                  cwd: ctx.cwd,
-                },
-              ),
+              collectPiExtensionInventoryFromHost({
+                api: pi,
+                rootExports: PiPublicExports as unknown as Readonly<
+                  Record<string, unknown>
+                >,
+                trust: generation.preflight.trust,
+                cwd: ctx.cwd,
+              }),
           }).unwrapOr({ args: EMPTY_CHILD_EXTENSION_ARGS });
         if (!startupOwnsGeneration()) {
           void generationResources.dispose();

@@ -89,6 +89,15 @@ export interface PiSkillInfo {
   readonly sourceInfo?: PiSourceInfo;
 }
 
+/**
+ * One entry from `ExtensionAPI.getAllTools()`. Only the provenance this
+ * adapter reads is projected; Pi's own `ToolInfo` carries more.
+ */
+export interface PiToolInfo {
+  readonly name: string;
+  readonly sourceInfo?: PiSourceInfo;
+}
+
 /** The subset of Pi's `BuildSystemPromptOptions` this adapter reads. */
 export interface PiBuildSystemPromptOptions {
   readonly skills?: readonly PiSkillInfo[];
@@ -578,6 +587,14 @@ export interface PiExtensionApi {
   /** Reads and changes Pi's active tool list. */
   getActiveTools(): readonly string[];
   setActiveTools(names: readonly string[]): void;
+  /**
+   * Reads every configured tool with its `sourceInfo`
+   * (`ExtensionAPI.getAllTools`). Pi has exposed it publicly since the
+   * declared host floor, but it stays optional here for the same reason
+   * every other host surface does: a host gap must degrade into typed
+   * evidence, never an exception.
+   */
+  getAllTools?: () => readonly PiToolInfo[];
   /** Injects a custom context message without impersonating the user. */
   sendMessage(
     message: {
