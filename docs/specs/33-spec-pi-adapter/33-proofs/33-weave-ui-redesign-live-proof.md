@@ -1,9 +1,43 @@
 # Weave UI redesign real-harness live proof
 
-Status: **16 of 17 matrix items proven at the tested bytes — item `d` carried
-over from the first attempt and not re-observed**
+Status: **PASS by accepted evidence chaining — 16 of 17 matrix items observed at
+the tested bytes `7596103`, and item `d` carried over from the first attempt at
+`600bd88`**
 
 Date: 2026-08-16 (retry; supersedes the first attempt recorded the same day)
+
+## Conclusion and the basis for it
+
+This record concludes **PASS**. The conclusion rests on three separate facts,
+and the reader should keep them separate:
+
+1. Sixteen matrix items — `a`, `b`, `c`, `e`, `f`, `g`, `h`, `i`, `j`, `k`, `l`,
+   `m`, `n`, `o`, `p`, `q` — were observed live at the exact subject bytes
+   `7596103`.
+2. Item `d`, the failed settlement, was observed live in its own fresh pane at
+   the earlier subject `600bd88`. It was **not** re-observed at `7596103`. This
+   retry could not induce a genuine terminal provider failure; the attempts and
+   their real outcomes are recorded under “Item `d`: failure injection that did
+   not reproduce”.
+3. The repair between `600bd88` and `7596103` does not touch the code that item
+   `d` exercises. The diff changes only
+   `child-overlay-component.ts`, `child-overlay-controller.ts`,
+   `child-overlay-input-modes.ts`, `child-overlay-pi-native.ts`,
+   `child-overlay-search.ts`, `child-overlay-window.ts`, and
+   `child-session-events.ts` (queue-event normalization), plus a regression
+   test and docs. Provider-error projection (`child-provider-error.ts`,
+   `child-provider-error-render.ts`), settlement recording
+   (`delegation-controller.ts`, `repeated-settlement-validator.ts`), and failed
+   card rendering (`child-card-model.ts`, `child-card-render.ts`) are byte-identical
+   across the two subjects.
+
+**The user explicitly accepted this chaining.** Presented with the choice, the
+user selected “Accept carried-over proof (Recommended)”, which closes the only
+remaining Task 18 blocker.
+
+That acceptance is a decision about sufficiency, not a new observation. This
+record does **not** claim that item `d` was re-observed at the final bytes, and
+a reader who needs item `d` at `7596103` will not find it here.
 
 This record covers Task 18 of
 [the Pi Weave UI redesign plan](../../../../.weave/plans/pi-weave-ui-redesign.md).
@@ -105,9 +139,10 @@ identified by scenario, not by pane id.
 | p | narrow / short terminal keeping the prompt row that says how to leave | **Pass** | At 48 columns and 15 rows the overlay rendered with the folded rail (`life`, `work`, `queue`) and kept the leave row `✕ Enter steer · ✕ q cancel · Esc close`. At 48 columns and 21 rows the live form kept `Enter steer · q cancel · Esc close`. Below the declared minimum terminal the overlay hides itself instead of drawing a corrupted frame, which is what the pane at 13 reported rows did |
 | q | Plan Rail above the editor, `Alt+A` cycling, no duplicate task footer | **Pass** | With an engine-managed workflow tracked, the rail printed `◆ WEAVE · LOOM · Alt+A cycle · tapestry-execution`, the marks row `● ◐ ○   2/3`, `┃ now   Print the word RAILPROBE-TWO`, and `┗ next  Print the word RAILPROBE-THREE`. `Alt+A` cycled to `TAPESTRY` and back to `LOOM` with the rail updating each time. Exactly one rail row, one `now` row, one `next` row, and no task footer were present |
 
-Proven at the tested bytes: `a`, `b`, `c`, `e`, `f`, `g`, `h`, `i`, `j`, `k`,
-`l`, `m`, `n`, `o`, `p`, `q` (16).
-Carried over from the first attempt: `d` (1).
+Proven at the tested bytes `7596103`: `a`, `b`, `c`, `e`, `f`, `g`, `h`, `i`,
+`j`, `k`, `l`, `m`, `n`, `o`, `p`, `q` (16).
+Carried over from the first attempt at `600bd88`, and accepted by the user as
+sufficient on the unchanged-path rationale above: `d` (1).
 
 ## Cleanup after every pane
 
@@ -133,10 +168,14 @@ Attempts to drive the child past its context budget did not fail it either: Pi's
 tool layer truncates large `bash` and `read` results, and the child compacted
 rather than erroring at 265k reported tokens.
 
-Item `d` therefore remains proven only by the first attempt, against
-`600bd88`. The provider-error projection, the settlement record, and the card's
-failed rendering are untouched by the repair commit, but this record does not
-claim them as re-observed.
+Item `d` therefore remains proven only by the first attempt, against `600bd88`.
+The provider-error projection, the settlement record, and the card's failed
+rendering are untouched by the repair commit — the diff is confined to the
+overlay files and queue-event normalization listed in “Conclusion and the basis
+for it” — but this record does not claim them as re-observed at `7596103`.
+
+The user reviewed exactly this gap and chose to accept the carried-over proof
+rather than hold Task 18 open for a failure this harness would not reproduce.
 
 ## Restoration
 

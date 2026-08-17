@@ -13,11 +13,15 @@ dist hashes, package provenance, Pi version, commands, observations, and cleanup
 
 Rows citing [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md)
 were proven on Pi `0.84.2` under an explicit user-approved version deviation,
-because Pi `0.83` was unavailable. That record has two attempts: the retry ran
-at subject `7596103` and proves sixteen of its seventeen matrix items; the
-failed-settlement item is carried over from the first attempt at `600bd88` and
-is marked as such wherever it is cited. `Partial` means part of the row was
-observed live and the rest was not; the proof record names exactly which part.
+because Pi `0.83` was unavailable. That record concludes `PASS` across two
+attempts: the retry ran at subject `7596103` and observed sixteen of its
+seventeen matrix items there, while the failed-settlement item is carried over
+from the first attempt at `600bd88` and is marked as such wherever it is cited.
+The user explicitly accepted that carry-over, because the repair between the two
+subjects does not touch provider-error projection, settlement recording, or
+failed-card rendering. No row below claims the failed card was observed at the
+final bytes. `Partial` means part of the row was observed live and the rest was
+not; the proof record names exactly which part.
 
 ## Pi 0.84.1 native-session contract
 
@@ -225,7 +229,10 @@ live row.
 redesign proof, whose retry ran at subject `7596103`. One qualification stands:
 the failed-settlement card (`S041`, `S079`) was observed only in that record's
 first attempt, at subject `600bd88`; the retry could not induce a genuine
-terminal provider failure and says so. `S042` stays `Partial` because
+terminal provider failure and says so. Those two rows pass on evidence the user
+explicitly accepted as chained across the two subjects, on the ground that the
+repair leaves the provider-error, settlement, and failed-card paths unchanged —
+not on a re-observation at the final bytes. `S042` stays `Partial` because
 control-sequence sanitization was never exercised live, and `S077` stays
 `Pending` because its `Ctrl+O` conflict route was removed with the old chrome.
 
