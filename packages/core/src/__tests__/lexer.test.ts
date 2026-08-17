@@ -253,3 +253,198 @@ describe("Lexer — errors", () => {
     expect(errors[0]?.line).toBe(2);
   });
 });
+
+describe("Lexer — triple-quoted multiline strings", () => {
+  const stringValue = (src: string): string => {
+    const result = tokenize(src);
+    expect(result.isOk()).toBe(true);
+    const token = result._unsafeUnwrap()[0];
+    expect(token?.type).toBe(TokenType.String);
+    return token?.value ?? "";
+  };
+
+  it("normalizes CRLF content and dedents on LF boundaries", () => {
+    const value = stringValue('"""\r\n  hello\r\n  world\r\n"""');
+    expect(value).toBe("hello\nworld");
+    expect(value).not.toContain("\r");
+  });
+
+  it("normalizes lone CR line endings to LF", () => {
+    const value = stringValue('"""\r  hello\r  world\r"""');
+    expect(value).toBe("hello\nworld");
+    expect(value).not.toContain("\r");
+  });
+
+  it("skips exactly one CRLF line break after the opening delimiter", () => {
+    expect(stringValue('"""\r\nhello"""')).toBe("hello");
+    // A second CRLF becomes a leading blank line, which the blank-line trim
+    // removes — the same shape LF sources produce.
+    expect(stringValue('"""\r\n\r\nhello"""')).toBe("hello");
+  });
+
+  it("skips exactly one LF line break after the opening delimiter", () => {
+    expect(stringValue('"""\nhello"""')).toBe("hello");
+  });
+
+  it("preserves interior blank lines and trims leading/trailing blank lines", () => {
+    expect(stringValue('"""\n\n  first\n\n  second\n\n"""')).toBe(
+      "first\n\nsecond",
+    );
+  });
+
+  it("preserves a blank line that is whitespace-only inside content", () => {
+    expect(stringValue('"""\n  first\n   \n  second\n"""')).toBe(
+      "first\n \nsecond",
+    );
+  });
+
+  it("returns an empty value for whitespace-only content", () => {
+    expect(stringValue('"""\n   \n\n"""')).toBe("");
+  });
+
+  it("dedents tab-indented content by leading whitespace character count", () => {
+    expect(stringValue('"""\n\t\thello\n\t\tworld\n"""')).toBe("hello\nworld");
+  });
+
+  it("dedents mixed tab/space indentation per character, not per column", () => {
+    // "\thello" has 1 leading whitespace character, "  world" has 2, so the
+    // common indent is 1 character — a tab counts exactly like a space and is
+    // never expanded to a tab stop.
+    expect(stringValue('"""\n\thello\n  world\n"""')).toBe("hello\n world");
+    expect(stringValue('"""\n    hello\n\tworld\n"""')).toBe("   hello\nworld");
+  });
+
+  it("preserves trailing whitespace inside a line", () => {
+    expect(stringValue('"""\n  hello  \n  world\n"""')).toBe("hello  \nworld");
+  });
+
+  it("reads same-line content verbatim", () => {
+    expect(stringValue('"""hello world"""')).toBe("hello world");
+  });
+
+  it("treats punctuation, comment markers, and DSL keywords as literal text", () => {
+    const src = [
+      '"""',
+      "# not a comment",
+      "agent x {",
+      "}",
+      'workflow ["a", "b"]',
+      'quotes " and "" stay',
+      '"""',
+    ].join("\n");
+    expect(stringValue(src)).toBe(
+      [
+        "# not a comment",
+        "agent x {",
+        "}",
+        'workflow ["a", "b"]',
+        'quotes " and "" stay',
+      ].join("\n"),
+    );
+  });
+
+  it("keeps backslash sequences raw with no escape processing", () => {
+    const value = stringValue('"""a\\"b\\\\c\\n\\t\\#"""');
+    expect(value).toBe('a\\"b\\\\c\\n\\t\\#');
+    // No escape was interpreted: no real newline or tab is present.
+    expect(value).not.toContain("\n");
+    expect(value).not.toContain("\t");
+    expect(value.length).toBe('a\\"b\\\\c\\n\\t\\#'.length);
+  });
+
+  it('closes at the first """ even when a backslash precedes it', () => {
+    // `"""a\"""` closes at the first """ after the backslash, so the value is
+    // the two characters `a\` — the backslash does not extend the string.
+    const result = tokenize('"""a\\"""');
+    expect(result.isOk()).toBe(true);
+    const tokens = result._unsafeUnwrap();
+    expect(tokens[0]).toMatchObject({ type: TokenType.String, value: "a\\" });
+    expect(tokens[1]).toMatchObject({ type: TokenType.EOF });
+  });
+
+  it("closes early when content abuts the delimiter with a trailing quote", () => {
+    // `"""abc""""` closes after `abc`; the fourth quote opens a single-line
+    // string that never terminates.
+    const result = tokenize('"""abc""""');
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors[0]).toMatchObject({
+      type: "UnterminatedString",
+      line: 1,
+      column: 10,
+    });
+  });
+
+  it("reports UnterminatedString at the opening delimiter position", () => {
+    const result = tokenize('foo\n  """abc\ndef');
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
+      type: "UnterminatedString",
+      line: 2,
+      column: 3,
+    });
+  });
+
+  it("keeps line/column correct for the token after a multiline string (LF)", () => {
+    const result = tokenize(
+      'agent x {\n  prompt """\n  hi\n  """\n  model "m"\n}',
+    );
+    expect(result.isOk()).toBe(true);
+    const tokens = result._unsafeUnwrap();
+    expect(tokens.find((t) => t.value === "prompt")).toMatchObject({
+      line: 2,
+      column: 3,
+    });
+    expect(tokens.find((t) => t.value === "hi")).toMatchObject({
+      type: TokenType.String,
+      line: 2,
+      column: 10,
+    });
+    expect(tokens.find((t) => t.value === "model")).toMatchObject({
+      line: 5,
+      column: 3,
+    });
+    expect(tokens.find((t) => t.value === "}")).toMatchObject({
+      line: 6,
+      column: 1,
+    });
+  });
+
+  it("keeps line/column correct for the token after a multiline string (CRLF)", () => {
+    const result = tokenize(
+      'agent x {\r\n  prompt """\r\n  hi\r\n  """\r\n  model "m"\r\n}',
+    );
+    expect(result.isOk()).toBe(true);
+    const tokens = result._unsafeUnwrap();
+    expect(tokens.find((t) => t.value === "hi")).toMatchObject({
+      type: TokenType.String,
+      line: 2,
+      column: 10,
+    });
+    expect(tokens.find((t) => t.value === "model")).toMatchObject({
+      line: 5,
+      column: 3,
+    });
+    expect(tokens.find((t) => t.value === "}")).toMatchObject({
+      line: 6,
+      column: 1,
+    });
+  });
+
+  it("produces identical values for LF and CRLF encodings of the same source", () => {
+    const lf = 'agent x {\n  prompt """\n  first\n\n  second\n  """\n}';
+    const crlf = lf.replace(/\n/g, "\r\n");
+    const values = (src: string): string[] => {
+      const result = tokenize(src);
+      expect(result.isOk()).toBe(true);
+      return result
+        ._unsafeUnwrap()
+        .filter((t) => t.type === TokenType.String)
+        .map((t) => t.value);
+    };
+    expect(values(lf)).toEqual(["first\n\nsecond"]);
+    expect(values(crlf)).toEqual(values(lf));
+  });
+});
