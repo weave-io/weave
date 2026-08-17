@@ -205,6 +205,14 @@
   - interface PiControlEnvelope
   - interface UnsignedEnvelopeInput
   - _...8 more_
+- `packages/adapters/pi/src/child-extension-selection.ts`
+  - function isSafeChildExtensionPath: (value) => boolean
+  - function childExtensionEntryId: (info) => Result<string, ChildExtensionIdentityError>
+  - function decodeChildExtensionSelection: (valueJson) => DecodedChildExtensionSelection
+  - function encodeChildExtensionSelection: (record) => Result<string, ChildExtensionSelectionEncodeError>
+  - function resolveChildExtensionPlan: (input) => ChildExtensionPlan
+  - interface ChildExtensionIdentitySource
+  - _...25 more_
 - `packages/adapters/pi/src/child-extension-ui.ts`
   - function normalizePiExtensionUiRequest: (value) => Result<
   - function createPiChildExtensionUiBridge: (options) => PiChildExtensionUiBridge<E>

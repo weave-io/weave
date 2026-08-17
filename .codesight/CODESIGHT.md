@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 308 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~33,600 tokens. Without it, AI exploration would cost ~99,100 tokens. **Saves ~65,500 tokens per conversation.**
-> **Last scanned:** 2026-08-17 21:25 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 309 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~33,700 tokens. Without it, AI exploration would cost ~99,400 tokens. **Saves ~65,600 tokens per conversation.**
+> **Last scanned:** 2026-08-17 21:35 — re-run after significant changes
 
 ---
 
@@ -216,6 +216,14 @@
   - interface PiControlEnvelope
   - interface UnsignedEnvelopeInput
   - _...8 more_
+- `packages/adapters/pi/src/child-extension-selection.ts`
+  - function isSafeChildExtensionPath: (value) => boolean
+  - function childExtensionEntryId: (info) => Result<string, ChildExtensionIdentityError>
+  - function decodeChildExtensionSelection: (valueJson) => DecodedChildExtensionSelection
+  - function encodeChildExtensionSelection: (record) => Result<string, ChildExtensionSelectionEncodeError>
+  - function resolveChildExtensionPlan: (input) => ChildExtensionPlan
+  - interface ChildExtensionIdentitySource
+  - _...25 more_
 - `packages/adapters/pi/src/child-extension-ui.ts`
   - function normalizePiExtensionUiRequest: (value) => Result<
   - function createPiChildExtensionUiBridge: (options) => PiChildExtensionUiBridge<E>
@@ -1974,7 +1982,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 342 test files found
+> 343 test files found
 
 ---
 

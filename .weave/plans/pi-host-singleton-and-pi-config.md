@@ -221,7 +221,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - Tests cover: default listing, namespace filter, limit clamping, empty store, missing database file, and value truncation.
     - `weave runtime preferences --help`-level argument errors return a non-zero exit with a clear message.
 
-- [ ] 9. Add the Pi child-extension selection record and its semantics
+- [x] 9. Add the Pi child-extension selection record and its semantics
   - **What**: The adapter-owned schema, defaults, and migration rules for the value stored under the Pi preference namespace.
   - **Files**: `packages/adapters/pi/src/child-extension-selection.ts`, `packages/adapters/pi/src/__tests__/child-extension-selection.test.ts`
   - **Depends on**: Task 7
