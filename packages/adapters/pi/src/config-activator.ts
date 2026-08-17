@@ -5,16 +5,17 @@ import type {
   AgentDescriptor,
   MaterializationError,
   MaterializationPlan,
+  PromptFileReader,
 } from "@weaveio/weave-engine";
 import { materializeAgents } from "@weaveio/weave-engine";
 import { errAsync, ResultAsync } from "neverthrow";
 import {
-  resolvePiChildInspectionSettings,
   type PiChildInspectionSettingsResolution,
+  resolvePiChildInspectionSettings,
 } from "./child-inspection-settings.js";
 import {
-  resolvePiChildLifecycleSettings,
   type PiChildLifecycleSettings,
+  resolvePiChildLifecycleSettings,
 } from "./child-lifecycle-settings.js";
 import {
   makeActivationFailedFailure,
@@ -87,19 +88,41 @@ export const defaultPiConfigLoaderPort: PiConfigLoaderPort = {
   load: (projectRoot, fileReader) => loadConfig(projectRoot, fileReader),
 };
 
-/** Adapter-facing seam over `@weaveio/weave-engine`'s `materializeAgents`, injectable for tests. */
+/**
+ * Adapter-facing seam over `@weaveio/weave-engine`'s `materializeAgents`,
+ * injectable for tests.
+ *
+ * `promptFileReader` is the engine's prompt-source seam. Omitting it keeps the
+ * engine's own filesystem read for `prompt_file` / `prompt_append_file`;
+ * supplying one lets the caller compose from bytes it already read (and
+ * hashed), which is how the adapter's config refresh composes from the exact
+ * bytes its digest manifest covers. The parameter is optional so every
+ * pre-existing implementation of this port keeps type-checking unchanged.
+ */
 export interface PiMaterializerPort {
-  materialize(config: WeaveConfig): ResultAsync<MaterializationPlan, never>;
+  materialize(
+    config: WeaveConfig,
+    promptFileReader?: PromptFileReader,
+  ): ResultAsync<MaterializationPlan, never>;
 }
 
 export const defaultPiMaterializerPort: PiMaterializerPort = {
-  materialize: (config) => materializeAgents({ config }),
+  materialize: (config, promptFileReader) =>
+    materializeAgents({ config, promptFileReader }),
 };
 
 export interface PiConfigActivatorDeps {
   readonly fileReader?: FileReader;
   readonly configLoader?: PiConfigLoaderPort;
   readonly materializer?: PiMaterializerPort;
+  /**
+   * Prompt-source seam threaded into materialization.
+   *
+   * Omitted in the boot path, where the engine reads each declared prompt path
+   * itself. The refresh path supplies a per-attempt reader so composition uses
+   * the same bytes the manifest hashed.
+   */
+  readonly promptFileReader?: PromptFileReader;
 }
 
 export interface PiConfigActivationInput {
@@ -233,7 +256,7 @@ export class PiConfigActivator {
       )
       .andThen((config) =>
         safelyAwaitPortResult(
-          () => materializer.materialize(config),
+          () => materializer.materialize(config, this.deps.promptFileReader),
           (): PiAdapterFailure =>
             makeActivationFailedFailure("materialize-threw"),
         ).andThen((plan) => {
@@ -251,11 +274,12 @@ export class PiConfigActivator {
               plan,
               descriptors: buildDescriptorCatalog(plan),
               trust: input.trust,
-              childInspectionSettings:
-                resolvePiChildInspectionSettings(config).match(
-                  (resolution) => resolution,
-                  (issues) => ({ status: "invalid" as const, issues }),
-                ),
+              childInspectionSettings: resolvePiChildInspectionSettings(
+                config,
+              ).match(
+                (resolution) => resolution,
+                (issues) => ({ status: "invalid" as const, issues }),
+              ),
               childLifecycleSettings: childLifecycle.value,
             }),
           );

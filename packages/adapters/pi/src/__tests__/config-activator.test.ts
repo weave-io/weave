@@ -2,12 +2,16 @@ import { describe, expect, it } from "bun:test";
 import type { ConfigLoadError, FileReader } from "@weaveio/weave-config";
 import { loadConfig } from "@weaveio/weave-config";
 import type { WeaveConfig } from "@weaveio/weave-core";
-import type { MaterializationPlan } from "@weaveio/weave-engine";
+import type {
+  MaterializationPlan,
+  PromptFileReader,
+} from "@weaveio/weave-engine";
 import { materializeAgents } from "@weaveio/weave-engine";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import {
   buildDescriptorCatalog,
   createTrustWithheldFileReader,
+  defaultPiMaterializerPort,
   logMaterializationErrors,
   PiConfigActivator,
 } from "../config-activator.js";
@@ -330,6 +334,97 @@ describe("PiConfigActivator (unit, fake ports)", () => {
       "sk-super-secret-123",
     );
     expect(result._unsafeUnwrapErr().code).toBe("ActivationFailed");
+  });
+});
+
+describe("prompt-source seam", () => {
+  // A name no builtin declares, so the project layer's prompt_file is the
+  // only prompt source after merge.
+  const PROMPT_FILE_DSL = `
+agent scout {
+  prompt_file "scout.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+}
+`;
+  const SCOUT_PROMPT_PATH = `${PROJECT_ROOT}/.weave/prompts/scout.md`;
+
+  it("threads the activator's prompt reader into the materializer port", async () => {
+    const reader: PromptFileReader = { read: () => okAsync("injected") };
+    const seen: (PromptFileReader | undefined)[] = [];
+    const activator = new PiConfigActivator({
+      configLoader: {
+        load: () =>
+          okAsync({
+            agents: {},
+            disabled: { agents: [], skills: [] },
+          } as unknown as WeaveConfig),
+      },
+      materializer: {
+        materialize: (_config, promptFileReader) => {
+          seen.push(promptFileReader);
+          return okAsync({ agents: [], errors: [] });
+        },
+      },
+      promptFileReader: reader,
+    });
+
+    const result = await activator.activate({
+      projectRoot: PROJECT_ROOT,
+      trust: "trusted",
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(seen).toEqual([reader]);
+  });
+
+  it("omits the reader when none is configured, preserving the engine's own read", async () => {
+    const seen: (PromptFileReader | undefined)[] = [];
+    const activator = new PiConfigActivator({
+      configLoader: {
+        load: () =>
+          okAsync({
+            agents: {},
+            disabled: { agents: [], skills: [] },
+          } as unknown as WeaveConfig),
+      },
+      materializer: {
+        materialize: (_config, promptFileReader) => {
+          seen.push(promptFileReader);
+          return okAsync({ agents: [], errors: [] });
+        },
+      },
+    });
+
+    await activator.activate({ projectRoot: PROJECT_ROOT, trust: "trusted" });
+    expect(seen).toEqual([undefined]);
+  });
+
+  it("composes prompt_file from the injected reader's bytes, reading each path once", async () => {
+    const paths: string[] = [];
+    const promptFileReader: PromptFileReader = {
+      read: (path) => {
+        paths.push(path);
+        return okAsync("Prompt from the injected reader.");
+      },
+    };
+    const activator = new PiConfigActivator({
+      fileReader: mockReader({ [PROJECT_CONFIG_PATH]: PROMPT_FILE_DSL }),
+      configLoader: { load: (root, fr) => loadConfig(root, fr) },
+      materializer: defaultPiMaterializerPort,
+      promptFileReader,
+    });
+
+    const result = await activator.activate({
+      projectRoot: PROJECT_ROOT,
+      trust: "trusted",
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(
+      result._unsafeUnwrap().descriptors.byName.get("scout")?.composedPrompt,
+    ).toContain("Prompt from the injected reader.");
+    expect(paths).toEqual([SCOUT_PROMPT_PATH]);
   });
 });
 

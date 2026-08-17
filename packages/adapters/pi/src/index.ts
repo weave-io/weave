@@ -673,6 +673,20 @@ export {
   PiConfigActivator,
 } from "./config-activator.js";
 export type {
+  PiConfigCatalogState,
+  PiConfigRefreshCandidate,
+  PiConfigRefreshDeps,
+  PiConfigRefreshFailure,
+  PiConfigRefreshMaterializationReason,
+  PiConfigSourceCachedContent,
+  PiConfigSourceContents,
+} from "./config-refresh.js";
+export {
+  buildPiConfigRefreshCandidate,
+  refreshPiConfigCandidate,
+  toPiConfigRefreshFailure,
+} from "./config-refresh.js";
+export type {
   PiBuiltinSourceEntry,
   PiConfigFileSourceKind,
   PiConfigSourceChange,
