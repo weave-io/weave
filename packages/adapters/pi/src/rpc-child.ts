@@ -98,8 +98,8 @@ import { ChunkTransferAssembler } from "./child-transfer.js";
 import {
   addUsage,
   EMPTY_USAGE_AGGREGATE,
-  extractAssistantTextDeltaPreview,
-  extractAssistantThinkingDeltaPreview,
+  nextLiveAnswerId,
+  type PiChildLiveAnswerState,
   type PiChildStatus,
   type PiChildTreeNode,
   type PiChildUsageAggregate,
@@ -129,6 +129,7 @@ import {
   type PiAdapterFailure,
   type PiChildResponseMissingReason,
 } from "./errors.js";
+import { classifyPiMessageUpdate } from "./message-update-carrier.js";
 import {
   encodePromptChunksBounded,
   MAX_OUTBOUND_PROMPT_RECORD_BYTES,
@@ -834,6 +835,23 @@ export class PiRpcChild {
    */
   private reasoningObserved = false;
   private resetPreviewOnNextDelta = false;
+  /**
+   * The assistant message being written RIGHT NOW, as its own bounded
+   * lifecycle: an explicit identity, an open/closed state, and the exact
+   * ordered concatenation of that message's own answer deltas.
+   *
+   * It is kept separately from `latestOutput`, which is a per-TURN
+   * preview and deliberately survives the end of a message. A reader catching
+   * up mid-stream needs to know which message it is looking at and whether
+   * that message is still open; asking it to guess from the preview's PROSE is
+   * what made a finished answer reappear as a live one, and made a new message
+   * that happened to repeat an older answer invisible.
+   */
+  private liveAnswer: PiChildLiveAnswerState = {
+    id: 0,
+    open: false,
+    text: "",
+  };
   private latestCompletedAssistantOutput = "";
   /**
    * Result-contract observation, tracked separately from the parent-visible
@@ -1001,7 +1019,35 @@ export class PiRpcChild {
       // chain-of-thought in four places at once.
       latestOutput: this.latestOutput,
       reasoningObserved: this.reasoningObserved,
+      // Present only while a message is genuinely open and has answer text.
+      // Absence is therefore the honest statement "nothing is being written",
+      // which is what stops a reader adopting a finished answer as live.
+      ...(this.liveAnswer.open && this.liveAnswer.text.length > 0
+        ? {
+            liveAnswer: {
+              id: this.liveAnswer.id,
+              text: this.liveAnswer.text,
+            },
+          }
+        : {}),
     };
+  }
+
+  /** Opens a new assistant answer lifecycle with a fresh bounded identity. */
+  private openLiveAnswer(): void {
+    this.liveAnswer = {
+      id: nextLiveAnswerId(this.liveAnswer.id),
+      open: true,
+      text: "",
+    };
+  }
+
+  /**
+   * Closes the open lifecycle. The identity is retained (it is never reused
+   * for a later message), the text is not.
+   */
+  private closeLiveAnswer(): void {
+    this.liveAnswer = { id: this.liveAnswer.id, open: false, text: "" };
   }
 
   /**
@@ -2266,7 +2312,17 @@ export class PiRpcChild {
       // Clearing here makes the preview flash briefly and then disappear while
       // the child starts its next model or tool step.
       this.resetPreviewOnNextDelta = true;
+      // No message is being written between turns, whatever the preview still
+      // shows.
+      this.closeLiveAnswer();
       this.onStreamingUpdate?.(this.snapshot());
+      return;
+    }
+    if (type === "message_start") {
+      // A new assistant message: a new lifecycle identity, and nothing written
+      // into it yet. This is the only place an identity is minted from an
+      // authoritative host statement.
+      this.openLiveAnswer();
       return;
     }
     if (type === "tool_execution_start") {
@@ -2281,8 +2337,12 @@ export class PiRpcChild {
       return;
     }
     if (type === "message_update") {
-      const preview = extractAssistantTextDeltaPreview(record);
-      if (preview !== undefined) {
+      // One classification for the whole frame. A frame carrying answer text
+      // AND raw reasoning is rejected there, so it can neither publish
+      // chain-of-thought as the parent-visible preview nor claim the child was
+      // only thinking while it spoke.
+      const carrier = classifyPiMessageUpdate(record);
+      if (carrier.kind === "answer") {
         if (this.resetPreviewOnNextDelta) {
           this.latestOutput = "";
           this.reasoningObserved = false;
@@ -2292,22 +2352,30 @@ export class PiRpcChild {
         // rather than replacing it with only the very last delta -
         // `truncateLatestOutput` keeps the combined buffer bounded to
         // <=4KiB of valid UTF-8 at a code-point boundary.
-        this.latestOutput = truncateLatestOutput(this.latestOutput + preview);
+        this.latestOutput = truncateLatestOutput(
+          this.latestOutput + carrier.text,
+        );
+        // A host that streams text without ever framing a message still gets a
+        // lifecycle identity, allocated on the first delta it writes.
+        if (!this.liveAnswer.open) this.openLiveAnswer();
+        this.liveAnswer = {
+          ...this.liveAnswer,
+          text: truncateLatestOutput(this.liveAnswer.text + carrier.text),
+        };
         // Real answer text always wins over reasoning: once the model starts
         // speaking, the reasoning marker stops being what the parent shows.
         this.reasoningObserved = false;
         this.onStreamingUpdate?.(this.snapshot());
         return;
       }
-      const thinking = extractAssistantThinkingDeltaPreview(record);
-      if (thinking !== undefined) {
+      if (carrier.kind === "reasoning") {
         if (this.resetPreviewOnNextDelta) {
           this.latestOutput = "";
           this.reasoningObserved = false;
           this.resetPreviewOnNextDelta = false;
         }
-        // The delta's PROSE is discarded here and nowhere kept; only the fact
-        // that it arrived survives.
+        // The frame's PROSE never leaves the classifier; only the fact that it
+        // arrived survives.
         this.reasoningObserved = true;
         // Only announce reasoning while there is no visible answer text yet -
         // a reasoning model can think for a long time before its first
@@ -2319,6 +2387,9 @@ export class PiRpcChild {
       return;
     }
     if (type === "message_end") {
+      // The message stops being written here, whatever the turn preview keeps
+      // showing. Everything downstream reads this as "no answer is in flight".
+      this.closeLiveAnswer();
       const message = record.message;
       const stopReason =
         isJsonRecord(message) && typeof message.stopReason === "string"

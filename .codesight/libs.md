@@ -117,6 +117,7 @@
   - interface PiArtifactReadInput
   - interface PiArtifactDigest
   - _...9 more_
+- `packages/adapters/pi/src/assistant-stream-text.ts` — function appendAssistantStreamDelta: (accumulated, delta) => string
 - `packages/adapters/pi/src/capability-prober.ts`
   - function describeDelegationReadinessGap: (requiredGaps) => PiDelegationReadinessReason
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
@@ -575,12 +576,12 @@
   - interface ChildTreeRenderOptions
 - `packages/adapters/pi/src/child-tree.ts`
   - function addUsage: (a, b) => PiChildUsageAggregate
+  - function nextLiveAnswerId: (current) => number
   - function truncateUtf8: (text, maxBytes) => string
   - function truncateFinalOutput: (text) => string
   - function truncateLatestOutput: (text) => string
-  - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
-  - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
-  - _...19 more_
+  - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
+  - _...20 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -696,6 +697,13 @@
   - function selectsCustomEditorFallback: (report) => boolean
   - function createDefaultPiHostProbePort: (input) => PiHostProbePort
   - _...11 more_
+- `packages/adapters/pi/src/message-update-carrier.ts`
+  - function classifyPiMessageUpdate: (record) => PiMessageUpdateCarrier
+  - function messageUpdateAnswerText: (record) => string | undefined
+  - function messageUpdateObservesRawReasoning: (record) => boolean
+  - type PiMessageUpdateRejection
+  - type PiMessageUpdateCarrier
+  - const MAX_MESSAGE_UPDATE_ANSWER_LENGTH
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator

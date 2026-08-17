@@ -82,9 +82,11 @@ describe("child-compact-render", () => {
 
   it("adds, replaces, and dedups meaningful assistant fragments", () => {
     let state = mustReduce(createChildCompactState("t1"), start());
-    state = mustReduce(state, fragment("hello", "assistant", "d1", "append"));
+    state = mustReduce(state, fragment("hello ", "assistant", "d1", "append"));
     expect(state.runs[0]?.latestMeaningfulFragment).toBe("hello");
 
+    // Fragments are concatenated EXACTLY, in order. The separator is whatever
+    // the child streamed - inventing one turns ["hel", "lo"] into "hel lo".
     state = mustReduce(state, fragment("world", "assistant", "d2", "append"));
     expect(state.runs[0]?.latestMeaningfulFragment).toBe("hello world");
 

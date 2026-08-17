@@ -8,6 +8,7 @@ import {
   type PiChildSessionEvent,
   redactRawReasoningFromEvent,
 } from "./child-session-events.js";
+import { classifyPiMessageUpdate } from "./message-update-carrier.js";
 /** Maximum size of one private transcript event, measured as UTF-8 JSON bytes. */
 export const MAX_TRANSCRIPT_HISTORY_EVENT_BYTES = 2 * 1024 * 1024;
 /** Maximum total bytes retained by the in-memory event history. */
@@ -701,6 +702,12 @@ function messageText(value: unknown): string | undefined {
  * `reasoningObserved` flag, while `reasoningSummary` is read exclusively from
  * the host's explicit reasoning-summary surface. No code path converts one
  * into the other.
+ *
+ * Answer text and the reasoning fact both come from the SINGLE carrier
+ * classification, not from a local reading of the frame. Reading `delta.text`
+ * here independently is what let a frame carrying answer text beside a
+ * `thinking_delta` write chain-of-thought into transcript state - and from
+ * there into the pane, search, and every snapshot built from it.
  */
 function messageUpdateParts(event: PiChildSessionEvent): {
   readonly messageId?: string;
@@ -714,16 +721,11 @@ function messageUpdateParts(event: PiChildSessionEvent): {
   const assistantEvent = recordValue(eventRecord.assistantMessageEvent);
   const messageId = messageIdFrom(delta) ?? messageIdFrom(assistantEvent);
   const assistantType = stringValue(assistantEvent?.type);
-  const text =
-    stringValue(delta?.text) ??
-    (assistantType === "text_delta"
-      ? stringValue(assistantEvent?.delta)
-      : undefined);
-  // RAW CHAIN-OF-THOUGHT IS DROPPED HERE. Only the fact that it existed is
-  // carried forward; its text is never read into transcript state.
-  const reasoningObserved =
-    stringValue(delta?.thinking) !== undefined ||
-    assistantType === "thinking_delta";
+  const carrier = classifyPiMessageUpdate(event);
+  const text = carrier.kind === "answer" ? carrier.text : undefined;
+  // RAW CHAIN-OF-THOUGHT IS DROPPED IN THE CLASSIFIER, and never read here.
+  // Only the fact that it existed is carried forward.
+  const reasoningObserved = carrier.kind === "reasoning";
   const reasoningSummary =
     stringValue(delta?.reasoningSummary) ??
     (assistantType === "reasoning_summary"

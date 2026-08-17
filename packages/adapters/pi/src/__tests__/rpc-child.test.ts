@@ -2895,6 +2895,107 @@ describe("PiRpcChild", () => {
     expect(JSON.stringify(child.snapshot())).not.toContain("next thought");
   });
 
+  it("refuses a frame that carries answer text and raw reasoning at once", async () => {
+    const processPort = new FakeChildProcessPort();
+    const streamingUpdates: PiChildTreeNode[] = [];
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      onStreamingUpdate: (snapshot) => streamingUpdates.push(snapshot),
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    // The legacy `delta.text` carrier used to be read FIRST, so a frame whose
+    // authoritative carrier said `thinking_delta` was published as an answer.
+    spawned.emitLine({
+      type: "message_update",
+      delta: { text: "SECRET-COT" },
+      assistantMessageEvent: { type: "thinking_delta", delta: "SECRET-COT" },
+    });
+    expect(child.snapshot().latestOutput).toBe("");
+    // Not even the content-free reasoning fact: an ambiguous frame states
+    // nothing this boundary will repeat.
+    expect(child.snapshot().reasoningObserved).toBe(false);
+    expect(JSON.stringify(child.snapshot())).not.toContain("SECRET-COT");
+    expect(JSON.stringify(streamingUpdates)).not.toContain("SECRET-COT");
+
+    // The unambiguous frame that follows is published normally.
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "answer" },
+    });
+    expect(child.snapshot().latestOutput).toBe("answer");
+  });
+
+  it("publishes the open message's own lifecycle, and withdraws it at its end", async () => {
+    const processPort = new FakeChildProcessPort();
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    // No message open yet: absence is the honest statement.
+    expect(child.snapshot().liveAnswer).toBeUndefined();
+
+    spawned.emitLine({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "same answer" },
+    });
+    const first = child.snapshot().liveAnswer;
+    expect(first?.text).toBe("same answer");
+    expect(first?.id).toBeGreaterThan(0);
+
+    // The message ends: nothing is being written, whatever the turn preview
+    // still shows.
+    spawned.emitLine({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "same answer" }],
+      },
+    });
+    expect(child.snapshot().liveAnswer).toBeUndefined();
+    expect(child.snapshot().latestOutput).toBe("same answer");
+
+    // A NEW message with identical text is a different lifecycle, and says so.
+    spawned.emitLine({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "same answer" },
+    });
+    const second = child.snapshot().liveAnswer;
+    expect(second?.text).toBe("same answer");
+    expect(second?.id).not.toBe(first?.id);
+
+    // A turn boundary closes an unfinished message too.
+    spawned.emitLine({ type: "turn_start" });
+    expect(child.snapshot().liveAnswer).toBeUndefined();
+  });
+
   it("settles from the latest completed assistant message, not transient or control text", async () => {
     const running = await startRunningChild();
     running.spawned.emitLine({

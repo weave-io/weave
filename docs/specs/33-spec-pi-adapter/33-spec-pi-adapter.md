@@ -282,10 +282,19 @@ Behavior:
   event flow, with stable per-item IDs, placeholder slots for out-of-order
   arrival, and duplicate suppression only where the host states an event's
   identity. Matching text is never treated as identity, so a repeated answer
-  delta is kept. Updates are coalesced through the injected timer port, and run
-  start, tool error, provider error, queue change, and settlement always publish
-  immediately. Settlement drains final events before classification and
-  always flushes.
+  delta is kept. Streamed deltas are accumulated as the exact ordered
+  concatenation of what the child sent, bounded to the shared 4 KiB preview
+  budget, and sanitized once for display, so the card and the inspector cannot
+  disagree about the answer. Updates are coalesced through the injected timer
+  port, and run start, tool error, provider error, queue change, and settlement
+  always publish immediately. Settlement drains final events before
+  classification and always flushes.
+- What one `message_update` states is decided by a single mutually exclusive
+  classification shared by every consumer: answer text, the content-free
+  reasoning fact, framing that states nothing, or a typed rejection. A frame
+  that declares an answer carrier and a raw-reasoning carrier at once is
+  rejected fail-closed — it produces no text and no reasoning claim on any
+  surface, and both carriers are emptied before the event is retained.
 - All child-sourced text is sanitized for terminal control sequences before
   render, and box-drawing glyphs are reachable only through the frame
   primitives, so child text structurally cannot forge a frame.

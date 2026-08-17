@@ -5,12 +5,10 @@ import {
   applyTreeControlKey,
   EMPTY_USAGE_AGGREGATE,
   extractAssistantStopReason,
-  extractAssistantTextDeltaPreview,
-  extractAssistantThinkingDeltaPreview,
   MAX_LATEST_OUTPUT_BYTES,
-  PiChildInspectionRegistry,
   type PiChildInspectionHistoryPort,
   type PiChildInspectionRegistration,
+  PiChildInspectionRegistry,
   type PiChildTreeNode,
   ROOT_NODE_ID,
   subtreeIds,
@@ -194,111 +192,9 @@ describe("subtreeIds", () => {
   });
 });
 
-describe("extractAssistantTextDeltaPreview (Task 9 finding 1)", () => {
-  it("reads legacy delta.text when present", () => {
-    expect(
-      extractAssistantTextDeltaPreview({
-        type: "message_update",
-        delta: { text: "hello" },
-      }),
-    ).toBe("hello");
-  });
-
-  it("reads the exact-host 0.81.1 assistantMessageEvent text delta", () => {
-    expect(
-      extractAssistantTextDeltaPreview({
-        type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta: "hello" },
-      }),
-    ).toBe("hello");
-  });
-
-  it("ignores non-text exact-host assistant events", () => {
-    expect(
-      extractAssistantTextDeltaPreview({
-        type: "message_update",
-        assistantMessageEvent: { type: "text_end", content: "hello" },
-      }),
-    ).toBeUndefined();
-  });
-
-  it("returns undefined when delta is missing", () => {
-    expect(
-      extractAssistantTextDeltaPreview({ type: "message_update" }),
-    ).toBeUndefined();
-  });
-
-  it("returns undefined when delta is not an object", () => {
-    expect(
-      extractAssistantTextDeltaPreview({
-        type: "message_update",
-        delta: "not-an-object",
-      }),
-    ).toBeUndefined();
-  });
-
-  it("returns undefined when delta.text is not a string", () => {
-    expect(
-      extractAssistantTextDeltaPreview({
-        type: "message_update",
-        delta: { text: 42 },
-      }),
-    ).toBeUndefined();
-  });
-
-  it("never mistakes a thinking delta for answer text", () => {
-    expect(
-      extractAssistantTextDeltaPreview({
-        type: "message_update",
-        assistantMessageEvent: { type: "thinking_delta", delta: "pondering" },
-      }),
-    ).toBeUndefined();
-  });
-});
-
-describe("extractAssistantThinkingDeltaPreview", () => {
-  it("reads a streamed thinking delta so a reasoning child never looks frozen", () => {
-    expect(
-      extractAssistantThinkingDeltaPreview({
-        type: "message_update",
-        assistantMessageEvent: { type: "thinking_delta", delta: "pondering" },
-      }),
-    ).toBe("pondering");
-  });
-
-  it("ignores answer-text deltas", () => {
-    expect(
-      extractAssistantThinkingDeltaPreview({
-        type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta: "hello" },
-      }),
-    ).toBeUndefined();
-  });
-
-  it("ignores thinking block boundaries that carry no delta", () => {
-    expect(
-      extractAssistantThinkingDeltaPreview({
-        type: "message_update",
-        assistantMessageEvent: { type: "thinking_start" },
-      }),
-    ).toBeUndefined();
-  });
-
-  it("returns undefined when the thinking delta is not a string", () => {
-    expect(
-      extractAssistantThinkingDeltaPreview({
-        type: "message_update",
-        assistantMessageEvent: { type: "thinking_delta", delta: 42 },
-      }),
-    ).toBeUndefined();
-  });
-
-  it("returns undefined when there is no assistant event at all", () => {
-    expect(
-      extractAssistantThinkingDeltaPreview({ type: "message_update" }),
-    ).toBeUndefined();
-  });
-});
+// The `message_update` carrier readers that used to live in `child-tree.ts`
+// now have exactly one authority. Their behaviour is covered, mutual
+// exclusion included, in `message-update-carrier.test.ts`.
 
 describe("extractAssistantStopReason (Task 9 finding 2)", () => {
   it("reads message.stopReason for an assistant message", () => {

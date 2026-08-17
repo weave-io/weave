@@ -52,8 +52,7 @@ import {
   type PiChildTranscriptState,
   reducePiChildTranscript,
 } from "./child-transcript.js";
-import { extractAssistantTextDeltaPreview } from "./child-tree.js";
-import type { JsonValue } from "./strict-json.js";
+import { messageUpdateAnswerText } from "./message-update-carrier.js";
 
 // ---------------------------------------------------------------------------
 // Native entry mapping (Task 4 adapt / child-transcript projection)
@@ -827,12 +826,10 @@ export function projectLiveEntry(
       if (event.type === "message_end") {
         text = messageText(event.message).text;
       } else if (event.type === "message_update") {
-        // Legacy `delta: { text }` and real 0.84 `assistantMessageEvent:
-        // { type: "text_delta", delta }`, via the parent tree's reader.
-        // A `thinking_delta` is not body text and projects nothing.
-        const delta = extractAssistantTextDeltaPreview(
-          event as unknown as Record<string, JsonValue>,
-        );
+        // The single carrier classification: only an unambiguous answer frame
+        // has body text. A `thinking_delta`, a framing frame, and any frame
+        // that mixed carriers all project nothing.
+        const delta = messageUpdateAnswerText(event);
         if (delta !== undefined) text = boundText(delta);
       }
       // Real Pi 0.84 `AssistantMessage` carries no id, and `state.entries`

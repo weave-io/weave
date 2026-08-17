@@ -35,6 +35,7 @@ import {
 import { getKeybindings, TUI } from "@earendil-works/pi-tui";
 import { PiChildCardProjection } from "../child-card-model.js";
 import { renderDelegationCard } from "../child-card-render.js";
+import { sanitizeChildCompactText } from "../child-compact-render.js";
 import {
   createChildOverlayController,
   createChildOverlayCustomComponent,
@@ -49,6 +50,7 @@ import {
   type PiChildSessionEvent,
   parsePiChildSessionEvent,
 } from "../child-session-events.js";
+import { MAX_LATEST_OUTPUT_BYTES } from "../child-tree.js";
 import type { PiUiThemePort } from "../types.js";
 import { plainPaint } from "../ui-paint.js";
 
@@ -232,7 +234,15 @@ describe("Bug A · the delegation card's Native Line carries streamed answer tex
 // 2. The inspector overlay
 // ---------------------------------------------------------------------------
 
-function liveChild(streamedAnswer = ""): MemoryOverlaySourceChild {
+/**
+ * The child's own live-answer fact: the message it is writing NOW, stamped
+ * with that message's own lifecycle id. Presence is the stream-open state, so
+ * a child that is between messages simply has none.
+ */
+function liveChild(streamedAnswer?: {
+  readonly id: number;
+  readonly text: string;
+}): MemoryOverlaySourceChild {
   return {
     childId: CHILD_ID,
     threadId: CHILD_ID,
@@ -243,7 +253,7 @@ function liveChild(streamedAnswer = ""): MemoryOverlaySourceChild {
     agentName: "shuttle",
     parentAgentName: "loom",
     model: "test-model",
-    streamedAnswer,
+    ...(streamedAnswer === undefined ? {} : { streamedAnswer }),
     runs: [{ run: 1, action: "start" }],
     branchIds: ["main"],
     descendantChildIds: [],
@@ -342,10 +352,11 @@ describe("Bug A · the inspector renders one growing live assistant row", () => 
     expect(JSON.stringify(view.compact)).not.toContain(RAW_COT);
   });
 
-  it("never adopts a snapshot the window already states", async () => {
-    // The child finished its message; its answer snapshot still holds the same
-    // text. Adopting it would print the same answer twice.
-    const { controller } = open(liveChild(FULL_ANSWER));
+  it("never re-adopts the lifecycle it already adopted", async () => {
+    // The child finished its message; a repeated read still reports the same
+    // lifecycle id. Adopting it again would print the same answer twice, and
+    // the window refuses on IDENTITY, never by comparing the answer's words.
+    const { controller } = open(liveChild({ id: 7, text: FULL_ANSWER }));
     (await controller.open(CHILD_ID))._unsafeUnwrap();
     for (const raw of streamingLifecycle()) {
       controller.applyLiveEvent(raw)._unsafeUnwrap();
@@ -360,8 +371,64 @@ describe("Bug A · the inspector renders one growing live assistant row", () => 
     ).toHaveLength(1);
   });
 
+  it("drops the provisional row once the child stops writing that message", async () => {
+    // The catch-up row is a claim about a message in flight. When the child
+    // reports no open message, that claim expires - post-`message_end`
+    // duplication is impossible because the fact itself is gone, not because
+    // some text matched.
+    const child = liveChild({ id: 3, text: FULL_ANSWER });
+    const { controller } = open(child);
+    (await controller.open(CHILD_ID))._unsafeUnwrap();
+    expect(
+      paneRows(currentView(controller)).some((row) =>
+        row.includes("streaming reply"),
+      ),
+    ).toBe(true);
+
+    (child as { streamedAnswer?: unknown }).streamedAnswer = undefined;
+    (await controller.refreshOpenChild())._unsafeUnwrap();
+
+    const rows = paneRows(currentView(controller));
+    expect(rows.some((row) => row.includes("streaming reply"))).toBe(false);
+    expect(rows.some((row) => row.includes("The reporter drops rows"))).toBe(
+      false,
+    );
+  });
+
+  it("adopts a later message whose text equals an older terminal answer", async () => {
+    // Two consecutive messages with identical text. Content correlation hid
+    // the second one entirely; lifecycle identity shows both.
+    const child = liveChild();
+    const { controller } = open(child);
+    (await controller.open(CHILD_ID))._unsafeUnwrap();
+    for (const raw of streamingLifecycle()) {
+      controller.applyLiveEvent(raw)._unsafeUnwrap();
+    }
+    controller.applyLiveEvent(terminalEvent())._unsafeUnwrap();
+
+    (child as { streamedAnswer?: unknown }).streamedAnswer = {
+      id: 2,
+      text: FULL_ANSWER,
+    };
+    (await controller.refreshOpenChild())._unsafeUnwrap();
+
+    const rows = paneRows(currentView(controller));
+    expect(rows.filter((row) => row.includes("shuttle · reply"))).toHaveLength(
+      1,
+    );
+    expect(
+      rows.filter((row) => row.includes("shuttle · streaming reply")),
+    ).toHaveLength(1);
+    expect(
+      rows.filter((row) => row.includes("The reporter drops rows")),
+    ).toHaveLength(2);
+  });
+
   it("never adopts a settled child's snapshot", async () => {
-    const settled = { ...liveChild(FULL_ANSWER), status: "settled" as const };
+    const settled = {
+      ...liveChild({ id: 1, text: FULL_ANSWER }),
+      status: "settled" as const,
+    };
     const { controller } = open(settled);
     (await controller.open(CHILD_ID))._unsafeUnwrap();
 
@@ -376,7 +443,7 @@ describe("Bug A · the inspector renders one growing live assistant row", () => 
     // The reader opened the inspector mid-stream: the live events already
     // happened and this controller never saw them. The only authoritative
     // bounded live source is the child's answer-only snapshot.
-    const { controller } = open(liveChild(FULL_ANSWER));
+    const { controller } = open(liveChild({ id: 1, text: FULL_ANSWER }));
     (await controller.open(CHILD_ID))._unsafeUnwrap();
 
     const rows = paneRows(currentView(controller));
@@ -387,8 +454,40 @@ describe("Bug A · the inspector renders one growing live assistant row", () => 
     expect(rows.join("\n")).not.toContain(RAW_COT);
   });
 
+  it("grows the adopted row in place while the same message keeps streaming", async () => {
+    const child = liveChild({ id: 4, text: ANSWER_DELTAS[0] });
+    const { controller } = open(child);
+    (await controller.open(CHILD_ID))._unsafeUnwrap();
+
+    (child as { streamedAnswer?: unknown }).streamedAnswer = {
+      id: 4,
+      text: FULL_ANSWER,
+    };
+    (await controller.refreshOpenChild())._unsafeUnwrap();
+
+    const rows = paneRows(currentView(controller));
+    expect(
+      rows.filter((row) => row.includes("shuttle · streaming reply")),
+    ).toHaveLength(1);
+    expect(rows.some((row) => row.includes(FULL_ANSWER))).toBe(true);
+  });
+
+  it("keeps the adopted row through the rebuild every trim runs", async () => {
+    const { controller } = open(liveChild({ id: 9, text: FULL_ANSWER }));
+    (await controller.open(CHILD_ID))._unsafeUnwrap();
+
+    const rebuilt = transcriptFromOverlayEntries(
+      currentView(controller).entries,
+    );
+    const streamed = rebuilt.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(streamed).toHaveLength(1);
+    expect(streamed[0]?.text).toBe(FULL_ANSWER);
+  });
+
   it("does not duplicate the answer when live deltas follow the catch-up seed", async () => {
-    const { controller } = open(liveChild(ANSWER_DELTAS[0]));
+    const { controller } = open(liveChild({ id: 1, text: ANSWER_DELTAS[0] }));
     (await controller.open(CHILD_ID))._unsafeUnwrap();
 
     for (const raw of streamingLifecycle()) {
@@ -603,5 +702,281 @@ describe("Bug B · repeated identical deltas all reach the answer", () => {
     expect(streamed[0]?.text).toBe(REPEAT_ANSWER);
     expect(JSON.stringify(view.entries)).not.toContain(RAW_COT);
     expect(JSON.stringify(rebuilt)).not.toContain(RAW_COT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Exact delta accumulation, and card/inspector parity
+// ---------------------------------------------------------------------------
+
+/**
+ * A streamed delta is a FRAGMENT. A model splits `hello` into `hel` + `lo`
+ * whenever its tokenizer feels like it, and the wire owns every space between
+ * words.
+ *
+ * The card and the compact block used to sanitize each fragment on arrival and
+ * then join the results with a space, so `["hel", "lo"]` was painted as
+ * `hel lo` while the inspector, which concatenated, said `hello`. Two surfaces
+ * reading the same wire disagreed about what the child had said, and neither
+ * was quoting it.
+ *
+ * Both now accumulate the raw answer with the same primitive and sanitize only
+ * the projection, so the card's text is exactly the inspector's text with the
+ * card's own documented whitespace normalization applied.
+ */
+
+/** The card's answer text after a delta script. */
+function cardAnswerFrom(deltas: readonly string[]): string {
+  const card = projection();
+  card.applySessionEvent(
+    parsed({ type: "message_start", message: assistantMessage("") }),
+  );
+  for (const delta of deltas) {
+    card.applySessionEvent(
+      parsed(update({ type: "text_delta", contentIndex: 1, delta })),
+    );
+  }
+  return card.facts().activity.text;
+}
+
+/** The inspector's live assistant row text after the same script. */
+async function inspectorAnswerFrom(deltas: readonly string[]): Promise<string> {
+  const { controller } = open(liveChild());
+  (await controller.open(CHILD_ID))._unsafeUnwrap();
+  controller
+    .applyLiveEvent({
+      type: "message_start",
+      message: assistantMessage(""),
+    })
+    ._unsafeUnwrap();
+  for (const delta of deltas) {
+    controller
+      .applyLiveEvent(update({ type: "text_delta", contentIndex: 1, delta }))
+      ._unsafeUnwrap();
+  }
+  const rebuilt = transcriptFromOverlayEntries(currentView(controller).entries);
+  const assistant = rebuilt.entries.filter(
+    (entry) => entry.kind === "assistant",
+  );
+  expect(assistant).toHaveLength(1);
+  return assistant[0]?.text ?? "";
+}
+
+describe("Bug B · deltas are concatenated exactly on every surface", () => {
+  const scripts: readonly {
+    readonly name: string;
+    readonly deltas: readonly string[];
+    readonly answer: string;
+  }[] = [
+    { name: "intra-word split", deltas: ["hel", "lo"], answer: "hello" },
+    {
+      name: "a whitespace-only delta between words",
+      deltas: ["Hello", " ", "world"],
+      answer: "Hello world",
+    },
+    {
+      name: "punctuation split from its word",
+      deltas: ["done", ".", " ", "next"],
+      answer: "done. next",
+    },
+    {
+      name: "a repeated token",
+      deltas: ["the ", "the ", "the ", "end"],
+      answer: "the the the end",
+    },
+    {
+      name: "a single character at a time",
+      deltas: [..."streaming"],
+      answer: "streaming",
+    },
+  ];
+
+  for (const script of scripts) {
+    it(`accumulates ${script.name} identically on card and inspector`, async () => {
+      const card = cardAnswerFrom(script.deltas);
+      const inspector = await inspectorAnswerFrom(script.deltas);
+      expect(card).toBe(script.answer);
+      expect(inspector).toBe(script.answer);
+      expect(card).toBe(sanitizeChildCompactText(inspector));
+    });
+  }
+
+  it("keeps a multi-line answer whole, and normalizes it only for the card", async () => {
+    const deltas = ["line one", "\n", "line two"];
+    const inspector = await inspectorAnswerFrom(deltas);
+    expect(inspector).toBe("line one\nline two");
+    // The card is a one-line surface, so it collapses whitespace - and that
+    // is the ONLY difference the two surfaces are allowed to have.
+    expect(cardAnswerFrom(deltas)).toBe(sanitizeChildCompactText(inspector));
+    expect(cardAnswerFrom(deltas)).toBe("line one line two");
+  });
+
+  it("bounds a long stream on both surfaces without inventing separators", async () => {
+    // Well past the shared 4 KiB preview budget, and split mid-word so a
+    // joined-with-spaces accumulator would be obvious.
+    const deltas = Array.from({ length: 4_000 }, (_, index) =>
+      index % 2 === 0 ? "ab" : "cd",
+    );
+    const card = cardAnswerFrom(deltas);
+    const inspector = await inspectorAnswerFrom(deltas);
+    expect(card.length).toBeLessThanOrEqual(MAX_LATEST_OUTPUT_BYTES);
+    expect(inspector.length).toBeLessThanOrEqual(MAX_LATEST_OUTPUT_BYTES);
+    // No separator was invented anywhere in 8 000 fragments.
+    expect(card).not.toContain(" ");
+    expect(inspector).not.toContain(" ");
+    expect(card.startsWith("abcdabcd")).toBe(true);
+    // The card row has its own narrower display budget and marks the cut with
+    // an ellipsis; what it shows is a PREFIX of the same answer, never a
+    // differently assembled one.
+    expect(card.endsWith("\u2026")).toBe(true);
+    expect(inspector.startsWith(card.slice(0, -1))).toBe(true);
+  });
+
+  it("replaces the accumulation with the terminal message, exactly once", async () => {
+    const deltas = ["par", "tial ans", "wer"];
+    const card = projection();
+    card.applySessionEvent(
+      parsed({ type: "message_start", message: assistantMessage("") }),
+    );
+    for (const delta of deltas) {
+      card.applySessionEvent(
+        parsed(update({ type: "text_delta", contentIndex: 1, delta })),
+      );
+    }
+    expect(card.facts().activity.text).toBe("partial answer");
+    card.applySessionEvent(
+      parsed({
+        type: "message_end",
+        message: assistantMessage("partial answer, completed"),
+      }),
+    );
+    const facts = card.facts();
+    expect(facts.activity.text).toBe("partial answer, completed");
+    const messageRows = facts.viewport.rows.filter((row) => row.kind === "msg");
+    expect(messageRows).toHaveLength(1);
+    expect(messageRows[0]?.text).toBe("partial answer, completed");
+
+    const { controller } = open(liveChild());
+    (await controller.open(CHILD_ID))._unsafeUnwrap();
+    controller
+      .applyLiveEvent({
+        type: "message_start",
+        message: assistantMessage(""),
+      })
+      ._unsafeUnwrap();
+    for (const delta of deltas) {
+      controller
+        .applyLiveEvent(update({ type: "text_delta", contentIndex: 1, delta }))
+        ._unsafeUnwrap();
+    }
+    controller
+      .applyLiveEvent({
+        type: "message_end",
+        message: assistantMessage("partial answer, completed"),
+      })
+      ._unsafeUnwrap();
+    const rebuilt = transcriptFromOverlayEntries(
+      currentView(controller).entries,
+    );
+    const assistant = rebuilt.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0]?.text).toBe("partial answer, completed");
+  });
+
+  it("starts a fresh answer for the next message instead of extending", () => {
+    const card = projection();
+    card.applySessionEvent(
+      parsed({ type: "message_start", message: assistantMessage("") }),
+    );
+    card.applySessionEvent(
+      parsed(update({ type: "text_delta", contentIndex: 1, delta: "first" })),
+    );
+    card.applySessionEvent(
+      parsed({ type: "message_end", message: assistantMessage("first") }),
+    );
+    card.applySessionEvent(
+      parsed({ type: "message_start", message: assistantMessage("") }),
+    );
+    card.applySessionEvent(
+      parsed(update({ type: "text_delta", contentIndex: 1, delta: "second" })),
+    );
+    expect(card.facts().activity.text).toBe("second");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. A frame that carries both an answer and raw reasoning states nothing
+// ---------------------------------------------------------------------------
+
+/**
+ * The wire has two carriers for the same facts: a legacy `delta: { text } |
+ * { thinking }` object, and the authoritative `assistantMessageEvent`. Nothing
+ * promises a frame carries only one of them, and every reader used to answer
+ * "is this answer text?" for itself by looking at `delta.text` FIRST.
+ *
+ * A single frame carrying `delta: { text: <cot> }` beside
+ * `assistantMessageEvent: { type: "thinking_delta" }` was therefore published
+ * as the child's answer on every surface at once.
+ */
+const MIXED_CARRIER_FRAME = {
+  type: "message_update",
+  usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+  delta: { text: RAW_COT },
+  assistantMessageEvent: {
+    type: "thinking_delta",
+    contentIndex: 0,
+    delta: RAW_COT,
+  },
+} as const;
+
+describe("Bug A · a mixed-carrier frame reaches no surface at all", () => {
+  it("moves nothing on the card, and claims no reasoning either", () => {
+    const card = projection();
+    card.applySessionEvent(
+      parsed({ type: "message_start", message: assistantMessage("") }),
+    );
+    card.applySessionEvent(
+      parsed(update({ type: "text_delta", contentIndex: 1, delta: "real " })),
+    );
+    const before = card.facts();
+    card.applySessionEvent(parsed({ ...MIXED_CARRIER_FRAME }));
+    const after = card.facts();
+
+    expect(after.activity.text).toBe("real");
+    expect(after.activity.kind).toBe("say");
+    expect(after.viewport.rows).toEqual(before.viewport.rows);
+    expect(JSON.stringify(after)).not.toContain(RAW_COT);
+    expect(cardRows(card).join("\n")).not.toContain(RAW_COT);
+  });
+
+  it("reaches no overlay entry, replay step, transcript or compact state", async () => {
+    const { controller, component } = open(liveChild());
+    (await controller.open(CHILD_ID))._unsafeUnwrap();
+    controller
+      .applyLiveEvent({
+        type: "message_start",
+        message: assistantMessage(""),
+      })
+      ._unsafeUnwrap();
+    controller
+      .applyLiveEvent(
+        update({ type: "text_delta", contentIndex: 1, delta: "real answer" }),
+      )
+      ._unsafeUnwrap();
+    controller.applyLiveEvent({ ...MIXED_CARRIER_FRAME })._unsafeUnwrap();
+
+    const view = currentView(controller);
+    expect(JSON.stringify(view.entries)).not.toContain(RAW_COT);
+    expect(JSON.stringify(view.transcript)).not.toContain(RAW_COT);
+    expect(JSON.stringify(view.compact)).not.toContain(RAW_COT);
+    expect(
+      JSON.stringify(transcriptFromOverlayEntries(view.entries)),
+    ).not.toContain(RAW_COT);
+    expect(transcriptRows(component).join("\n")).not.toContain(RAW_COT);
+    expect(
+      transcriptRows(component).some((row) => row.includes("real answer")),
+    ).toBe(true);
   });
 });

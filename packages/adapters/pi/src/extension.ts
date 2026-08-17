@@ -192,7 +192,6 @@ import {
   EMPTY_USAGE_AGGREGATE,
   extractAssistantMessageId,
   extractAssistantStopReason,
-  extractAssistantTextDeltaPreview,
   PiChildInspectionRegistry,
   type PiChildTreeNode,
   ROOT_NODE_ID,
@@ -258,6 +257,7 @@ import {
   readValidatedCommands,
   safeReadHostSurfaceReport,
 } from "./host-inventory.js";
+import { messageUpdateAnswerText } from "./message-update-carrier.js";
 import {
   PiModelActivator,
   type PiModelApplyPort,
@@ -1755,9 +1755,11 @@ async function activateChildModeIfApplicable(
   });
 
   pi.on("message_update", (event) => {
-    const record = asJsonRecord(event);
-    if (record === undefined) return undefined;
-    const preview = extractAssistantTextDeltaPreview(record);
+    // The single carrier classification. A frame that carries answer text
+    // beside raw reasoning is rejected there rather than accumulated here, so
+    // this child's own transient answer buffer cannot become a
+    // chain-of-thought buffer.
+    const preview = messageUpdateAnswerText(event);
     if (preview !== undefined) {
       state.latestAssistantOutput = truncateLatestOutput(
         state.latestAssistantOutput + preview,
@@ -2349,12 +2351,18 @@ function toChildOverlayDescriptor(
       ? {}
       : { assignment: descriptor.assignment }),
     ...(descriptor.turn === undefined ? {} : { turn: descriptor.turn }),
-    // The child's own answer-only preview of the message in flight. It crosses
-    // only while the controller reports the child still running, so a settled
-    // child's authoritative transcript is never shadowed by a stale preview.
+    // The child's own answer-only preview of the message in flight, with that
+    // message's lifecycle id. It crosses only while the controller reports the
+    // child still running, so a settled child's authoritative transcript is
+    // never shadowed by a stale preview.
     ...(descriptor.status !== "live" || descriptor.streamedAnswer === undefined
       ? {}
-      : { streamedAnswer: descriptor.streamedAnswer }),
+      : {
+          streamedAnswer: {
+            id: descriptor.streamedAnswer.id,
+            text: descriptor.streamedAnswer.text,
+          },
+        }),
     ...(descriptor.queueDepth === undefined
       ? {}
       : { queueDepth: descriptor.queueDepth }),

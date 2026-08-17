@@ -449,7 +449,9 @@ describe("PiChildCardProjection", () => {
       message: { id: "asst-42", role: "assistant", content: [] },
     } as unknown as PiChildSessionEvent;
     projection.applySessionEvent(start);
-    projection.applySessionEvent(textDelta("hello", "asst-42"));
+    // Deltas are concatenated EXACTLY, in order, with no separator invented:
+    // the wire decides where the spaces go, and the first delta carries one.
+    projection.applySessionEvent(textDelta("hello ", "asst-42"));
     // The same delta again is the child saying the word twice. The wire gives
     // a delta no identity, so matching on its text would delete a real word.
     projection.applySessionEvent(textDelta("hello", "asst-42"));

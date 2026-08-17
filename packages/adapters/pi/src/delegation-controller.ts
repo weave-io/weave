@@ -327,16 +327,19 @@ export interface PiOverlayChildDescriptor {
   readonly turn?: number;
   /**
    * The child's own ANSWER-ONLY preview of the message it is writing now
-   * (`PiChildTreeNode.latestOutput`), for live children only.
+   * (`PiChildTreeNode.liveAnswer`), for live children only.
    *
    * It exists so an inspector opened MID-STREAM can show the unfinished answer
    * the reader can already see on the delegation card: the deltas that built
    * it were delivered before the overlay mounted. It is a transient 4 KiB
-   * preview the picker and the card already read — never persisted here, and
-   * never chain-of-thought, because the child accumulates only text deltas
-   * into it.
+   * preview — never persisted here, and never chain-of-thought, because the
+   * child accumulates only classified answer text into it.
+   *
+   * It carries the message's own lifecycle `id`, and it is ABSENT the moment
+   * that message ends. A reader therefore never has to ask whether a preview
+   * is stale by looking at its words.
    */
-  readonly streamedAnswer?: string;
+  readonly streamedAnswer?: { readonly id: number; readonly text: string };
   readonly queueDepth?: number;
   readonly elapsedMs?: number;
   readonly usage?: PiOverlayChildUsage;
@@ -1433,14 +1436,18 @@ export class PiDelegationController {
     elapsedMs?: number;
     usage?: PiOverlayChildUsage;
     queueDepth?: number;
-    streamedAnswer?: string;
+    streamedAnswer?: { readonly id: number; readonly text: string };
   } {
     const queueDepth = this.liveQueueDepths.get(childId);
+    // The child's own open-message fact, not a re-reading of its turn preview:
+    // `liveAnswer` exists exactly while a message is being written, and names
+    // which message that is.
     const streamedAnswer =
       snapshot !== undefined &&
       snapshot.status === "running" &&
-      snapshot.latestOutput.length > 0
-        ? snapshot.latestOutput
+      snapshot.liveAnswer !== undefined &&
+      snapshot.liveAnswer.text.length > 0
+        ? { id: snapshot.liveAnswer.id, text: snapshot.liveAnswer.text }
         : undefined;
     return {
       ...(streamedAnswer === undefined ? {} : { streamedAnswer }),

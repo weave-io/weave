@@ -94,9 +94,9 @@ import {
   endLiveAssistantLifecycle,
   isReadOnly,
   prependOverlayPage,
+  reconcileLiveAssistantAnswer,
   resolveLiveAssistantEntry,
   type SavedChildState,
-  seedLiveAssistantAnswer,
   syncTranscriptFromEntries,
 } from "./child-overlay-window.js";
 import {
@@ -109,8 +109,7 @@ import {
   type PiChildTranscriptState,
   reducePiChildTranscript,
 } from "./child-transcript.js";
-import { extractAssistantTextDeltaPreview } from "./child-tree.js";
-import type { JsonValue } from "./strict-json.js";
+import { messageUpdateAnswerText } from "./message-update-carrier.js";
 
 // ---------------------------------------------------------------------------
 // Controller
@@ -325,22 +324,29 @@ export class ChildOverlayController {
   }
 
   /**
-   * Adopts the child's own answer snapshot when the window has no row for the
-   * message being written.
+   * Reconciles the window with the child's own live-answer lifecycle.
    *
    * A reader who opens the inspector while a child is answering missed every
    * delta that already happened: this controller was not listening for them,
    * and no bounded source can replay them. The child's own answer-only
    * snapshot is the authoritative live state for exactly that gap, so the
    * unfinished answer is adopted as a PROVISIONAL, unframed assistant row that
-   * a later genuine `message_start` takes over.
+   * a later genuine `message_start` takes over — and is dropped again when the
+   * child stops writing that message.
+   *
+   * The decision is made on the message's lifecycle identity, never on its
+   * prose.
    */
   private catchUpLiveAnswer(
     child: ChildOverlayChild,
     state: SavedChildState,
   ): void {
-    const seeded = seedLiveAssistantAnswer(state, child);
-    if (seeded === undefined) return;
+    const seeded = reconcileLiveAssistantAnswer(state, child);
+    if (seeded === undefined) {
+      // A dropped stale row still changes the window.
+      syncTranscriptFromEntries(state);
+      return;
+    }
     this.mergeEntry(state, seeded);
     // The row is replayed into the transcript through the same rebuild every
     // page merge uses, so the pane reads it exactly like a live one.
@@ -597,9 +603,7 @@ export class ChildOverlayController {
     // Writing the accumulated text (and one canonical replay step) here is what
     // lets a rebuilt window still hold an unfinished answer.
     if (phase === "continue" && assistantEntryId !== undefined) {
-      const delta = extractAssistantTextDeltaPreview(
-        sessionEvent as unknown as Record<string, JsonValue>,
-      );
+      const delta = messageUpdateAnswerText(sessionEvent);
       if (delta !== undefined) {
         projected = appendLiveAssistantDelta(
           state,

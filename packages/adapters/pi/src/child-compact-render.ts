@@ -11,6 +11,7 @@
  * leaves prior state untouched.
  */
 import { err, type Result as NeverthrowResult, ok, Result } from "neverthrow";
+import { appendAssistantStreamDelta } from "./assistant-stream-text.js";
 import {
   PI_CHILD_ERROR_CLASSES,
   type PiChildErrorClass,
@@ -20,13 +21,9 @@ import {
   type PiChildSessionEvent,
   parsePiChildUsageReport,
 } from "./child-session-events.js";
-import {
-  extractAssistantTextDeltaPreview,
-  messageUpdateObservesRawReasoning,
-  truncateLatestOutput,
-} from "./child-tree.js";
+import { truncateLatestOutput } from "./child-tree.js";
+import { classifyPiMessageUpdate } from "./message-update-carrier.js";
 import type { PiChildSettlement } from "./rpc-child.js";
-import type { JsonValue } from "./strict-json.js";
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -206,7 +203,18 @@ export type ChildCompactItemKind =
 export interface ChildCompactItem {
   readonly id: string;
   readonly kind: ChildCompactItemKind;
+  /** The display projection: `rawText` sanitized, once. */
   readonly text: string;
+  /**
+   * The exact ordered concatenation of everything the child streamed into
+   * this item, bounded but otherwise untouched.
+   *
+   * It exists because a delta is a fragment, not a phrase. Sanitizing each
+   * fragment on arrival and joining the results with a space turned
+   * `["hel", "lo"]` into `hel lo`, so the card quoted an answer the child
+   * never gave and disagreed with the inspector about the same wire.
+   */
+  readonly rawText: string;
   readonly isPlaceholder: boolean;
   readonly ended: boolean;
 }
@@ -373,43 +381,45 @@ export function mapPiChildSessionEventToCompactInput(
             mode: "replace",
           };
         case "message_update": {
-          const record = event as unknown as Record<string, JsonValue>;
-          const preview = extractAssistantTextDeltaPreview(record);
-          if (preview !== undefined) {
-            // NO dedup key. A streamed delta is not identified by what it
-            // says: `" the"` can legitimately arrive many times in one answer,
-            // and keying on its text deleted every repeat after the first, so
-            // the card printed an answer the child never gave.
-            //
-            // Nothing else on the wire identifies a delta either. Pi 0.84's
-            // RPC/JSON protocol strips the cumulative `partial` snapshot from
-            // `message_update` (`toJsonEvent`) and sends only
-            // `{ type, usage, assistantMessageEvent: { type: "text_delta",
-            // contentIndex, delta } }` — no message id, no sequence, and
-            // `contentIndex` names the content BLOCK, which every delta of one
-            // answer shares. The frames arrive over an ordered JSONL pipe that
-            // has no retransmission, so a repeated delta is a repeated token,
-            // not a repeated frame.
-            return {
-              kind: "assistant_fragment",
-              itemId,
-              text: preview,
-              mode: "append",
-            };
+          // One classification decides what this frame states. A frame that
+          // carries answer text AND raw reasoning is REJECTED there, so the
+          // card can never print chain-of-thought that arrived disguised as a
+          // legacy `delta.text` beside a `thinking_delta`.
+          const carrier = classifyPiMessageUpdate(event);
+          switch (carrier.kind) {
+            case "answer":
+              // NO dedup key. A streamed delta is not identified by what it
+              // says: `" the"` can legitimately arrive many times in one
+              // answer, and keying on its text deleted every repeat after the
+              // first, so the card printed an answer the child never gave.
+              //
+              // Nothing else on the wire identifies a delta either. Pi 0.84's
+              // RPC/JSON protocol strips the cumulative `partial` snapshot
+              // from `message_update` (`toJsonEvent`) and sends only
+              // `{ type, usage, assistantMessageEvent: { type: "text_delta",
+              // contentIndex, delta } }` — no message id, no sequence, and
+              // `contentIndex` names the content BLOCK, which every delta of
+              // one answer shares. The frames arrive over an ordered JSONL
+              // pipe that has no retransmission, so a repeated delta is a
+              // repeated token, not a repeated frame.
+              return {
+                kind: "assistant_fragment",
+                itemId,
+                text: carrier.text,
+                mode: "append",
+              };
+            case "reasoning":
+              // The content-free fact that the child reasoned, never its
+              // prose.
+              return { kind: "thinking", itemId: `${itemId}:thinking` };
+            default:
+              // `framing` is LIFECYCLE structure (`text_start`, `text_end`,
+              // `toolcall_*`): it states no fact a reader can act on, and
+              // mapping it to `thinking` is what made the card say
+              // `reasoning` while the child was answering. `rejected` is an
+              // ambiguous frame, which moves nothing at all.
+              return undefined;
           }
-          // Raw thinking inside message_update — recorded as the content-free
-          // fact that the child reasoned, never as its prose.
-          if (messageUpdateObservesRawReasoning(record)) {
-            return { kind: "thinking", itemId: `${itemId}:thinking` };
-          }
-          // Everything else a Pi 0.84 `message_update` carries is LIFECYCLE
-          // FRAMING: `text_start`, `text_end`, `toolcall_start`,
-          // `toolcall_delta`, `toolcall_end`. It states no fact a reader can
-          // act on, so it produces no reducer input at all. Mapping it to
-          // `thinking` is what made the card say `reasoning` while the child
-          // was answering, and say it again the instant `text_end` closed the
-          // answer it had just streamed.
-          return undefined;
         }
         case "message_end": {
           const text = extractAssistantEndText(event.message);
@@ -816,24 +826,24 @@ function reduceAssistantFragment(
   if (dedupKey !== undefined && current.dedupKeys.has(dedupKey)) return state;
 
   const mode = input.mode ?? "append";
-  const incoming = sanitizeChildCompactText(input.text);
   const itemId = boundOpaqueId(input.itemId);
   const existing = current.items.find((item) => item.id === itemId);
 
-  let nextText: string;
-  if (existing === undefined) {
-    nextText = incoming;
-  } else if (mode === "replace") {
-    nextText = incoming;
-  } else {
-    nextText = sanitizeChildCompactText(`${existing.text} ${incoming}`.trim());
-  }
+  // Accumulate RAW, sanitize the projection. A delta is a fragment of a word
+  // as often as it is a word, so the fragments are concatenated exactly and
+  // the result is sanitized once.
+  const nextRaw =
+    existing === undefined || mode === "replace"
+      ? appendAssistantStreamDelta("", input.text)
+      : appendAssistantStreamDelta(existing.rawText, input.text);
+  const nextText = sanitizeChildCompactText(nextRaw);
 
   const meaningful = nextText.length > 0 ? nextText : undefined;
   const nextItem: ChildCompactItem = {
     id: itemId,
-    kind: existing?.isPlaceholder ? "assistant" : "assistant",
+    kind: "assistant",
     text: nextText,
+    rawText: nextRaw,
     isPlaceholder: false,
     ended: existing?.ended ?? false,
   };
@@ -864,8 +874,11 @@ function reduceAssistantEnd(
 
   const itemId = boundOpaqueId(input.itemId);
   const existing = current.items.find((item) => item.id === itemId);
-  const endText =
-    input.text !== undefined ? sanitizeChildCompactText(input.text) : "";
+  // The terminal message carries the whole answer, so it REPLACES the raw
+  // accumulation rather than extending it.
+  const endRaw =
+    input.text !== undefined ? appendAssistantStreamDelta("", input.text) : "";
+  const endText = sanitizeChildCompactText(endRaw);
 
   if (existing === undefined) {
     // Out-of-order end-before-start: placeholder slot, optionally filled.
@@ -873,6 +886,7 @@ function reduceAssistantEnd(
       id: itemId,
       kind: endText.length > 0 ? "assistant" : "placeholder",
       text: endText,
+      rawText: endRaw,
       isPlaceholder: true,
       ended: true,
     };
@@ -886,12 +900,13 @@ function reduceAssistantEnd(
     });
   }
 
-  const text =
-    endText.length > 0 ? endText : sanitizeChildCompactText(existing.text);
+  const rawText = endText.length > 0 ? endRaw : existing.rawText;
+  const text = endText.length > 0 ? endText : existing.text;
   const nextItem: ChildCompactItem = {
     id: itemId,
     kind: "assistant",
     text,
+    rawText,
     isPlaceholder: false,
     ended: true,
   };
@@ -917,6 +932,7 @@ function reduceSideItem(
     id,
     kind,
     text: "",
+    rawText: "",
     isPlaceholder: false,
     ended: true,
   };

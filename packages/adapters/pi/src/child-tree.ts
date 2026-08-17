@@ -423,6 +423,53 @@ export interface PiChildTreeNode {
    * produced answer text for this turn. Carries no chain-of-thought prose.
    */
   readonly reasoningObserved?: boolean;
+  /**
+   * The assistant message being written RIGHT NOW, with its own explicit
+   * lifecycle identity.
+   *
+   * PRESENCE is the stream-open state: the field exists only while a message
+   * is genuinely open and has produced answer text. It disappears at
+   * `message_end` and at `turn_start`, so a reader can never mistake a
+   * finished answer for one still in flight.
+   *
+   * `id` names the message, not its words. Two consecutive messages with
+   * identical text have different ids, and the same message keeps its id as it
+   * grows, which is what lets a catch-up decide whether it is looking at
+   * something new WITHOUT comparing prose.
+   *
+   * Answer text only, exactly like `latestOutput`: the accumulator is
+   * fed from the single answer classification, so raw chain-of-thought cannot
+   * reach it.
+   */
+  readonly liveAnswer?: PiChildLiveAnswer;
+}
+
+/** The bounded live-answer fact one child publishes about itself. */
+export interface PiChildLiveAnswer {
+  /** Bounded, non-reused-for-the-next-message lifecycle identity. */
+  readonly id: number;
+  /** Exact ordered concatenation of this message's answer deltas. */
+  readonly text: string;
+}
+
+/** Mutable form the child keeps, including the closed state. */
+export interface PiChildLiveAnswerState extends PiChildLiveAnswer {
+  readonly open: boolean;
+}
+
+/**
+ * Ceiling on the live-answer lifecycle counter.
+ *
+ * Ids exist to tell one message from its neighbours, not to be a global
+ * sequence, so the counter wraps rather than growing without bound. A wrap
+ * needs a million assistant messages in one child.
+ */
+export const MAX_LIVE_ANSWER_ID = 1_000_000;
+
+/** The next bounded lifecycle identity after `current`. */
+export function nextLiveAnswerId(current: number): number {
+  if (!Number.isSafeInteger(current) || current < 1) return 1;
+  return current >= MAX_LIVE_ANSWER_ID ? 1 : current + 1;
 }
 
 export const MAX_LATEST_OUTPUT_BYTES = 4 * 1024;
@@ -447,104 +494,12 @@ export function truncateLatestOutput(text: string): string {
 }
 
 /**
- * Reads a streamed assistant text delta from either supported Pi RPC shape:
- * the legacy `delta.text` object or 0.81.1's
- * `assistantMessageEvent: { type: "text_delta", delta: string }`. Shared by
- * the parent tree preview and child settlement summary.
+ * What one `message_update` states is decided in exactly one place — see
+ * `message-update-carrier.ts`. The readers that used to live here answered
+ * "is this answer text?" and "is this reasoning?" independently, so a frame
+ * carrying both was published as an answer by whichever reader looked at
+ * `delta.text` first.
  */
-export function extractAssistantTextDeltaPreview(
-  record: Record<string, JsonValue>,
-): string | undefined {
-  const delta = record.delta;
-  if (typeof delta === "object" && delta !== null && !Array.isArray(delta)) {
-    const text = (delta as Record<string, JsonValue>).text;
-    if (typeof text === "string") return text;
-  }
-
-  const assistantEvent = record.assistantMessageEvent;
-  if (
-    typeof assistantEvent !== "object" ||
-    assistantEvent === null ||
-    Array.isArray(assistantEvent)
-  ) {
-    return undefined;
-  }
-  const eventRecord = assistantEvent as Record<string, JsonValue>;
-  if (eventRecord.type !== "text_delta") return undefined;
-  return typeof eventRecord.delta === "string" ? eventRecord.delta : undefined;
-}
-
-/**
- * Reads a streamed assistant *thinking* delta from a Pi RPC `message_update`
- * record (`assistantMessageEvent: { type: "thinking_delta", delta: string }`).
- *
- * A reasoning model can think for a long time before it emits a single
- * visible text token. Without this, a delegated child looks frozen for that
- * entire stretch: `latestOutput` stays empty and the parent tool renders
- * nothing but a status. Thinking is treated exactly like text - transient,
- * bounded, and never persisted - but is tracked in its own buffer by the
- * caller so real answer text always wins once it starts.
- */
-export function extractAssistantThinkingDeltaPreview(
-  record: Record<string, JsonValue>,
-): string | undefined {
-  const assistantEvent = record.assistantMessageEvent;
-  if (
-    typeof assistantEvent !== "object" ||
-    assistantEvent === null ||
-    Array.isArray(assistantEvent)
-  ) {
-    return undefined;
-  }
-  const eventRecord = assistantEvent as Record<string, JsonValue>;
-  if (eventRecord.type !== "thinking_delta") return undefined;
-  return typeof eventRecord.delta === "string" ? eventRecord.delta : undefined;
-}
-
-/**
- * Raw-reasoning `assistantMessageEvent` types Pi 0.84 streams.
- *
- * All three are GENUINE thinking facts, unlike `text_start` / `text_end` /
- * `toolcall_*`, which are lifecycle framing and state nothing about what the
- * child is doing.
- */
-const RAW_REASONING_UPDATE_TYPES = new Set([
-  "thinking_start",
-  "thinking_delta",
-  "thinking_end",
-]);
-
-/**
- * True when one `message_update` reports that the child produced raw
- * chain-of-thought.
- *
- * This is a CONTENT-FREE classification: it reads the event's type, never its
- * prose, and is the single rule that decides whether a reader may be told
- * `reasoning`. It exists because a `message_update` is not one thing — Pi
- * 0.84 sends the whole assistant lifecycle through it, and treating every
- * non-text update as reasoning made `text_start`, `text_end` and every
- * `toolcall_*` frame claim the child was thinking while it was answering.
- */
-export function messageUpdateObservesRawReasoning(
-  record: Record<string, JsonValue>,
-): boolean {
-  const delta = record.delta;
-  if (typeof delta === "object" && delta !== null && !Array.isArray(delta)) {
-    if (typeof (delta as Record<string, JsonValue>).thinking === "string") {
-      return true;
-    }
-  }
-  const assistantEvent = record.assistantMessageEvent;
-  if (
-    typeof assistantEvent !== "object" ||
-    assistantEvent === null ||
-    Array.isArray(assistantEvent)
-  ) {
-    return false;
-  }
-  const type = (assistantEvent as Record<string, JsonValue>).type;
-  return typeof type === "string" && RAW_REASONING_UPDATE_TYPES.has(type);
-}
 
 /**
  * Reads the terminal `stopReason` of a just-completed assistant message from

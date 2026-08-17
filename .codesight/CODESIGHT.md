@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 304 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~33,200 tokens. Without it, AI exploration would cost ~98,100 tokens. **Saves ~64,900 tokens per conversation.**
-> **Last scanned:** 2026-08-17 22:47 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 306 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~33,300 tokens. Without it, AI exploration would cost ~98,600 tokens. **Saves ~65,300 tokens per conversation.**
+> **Last scanned:** 2026-08-17 23:38 — re-run after significant changes
 
 ---
 
@@ -128,6 +128,7 @@
   - interface PiArtifactReadInput
   - interface PiArtifactDigest
   - _...9 more_
+- `packages/adapters/pi/src/assistant-stream-text.ts` — function appendAssistantStreamDelta: (accumulated, delta) => string
 - `packages/adapters/pi/src/capability-prober.ts`
   - function describeDelegationReadinessGap: (requiredGaps) => PiDelegationReadinessReason
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
@@ -586,12 +587,12 @@
   - interface ChildTreeRenderOptions
 - `packages/adapters/pi/src/child-tree.ts`
   - function addUsage: (a, b) => PiChildUsageAggregate
+  - function nextLiveAnswerId: (current) => number
   - function truncateUtf8: (text, maxBytes) => string
   - function truncateFinalOutput: (text) => string
   - function truncateLatestOutput: (text) => string
-  - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
-  - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
-  - _...19 more_
+  - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
+  - _...20 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -707,6 +708,13 @@
   - function selectsCustomEditorFallback: (report) => boolean
   - function createDefaultPiHostProbePort: (input) => PiHostProbePort
   - _...11 more_
+- `packages/adapters/pi/src/message-update-carrier.ts`
+  - function classifyPiMessageUpdate: (record) => PiMessageUpdateCarrier
+  - function messageUpdateAnswerText: (record) => string | undefined
+  - function messageUpdateObservesRawReasoning: (record) => boolean
+  - type PiMessageUpdateRejection
+  - type PiMessageUpdateCarrier
+  - const MAX_MESSAGE_UPDATE_ANSWER_LENGTH
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator
@@ -1896,17 +1904,17 @@
 
 - `packages/adapters/pi/src/types.ts` — imported by **52** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
-- `packages/adapters/pi/src/strict-json.ts` — imported by **30** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **27** files
 - `packages/adapters/pi/src/native-session-fs.ts` — imported by **25** files
 - `packages/adapters/pi/src/ui-paint.ts` — imported by **24** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
 - `packages/adapters/pi/src/child-timer.ts` — imported by **21** files
 - `packages/adapters/pi/src/errors.ts` — imported by **21** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `packages/adapters/pi/src/child-session-events.ts` — imported by **18** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **19** files
+- `packages/adapters/pi/src/child-tree.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
-- `packages/adapters/pi/src/child-tree.ts` — imported by **17** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
@@ -1919,8 +1927,8 @@
 
 - `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +47 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
-- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +25 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
+- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +22 more
 - `packages/adapters/pi/src/native-session-fs.ts` ← `packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts`, `packages/adapters/pi/src/__tests__/adapter-cli-production-delete.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-bounded-reads.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-create.integration.test.ts` +20 more
 - `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +19 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
@@ -1949,7 +1957,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 338 test files found
+> 339 test files found
 
 ---
 

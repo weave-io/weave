@@ -114,6 +114,14 @@ export const CHILD_OVERLAY_BOUNDS = Object.freeze({
    * bigger preview, it is a payload this boundary never agreed to.
    */
   maxStreamedAnswerLength: 4 * 1024,
+  /**
+   * Ceiling on the child's own live-answer lifecycle id.
+   *
+   * Pinned to the child's own bounded counter (`MAX_LIVE_ANSWER_ID`): the id
+   * exists to tell one message from its neighbours, so it wraps rather than
+   * growing, and a value outside the range is not this boundary's id.
+   */
+  maxStreamedAnswerId: 1_000_000,
   /** Ceiling on any single reported usage token count (pinned to the parser). */
   maxUsageTokens: MAX_CHILD_USAGE_TOKENS,
   /** Ceiling on a reported aggregate cost. */
@@ -292,7 +300,8 @@ export const ChildOverlayChildSchema = z
       .optional(),
     turn: z.number().int().min(0).max(CHILD_OVERLAY_BOUNDS.maxTurn).optional(),
     /**
-     * The child's own ANSWER-ONLY snapshot of the message it is writing now.
+     * The child's own ANSWER-ONLY snapshot of the message it is writing now,
+     * with that message's own lifecycle identity.
      *
      * This is the single bounded live source an inspector opened MID-STREAM
      * can recover an unfinished answer from: the events that produced it were
@@ -300,13 +309,29 @@ export const ChildOverlayChildSchema = z
      * adapter never kept would be unbounded. It is the same 4 KiB preview the
      * delegation tree, the picker and the card already read, so it introduces
      * no new surface — and, by construction, no chain-of-thought: the child
-     * accumulates only text deltas into it.
+     * accumulates only classified answer text into it.
+     *
+     * PRESENCE is the stream-open state, and `id` names the message rather
+     * than its words. Both are structural: the field is one object, so a
+     * reader can never be handed text without the identity that says which
+     * message it belongs to, and never has to compare prose to decide whether
+     * it has seen this answer before.
      *
      * Live children only. A settled child's transcript is authoritative.
      */
     streamedAnswer: z
-      .string()
-      .max(CHILD_OVERLAY_BOUNDS.maxStreamedAnswerLength)
+      .object({
+        id: z
+          .number()
+          .int()
+          .min(1)
+          .max(CHILD_OVERLAY_BOUNDS.maxStreamedAnswerId),
+        text: z
+          .string()
+          .min(1)
+          .max(CHILD_OVERLAY_BOUNDS.maxStreamedAnswerLength),
+      })
+      .strict()
       .optional(),
     queueDepth: z
       .number()

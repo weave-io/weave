@@ -1,5 +1,6 @@
 import { err, ok, Result } from "neverthrow";
 import { z } from "zod";
+import { classifyPiMessageUpdate } from "./message-update-carrier.js";
 
 /** Bounds applied to observed private Pi protocol data. */
 export const MAX_CHILD_EVENT_STRING = 16_384;
@@ -1242,9 +1243,29 @@ const redactMessageReasoning = (
  * - a `message_update`'s `thinking_delta` / legacy `delta.thinking`;
  * - a `thinking` or `reasoning` content block on a carried message.
  *
+ * A `message_update` that carries answer text AND raw reasoning at once is a
+ * fourth case, and the strictest: no reader can tell which carrier held the
+ * chain-of-thought, so BOTH are emptied. Redacting only the thinking carrier
+ * left the ambiguous frame's `delta.text` in the retained history event, where
+ * a rebuild, a search, or a snapshot could still read it.
+ *
  * `reasoning_summary` is deliberately untouched: it is the host's own explicit
  * summary surface and the ONE trusted place reasoning prose may be read from.
  */
+function redactDeltaCarrier(
+  delta: Record<string, unknown>,
+  ambiguous: boolean,
+): Record<string, unknown> | undefined {
+  const thinking = typeof delta.thinking === "string" && delta.thinking !== "";
+  const text = ambiguous && typeof delta.text === "string" && delta.text !== "";
+  if (!thinking && !text) return undefined;
+  return {
+    ...delta,
+    ...(thinking ? { thinking: "" } : {}),
+    ...(text ? { text: "" } : {}),
+  };
+}
+
 export function redactRawReasoningFromEvent(
   event: PiChildSessionEvent,
 ): PiChildSessionEvent {
@@ -1264,14 +1285,16 @@ export function redactRawReasoningFromEvent(
   const record = event as unknown as Record<string, unknown>;
   const delta = plainRecord(record.delta);
   const assistantEvent = plainRecord(record.assistantMessageEvent);
+  // An ambiguous frame is redacted on every carrier it declared, because the
+  // classifier refused to say which of them the child's reasoning was in.
+  const ambiguous = classifyPiMessageUpdate(event).kind === "rejected";
   const redactedDelta =
-    delta !== undefined && typeof delta.thinking === "string"
-      ? { ...delta, thinking: "" }
-      : undefined;
+    delta === undefined ? undefined : redactDeltaCarrier(delta, ambiguous);
   const redactedAssistant =
     assistantEvent !== undefined &&
-    assistantEvent.type === "thinking_delta" &&
-    typeof assistantEvent.delta === "string"
+    (assistantEvent.type === "thinking_delta" || ambiguous) &&
+    typeof assistantEvent.delta === "string" &&
+    assistantEvent.delta !== ""
       ? { ...assistantEvent, delta: "" }
       : undefined;
   const redactedMessage = redactMessageReasoning(record.message);
