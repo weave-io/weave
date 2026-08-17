@@ -52,6 +52,7 @@ import {
   type PiDelegationAuthorityReadiness,
   WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
 } from "./capability-prober.js";
+import { PiChildAbortSettlementGate } from "./child-compaction-settlement.js";
 import {
   MAX_SETTLEMENT_OUTPUT_BYTES,
   parseControlBody,
@@ -181,7 +182,7 @@ import {
   type PiChildSessionStorageAuthority,
   provePiChildSessionRoot,
 } from "./child-session-storage-authority.js";
-import { SystemTimerPort } from "./child-timer.js";
+import { SystemTimerPort, type TimerPort } from "./child-timer.js";
 import {
   applyTreeControlKey,
   EMPTY_USAGE_AGGREGATE,
@@ -582,6 +583,12 @@ export interface PiExtensionDeps {
    */
   readonly childCommand: readonly string[];
   readonly childOutputPort: PiChildOutputPort;
+  /**
+   * Timer seam for the private child's bounded abort/compaction settlement
+   * gate. Production uses `SystemTimerPort`; tests MUST override with a
+   * deterministic fake so no regression depends on wall-clock delay.
+   */
+  readonly childTimerPort: TimerPort;
   /** Optional private inspector/history sink for complete child output. */
   readonly onChildPrivateOutput?: (
     childId: string,
@@ -723,6 +730,7 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     processPort: new BunPiChildProcessPort(),
     childCommand: buildDefaultPiChildCommand(envPort),
     childOutputPort: new StdoutChildOutputPort(),
+    childTimerPort: new SystemTimerPort(),
     runtimeStoreFactory: new SqliteRuntimeStoreFactory(),
     pathContainmentPort: new BunPathContainmentPort(),
     planCatalogPort: new BunPiPlanCatalogPort(),
@@ -1579,6 +1587,21 @@ async function activateChildModeIfApplicable(
       },
     );
 
+  /**
+   * Bounded gate that keeps a compaction-intent local abort from becoming a
+   * terminal failure. See `child-compaction-settlement.ts` for the observed
+   * Pi 0.84 event order this models.
+   */
+  const abortGate = new PiChildAbortSettlementGate({
+    timerPort: deps.childTimerPort,
+    onExpire: (failure) => {
+      // The deferred verdict is now terminal, so no late completion candidate
+      // may still be recorded for it.
+      if (state.directStep !== undefined) state.directStep.windowOpen = false;
+      void reportSettlement("failed", { reason: failure.reason });
+    },
+  });
+
   pi.registerCommand(PROMPT_CHUNK_COMMAND.slice(1), {
     handler: async (rawArgs: string) => {
       const parsed = parsePromptChunk(rawArgs);
@@ -1651,6 +1674,32 @@ async function activateChildModeIfApplicable(
     state.latestAssistantOutput = "";
     state.fullAssistantOutput = "";
     state.terminalError = undefined;
+    // A turn that begins after a deferred abort is the resumed run the
+    // compaction extension asked for - the only structural resumption
+    // evidence Pi exposes. It hands the outcome back to the ordinary path.
+    abortGate.observeTurnStart();
+  });
+
+  // The two structural compaction-lifecycle events. Their *existence* - not
+  // any error prose - is what distinguishes a compaction-intent abort from a
+  // genuine failure. Both are observed because `session_compact` is emitted
+  // only when a compaction entry was actually saved, while
+  // `session_before_compact` is emitted first and always.
+  const observeCompaction = (): undefined => {
+    abortGate.observeCompactionLifecycle();
+    return undefined;
+  };
+  pi.on("session_before_compact", observeCompaction);
+  pi.on("session_compact", observeCompaction);
+
+  // By the time this fires the adapter's own shutdown handler (registered at
+  // factory time, so always first) has already torn the child runtime down -
+  // an envelope sent from here is rejected as `runtime not activated`. So the
+  // gate only drops its armed timer; the parent's existing
+  // exit-without-settlement classification owns that outcome.
+  pi.on("session_shutdown", () => {
+    abortGate.dispose();
+    return undefined;
   });
 
   pi.on("message_update", (event) => {
@@ -1707,15 +1756,18 @@ async function activateChildModeIfApplicable(
     // `"cancelled"` one that already went out, and never report completed
     // more than once (Task 9).
     if (runtime.isCancelled()) return;
-    // Direct-step completion window closes the instant this event fires
-    // (Pi adapter contract) - a tool call that races in afterward must observe
-    // `windowOpen === false` and be rejected as late, never recorded.
-    if (state.directStep !== undefined) state.directStep.windowOpen = false;
     if (
       state.lastAssistantStopReason === "error" ||
       state.lastAssistantStopReason === "aborted"
     ) {
-      await reportSettlement("failed", {
+      // A third-party compaction extension forces a threshold compaction by
+      // aborting the run and then compacting from its own `agent_settled`
+      // handler. Pi awaits extension handlers sequentially, so this handler
+      // must return immediately: awaiting a grace period here would stop a
+      // later-ordered `ctx.compact()` from ever running. The sanitized
+      // verdict is captured now (it belongs to *this* turn) and published on
+      // a bounded deferral unless compaction evidence arrives first.
+      abortGate.observeAbortSettlement({
         reason:
           state.lastAssistantStopReason === "error"
             ? formatPiChildProviderError(state.terminalError)
@@ -1723,6 +1775,14 @@ async function activateChildModeIfApplicable(
       });
       return;
     }
+    // A genuine settlement always wins over any deferred abort verdict, so no
+    // settlement is lost and none is ever reported twice.
+    if (abortGate.admitSettlement().kind === "suppress") return;
+    // Direct-step completion window closes the instant a settlement is
+    // admitted (Pi adapter contract) - a tool call that races in afterward
+    // must observe `windowOpen === false` and be rejected as late, never
+    // recorded.
+    if (state.directStep !== undefined) state.directStep.windowOpen = false;
     if (state.directStep !== undefined) {
       // A direct-step child's settlement is NEVER free-form prose (Pi adapter contract
       //): report the one recorded structured completion candidate as

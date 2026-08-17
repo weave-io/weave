@@ -149,6 +149,14 @@
   - function reduceChildCompactSafe: (state, input) => ChildCompactState
   - function childCompactChromeIsClean: (chrome, state) => boolean
   - _...19 more_
+- `packages/adapters/pi/src/child-compaction-settlement.ts`
+  - class PiChildAbortSettlementGate
+  - interface DeferredChildFailure
+  - interface PiChildAbortSettlementGateOptions
+  - type AbortSettlementDecision
+  - type SettlementAdmission
+  - const DEFAULT_COMPACTION_EVIDENCE_GRACE_MS
+  - _...1 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function makeCancelBody: (reason) => void

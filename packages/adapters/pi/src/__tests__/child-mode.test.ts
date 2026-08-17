@@ -13,6 +13,7 @@ import {
   WEAVE_CONTROLLER_GENERATION_ENV,
 } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
+import type { TimerHandle, TimerPort } from "../child-timer.js";
 import {
   ChunkTransferAssembler,
   type TransferChunk,
@@ -219,6 +220,36 @@ function fakeCtx(overrides: Partial<PiSessionContext> = {}): PiSessionContext {
   };
 }
 
+/**
+ * Deterministic stand-in for the child's abort/compaction settlement timer.
+ * Nothing fires until a test fires it, so the bounded deferral that keeps a
+ * compaction-intent abort non-terminal costs a test no wall-clock time.
+ */
+class ScriptedTimerPort implements TimerPort {
+  private readonly scheduled: {
+    callback: () => void;
+    cancelled: boolean;
+    fired: boolean;
+  }[] = [];
+  schedule(callback: () => void, _delayMs: number): TimerHandle {
+    const entry = { callback, cancelled: false, fired: false };
+    this.scheduled.push(entry);
+    return {
+      cancel: () => {
+        entry.cancelled = true;
+      },
+    };
+  }
+  /** Fires every live timer once, in scheduling order. */
+  fireAll(): void {
+    for (const entry of [...this.scheduled]) {
+      if (entry.cancelled || entry.fired) continue;
+      entry.fired = true;
+      entry.callback();
+    }
+  }
+}
+
 async function buildChildExtension(
   sessionCtx: PiSessionContext = fakeCtx(),
   overrides: Partial<PiExtensionDeps> = {},
@@ -233,12 +264,14 @@ async function buildChildExtension(
   );
   const output = new FakeOutputPort();
   const host = new MinimalFakeHost();
+  const timers = new ScriptedTimerPort();
   const factory = createPiExtension({
     envPort: env,
     randomPort,
     hmacPort,
     processPort: new FakeChildProcessPort(),
     childOutputPort: output,
+    childTimerPort: timers,
     sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
     ...overrides,
   });
@@ -249,7 +282,7 @@ async function buildChildExtension(
   // ctx a caller might pass to the command handler. Tests that need a
   // specific `ctx.modelRegistry`/`ctx.model` must supply it here.
   await host.fire("session_start", {}, sessionCtx);
-  return { host, output, secretBytes };
+  return { host, output, secretBytes, timers };
 }
 
 async function deliverEnvelope(
@@ -662,7 +695,7 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
   });
 
   it("derives a failed outcome from the last observed assistant stopReason, since agent_settled itself carries no payload (Task 9)", async () => {
-    const { host, output } = await buildChildExtension();
+    const { host, output, timers } = await buildChildExtension();
     await host.fire(
       "message_end",
       {
@@ -672,7 +705,10 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       fakeCtx(),
     );
     await host.fire("agent_settled", {}, fakeCtx());
-    await flush();
+    // The verdict is captured now and published once the bounded
+    // compaction-evidence grace expires with no compaction lifecycle.
+    timers.fireAll();
+    await waitFor(() => output.lines.some((line) => line.kind === "settled"));
 
     const settled = output.lines.at(-1);
     expect(settled?.kind).toBe("settled");
@@ -681,7 +717,7 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
   });
 
   it("treats an aborted stopReason the same as an error stopReason", async () => {
-    const { host, output } = await buildChildExtension();
+    const { host, output, timers } = await buildChildExtension();
     await host.fire(
       "message_end",
       {
@@ -691,7 +727,8 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       fakeCtx(),
     );
     await host.fire("agent_settled", {}, fakeCtx());
-    await flush();
+    timers.fireAll();
+    await waitFor(() => output.lines.some((line) => line.kind === "settled"));
 
     const body = output.lines.at(-1)?.body as Record<string, unknown>;
     expect(body.outcome).toBe("failed");

@@ -398,6 +398,8 @@ and environment values never enter the result.
 
 Pi's `agent_settled` event has no payload. The adapter derives `failed` from the latest assistant `message_end.stopReason` when it is `error` or `aborted`; every other case, including no observed reason, settles as `completed`. Once cancellation is admitted, that child cannot report `completed`.
 
+A `failed` verdict is captured immediately but published on a bounded deferral, because a context-compaction extension can force a threshold compaction by aborting the run and then compacting from its own `agent_settled` handler. Pi awaits extension handlers sequentially, so the adapter returns from `agent_settled` at once instead of blocking that chain. Only the structural compaction lifecycle decides the outcome: `session_before_compact` or `session_compact` within a five-second grace moves the child to a ten-minute resume window, and the next `turn_start` discards the captured verdict and returns the child to the ordinary settlement path. Error prose is never used to detect compaction. If no compaction starts, or compaction starts but the child never resumes, the captured verdict is published unchanged with its original sanitized reason. A genuine settlement always wins over a captured verdict, so exactly one settlement is reported, no settlement is lost, and no state is unbounded.
+
 Completed settlement fields have one meaning each: `assistantOutput` is the
 bounded parent projection, `completionCandidate` is direct-step structured JSON,
 `outputTransferId` references an ACKed private transfer, and
