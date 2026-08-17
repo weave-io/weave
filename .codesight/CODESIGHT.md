@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 307 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~33,400 tokens. Without it, AI exploration would cost ~98,900 tokens. **Saves ~65,400 tokens per conversation.**
-> **Last scanned:** 2026-08-17 19:37 — re-run after significant changes
+> **Last scanned:** 2026-08-17 20:22 — re-run after significant changes
 
 ---
 
@@ -662,7 +662,7 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
   - _...92 more_
-- `packages/adapters/pi/src/extension.ts`
+- `packages/adapters/pi/src/extension-impl.ts`
   - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
   - function resolveAgentRuntimeMeta: (descriptorsByName, AgentDescriptor>, agentName, ctx?) => void
@@ -705,9 +705,9 @@
   - function exactPathLoadFilter: (exactPath) => RegExp
   - function deriveHostPackageRoot: (cliEntryPath) => Result<string,
   - function resolveHostModules: (env, options?) => ResultAsync<PiHostModuleOutcome, never>
-  - class BunPiHostModuleEnvironment
-  - interface PiHostModuleEnvironmentPort
-  - _...10 more_
+  - function recordHostModuleOutcome: (outcome) => void
+  - function getHostModuleOutcome: () => PiHostModuleOutcome | undefined
+  - _...12 more_
 - `packages/adapters/pi/src/host-module-redirect.ts`
   - function hostEntrySpecifierFor: (specifier) => string
   - function isSafeAbsoluteHostPath: (value) => boolean

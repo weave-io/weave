@@ -1026,12 +1026,10 @@ describe("child provider error safe message copy", () => {
     if (!parsed.success) throw new Error("unreachable");
     const projected = redactProviderErrorFromEvent(parsed.data);
     const callsAfterParse = getterCalls;
-    expect(callsAfterParse).toBeGreaterThanOrEqual(0);
+    expect(callsAfterParse).toBe(0);
     expect(getterCalls).toBe(callsAfterParse);
     expect(JSON.stringify(projected)).not.toContain("ghp_");
-    expect(JSON.stringify(projected)).toContain(
-      TOOL_RESULT_DETAILS_UNAVAILABLE,
-    );
+    expect((projected as { result?: unknown }).result).toBeUndefined();
   });
 
   it("preserves validated extension UI correlation and sanitizes payloads", () => {
@@ -1729,25 +1727,27 @@ describe("child provider error retention in the overlay", () => {
     const established = apply(controller, errorEnd("429 rate limit reached"));
     expect(established.terminalError?.class).toBe("rate-limit");
 
-    const hostile: readonly unknown[] = [
+    const unreadable: readonly unknown[] = [
       {
         get type(): string {
           throw new Error("hostile type getter");
         },
       },
       new Proxy(
-        { type: "message_end", message: { role: "assistant" } },
-        {
-          get(): never {
-            throw new Error("hostile get trap");
-          },
-        },
-      ),
-      new Proxy(
         { type: "definitely_unknown_kind", payload: { a: 1 } },
         {
           ownKeys(): never {
             throw new Error("hostile ownKeys trap");
+          },
+        },
+      ),
+    ];
+    const descriptorSafe: readonly unknown[] = [
+      new Proxy(
+        { type: "message_end", message: { role: "assistant" } },
+        {
+          get(): never {
+            throw new Error("hostile get trap");
           },
         },
       ),
@@ -1769,13 +1769,22 @@ describe("child provider error retention in the overlay", () => {
       },
     ];
 
-    for (const event of hostile) {
+    for (const event of unreadable) {
       expect(() => controller.applyLiveEvent(event)).not.toThrow();
       const view = apply(controller, event);
-      // The event is ignored outright: the retained error is neither replaced
-      // nor cleared, and no entry is admitted from an unreadable event.
+      // Unreadable events stay ignored: the retained error is neither replaced
+      // nor cleared, and no entry is admitted.
       expect(view.terminalError).toEqual(established.terminalError);
       expect(view.entries).toEqual(established.entries);
+      expect(JSON.stringify(view)).not.toContain("hostile");
+    }
+
+    for (const event of descriptorSafe) {
+      expect(() => controller.applyLiveEvent(event)).not.toThrow();
+      const view = apply(controller, event);
+      // Descriptor-safe fields may be admitted. Hostile traps are omitted, so
+      // the retained error is not replaced by trap prose and no secret leaks.
+      expect(view.terminalError).toEqual(established.terminalError);
       expect(JSON.stringify(view)).not.toContain("hostile");
     }
 

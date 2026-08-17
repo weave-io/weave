@@ -577,6 +577,60 @@ describe("queue depth stays optional through every boundary", () => {
     expect(reads).toBe(0);
   });
 
+  it("keeps a descriptor/get divergent proxy off the rail, card and replay", async () => {
+    let getReads = 0;
+    const forged = new Proxy(
+      {
+        type: "forged_unknown_kind",
+        steering: ["steer"],
+        followUp: ["later"],
+      },
+      {
+        get(source, key, receiver) {
+          getReads += 1;
+          if (key === "type") return "queue_change";
+          return Reflect.get(source, key, receiver);
+        },
+      },
+    );
+
+    const view = await openView({ status: "live" }, [forged]);
+    const rail = childOverlayRailFacts(view);
+    expect(rail.queueCount).toBeUndefined();
+    expect(rail.firstQueued).toBeUndefined();
+    expect(railText(rail)).toContain(OVERLAY_UNKNOWN);
+    expect(railText(rail)).not.toContain("queue empty");
+    expect(railText(rail)).not.toContain("queue 0");
+    expect(railText(rail)).not.toContain("queue 2");
+    expect(
+      childOverlayPromptFacts(view, { draft: "", confirmingCancel: false })
+        .queueCount,
+    ).toBeUndefined();
+    expect(overlayRows(view)).not.toContain("queue: 2");
+
+    const parsed = parsePiChildSessionEvent(forged);
+    expect(() => parsePiChildSessionEvent(forged)).not.toThrow();
+    expect(getReads).toBe(0);
+    if (parsed.success) {
+      expect(parsed.data.type).not.toBe("queue_change");
+      expect(
+        mapPiChildSessionEventToCompactInput(parsed.data)._unsafeUnwrap()?.kind,
+      ).not.toBe("queue");
+      const facts = projectDelegationCardFacts(
+        applyDelegationCardEvent(
+          startedCard(),
+          parsed.data,
+          () => 2_000,
+          "assistant",
+        )._unsafeUnwrap(),
+      );
+      expect(facts.run.phase).not.toBe("steered");
+      expect(facts.activity?.kind).not.toBe("queue");
+    } else {
+      expect(parsed.success).toBe(false);
+    }
+  });
+
   it("keeps a partial `queue_update` off the compact render and the card", () => {
     const parsed = parsePiChildSessionEvent({
       type: "queue_update",

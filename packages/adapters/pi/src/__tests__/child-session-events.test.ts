@@ -271,26 +271,43 @@ describe("Pi child session event hostile boundary", () => {
     );
   });
 
-  it("returns a typed failure for a throwing get trap", () => {
-    expectTypedFailure(
-      new Proxy(
-        { type: "text", text: "bounded" },
-        {
-          get(): never {
-            return throwing("hostile get trap");
-          },
+  it("never invokes a throwing get trap when descriptors already state a known event", () => {
+    let getReads = 0;
+    const value = new Proxy(
+      { type: "text", text: "bounded" },
+      {
+        get(): never {
+          getReads += 1;
+          return throwing("hostile get trap");
         },
-      ),
+      },
     );
+    expect(() => parsePiChildSessionEvent(value)).not.toThrow();
+    const parsed = parsePiChildSessionEvent(value);
+    expect(getReads).toBe(0);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toMatchObject({ type: "text", text: "bounded" });
+    }
   });
 
-  it("returns a typed failure for a nested message getter that throws", () => {
-    expectTypedFailure({
+  it("omits a nested message getter and never invokes it", () => {
+    let reads = 0;
+    const value = {
       type: "message_end",
       get message(): unknown {
+        reads += 1;
         return throwing("hostile nested getter");
       },
-    });
+    };
+    expect(() => parsePiChildSessionEvent(value)).not.toThrow();
+    const parsed = parsePiChildSessionEvent(value);
+    expect(reads).toBe(0);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toMatchObject({ type: "message_end" });
+      expect("message" in parsed.data).toBe(false);
+    }
   });
 
   it("returns a typed failure for a throwing accessor descriptor", () => {
@@ -304,7 +321,7 @@ describe("Pi child session event hostile boundary", () => {
     expectTypedFailure(hostile);
   });
 
-  it("returns a typed failure for hostile symbol and toJSON traps", () => {
+  it("returns a typed failure for hostile symbol traps and omits toJSON accessors", () => {
     const symbolTrap: Record<string | symbol, unknown> = {
       type: "text",
       text: { toString: (): never => throwing("hostile toString") },
@@ -317,20 +334,34 @@ describe("Pi child session event hostile boundary", () => {
     expect(() => parsePiChildSessionEvent(symbolTrap)).not.toThrow();
     expect(parsePiChildSessionEvent(symbolTrap).success).toBe(false);
 
-    expectTypedFailure({
+    let toJsonReads = 0;
+    let messageReads = 0;
+    const accessors = {
       type: "message_end",
       get toJSON(): unknown {
+        toJsonReads += 1;
         return throwing("hostile toJSON");
       },
       get message(): unknown {
+        messageReads += 1;
         return throwing("hostile toJSON message");
       },
-    });
+    };
+    expect(() => parsePiChildSessionEvent(accessors)).not.toThrow();
+    const parsed = parsePiChildSessionEvent(accessors);
+    expect(toJsonReads).toBe(0);
+    expect(messageReads).toBe(0);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toMatchObject({ type: "message_end" });
+      expect("message" in parsed.data).toBe(false);
+    }
   });
 
-  it("returns a typed failure for a throwing nested tool payload", () => {
-    // `tool_execution_start` is normalized, which enumerates `args`.
-    expectTypedFailure({
+  it("drops a throwing nested tool payload instead of enumerating it", () => {
+    // `args` is not plain data, so it is omitted. Normalization then sees only
+    // the descriptor-safe call identity.
+    const value = {
       type: "tool_execution_start",
       toolCallId: "call-1",
       toolName: "read",
@@ -342,7 +373,20 @@ describe("Pi child session event hostile boundary", () => {
           },
         },
       ),
-    });
+    };
+    expect(() => parsePiChildSessionEvent(value)).not.toThrow();
+    const parsed = parsePiChildSessionEvent(value);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toMatchObject({
+        type: "tool_call",
+        toolCallId: "call-1",
+        toolName: "read",
+      });
+      expect(
+        (parsed.data as { arguments?: unknown }).arguments,
+      ).toBeUndefined();
+    }
   });
 
   it("still parses parser-approved real events unchanged", () => {
@@ -477,6 +521,112 @@ describe("Pi child session event type authority", () => {
       if (parsed.data.type === "unknown") {
         expect(parsed.data.originalType).toHaveLength(256);
       }
+    }
+  });
+
+  it("does not grant known-event authority when a proxy get forges queue_change", () => {
+    let getReads = 0;
+    const value = new Proxy(
+      {
+        type: "forged_unknown_kind",
+        steering: ["steer"],
+        followUp: ["later"],
+      },
+      {
+        get(source, key, receiver) {
+          getReads += 1;
+          if (key === "type") return "queue_change";
+          return Reflect.get(source, key, receiver);
+        },
+      },
+    );
+    expect(() => parsePiChildSessionEvent(value)).not.toThrow();
+    const parsed = parsePiChildSessionEvent(value);
+    expect(getReads).toBe(0);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe("unknown");
+      expect(JSON.stringify(parsed.data)).not.toContain("queue_change");
+    }
+  });
+
+  it("does not let Zod read a proxy whose field descriptors diverge from get", () => {
+    let getReads = 0;
+    const value = new Proxy(
+      { type: "text", text: "descriptor-safe" },
+      {
+        get(source, key, receiver) {
+          getReads += 1;
+          if (key === "text") return "forged-via-get";
+          return Reflect.get(source, key, receiver);
+        },
+      },
+    );
+    const parsed = parsePiChildSessionEvent(value);
+    expect(getReads).toBe(0);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toMatchObject({
+        type: "text",
+        text: "descriptor-safe",
+      });
+      expect(JSON.stringify(parsed.data)).not.toContain("forged-via-get");
+    }
+  });
+
+  it("does not let Zod or the queue normalizer read divergent queue fields via get", () => {
+    let getReads = 0;
+    const queued = new Proxy(
+      {
+        type: "queue_update",
+        steering: ["steer"],
+        followUp: ["later"],
+      },
+      {
+        get(source, key, receiver) {
+          getReads += 1;
+          if (key === "steering") return ["forged-steer"];
+          if (key === "followUp") return ["forged-later"];
+          if (key === "size") return 99;
+          if (key === "queue") return ["forged-queue"];
+          return Reflect.get(source, key, receiver);
+        },
+      },
+    );
+    const parsed = parsePiChildSessionEvent(queued);
+    expect(getReads).toBe(0);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toMatchObject({
+        type: "queue_change",
+        size: 2,
+        queue: ["steer", "later"],
+      });
+      expect(JSON.stringify(parsed.data)).not.toContain("forged");
+    }
+
+    getReads = 0;
+    const change = new Proxy(
+      { type: "queue_change", size: 0, queue: [] },
+      {
+        get(source, key, receiver) {
+          getReads += 1;
+          if (key === "size") return 99;
+          if (key === "queue") return ["forged-queue"];
+          return Reflect.get(source, key, receiver);
+        },
+      },
+    );
+    const parsedChange = parsePiChildSessionEvent(change);
+    expect(getReads).toBe(0);
+    expect(parsedChange.success).toBe(true);
+    if (parsedChange.success) {
+      expect(parsedChange.data).toMatchObject({
+        type: "queue_change",
+        size: 0,
+        queue: [],
+      });
+      expect(JSON.stringify(parsedChange.data)).not.toContain("forged");
     }
   });
 
