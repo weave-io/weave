@@ -200,6 +200,7 @@ export function createMemoryChildOverlaySource(
         reasoning: child.reasoning,
         assignment: child.assignment,
         turn: child.turn,
+        streamedAnswer: child.streamedAnswer,
         queueDepth: child.queueDepth,
         elapsedMs: child.elapsedMs,
         usage: child.usage,

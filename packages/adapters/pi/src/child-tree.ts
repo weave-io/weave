@@ -502,6 +502,51 @@ export function extractAssistantThinkingDeltaPreview(
 }
 
 /**
+ * Raw-reasoning `assistantMessageEvent` types Pi 0.84 streams.
+ *
+ * All three are GENUINE thinking facts, unlike `text_start` / `text_end` /
+ * `toolcall_*`, which are lifecycle framing and state nothing about what the
+ * child is doing.
+ */
+const RAW_REASONING_UPDATE_TYPES = new Set([
+  "thinking_start",
+  "thinking_delta",
+  "thinking_end",
+]);
+
+/**
+ * True when one `message_update` reports that the child produced raw
+ * chain-of-thought.
+ *
+ * This is a CONTENT-FREE classification: it reads the event's type, never its
+ * prose, and is the single rule that decides whether a reader may be told
+ * `reasoning`. It exists because a `message_update` is not one thing — Pi
+ * 0.84 sends the whole assistant lifecycle through it, and treating every
+ * non-text update as reasoning made `text_start`, `text_end` and every
+ * `toolcall_*` frame claim the child was thinking while it was answering.
+ */
+export function messageUpdateObservesRawReasoning(
+  record: Record<string, JsonValue>,
+): boolean {
+  const delta = record.delta;
+  if (typeof delta === "object" && delta !== null && !Array.isArray(delta)) {
+    if (typeof (delta as Record<string, JsonValue>).thinking === "string") {
+      return true;
+    }
+  }
+  const assistantEvent = record.assistantMessageEvent;
+  if (
+    typeof assistantEvent !== "object" ||
+    assistantEvent === null ||
+    Array.isArray(assistantEvent)
+  ) {
+    return false;
+  }
+  const type = (assistantEvent as Record<string, JsonValue>).type;
+  return typeof type === "string" && RAW_REASONING_UPDATE_TYPES.has(type);
+}
+
+/**
  * Reads the terminal `stopReason` of a just-completed assistant message from
  * a `message_end` event record, if present.
  *

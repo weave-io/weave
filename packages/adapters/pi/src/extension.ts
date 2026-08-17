@@ -2325,6 +2325,12 @@ function toChildOverlayDescriptor(
       ? {}
       : { assignment: descriptor.assignment }),
     ...(descriptor.turn === undefined ? {} : { turn: descriptor.turn }),
+    // The child's own answer-only preview of the message in flight. It crosses
+    // only while the controller reports the child still running, so a settled
+    // child's authoritative transcript is never shadowed by a stale preview.
+    ...(descriptor.status !== "live" || descriptor.streamedAnswer === undefined
+      ? {}
+      : { streamedAnswer: descriptor.streamedAnswer }),
     ...(descriptor.queueDepth === undefined
       ? {}
       : { queueDepth: descriptor.queueDepth }),

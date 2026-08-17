@@ -106,6 +106,14 @@ export const CHILD_OVERLAY_BOUNDS = Object.freeze({
   maxQueueDepth: MAX_CHILD_EVENT_ITEMS,
   /** Ceiling on reported elapsed milliseconds (one year). */
   maxElapsedMs: 31_536_000_000,
+  /**
+   * Ceiling on the child's own streamed-answer catch-up snapshot.
+   *
+   * Pinned to the delegation tree's `MAX_LATEST_OUTPUT_BYTES` preview budget:
+   * the descriptor carries that exact value, so a longer string is not a
+   * bigger preview, it is a payload this boundary never agreed to.
+   */
+  maxStreamedAnswerLength: 4 * 1024,
   /** Ceiling on any single reported usage token count (pinned to the parser). */
   maxUsageTokens: MAX_CHILD_USAGE_TOKENS,
   /** Ceiling on a reported aggregate cost. */
@@ -283,6 +291,23 @@ export const ChildOverlayChildSchema = z
       .max(CHILD_OVERLAY_BOUNDS.maxAssignmentLength)
       .optional(),
     turn: z.number().int().min(0).max(CHILD_OVERLAY_BOUNDS.maxTurn).optional(),
+    /**
+     * The child's own ANSWER-ONLY snapshot of the message it is writing now.
+     *
+     * This is the single bounded live source an inspector opened MID-STREAM
+     * can recover an unfinished answer from: the events that produced it were
+     * delivered before the overlay mounted, and replaying an event log the
+     * adapter never kept would be unbounded. It is the same 4 KiB preview the
+     * delegation tree, the picker and the card already read, so it introduces
+     * no new surface — and, by construction, no chain-of-thought: the child
+     * accumulates only text deltas into it.
+     *
+     * Live children only. A settled child's transcript is authoritative.
+     */
+    streamedAnswer: z
+      .string()
+      .max(CHILD_OVERLAY_BOUNDS.maxStreamedAnswerLength)
+      .optional(),
     queueDepth: z
       .number()
       .int()

@@ -993,6 +993,58 @@ export function liveAssistantLifecyclePhase(
 }
 
 /**
+ * The canonical window entry of an assistant message that is still being
+ * written.
+ *
+ * A streamed `message_update` states one delta, and an entry that keeps only
+ * that delta is a fact nothing can rebuild an answer from. Every window
+ * reconstruction the overlay performs — a trim, an older/newer page merge, a
+ * search that fetches pages — replays entries through
+ * {@link transcriptFromOverlayEntries}, and a lifecycle whose only retained
+ * step was `message_start` came back empty while the child was still
+ * answering.
+ *
+ * So the entry carries the ACCUMULATED answer instead, with one canonical
+ * `message_update` step that reproduces it. It is exactly one step: replay
+ * compaction collapses same-message updates onto their own stage, so a
+ * thousand deltas cost one slot, and the terminal `message_end` occupies a
+ * different stage and REPLACES the accumulated text on rebuild rather than
+ * appending to it. Raw chain-of-thought never reaches here: the caller
+ * accumulates answer deltas only.
+ */
+export function liveAssistantStreamEntry(input: {
+  readonly id: string;
+  readonly sequence: number;
+  readonly expanded: boolean;
+  readonly text: string;
+  /** Framed as its own message when no `message_start` was observed. */
+  readonly framed: boolean;
+}): ChildOverlayEntry {
+  const text = boundText(input.text);
+  const steps: ChildOverlayReplayStep[] = [];
+  if (input.framed) {
+    const start = replayEvent({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    if (start !== undefined) steps.push(start);
+  }
+  const update = replayEvent({
+    type: "message_update",
+    delta: { text },
+  });
+  if (update !== undefined) steps.push(update);
+  return {
+    id: input.id,
+    sequence: input.sequence,
+    kind: "assistant",
+    text,
+    expanded: input.expanded,
+    replay: steps,
+  };
+}
+
+/**
  * Allocates the next assistant lifecycle overlay entry id from a bounded
  * monotonic counter.
  *

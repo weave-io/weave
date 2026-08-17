@@ -22,6 +22,7 @@ import {
 } from "./child-session-events.js";
 import {
   extractAssistantTextDeltaPreview,
+  messageUpdateObservesRawReasoning,
   truncateLatestOutput,
 } from "./child-tree.js";
 import type { PiChildSettlement } from "./rpc-child.js";
@@ -353,9 +354,8 @@ export function mapPiChildSessionEventToCompactInput(
             mode: "replace",
           };
         case "message_update": {
-          const preview = extractAssistantTextDeltaPreview(
-            event as unknown as Record<string, JsonValue>,
-          );
+          const record = event as unknown as Record<string, JsonValue>;
+          const preview = extractAssistantTextDeltaPreview(record);
           if (preview !== undefined) {
             const dedupKey = `${itemId}:frag:${stableFragmentKey(preview)}`;
             return {
@@ -366,8 +366,19 @@ export function mapPiChildSessionEventToCompactInput(
               mode: "append",
             };
           }
-          // Thinking deltas inside message_update — record, never activity.
-          return { kind: "thinking", itemId: `${itemId}:thinking` };
+          // Raw thinking inside message_update — recorded as the content-free
+          // fact that the child reasoned, never as its prose.
+          if (messageUpdateObservesRawReasoning(record)) {
+            return { kind: "thinking", itemId: `${itemId}:thinking` };
+          }
+          // Everything else a Pi 0.84 `message_update` carries is LIFECYCLE
+          // FRAMING: `text_start`, `text_end`, `toolcall_start`,
+          // `toolcall_delta`, `toolcall_end`. It states no fact a reader can
+          // act on, so it produces no reducer input at all. Mapping it to
+          // `thinking` is what made the card say `reasoning` while the child
+          // was answering, and say it again the instant `text_end` closed the
+          // answer it had just streamed.
+          return undefined;
         }
         case "message_end": {
           const text = extractAssistantEndText(event.message);

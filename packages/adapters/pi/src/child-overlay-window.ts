@@ -12,7 +12,13 @@ import {
   type ChildCompactState,
   createChildCompactState,
 } from "./child-compact-render.js";
-import { transcriptFromOverlayEntries } from "./child-overlay-replay.js";
+import {
+  allocateLiveAssistantEntryId,
+  boundText,
+  type LiveAssistantLifecyclePhase,
+  liveAssistantStreamEntry,
+  transcriptFromOverlayEntries,
+} from "./child-overlay-replay.js";
 import {
   markTailGrowth,
   type OverlayScrollState,
@@ -94,6 +100,26 @@ export interface SavedChildState extends OverlayScrollState {
    * {@link MAX_LIVE_ASSISTANT_LIFECYCLES}.
    */
   liveAssistantCounter: number;
+  /**
+   * The ANSWER text of the lifecycle in flight, accumulated from its own text
+   * deltas and bounded by `boundText`.
+   *
+   * It is the canonical live assistant state: the window entry and its single
+   * replay step are both written from it, so an unfinished answer survives
+   * every window reconstruction (trim, page merge, search fetch) instead of
+   * collapsing to whatever the last delta happened to be. Raw chain-of-thought
+   * never reaches it — only text deltas are accumulated.
+   */
+  liveAssistantText: string;
+  /**
+   * True once a real `message_start` framed the lifecycle in flight.
+   *
+   * An UNFRAMED row is a provisional partial: the reader opened the inspector
+   * mid-message, or caught up from the child's own answer snapshot, so no
+   * start was ever observed for it. A later genuine `message_start` therefore
+   * reuses that row instead of leaving an orphan partial beside the real one.
+   */
+  liveAssistantFramed: boolean;
   width: number;
   height: number;
   lastTouched: number;
@@ -126,6 +152,8 @@ export function emptySaved(threadId: string, touched: number): SavedChildState {
     transcript: createPiChildTranscriptState(),
     liveAssistantEntryId: undefined,
     liveAssistantCounter: 0,
+    liveAssistantText: "",
+    liveAssistantFramed: false,
     anchor: undefined,
     width: 80,
     height: 24,
@@ -188,6 +216,129 @@ export function appendOverlayPage(
   syncTranscriptFromEntries(state);
   state.usage = latestUsageInWindow(uniqueNewer) ?? state.usage;
   state.evidence = pageEvidence(state.evidence, uniqueNewer, "newer");
+}
+
+// ---------------------------------------------------------------------------
+// The assistant message being written right now
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the overlay entry one assistant lifecycle event belongs to.
+ *
+ * Pi 0.84 `AssistantMessage` carries no id, so the lifecycle identity lives
+ * here and is allocated once per message. Three cases, and only the third is
+ * new:
+ *
+ * - `start` opens a message and allocates an id;
+ * - `continue` / `end` reuse the open id, allocating on first sight for a
+ *   lifecycle whose start was never observed;
+ * - a `start` that finds a PROVISIONAL row (one no `message_start` ever
+ *   framed: a mid-stream open, or a catch-up from the child's own answer
+ *   snapshot) takes that row over and discards it whole, so a partial can
+ *   neither survive beside the real message nor prepend itself to it.
+ */
+export function resolveLiveAssistantEntry(
+  state: SavedChildState,
+  phase: LiveAssistantLifecyclePhase,
+): string {
+  const provisionalId =
+    phase === "start" && !state.liveAssistantFramed
+      ? state.liveAssistantEntryId
+      : undefined;
+  if (provisionalId !== undefined) {
+    state.entries = state.entries.filter((entry) => entry.id !== provisionalId);
+    syncTranscriptFromEntries(state);
+  } else if (phase === "start" || state.liveAssistantEntryId === undefined) {
+    const allocated = allocateLiveAssistantEntryId(state.liveAssistantCounter);
+    state.liveAssistantEntryId = allocated.entryId;
+    state.liveAssistantCounter = allocated.nextCounter;
+  }
+  if (phase === "start") {
+    state.liveAssistantText = "";
+    state.liveAssistantFramed = true;
+  }
+  return state.liveAssistantEntryId ?? "";
+}
+
+/**
+ * Folds one streamed answer delta into the open lifecycle and returns the
+ * canonical window entry for it.
+ *
+ * The window keeps the whole answer, not the last fragment: every
+ * reconstruction the overlay performs replays entries, and an entry holding
+ * one delta rebuilds into an empty message.
+ */
+export function appendLiveAssistantDelta(
+  state: SavedChildState,
+  entryId: string,
+  delta: string,
+  sequence: number,
+): ChildOverlayEntry {
+  state.liveAssistantText = boundText(state.liveAssistantText + delta);
+  return liveAssistantStreamEntry({
+    id: entryId,
+    sequence,
+    expanded: state.globalExpanded,
+    text: state.liveAssistantText,
+    framed: !state.liveAssistantFramed,
+  });
+}
+
+/**
+ * Releases the open lifecycle once its terminal message arrived. The terminal
+ * message carries the whole answer, so the accumulated deltas go with it.
+ */
+export function endLiveAssistantLifecycle(state: SavedChildState): void {
+  state.liveAssistantEntryId = undefined;
+  state.liveAssistantText = "";
+  state.liveAssistantFramed = false;
+}
+
+/**
+ * The provisional row for an answer this window never saw the deltas of, or
+ * `undefined` when the window needs no catch-up.
+ *
+ * Deliberately narrow, so it can neither invent nor duplicate a message: live
+ * children only, never while a lifecycle is already in flight (the live stream
+ * owns that row and is ahead of any snapshot), and never when a retained entry
+ * already states that text — which is what a snapshot left over from a message
+ * that has already ended looks like.
+ */
+export function seedLiveAssistantAnswer(
+  state: SavedChildState,
+  child: ChildOverlayChild,
+): ChildOverlayEntry | undefined {
+  if (child.status !== "live") return undefined;
+  if (state.liveAssistantEntryId !== undefined) return undefined;
+  const answer = boundText(child.streamedAnswer ?? "");
+  if (answer.trim().length === 0) return undefined;
+  // Compared with whitespace collapsed: the snapshot is the concatenation of
+  // the deltas, the retained entry is the message the host assembled from
+  // them, and the two agree on words rather than on line breaks.
+  const needle = collapseWhitespace(answer);
+  if (
+    state.entries.some((entry) =>
+      collapseWhitespace(entry.text).includes(needle),
+    )
+  ) {
+    return undefined;
+  }
+  const allocated = allocateLiveAssistantEntryId(state.liveAssistantCounter);
+  state.liveAssistantEntryId = allocated.entryId;
+  state.liveAssistantCounter = allocated.nextCounter;
+  state.liveAssistantText = answer;
+  state.liveAssistantFramed = false;
+  return liveAssistantStreamEntry({
+    id: allocated.entryId,
+    sequence: state.entries.length,
+    expanded: state.globalExpanded,
+    text: answer,
+    framed: true,
+  });
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
 }
 
 export function dedupEntries(

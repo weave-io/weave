@@ -377,7 +377,7 @@
   - function transcriptFromOverlayEntries: (entries) => PiChildTranscriptState
   - function degradedCapacityEntry: (id, sequence, error) => ChildOverlayEntry
   - function projectLiveEntry: (event, sequence, expanded, assistantEntryId?) => ChildOverlayEntry | undefined
-  - _...4 more_
+  - _...5 more_
 - `packages/adapters/pi/src/child-overlay-scroll.ts`
   - function setLayoutSpans: (state, spans) => void
   - function captureViewportAnchor: (state) => ChildOverlayAnchor | undefined
@@ -428,9 +428,9 @@
   - function isReadOnly: (child) => boolean
   - function prependOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
   - function appendOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
-  - function dedupEntries: (entries) => ChildOverlayEntry[]
-  - function syncTranscriptFromEntries: (state) => void
-  - _...1 more_
+  - function resolveLiveAssistantEntry: (state, phase) => string
+  - function appendLiveAssistantDelta: (state, entryId, delta, sequence) => ChildOverlayEntry
+  - _...5 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
@@ -580,7 +580,7 @@
   - function truncateLatestOutput: (text) => string
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
-  - _...18 more_
+  - _...19 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
