@@ -227,6 +227,64 @@ describe("mergeConfigs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests — multiline inline prompt scalars
+// ---------------------------------------------------------------------------
+
+describe("mergeConfigs — multiline inline prompts", () => {
+  it("lets project multiline values override global single-line values", () => {
+    const global = cfg(`agent helper {
+  prompt "Global prompt."
+  prompt_append "Global append."
+}`);
+    const project = cfg(`agent helper {
+  prompt """
+    Project prompt line one.
+      Project prompt line two.
+
+    Project prompt end.
+  """
+  prompt_append """
+    Project append line one.
+      Project append line two.
+  """
+}`);
+
+    const merged = mergeConfigs(global, project);
+
+    expect(merged.agents.helper?.prompt).toBe(
+      "Project prompt line one.\n  Project prompt line two.\n\nProject prompt end.",
+    );
+    expect(merged.agents.helper?.prompt_append).toBe(
+      "Project append line one.\n  Project append line two.",
+    );
+  });
+
+  it("lets project single-line values override global multiline values", () => {
+    const global = cfg(`agent helper {
+  prompt """
+    Global prompt line one.
+      Global prompt line two.
+
+    Global prompt end.
+  """
+  prompt_append """
+    Global append line one.
+      Global append line two.
+  """
+}`);
+    const project = cfg(`agent helper {
+  prompt "Project prompt."
+  prompt_append "Project append."
+}`);
+
+    const merged = mergeConfigs(global, project);
+
+    expect(merged.agents.helper?.prompt).toBe("Project prompt.");
+    expect(merged.agents.helper?.prompt_append).toBe("Project append.");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests — workflow backwards compat (no extends)
 // ---------------------------------------------------------------------------
 

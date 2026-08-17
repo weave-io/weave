@@ -217,6 +217,51 @@ describe("composeAgentDescriptor", () => {
       );
     });
 
+    it("Multiline_agent_and_category_appends_preserve_composed_order", async () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt """
+            Base "quoted" line.
+            Base {literal} [line].
+          """
+          prompt_append """
+            Agent append one.
+            Agent append two.
+          """
+        }
+        category frontend {
+          description "Frontend UI"
+          prompt_append """
+            Category append one.
+            Category append two.
+          """
+        }
+      `);
+      const generatedResult = generateCategoryShuttles(config);
+      expect(generatedResult.isOk()).toBe(true);
+      const generated = generatedResult._unsafeUnwrap()["shuttle-frontend"];
+      expect(generated).toBeDefined();
+      if (generated === undefined) {
+        throw new Error("expected generated frontend shuttle");
+      }
+
+      expect(generated.config.prompt_append).toBe(
+        "Agent append one.\nAgent append two.\nCategory append one.\nCategory append two.",
+      );
+
+      const descriptor = await descriptorFor(
+        "shuttle-frontend",
+        generated.config,
+        config,
+        { ...config.agents, "shuttle-frontend": generated.config },
+        generated.categoryMeta,
+      );
+
+      expect(descriptor.composedPrompt).toBe(
+        'Base "quoted" line.\nBase {literal} [line].\n\nAgent append one.\nAgent append two.\nCategory append one.\nCategory append two.',
+      );
+    });
+
     it("No_prompt_append_does_not_add_extra_section", async () => {
       const config = cfg(`
         agent loom {
@@ -1761,6 +1806,87 @@ function makeWorkflow(overrides: Partial<WorkflowConfig> = {}): WorkflowConfig {
 }
 
 describe("composeWorkflowStepPrompt — execution lifecycle contract", () => {
+  describe("multiline inline prompts", () => {
+    it("renders Mustache tags and preserves non-tag braces at workflow and step scope", async () => {
+      const config = cfg(`workflow multiline {
+  version 1
+  prompt_append """
+    Workflow append for {{agent.name}}.
+    Keep {workflow} and }.
+  """
+
+  step fallback {
+    type autonomous
+    agent helper
+    prompt """
+      Fallback {{agent.name}}.
+      Keep {prompt} and ["array"].
+    """
+    completion agent_signal
+  }
+
+  step local {
+    type autonomous
+    agent helper
+    prompt """
+      Local {{agent.name}}.
+      Keep {"json": true}.
+    """
+    prompt_append """
+      Local append for {{agent.mode}}.
+      Keep {append} and }.
+    """
+    completion agent_signal
+  }
+}`);
+      const workflow = config.workflows.multiline;
+      const fallbackStep = workflow?.steps.find(
+        (step) => step.name === "fallback",
+      );
+      const localStep = workflow?.steps.find((step) => step.name === "local");
+      expect(workflow).toBeDefined();
+      expect(fallbackStep).toBeDefined();
+      expect(localStep).toBeDefined();
+      if (
+        workflow === undefined ||
+        fallbackStep === undefined ||
+        localStep === undefined
+      ) {
+        throw new Error("expected parsed multiline workflow fixtures");
+      }
+      const ctx = makeStepTemplateContext("composed-agent");
+
+      const fallbackResult = await composeWorkflowStepPrompt(
+        "fallback",
+        fallbackStep,
+        workflow,
+        ctx,
+      );
+      const localResult = await composeWorkflowStepPrompt(
+        "local",
+        localStep,
+        workflow,
+        ctx,
+      );
+
+      expect(fallbackResult.isOk()).toBe(true);
+      expect(localResult.isOk()).toBe(true);
+      if (fallbackResult.isErr() || localResult.isErr()) {
+        throw new Error("expected multiline workflow prompts to compose");
+      }
+      expect(fallbackResult.value).toEqual({
+        composedPrompt:
+          'Fallback composed-agent.\nKeep {prompt} and ["array"].\n\nWorkflow append for composed-agent.\nKeep {workflow} and }.',
+        appendScope: "workflow",
+      });
+      expect(localResult.value).toEqual({
+        composedPrompt:
+          'Local composed-agent.\nKeep {"json": true}.\n\nLocal append for subagent.\nKeep {append} and }.',
+        appendScope: "step",
+      });
+    });
+  });
+
   describe("no appends", () => {
     it("Step_with_no_appends_returns_step_prompt_unchanged", async () => {
       const step = makeStep({ prompt: "Do the work." });
