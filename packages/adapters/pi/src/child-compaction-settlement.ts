@@ -101,7 +101,7 @@ export interface PiChildAbortSettlementGateOptions {
  *     │                                          └─ abort/error agent_settled ─┐
  *     │ abort/error agent_settled                                              │
  *     ▼                                                                        │
- *   deferred ──(grace expires)──▶ closed (publish)                             │
+ *   deferred ──(grace expires OR unrelated turn_start)──▶ closed (publish)     │
  *     │                                                                        │
  *     └─ session_before_compact / session_compact ──▶ compacting ◀─────────────┘
  *                                                        │  │
@@ -114,9 +114,12 @@ export interface PiChildAbortSettlementGateOptions {
  *
  * A captured failure is discarded ONLY when structural compaction evidence was
  * recorded for it - either before the abort (`evidenced`) or after it
- * (`compacting`). A `turn_start` with no such evidence is an unrelated turn and
- * leaves the deferred failure on its grace timer, so a provider or local abort
- * can never be converted into a later success.
+ * (`compacting`). A `turn_start` with no such evidence is an unrelated turn: it
+ * proves the compaction that would have justified the abort never started
+ * before the child moved on, so the captured failure is published at once and
+ * the gate closes. A provider or local abort can therefore never be converted
+ * into a later success, not even by compaction evidence that arrives after the
+ * unrelated turn already began.
  *
  * Every non-`open` state holds exactly one live timer, so the child can never
  * sit deferred forever and no state is unbounded.
@@ -231,12 +234,21 @@ export class PiChildAbortSettlementGate {
    *
    * A turn that begins after compaction evidence is the resumed run the
    * compaction extension asked for, so the captured failure is discarded and
-   * the ordinary settlement path owns the next outcome. A turn that begins
-   * with no compaction evidence at all is an unrelated turn: it must NOT
-   * discard a deferred failure, or a genuine provider/local abort would be
-   * silently converted into whatever that later turn reports.
+   * the ordinary settlement path owns the next outcome.
+   *
+   * A turn that begins while a failure is deferred with NO compaction evidence
+   * is an unrelated turn. Pi drives `ctx.compact()`'s prologue before any new
+   * turn starts, so a compaction that would explain the abort would already
+   * have emitted `session_before_compact`. Leaving the failure merely deferred
+   * here would let lifecycle evidence belonging to that later, unrelated turn
+   * adopt the stale verdict and resume it into a success. The captured failure
+   * is published immediately instead and the gate closes for good.
    */
   observeTurnStart(): void {
+    if (this.state.kind === "deferred") {
+      this.publish();
+      return;
+    }
     if (this.state.kind === "compacting") {
       this.state.timer.cancel();
       this.state = { kind: "open" };

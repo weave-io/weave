@@ -605,7 +605,7 @@ describe("private child settlement across a forced context compaction", () => {
     expect(body?.assistantOutput).toBeUndefined();
   });
 
-  it("still publishes the deferred failure when an unrelated turn starts and no settlement follows", async () => {
+  it("publishes the deferred failure as soon as an unrelated turn starts, with no settlement of its own", async () => {
     const { host, output, timers } = await buildChildExtension();
 
     await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
@@ -613,17 +613,55 @@ describe("private child settlement across a forced context compaction", () => {
     await flush();
     expect(timers.pending()).toHaveLength(1);
 
-    // An unrelated turn must not disarm the grace timer.
+    // A turn that starts with no compaction evidence proves the compaction
+    // that would have justified the abort never began, so the captured verdict
+    // is published at once and nothing is left armed.
     await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
-    await flush();
-    expect(timers.pending()).toHaveLength(1);
+    await waitForSettlement(output);
+    expect(timers.pending()).toHaveLength(0);
 
     timers.fireAll();
-    await waitForSettlement(output);
+    await quiesce();
 
     expect(settledLines(output)).toHaveLength(1);
     expect(settledBody(output)?.outcome).toBe("failed");
     expect(settledBody(output)?.reason).toBe("assistant stop reason: aborted");
+  });
+
+  it("never lets compaction evidence that arrives after an unrelated turn adopt the earlier failure", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+
+    // An unrelated turn starts with NO compaction evidence: the captured
+    // failure becomes terminal here.
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await waitForSettlement(output);
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+
+    // Late lifecycle evidence belongs to that later turn. It must not reach
+    // back, adopt the closed verdict, and resume it into a success.
+    await compactionLifecycle(host);
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "resumed",
+      stopReason: "stop",
+      text: "late success",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    timers.fireAll();
+    await quiesce();
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+    expect(settledBody(output)?.reason).toBe("assistant stop reason: aborted");
+    expect(settledBody(output)?.assistantOutput).toBeUndefined();
+    expect(timers.pending()).toHaveLength(0);
   });
 
   it("discards the captured failure only when compaction evidence precedes the resumed turn", async () => {
