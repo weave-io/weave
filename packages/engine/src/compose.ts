@@ -120,9 +120,46 @@ export type ComposeError =
       message: string;
     };
 
+/** Failure returned by a {@link PromptFileReader}. */
+export interface PromptFileReadFailure {
+  /**
+   * Reader-supplied reason for the failure. It is copied verbatim into
+   * `PromptFileReadError.fileErrorMessage`, so the error shape is identical
+   * whether the bytes came from the default reader or an injected one.
+   */
+  message: string;
+}
+
+/**
+ * Injectable source for prompt file contents.
+ *
+ * Composition reads `prompt_file` and `prompt_append_file` through this seam so
+ * a caller that has already read (and, for example, hashed) those bytes can
+ * compose from the very same bytes instead of re-reading the path. The reader
+ * substitutes I/O only: it never decides which prompt source wins.
+ */
+export interface PromptFileReader {
+  /** Read the full text of `path`. */
+  read(path: string): ResultAsync<string, PromptFileReadFailure>;
+}
+
+/**
+ * Reader used when a caller supplies none.
+ *
+ * Preserves the historical behavior of composition: read the path with
+ * `Bun.file(path).text()` and report the thrown reason verbatim.
+ */
+export const defaultPromptFileReader: PromptFileReader = {
+  read: (path) =>
+    ResultAsync.fromPromise(Bun.file(path).text(), (cause) => ({
+      message: cause instanceof Error ? cause.message : String(cause),
+    })),
+};
+
 function loadPromptSource(
   agentName: string,
   agentConfig: AgentConfig,
+  reader: PromptFileReader,
 ): ResultAsync<string, ComposeError> {
   if (agentConfig.prompt !== undefined) return okAsync(agentConfig.prompt);
 
@@ -136,12 +173,12 @@ function loadPromptSource(
 
   const promptFilePath = agentConfig.prompt_file;
 
-  return ResultAsync.fromPromise(Bun.file(promptFilePath).text(), (cause) => ({
+  return reader.read(promptFilePath).mapErr((failure) => ({
     type: "PromptFileReadError" as const,
     agentName,
     promptFilePath,
     message: `Failed to read prompt file for agent "${agentName}": ${promptFilePath}`,
-    fileErrorMessage: cause instanceof Error ? cause.message : String(cause),
+    fileErrorMessage: failure.message,
   }));
 }
 
@@ -341,14 +378,19 @@ function mapRendererError(
 function loadAppendSource(
   agentName: string,
   agentConfig: AgentConfig,
+  reader: PromptFileReader,
 ): ResultAsync<
   { content: string; fromFile: boolean } | undefined,
   ComposeError
 > {
-  return loadAppendSourceFromInput(agentName, {
-    prompt_append: agentConfig.prompt_append,
-    prompt_append_file: agentConfig.prompt_append_file,
-  });
+  return loadAppendSourceFromInput(
+    agentName,
+    {
+      prompt_append: agentConfig.prompt_append,
+      prompt_append_file: agentConfig.prompt_append_file,
+    },
+    reader,
+  );
 }
 
 /**
@@ -602,6 +644,7 @@ interface AppendSourceInput {
 function loadAppendSourceFromInput(
   contextLabel: string,
   input: AppendSourceInput,
+  reader: PromptFileReader,
 ): ResultAsync<
   { content: string; fromFile: boolean } | undefined,
   ComposeError
@@ -616,13 +659,16 @@ function loadAppendSourceFromInput(
 
   const appendFilePath = input.prompt_append_file;
 
-  return ResultAsync.fromPromise(Bun.file(appendFilePath).text(), (cause) => ({
-    type: "PromptFileReadError" as const,
-    agentName: contextLabel,
-    promptFilePath: appendFilePath,
-    message: `Failed to read prompt_append_file for "${contextLabel}": ${appendFilePath}`,
-    fileErrorMessage: cause instanceof Error ? cause.message : String(cause),
-  })).map((content) => ({ content, fromFile: true }));
+  return reader
+    .read(appendFilePath)
+    .mapErr((failure) => ({
+      type: "PromptFileReadError" as const,
+      agentName: contextLabel,
+      promptFilePath: appendFilePath,
+      message: `Failed to read prompt_append_file for "${contextLabel}": ${appendFilePath}`,
+      fileErrorMessage: failure.message,
+    }))
+    .map((content) => ({ content, fromFile: true }));
 }
 
 /**
@@ -654,6 +700,8 @@ function loadAppendSourceFromInput(
  * @param step             - The validated workflow step config
  * @param workflow         - The validated workflow config (provides workflow-scope append)
  * @param templateContext  - Bounded template context for Mustache rendering
+ * @param promptFileReader - Optional prompt-source seam; defaults to reading the
+ *                           declared `prompt_append_file` path with Bun
  * @returns `ResultAsync<WorkflowStepComposedPrompt, ComposeError>`
  */
 export function composeWorkflowStepPrompt(
@@ -661,8 +709,10 @@ export function composeWorkflowStepPrompt(
   step: WorkflowStep,
   workflow: WorkflowConfig,
   templateContext: AgentPromptTemplateContext,
+  promptFileReader?: PromptFileReader,
 ): ResultAsync<WorkflowStepComposedPrompt, ComposeError> {
   const contextLabel = `workflow-step:${stepName}`;
+  const reader = promptFileReader ?? defaultPromptFileReader;
 
   // Render the step's primary prompt as a template
   const renderedPrimaryResult = renderPromptTemplate(
@@ -704,7 +754,11 @@ export function composeWorkflowStepPrompt(
     effectiveScope = "none";
   }
 
-  return loadAppendSourceFromInput(contextLabel, effectiveAppendInput).andThen(
+  return loadAppendSourceFromInput(
+    contextLabel,
+    effectiveAppendInput,
+    reader,
+  ).andThen(
     (appendSource): Result<WorkflowStepComposedPrompt, ComposeError> => {
       if (appendSource === undefined) {
         return ok({ composedPrompt: renderedPrimary, appendScope: "none" });
@@ -780,6 +834,14 @@ export function buildReviewRoutingContext(
   };
 }
 
+/**
+ * Compose one adapter-facing agent descriptor.
+ *
+ * `promptFileReader` is an optional trailing seam: when omitted, `prompt_file`
+ * and `prompt_append_file` are read with {@link defaultPromptFileReader}, which
+ * preserves the historical `Bun.file(path).text()` behavior. Existing positional
+ * callers are unaffected.
+ */
 export function composeAgentDescriptor(
   agentName: string,
   agentConfig: AgentConfig,
@@ -787,7 +849,9 @@ export function composeAgentDescriptor(
   allAgents: Record<string, AgentConfig>,
   category?: CategoryMetadata,
   materializedReviewVariants?: MaterializedAgent[],
+  promptFileReader?: PromptFileReader,
 ): ResultAsync<AgentDescriptor, ComposeError> {
+  const reader = promptFileReader ?? defaultPromptFileReader;
   const delegationTargets = buildDelegationTargets(
     agentName,
     agentConfig,
@@ -830,7 +894,7 @@ export function composeAgentDescriptor(
   const primarySourceKind: "prompt" | "prompt_file" =
     agentConfig.prompt !== undefined ? "prompt" : "prompt_file";
 
-  return loadPromptSource(agentName, agentConfig)
+  return loadPromptSource(agentName, agentConfig, reader)
     .andThen(
       (promptSource): Result<string, ComposeError> =>
         renderPromptTemplate(
@@ -842,7 +906,7 @@ export function composeAgentDescriptor(
         ),
     )
     .andThen((renderedPrimary) =>
-      loadAppendSource(agentName, agentConfig).andThen(
+      loadAppendSource(agentName, agentConfig, reader).andThen(
         (appendSource): Result<AgentDescriptor, ComposeError> => {
           const sections: string[] = [renderedPrimary];
 
