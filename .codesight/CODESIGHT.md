@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 305 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~33,200 tokens. Without it, AI exploration would cost ~98,300 tokens. **Saves ~65,200 tokens per conversation.**
-> **Last scanned:** 2026-08-17 18:41 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 306 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~33,300 tokens. Without it, AI exploration would cost ~98,600 tokens. **Saves ~65,300 tokens per conversation.**
+> **Last scanned:** 2026-08-17 19:13 — re-run after significant changes
 
 ---
 
@@ -700,6 +700,14 @@
   - function selectsCustomEditorFallback: (report) => boolean
   - function createDefaultPiHostProbePort: (input) => PiHostProbePort
   - _...11 more_
+- `packages/adapters/pi/src/host-module-loader.ts`
+  - function escapeExactPathRegExp: (value) => string
+  - function exactPathLoadFilter: (exactPath) => RegExp
+  - function deriveHostPackageRoot: (cliEntryPath) => Result<string,
+  - function resolveHostModules: (env, options?) => ResultAsync<PiHostModuleOutcome, never>
+  - class BunPiHostModuleEnvironment
+  - interface PiHostModuleEnvironmentPort
+  - _...10 more_
 - `packages/adapters/pi/src/host-module-redirect.ts`
   - function hostEntrySpecifierFor: (specifier) => string
   - function isSafeAbsoluteHostPath: (value) => boolean
@@ -1950,7 +1958,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 337 test files found
+> 338 test files found
 
 ---
 

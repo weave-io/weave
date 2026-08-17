@@ -689,6 +689,14 @@
   - function selectsCustomEditorFallback: (report) => boolean
   - function createDefaultPiHostProbePort: (input) => PiHostProbePort
   - _...11 more_
+- `packages/adapters/pi/src/host-module-loader.ts`
+  - function escapeExactPathRegExp: (value) => string
+  - function exactPathLoadFilter: (exactPath) => RegExp
+  - function deriveHostPackageRoot: (cliEntryPath) => Result<string,
+  - function resolveHostModules: (env, options?) => ResultAsync<PiHostModuleOutcome, never>
+  - class BunPiHostModuleEnvironment
+  - interface PiHostModuleEnvironmentPort
+  - _...10 more_
 - `packages/adapters/pi/src/host-module-redirect.ts`
   - function hostEntrySpecifierFor: (specifier) => string
   - function isSafeAbsoluteHostPath: (value) => boolean

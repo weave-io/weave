@@ -92,7 +92,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - Unit tests cover: redirect planned for a differing local copy; skip for identical paths; skip when no local copy exists; rejection for a mismatched host package name; rejection for unsafe paths; `pi-ai` mapped to the compat entry; stub text with and without a default export.
     - `bun test src/__tests__/host-module-redirect.test.ts` passes.
 
-- [ ] 2. Add the host-module loader edge
+- [x] 2. Add the host-module loader edge
   - **What**: The impure counterpart that discovers host facts, registers the Bun plugin, imports the host namespaces, and returns a typed outcome — behind injectable ports so tests never touch Bun's real plugin registry.
   - **Files**: `packages/adapters/pi/src/host-module-loader.ts`, `packages/adapters/pi/src/__tests__/host-module-loader.test.ts`
   - **Depends on**: Task 1
