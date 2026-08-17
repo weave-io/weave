@@ -213,6 +213,7 @@ import { renderChildTreeLines } from "./child-tree-render.js";
 import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
 import {
   logMaterializationErrors,
+  type PiConfigActivationResult,
   PiConfigActivator,
 } from "./config-activator.js";
 import {
@@ -234,6 +235,11 @@ import {
   createDirectDispatchTransport,
   PiDirectStepChildRegistry,
 } from "./direct-dispatch-transport.js";
+import {
+  createPiDispatchSnapshot,
+  EMPTY_PI_DISPATCH_SNAPSHOT,
+  type PiDispatchSnapshot,
+} from "./dispatch-snapshot.js";
 import {
   makeChildAbortFailedFailure,
   makeLogWriteFailedFailure,
@@ -4864,6 +4870,47 @@ export function createPiExtension(
       };
       activeSession = session;
 
+      // One snapshot per published catalog, memoized on the activation object
+      // itself. Repeated samples of an unchanged catalog therefore hand back
+      // the identical reference, so pinning costs nothing and a pinned child
+      // can be compared against the catalog it was dispatched under.
+      const dispatchSnapshots = new WeakMap<
+        PiConfigActivationResult,
+        PiDispatchSnapshot
+      >();
+      const currentDispatchSnapshot = (): PiDispatchSnapshot => {
+        const activation = catalogCell.activation();
+        // A revoked generation resolves nothing rather than serving the
+        // catalog it used to hold.
+        if (activation === undefined) return EMPTY_PI_DISPATCH_SNAPSHOT;
+        const memoized = dispatchSnapshots.get(activation);
+        if (memoized !== undefined) return memoized;
+        const built = createPiDispatchSnapshot({
+          catalog: activation,
+          buildBootstrap: (
+            descriptors,
+            disabledSkills,
+            target,
+            childId,
+            context,
+          ) =>
+            buildChildBootstrapBody(
+              descriptors,
+              target,
+              childId,
+              context,
+              ctx,
+              (descriptor) =>
+                session.primarySession.prepareComposedPrompt(
+                  descriptor,
+                  disabledSkills,
+                ),
+            ),
+        });
+        dispatchSnapshots.set(activation, built);
+        return built;
+      };
+
       const sessionHealthOnly = effectiveHealthOnly(generation);
 
       // Strict boot activation (Pi adapter contract): the default primary is
@@ -5208,7 +5255,11 @@ export function createPiExtension(
         if (allowDelegationController) {
           delegationControllerCell.generationId = generation.id;
           delegationControllerCell.controller = new PiDelegationController({
-            config: configActivation.config,
+            // Read through the cell, never captured: a limit lowered by a
+            // later publication binds the next admission and leaves every
+            // already-running child alone.
+            currentConfig: () =>
+              catalogCell.activation()?.config ?? configActivation.config,
             generationId: generation.id,
             idGenerator: deps.idGenerator,
             logger: deps.logger,
@@ -5216,15 +5267,10 @@ export function createPiExtension(
             sessionStorageAuthority: sessionAuthority,
             randomPort: deps.randomPort,
             hmacPort: deps.hmacPort,
-            handshakeTimeoutMs:
-              configActivation.childLifecycleSettings.handshakeTimeoutMs,
-            replyTimeoutMs:
-              configActivation.childLifecycleSettings.replyTimeoutMs,
-            settlementTimeoutMs:
-              configActivation.childLifecycleSettings
-                .settlementInactivityTimeoutMs,
-            runtimeBudgetMs:
-              configActivation.childLifecycleSettings.absoluteRuntimeBudgetMs,
+            // Sampled once per dispatched child. Lifecycle budgets, nested
+            // targets and the bootstrap all come from that one sample, so a
+            // child never straddles two catalogs.
+            currentDispatch: currentDispatchSnapshot,
             ...(deps.childResponseDrainMs === undefined
               ? {}
               : { responseDrainMs: deps.childResponseDrainMs }),
@@ -5268,35 +5314,6 @@ export function createPiExtension(
             rootAgentName: () =>
               activeSession?.primarySession.getCurrent()?.descriptor.name ??
               DEFAULT_PRIMARY_AGENT_NAME,
-            // Nested/descendant delegation (Pi adapter contract): a requesting
-            // child is only ever resolved against ITS OWN declared
-            // `delegationTargets`, never the full descriptor set - exactly
-            // the same restriction the root's own tool already applies.
-            resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
-              catalogCell
-                .descriptors()
-                .get(requestingAgentName)
-                ?.delegationTargets.find(
-                  (target) => target.name === targetAgentName,
-                ),
-            // The inspector's `role` fact. An agent this session did not
-            // configure resolves to `undefined`, so the header prints no role
-            // rather than inventing one.
-            resolveAgentRole: (agentName) =>
-              catalogCell.descriptors().get(agentName)?.category?.name,
-            buildBootstrap: (target, childId, context) =>
-              buildChildBootstrapBody(
-                catalogCell.descriptors(),
-                target,
-                childId,
-                context,
-                ctx,
-                (descriptor) =>
-                  session.primarySession.prepareComposedPrompt(
-                    descriptor,
-                    catalogCell.disabledSkills(),
-                  ),
-              ),
             onTreeChanged: () => {
               if (!startupOwnsGeneration()) return;
               // The focused child leaving the live set is the only settlement
@@ -5604,16 +5621,9 @@ export function createPiExtension(
                   randomPort: deps.randomPort,
                   hmacPort: deps.hmacPort,
                   logger: deps.logger,
-                  handshakeTimeoutMs:
-                    configActivation.childLifecycleSettings.handshakeTimeoutMs,
-                  replyTimeoutMs:
-                    configActivation.childLifecycleSettings.replyTimeoutMs,
-                  settlementTimeoutMs:
-                    configActivation.childLifecycleSettings
-                      .settlementInactivityTimeoutMs,
-                  runtimeBudgetMs:
-                    configActivation.childLifecycleSettings
-                      .absoluteRuntimeBudgetMs,
+                  // One sample per step: the child's budgets and the catalog
+                  // its nested relays resolve against are the same reference.
+                  currentDispatch: currentDispatchSnapshot,
                   idGenerator: deps.idGenerator,
                   // The exact executable that launched this host, never a
                   // bare "pi" a spawner would have to re-resolve via `PATH`

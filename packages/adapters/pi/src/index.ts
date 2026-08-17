@@ -766,6 +766,15 @@ export {
   WEAVE_DELEGATION_TOOL_NAME,
 } from "./delegation-tool.js";
 export type {
+  PiChildDispatchBudgets,
+  PiDispatchSnapshot,
+  PiDispatchSnapshotInput,
+} from "./dispatch-snapshot.js";
+export {
+  createPiDispatchSnapshot,
+  EMPTY_PI_DISPATCH_SNAPSHOT,
+} from "./dispatch-snapshot.js";
+export type {
   PiAdapterFailure,
   PiAdapterFailureCode,
   PiAdapterFailureImpact,

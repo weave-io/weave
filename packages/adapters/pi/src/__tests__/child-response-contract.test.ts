@@ -470,9 +470,10 @@ describe("child result contract capacity release", () => {
   it("releases max_children capacity after a ChildResponseMissing drain", async () => {
     const port = new FakeChildProcessPort();
     const controller = new PiDelegationController({
-      config: config(
-        "settings {\n  delegation {\n    max_children 1\n    max_concurrency 1\n    max_depth 2\n    max_processes 4\n  }\n}\nagent shuttle {\n}\n",
-      ),
+      currentConfig: () =>
+        config(
+          "settings {\n  delegation {\n    max_children 1\n    max_concurrency 1\n    max_depth 2\n    max_processes 4\n  }\n}\nagent shuttle {\n}\n",
+        ),
       generationId: "gen-1",
       idGenerator: new SequentialIdGenerator(),
       logger: noopLogger(),

@@ -295,7 +295,7 @@ function makeController(
   > = {},
 ): PiDelegationController {
   return new PiDelegationController({
-    config: EMPTY_CONFIG,
+    currentConfig: () => EMPTY_CONFIG,
     generationId: "gen-1",
     idGenerator: new FakeIdGenerator(),
     logger: new RecordingLogger(),

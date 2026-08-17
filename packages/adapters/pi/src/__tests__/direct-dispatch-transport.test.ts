@@ -8,12 +8,11 @@ import {
 } from "../child-crypto.js";
 import { WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
-import { encodeTransferChunks } from "../child-transfer.js";
 import type {
   CreateNativeChildSessionInput,
   MintNativeSessionLaunchGrantInput,
-  PiNativeSessionRecord,
   PiNativeResultAppendIdentity,
+  PiNativeSessionRecord,
   PiNativeThreadMetadataInput,
 } from "../child-native-sessions.js";
 import type {
@@ -22,6 +21,7 @@ import type {
   AppendNewChildRefInput,
   PiChildRefRecord,
 } from "../child-session-refs.js";
+import { encodeTransferChunks } from "../child-transfer.js";
 import {
   type PiChildInspectionRegistration,
   PiChildInspectionRegistry,
@@ -36,6 +36,10 @@ import {
   createDirectDispatchTransport,
   PiDirectStepChildRegistry,
 } from "../direct-dispatch-transport.js";
+import {
+  EMPTY_PI_DISPATCH_SNAPSHOT,
+  type PiDispatchSnapshot,
+} from "../dispatch-snapshot.js";
 import type { JsonValue } from "../strict-json.js";
 import { serializeCompletionCandidate } from "../structured-completion.js";
 import type { PiAdapterLogger } from "../types.js";
@@ -1677,5 +1681,104 @@ describe("direct workflow steps persist complete private output", () => {
       status: "completed",
       persisted: 1,
     });
+  });
+});
+
+describe("direct workflow steps pin the catalog they were dispatched with", () => {
+  it("samples the step's lifecycle budgets from the current catalog at dispatch", async () => {
+    const processPort = new FakeChildProcessPort();
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator: new FakeIdGenerator(),
+        availableModels: AVAILABLE_MODELS,
+        // A one-millisecond handshake budget is only reachable through the
+        // accessor: the transport's own default is thirty seconds.
+        currentDispatch: (): PiDispatchSnapshot => ({
+          ...EMPTY_PI_DISPATCH_SNAPSHOT,
+          budgets: { handshakeTimeoutMs: 1 },
+        }),
+      },
+      "gen-1",
+    );
+
+    const settlement = await transport(baseInput());
+
+    expect(settlement._unsafeUnwrapErr().code).toBe("ChildHandshakeMissing");
+  });
+
+  it("relays every nested request against the catalog sampled at dispatch, not a newer one", async () => {
+    const processPort = new FakeChildProcessPort();
+    const relayRequests: Array<{ readonly snapshot?: PiDispatchSnapshot }> = [];
+    const dispatched: PiDispatchSnapshot = {
+      ...EMPTY_PI_DISPATCH_SNAPSHOT,
+      resolveAgentRole: () => "dispatched",
+    };
+    const published: PiDispatchSnapshot = {
+      ...EMPTY_PI_DISPATCH_SNAPSHOT,
+      resolveAgentRole: () => "published",
+    };
+    let current = dispatched;
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator: new FakeIdGenerator(),
+        availableModels: AVAILABLE_MODELS,
+        currentDispatch: () => current,
+        relayDelegation: (request) => {
+          relayRequests.push(request);
+          return okAsync({
+            outcome: "completed" as const,
+            assistantOutput: "NESTED_OK",
+          });
+        },
+      },
+      "gen-1",
+    );
+
+    void transport(baseInput({ agentName: "tapestry" }));
+    const spawned = await awaitSpawnedChild(processPort);
+    const expectedChildId = "direct-wf-1-verify-generation-1";
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(
+      spawned,
+      expectedChildId,
+      "gen-1",
+    );
+    await responder.send("handshake", expectedChildId, {}, secretBytes);
+    const bootstrapEnvelope = await waitForBootstrapEnvelope(
+      spawned,
+      expectedChildId,
+    );
+    await responder.send(
+      "bootstrap-ack",
+      expectedChildId,
+      { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
+      secretBytes,
+    );
+
+    // A whole new catalog is published while this step runs.
+    current = published;
+
+    await responder.send(
+      "delegate-request",
+      `${expectedChildId}-delegate-0`,
+      { agentName: "tapestry-worker", task: "nested task" },
+      secretBytes,
+    );
+    await waitFor(
+      "the nested delegation to reach the shared parent controller",
+      () => relayRequests.length > 0,
+    );
+
+    expect(relayRequests[0]?.snapshot).toBe(dispatched);
   });
 });

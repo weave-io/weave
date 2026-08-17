@@ -30,6 +30,10 @@ import {
   createDirectDispatchTransport,
   PiDirectStepChildRegistry,
 } from "../direct-dispatch-transport.js";
+import {
+  EMPTY_PI_DISPATCH_SNAPSHOT,
+  type PiDispatchSnapshot,
+} from "../dispatch-snapshot.js";
 import { InMemoryRecoveryPointerStore } from "../recovery-pointer.js";
 import { PiRpcChild, type PiRpcChildSpawnInput } from "../rpc-child.js";
 import { canonicalizeToBytes, type JsonValue } from "../strict-json.js";
@@ -338,7 +342,7 @@ test("real ordinary, nested, and workflow execution retain only bounded topology
   };
   const registry = new PiChildInspectionRegistry(history);
   const controller = new PiDelegationController({
-    config: generous,
+    currentConfig: () => generous,
     generationId: "gen-1",
     idGenerator: new Ids(),
     logger: noopLogger,
@@ -349,8 +353,11 @@ test("real ordinary, nested, and workflow execution retain only bounded topology
     timerPort: new SystemTimerPort(),
     cancelGraceMs: 10,
     rootAgentName: () => "loom",
-    resolveDelegationTarget: () => ({ name: "shuttle" }) as never,
-    buildBootstrap: (_target, childId) => bootstrapFor(childId),
+    currentDispatch: (): PiDispatchSnapshot => ({
+      ...EMPTY_PI_DISPATCH_SNAPSHOT,
+      resolveDelegationTarget: () => ({ name: "shuttle" }) as never,
+      buildBootstrap: (_target, childId) => bootstrapFor(childId),
+    }),
     inspectionRegistry: registry,
   });
   const ordinary = controller.delegate(request());
@@ -483,7 +490,7 @@ test("real RPC lifecycle supports steer, queued follow-up, UI response, interrup
     },
   });
   const restoreController = new PiDelegationController({
-    config: generous,
+    currentConfig: () => generous,
     generationId: "gen-1",
     idGenerator: new Ids(),
     logger: noopLogger,
@@ -495,7 +502,10 @@ test("real RPC lifecycle supports steer, queued follow-up, UI response, interrup
     cancelGraceMs: 10,
     rootAgentName: () => "loom",
     resolveRootDelegationTarget: () => ({ name: "shuttle" }) as never,
-    buildBootstrap: (_target, childId) => bootstrapFor(childId),
+    currentDispatch: (): PiDispatchSnapshot => ({
+      ...EMPTY_PI_DISPATCH_SNAPSHOT,
+      buildBootstrap: (_target, childId) => bootstrapFor(childId),
+    }),
     pathContainment: {
       verifyContainment: () => okAsync("/history/children/child-1"),
     },
@@ -536,7 +546,7 @@ test("real ordinary recovery resumes through the controller and preserves bounde
   const port = new FakeChildProcessPort();
   const registry = new PiChildInspectionRegistry();
   const controller = new PiDelegationController({
-    config: generous,
+    currentConfig: () => generous,
     generationId: "gen-1",
     idGenerator: new Ids(),
     logger: noopLogger,
@@ -548,7 +558,10 @@ test("real ordinary recovery resumes through the controller and preserves bounde
     cancelGraceMs: 10,
     rootAgentName: () => "loom",
     resolveRootDelegationTarget: () => ({ name: "shuttle" }) as never,
-    buildBootstrap: (_target, childId) => bootstrapFor(childId),
+    currentDispatch: (): PiDispatchSnapshot => ({
+      ...EMPTY_PI_DISPATCH_SNAPSHOT,
+      buildBootstrap: (_target, childId) => bootstrapFor(childId),
+    }),
     pathContainment: {
       verifyContainment: () => okAsync("/history/children/recover-me"),
     },
