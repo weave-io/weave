@@ -185,6 +185,122 @@ const recordOrUndefined = (
     ? (value as Record<string, unknown>)
     : undefined;
 
+/** Why an observed field or element is not the host's own stated value. */
+type OwnValueRejection =
+  | "absent"
+  | "inherited"
+  | "accessor"
+  | "non-enumerable"
+  | "unreadable"
+  | "malformed";
+
+/**
+ * `Object.getOwnPropertyDescriptor` as a value.
+ *
+ * The observed payload is private host data that may be a proxy: its
+ * `getOwnPropertyDescriptor` trap can throw, and a revoked proxy always does.
+ * A descriptor that cannot be read states nothing.
+ */
+const ownDescriptor = Result.fromThrowable(
+  (target: object, key: PropertyKey): PropertyDescriptor | undefined =>
+    Object.getOwnPropertyDescriptor(target, key),
+  (): OwnValueRejection => "unreadable",
+);
+
+/** `Array.isArray` as a value: it throws on a revoked proxy. */
+const isArrayValue = Result.fromThrowable(
+  (value: unknown): boolean => Array.isArray(value),
+  (): OwnValueRejection => "unreadable",
+);
+
+/**
+ * The value of an own, enumerable DATA property.
+ *
+ * An accessor is not a stated value - reading it would run the payload's own
+ * code - and neither is an inherited or non-enumerable property. All three are
+ * rejections rather than values, and no getter is invoked to decide that.
+ */
+const ownEnumerableDataValue = (
+  target: object,
+  key: PropertyKey,
+): Result<unknown, OwnValueRejection> => {
+  const descriptor = ownDescriptor(target, key);
+  if (descriptor.isErr()) return err(descriptor.error);
+  const found = descriptor.value;
+  if (found === undefined) return err("absent");
+  if (!("value" in found)) return err("accessor");
+  if (found.enumerable !== true) return err("non-enumerable");
+  return ok(found.value);
+};
+
+/**
+ * The exact strings a host-stated queue list holds.
+ *
+ * The list must be a plain, dense array of primitive strings that already fit
+ * the bound. Subclasses, sparse holes, accessor or non-enumerable indexes,
+ * non-string entries, oversized lists and overbound strings are all
+ * rejections; nothing is coerced, sliced or defaulted.
+ */
+const readQueueList = (
+  value: unknown,
+): Result<readonly string[], OwnValueRejection> => {
+  // `Array.isArray` itself throws on a revoked proxy.
+  const arrayShaped = isArrayValue(value);
+  if (arrayShaped.isErr()) return err(arrayShaped.error);
+  if (!arrayShaped.value) return err("malformed");
+  const list = value as readonly unknown[];
+  // A plain array only. A subclass or an exotic array-like carries behaviour
+  // this parser cannot vouch for.
+  const prototype = Result.fromThrowable(
+    () => Object.getPrototypeOf(list) as unknown,
+    (): OwnValueRejection => "unreadable",
+  )();
+  if (prototype.isErr()) return err(prototype.error);
+  if (prototype.value !== Array.prototype) return err("malformed");
+
+  // `length` is an own, non-enumerable DATA property on every real array.
+  // Reading it through its descriptor keeps a proxy's `get` trap out of the
+  // decision entirely.
+  const lengthDescriptor = ownDescriptor(list, "length");
+  if (lengthDescriptor.isErr()) return err(lengthDescriptor.error);
+  const found = lengthDescriptor.value;
+  if (found === undefined || !("value" in found) || found.enumerable === true) {
+    return err("malformed");
+  }
+  const size = found.value;
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) {
+    return err("malformed");
+  }
+  if (size > MAX_CHILD_EVENT_ITEMS) return err("malformed");
+
+  // Dense and nothing else: the own enumerable keys must be exactly the
+  // indexes `0..size-1`. A hole, a non-enumerable index or an extra own
+  // enumerable property is a shape this parser cannot read as a queue.
+  const keys = Result.fromThrowable(
+    () => Object.keys(list),
+    (): OwnValueRejection => "unreadable",
+  )();
+  if (keys.isErr()) return err(keys.error);
+  if (keys.value.length !== size) return err("malformed");
+  for (let index = 0; index < size; index += 1) {
+    if (keys.value[index] !== String(index)) return err("malformed");
+  }
+
+  const items: string[] = [];
+  for (let index = 0; index < size; index += 1) {
+    const element = ownEnumerableDataValue(list, String(index));
+    // A hole, an accessor index, a non-enumerable index or an unreadable one
+    // is not a queued entry.
+    if (element.isErr()) return err(element.error);
+    const item = element.value;
+    if (typeof item !== "string") return err("malformed");
+    // Bounded, never truncated: a shortened entry is not what the host queued.
+    if (item.length > MAX_CHILD_EVENT_STRING) return err("malformed");
+    items.push(item);
+  }
+  return ok(items);
+};
+
 /** Read only an own data property. Accessors and inherited values are absent. */
 const ownDataProperty = (
   record: Record<string, unknown>,
@@ -516,21 +632,116 @@ export const PiChildSessionEventSchema = z.discriminatedUnion("type", [
 export type PiChildSessionEvent = z.infer<typeof PiChildSessionEventSchema>;
 export type PiChildEventType = PiChildSessionEvent["type"];
 
-/** Convert an unrecognised host record into the bounded unknown variant. */
+/** How deep a preserved payload may nest before it states nothing. */
+const MAX_PRESERVED_PAYLOAD_DEPTH = 32;
+
+/** Distinguishes "no stated value" from a stated `undefined`. */
+const ABSENT_MEMBER = Symbol("absent-member");
+
+/**
+ * The value of an own, enumerable data property, WITHOUT guarding the
+ * reflection itself.
+ *
+ * Used for the event record the parser was handed: a record whose own traps
+ * throw is unusable, and the parser's outer guard reports that as its typed
+ * failure. Accessors still state nothing and are never invoked.
+ */
+const strictOwnEnumerableDataValue = (
+  target: object,
+  key: PropertyKey,
+): unknown => {
+  const descriptor = Object.getOwnPropertyDescriptor(target, key);
+  if (descriptor === undefined) return ABSENT_MEMBER;
+  if (!("value" in descriptor) || descriptor.enumerable !== true) {
+    return ABSENT_MEMBER;
+  }
+  return descriptor.value;
+};
+
+/**
+ * Is this value plain data all the way down, judged by DESCRIPTORS alone?
+ *
+ * The preserved payload is validated afterwards by `boundedJson`, and Zod
+ * reads its members the ordinary way - through `get`. Proving first that the
+ * value carries no accessor anywhere is what keeps that read from running the
+ * observed payload's own code. Anything exotic (an accessor, a non-plain
+ * prototype, a descriptor that throws, a depth past the cap) is not plain
+ * data, so the field it belongs to states nothing and is dropped.
+ */
+const isPlainDataValue = (value: unknown, depth: number): boolean => {
+  if (value === null) return true;
+  const type = typeof value;
+  if (type === "string" || type === "number" || type === "boolean") return true;
+  if (type !== "object") return false;
+  if (depth >= MAX_PRESERVED_PAYLOAD_DEPTH) return false;
+
+  const prototype = Result.fromThrowable(
+    () => Object.getPrototypeOf(value) as unknown,
+    () => undefined,
+  )();
+  if (prototype.isErr()) return false;
+  const arrayShaped = isArrayValue(value);
+  if (arrayShaped.isErr()) return false;
+  const isArray = arrayShaped.value;
+  if (isArray) {
+    if (prototype.value !== Array.prototype) return false;
+  } else if (prototype.value !== Object.prototype && prototype.value !== null) {
+    return false;
+  }
+
+  const target = value as object;
+  const keys = Result.fromThrowable(
+    () => Object.keys(target),
+    () => undefined,
+  )();
+  if (keys.isErr()) return false;
+  // The schema's own bounds, applied before the walk so an oversized node is
+  // rejected rather than traversed.
+  if (keys.value.length > MAX_CHILD_EVENT_ITEMS) return false;
+  for (const key of keys.value) {
+    const member = ownEnumerableDataValue(target, key);
+    if (member.isErr()) return false;
+    if (!isPlainDataValue(member.value, depth + 1)) return false;
+  }
+  // A sparse array reads as a hole rather than as data.
+  if (isArray && keys.value.length !== (value as unknown[]).length) {
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Convert an unrecognised host record into the bounded unknown variant.
+ *
+ * Fields are read through their own property descriptors and only when they
+ * are plain data, so preserving an event never invokes an accessor the
+ * observed payload defined and never throws on a hostile proxy.
+ */
 export function preserveUnknownChildEvent(value: unknown): PiChildSessionEvent {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { type: "unknown", originalType: "non-object", payload: {} };
   }
   const record = value as Record<string, unknown>;
-  const rawType = typeof record.type === "string" ? record.type : "missing";
+  // The event record's OWN reflection is not guarded here: a record this
+  // parser cannot enumerate at all is unusable, and `parsePiChildSessionEvent`
+  // already turns that into its typed parser failure. What is guarded is
+  // everything the record merely CARRIES.
+  const declaredType = strictOwnEnumerableDataValue(record, "type");
+  const rawType = typeof declaredType === "string" ? declaredType : "missing";
   const originalType = rawType.slice(0, 256) || "missing";
   const payload: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(record)) {
+  for (const key of Object.keys(record)) {
     if (key === "type" || Object.keys(payload).length >= MAX_CHILD_EVENT_KEYS)
       continue;
     const boundedName = key.slice(0, 256);
-    const parsed = boundedJson.safeParse(item);
-    if (boundedName && parsed.success) payload[boundedName] = parsed.data;
+    if (!boundedName) continue;
+    const member = strictOwnEnumerableDataValue(record, key);
+    // An accessor field states nothing: running it would execute the observed
+    // payload's own code inside the parser.
+    if (member === ABSENT_MEMBER) continue;
+    if (!isPlainDataValue(member, 0)) continue;
+    const parsed = boundedJson.safeParse(member);
+    if (parsed.success) payload[boundedName] = parsed.data;
   }
   return { type: "unknown", originalType, payload };
 }
@@ -663,27 +874,26 @@ const nativeToolEndIsError = (record: Record<string, unknown>): boolean => {
  * depth: `{ steering: [] }` proves nothing about queued follow-ups. Deriving
  * `{ size: 0 }` from it would state, with the host's own authority, that a
  * steered child has nothing queued.
+ *
+ * Every field and every element is read through its own property DESCRIPTOR,
+ * so no getter on the observed payload is ever invoked and no value is ever
+ * repaired: a queued string that exceeds the bound is rejected rather than
+ * truncated, because a truncated entry would be a queue fact the host never
+ * stated. A descriptor read that throws (a revoked or hostile proxy) is a
+ * rejection like any other, so this function never throws.
  */
 const normalizeQueueUpdateEvent = (
   record: Record<string, unknown>,
 ): unknown => {
   const items: string[] = [];
   for (const key of ["steering", "followUp"] as const) {
-    // An inherited or accessor-shaped field is not the host's own statement.
-    if (!Object.hasOwn(record, key)) return record;
-    const list = record[key];
-    if (!Array.isArray(list)) return record;
-    if (list.length > MAX_CHILD_EVENT_ITEMS) return record;
-    for (let index = 0; index < list.length; index += 1) {
-      // A hole in a sparse array reads as `undefined`, which is an absent
-      // entry rather than a queued one.
-      if (!Object.hasOwn(list, index)) return record;
-      const item = list[index];
-      if (typeof item !== "string") return record;
-      items.push(item.slice(0, MAX_CHILD_EVENT_STRING));
-    }
+    const list = ownEnumerableDataValue(record, key);
+    if (list.isErr()) return record;
+    const read = readQueueList(list.value);
+    if (read.isErr()) return record;
+    for (const item of read.value) items.push(item);
+    if (items.length > MAX_CHILD_EVENT_ITEMS) return record;
   }
-  if (items.length > MAX_CHILD_EVENT_ITEMS) return record;
   return { type: "queue_change", size: items.length, queue: items };
 };
 

@@ -970,6 +970,105 @@ describe("private child settlement across a forced context compaction", () => {
     );
   });
 
+  it("discards a late duplicate of the pre-compaction abort after an abort-first compaction resumed", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    // Abort-first handler order: Weave observed the abort (deferred), then the
+    // compaction evidence (compacting), then the resumed turn.
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "pre-compaction",
+      stopReason: "aborted",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await compactionLifecycle(host);
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await flush();
+    expect(settledLines(output)).toHaveLength(0);
+    // The compacting timer was dropped when the resumed run took over.
+    expect(timers.pending()).toHaveLength(0);
+
+    // Pi re-enters `agent_settled` for the run that already aborted. No new
+    // assistant message ended, so the stale `stopReason` it reads is still the
+    // discarded one and its epoch is still the compacted turn's. Re-capturing
+    // it here would publish the compaction's own abort as a terminal failure
+    // of the healthy resumed run.
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    expect(settledLines(output)).toHaveLength(0);
+    expect(timers.pending()).toHaveLength(0);
+
+    timers.fireAll();
+    await quiesce();
+    expect(settledLines(output)).toHaveLength(0);
+
+    // The resumed run then settles normally, exactly once.
+    await assistantMessageEnd(host, {
+      id: "resumed",
+      stopReason: "stop",
+      text: "verdict after compaction",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("completed");
+    expect(settledBody(output)?.assistantOutput).toBe(
+      "verdict after compaction",
+    );
+    expect(timers.pending()).toHaveLength(0);
+  });
+
+  it("publishes the resumed run's own failure once when a late duplicate abort follows an abort-first compaction", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "pre-compaction",
+      stopReason: "aborted",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await compactionLifecycle(host);
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    // The late duplicate of the discarded verdict.
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    expect(settledLines(output)).toHaveLength(0);
+    expect(timers.pending()).toHaveLength(0);
+
+    // The resumed run now fails on its own. Its verdict carries a NEW epoch,
+    // so it is captured, deferred on the ordinary grace and published.
+    await assistantMessageEnd(host, {
+      id: "resumed-failure",
+      stopReason: "error",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    const pending = timers.pending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.delayMs).toBe(DEFAULT_COMPACTION_EVIDENCE_GRACE_MS);
+
+    timers.fireAll();
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+    expect(settledBody(output)?.reason as string).toStartWith(
+      "assistant error",
+    );
+
+    // Late evidence, a late turn and a late settlement change nothing.
+    await compactionLifecycle(host);
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    timers.fireAll();
+    await quiesce();
+    expect(settledLines(output)).toHaveLength(1);
+    expect(timers.pending()).toHaveLength(0);
+  });
+
   it("reports the resumed run's failure exactly once across duplicate and late events", async () => {
     const { host, output, timers } = await buildChildExtension();
 

@@ -331,6 +331,15 @@ export class PiChildAbortSettlementGate {
     }
     if (this.state.kind === "compacting") {
       this.state.timer.cancel();
+      // The captured verdict is discarded here as the compaction's own
+      // pre-compaction abort. Pi can re-enter `agent_settled` for that same
+      // turn - the stale `stopReason` it reads is still the discarded one -
+      // so the epoch is remembered exactly as the evidence-first path
+      // remembers it. Without this, the abort-first order would capture the
+      // very verdict it just discarded and publish it as the resumed run's
+      // failure. A genuine failure of the resumed run carries a NEW epoch and
+      // is still captured and published.
+      this.discardedEpoch = this.state.epoch;
       this.state = { kind: "open" };
       return;
     }
