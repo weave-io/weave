@@ -422,7 +422,7 @@
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
   - interface ChildOverlayConfig
-  - _...34 more_
+  - _...36 more_
 - `packages/adapters/pi/src/child-overlay-window.ts`
   - function emptySaved: (threadId, touched) => SavedChildState
   - function isReadOnly: (child) => boolean

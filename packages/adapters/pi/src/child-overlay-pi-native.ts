@@ -230,7 +230,9 @@ export interface OverlayTranscriptRender {
  */
 function contentBlockText(record: Record<string, unknown>): string | undefined {
   if (typeof record.type !== "string") return undefined;
-  for (const key of ["text", "thinking"] as const) {
+  // `thinking` is deliberately absent: a raw reasoning block's prose is never
+  // unwrapped for display.
+  for (const key of ["text"] as const) {
     const value = record[key];
     if (typeof value === "string") return value;
   }
@@ -520,7 +522,11 @@ function assistantEntryHasVisibleRows(
 ): boolean {
   if (entry.streaming && !settled) return true;
   if (entry.stopReason === "error") return true;
-  if (entry.thinkingVisible && safeTrim(entry.thinking).length > 0) return true;
+  if (
+    entry.thinkingVisible &&
+    (safeTrim(entry.reasoningSummary).length > 0 || entry.reasoningObserved)
+  )
+    return true;
   return safeTrim(entry.text || entry.markdown).length > 0;
 }
 
@@ -565,7 +571,28 @@ function renderEntryRows(
       ];
     }
 
+    // A raw reasoning entry has no body: the transcript reducer stored none.
+    // The row states that the child reasoned and stops there.
     case "thinking": {
+      if (!entry.thinkingVisible) {
+        return [
+          headRow(
+            `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning")} ${dim("[hidden]")}`,
+            width,
+          ),
+        ];
+      }
+      return [
+        headRow(
+          `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning")}`,
+          width,
+        ),
+      ];
+    }
+
+    // The host published an explicit summary. This is the ONE reasoning
+    // surface that may print prose.
+    case "reasoning_summary": {
       if (!entry.thinkingVisible) {
         return [
           headRow(
@@ -609,17 +636,32 @@ function renderEntryRows(
       // renders nothing at all.
       if (!assistantEntryHasVisibleRows(entry, input.settled)) return [];
       const rows: string[] = [];
-      // The reasoning that produced this reply is stated as a SUMMARY line
-      // above it, exactly as the prototype orders them, and it is bounded so a
-      // long chain can never become a thought stream on screen.
-      if (entry.thinkingVisible && safeTrim(entry.thinking).length > 0) {
-        rows.push(
-          headRow(
-            `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning · SUMMARY")}`,
-            width,
-          ),
-          ...bodyRows(entry.thinking, width, PI_NATIVE_BODY_ROWS.reason, dim),
-        );
+      // The reasoning that produced this reply is stated above it, exactly as
+      // the prototype orders them. Prose appears ONLY when the host itself
+      // published a summary; observed raw chain-of-thought is announced as a
+      // bare fact and its text is never held, let alone printed.
+      if (entry.thinkingVisible) {
+        if (safeTrim(entry.reasoningSummary).length > 0) {
+          rows.push(
+            headRow(
+              `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning · SUMMARY")}`,
+              width,
+            ),
+            ...bodyRows(
+              entry.reasoningSummary,
+              width,
+              PI_NATIVE_BODY_ROWS.reason,
+              dim,
+            ),
+          );
+        } else if (entry.reasoningObserved) {
+          rows.push(
+            headRow(
+              `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning")}`,
+              width,
+            ),
+          );
+        }
       }
       const streaming = entry.streaming && !input.settled;
       const label = replyLabel(

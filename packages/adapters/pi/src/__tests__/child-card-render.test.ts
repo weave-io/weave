@@ -446,11 +446,34 @@ describe("the Native Line", () => {
     }
   });
 
-  it("names reasoning as a summary and carries the live mark only while live", () => {
-    const live = rowText(nativeLine(facts(), 80)[0] as Row);
+  it("prints the reasoning wording the model chose and carries the live mark only while live", () => {
+    // The renderer adds no reasoning wording of its own: relabelling a raw
+    // reasoning marker as a `summary` here would fabricate one.
+    const live = rowText(
+      nativeLine(
+        facts({ activity: { kind: "think", text: "reasoning", live: true } }),
+        80,
+      )[0] as Row,
+    );
     expect(live).toContain("⤷");
-    expect(live).toContain("summary · ");
+    expect(live).toContain("reasoning");
+    expect(live).not.toContain("summary · ");
     expect(live).toContain("▍");
+
+    const summarized = rowText(
+      nativeLine(
+        facts({
+          activity: {
+            kind: "think",
+            text: "summary · weighed two fixes",
+            live: true,
+          },
+        }),
+        80,
+      )[0] as Row,
+    );
+    expect(summarized).toContain("summary · weighed two fixes");
+    expect(summarized).not.toContain("summary · summary · ");
 
     const frozen = rowText(
       nativeLine(

@@ -316,7 +316,9 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     expect(host.getEditorComponentForTest()).toBe(editorOwnerBefore);
 
     const rendered = host.customRenderedLines.at(-1)?.join("\n") ?? "";
-    expect(rendered).toContain("SETTLED");
+    // The ref's own `completed` status is the settlement authority, so the
+    // frame and rail state the verdict rather than a generic `SETTLED`.
+    expect(rendered).toContain("COMPLETED");
     expect(rendered.toLowerCase()).toContain("read-only");
     // Bounded newest page: the newest entries are present, the oldest are not.
     expect(rendered).toContain("body-68");
@@ -353,7 +355,9 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     expect(host.getEditorComponentForTest()).toBe(editorOwnerBefore);
 
     const rendered = host.customRenderedLines.at(-1)?.join("\n") ?? "";
-    expect(rendered).toContain("SETTLED");
+    // The ref's own `completed` status is the settlement authority, so the
+    // frame and rail state the verdict rather than a generic `SETTLED`.
+    expect(rendered).toContain("COMPLETED");
     expect(rendered.toLowerCase()).toContain("read-only");
     expect(rendered).toContain("body-68");
 
@@ -394,7 +398,9 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     expect(rendered).toContain("metadata-model-9");
     // Transcript: the bounded newest page of persisted entries.
     expect(rendered).toContain("body-68");
-    expect(rendered).toContain("SETTLED");
+    // The ref's own `completed` status is the settlement authority, so the
+    // frame and rail state the verdict rather than a generic `SETTLED`.
+    expect(rendered).toContain("COMPLETED");
     expect(rendered.toLowerCase()).toContain("read-only");
     // Nothing live leaked in, and no path ever reaches the pane.
     expect(rendered).not.toContain(root);

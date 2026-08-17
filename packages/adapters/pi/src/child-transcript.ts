@@ -94,7 +94,23 @@ export interface PiChildTranscriptAssistantEntry
   readonly kind: "assistant";
   readonly messageId: string;
   readonly text: string;
-  readonly thinking: string;
+  /**
+   * Trusted reasoning summary, and only that.
+   *
+   * It is filled exclusively from an explicit host reasoning-summary surface
+   * (a `reasoning_summary` assistant event, or a `delta.reasoningSummary`
+   * field). Raw `thinking_delta` chain-of-thought never reaches this field:
+   * relabelling or truncating raw reasoning would fabricate a summary the host
+   * never wrote.
+   */
+  readonly reasoningSummary: string;
+  /**
+   * The child reasoned during this message, with no trusted summary published.
+   *
+   * Content-free on purpose: it lets the UI state THAT reasoning happened
+   * without ever stating WHAT it was.
+   */
+  readonly reasoningObserved: boolean;
   readonly markdown: string;
   readonly streaming: boolean;
   readonly stopReason?: string;
@@ -118,7 +134,11 @@ export interface PiChildTranscriptToolEntry extends PiChildTranscriptBaseEntry {
 }
 
 export interface PiChildTranscriptTextEntry extends PiChildTranscriptBaseEntry {
-  readonly kind: "text" | "thinking" | "markdown";
+  readonly kind: "text" | "thinking" | "markdown" | "reasoning_summary";
+  /**
+   * Body text of the entry. A `thinking` entry ALWAYS holds the empty string:
+   * raw chain-of-thought is dropped at the reducer boundary and never stored.
+   */
   readonly text: string;
 }
 
@@ -656,10 +676,20 @@ function messageText(value: unknown): string | undefined {
   );
 }
 
+/**
+ * Splits one `message_update` into the facts the reducer may keep.
+ *
+ * Raw reasoning is deliberately asymmetric with every other part: a
+ * `thinking_delta` (or a legacy `delta.thinking`) yields only the content-free
+ * `reasoningObserved` flag, while `reasoningSummary` is read exclusively from
+ * the host's explicit reasoning-summary surface. No code path converts one
+ * into the other.
+ */
 function messageUpdateParts(event: PiChildSessionEvent): {
   readonly messageId?: string;
   readonly text?: string;
-  readonly thinking?: string;
+  readonly reasoningSummary?: string;
+  readonly reasoningObserved: boolean;
   readonly markdown?: string;
 } {
   const eventRecord = event as unknown as RecordValue;
@@ -672,9 +702,14 @@ function messageUpdateParts(event: PiChildSessionEvent): {
     (assistantType === "text_delta"
       ? stringValue(assistantEvent?.delta)
       : undefined);
-  const thinking =
-    stringValue(delta?.thinking) ??
-    (assistantType === "thinking_delta"
+  // RAW CHAIN-OF-THOUGHT IS DROPPED HERE. Only the fact that it existed is
+  // carried forward; its text is never read into transcript state.
+  const reasoningObserved =
+    stringValue(delta?.thinking) !== undefined ||
+    assistantType === "thinking_delta";
+  const reasoningSummary =
+    stringValue(delta?.reasoningSummary) ??
+    (assistantType === "reasoning_summary"
       ? stringValue(assistantEvent?.delta)
       : undefined);
   const markdown =
@@ -682,8 +717,13 @@ function messageUpdateParts(event: PiChildSessionEvent): {
     (assistantType === "markdown" || assistantType === "markdown_delta"
       ? stringValue(assistantEvent?.delta)
       : undefined);
-  return { messageId, text, thinking, markdown };
+  return { messageId, text, reasoningSummary, reasoningObserved, markdown };
 }
+
+/** No-fact parts, used by `message_end`, which carries no incremental deltas. */
+const EMPTY_MESSAGE_UPDATE_PARTS: ReturnType<typeof messageUpdateParts> = {
+  reasoningObserved: false,
+};
 
 function usageValue(value: unknown): PiChildTranscriptUsage {
   return isRecord(value) ? { ...value } : {};
@@ -907,11 +947,50 @@ function addEntry(
   return ok({ ...state, entries: [...state.entries, entry] });
 }
 
+/**
+ * Strips raw chain-of-thought TEXT out of one event while preserving its
+ * SHAPE, so the reducer still learns that the child reasoned.
+ *
+ * It runs before the bounded history append as well as before the entry
+ * reduce: raw reasoning is never rendered, so retaining it anywhere in
+ * transcript state would only create a surface for it to escape from.
+ */
+function withoutRawReasoning(event: PiChildSessionEvent): PiChildSessionEvent {
+  if (event.type === "thinking") {
+    return event.text === undefined ? event : { ...event, text: "" };
+  }
+  if (event.type !== "message_update") return event;
+  const record = event as unknown as RecordValue;
+  const delta = recordValue(record.delta);
+  const assistantEvent = recordValue(record.assistantMessageEvent);
+  const redactedDelta =
+    delta !== undefined && typeof delta.thinking === "string"
+      ? { ...delta, thinking: "" }
+      : undefined;
+  const redactedAssistant =
+    assistantEvent !== undefined &&
+    assistantEvent.type === "thinking_delta" &&
+    typeof assistantEvent.delta === "string"
+      ? { ...assistantEvent, delta: "" }
+      : undefined;
+  if (redactedDelta === undefined && redactedAssistant === undefined) {
+    return event;
+  }
+  return {
+    ...event,
+    ...(redactedDelta === undefined ? {} : { delta: redactedDelta }),
+    ...(redactedAssistant === undefined
+      ? {}
+      : { assistantMessageEvent: redactedAssistant }),
+  } as PiChildSessionEvent;
+}
+
 function applyEventBody(
   state: PiChildTranscriptState,
-  event: PiChildSessionEvent,
+  rawEvent: PiChildSessionEvent,
   sequence: number,
 ): Result<PiChildTranscriptState, PiChildTranscriptError> {
+  const event = withoutRawReasoning(rawEvent);
   const history = appendHistory(state, event, sequence);
   if (history.isErr()) return err(history.error);
   let next: PiChildTranscriptState = { ...state, ...history.value };
@@ -933,7 +1012,8 @@ function applyEventBody(
       kind: "assistant",
       messageId,
       text: messageText(message?.text) ?? messageText(message?.content) ?? "",
-      thinking: "",
+      reasoningSummary: "",
+      reasoningObserved: false,
       markdown: "",
       streaming: true,
       usage: undefined,
@@ -959,7 +1039,9 @@ function applyEventBody(
   if (eventType === "message_update" || eventType === "message_end") {
     const eventRecord = event as unknown as RecordValue;
     const parts =
-      eventType === "message_update" ? messageUpdateParts(event) : {};
+      eventType === "message_update"
+        ? messageUpdateParts(event)
+        : EMPTY_MESSAGE_UPDATE_PARTS;
     const message =
       eventType === "message_end"
         ? recordValue(eventRecord.message)
@@ -978,7 +1060,8 @@ function applyEventBody(
         kind: "assistant",
         messageId: placeholderId,
         text: "",
-        thinking: "",
+        reasoningSummary: "",
+        reasoningObserved: false,
         markdown: "",
         streaming: true,
         imageIds: [],
@@ -1021,7 +1104,9 @@ function applyEventBody(
         eventType === "message_end" && terminalText !== undefined
           ? terminalText
           : current.text + (parts.text ?? ""),
-      thinking: current.thinking + (parts.thinking ?? ""),
+      reasoningSummary:
+        current.reasoningSummary + (parts.reasoningSummary ?? ""),
+      reasoningObserved: current.reasoningObserved || parts.reasoningObserved,
       markdown: current.markdown + (parts.markdown ?? ""),
       streaming: eventType !== "message_end",
       stopReason:
@@ -1045,10 +1130,15 @@ function applyEventBody(
   if (
     eventType === "text" ||
     eventType === "thinking" ||
+    eventType === "reasoning_summary" ||
     eventType === "markdown"
   ) {
     const eventRecord = event as unknown as RecordValue;
-    const text = stringValue(eventRecord.text) ?? "";
+    // A standalone `thinking` event is raw chain-of-thought. It is retained as
+    // a content-free marker: the reader learns that the child reasoned, never
+    // what it reasoned.
+    const text =
+      eventType === "thinking" ? "" : (stringValue(eventRecord.text) ?? "");
     const entry: PiChildTranscriptTextEntry = {
       ...baseEntry(
         nextEntryId(next, eventType, sequence),
@@ -1592,7 +1682,8 @@ export type PiTranscriptComponentPayload =
   | {
       readonly type: "assistant";
       readonly text: string;
-      readonly thinking: string;
+      /** Trusted host reasoning summary only. Never raw chain-of-thought. */
+      readonly reasoningSummary: string;
       readonly markdown: string;
       readonly streaming: boolean;
       readonly stopReason?: string;
@@ -1933,14 +2024,27 @@ function renderEntry(
       ),
     );
     if (entry.thinkingVisible) {
-      if (entry.thinking)
+      // Only a host-published summary has text. Observed raw reasoning states
+      // itself and nothing more.
+      if (entry.reasoningSummary)
         rows.push(
           row(
             entry.id,
             entry.sequence,
             entry.kind,
             "thinking",
-            `thinking: ${entry.thinking}`,
+            `reasoning summary: ${entry.reasoningSummary}`,
+            width,
+          ),
+        );
+      else if (entry.reasoningObserved)
+        rows.push(
+          row(
+            entry.id,
+            entry.sequence,
+            entry.kind,
+            "thinking",
+            "reasoning: [not summarized]",
             width,
           ),
         );
@@ -2087,6 +2191,7 @@ function renderEntry(
   } else if (
     entry.kind === "text" ||
     entry.kind === "thinking" ||
+    entry.kind === "reasoning_summary" ||
     entry.kind === "markdown"
   ) {
     if (entry.kind === "thinking" && !entry.thinkingVisible)
@@ -2312,7 +2417,9 @@ function componentKindFor(
   if (entry?.kind === "unknown" || entry === undefined) return "unknown";
   if (rowItem.factId.endsWith(":thinking")) return "thinking";
   if (rowItem.factId.endsWith(":markdown")) return "markdown";
-  return entry.kind === "thinking" ? "thinking" : "assistant";
+  return entry.kind === "thinking" || entry.kind === "reasoning_summary"
+    ? "thinking"
+    : "assistant";
 }
 
 function payloadFor(
@@ -2328,13 +2435,14 @@ function payloadFor(
       return {
         type: "assistant",
         text: boundedTranscriptText(entry.text),
-        thinking: boundedTranscriptText(entry.thinking),
+        reasoningSummary: boundedTranscriptText(entry.reasoningSummary),
         markdown: boundedTranscriptText(entry.markdown),
         streaming: entry.streaming,
         stopReason: entry.stopReason,
       };
     case "text":
     case "thinking":
+    case "reasoning_summary":
     case "markdown":
       return { type: "text", text: boundedTranscriptText(entry.text) };
     case "tool":

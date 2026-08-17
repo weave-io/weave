@@ -105,7 +105,13 @@ export interface NativeToolResultBlock {
 export interface NativeMessageParts {
   readonly role: string | undefined;
   readonly text: string;
-  readonly thinking: readonly string[];
+  /**
+   * How many raw reasoning blocks the message carried. Content-free on
+   * purpose: persisted chain-of-thought is counted, never read.
+   */
+  readonly reasoningBlocks: number;
+  /** Text of explicit host-published reasoning summaries only. */
+  readonly reasoningSummaries: readonly string[];
   readonly toolCalls: readonly NativeToolCallBlock[];
   readonly toolResults: readonly NativeToolResultBlock[];
   readonly images: readonly (string | undefined)[];
@@ -197,13 +203,15 @@ export function nativeMessageParts(
     return ok({
       role,
       text: boundText(content),
-      thinking: [],
+      reasoningBlocks: 0,
+      reasoningSummaries: [],
       toolCalls: [],
       toolResults: [],
       images: [],
     });
   }
-  const thinking: string[] = [];
+  let reasoningBlocks = 0;
+  const reasoningSummaries: string[] = [];
   const toolCalls: NativeToolCallBlock[] = [];
   const toolResults: NativeToolResultBlock[] = [];
   const images: (string | undefined)[] = [];
@@ -221,7 +229,8 @@ export function nativeMessageParts(
       return ok({
         role,
         text: "",
-        thinking: [],
+        reasoningBlocks: 0,
+        reasoningSummaries: [],
         toolCalls: [],
         toolResults: [
           {
@@ -239,7 +248,8 @@ export function nativeMessageParts(
     return ok({
       role,
       text: "",
-      thinking: [],
+      reasoningBlocks: 0,
+      reasoningSummaries: [],
       toolCalls: [],
       toolResults: [],
       images: [],
@@ -260,10 +270,16 @@ export function nativeMessageParts(
     const block = recordOf(item);
     if (block === undefined) continue;
     const type = nonEmptyString(block.type) ?? "";
+    // RAW REASONING IS COUNTED, NEVER READ. A persisted chain-of-thought block
+    // is proof that the child reasoned and nothing else.
     if (type === "thinking" || type === "reasoning") {
-      const value =
-        nonEmptyString(block.thinking) ?? nonEmptyString(block.text);
-      if (value !== undefined) thinking.push(boundText(value));
+      reasoningBlocks += 1;
+      continue;
+    }
+    // The one trusted surface: a summary the host itself wrote.
+    if (type === "reasoning_summary" || type === "reasoningSummary") {
+      const value = nonEmptyString(block.text) ?? nonEmptyString(block.summary);
+      if (value !== undefined) reasoningSummaries.push(boundText(value));
       continue;
     }
     if (type === "toolCall" || type === "tool_use" || type === "tool_call") {
@@ -311,7 +327,8 @@ export function nativeMessageParts(
   return ok({
     role,
     text: boundText(text),
-    thinking,
+    reasoningBlocks,
+    reasoningSummaries,
     toolCalls,
     toolResults,
     images,

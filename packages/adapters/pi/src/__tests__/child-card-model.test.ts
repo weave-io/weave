@@ -223,10 +223,23 @@ describe("child-card-model event coverage", () => {
     expect(fromMarkdown.activity.text).toBe("**bold** reply");
   });
 
-  it("thinking becomes a bounded, explicitly named summary", () => {
+  it("raw thinking becomes a content-free reasoning marker, never a summary", () => {
+    const state = applyEvent(started(), {
+      type: "thinking",
+      text: "step one then step two",
+    });
+    const f = facts(state);
+    expect(f.activity.kind).toBe("think");
+    expect(f.activity.text).toBe("reasoning");
+    expect(f.activity.text).not.toContain("summary");
+    expect(f.run.phase).toBe("reasoning");
+    expect(JSON.stringify(state)).not.toContain("step one");
+  });
+
+  it("an explicit host reasoning summary is named a summary", () => {
     const f = facts(
       applyEvent(started(), {
-        type: "thinking",
+        type: "reasoning_summary",
         text: "step one then step two",
       }),
     );
@@ -237,7 +250,7 @@ describe("child-card-model event coverage", () => {
 
   it("bounds a long reasoning summary and never retains more than it prints", () => {
     const state = applyEvent(started(), {
-      type: "thinking",
+      type: "reasoning_summary",
       text: "x".repeat(5_000),
     });
     const f = facts(state);

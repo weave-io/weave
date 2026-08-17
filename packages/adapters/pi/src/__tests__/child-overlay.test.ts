@@ -682,7 +682,7 @@ describe("ChildOverlayController", () => {
 
     const liveEvents: readonly unknown[] = [
       { type: "message_start", message: { id: "msg-1", role: "assistant" } },
-      { type: "thinking", text: "considering the plan" },
+      { type: "reasoning_summary", text: "considering the plan" },
       { type: "tool_call", toolCallId: "call-1", toolName: "read" },
       {
         type: "tool_result",
@@ -717,7 +717,7 @@ describe("ChildOverlayController", () => {
 
     const live = summarize(view.transcript);
     // Live reducer fidelity: every kind survives with its own entry.
-    expect(live).toContain("thinking:considering the plan");
+    expect(live).toContain("reasoning_summary:considering the plan");
     expect(live).toContain("tool:call-1:read:result");
     expect(live).toContain("tool:call-2:bash:error");
     expect(live).toContain("assistant:msg-1:all done");
@@ -3161,7 +3161,7 @@ describe("createChildOverlayCustomComponent", () => {
   it("renders native entry kinds with a bounded header for a live child", async () => {
     const { component, controller } = await mount({ status: "live" });
     controller.applyLiveEvent({
-      type: "thinking",
+      type: "reasoning_summary",
       text: "pondering",
     });
     controller.applyLiveEvent({
@@ -3420,7 +3420,10 @@ describe("createChildOverlayCustomComponent", () => {
     // Several live events land below the viewport before the next render.
     for (let step = 0; step < 3; step += 1) {
       controller
-        .applyLiveEvent({ type: "thinking", text: `live-tail-row-${step}` })
+        .applyLiveEvent({
+          type: "reasoning_summary",
+          text: `live-tail-row-${step}`,
+        })
         ._unsafeUnwrap();
     }
     component.invalidate();

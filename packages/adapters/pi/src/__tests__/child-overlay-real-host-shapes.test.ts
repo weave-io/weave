@@ -392,7 +392,7 @@ describe("non-conversation events render nothing", () => {
     expect(rows).toEqual(["⚙ bash(command: bun test)", "  ⎿ running", ""]);
   });
 
-  it("still prints a reply that has prose, and its reasoning summary", () => {
+  it("prints a reply with prose, and announces raw reasoning without quoting it", () => {
     const rows = rowsOf([
       {
         type: "message_start",
@@ -417,12 +417,43 @@ describe("non-conversation events render nothing", () => {
       },
     ]);
     const joined = rows.join("\n");
-    // Observation 9: a real `thinking_delta` DOES reach the pane. The
-    // production path does not drop it, so nothing here is worked around.
-    expect(joined).toContain("✻ reasoning · SUMMARY");
-    expect(joined).toContain("check the reporter first");
+    // Observation 9 REVISED: a real `thinking_delta` is raw chain-of-thought.
+    // The pane states that the child reasoned and never quotes it, and it
+    // never calls it a SUMMARY, because the host published none.
+    expect(joined).toContain("✻ reasoning");
+    expect(joined).not.toContain("SUMMARY");
+    expect(joined).not.toContain("check the reporter first");
     expect(joined).toContain("● shuttle · reply");
     expect(joined).toContain("the reporter drops rows");
+  });
+
+  it("prints an explicit host reasoning summary as a SUMMARY", () => {
+    const rows = rowsOf([
+      {
+        type: "message_start",
+        message: { id: "m3", role: "assistant", content: [] },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "reasoning_summary",
+          contentIndex: 0,
+          delta: "weighed two reporters",
+        },
+      },
+      {
+        type: "message_end",
+        message: {
+          id: "m3",
+          role: "assistant",
+          content: [{ type: "text", text: "the reporter drops rows" }],
+          stopReason: "stop",
+        },
+      },
+    ]);
+    const joined = rows.join("\n");
+    expect(joined).toContain("✻ reasoning · SUMMARY");
+    expect(joined).toContain("weighed two reporters");
   });
 });
 

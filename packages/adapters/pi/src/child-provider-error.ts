@@ -1017,6 +1017,7 @@ export function redactProviderErrorFromEvent(
       }
       case "text":
       case "thinking":
+      case "reasoning_summary":
       case "markdown":
         copyString(rebuilt, source, "text");
         copyString(rebuilt, source, "messageId", 256);

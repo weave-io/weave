@@ -488,10 +488,20 @@ describe("child-compact-render", () => {
       detail: "exit 1",
     });
 
+    // Raw chain-of-thought maps to a content-free marker: its text is dropped
+    // at the mapper, so no downstream surface can print or persist it.
     expect(mapOne({ type: "thinking", text: "weighing options" })).toEqual({
       kind: "thinking",
       itemId: "assistant:thinking",
-      summary: "weighing options",
+    });
+
+    // Only the host's explicit reasoning summary carries text.
+    expect(
+      mapOne({ type: "reasoning_summary", text: "weighed two fixes" }),
+    ).toEqual({
+      kind: "reasoning_summary",
+      itemId: "assistant:reasoning-summary",
+      summary: "weighed two fixes",
     });
 
     expect(

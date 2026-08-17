@@ -115,10 +115,22 @@ export type ChildCompactReducerInput =
       readonly usage?: ChildCompactUsageFacts;
     }
   | {
+      /**
+       * The child reasoned. CONTENT-FREE BY CONSTRUCTION: this input carries
+       * no text field at all, so raw chain-of-thought cannot reach the card's
+       * model-visible line or its persisted details even by accident.
+       */
       readonly kind: "thinking";
       readonly itemId: string;
-      /** Bounded reasoning SUMMARY. Raw chain-of-thought is never retained. */
-      readonly summary?: string;
+    }
+  | {
+      /**
+       * An explicit host-published reasoning summary — the ONE trusted
+       * reasoning surface. Never derived from a `thinking` event.
+       */
+      readonly kind: "reasoning_summary";
+      readonly itemId: string;
+      readonly summary: string;
     }
   | {
       readonly kind: "tool";
@@ -379,15 +391,20 @@ export function mapPiChildSessionEventToCompactInput(
             mode: "replace",
           };
         }
-        case "thinking": {
+        // Raw chain-of-thought. Its text is dropped here and nowhere else has
+        // a chance to see it.
+        case "thinking":
+          return { kind: "thinking", itemId: `${itemId}:thinking` };
+        case "reasoning_summary": {
           const summary =
             typeof event.text === "string"
               ? sanitizeChildCompactText(event.text)
               : "";
+          if (summary.length === 0) return undefined;
           return {
-            kind: "thinking",
-            itemId: `${itemId}:thinking`,
-            ...(summary.length > 0 ? { summary } : {}),
+            kind: "reasoning_summary",
+            itemId: `${itemId}:reasoning-summary`,
+            summary,
           };
         }
         case "tool_call":
@@ -684,6 +701,7 @@ function reduceChildCompactUnchecked(
     case "assistant_end":
       return reduceAssistantEnd(state, input);
     case "thinking":
+    case "reasoning_summary":
       return reduceSideItem(state, input.itemId, "thinking");
     case "tool":
       return reduceSideItem(state, input.itemId, "tool");
@@ -1023,12 +1041,26 @@ export function parseReducerInput(
           detail: "invalid_thinking",
         });
       }
+      // Any `summary` a caller attached to a raw thinking record is dropped:
+      // the trusted summary has its own input kind.
+      return ok({ kind: "thinking", itemId: record.itemId });
+    }
+    case "reasoning_summary": {
+      if (
+        typeof record.itemId !== "string" ||
+        typeof record.summary !== "string" ||
+        record.summary.length === 0
+      ) {
+        return err({
+          type: "ChildCompactFailed",
+          operation: "reduce",
+          detail: "invalid_reasoning_summary",
+        });
+      }
       return ok({
-        kind: "thinking",
+        kind: "reasoning_summary",
         itemId: record.itemId,
-        ...(typeof record.summary === "string"
-          ? { summary: record.summary }
-          : {}),
+        summary: record.summary,
       });
     }
     case "tool": {

@@ -581,10 +581,11 @@ export function nativeLine(
   const kind = facts.activity.kind;
   const ink = ACTIVITY_INK[kind];
   const live = facts.activity.live;
-  // Reasoning is a bounded summary, and the card says so in words rather than
-  // implying it with a glyph.
-  const text =
-    kind === "think" ? `summary · ${facts.activity.text}` : facts.activity.text;
+  // The reasoning wording is decided by the model, not here: only a trusted
+  // host summary is allowed to say the word `summary`, and a raw reasoning
+  // marker must stay content-free. Re-prefixing here would relabel one as the
+  // other.
+  const text = facts.activity.text;
   const body = clipText(text, Math.max(2, bodyW - (live ? 4 : 2)));
   const row: Seg[] = [
     seg(ink === "text" ? toneInk(facts.tone) : ink, `${ACTIVITY_GLYPH[kind]} `),

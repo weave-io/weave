@@ -39,6 +39,7 @@ import {
   overlayToolTone,
 } from "./child-overlay-pi-native.js";
 import type {
+  ChildOverlayOutcome,
   ChildOverlayStatus,
   ChildOverlayView,
 } from "./child-overlay-types.js";
@@ -372,7 +373,9 @@ function liveActivity(view: ChildOverlayView): string | undefined {
  * overriding it, so `LIVE · working` still says the run is live.
  */
 function statusWords(view: ChildOverlayView): string {
-  const lifecycle = view.child.status.toUpperCase();
+  // The same authoritative word the frame marker prints, so a settled child's
+  // verdict cannot differ between the marker and the rail.
+  const lifecycle = childOverlaySettlementFacts(view).word;
   const reported = safeTrim(view.transcript.status ?? "");
   if (reported.length === 0 || view.readOnly) return lifecycle;
   return `${lifecycle} · ${reported}`;
@@ -403,8 +406,20 @@ export function childOverlayTranscriptInput(
   };
 }
 
-function settlementPhase(status: ChildOverlayStatus): OverlaySettlementPhase {
-  if (status === "settled") return "completed";
+function settlementPhase(
+  status: ChildOverlayStatus,
+  outcome: ChildOverlayOutcome | undefined,
+): OverlaySettlementPhase {
+  if (status === "settled") {
+    // The authoritative verdict, when the settlement authority named one.
+    if (outcome === "failed") return "failed";
+    if (outcome === "cancelled") return "cancelled";
+    // COMPATIBILITY FALLBACK: history written before the outcome field
+    // existed proves only that the run ended. It stays on the completed phase
+    // and keeps the generic `SETTLED` word below rather than claiming a
+    // verdict the record does not carry.
+    return "completed";
+  }
   if (status === "orphan") return "cancelled";
   return "live";
 }
@@ -412,16 +427,20 @@ function settlementPhase(status: ChildOverlayStatus): OverlaySettlementPhase {
 /**
  * The frame marker's phase and word.
  *
- * The three overlay statuses are the only authoritative lifecycle facts this
- * layer has, so the marker states exactly one of them rather than inferring a
- * failure or a retry the source never reported.
+ * The lifecycle status says whether the run ended; the authoritative outcome
+ * says HOW. Both come from the settlement authority through the descriptor —
+ * never from assistant text, reported status prose, or a `message_end` — so
+ * this layer states a verdict only when one was proven, and otherwise keeps
+ * the generic settled wording.
  */
 export function childOverlaySettlementFacts(
   view: ChildOverlayView,
 ): OverlaySettlementFacts {
+  const outcome =
+    view.child.status === "settled" ? view.child.outcome : undefined;
   return overlaySettlementFacts(
-    settlementPhase(view.child.status),
-    view.child.status.toUpperCase(),
+    settlementPhase(view.child.status, outcome),
+    (outcome ?? view.child.status).toUpperCase(),
   );
 }
 
@@ -579,7 +598,9 @@ export function childOverlayRailFacts(
     toolTone: providerFailure === undefined ? toolTone : "bad",
     failed,
     ...(errorDetail === undefined ? {} : { errorDetail }),
-    queueCount: queue?.size ?? view.identity?.queueDepth ?? 0,
+    // An unreported queue is UNKNOWN, not empty. Only an authoritative queue
+    // entry or a descriptor depth may state a number, including zero.
+    queueCount: queue?.size ?? view.identity?.queueDepth,
     ...(queue?.first === undefined ? {} : { firstQueued: queue.first }),
     tokensIn: formatOverlayTokenCount(spend.tokensIn),
     tokensOut: formatOverlayTokenCount(spend.tokensOut),
@@ -605,7 +626,8 @@ export function childOverlayPromptFacts(
     turn: childOverlayTurn(view),
     settled: view.readOnly,
     failed: view.terminalError !== undefined,
-    queueCount: view.identity?.queueDepth ?? 0,
+    // Absent stays absent: see the rail's queue fact.
+    queueCount: view.identity?.queueDepth,
     draft: view.readOnly ? "" : input.draft,
     stateWord: settlement.word,
     confirmingCancel: input.confirmingCancel,

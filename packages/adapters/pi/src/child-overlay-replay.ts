@@ -198,6 +198,8 @@ function replayCompactionStageKey(
       return `message_update:${messageId}`;
     case "thinking":
       return "thinking";
+    case "reasoning_summary":
+      return "reasoning_summary";
     case "text":
       return "text";
     case "markdown":
@@ -574,8 +576,17 @@ function assistantEntryFromParts(
     message: { id, role: "assistant" },
   });
   if (start.isErr()) return err(start.error);
-  for (const thinking of parts.thinking) {
-    const pushed = pushReplayEvent(steps, { type: "thinking", text: thinking });
+  // A persisted raw reasoning block replays as a content-free marker: the
+  // rebuilt page proves the child reasoned without restating its thoughts.
+  if (parts.reasoningBlocks > 0) {
+    const pushed = pushReplayEvent(steps, { type: "thinking" });
+    if (pushed.isErr()) return err(pushed.error);
+  }
+  for (const summary of parts.reasoningSummaries) {
+    const pushed = pushReplayEvent(steps, {
+      type: "reasoning_summary",
+      text: summary,
+    });
     if (pushed.isErr()) return err(pushed.error);
   }
   for (const call of parts.toolCalls) {
@@ -606,16 +617,20 @@ function assistantEntryFromParts(
   }
 
   const hasText = parts.text.trim().length > 0;
+  const reasoned = parts.reasoningBlocks > 0;
   let kind: ChildOverlayEntryKind = "assistant";
   if (!hasText && parts.toolCalls.length > 0) kind = "tool";
-  else if (!hasText && parts.thinking.length > 0) kind = "thinking";
+  else if (!hasText && (reasoned || parts.reasoningSummaries.length > 0))
+    kind = "thinking";
   else if (!hasText && parts.images.length > 0) kind = "image";
+  // Raw reasoning contributes NO text to the entry label; only tool names and
+  // host-published summaries do.
   const text = hasText
     ? parts.text
     : boundText(
         [
           ...parts.toolCalls.map((call) => call.toolName),
-          ...parts.thinking,
+          ...parts.reasoningSummaries,
         ].join("\n"),
       );
   return ok({ id, sequence, kind, text, expanded: false, replay: steps });
@@ -835,9 +850,19 @@ export function projectLiveEntry(
         expanded,
         replay,
       };
+    // Raw reasoning: the entry exists, its text never does.
     case "thinking":
       return {
         id: `live-thinking-${sequence}`,
+        sequence,
+        kind: "thinking",
+        text: "",
+        expanded,
+        replay,
+      };
+    case "reasoning_summary":
+      return {
+        id: `live-reasoning-summary-${sequence}`,
         sequence,
         kind: "thinking",
         text: boundText(typeof event.text === "string" ? event.text : ""),

@@ -172,6 +172,21 @@ export type ChildOverlayRunDivider = z.infer<
 export const ChildOverlayStatusSchema = z.enum(["live", "settled", "orphan"]);
 export type ChildOverlayStatus = z.infer<typeof ChildOverlayStatusSchema>;
 
+/**
+ * The authoritative verdict of a settled run.
+ *
+ * It comes from the settlement authority alone — the child's own terminal
+ * status for a live run, the ref record's status for a historical one. It is
+ * never derived from assistant text, from reported status prose, or from a
+ * `message_end`.
+ */
+export const ChildOverlayOutcomeSchema = z.enum([
+  "completed",
+  "failed",
+  "cancelled",
+]);
+export type ChildOverlayOutcome = z.infer<typeof ChildOverlayOutcomeSchema>;
+
 /** One bounded identity label (agent, parent agent, role, model, reasoning). */
 export const ChildOverlayLabelSchema = z
   .string()
@@ -224,6 +239,15 @@ export const ChildOverlayChildSchema = z
     threadId: OpaqueIdSchema,
     parentChildId: OpaqueIdSchema.optional(),
     status: ChildOverlayStatusSchema,
+    /**
+     * Authoritative terminal verdict, when the settlement authority named one.
+     *
+     * Optional for backward compatibility: a child described by a source that
+     * predates this field (or a ref written before it existed) reports no
+     * outcome, and the overlay then falls back to the generic `SETTLED`
+     * wording rather than guessing a verdict.
+     */
+    outcome: ChildOverlayOutcomeSchema.optional(),
     title: z.string().max(CHILD_OVERLAY_BOUNDS.maxTitleLength).optional(),
     generationId: OpaqueIdSchema.optional(),
     runs: z

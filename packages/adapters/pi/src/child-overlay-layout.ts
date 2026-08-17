@@ -200,7 +200,12 @@ export interface OverlayRailFacts {
   readonly failed: boolean;
   /** Safe, already-sanitized tool-error detail. Never environment or secrets. */
   readonly errorDetail?: string;
-  readonly queueCount: number;
+  /**
+   * Authoritative queue depth. `undefined` means NO authority reported one,
+   * which the rail prints as unknown; `0` means a source proved the queue is
+   * empty. The two are never collapsed.
+   */
+  readonly queueCount?: number;
   readonly firstQueued?: string;
   readonly tokensIn?: string;
   readonly tokensOut?: string;
@@ -221,7 +226,8 @@ export interface OverlayPromptFacts {
   readonly settled: boolean;
   /** The latest tool failed. The child is still alive. */
   readonly failed: boolean;
-  readonly queueCount: number;
+  /** Authoritative queue depth, or `undefined` when none was reported. */
+  readonly queueCount?: number;
   /** The live draft. Ignored entirely once the child has settled. */
   readonly draft: string;
   /** The state word the frame marker and the rail also print. */
@@ -317,7 +323,10 @@ export function overlaySettlementFacts(
 ): OverlaySettlementFacts {
   return {
     phase,
-    settled: phase === "completed" || phase === "cancelled",
+    // A failed run is over. It ends the child exactly as a completed or a
+    // cancelled one does, so the read-only prompt applies to all three.
+    settled:
+      phase === "completed" || phase === "cancelled" || phase === "failed",
     word: boundedWord(word ?? defaultStateWord(phase)),
     glyph: settlementGlyph(phase),
     tone: settlementTone(phase),
@@ -329,7 +338,7 @@ function defaultStateWord(phase: OverlaySettlementPhase): string {
     case "completed":
       return "COMPLETED";
     case "failed":
-      return "TOOL ERROR";
+      return "FAILED";
     case "cancelled":
       return "CANCELLED";
     case "recovering":
@@ -694,6 +703,7 @@ export function matrixRow(
 }
 
 function queueText(facts: OverlayRailFacts): string {
+  if (facts.queueCount === undefined) return "queue unknown";
   if (facts.queueCount === 0) return "queue empty";
   // The depth is the fact; the first item is a bonus the child may not have
   // reported. Printing `queue 2 · —` spends a column saying nothing.
@@ -772,9 +782,13 @@ export function renderRailStatusMatrix(
     matrixRow(
       paint,
       "queue",
-      String(Math.max(0, Math.floor(facts.queueCount))),
+      factValue(
+        facts.queueCount === undefined
+          ? undefined
+          : String(Math.max(0, Math.floor(facts.queueCount))),
+      ),
       rail,
-      facts.queueCount > 0
+      facts.queueCount !== undefined && facts.queueCount > 0
         ? (text) => paint.warn(text)
         : (text) => paint.dim(text),
     ),
@@ -1317,7 +1331,10 @@ const PROMPT_WIDE_LABEL = 78;
 
 function promptLabel(facts: OverlayPromptFacts, width: number): string {
   const target = safeTrim(facts.target);
-  const queueTag = facts.queueCount > 0 ? ` · ${facts.queueCount} queued` : "";
+  const queueTag =
+    facts.queueCount !== undefined && facts.queueCount > 0
+      ? ` · ${facts.queueCount} queued`
+      : "";
   const turnTag = facts.turn === undefined ? "" : ` · turn ${facts.turn}`;
   if (facts.settled) {
     return ` ${target} · ${safeTrim(facts.stateWord).toLowerCase()} · read-only `;

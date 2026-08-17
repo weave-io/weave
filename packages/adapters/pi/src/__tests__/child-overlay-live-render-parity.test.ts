@@ -204,7 +204,10 @@ describe("live transcript rows match the prototype's renderPiNative design", () 
     (await controller.open(CHILD_ID))._unsafeUnwrap();
 
     for (const event of [
-      { type: "thinking", text: "check the suite, then read the reporter" },
+      {
+        type: "reasoning_summary",
+        text: "check the suite, then read the reporter",
+      },
       {
         type: "tool_call",
         toolCallId: "call-1",
@@ -473,8 +476,17 @@ describe("every streamed event kind matches its prototype fixture", () => {
 
   it("reasoning summary", async () => {
     expect(
-      await rowsFor([{ type: "thinking", text: "read the reporter" }]),
+      await rowsFor([{ type: "reasoning_summary", text: "read the reporter" }]),
     ).toEqual(["✻ reasoning · SUMMARY", "  read the reporter", ""]);
+  });
+
+  it("raw reasoning is a content-free marker, never a summary", async () => {
+    const rows = await rowsFor([
+      { type: "thinking", text: "RAW_CHAIN_OF_THOUGHT" },
+    ]);
+    expect(rows).toEqual(["✻ reasoning", ""]);
+    expect(rows.join("\n")).not.toContain("RAW_CHAIN_OF_THOUGHT");
+    expect(rows.join("\n")).not.toContain("SUMMARY");
   });
 
   it("tool call", async () => {
@@ -619,7 +631,7 @@ function burstEvents(count: number): readonly unknown[] {
   const events: unknown[] = [];
   for (let index = 0; events.length < count; index += 1) {
     events.push(
-      { type: "thinking", text: `summary ${index}` },
+      { type: "reasoning_summary", text: `summary ${index}` },
       {
         type: "tool_call",
         toolCallId: `call-${index}`,

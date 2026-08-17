@@ -268,6 +268,15 @@ export interface PiOverlayChildDescriptor {
   /** Newest live run child id when known; otherwise the resolved child id. */
   readonly activeChildId: string;
   readonly status: "live" | "settled" | "orphan";
+  /**
+   * The authoritative terminal verdict of a settled run.
+   *
+   * Filled only from the settlement authority: the child's own terminal status
+   * for a live run, the ref record's status for a historical one. Absent while
+   * a child is live, absent for a tombstoned child, and absent for history
+   * whose ref carries no usable status — never inferred from transcript text.
+   */
+  readonly outcome?: "completed" | "failed" | "cancelled";
   readonly title: string;
   readonly generationId: string;
   readonly parentChildId: string | undefined;
@@ -1316,6 +1325,8 @@ export class PiDelegationController {
         threadId: childId,
         activeChildId: childId,
         status: live ? "live" : "settled",
+        // The child's own terminal status IS the settlement verdict.
+        ...(live ? {} : outcomeFact(snap.status)),
         title: snap.name,
         generationId: this.deps.generationId,
         parentChildId:
@@ -1349,6 +1360,16 @@ export class PiDelegationController {
       threadId: state.threadId,
       activeChildId: state.latestChildId,
       status,
+      // `state.status` is written by `settleThread` from the child's own
+      // authenticated settlement, so it is the settlement authority here. The
+      // tree node's terminal status is the fallback for a thread that settled
+      // before the record was updated.
+      ...(status === "settled"
+        ? {
+            ...outcomeFact(treeChild?.snapshot().status),
+            ...outcomeFact(state.status),
+          }
+        : {}),
       title,
       generationId: this.deps.generationId,
       parentChildId:
@@ -3445,6 +3466,21 @@ function refStatusToOverlayStatus(
   return "settled";
 }
 
+/**
+ * The terminal verdict a status names, as a spreadable fragment.
+ *
+ * Only the three settled verdicts qualify. `queued`, `running` and
+ * `tombstoned` name no verdict, so they yield nothing and the descriptor
+ * reports an absence instead of a guess.
+ */
+function outcomeFact(status: string | undefined): {
+  outcome?: "completed" | "failed" | "cancelled";
+} {
+  return status === "completed" || status === "failed" || status === "cancelled"
+    ? { outcome: status }
+    : {};
+}
+
 function refRecordToOverlayDescriptor(
   record: PiChildRefRecord,
   generationId: string,
@@ -3454,6 +3490,7 @@ function refRecordToOverlayDescriptor(
     threadId: record.threadId,
     activeChildId: record.childId,
     status: refStatusToOverlayStatus(record.status),
+    ...outcomeFact(record.status),
     title: record.title,
     generationId,
     parentChildId: undefined,

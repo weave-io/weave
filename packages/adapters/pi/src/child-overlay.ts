@@ -185,6 +185,7 @@ export function createMemoryChildOverlaySource(
         threadId: child.threadId,
         parentChildId: child.parentChildId,
         status: child.status,
+        outcome: child.outcome,
         title: child.title,
         generationId: child.generationId,
         runs: child.runs,
@@ -448,6 +449,7 @@ export type {
   ChildOverlayInputOutcome,
   ChildOverlayMappingError,
   ChildOverlayMutationPort,
+  ChildOverlayOutcome,
   ChildOverlayPage,
   ChildOverlayPlanContext,
   ChildOverlayReplayStep,
@@ -463,6 +465,7 @@ export {
   CHILD_OVERLAY_BOUNDS,
   CHILD_OVERLAY_TELEMETRY_BOUNDS,
   ChildOverlayChildSchema,
+  ChildOverlayOutcomeSchema,
   ChildOverlayRunDividerSchema,
   ChildOverlayStatusSchema,
 } from "./child-overlay-types.js";

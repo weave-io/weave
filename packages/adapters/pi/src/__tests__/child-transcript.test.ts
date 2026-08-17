@@ -73,7 +73,7 @@ describe("Pi child transcript reducer", () => {
             delta: {
               messageId: "message-1",
               text: "world",
-              thinking: "plan",
+              reasoningSummary: "plan",
               markdown: "**md**",
             },
           }),
@@ -106,7 +106,7 @@ describe("Pi child transcript reducer", () => {
     expect(entries[1]).toMatchObject({
       messageId: "message-1",
       text: "hello world",
-      thinking: "plan",
+      reasoningSummary: "plan",
       markdown: "**md**",
       streaming: false,
       stopReason: "end_turn",
@@ -728,7 +728,7 @@ describe("Pi child transcript reducer", () => {
         delta: {
           messageId: "payload-message",
           text: "visible answer",
-          thinking: "reasoning",
+          reasoningSummary: "reasoning",
         },
       },
       {
@@ -770,7 +770,7 @@ describe("Pi child transcript reducer", () => {
     expect(assistant?.payload).toMatchObject({
       type: "assistant",
       text: "visible answer",
-      thinking: "reasoning",
+      reasoningSummary: "reasoning",
       streaming: true,
     });
     const tool = requests.find((request) => request.kind === "tool");

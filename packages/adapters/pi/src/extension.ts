@@ -2240,6 +2240,11 @@ function toChildOverlayDescriptor(
       ? {}
       : { parentChildId: descriptor.parentChildId }),
     status: descriptor.status,
+    // The authoritative terminal verdict crosses only when the controller
+    // proved one; an unknown outcome stays an absence.
+    ...(descriptor.outcome === undefined
+      ? {}
+      : { outcome: descriptor.outcome }),
     title: descriptor.title,
     generationId: descriptor.generationId,
     runs: descriptor.runs.map((run) => ({

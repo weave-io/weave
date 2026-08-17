@@ -138,7 +138,7 @@ describe("native child transcript performance bounds", () => {
 
     for (let index = 0; index < 5_000; index += 1) {
       const outcome = stream.ingest(childId, {
-        type: "thinking",
+        type: "reasoning_summary",
         text: `burst-${index}-${"x".repeat(200)}`,
       });
       expect(outcome.kind).toBe("applied");

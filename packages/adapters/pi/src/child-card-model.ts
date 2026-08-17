@@ -378,6 +378,8 @@ function applyParsed(
       return applyAssistantEnd(timed, input);
     case "thinking":
       return applyThinking(timed, input);
+    case "reasoning_summary":
+      return applyReasoningSummary(timed, input);
     case "tool":
       return applyTool(timed, input);
     case "usage":
@@ -486,14 +488,43 @@ function applyAssistantEnd(
   };
 }
 
+/**
+ * The child reasoned, stated as a bare fact.
+ *
+ * NEVER SHOW RAW CHAIN-OF-THOUGHT. The input kind carries no text at all, so
+ * the row, the model-visible activity line and the persisted card details all
+ * hold the same content-free word. The card never claims to summarize what it
+ * has not been given: see {@link applyReasoningSummary} for the one trusted
+ * surface that may print prose.
+ */
 function applyThinking(
   state: PiDelegationCardState,
   input: Extract<ChildCompactReducerInput, { kind: "thinking" }>,
 ): PiDelegationCardState {
-  // NEVER SHOW RAW CHAIN-OF-THOUGHT: the card says the word `summary` out loud
-  // and retains only the bounded sentence it prints.
+  const text = "reasoning";
+  return {
+    ...pushRow(state, {
+      id: `think:${input.itemId}`,
+      kind: "think",
+      head: "thinking",
+      text,
+    }),
+    phase: "reasoning",
+    activity: { kind: "think", text, live: true },
+  };
+}
+
+/**
+ * An explicit host-published reasoning summary, and the only reasoning prose
+ * the card will ever print. It is bounded and sanitized like every other
+ * child-authored string.
+ */
+function applyReasoningSummary(
+  state: PiDelegationCardState,
+  input: Extract<ChildCompactReducerInput, { kind: "reasoning_summary" }>,
+): PiDelegationCardState {
   const summary = boundText(
-    sanitizeChildCompactText(input.summary ?? ""),
+    sanitizeChildCompactText(input.summary),
     CARD_ROW_TEXT_MAX - "summary · ".length,
   );
   const text = `summary · ${summary.length > 0 ? summary : "…"}`;

@@ -63,7 +63,7 @@ describe("Pi native transcript components", () => {
         payload: {
           type: "assistant",
           text: "**bold answer**",
-          thinking: "",
+          reasoningSummary: "",
           markdown: "",
           streaming: false,
         },
@@ -153,7 +153,7 @@ describe("Pi native transcript components", () => {
           payload: {
             type: "assistant",
             text: "   ",
-            thinking: "",
+            reasoningSummary: "",
             markdown: "",
             streaming: true,
           },
@@ -194,7 +194,7 @@ describe("Pi native transcript components", () => {
         payload: {
           type: "assistant",
           text: "### Validation",
-          thinking: "",
+          reasoningSummary: "",
           markdown: "",
           streaming: false,
         },
@@ -233,7 +233,7 @@ describe("Pi native transcript components", () => {
       { type: "message_start", message: { id: "m1" } },
       {
         type: "message_update",
-        delta: { messageId: "m1", thinking: "Planning approach" },
+        delta: { messageId: "m1", reasoningSummary: "Planning approach" },
       },
       {
         type: "message_update",
@@ -262,7 +262,7 @@ describe("Pi native transcript components", () => {
   it("separates messages with a single blank row", () => {
     const reducer = new PiChildTranscriptReducer();
     for (const value of [
-      { type: "thinking", text: "Planning the fix" },
+      { type: "reasoning_summary", text: "Planning the fix" },
       { type: "text", text: "Here is the answer" },
     ] as unknown[])
       expect(reducer.applyEvent(value as PiChildSessionEvent).isOk()).toBe(

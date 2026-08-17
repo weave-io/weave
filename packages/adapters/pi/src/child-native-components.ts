@@ -199,7 +199,9 @@ function assistantText(request: PiTranscriptComponentRequest): string {
 
 function thinkingText(request: PiTranscriptComponentRequest): string {
   const payload = request.payload;
-  if (payload?.type === "assistant") return payload.thinking;
+  // Only a host-published summary carries text here; the transcript reducer
+  // never stores raw chain-of-thought for this component to print.
+  if (payload?.type === "assistant") return payload.reasoningSummary;
   if (payload?.type === "text") return payload.text;
   return request.content;
 }

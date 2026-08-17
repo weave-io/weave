@@ -38,7 +38,25 @@ const MessageEnd = event("message_end", {
   message: boundedJson.optional(),
 });
 const Text = event("text", { text: boundedString });
+/**
+ * Raw model reasoning (chain-of-thought).
+ *
+ * Its `text` is NEVER a summary and is never rendered anywhere: the overlay,
+ * the delegation card's model-visible line and the persisted card details all
+ * treat this event as a content-free "the child reasoned" marker. Truncating
+ * or relabelling this text would fabricate a summary the host never produced.
+ */
 const Thinking = event("thinking", { text: boundedString.optional() });
+/**
+ * The ONE trusted reasoning surface.
+ *
+ * A host emits this only when it has itself produced an explicit reasoning
+ * summary for the reader. It is structurally distinct from {@link Thinking} on
+ * purpose: nothing derives one from the other.
+ */
+const ReasoningSummary = event("reasoning_summary", {
+  text: boundedString.optional(),
+});
 const Markdown = event("markdown", { text: boundedString.optional() });
 const ToolCall = event("tool_call", {
   toolCallId: boundedString.optional(),
@@ -480,6 +498,7 @@ export const PiChildSessionEventSchema = z.discriminatedUnion("type", [
   MessageEnd,
   Text,
   Thinking,
+  ReasoningSummary,
   Markdown,
   ToolCall,
   ToolPartialResult,
@@ -526,6 +545,7 @@ const KNOWN_CHILD_EVENT_TYPES = new Set([
   "message_end",
   "text",
   "thinking",
+  "reasoning_summary",
   "markdown",
   "tool_call",
   "tool_partial_result",

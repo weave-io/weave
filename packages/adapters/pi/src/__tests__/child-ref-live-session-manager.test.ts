@@ -398,7 +398,9 @@ describe("createPiExtension: child refs follow the live session manager", () => 
     expect(host.customCalls.length - customBefore).toBe(1);
     expect(host.getEditorComponentForTest()).toBe(editorOwnerBefore);
     const rendered = host.customRenderedLines.at(-1)?.join("\n") ?? "";
-    expect(rendered).toContain("SETTLED");
+    // The ref's own `completed` status is the settlement authority, so the
+    // frame and rail state the verdict rather than a generic `SETTLED`.
+    expect(rendered).toContain("COMPLETED");
     expect(rendered).toContain(`body-${HISTORICAL_ENTRY_COUNT - 1}`);
   });
 

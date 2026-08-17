@@ -7787,7 +7787,8 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       host.customRenderedLines.at(-1)?.join("\n") ?? "";
     // Identity on the Session Header, lifecycle on the frame marker.
     expect(replacementOverlay).toContain("loom-istchild");
-    expect(replacementOverlay).toContain("SETTLED");
+    // The child's own `completed` settlement is carried through to the frame.
+    expect(replacementOverlay).toContain("COMPLETED");
     expect(replacementOverlay).toContain("native-overlay-body");
 
     expect(host.editorFactoryCalls.length).toBe(0);

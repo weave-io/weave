@@ -535,7 +535,10 @@ describe("bounded history stays at the declared bounds", () => {
     for (let index = 0; index < 500; index += 1) {
       expect(
         controller
-          .applyLiveEvent({ type: "thinking", text: `burst-${index}` })
+          .applyLiveEvent({
+            type: "reasoning_summary",
+            text: `burst-${index}`,
+          })
           .isOk(),
       ).toBe(true);
     }
@@ -629,7 +632,7 @@ describe("repaint backpressure", () => {
     const h = await harness();
     for (let index = 0; index < 5_000; index += 1) {
       const outcome = h.stream.ingest(CHILD_ID, {
-        type: "thinking",
+        type: "reasoning_summary",
         text: `burst-${index}`,
       });
       expect(outcome.kind).toBe("applied");
@@ -746,7 +749,10 @@ describe("malformed events never reach the pane as prose", () => {
     ).toBe(true);
     expect(
       controller
-        .applyLiveEvent({ type: "thinking", text: "VISIBLE_REASONING" })
+        .applyLiveEvent({
+          type: "reasoning_summary",
+          text: "VISIBLE_REASONING",
+        })
         .isOk(),
     ).toBe(true);
     const rendered = pane.render(WIDTH).join("\n");
