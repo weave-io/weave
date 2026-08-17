@@ -302,7 +302,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - Command tests cover: registration and classification; blocked in health-only; TUI-mode gating; store-unavailable message.
     - `capability-prober` still reports all commands exclusively owned with the new entry present.
 
-- [ ] 13. Update documentation and add changesets
+- [x] 13. Update documentation and add changesets
   - **What**: Document the host-singleton contract, the new command, the preference repository, and the CLI query; add changesets for the affected packages.
   - **Files**: `docs/adapters/pi.md`, `docs/testing/adapter-verification.md`, `docs/reference/runtime.md`, `docs/reference/cli.md`, `.changeset/pi-host-singleton.md`, `.changeset/pi-child-extension-config.md`
   - **Depends on**: Tasks 4, 8, 11, 12

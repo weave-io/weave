@@ -61,21 +61,58 @@ built extension through a local symlink. This bypasses only source ownership;
 missing commands and numeric-suffix collisions still fail closed. Never use the
 override for release verification or packaged adapter proof.
 
-Pi packages declare Pi's core packages as peers. They must resolve from the
-running Pi host. Do not install nested copies of
-`@earendil-works/pi-coding-agent`, `pi-agent-core`, `pi-ai`, or `pi-tui` inside
-the adapter package. A nested host copy can change identity and capability
-checks. When preparing a local extracted package with Bun, use
-`bun install --production --omit=peer`.
+Pi packages declare `@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`,
+and `@earendil-works/pi-tui` as peers. They must resolve from the running Pi
+host. A nested copy beside the adapter changes module identity, and with it
+every host-version gate and capability probe.
+
+The Pi extension loader now redirects those three specifiers to the proven host
+copy, so a nested copy no longer silently wins. That redirect is deliberately
+fail-open, so it is a safety net rather than permission: keep packaged installs
+free of nested host copies, and when preparing a local extracted package with
+Bun use `bun install --production --omit=peer`. Prove the outcome instead of
+assuming it — see
+[Prove one host runtime copy (Pi)](#prove-one-host-runtime-copy-pi).
+
+## Prove one host runtime copy (Pi)
+
+A successful import proves nothing about module identity. Prove it with a real
+process:
+
+```bash
+bun run verify:pi-host-singleton
+```
+
+The script builds `packages/adapters/pi/dist/extension.js`, records its digest,
+resolves the host CLI from `PI_HOST_CLI` or `PATH`, and runs two controls
+against that host:
+
+- **Positive control.** It starts `pi --mode rpc` with the built extension and
+  `WEAVE_PI_HOST_MODULE_PROOF=1`, then requires the proof line's host version to
+  match the host `package.json`, every specifier to load from under the host
+  root, and the live process's OS mappings to contain no `@earendil-works` file
+  under the checkout's `node_modules`.
+- **Negative control.** It repeats the run with
+  `WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT=1` and requires those same assertions
+  to fail. A negative control that stays clean fails the script, because a
+  detector that cannot see the duplicate proves nothing about the positive run.
+
+The script prints `PASS` only when the positive run is clean and the negative
+control is detected. Without an available host it exits non-zero unless
+`--allow-skip` is passed, and a skip is a missing proof rather than a pass. It
+spawns a real Pi process, so it is not part of `bun test`. RPC mode proves
+module loading only: readiness and behavior still need the five stages above in
+a fresh interactive TUI.
 
 ## Minimum adapter checks
 
 ### Pi
 
 - `pi list` shows the expected npm package identity and no load error.
+- `bun run verify:pi-host-singleton` prints `PASS` for the built artifact.
 - Start a fresh interactive TUI after installation.
-- `/weave:health` reports `Weave adapter mode: ready` and required capabilities
-  at their declared readiness.
+- `/weave:health` reports `Weave adapter mode: ready`, `host runtime:
+  single-copy`, and required capabilities at their declared readiness.
 - `/weave:status` reports trusted interactive mode and `health-only: false`.
 - Run one ordinary delegation and one direct workflow-step completion when the
   change touches child transport or settlement.

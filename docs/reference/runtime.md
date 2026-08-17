@@ -17,6 +17,7 @@ This is a narrow exception to the normal no-I/O engine rule: the engine may use 
 The default store is `.weave/runtime/weave.db`, backed by SQLite through an internal Kysely dialect over `bun:sqlite`.
 
 - Initialization and code-owned migrations run lazily on the first repository operation.
+- The current schema version is `6`.
 - Unsupported future schema versions fail closed; Weave never attempts a downgrade.
 - Runtime directories and files use restrictive permissions where the platform supports them.
 - Database publication uses no-follow path handling, a bounded lock, a synced temporary image, and atomic rename.
@@ -35,6 +36,7 @@ Never open or mutate `weave.db` from an adapter. Use the repositories or read-on
 | Session snapshots | Sanitized Weave-visible harness observations |
 | Runtime journal | Diagnostic observations; never authoritative execution state |
 | Usage | Idempotent detailed observations and durable aggregate rollups |
+| Adapter preferences | Bounded opaque adapter configuration records, keyed by namespace and key |
 
 Permission persistence is associated with a concrete store internally. Adapters use `PermissionService`; they do not receive a public permission-repository mutation surface.
 
@@ -72,6 +74,33 @@ The Runtime Journal is observational. It cannot reconstruct or replace workflow 
 Journal entries use a fixed envelope, bounded JSON data, and an engine-provided `RuntimeJournalWriter`. Journal writes are best-effort by default; `settings.runtime.journal.strict` makes a correlated journal failure roll back the enclosing unit of work.
 
 Session snapshots contain normalized Weave-visible fields only. They are not raw harness dumps or transcripts.
+
+## Adapter preferences
+
+`AdapterPreferenceRepository` is a harness-neutral, bounded key/value surface. An adapter uses it to persist a small configuration record without owning a table, and the engine stores and returns the value without interpreting it.
+
+| Method | Behavior |
+| --- | --- |
+| `get(namespace, key)` | One record, or `null` when the pair is absent |
+| `set(namespace, key, valueJson)` | Insert or overwrite, refreshing `updatedAt` |
+| `list(namespace, limit?)` | One namespace, ordered by key |
+| `listAll(limit?)` | Every namespace, ordered by namespace then key |
+| `remove(namespace, key)` | Delete one pair; a missing pair succeeds |
+
+The engine enforces the bounds and returns a typed validation error rather than storing a value it cannot bound:
+
+- namespace at most 64 characters, key at most 128 characters, neither empty;
+- no control characters and no NUL in a namespace, key, or value;
+- serialized value at most 16 KiB of UTF-8;
+- `list` and `listAll` default to 100 rows and clamp a larger or non-finite limit to 100, so every read is bounded.
+
+The stored value is an **opaque valid JSON string**. The engine parses it only to prove it is JSON, then keeps the original text. It defines no field names, enums, defaults, or migration rules for the payload; those belong to the adapter that owns the namespace. `listAll` orders rows by UTF-16 code-unit comparison of `(namespace, key)` in every implementation, so the in-memory and SQLite stores return the same rows in the same order.
+
+**Preferences must never contain secrets.** A preference row is ordinary local database state with no extra protection, and `weave runtime preferences` prints a bounded preview of every value it lists.
+
+Migration `6` adds the backing table `adapter_preferences(namespace, key, value_json, updated_at)` with the primary key `(namespace, key)`. It runs in place on an existing v5 database, preserves existing rows, and the store re-verifies the live relation's expected columns when it opens.
+
+The Pi adapter is the first consumer. It stores its child-extension selection under namespace `adapter-pi` and key `child-extensions`; see [Pi Adapter](../adapters/pi.md#child-extension-selection). Read the rows with [`weave runtime preferences`](cli.md#runtime-inspection).
 
 ## Privacy and integrity
 

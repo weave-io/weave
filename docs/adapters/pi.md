@@ -90,6 +90,7 @@ The registered `weave_delegate` schema is static because Pi requires it at regis
 - `/weave:doctor` — run the bounded child-storage diagnostics and print each check;
 - `/weave:clear-children` — clear terminal child records for this session;
 - `/weave:recover-children` — recover interrupted top-level children;
+- `/weave:pi-config` — choose which Pi extensions Weave children load;
 - `Alt+A` — cycle healthy primary-capable agents;
 - `Alt+T` — open the read-only plan-task list;
 - `Alt+I` — open the child picker (see [Overlay keys](#overlay-keys)).
@@ -174,6 +175,24 @@ Malformed, unauthenticated, replayed, or out-of-sequence input fails closed and 
 A child may request nested delegation only to its own declared targets. Canceling a node cancels queued and live descendants. Live children get a bounded cooperative grace period before force termination. The 60-minute settlement budget is an inactivity timeout: each parser-approved session event or authenticated control envelope renews it, while a silent child still fails with `ChildSettlementMissing`. A separate six-hour absolute runtime budget starts at the spawn boundary and is never renewed by activity; it covers the spawn itself and the post-settlement response drain, so a process that finishes spawning after the budget expired is force-killed and never installed as a live child. When it expires the child is force-killed and the run fails with `ChildRuntimeExceeded`. The failure is retryable and leaves the child's thread and native session intact for explicit recovery.
 
 Children are inspectable and cancellable through the TUI tree, not steerable. Public user-started RPC mode does not activate this private path.
+
+### Child extension selection
+
+`/weave:pi-config` chooses which Pi extensions a delegated child loads. It is TUI-only: outside TUI mode, or when the host offers no custom surface, it reports that instead of opening. It writes durable state, so health-only mode blocks it like every other mutating command, and it needs the generation's open Runtime Store. It writes no `.weave` config file and no Pi settings file.
+
+The default is **inherit-all**. No preference row exists, the spawn argv is byte-identical to a child spawned before this command existed, and the child inherits whatever the host would load. Saving an explicit selection stores an `explicit` record, and the child is then spawned with `--no-extensions` followed by one `-e <absolute path>` per resolved extension. Only absolute paths are emitted; `-e npm:<package>` never is, because Pi would install that package into a temporary directory for every child.
+
+Weave is always first and is never persisted in the record. Its path is derived at spawn time, so a stale stored path can never disable or misdirect the adapter. When that path cannot be derived, the plan falls back to inherit-all rather than spawning a child without Weave. The overlay pins the Weave row as `Weave adapter — always enabled`, never renders it as toggleable, and a save payload that tries to add or remove it is rejected.
+
+Stored entries are matched against the live inventory. An entry the inventory no longer offers is dropped, the surviving entries are kept, and one bounded path-free warning names the count per generation. A renamed or moved extension is indistinguishable from a removed one and is dropped the same way. An `explicit` record whose entries have all disappeared still means explicit: the child loads Weave alone, and it is never promoted back to inherit-all. A malformed record, or one with an unknown schema version, is treated as absent — inherit-all plus a bounded diagnostic — and never fails a spawn. In the overlay, a stored id the live inventory no longer offers is still listed, tagged `unavailable` and `dropped on save`, so a save is never a silent loss. When the inventory is degraded, the overlay opens read-only: it can be read but not saved.
+
+Unselecting a provider extension removes the models and credentials it supplies, so a child may no longer resolve its model. The overlay states this, and it is why inherit-all remains the default.
+
+**Changes apply to children spawned after this session's next start.** They never reapply to a running child, and they do not change the children of the current generation.
+
+Enumeration is best-effort and read-only. The inventory unions three evidence sources: the `sourceInfo` of commands and tools the host already loaded, configured packages with their installed path and `pi.extensions` manifest, and bounded scans of `<agent dir>/extensions` plus, only for a trusted project, `<cwd>/.pi/extensions`. Nothing is loaded, evaluated, installed, or resolved over the network. Two limits follow from that: an extension that registers no command and no tool and lives outside those two directories cannot be enumerated at all, and a configured package is represented by its installed directory rather than by each entry it declares. The inventory is capped at 200 entries, with bounded directory depth and page sizes, and reports truncation instead of silently shortening the list.
+
+The record is stored in the project Runtime Store as one [adapter preference](../reference/runtime.md#adapter-preferences) row under namespace `adapter-pi`, key `child-extensions`. Choosing inherit-all removes the row rather than storing a record that says "default". `weave runtime preferences --namespace adapter-pi` lists it read-only.
 
 ### Native child sessions
 
@@ -506,6 +525,18 @@ Beyond the engine's closed capability IDs, the adapter declares the concrete Pi 
 - `rendering-fallback` — a gap uses Pi's default rendering.
 
 A gap reports the stable surface id plus a remediation string, for example upgrading to a host that exposes `pi.appendEntry`. Pi 0.83 exposes no named extension action ids, so overlay actions are reported through the `named-configurable-shortcut-actions` diagnostic rather than as a native capability. See [Adapter Capabilities](../reference/adapter-capabilities.md#adapter-owned-host-surface-probes).
+
+### Host runtime resolution
+
+The package ships two extension files. `dist/extension.js` is a thin loader that imports no Pi package; `dist/extension-impl.js` holds the adapter. Pi awaits the loader's async factory, so the loader completes before `session_start`.
+
+The loader resolves `@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`, and `@earendil-works/pi-tui` to the copies the running host already evaluated. Without it, Bun's native import resolves those bare specifiers from the extension's own directory, so a nested copy silently wins and a second Pi runtime is evaluated inside the host process. The loader proves the host package root from the running CLI entry, confirms that root's `package.json` name and version, and installs one exact-path load override per differing specifier that re-exports the host entry. The bare `pi-ai` specifier targets the host's compat entry, matching Pi's own alias table. Only then does the loader import the implementation.
+
+Redirection is fail-open. An unproven host root, a mismatched host package, a missing local copy, a local copy that is already the host copy, an unsafe path, or an unavailable plugin surface skips that specifier with a closed reason and preserves the previous behavior. The extension never fails to load because a redirect did not happen. Setting `WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT=1` skips every specifier; it is the operator escape hatch and the negative control for verification.
+
+`/weave:health` carries one path-free line: `host runtime: single-copy; redirected <n>`, or `host runtime: duplicate-detected (host-runtime-duplicate); redirected <n>` when the imported `VERSION` disagrees with the proven host `package.json` version. The proven version wins, so every host-version gate reasons about the real host. **Duplicate detection is warning-only.** It never enters health-only mode, because the mismatch removes no declared capability and health-only would break a session mid-upgrade. The compatibility floor above is unchanged.
+
+Setting `WEAVE_PI_HOST_MODULE_PROOF=1` writes exactly one bounded JSON line to stderr with the host root, host version, and per-specifier resolutions. That line carries absolute paths, so it is strictly opt-in and no other surface prints them. `bun run verify:pi-host-singleton` reads it against a real Pi process; see [Adapter Verification](../testing/adapter-verification.md#prove-one-host-runtime-copy-pi).
 
 ## Health-only mode
 

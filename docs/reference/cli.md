@@ -19,6 +19,7 @@ The `weave` CLI validates and inspects configuration, initializes harness integr
 | `weave prompt self-modify` | Print the self-modification guide for a config scope |
 | `weave runtime status` | Inspect local Runtime Store schema, lease, and instances |
 | `weave runtime journal` | Read recent sanitized journal entries |
+| `weave runtime preferences` | List stored adapter preferences |
 | `weave adapter pi children list` | List locally recorded Pi child sessions for a workspace |
 | `weave adapter pi children show <id>` | Read one child's bounded metadata and native entry index |
 | `weave adapter pi children result <id>` | Read one child's byte-exact durable result in bounded pages |
@@ -109,14 +110,21 @@ JSON mode emits bounded metadata plus composed text. It never includes credentia
 ```bash
 weave runtime status
 weave runtime journal --limit 50
+weave runtime preferences
+weave runtime preferences --namespace adapter-pi --limit 20
 ```
 
-Both commands inspect `.weave/runtime/weave.db` without creating it when absent.
+All three commands inspect `.weave/runtime/weave.db` without creating it when absent. When the file does not exist they print `No runtime store found at <path>` and exit `0`.
 
 - `status` reports schema version, active lease, resumable instances, and recent instances.
 - `journal` reads bounded sanitized entries and defensively filters denied keys.
+- `preferences` lists stored [adapter preference](runtime.md#adapter-preferences) rows as `namespace  key  updated_at  <value preview>`.
 
-The CLI opens the database read-only when reading schema metadata. It never writes workflow state, advances execution, or exposes raw prompts, completions, transcripts, credentials, cookies, authorization headers, tokens, or provider payloads.
+`preferences` defaults to every namespace, ordered by namespace then key. `--namespace <ns>` restricts the listing to one namespace, ordered by key. Both orders come from the repository and are byte-deterministic, so the same store prints the same rows in the same order. `--limit <n>` requires a positive integer, defaults to 100, and clamps to 100; a malformed value is an argument error with a non-zero exit.
+
+Each value preview is bounded. Control characters, including newlines and tabs, collapse to single spaces so one record occupies exactly one line, and the preview truncates at 120 UTF-8 bytes with a `…` marker that never splits a character. A value stored under a denied key name prints `<redacted>`; preferences must not hold secrets, so that is a defensive backstop rather than a supported use. An empty result prints `No preferences stored.`, or names the requested namespace when `--namespace` was passed.
+
+The CLI opens the database read-only when reading schema metadata. Preference listing is read-only too: it opens an existing store, reads, and closes it, and never creates, migrates, or writes anything. No runtime command writes workflow state, advances execution, or exposes raw prompts, completions, transcripts, credentials, cookies, authorization headers, tokens, or provider payloads.
 
 See [Runtime Store](runtime.md) and [`commands/runtime.ts`](../../packages/cli/src/commands/runtime.ts).
 
