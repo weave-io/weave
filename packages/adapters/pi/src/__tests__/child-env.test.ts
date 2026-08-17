@@ -154,6 +154,18 @@ describe("buildDefaultPiChildCommand", () => {
     }
   });
 
+  it("never carries an extension flag, which PiRpcChild alone appends and validates", () => {
+    const envPort = new FakeEnvPort({ _: "/opt/official/pi/pi" });
+    const command = buildDefaultPiChildCommand(envPort);
+    for (const flag of ["--no-extensions", "-e", "--extension"]) {
+      expect(
+        command.some(
+          (argument) => argument === flag || argument.startsWith(`${flag}=`),
+        ),
+      ).toBe(false);
+    }
+  });
+
   it("a PATH entry that would shadow the real pi install never changes the built command", () => {
     const shadowed = new FakeEnvPort({
       _: "/opt/official/pi/pi",

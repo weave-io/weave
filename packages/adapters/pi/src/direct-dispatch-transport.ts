@@ -90,6 +90,13 @@ export interface PiDirectDispatchTransportDeps {
   readonly idGenerator: IdGenerator;
   readonly baseEnv?: Readonly<Record<string, string>>;
   readonly command?: readonly string[];
+  /**
+   * Supplies the child-extension selection arguments for the direct-step
+   * child. Direct dispatch bypasses the delegation controller's tree, so it
+   * must receive the same generation-resolved provider explicitly; absent, or
+   * an empty result, keeps today's inherit-all argv.
+   */
+  readonly resolveExtensionArgs?: () => readonly string[];
   readonly handshakeTimeoutMs?: number;
   readonly replyTimeoutMs?: number;
   readonly settlementTimeoutMs?: number;
@@ -319,6 +326,7 @@ export function createDirectDispatchTransport(
         hmacPort: deps.hmacPort,
         logger: deps.logger,
         command: deps.command,
+        resolveExtensionArgs: deps.resolveExtensionArgs,
         handshakeTimeoutMs: deps.handshakeTimeoutMs,
         replyTimeoutMs: deps.replyTimeoutMs,
         settlementTimeoutMs: deps.settlementTimeoutMs,

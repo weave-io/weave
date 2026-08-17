@@ -265,6 +265,12 @@ import {
   BunPathContainmentPort,
   type PathContainmentPort,
 } from "./path-containment.js";
+import { collectPiExtensionInventory } from "./pi-extension-inventory.js";
+import {
+  type ChildExtensionArgsResolution,
+  createBunPiExtensionInventoryPort,
+  resolveChildExtensionSpawnArgs,
+} from "./pi-extension-inventory-port.js";
 import {
   BunPiPlanCatalogPort,
   type PiPlanCatalogPort,
@@ -417,6 +423,12 @@ interface PiGenerationGuard {
 export interface PiSharedLogRedirector {
   redirect(filePath: string): ResultAsync<void, PiAdapterFailure>;
 }
+
+/**
+ * The inherit-all child-extension argv: no `--no-extensions` and no `-e`, so
+ * a spawned child receives exactly the extensions it receives today.
+ */
+const EMPTY_CHILD_EXTENSION_ARGS: readonly string[] = Object.freeze([]);
 
 const PI_SKILL_CATALOG_ERROR = "boot-skill-catalog-malformed" as const;
 const PI_SKILL_CATALOG_START = "<available_skills>";
@@ -4779,6 +4791,51 @@ export function createPiExtension(
         }
       }
 
+      // Child-extension selection is resolved exactly once per generation,
+      // only after the Runtime Store is open, and never per spawn: a child
+      // must not pay for a preference read, an inventory scan, or a directory
+      // walk. Absent an explicit stored selection this stays empty, which
+      // makes child argv byte-identical to a spawn with no provider at all.
+      let childExtensionArgs: readonly string[] = EMPTY_CHILD_EXTENSION_ARGS;
+      if (runtimeStore !== undefined) {
+        // The resolution is typed as infallible: every failure inside it
+        // already degrades to the inherit-all default.
+        const resolved: ChildExtensionArgsResolution =
+          await resolveChildExtensionSpawnArgs({
+            store: runtimeStore,
+            collectInventory: () =>
+              collectPiExtensionInventory(
+                createBunPiExtensionInventoryPort({
+                  commands: () => pi.getCommands(),
+                  agentDirectory: () => PiPublicExports.getAgentDir(),
+                }),
+                {
+                  trust: generation.preflight.trust,
+                  cwd: ctx.cwd,
+                },
+              ),
+          }).unwrapOr({ args: EMPTY_CHILD_EXTENSION_ARGS });
+        if (!startupOwnsGeneration()) {
+          void generationResources.dispose();
+          return;
+        }
+        childExtensionArgs = resolved.args;
+        if (resolved.diagnostics !== undefined) {
+          // Bounded counts and closed reason codes only: an entry id is an
+          // absolute path for every non-package extension.
+          deps.logger.warn(
+            {
+              ...resolved.diagnostics,
+              selectedExtensions:
+                resolved.args.length === 0 ? 0 : (resolved.args.length - 1) / 2,
+            },
+            "child extension selection degraded",
+          );
+        }
+      }
+      const resolveChildExtensionArgs = (): readonly string[] =>
+        childExtensionArgs;
+
       currentWorkflows = configActivation.config.workflows ?? {};
       planStateProviderCell.value =
         deps.planStateProviderFactory?.(ctx.cwd) ??
@@ -5170,6 +5227,7 @@ export function createPiExtension(
             // "pi" a spawner would have to re-resolve via `PATH` (Pi adapter contract
             //).
             command: deps.childCommand,
+            resolveExtensionArgs: resolveChildExtensionArgs,
             // Preserves ordinary runtime necessities (PATH/HOME/etc.) for the
             // spawned `pi` process, while never forwarding secrets/credentials
             // or this adapter's own private child-bootstrap variables.
@@ -5554,6 +5612,7 @@ export function createPiExtension(
                   // bare "pi" a spawner would have to re-resolve via `PATH`
                   // (Pi adapter contract).
                   command: deps.childCommand,
+                  resolveExtensionArgs: resolveChildExtensionArgs,
                   baseEnv: buildPiChildBaseEnv(),
                   registry: directStepChildRegistry,
                   inspectionRegistry,

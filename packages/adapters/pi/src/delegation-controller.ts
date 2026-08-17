@@ -146,6 +146,12 @@ export interface PiDelegationControllerDeps {
   readonly now?: () => number;
   readonly command?: readonly string[];
   /**
+   * Supplies the child-extension selection arguments appended to every child
+   * this controller spawns. Absent, or an empty result, means the child
+   * inherits the host's extensions exactly as it does today.
+   */
+  readonly resolveExtensionArgs?: () => readonly string[];
+  /**
    * The real primary/root agent's own logical name for this generation, as
    * activated by the extension - never caller-supplied. Used to verify
    * that a `delegate()` call claiming to originate from the synthetic
@@ -2554,6 +2560,7 @@ export class PiDelegationController {
         baseEnv: this.deps.baseEnv,
         logger: this.deps.logger,
         command: this.deps.command,
+        resolveExtensionArgs: this.deps.resolveExtensionArgs,
         now: this.deps.now,
         onDelegationRequest: (
           relayChildId,
@@ -3247,6 +3254,7 @@ export class PiDelegationController {
             baseEnv: this.deps.baseEnv,
             logger: this.deps.logger,
             command: this.deps.command,
+            resolveExtensionArgs: this.deps.resolveExtensionArgs,
             now: this.deps.now,
             onDelegationRequest: (relayId, correlationId, body) =>
               this.handleChildDelegationRequest(relayId, correlationId, body),

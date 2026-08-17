@@ -196,6 +196,19 @@ export interface PiRpcChildDeps {
   readonly timerPort?: TimerPort;
   readonly logger: PiAdapterLogger;
   readonly command?: readonly string[];
+  /**
+   * Supplies this child's extension-selection arguments, evaluated once per
+   * spawn so a selection resolved after this child was constructed still
+   * applies. The result is appended after the base command and before the
+   * session flags.
+   *
+   * Returning an empty array means "inherit every extension the host would
+   * give a child", which is the default and produces argv byte-identical to a
+   * spawn with no provider at all. Any other result must be exactly
+   * `--no-extensions` followed by `-e <absolute path>` pairs; anything else
+   * fails the spawn with `ChildSpawnFailed` rather than being dropped.
+   */
+  readonly resolveExtensionArgs?: () => readonly string[];
   readonly handshakeTimeoutMs?: number;
   readonly replyTimeoutMs?: number;
   /** Maximum silence while awaiting settlement; valid child activity renews it. */
@@ -335,6 +348,24 @@ const SESSION_FLAGS = [
  * a child away from the validated `--session-dir`.
  */
 const PI_INHERITED_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
+/**
+ * Pi's own extension-selection flags. `--no-extensions` suppresses every
+ * extension the host would otherwise hand the child; each `-e <source>` adds
+ * one back. Weave only ever emits absolute paths: `-e npm:<pkg>` makes Pi
+ * install into a fresh temporary directory per child.
+ */
+const NO_EXTENSIONS_FLAG = "--no-extensions";
+const EXTENSION_FLAG = "-e";
+/**
+ * Bound on `-e <path>` pairs: the mandatory Weave entry plus the 64 optional
+ * entries the selection record can persist.
+ */
+const MAX_EXTENSION_ARG_PATHS = 65;
+/** Per-path bound in UTF-8 bytes, matching the persisted per-field bound. */
+const MAX_EXTENSION_ARG_PATH_BYTES = 512;
+/** `--no-extensions` plus one flag and one path per selected extension. */
+const MAX_EXTENSION_ARGS = 1 + 2 * MAX_EXTENSION_ARG_PATHS;
+
 const MAX_SPAWN_SESSION_ID_BYTES = 256;
 const MAX_SPAWN_CHECKPOINT_CURSOR = Number.MAX_SAFE_INTEGER;
 const MAX_LIVE_RPC_ID_LENGTH = 256;
@@ -372,6 +403,88 @@ function validateAbsoluteSpawnPath(
   return ok(value);
 }
 
+function isSessionFlagArgument(value: string): boolean {
+  return SESSION_FLAGS.some(
+    (flag) => value === flag || value.startsWith(`${flag}=`),
+  );
+}
+
+/**
+ * Validates one provider result before any of it can reach argv.
+ *
+ * The accepted shape is deliberately closed: either nothing at all, or
+ * exactly `--no-extensions` followed by `-e <absolute safe path>` pairs. A
+ * provider that returns anything else - an npm spec, a relative or traversal
+ * path, a control character, a session flag, a duplicate, a trailing `-e`
+ * with no value, or more entries than the selection record can hold - fails
+ * the spawn. Silently dropping a malformed entry would either leave a child
+ * without the Weave adapter or quietly hand it extensions the user
+ * deselected, and both are worse than a typed `ChildSpawnFailed`.
+ */
+function validateExtensionArguments(
+  values: readonly string[],
+): Result<readonly string[], string> {
+  if (!Array.isArray(values)) {
+    return err("extension arguments must be an array");
+  }
+  if (values.length === 0) return ok([]);
+  if (values.length > MAX_EXTENSION_ARGS) {
+    return err("extension arguments exceed their bound");
+  }
+  for (const value of values) {
+    if (typeof value !== "string") {
+      return err("extension arguments must be strings");
+    }
+    if (isSessionFlagArgument(value)) {
+      return err("extension arguments contain a session flag");
+    }
+  }
+  if (values[0] !== NO_EXTENSIONS_FLAG) {
+    return err(`extension arguments must start with ${NO_EXTENSIONS_FLAG}`);
+  }
+  const pairs = values.slice(1);
+  if (pairs.length === 0) {
+    // `--no-extensions` alone would spawn a child without the Weave adapter,
+    // which cannot handshake and can only fail later, more confusingly.
+    return err("extension arguments select no extension");
+  }
+  if (pairs.length % 2 !== 0) {
+    return err("extension arguments have a flag without a path");
+  }
+  const seen = new Set<string>();
+  for (let index = 0; index < pairs.length; index += 2) {
+    if (pairs[index] !== EXTENSION_FLAG) {
+      return err(`extension arguments expect ${EXTENSION_FLAG} before a path`);
+    }
+    const candidate = pairs[index + 1] ?? "";
+    const path = validateAbsoluteSpawnPath(candidate, "extension path");
+    if (path.isErr()) return err(path.error);
+    if (
+      new TextEncoder().encode(path.value).byteLength >
+      MAX_EXTENSION_ARG_PATH_BYTES
+    ) {
+      return err("extension path exceeds its bound");
+    }
+    if (seen.has(path.value)) {
+      return err("extension arguments repeat a path");
+    }
+    seen.add(path.value);
+  }
+  return ok(values);
+}
+
+function resolveExtensionArguments(
+  resolve: (() => readonly string[]) | undefined,
+): Result<readonly string[], string> {
+  if (resolve === undefined) return ok([]);
+  const resolved = Result.fromThrowable(
+    resolve,
+    () => "extension argument provider failed",
+  )();
+  if (resolved.isErr()) return err(resolved.error);
+  return validateExtensionArguments(resolved.value);
+}
+
 function validateSpawnSessionId(value: unknown): Result<string, string> {
   if (typeof value !== "string" || value.length === 0) {
     return err("activeLeafId must be non-empty");
@@ -399,24 +512,27 @@ function buildSpawnCommand(
     readonly childId: string;
     readonly authority: PiChildSessionLaunchAuthority;
   },
+  resolveExtensionArgs?: () => readonly string[],
 ): SpawnSessionPlanResult {
   for (const argument of baseCommand) {
-    if (
-      typeof argument !== "string" ||
-      SESSION_FLAGS.some(
-        (flag) => argument === flag || argument.startsWith(`${flag}=`),
-      )
-    ) {
+    if (typeof argument !== "string" || isSessionFlagArgument(argument)) {
       return invalidSpawnSession("base command contains a session flag");
     }
   }
+
+  // Extension selection sits between the base command and the session flags:
+  // after the executable and its mode, before the session selection this
+  // transport alone owns.
+  const extensionArgs = resolveExtensionArguments(resolveExtensionArgs);
+  if (extensionArgs.isErr()) return invalidSpawnSession(extensionArgs.error);
+  const launchCommand = [...baseCommand, ...extensionArgs.value];
 
   const selected = session ?? { mode: "ephemeral" as const };
   if (typeof selected !== "object" || selected === null) {
     return invalidSpawnSession("session must be an object");
   }
   if (selected.mode === "ephemeral") {
-    return ok({ command: [...baseCommand, "--no-session"] });
+    return ok({ command: [...launchCommand, "--no-session"] });
   }
   if (selected.mode !== "native") {
     return invalidSpawnSession("unknown session mode");
@@ -476,7 +592,7 @@ function buildSpawnCommand(
 
   return ok({
     command: [
-      ...baseCommand,
+      ...launchCommand,
       "--session-dir",
       sessionDir.value,
       "--session",
@@ -759,6 +875,7 @@ export class PiRpcChild {
   private readonly timerPort: TimerPort;
   private readonly logger: PiAdapterLogger;
   private readonly command: readonly string[];
+  private readonly resolveExtensionArgs: (() => readonly string[]) | undefined;
   private readonly handshakeTimeoutMs: number;
   private readonly settlementTimeoutMs: number;
   private readonly runtimeBudget: ChildRuntimeBudget;
@@ -936,6 +1053,7 @@ export class PiRpcChild {
     this.timerPort = deps.timerPort ?? new SystemTimerPort();
     this.logger = deps.logger;
     this.command = deps.command ?? DEFAULT_COMMAND;
+    this.resolveExtensionArgs = deps.resolveExtensionArgs;
     this.handshakeTimeoutMs =
       deps.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
     this.settlementTimeoutMs =
@@ -1040,10 +1158,15 @@ export class PiRpcChild {
       return errAsync(authority.error);
     }
 
-    const plan = buildSpawnCommand(this.command, input.session, {
-      childId: this.childId,
-      authority: authority.value,
-    });
+    const plan = buildSpawnCommand(
+      this.command,
+      input.session,
+      {
+        childId: this.childId,
+        authority: authority.value,
+      },
+      this.resolveExtensionArgs,
+    );
     if (plan.isErr()) {
       const failure = makeChildSpawnFailedFailure(this.childId, plan.error);
       this.failOutstanding(failure);

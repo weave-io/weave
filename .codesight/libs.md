@@ -747,6 +747,14 @@
   - class BunPathContainmentPort
   - class NullPathContainmentPort
   - _...11 more_
+- `packages/adapters/pi/src/pi-extension-inventory-port.ts`
+  - function createBunPiExtensionInventoryPort: (host) => PiExtensionInventoryPort
+  - function renderChildExtensionArgs: (plan) => readonly string[]
+  - function resolveChildExtensionSpawnArgs: (input) => ResultAsync<ChildExtensionArgsResolution, never>
+  - interface BunPiExtensionInventoryHost
+  - interface ChildExtensionArgsDiagnostics
+  - interface ChildExtensionArgsResolution
+  - _...2 more_
 - `packages/adapters/pi/src/pi-extension-inventory.ts`
   - function collectPiExtensionInventory: (port, options) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
   - interface PiExtensionInventoryDirectoryEntry

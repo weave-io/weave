@@ -259,7 +259,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
   - **Acceptance**:
     - Tests with fake ports cover: union across evidence sources; mandatory marking with and without provenance enforcement; missing host APIs producing partial inventory plus degradation; truncation; project scan skipped when untrusted.
 
-- [ ] 11. Apply the selection to child spawn argv
+- [x] 11. Apply the selection to child spawn argv
   - **What**: Spawned RPC children receive `--no-extensions` plus one `-e <path>` per resolved extension when the user has saved an explicit selection, and today's argv otherwise.
   - **Files**: `packages/adapters/pi/src/rpc-child.ts`, `packages/adapters/pi/src/child-env.ts`, `packages/adapters/pi/src/extension-impl.ts`, `packages/adapters/pi/src/delegation-controller.ts`, `packages/adapters/pi/src/direct-dispatch.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/rpc-child-spawn-extensions.test.ts`
   - **Depends on**: Tasks 9 and 10

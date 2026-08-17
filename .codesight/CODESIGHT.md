@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 310 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~33,900 tokens. Without it, AI exploration would cost ~99,600 tokens. **Saves ~65,800 tokens per conversation.**
-> **Last scanned:** 2026-08-17 21:53 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 311 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~34,000 tokens. Without it, AI exploration would cost ~99,900 tokens. **Saves ~65,900 tokens per conversation.**
+> **Last scanned:** 2026-08-17 22:14 — re-run after significant changes
 
 ---
 
@@ -758,6 +758,14 @@
   - class BunPathContainmentPort
   - class NullPathContainmentPort
   - _...11 more_
+- `packages/adapters/pi/src/pi-extension-inventory-port.ts`
+  - function createBunPiExtensionInventoryPort: (host) => PiExtensionInventoryPort
+  - function renderChildExtensionArgs: (plan) => readonly string[]
+  - function resolveChildExtensionSpawnArgs: (input) => ResultAsync<ChildExtensionArgsResolution, never>
+  - interface BunPiExtensionInventoryHost
+  - interface ChildExtensionArgsDiagnostics
+  - interface ChildExtensionArgsResolution
+  - _...2 more_
 - `packages/adapters/pi/src/pi-extension-inventory.ts`
   - function collectPiExtensionInventory: (port, options) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
   - interface PiExtensionInventoryDirectoryEntry
@@ -1935,7 +1943,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/adapters/pi/src/types.ts` — imported by **52** files
+- `packages/adapters/pi/src/types.ts` — imported by **54** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/adapters/pi/src/strict-json.ts` — imported by **29** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
@@ -1948,17 +1956,17 @@
 - `packages/adapters/pi/src/child-session-events.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
+- `packages/adapters/pi/src/rpc-child.ts` — imported by **16** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **16** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
-- `packages/adapters/pi/src/rpc-child.ts` — imported by **15** files
 - `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 
 ## Import Map (who imports what)
 
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +47 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +49 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +24 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
@@ -1990,7 +1998,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 344 test files found
+> 346 test files found
 
 ---
 

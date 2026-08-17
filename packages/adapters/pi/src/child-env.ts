@@ -74,6 +74,13 @@ export function resolveCurrentPiExecutablePath(
  * and rejects any base command that already contains a session flag with
  * `ChildSpawnFailed`. Adding `--no-session` here makes every delegation fail
  * to spawn.
+ *
+ * It must not carry an extension flag either. `PiRpcChild` owns extension
+ * selection through its `resolveExtensionArgs` provider, which appends
+ * `--no-extensions` plus one `-e <absolute path>` per selected extension
+ * between this base command and the session flags. A `--no-extensions` or
+ * `-e` here would sit outside that validated slice and could silently
+ * suppress the Weave adapter in every child.
  */
 export function buildDefaultPiChildCommand(
   envPort: PiEnvPort,
