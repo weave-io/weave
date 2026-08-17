@@ -23,6 +23,7 @@ import { registerPermissionApprovalRepository } from "./permission-repository.js
 import { sanitizeSnapshotMetadata } from "./sanitizer.js";
 import type {
   AcquireLeaseInput,
+  AdapterPreferenceRepository,
   CreateWorkflowInstanceInput,
   ExecutionLeaseRepository,
   RecordSessionSnapshotInput,
@@ -35,7 +36,14 @@ import type {
   UsageRepository,
   WorkflowInstanceRepository,
 } from "./store.js";
+import {
+  clampAdapterPreferenceListLimit,
+  validateAdapterPreferenceIdentity,
+  validateAdapterPreferenceNamespace,
+  validateAdapterPreferenceValue,
+} from "./store.js";
 import type {
+  AdapterPreferenceRecord,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactIntegrityMetadata,
@@ -116,6 +124,14 @@ export interface InMemoryRuntimeStoreFailureConfig {
   usageRecord?: RuntimeStoreError;
   /** Injected error for `UsageRepository.pruneDetails`. */
   usagePrune?: RuntimeStoreError;
+  /** Injected error for `AdapterPreferenceRepository.set`. */
+  preferenceSet?: RuntimeStoreError;
+  /** Injected error for `AdapterPreferenceRepository.get`. */
+  preferenceGet?: RuntimeStoreError;
+  /** Injected error for `AdapterPreferenceRepository.list`. */
+  preferenceList?: RuntimeStoreError;
+  /** Injected error for `AdapterPreferenceRepository.remove`. */
+  preferenceRemove?: RuntimeStoreError;
   /** Injected error for `RuntimeStore.transaction`. */
   transaction?: RuntimeStoreError;
   /** Injected error for `RuntimeStore.close`. */
@@ -1027,6 +1043,103 @@ function pruneByAgeThenCount<T>(
 }
 
 // ---------------------------------------------------------------------------
+// InMemoryAdapterPreferenceRepository
+// ---------------------------------------------------------------------------
+
+function preferenceMapKey(namespace: string, key: string): string {
+  return `${namespace}\0${key}`;
+}
+
+class InMemoryAdapterPreferenceRepository
+  implements AdapterPreferenceRepository
+{
+  private readonly store = new Map<string, AdapterPreferenceRecord>();
+  private failures: InMemoryRuntimeStoreFailureConfig;
+  private readonly clock: () => Date;
+
+  constructor(failures: InMemoryRuntimeStoreFailureConfig, clock: () => Date) {
+    this.failures = failures;
+    this.clock = clock;
+  }
+
+  setFailures(failures: InMemoryRuntimeStoreFailureConfig): void {
+    this.failures = failures;
+  }
+
+  get(
+    namespace: string,
+    key: string,
+  ): ResultAsync<AdapterPreferenceRecord | null, RuntimeStoreError> {
+    if (this.failures.preferenceGet) {
+      return errAsync(this.failures.preferenceGet);
+    }
+    const identity = validateAdapterPreferenceIdentity(namespace, key);
+    if (identity.isErr()) return errAsync(identity.error);
+    return okAsync(this.store.get(preferenceMapKey(namespace, key)) ?? null);
+  }
+
+  set(
+    namespace: string,
+    key: string,
+    valueJson: string,
+  ): ResultAsync<AdapterPreferenceRecord, RuntimeStoreError> {
+    if (this.failures.preferenceSet) {
+      return errAsync(this.failures.preferenceSet);
+    }
+    const identity = validateAdapterPreferenceIdentity(namespace, key);
+    if (identity.isErr()) return errAsync(identity.error);
+    const value = validateAdapterPreferenceValue(valueJson);
+    if (value.isErr()) return errAsync(value.error);
+    const record: AdapterPreferenceRecord = {
+      namespace,
+      key,
+      valueJson,
+      updatedAt: this.clock().toISOString(),
+    };
+    this.store.set(preferenceMapKey(namespace, key), record);
+    return okAsync(record);
+  }
+
+  list(
+    namespace: string,
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError> {
+    if (this.failures.preferenceList) {
+      return errAsync(this.failures.preferenceList);
+    }
+    const validated = validateAdapterPreferenceNamespace(namespace);
+    if (validated.isErr()) return errAsync(validated.error);
+    const clamped = clampAdapterPreferenceListLimit(limit);
+    const entries = Array.from(this.store.values())
+      .filter((entry) => entry.namespace === namespace)
+      .sort((left, right) => left.key.localeCompare(right.key))
+      .slice(0, clamped);
+    return okAsync(entries);
+  }
+
+  remove(namespace: string, key: string): ResultAsync<void, RuntimeStoreError> {
+    if (this.failures.preferenceRemove) {
+      return errAsync(this.failures.preferenceRemove);
+    }
+    const identity = validateAdapterPreferenceIdentity(namespace, key);
+    if (identity.isErr()) return errAsync(identity.error);
+    this.store.delete(preferenceMapKey(namespace, key));
+    return okAsync(undefined);
+  }
+
+  snapshot(): Map<string, AdapterPreferenceRecord> {
+    return new Map(this.store);
+  }
+
+  restore(snapshot: Map<string, AdapterPreferenceRecord>): void {
+    this.store.clear();
+    for (const [k, v] of snapshot) {
+      this.store.set(k, v);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // InMemoryJournalWriterRepository
 // ---------------------------------------------------------------------------
 
@@ -1114,6 +1227,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
   readonly snapshots: InMemorySessionSnapshotRepository;
   readonly journal: InMemoryRuntimeJournalRepository;
   readonly usage: InMemoryUsageRepository;
+  readonly preferences: InMemoryAdapterPreferenceRepository;
   #permissions: InMemoryPermissionApprovalRepository;
 
   private readonly clock: () => Date;
@@ -1140,6 +1254,10 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     );
     this.journal = new InMemoryRuntimeJournalRepository(this.failureConfig);
     this.usage = new InMemoryUsageRepository(this.failureConfig);
+    this.preferences = new InMemoryAdapterPreferenceRepository(
+      this.failureConfig,
+      this.clock,
+    );
     // Construct after the injected Date clock is assigned so revoke/list/match
     // timestamps share the store clock (parity with SqliteRuntimeStore).
     this.#permissions = new InMemoryPermissionApprovalRepository({}, () =>
@@ -1158,6 +1276,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     this.snapshots.setFailures(config);
     this.journal.setFailures(config);
     this.usage.setFailures(config);
+    this.preferences.setFailures(config);
   }
 
   transaction<T>(
@@ -1173,6 +1292,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     const snapshotsSnap = this.snapshots.snapshot();
     const journalSnap = this.journal.snapshot();
     const usageSnap = this.usage.snapshot();
+    const preferencesSnap = this.preferences.snapshot();
 
     // Wrap the journal with a writer that enforces strict/best-effort semantics
     const journalForTx = new InMemoryJournalWriterRepository(
@@ -1186,6 +1306,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
       snapshots: this.snapshots,
       journal: journalForTx,
       usage: this.usage,
+      preferences: this.preferences,
     };
 
     return ResultAsync.fromPromise(Promise.resolve(callback(tx)), (cause) =>
@@ -1198,6 +1319,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
         this.snapshots.restore(snapshotsSnap);
         this.journal.restore(journalSnap);
         this.usage.restore(usageSnap);
+        this.preferences.restore(preferencesSnap);
         return errAsync(result.error);
       }
       // Commit: changes are already applied in-place

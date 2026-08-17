@@ -30,7 +30,7 @@ import {
  * The highest schema version this Weave build supports.
  * Increment this when adding a new migration.
  */
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 6;
 
 // ---------------------------------------------------------------------------
 // Migration definition
@@ -66,7 +66,7 @@ interface ExpectedColumn {
   readonly type: string;
   readonly notnull: 0 | 1;
   readonly dflt_value: null;
-  readonly pk: 0 | 1;
+  readonly pk: number;
 }
 
 const RUNTIME_METADATA_COLUMNS: readonly ExpectedColumn[] = [
@@ -246,6 +246,51 @@ const PERMISSION_GRANT_STATE_EXPIRY_COLUMNS = [
   "state",
   "expires_at",
 ] as const;
+
+const ADAPTER_PREFERENCES_TABLE = "adapter_preferences";
+const ADAPTER_PREFERENCES_AUTOINDEX_NAME =
+  /^sqlite_autoindex_adapter_preferences_[1-9]\d*$/;
+
+const ADAPTER_PREFERENCE_COLUMNS: readonly ExpectedColumn[] = [
+  {
+    name: "namespace",
+    type: "TEXT",
+    notnull: 1,
+    dflt_value: null,
+    pk: 1,
+  },
+  {
+    name: "key",
+    type: "TEXT",
+    notnull: 1,
+    dflt_value: null,
+    pk: 2,
+  },
+  {
+    name: "value_json",
+    type: "TEXT",
+    notnull: 1,
+    dflt_value: null,
+    pk: 0,
+  },
+  {
+    name: "updated_at",
+    type: "TEXT",
+    notnull: 1,
+    dflt_value: null,
+    pk: 0,
+  },
+];
+
+const ADAPTER_PREFERENCES_MIGRATION_SQL = `
+  CREATE TABLE IF NOT EXISTS adapter_preferences (
+    namespace TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (namespace, key)
+  );
+`;
 
 const PERMISSION_GRANTS_MIGRATION_SQL = `
   CREATE TABLE IF NOT EXISTS permission_grants (
@@ -535,6 +580,11 @@ const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_session_snapshots_recorded_at
         ON session_snapshots (recorded_at);
     `,
+  },
+  {
+    version: 6,
+    name: "adapter_preferences",
+    sql: ADAPTER_PREFERENCES_MIGRATION_SQL,
   },
 ];
 
@@ -1362,6 +1412,54 @@ function verifyPermissionGrantsSchema(
   return ok(undefined);
 }
 
+function verifyAdapterPreferencesIndexAllowlist(
+  db: Database,
+  indexes: readonly IndexListRow[],
+): boolean {
+  if (indexes.length !== 1) return false;
+  const index = indexes[0];
+  return (
+    isNonPartialUnique(index, "pk") &&
+    ADAPTER_PREFERENCES_AUTOINDEX_NAME.test(index.name) &&
+    indexColumnsMatch(db, index.name, ["namespace", "key"])
+  );
+}
+
+/**
+ * Verify the live `adapter_preferences` relation matches the migration-v6
+ * contract: expected columns, composite PRIMARY KEY, and no extra objects.
+ */
+function verifyAdapterPreferencesSchema(
+  db: Database,
+): Result<void, RuntimeStoreError> {
+  const failure = err(
+    initializationError("Invalid adapter_preferences schema"),
+  );
+
+  const relation = readRelationType(db, ADAPTER_PREFERENCES_TABLE);
+  if (relation.isErr() || relation.value !== "table") return failure;
+
+  const columns = readTableInfo(db, ADAPTER_PREFERENCES_TABLE);
+  if (columns.isErr()) return failure;
+  if (!columnsMatchExpected(columns.value, ADAPTER_PREFERENCE_COLUMNS))
+    return failure;
+
+  const indexes = readIndexList(db, ADAPTER_PREFERENCES_TABLE);
+  if (indexes.isErr()) return failure;
+  if (
+    !verifyExactRelationInventory(
+      db,
+      ADAPTER_PREFERENCES_TABLE,
+      indexes.value,
+      verifyAdapterPreferencesIndexAllowlist(db, indexes.value),
+    )
+  ) {
+    return failure;
+  }
+
+  return ok(undefined);
+}
+
 // ---------------------------------------------------------------------------
 // Foreign key enforcement toggle (migration v5 table recreation)
 // ---------------------------------------------------------------------------
@@ -1454,6 +1552,9 @@ function verifyNoForeignKeyViolations(
  * - When the effective schema version is >= 3 (including no-pending reopen),
  *   re-verifies the live `permission_grants` relation (including BINARY
  *   collations on identity/index keys) before returning Ok.
+ * - When the effective schema version is >= 6 (including no-pending reopen),
+ *   re-verifies the live `adapter_preferences` relation (expected columns and
+ *   composite primary key) before returning Ok.
  * - Migration v5 recreates `session_snapshots` with a nullable `lease_id`
  *   and `ON DELETE SET NULL` (SQLite cannot ALTER either in place). Foreign
  *   key enforcement is disabled for the whole pending-migration transaction
@@ -1528,8 +1629,12 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
   );
 
   if (pending.length === 0) {
-    // Healthy reopen still proves the live v3 contract. A table/index dropped
-    // or weakened after initialization must not be claimed healthy.
+    // Healthy reopen still proves the live v3/v6 contracts. A table/index
+    // dropped or weakened after initialization must not be claimed healthy.
+    if (storedVersion >= 6) {
+      const preferences = verifyAdapterPreferencesSchema(db);
+      if (preferences.isErr()) return err(preferences.error);
+    }
     if (storedVersion >= 3) return verifyPermissionGrantsSchema(db);
     return ok(undefined);
   }
@@ -1559,6 +1664,12 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
       }
       if (migration.version === 5) {
         const verified = verifyNoForeignKeyViolations(db);
+        if (verified.isErr()) {
+          throw new Error(verified.error.message);
+        }
+      }
+      if (migration.version === 6) {
+        const verified = verifyAdapterPreferencesSchema(db);
         if (verified.isErr()) {
           throw new Error(verified.error.message);
         }
@@ -1599,6 +1710,10 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
   if (noTriggersAfter.isErr()) return err(noTriggersAfter.error);
 
   const effectiveVersion = pending[pending.length - 1].version;
+  if (effectiveVersion >= 6) {
+    const preferences = verifyAdapterPreferencesSchema(db);
+    if (preferences.isErr()) return err(preferences.error);
+  }
   if (effectiveVersion >= 3) return verifyPermissionGrantsSchema(db);
   return ok(undefined);
 }

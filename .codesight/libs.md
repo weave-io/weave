@@ -589,6 +589,7 @@
   - type WeaveCommandClassification
   - const WEAVE_INSPECT_COMMAND_NAME
   - _...7 more_
+- `packages/adapters/pi/src/config-activation-diagnostics.ts` — function projectConfigLoadIssues: (errors, projectRoot) => readonly string[]
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -596,7 +597,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...7 more_
+  - _...8 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -1570,6 +1571,14 @@
   - class SqlitePermissionApprovalRepository
   - class SqliteRuntimeStore
   - interface SqliteRuntimeStoreOptions
+- `packages/engine/src/runtime/store.ts`
+  - function clampAdapterPreferenceListLimit: (limit?) => number
+  - function validateAdapterPreferenceNamespace: (namespace) => Result<void, RuntimeStoreError>
+  - function validateAdapterPreferenceKey: (key) => Result<void, RuntimeStoreError>
+  - function validateAdapterPreferenceValue: (valueJson) => Result<void, RuntimeStoreError>
+  - function validateAdapterPreferenceIdentity: (namespace, key) => Result<void, RuntimeStoreError>
+  - interface CreateWorkflowInstanceInput
+  - _...16 more_
 - `packages/engine/src/runtime/types.ts`
   - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
   - function createExecutionLeaseId: (raw) => ExecutionLeaseId
@@ -1577,7 +1586,7 @@
   - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
   - function createUsageObservationId: (raw) => UsageObservationId
   - function createOwnerId: (raw) => OwnerId
-  - _...41 more_
+  - _...42 more_
 - `packages/engine/src/runtime/usage.ts`
   - function normalizeUsageObservation: (input) => Result<NormalizedUsageObservation, RuntimeStoreError>
   - function denormalizeUsageObservation: (normalized) => UsageObservation

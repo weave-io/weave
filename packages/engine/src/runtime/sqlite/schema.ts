@@ -239,6 +239,23 @@ export interface UsageRollupRow {
 }
 
 // ---------------------------------------------------------------------------
+// adapter_preferences
+// ---------------------------------------------------------------------------
+
+/**
+ * Row shape for the `adapter_preferences` table.
+ *
+ * `value_json` is an opaque valid JSON string. The engine does not interpret
+ * it. Preferences must never contain secrets.
+ */
+export interface AdapterPreferenceRow {
+  readonly namespace: string;
+  readonly key: string;
+  readonly value_json: string;
+  readonly updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // WeaveDatabase — Kysely schema type
 // ---------------------------------------------------------------------------
 
@@ -257,4 +274,5 @@ export interface WeaveDatabase {
   readonly permission_grants: PermissionGrantRow;
   readonly usage_observations: UsageObservationRow;
   readonly usage_rollups: UsageRollupRow;
+  readonly adapter_preferences: AdapterPreferenceRow;
 }

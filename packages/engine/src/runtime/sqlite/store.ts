@@ -102,6 +102,7 @@ import { RuntimeJournalWriter } from "../journal-writer.js";
 import { sanitizeSnapshotMetadata } from "../sanitizer.js";
 import type {
   AcquireLeaseInput,
+  AdapterPreferenceRepository,
   CreateWorkflowInstanceInput,
   ExecutionLeaseRepository,
   RecordSessionSnapshotInput,
@@ -114,7 +115,14 @@ import type {
   UsageRepository,
   WorkflowInstanceRepository,
 } from "../store.js";
+import {
+  clampAdapterPreferenceListLimit,
+  validateAdapterPreferenceIdentity,
+  validateAdapterPreferenceNamespace,
+  validateAdapterPreferenceValue,
+} from "../store.js";
 import type {
+  AdapterPreferenceRecord,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactIntegrityMetadata,
@@ -163,6 +171,7 @@ import {
 } from "./kysely-bun-sqlite.js";
 import { CURRENT_SCHEMA_VERSION, runMigrations } from "./migrations.js";
 import type {
+  AdapterPreferenceRow,
   ExecutionLeaseRow,
   RuntimeJournalEntryRow,
   SessionSnapshotRow,
@@ -2183,6 +2192,127 @@ export class SqlitePermissionApprovalRepository
 }
 
 // ---------------------------------------------------------------------------
+// SqliteAdapterPreferenceRepository
+// ---------------------------------------------------------------------------
+
+function rowToAdapterPreference(
+  row: AdapterPreferenceRow,
+): AdapterPreferenceRecord {
+  return {
+    namespace: row.namespace,
+    key: row.key,
+    valueJson: row.value_json,
+    updatedAt: row.updated_at,
+  };
+}
+
+class SqliteAdapterPreferenceRepository implements AdapterPreferenceRepository {
+  constructor(
+    private readonly db: Kysely<WeaveDatabase>,
+    private readonly clock: () => Date,
+  ) {}
+
+  get(
+    namespace: string,
+    key: string,
+  ): ResultAsync<AdapterPreferenceRecord | null, RuntimeStoreError> {
+    const identity = validateAdapterPreferenceIdentity(namespace, key);
+    if (identity.isErr()) return errAsync(identity.error);
+    return ResultAsync.fromPromise(
+      this.db
+        .selectFrom("adapter_preferences")
+        .selectAll()
+        .where("namespace", "=", namespace)
+        .where("key", "=", key)
+        .executeTakeFirst()
+        .then((row) => (row ? rowToAdapterPreference(row) : null)),
+      (cause) => queryError("Failed to get adapter preference", cause),
+    );
+  }
+
+  set(
+    namespace: string,
+    key: string,
+    valueJson: string,
+  ): ResultAsync<AdapterPreferenceRecord, RuntimeStoreError> {
+    const identity = validateAdapterPreferenceIdentity(namespace, key);
+    if (identity.isErr()) return errAsync(identity.error);
+    const value = validateAdapterPreferenceValue(valueJson);
+    if (value.isErr()) return errAsync(value.error);
+    const updatedAt = this.clock().toISOString();
+    return ResultAsync.fromPromise(
+      (async () => {
+        const existing = await this.db
+          .selectFrom("adapter_preferences")
+          .select("namespace")
+          .where("namespace", "=", namespace)
+          .where("key", "=", key)
+          .executeTakeFirst();
+        if (existing) {
+          await this.db
+            .updateTable("adapter_preferences")
+            .set({ value_json: valueJson, updated_at: updatedAt })
+            .where("namespace", "=", namespace)
+            .where("key", "=", key)
+            .execute();
+        } else {
+          await this.db
+            .insertInto("adapter_preferences")
+            .values({
+              namespace,
+              key,
+              value_json: valueJson,
+              updated_at: updatedAt,
+            })
+            .execute();
+        }
+        return {
+          namespace,
+          key,
+          valueJson,
+          updatedAt,
+        };
+      })(),
+      (cause) => queryError("Failed to set adapter preference", cause),
+    );
+  }
+
+  list(
+    namespace: string,
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError> {
+    const validated = validateAdapterPreferenceNamespace(namespace);
+    if (validated.isErr()) return errAsync(validated.error);
+    const clamped = clampAdapterPreferenceListLimit(limit);
+    return ResultAsync.fromPromise(
+      this.db
+        .selectFrom("adapter_preferences")
+        .selectAll()
+        .where("namespace", "=", namespace)
+        .orderBy("key", "asc")
+        .limit(clamped)
+        .execute()
+        .then((rows) => rows.map(rowToAdapterPreference)),
+      (cause) => queryError("Failed to list adapter preferences", cause),
+    );
+  }
+
+  remove(namespace: string, key: string): ResultAsync<void, RuntimeStoreError> {
+    const identity = validateAdapterPreferenceIdentity(namespace, key);
+    if (identity.isErr()) return errAsync(identity.error);
+    return ResultAsync.fromPromise(
+      this.db
+        .deleteFrom("adapter_preferences")
+        .where("namespace", "=", namespace)
+        .where("key", "=", key)
+        .execute()
+        .then(() => undefined),
+      (cause) => queryError("Failed to remove adapter preference", cause),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SqliteRuntimeStoreTransaction
 // ---------------------------------------------------------------------------
 
@@ -2196,6 +2326,7 @@ class SqliteRuntimeStoreTransaction implements RuntimeStoreTransaction {
   readonly snapshots: SessionSnapshotRepository;
   readonly journal: RuntimeJournalRepository;
   readonly usage: UsageRepository;
+  readonly preferences: AdapterPreferenceRepository;
   constructor(
     txDb: Kysely<WeaveDatabase>,
     clock: () => Date,
@@ -2207,6 +2338,7 @@ class SqliteRuntimeStoreTransaction implements RuntimeStoreTransaction {
     const rawJournal = new SqliteRuntimeJournalRepository(txDb);
     this.journal = new JournalWriterRepository(rawJournal, strictJournal);
     this.usage = new SqliteUsageRepository(txDb);
+    this.preferences = new SqliteAdapterPreferenceRepository(txDb, clock);
   }
 }
 
@@ -2378,6 +2510,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
   readonly snapshots: SessionSnapshotRepository;
   readonly journal: RuntimeJournalRepository;
   readonly usage: UsageRepository;
+  readonly preferences: AdapterPreferenceRepository;
   #permissions: PermissionApprovalRepository;
 
   /** The per-project CSPRNG salt stored in `runtime_metadata`. */
@@ -2401,6 +2534,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
     this.snapshots = new LazySessionSnapshotRepository(this);
     this.journal = new LazyRuntimeJournalRepository(this);
     this.usage = new LazyUsageRepository(this);
+    this.preferences = new LazyAdapterPreferenceRepository(this, this.clock);
     this.#permissions = new LazyPermissionApprovalRepository(this, () =>
       this.clock().getTime(),
     );
@@ -3091,6 +3225,48 @@ class LazyUsageRepository implements UsageRepository {
     readonly maxCount?: number;
   }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
     return this.repo().andThen((r) => r.pruneDetails(options));
+  }
+}
+
+class LazyAdapterPreferenceRepository implements AdapterPreferenceRepository {
+  constructor(
+    private readonly store: SqliteRuntimeStore,
+    private readonly clock: () => Date,
+  ) {}
+
+  private repo(): ResultAsync<
+    SqliteAdapterPreferenceRepository,
+    RuntimeStoreError
+  > {
+    return this.store
+      .ensureInitialized()
+      .map((db) => new SqliteAdapterPreferenceRepository(db, this.clock));
+  }
+
+  get(
+    namespace: string,
+    key: string,
+  ): ResultAsync<AdapterPreferenceRecord | null, RuntimeStoreError> {
+    return this.repo().andThen((r) => r.get(namespace, key));
+  }
+
+  set(
+    namespace: string,
+    key: string,
+    valueJson: string,
+  ): ResultAsync<AdapterPreferenceRecord, RuntimeStoreError> {
+    return this.repo().andThen((r) => r.set(namespace, key, valueJson));
+  }
+
+  list(
+    namespace: string,
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError> {
+    return this.repo().andThen((r) => r.list(namespace, limit));
+  }
+
+  remove(namespace: string, key: string): ResultAsync<void, RuntimeStoreError> {
+    return this.repo().andThen((r) => r.remove(namespace, key));
   }
 }
 

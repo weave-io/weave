@@ -568,13 +568,13 @@ describe("migrations", () => {
     }
   });
 
-  it("applies fresh migrations through version 5", () => {
+  it("applies fresh migrations through version 6", () => {
     const dbPath = join(testDir, "fresh.db");
     const db = new Database(dbPath);
 
     const result = runMigrations(db);
     expect(result.isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
 
     const migrations = db
       .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -585,6 +585,7 @@ describe("migrations", () => {
       { version: 3, name: "permission_grants" },
       { version: 4, name: "usage_observations_and_rollups" },
       { version: 5, name: "session_snapshots_lease_set_null" },
+      { version: 6, name: "adapter_preferences" },
     ]);
     expect(
       db
@@ -622,8 +623,9 @@ describe("migrations", () => {
       { version: 3 },
       { version: 4 },
       { version: 5 },
+      { version: 6 },
     ]);
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
     db.close();
   });
 
@@ -670,7 +672,7 @@ describe("migrations", () => {
     await store.close();
 
     const db = new Database(dbPath);
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
     expect(
       db
         .prepare(
@@ -743,7 +745,7 @@ describe("migrations", () => {
     await store.close();
 
     const db = new Database(dbPath);
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
     expect(
       db
         .prepare("SELECT lease_id FROM session_snapshots WHERE id = ?")
@@ -752,13 +754,13 @@ describe("migrations", () => {
     db.close();
   });
 
-  it("rejects future version 6 without mutating the DB", () => {
+  it("rejects future version 7 without mutating the DB", () => {
     const dbPath = join(testDir, "future.db");
     const db = new Database(dbPath);
 
     db.exec(CANONICAL_BOOTSTRAP_DDL);
     db.exec(
-      "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '6')",
+      "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '7')",
     );
 
     const result = runMigrations(db);
@@ -766,10 +768,10 @@ describe("migrations", () => {
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("migration_version");
     if (error.type === "migration_version") {
-      expect(error.foundVersion).toBe(6);
+      expect(error.foundVersion).toBe(7);
       expect(error.supportedVersion).toBe(CURRENT_SCHEMA_VERSION);
     }
-    expect(readSchemaVersion(db)).toBe(6);
+    expect(readSchemaVersion(db)).toBe(7);
     assertNoPermissionGrantsTable(db);
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
@@ -962,7 +964,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     expect(result.isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -973,6 +975,7 @@ describe("migrations", () => {
       { version: 3, name: "permission_grants" },
       { version: 4, name: "usage_observations_and_rollups" },
       { version: 5, name: "session_snapshots_lease_set_null" },
+      { version: 6, name: "adapter_preferences" },
     ]);
     expect(
       db
@@ -1238,11 +1241,11 @@ describe("migrations", () => {
   it("no-pending healthy current reopen re-verifies live permission_grants schema", () => {
     const db = new Database(join(testDir, "healthy-reopen.db"));
     expect(runMigrations(db).isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
 
     const second = runMigrations(db);
     expect(second.isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -1253,6 +1256,7 @@ describe("migrations", () => {
       { version: 3, name: "permission_grants" },
       { version: 4, name: "usage_observations_and_rollups" },
       { version: 5, name: "session_snapshots_lease_set_null" },
+      { version: 6, name: "adapter_preferences" },
     ]);
     db.close();
   });
@@ -1267,7 +1271,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     assertInitializationError(result, "Invalid permission_grants schema");
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -1287,7 +1291,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     assertInitializationError(result, "Invalid permission_grants schema");
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -1347,7 +1351,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     assertInitializationError(result, "Invalid permission_grants schema");
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")

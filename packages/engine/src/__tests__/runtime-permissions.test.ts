@@ -265,7 +265,7 @@ describe("sqlite permission persistence and schema", () => {
         /input|raw|constraint|canonical|secret|token/i.test(x),
       ),
     ).toBe(false);
-    expect(CURRENT_SCHEMA_VERSION).toBe(5);
+    expect(CURRENT_SCHEMA_VERSION).toBe(6);
     db.close();
     const reopened = sqlite();
     expect(

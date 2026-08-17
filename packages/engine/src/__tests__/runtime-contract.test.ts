@@ -32,6 +32,7 @@ import {
 } from "../runtime/errors.js";
 import type {
   AcquireLeaseInput,
+  AdapterPreferenceRepository,
   CreateWorkflowInstanceInput,
   ExecutionLeaseRepository,
   RecordSessionSnapshotInput,
@@ -647,12 +648,33 @@ class StubUsageRepository implements UsageRepository {
   }
 }
 
+class StubAdapterPreferenceRepository implements AdapterPreferenceRepository {
+  get() {
+    return okAsync(null);
+  }
+  set(namespace: string, key: string, valueJson: string) {
+    return okAsync({
+      namespace,
+      key,
+      valueJson,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+  }
+  list() {
+    return okAsync([]);
+  }
+  remove() {
+    return okAsync(undefined);
+  }
+}
+
 class StubRuntimeStore implements RuntimeStore {
   readonly instances = new StubWorkflowInstanceRepository();
   readonly leases = new StubExecutionLeaseRepository();
   readonly snapshots = new StubSessionSnapshotRepository();
   readonly journal = new StubRuntimeJournalRepository();
   readonly usage = new StubUsageRepository();
+  readonly preferences = new StubAdapterPreferenceRepository();
 
   transaction<T>(
     callback: TransactionCallback<T>,
@@ -663,6 +685,7 @@ class StubRuntimeStore implements RuntimeStore {
       snapshots: this.snapshots,
       journal: this.journal,
       usage: this.usage,
+      preferences: this.preferences,
     };
     return callback(tx);
   }
@@ -2064,7 +2087,9 @@ describe("Reconciliation contract — closed reason set (execution lifecycle con
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     // Error message should reference the maintained lifecycle contract.
-    expect(result.error.message).toContain("docs/reference/execution-lifecycle.md");
+    expect(result.error.message).toContain(
+      "docs/reference/execution-lifecycle.md",
+    );
   });
 });
 

@@ -11,9 +11,10 @@
  * @see docs/reference/runtime.md
  */
 
-import type { ResultAsync } from "neverthrow";
-import type { RuntimeStoreError } from "./errors.js";
+import { err, ok, Result, type ResultAsync } from "neverthrow";
+import { type RuntimeStoreError, validationError } from "./errors.js";
 import type {
+  AdapterPreferenceRecord,
   ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,
@@ -437,6 +438,211 @@ export interface UsageRepository {
 }
 
 // ---------------------------------------------------------------------------
+// Adapter preference repository
+// ---------------------------------------------------------------------------
+
+/** Maximum namespace length in UTF-16 code units. */
+export const ADAPTER_PREFERENCE_NAMESPACE_MAX_CHARS = 64;
+
+/** Maximum key length in UTF-16 code units. */
+export const ADAPTER_PREFERENCE_KEY_MAX_CHARS = 128;
+
+/** Maximum serialized preference value size in bytes. */
+export const ADAPTER_PREFERENCE_VALUE_MAX_BYTES = 16 * 1024;
+
+/**
+ * Default and maximum number of rows returned by `AdapterPreferenceRepository.list`.
+ * Callers may pass a smaller limit. Larger or non-finite values are clamped
+ * to this bound.
+ */
+export const ADAPTER_PREFERENCE_LIST_LIMIT = 100;
+
+/**
+ * Clamp a `list` limit to `[0, ADAPTER_PREFERENCE_LIST_LIMIT]`.
+ * Missing or non-finite values become the documented default of 100.
+ */
+export function clampAdapterPreferenceListLimit(limit?: number): number {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return ADAPTER_PREFERENCE_LIST_LIMIT;
+  }
+  return Math.max(
+    0,
+    Math.min(Math.floor(limit), ADAPTER_PREFERENCE_LIST_LIMIT),
+  );
+}
+
+function hasControlOrNul(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function rejectControlChars(
+  value: string,
+  field: string,
+): Result<void, RuntimeStoreError> {
+  if (hasControlOrNul(value)) {
+    return err(
+      validationError(
+        `Adapter preference ${field} must not contain control characters or NUL`,
+        field,
+      ),
+    );
+  }
+  return ok(undefined);
+}
+
+/** Validate a preference namespace: non-empty, bounded, no control chars or NUL. */
+export function validateAdapterPreferenceNamespace(
+  namespace: string,
+): Result<void, RuntimeStoreError> {
+  if (typeof namespace !== "string") {
+    return err(
+      validationError(
+        "Adapter preference namespace must be a string",
+        "namespace",
+      ),
+    );
+  }
+  if (namespace.length === 0) {
+    return err(
+      validationError(
+        "Adapter preference namespace must not be empty",
+        "namespace",
+      ),
+    );
+  }
+  if (namespace.length > ADAPTER_PREFERENCE_NAMESPACE_MAX_CHARS) {
+    return err(
+      validationError(
+        `Adapter preference namespace exceeds ${ADAPTER_PREFERENCE_NAMESPACE_MAX_CHARS} characters`,
+        "namespace",
+      ),
+    );
+  }
+  return rejectControlChars(namespace, "namespace");
+}
+
+/** Validate a preference key: non-empty, bounded, no control chars or NUL. */
+export function validateAdapterPreferenceKey(
+  key: string,
+): Result<void, RuntimeStoreError> {
+  if (typeof key !== "string") {
+    return err(
+      validationError("Adapter preference key must be a string", "key"),
+    );
+  }
+  if (key.length === 0) {
+    return err(
+      validationError("Adapter preference key must not be empty", "key"),
+    );
+  }
+  if (key.length > ADAPTER_PREFERENCE_KEY_MAX_CHARS) {
+    return err(
+      validationError(
+        `Adapter preference key exceeds ${ADAPTER_PREFERENCE_KEY_MAX_CHARS} characters`,
+        "key",
+      ),
+    );
+  }
+  return rejectControlChars(key, "key");
+}
+
+/**
+ * Validate an opaque preference value.
+ *
+ * The engine checks that the string is valid JSON and within the 16 KiB
+ * bound. It does not interpret the payload. Preferences must never contain
+ * secrets.
+ */
+export function validateAdapterPreferenceValue(
+  valueJson: string,
+): Result<void, RuntimeStoreError> {
+  if (typeof valueJson !== "string") {
+    return err(
+      validationError(
+        "Adapter preference value must be a JSON string",
+        "value",
+      ),
+    );
+  }
+  if (valueJson.includes("\0")) {
+    return err(
+      validationError("Adapter preference value must not contain NUL", "value"),
+    );
+  }
+  const bytes = new TextEncoder().encode(valueJson).byteLength;
+  if (bytes > ADAPTER_PREFERENCE_VALUE_MAX_BYTES) {
+    return err(
+      validationError(
+        `Adapter preference value exceeds the 16 KiB limit (${bytes} bytes)`,
+        "value",
+      ),
+    );
+  }
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(valueJson) as unknown,
+    () =>
+      validationError("Adapter preference value must be valid JSON", "value"),
+  )();
+  if (parsed.isErr()) return err(parsed.error);
+  return ok(undefined);
+}
+
+/** Validate a preference namespace and key together. */
+export function validateAdapterPreferenceIdentity(
+  namespace: string,
+  key: string,
+): Result<void, RuntimeStoreError> {
+  return validateAdapterPreferenceNamespace(namespace).andThen(() =>
+    validateAdapterPreferenceKey(key),
+  );
+}
+
+/**
+ * Harness-neutral bounded key/value repository for adapter configuration.
+ *
+ * Values are opaque valid JSON strings. The engine does not interpret them
+ * and must never persist secrets here.
+ */
+export interface AdapterPreferenceRepository {
+  /**
+   * Read one preference. Returns `null` when the pair is absent.
+   */
+  get(
+    namespace: string,
+    key: string,
+  ): ResultAsync<AdapterPreferenceRecord | null, RuntimeStoreError>;
+
+  /**
+   * Insert or overwrite a preference. `updated_at` is set to the store clock.
+   */
+  set(
+    namespace: string,
+    key: string,
+    valueJson: string,
+  ): ResultAsync<AdapterPreferenceRecord, RuntimeStoreError>;
+
+  /**
+   * List preferences in one namespace, ordered by key.
+   *
+   * `limit` defaults to {@link ADAPTER_PREFERENCE_LIST_LIMIT} and is clamped
+   * to that maximum.
+   */
+  list(
+    namespace: string,
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError>;
+
+  /**
+   * Delete one preference. Missing pairs succeed.
+   */
+  remove(namespace: string, key: string): ResultAsync<void, RuntimeStoreError>;
+}
+
+// ---------------------------------------------------------------------------
 // Transaction / Unit-of-Work
 // ---------------------------------------------------------------------------
 
@@ -462,6 +668,8 @@ export interface RuntimeStoreTransaction {
   readonly journal: RuntimeJournalRepository;
   /** Usage repository within this transaction. */
   readonly usage: UsageRepository;
+  /** Adapter preference repository within this transaction. */
+  readonly preferences: AdapterPreferenceRepository;
 }
 
 /**
@@ -496,6 +704,8 @@ export interface RuntimeStore {
   readonly journal: RuntimeJournalRepository;
   /** Usage observation/rollup repository. */
   readonly usage: UsageRepository;
+  /** Harness-neutral adapter preference repository. */
+  readonly preferences: AdapterPreferenceRepository;
   /**
    * Execute a unit-of-work transaction.
    *

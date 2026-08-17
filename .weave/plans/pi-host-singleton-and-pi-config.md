@@ -187,7 +187,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - The test fails when a bare Pi import is added back to `extension.ts` (verify by temporary local edit before committing).
     - `bun test` passes with the test in place.
 
-- [ ] 7. Add an engine-owned adapter preference repository and migration v6
+- [x] 7. Add an engine-owned adapter preference repository and migration v6
   - **What**: A harness-neutral, bounded key/value repository on `RuntimeStore` so adapters can persist small configuration records without owning tables or interpreting them in the engine.
   - **Files**: `packages/engine/src/runtime/types.ts`, `packages/engine/src/runtime/store.ts`, `packages/engine/src/runtime/sqlite/schema.ts`, `packages/engine/src/runtime/sqlite/migrations.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime/memory-store.ts`, `packages/engine/src/index.ts`, `packages/engine/src/__tests__/runtime-preferences.test.ts`, `packages/engine/src/__tests__/runtime-permissions.test.ts` (schema-version assertion), `packages/engine/src/__tests__/runtime-sqlite.test.ts`
   - **Depends on**: None

@@ -379,6 +379,7 @@ export {
 } from "./runtime/sqlite/store.js";
 export type {
   AcquireLeaseInput,
+  AdapterPreferenceRepository,
   CreateWorkflowInstanceInput,
   ExecutionLeaseRepository,
   RecordSessionSnapshotInput,
@@ -391,9 +392,21 @@ export type {
   UsageRepository,
   WorkflowInstanceRepository,
 } from "./runtime/store.js";
+export {
+  ADAPTER_PREFERENCE_KEY_MAX_CHARS,
+  ADAPTER_PREFERENCE_LIST_LIMIT,
+  ADAPTER_PREFERENCE_NAMESPACE_MAX_CHARS,
+  ADAPTER_PREFERENCE_VALUE_MAX_BYTES,
+  clampAdapterPreferenceListLimit,
+  validateAdapterPreferenceIdentity,
+  validateAdapterPreferenceKey,
+  validateAdapterPreferenceNamespace,
+  validateAdapterPreferenceValue,
+} from "./runtime/store.js";
 // Note: ArtifactApprovalState, ArtifactId, ArtifactIntegrityMetadata are
 // exported from ./runtime/types.js above.
 export type {
+  AdapterPreferenceRecord,
   ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,

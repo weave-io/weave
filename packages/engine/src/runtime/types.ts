@@ -766,3 +766,22 @@ export interface UsageRollupQueryFilter {
   readonly agentName?: string;
   readonly model?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Adapter preferences
+// ---------------------------------------------------------------------------
+
+/**
+ * One harness-neutral adapter preference row.
+ *
+ * `valueJson` is an opaque valid JSON string. The engine stores and returns it
+ * without interpreting the payload. Preferences must never contain secrets.
+ */
+export interface AdapterPreferenceRecord {
+  readonly namespace: string;
+  readonly key: string;
+  /** Opaque valid JSON text. The engine does not interpret this value. */
+  readonly valueJson: string;
+  /** ISO 8601 timestamp of the last write. */
+  readonly updatedAt: string;
+}
