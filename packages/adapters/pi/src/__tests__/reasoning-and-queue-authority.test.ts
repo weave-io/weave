@@ -299,6 +299,78 @@ describe("queue depth is reported, never inferred", () => {
     );
   });
 
+  it("leaves a report that names only one of the two queues unknown", () => {
+    // `queue_update` is the host's complete statement of BOTH queues. One
+    // empty list proves nothing about the other, so a depth may not be
+    // derived from it - least of all the authoritative zero of a child the
+    // parent has just steered.
+    for (const partial of [
+      { type: "queue_update", steering: [] },
+      { type: "queue_update", followUp: [] },
+      { type: "queue_update", steering: ["steer"] },
+      { type: "queue_update", followUp: ["later"] },
+    ]) {
+      const event = parsed(partial);
+      expect(event.type).toBe("unknown");
+      expect(serialized(event)).not.toContain("queue_change");
+    }
+  });
+
+  it("leaves a report unknown when either list is malformed, sparse or oversized", () => {
+    const sparse: unknown[] = [];
+    sparse.length = 2;
+    const oversized = Array.from({ length: 200 }, (_, index) => `q${index}`);
+    for (const malformed of [
+      { type: "queue_update", steering: [], followUp: "nope" },
+      { type: "queue_update", steering: "nope", followUp: [] },
+      { type: "queue_update", steering: [], followUp: [7] },
+      { type: "queue_update", steering: [{}], followUp: [] },
+      { type: "queue_update", steering: [], followUp: sparse },
+      { type: "queue_update", steering: sparse, followUp: [] },
+      { type: "queue_update", steering: [], followUp: oversized },
+      { type: "queue_update", steering: oversized, followUp: [] },
+    ]) {
+      expect(parsed(malformed).type).toBe("unknown");
+    }
+  });
+
+  it("does not accept an inherited list as the host's own statement", () => {
+    const inherited = Object.create({ followUp: [] }) as Record<
+      string,
+      unknown
+    >;
+    inherited.type = "queue_update";
+    inherited.steering = [];
+    expect(parsed(inherited).type).toBe("unknown");
+  });
+
+  it("carries a partial report as unknown through the transcript, its render and a rebuilt replay", () => {
+    const partial = { type: "queue_update", steering: [] };
+    const state = reduceAll([partial]);
+
+    // Nothing in the transcript may state a depth for it.
+    expect(state.queue).toBeUndefined();
+    expect(
+      state.entries.find((candidate) => candidate.kind === "queue"),
+    ).toBeUndefined();
+    const rendered = renderPiChildTranscriptLines(state, 80).join("\n");
+    expect(rendered).not.toContain("size=0");
+    expect(rendered).not.toContain("queue: 0");
+
+    // The live replay row states no queue fact either, so a rebuilt replay
+    // cannot invent one.
+    const entry = projectLiveEntry(parsed(partial), 0, false);
+    expect(entry?.kind).not.toBe("queue");
+    expect(serialized(entry)).not.toContain("queue: 0");
+    const rebuilt = transcriptFromOverlayEntries(
+      entry === undefined ? [] : [entry],
+    );
+    expect(
+      rebuilt.entries.find((candidate) => candidate.kind === "queue"),
+    ).toBeUndefined();
+    expect(rebuilt.queue).toBeUndefined();
+  });
+
   it("accepts a complete empty report as an authoritative zero", () => {
     const event = parsed({
       type: "queue_update",

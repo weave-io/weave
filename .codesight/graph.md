@@ -12,7 +12,7 @@
 - `packages/adapters/pi/src/child-timer.ts` — imported by **21** files
 - `packages/adapters/pi/src/errors.ts` — imported by **21** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `packages/adapters/pi/src/child-session-events.ts` — imported by **18** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **19** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **16** files

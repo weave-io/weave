@@ -40,6 +40,41 @@ export interface DeferredChildFailure {
   readonly reason: string;
 }
 
+/**
+ * Structural identity of the run a verdict or a lifecycle event belongs to.
+ *
+ * `turn` is the child's monotonic turn index, advanced by the host's own
+ * `turn_start`. `assistantMessageId` is Pi's id for the assistant message the
+ * fact was read from (`message_end`), when the host stated one.
+ *
+ * The gate compares epochs and never reads error prose. A pre-compaction abort
+ * and the resumed run's own failure are indistinguishable by text; they are
+ * always distinguishable by the turn they were captured in.
+ */
+export interface ChildTurnEpoch {
+  readonly turn: number;
+  readonly assistantMessageId: string | undefined;
+}
+
+/**
+ * Do two epochs name the same run?
+ *
+ * The turn index must match exactly. The assistant message id refines the
+ * comparison only when BOTH sides carry one: a host that never named an id
+ * leaves the turn as the only authority, and inventing a mismatch there would
+ * publish a failure the compaction had already explained.
+ */
+const sameEpoch = (left: ChildTurnEpoch, right: ChildTurnEpoch): boolean => {
+  if (left.turn !== right.turn) return false;
+  if (
+    left.assistantMessageId === undefined ||
+    right.assistantMessageId === undefined
+  ) {
+    return true;
+  }
+  return left.assistantMessageId === right.assistantMessageId;
+};
+
 /** Why an abort/error settlement was not published immediately. */
 export type AbortSettlementDecision =
   | { readonly kind: "defer" }
@@ -67,16 +102,20 @@ type GateState =
       readonly kind: "evidenced";
       /** A resumed run already started inside the same evidence window. */
       readonly resumed: boolean;
+      /** The run the compaction was observed for. */
+      readonly epoch: ChildTurnEpoch;
       readonly timer: TimerHandle;
     }
   | {
       readonly kind: "deferred";
       readonly failure: DeferredChildFailure;
+      readonly epoch: ChildTurnEpoch;
       readonly timer: TimerHandle;
     }
   | {
       readonly kind: "compacting";
       readonly failure: DeferredChildFailure;
+      readonly epoch: ChildTurnEpoch;
       readonly timer: TimerHandle;
     }
   | { readonly kind: "closed" };
@@ -113,8 +152,14 @@ export interface PiChildAbortSettlementGateOptions {
  * ```
  *
  * A captured failure is discarded ONLY when structural compaction evidence was
- * recorded for it - either before the abort (`evidenced`) or after it
- * (`compacting`). A `turn_start` with no such evidence is an unrelated turn: it
+ * recorded for THE SAME RUN - either before the abort (`evidenced`) or after it
+ * (`compacting`). "The same run" is a structural comparison of the turn index
+ * and the assistant message id the verdict was read from, never a reading of
+ * the failure's prose: an abort captured in the compacted turn is the
+ * compaction's own abort, while an abort captured in the RESUMED turn is that
+ * run's genuine failure and is published like any other.
+ *
+ * A `turn_start` with no such evidence is an unrelated turn: it
  * proves the compaction that would have justified the abort never started
  * before the child moved on, so the captured failure is published at once and
  * the gate closes. A provider or local abort can therefore never be converted
@@ -126,6 +171,14 @@ export interface PiChildAbortSettlementGateOptions {
  */
 export class PiChildAbortSettlementGate {
   private state: GateState = { kind: "open" };
+  /**
+   * The one epoch whose verdict was already discarded as a compaction's own
+   * pre-compaction abort. Pi can re-enter `agent_settled` for the same turn,
+   * and the stale `stopReason` it reads is still the discarded one, so a
+   * repeat of that verdict must be discarded again rather than captured as a
+   * fresh failure. Exactly one epoch is remembered, so nothing grows.
+   */
+  private discardedEpoch: ChildTurnEpoch | undefined;
   private readonly timerPort: TimerPort;
   private readonly onExpire: (failure: DeferredChildFailure) => void;
   private readonly evidenceGraceMs: number;
@@ -147,6 +200,7 @@ export class PiChildAbortSettlementGate {
    */
   observeAbortSettlement(
     failure: DeferredChildFailure,
+    epoch: ChildTurnEpoch,
   ): AbortSettlementDecision {
     if (this.state.kind === "deferred") {
       return { kind: "suppress", why: "deferred" };
@@ -157,30 +211,48 @@ export class PiChildAbortSettlementGate {
     if (this.state.kind === "closed") {
       return { kind: "suppress", why: "closed" };
     }
+    if (
+      this.discardedEpoch !== undefined &&
+      sameEpoch(epoch, this.discardedEpoch)
+    ) {
+      // A repeat of a verdict the compaction already explained.
+      return { kind: "suppress", why: "resumed" };
+    }
     if (this.state.kind === "evidenced") {
-      const { resumed, timer } = this.state;
-      timer.cancel();
-      if (resumed) {
-        // Compaction completed AND its resumed run already started before
-        // this settlement was observed. The verdict belongs to the aborted
-        // pre-compaction turn, and the run now in flight owns the next
-        // outcome, so nothing is captured and nothing is armed.
-        this.state = { kind: "open" };
-        return { kind: "suppress", why: "resumed" };
+      const evidence = this.state;
+      if (sameEpoch(epoch, evidence.epoch)) {
+        evidence.timer.cancel();
+        if (evidence.resumed) {
+          // Compaction completed AND its resumed run already started before
+          // this settlement was observed. The verdict was captured in the
+          // compacted turn, so it belongs to the aborted pre-compaction run,
+          // and the run now in flight owns the next outcome: nothing is
+          // captured and nothing is armed.
+          this.state = { kind: "open" };
+          this.discardedEpoch = epoch;
+          return { kind: "suppress", why: "resumed" };
+        }
+        this.state = {
+          kind: "compacting",
+          failure,
+          epoch,
+          timer: this.timerPort.schedule(
+            () => this.publish(),
+            this.resumeTimeoutMs,
+          ),
+        };
+        return { kind: "defer" };
       }
-      this.state = {
-        kind: "compacting",
-        failure,
-        timer: this.timerPort.schedule(
-          () => this.publish(),
-          this.resumeTimeoutMs,
-        ),
-      };
-      return { kind: "defer" };
+      // A verdict from a different run than the compaction was observed for -
+      // in practice the resumed run's OWN error or abort. The compaction
+      // explains nothing about it, so the evidence window is dropped and the
+      // verdict is captured like any ordinary failure.
+      evidence.timer.cancel();
     }
     this.state = {
       kind: "deferred",
       failure,
+      epoch,
       timer: this.timerPort.schedule(
         () => this.publish(),
         this.evidenceGraceMs,
@@ -199,7 +271,7 @@ export class PiChildAbortSettlementGate {
    * when the compaction extension is loaded first and drives `ctx.compact()`
    * from its own handler). Both orders are recorded; neither blocks.
    */
-  observeCompactionLifecycle(): void {
+  observeCompactionLifecycle(epoch: ChildTurnEpoch): void {
     if (this.state.kind === "closed") return;
     // A second lifecycle event of the same compaction keeps the first bounded
     // window rather than extending it.
@@ -210,6 +282,7 @@ export class PiChildAbortSettlementGate {
       this.state = {
         kind: "evidenced",
         resumed: false,
+        epoch,
         timer: this.timerPort.schedule(
           () => this.expireEvidence(),
           this.evidenceGraceMs,
@@ -217,11 +290,18 @@ export class PiChildAbortSettlementGate {
       };
       return;
     }
-    const { failure } = this.state;
+    const { failure, epoch: failureEpoch } = this.state;
+    if (!sameEpoch(epoch, failureEpoch)) {
+      // Evidence for a different run cannot adopt this verdict. Fail closed:
+      // the captured failure is published now.
+      this.publish();
+      return;
+    }
     this.state.timer.cancel();
     this.state = {
       kind: "compacting",
       failure,
+      epoch: failureEpoch,
       timer: this.timerPort.schedule(
         () => this.publish(),
         this.resumeTimeoutMs,

@@ -648,35 +648,42 @@ const nativeToolEndIsError = (record: Record<string, unknown>): boolean => {
  * fact, exactly as the native tool events above are normalized.
  *
  * The queue is REPORTED, never inferred, and a report is all-or-nothing.
- * `queue_update` is the host's COMPLETE statement of both queues, so a size
- * may only be derived from a record whose named lists are readable in full:
+ * `queue_update` is the host's COMPLETE statement of BOTH queues, so a depth
+ * may only be derived from a record that states both of them in full:
  *
- * - neither list present, or a present list that is not an array of strings,
- *   or more entries than the bound admits, states NOTHING. The record is
- *   returned untouched, so it leaves this parser as the existing typed
- *   unknown variant and every consumer keeps the last proven depth.
- * - at least one readable list makes the report authoritative, including the
- *   authoritative zero of a host that named both lists and both were empty.
+ * - a record missing either own list, or carrying a list that is not a dense
+ *   array of strings, or more entries than the bound admits, states NOTHING.
+ *   The record is returned untouched, so it leaves this parser as the existing
+ *   typed unknown variant and every consumer keeps the last proven depth.
+ * - only a record whose `steering` AND `followUp` are both readable is
+ *   authoritative, including the authoritative zero of a host that named both
+ *   lists and both were empty.
  *
- * Fabricating `{ size: 0 }` for an unreadable record would state, with the
- * host's own authority, that a steered child has nothing queued.
+ * A partial report is a report about ONE queue, not about the child's queue
+ * depth: `{ steering: [] }` proves nothing about queued follow-ups. Deriving
+ * `{ size: 0 }` from it would state, with the host's own authority, that a
+ * steered child has nothing queued.
  */
 const normalizeQueueUpdateEvent = (
   record: Record<string, unknown>,
 ): unknown => {
   const items: string[] = [];
-  let reported = false;
   for (const key of ["steering", "followUp"] as const) {
+    // An inherited or accessor-shaped field is not the host's own statement.
+    if (!Object.hasOwn(record, key)) return record;
     const list = record[key];
-    if (list === undefined) continue;
     if (!Array.isArray(list)) return record;
-    for (const item of list) {
+    if (list.length > MAX_CHILD_EVENT_ITEMS) return record;
+    for (let index = 0; index < list.length; index += 1) {
+      // A hole in a sparse array reads as `undefined`, which is an absent
+      // entry rather than a queued one.
+      if (!Object.hasOwn(list, index)) return record;
+      const item = list[index];
       if (typeof item !== "string") return record;
       items.push(item.slice(0, MAX_CHILD_EVENT_STRING));
     }
-    reported = true;
   }
-  if (!reported || items.length > MAX_CHILD_EVENT_ITEMS) return record;
+  if (items.length > MAX_CHILD_EVENT_ITEMS) return record;
   return { type: "queue_change", size: items.length, queue: items };
 };
 

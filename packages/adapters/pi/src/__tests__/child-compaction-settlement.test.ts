@@ -863,6 +863,168 @@ describe("private child settlement across a forced context compaction", () => {
     }
   });
 
+  // -------------------------------------------------------------------------
+  // Epoch correlation: compaction evidence explains ONLY the run it was
+  // observed for. The resumed run owns its own verdict.
+  // -------------------------------------------------------------------------
+
+  it("publishes the resumed run's own aborted verdict instead of adopting the compaction as its explanation", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "pre-compaction",
+      stopReason: "aborted",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await compactionLifecycle(host);
+    await flush();
+    expect(settledLines(output)).toHaveLength(0);
+
+    // The resumed run starts and then genuinely fails on its own.
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "resumed-failure",
+      stopReason: "aborted",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+
+    // The verdict was captured in the RESUMED turn, so the compaction that
+    // explained the earlier abort says nothing about it. It is deferred on the
+    // ordinary grace and published unchanged.
+    expect(settledLines(output)).toHaveLength(0);
+    const pending = timers.pending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.delayMs).toBe(DEFAULT_COMPACTION_EVIDENCE_GRACE_MS);
+
+    timers.fireAll();
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+    expect(settledBody(output)?.reason).toBe("assistant stop reason: aborted");
+    expect(timers.pending()).toHaveLength(0);
+  });
+
+  it("publishes the resumed run's own error verdict when Weave never saw an abort before the compaction", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    // Handler order B: the compaction extension drove `ctx.compact()` before
+    // Weave's own `agent_settled` handler ever ran, so the only thing recorded
+    // is the evidence itself.
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await compactionLifecycle(host);
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "resumed-failure",
+      stopReason: "error",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    expect(settledLines(output)).toHaveLength(0);
+
+    timers.fireAll();
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+    expect(settledBody(output)?.reason as string).toStartWith(
+      "assistant error",
+    );
+    expect(timers.pending()).toHaveLength(0);
+  });
+
+  it("still suppresses the pre-compaction abort when it is only reported after the resumed turn started", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "pre-compaction",
+      stopReason: "aborted",
+    });
+    // Evidence-first handler order, and the resumed turn begins before Weave's
+    // own `agent_settled` handler ever observes the old abort.
+    await compactionLifecycle(host);
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+
+    // That verdict was captured in the compacted turn: it is the compaction's
+    // own abort and is discarded, with nothing left armed.
+    expect(settledLines(output)).toHaveLength(0);
+    expect(timers.pending()).toHaveLength(0);
+
+    await assistantMessageEnd(host, {
+      id: "resumed",
+      stopReason: "stop",
+      text: "verdict after compaction",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("completed");
+    expect(settledBody(output)?.assistantOutput).toBe(
+      "verdict after compaction",
+    );
+  });
+
+  it("reports the resumed run's failure exactly once across duplicate and late events", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "pre-compaction",
+      stopReason: "aborted",
+    });
+    // Duplicate lifecycle evidence for the same compaction.
+    await compactionLifecycle(host);
+    await compactionLifecycle(host);
+    // The delayed old abort arrives after the resumed turn started, and is
+    // repeated.
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    expect(settledLines(output)).toHaveLength(0);
+
+    // The resumed run then fails on its own, and repeats its settlement. Its
+    // stop reason differs from the discarded one, so the published verdict
+    // names which run actually failed.
+    await assistantMessageEnd(host, {
+      id: "resumed-failure",
+      stopReason: "error",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    timers.fireAll();
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+    expect(settledBody(output)?.reason as string).toStartWith(
+      "assistant error",
+    );
+
+    // Late evidence, a late turn and a late settlement change nothing.
+    await compactionLifecycle(host);
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "late",
+      stopReason: "stop",
+      text: "late success",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    timers.fireAll();
+    await quiesce();
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+    expect(timers.pending()).toHaveLength(0);
+  });
+
   it("publishes nothing more when late events follow a cancellation of a deferred failure", async () => {
     const { host, output, timers, secretBytes } = await buildChildExtension();
 

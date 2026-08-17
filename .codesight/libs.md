@@ -152,11 +152,11 @@
 - `packages/adapters/pi/src/child-compaction-settlement.ts`
   - class PiChildAbortSettlementGate
   - interface DeferredChildFailure
+  - interface ChildTurnEpoch
   - interface PiChildAbortSettlementGateOptions
   - type AbortSettlementDecision
   - type SettlementAdmission
-  - const DEFAULT_COMPACTION_EVIDENCE_GRACE_MS
-  - _...1 more_
+  - _...2 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function makeCancelBody: (reason) => void
@@ -580,7 +580,7 @@
   - function truncateLatestOutput: (text) => string
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
-  - _...17 more_
+  - _...18 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined

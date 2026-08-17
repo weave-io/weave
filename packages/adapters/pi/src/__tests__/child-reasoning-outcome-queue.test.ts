@@ -22,6 +22,7 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  applyDelegationCardEvent,
   applyDelegationCardInput,
   createDelegationCardState,
   projectDelegationCardFacts,
@@ -52,6 +53,7 @@ import type {
   ChildOverlaySourcePort,
   ChildOverlayView,
 } from "../child-overlay-types.js";
+import { parsePiChildSessionEvent } from "../child-session-events.js";
 import {
   createPiChildTranscriptState,
   reducePiChildTranscript,
@@ -347,6 +349,73 @@ describe("queue depth stays optional through every boundary", () => {
   it("reports unknown when no authority named a depth (historical)", async () => {
     const view = await openView({ status: "settled", outcome: "completed" });
     expect(childOverlayRailFacts(view).queueCount).toBeUndefined();
+  });
+
+  it("reports unknown for a `queue_update` that names only one queue", async () => {
+    // One empty list is a statement about ONE queue. The rail must keep saying
+    // `—`: printing `0` here would tell the reader, with the child's own
+    // authority, that a steered child has nothing queued.
+    for (const partial of [
+      { type: "queue_update", steering: [] },
+      { type: "queue_update", followUp: [] },
+      { type: "queue_update", steering: ["steer"] },
+    ]) {
+      const view = await openView({ status: "live" }, [partial]);
+      const rail = childOverlayRailFacts(view);
+      expect(rail.queueCount).toBeUndefined();
+      expect(rail.firstQueued).toBeUndefined();
+      const text = railText(rail);
+      expect(text).toContain(OVERLAY_UNKNOWN);
+      expect(text).not.toContain("queue empty");
+      expect(text).not.toContain("queue 0");
+      expect(
+        childOverlayPromptFacts(view, { draft: "", confirmingCancel: false })
+          .queueCount,
+      ).toBeUndefined();
+      expect(overlayRows(view)).not.toContain("queue: 0");
+    }
+  });
+
+  it("reports zero for a complete empty `queue_update`", async () => {
+    const view = await openView({ status: "live" }, [
+      { type: "queue_update", steering: [], followUp: [] },
+    ]);
+    expect(childOverlayRailFacts(view).queueCount).toBe(0);
+  });
+
+  it("keeps a partial `queue_update` off the compact render and the card", () => {
+    const parsed = parsePiChildSessionEvent({
+      type: "queue_update",
+      steering: [],
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("unreachable");
+
+    const mapped = mapPiChildSessionEventToCompactInput(
+      parsed.data,
+    )._unsafeUnwrap();
+    expect(mapped?.kind).not.toBe("queue");
+
+    const started = applyDelegationCardInput(
+      createDelegationCardState({ agentName: "shuttle", assignment: "probe" }),
+      {
+        kind: "start_run",
+        threadId: "thread-opaque-1",
+        runNumber: 1,
+        action: "start",
+        agentName: "shuttle",
+      },
+      () => 2_000,
+    )._unsafeUnwrap();
+    const applied = applyDelegationCardEvent(
+      started,
+      parsed.data,
+      () => 2_000,
+      "assistant",
+    )._unsafeUnwrap();
+    const facts = projectDelegationCardFacts(applied);
+    expect(facts.run.phase).not.toBe("steered");
+    expect(facts.activity?.kind).not.toBe("queue");
   });
 
   it("reports zero only after an authoritative zero (live)", async () => {

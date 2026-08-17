@@ -532,6 +532,31 @@ export function extractAssistantStopReason(
   return typeof stopReason === "string" ? stopReason : undefined;
 }
 
+/**
+ * The host's own id for the assistant message an event reports.
+ *
+ * It is the only per-message identity Pi states on `message_end`, so it is
+ * what correlates a captured terminal verdict with the message it was read
+ * from. An event that names no id states no identity, and callers fall back to
+ * the turn index alone.
+ */
+export function extractAssistantMessageId(
+  record: Record<string, JsonValue>,
+): string | undefined {
+  const message = record.message;
+  if (
+    typeof message !== "object" ||
+    message === null ||
+    Array.isArray(message)
+  ) {
+    return undefined;
+  }
+  const messageRecord = message as Record<string, JsonValue>;
+  if (messageRecord.role !== "assistant") return undefined;
+  const id = messageRecord.id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
 export interface PiChildTreeSnapshot {
   readonly nodes: readonly PiChildTreeNode[];
   readonly selectedId: string;

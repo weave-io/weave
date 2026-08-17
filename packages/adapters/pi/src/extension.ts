@@ -52,7 +52,10 @@ import {
   type PiDelegationAuthorityReadiness,
   WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
 } from "./capability-prober.js";
-import { PiChildAbortSettlementGate } from "./child-compaction-settlement.js";
+import {
+  type ChildTurnEpoch,
+  PiChildAbortSettlementGate,
+} from "./child-compaction-settlement.js";
 import {
   MAX_SETTLEMENT_OUTPUT_BYTES,
   parseControlBody,
@@ -187,6 +190,7 @@ import { SystemTimerPort, type TimerPort } from "./child-timer.js";
 import {
   applyTreeControlKey,
   EMPTY_USAGE_AGGREGATE,
+  extractAssistantMessageId,
   extractAssistantStopReason,
   extractAssistantTextDeltaPreview,
   PiChildInspectionRegistry,
@@ -1261,6 +1265,19 @@ interface PiChildModeState {
    * the only observable signal available to derive a failed outcome.
    */
   lastAssistantStopReason: string | undefined;
+  /**
+   * Monotonic index of the turn the host is currently running, advanced by
+   * every `turn_start`. It is the structural identity a captured verdict and a
+   * compaction lifecycle event are correlated by.
+   */
+  turnEpoch: number;
+  /**
+   * The run `lastAssistantStopReason` was read from: the turn that was active
+   * when the assistant message ended, plus the host's own id for it. A verdict
+   * keeps this identity even when it is only reported (via `agent_settled`)
+   * after a later turn already started.
+   */
+  lastAssistantEpoch: ChildTurnEpoch | undefined;
   /** Latest closed sanitized provider-error projection for this turn. */
   terminalError: PiChildProviderError | undefined;
   /**
@@ -1297,6 +1314,8 @@ function createChildModeState(): PiChildModeState {
     latestAssistantOutput: "",
     fullAssistantOutput: "",
     lastAssistantStopReason: undefined,
+    turnEpoch: 0,
+    lastAssistantEpoch: undefined,
     terminalError: undefined,
   };
 }
@@ -1684,6 +1703,10 @@ async function activateChildModeIfApplicable(
     state.latestAssistantOutput = "";
     state.fullAssistantOutput = "";
     state.terminalError = undefined;
+    // A new turn is a new epoch. Verdicts already captured keep the epoch they
+    // were read in, which is what tells a pre-compaction abort apart from the
+    // resumed run's own failure.
+    state.turnEpoch += 1;
     // A turn that begins after a deferred abort is the resumed run the
     // compaction extension asked for - the only structural resumption
     // evidence Pi exposes. It hands the outcome back to the ordinary path.
@@ -1695,8 +1718,20 @@ async function activateChildModeIfApplicable(
   // genuine failure. Both are observed because `session_compact` is emitted
   // only when a compaction entry was actually saved, while
   // `session_before_compact` is emitted first and always.
+  /**
+   * The run a compaction lifecycle event was observed for: the turn now
+   * running, refined by that turn's own last assistant message when one has
+   * already ended. An assistant identity from an EARLIER turn is not adopted,
+   * so evidence never claims a message it did not follow.
+   */
+  const compactionEpoch = (): ChildTurnEpoch =>
+    state.lastAssistantEpoch !== undefined &&
+    state.lastAssistantEpoch.turn === state.turnEpoch
+      ? state.lastAssistantEpoch
+      : { turn: state.turnEpoch, assistantMessageId: undefined };
+
   const observeCompaction = (): undefined => {
-    abortGate.observeCompactionLifecycle();
+    abortGate.observeCompactionLifecycle(compactionEpoch());
     return undefined;
   };
   pi.on("session_before_compact", observeCompaction);
@@ -1736,7 +1771,15 @@ async function activateChildModeIfApplicable(
     const record = asJsonRecord(event);
     if (record === undefined) return undefined;
     const stopReason = extractAssistantStopReason(record);
-    if (stopReason !== undefined) state.lastAssistantStopReason = stopReason;
+    if (stopReason !== undefined) {
+      state.lastAssistantStopReason = stopReason;
+      // The verdict and the run it belongs to are recorded together: they
+      // describe the same assistant message.
+      state.lastAssistantEpoch = {
+        turn: state.turnEpoch,
+        assistantMessageId: extractAssistantMessageId(record),
+      };
+    }
     const projectedError = projectAssistantProviderError(record.message);
     state.terminalError = projectedError.match(
       (projection) => projection,
@@ -1777,12 +1820,18 @@ async function activateChildModeIfApplicable(
       // later-ordered `ctx.compact()` from ever running. The sanitized
       // verdict is captured now (it belongs to *this* turn) and published on
       // a bounded deferral unless compaction evidence arrives first.
-      abortGate.observeAbortSettlement({
-        reason:
-          state.lastAssistantStopReason === "error"
-            ? formatPiChildProviderError(state.terminalError)
-            : "assistant stop reason: aborted",
-      });
+      abortGate.observeAbortSettlement(
+        {
+          reason:
+            state.lastAssistantStopReason === "error"
+              ? formatPiChildProviderError(state.terminalError)
+              : "assistant stop reason: aborted",
+        },
+        state.lastAssistantEpoch ?? {
+          turn: state.turnEpoch,
+          assistantMessageId: undefined,
+        },
+      );
       return;
     }
     // A genuine settlement always wins over any deferred abort verdict, so no

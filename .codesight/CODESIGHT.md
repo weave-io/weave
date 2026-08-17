@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 304 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~33,000 tokens. Without it, AI exploration would cost ~98,100 tokens. **Saves ~65,000 tokens per conversation.**
-> **Last scanned:** 2026-08-17 17:34 — re-run after significant changes
+> **Last scanned:** 2026-08-17 18:03 — re-run after significant changes
 
 ---
 
@@ -163,11 +163,11 @@
 - `packages/adapters/pi/src/child-compaction-settlement.ts`
   - class PiChildAbortSettlementGate
   - interface DeferredChildFailure
+  - interface ChildTurnEpoch
   - interface PiChildAbortSettlementGateOptions
   - type AbortSettlementDecision
   - type SettlementAdmission
-  - const DEFAULT_COMPACTION_EVIDENCE_GRACE_MS
-  - _...1 more_
+  - _...2 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function makeCancelBody: (reason) => void
@@ -591,7 +591,7 @@
   - function truncateLatestOutput: (text) => string
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
-  - _...17 more_
+  - _...18 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -1897,7 +1897,7 @@
 - `packages/adapters/pi/src/child-timer.ts` — imported by **21** files
 - `packages/adapters/pi/src/errors.ts` — imported by **21** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `packages/adapters/pi/src/child-session-events.ts` — imported by **18** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **19** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **16** files
