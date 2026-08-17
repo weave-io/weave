@@ -13,7 +13,7 @@ import {
   createInMemoryRuntimeStore,
   type RuntimeStore,
 } from "@weaveio/weave-engine";
-import { errAsync, ok, okAsync } from "neverthrow";
+import { errAsync, ok, okAsync, ResultAsync } from "neverthrow";
 import {
   CHILD_EXTENSION_SELECTION_KEY,
   PI_PREFERENCE_NAMESPACE,
@@ -176,19 +176,21 @@ async function waitForCustomMount(host: RecordingFakePiHost): Promise<void> {
   }
 }
 
-/** The overlay settles before its write completes, so the write is polled. */
-async function waitForStoredSelection(store: RuntimeStore): Promise<string> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const row = (
-      await store.preferences.get(
-        PI_PREFERENCE_NAMESPACE,
-        CHILD_EXTENSION_SELECTION_KEY,
-      )
-    )._unsafeUnwrap();
-    if (row !== null) return row.valueJson;
-    await Bun.sleep(0);
-  }
-  return "";
+/**
+ * Reads the stored selection with no polling.
+ *
+ * The command awaits its own write before returning, so anything a test can
+ * observe after the command settles is already durable. Polling here would
+ * hide exactly the regression these tests exist to catch.
+ */
+async function storedSelection(store: RuntimeStore): Promise<string | null> {
+  const row = (
+    await store.preferences.get(
+      PI_PREFERENCE_NAMESPACE,
+      CHILD_EXTENSION_SELECTION_KEY,
+    )
+  )._unsafeUnwrap();
+  return row?.valueJson ?? null;
 }
 
 describe("/weave:pi-config registration and classification", () => {
@@ -362,8 +364,9 @@ describe("/weave:pi-config overlay", () => {
     await invoked;
     expect(host.customDoneCalls).toBe(1);
 
-    const stored = await waitForStoredSelection(store);
-    expect(JSON.parse(stored)).toEqual({
+    const stored = await storedSelection(store);
+    expect(stored).not.toBeNull();
+    expect(JSON.parse(stored ?? "null")).toEqual({
       schemaVersion: 1,
       mode: "explicit",
       entries: [
@@ -414,24 +417,8 @@ describe("/weave:pi-config overlay", () => {
     host.inputCustom("\r");
     await invoked;
 
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      const row = (
-        await store.preferences.get(
-          PI_PREFERENCE_NAMESPACE,
-          CHILD_EXTENSION_SELECTION_KEY,
-        )
-      )._unsafeUnwrap();
-      if (row === null) break;
-      await Bun.sleep(0);
-    }
-    expect(
-      (
-        await store.preferences.get(
-          PI_PREFERENCE_NAMESPACE,
-          CHILD_EXTENSION_SELECTION_KEY,
-        )
-      )._unsafeUnwrap(),
-    ).toBeNull();
+    // Removal is a write too, and it is complete before the command returns.
+    expect(await storedSelection(store)).toBeNull();
     expect(lastNotice(host)).toContain("inherit every Pi extension again");
   });
 
@@ -451,13 +438,152 @@ describe("/weave:pi-config overlay", () => {
     host.inputCustom("\r");
     await invoked;
     expect(host.customDoneCalls).toBe(1);
+    expect(await storedSelection(store)).toBeNull();
+    // Cancel says what happened; it never borrows the save wording.
+    expect(lastNotice(host)).toContain(
+      "Weave child-extension selection unchanged.",
+    );
+  });
+});
+
+describe("/weave:pi-config write completion", () => {
+  it("awaits the write before the command returns", async () => {
+    await Promise.resolve();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const store = createInMemoryRuntimeStore();
+    let releaseWrite: (() => void) | undefined;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let commandReturned = false;
+    const gatedStore = {
+      ...store,
+      // Rebuilt rather than spread: the real preference repository keeps its
+      // methods on a prototype, so a spread would silently drop them.
+      preferences: {
+        get: (namespace: string, key: string) =>
+          store.preferences.get(namespace, key),
+        remove: (namespace: string, key: string) =>
+          store.preferences.remove(namespace, key),
+        // The write is held open until the test releases it, so "the command
+        // returned" and "the write finished" cannot be confused.
+        set: (namespace: string, key: string, value: string) =>
+          ResultAsync.fromSafePromise(writeGate).andThen(() =>
+            store.preferences.set(namespace, key, value),
+          ),
+      },
+    } as unknown as RuntimeStore;
+    installExtension(host, {
+      runtimeStoreFactory: { open: () => okAsync(gatedStore) },
+    } as unknown as Partial<PiExtensionDeps>);
+    await host.triggerSessionStart();
+
+    const invoked = host
+      .invokeCommand(WEAVE_PI_CONFIG_COMMAND_NAME)
+      .then((value) => {
+        commandReturned = true;
+        return value;
+      });
+    await waitForCustomMount(host);
+    host.inputCustom("a");
+    host.inputCustom("\r"); // the overlay settles here
+    for (let tick = 0; tick < 20; tick += 1) await Bun.sleep(0);
+    // The overlay is closed, but the command is still holding the write.
+    expect(host.customDoneCalls).toBe(1);
+    expect(commandReturned).toBe(false);
+    expect(await storedSelection(store)).toBeNull();
+
+    releaseWrite?.();
+    await invoked;
+    // No polling: the row is already durable the moment the command returns,
+    // so nothing can race the store's close or a session restart.
+    expect(await storedSelection(store)).not.toBeNull();
+    expect(lastNotice(host)).toContain("Weave children will load 1 selected");
+  });
+
+  it("notifies when the write itself fails", async () => {
+    await Promise.resolve();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const store = createInMemoryRuntimeStore();
+    const failingStore = {
+      ...store,
+      preferences: {
+        get: (namespace: string, key: string) =>
+          store.preferences.get(namespace, key),
+        remove: (namespace: string, key: string) =>
+          store.preferences.remove(namespace, key),
+        set: () => errAsync({ type: "QueryFailed" }),
+      },
+    } as unknown as RuntimeStore;
+    installExtension(host, {
+      runtimeStoreFactory: { open: () => okAsync(failingStore) },
+    } as unknown as Partial<PiExtensionDeps>);
+    await host.triggerSessionStart();
+
+    const invoked = host.invokeCommand(WEAVE_PI_CONFIG_COMMAND_NAME);
+    await waitForCustomMount(host);
+    host.inputCustom("a");
+    host.inputCustom("\r");
+    await invoked;
+    expect(host.customDoneCalls).toBe(1);
+    // The failure is reported instead of being reported as a success.
+    expect(lastNotice(host)).toBe(
+      "Weave could not save the child-extension selection.",
+    );
+    expect(host.notifyCalls[host.notifyCalls.length - 1]?.level).toBe(
+      "warning",
+    );
+  });
+
+  it("settles a replaced generation without writing anything", async () => {
+    await Promise.resolve();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const store = createInMemoryRuntimeStore();
+    installExtension(host, {
+      runtimeStoreFactory: { open: () => okAsync(store) },
+    } as unknown as Partial<PiExtensionDeps>);
+    await host.triggerSessionStart();
+
+    const invoked = host.invokeCommand(WEAVE_PI_CONFIG_COMMAND_NAME);
+    await waitForCustomMount(host);
+    host.inputCustom("a");
+    // A reload replaces the generation while the overlay is still open.
+    await host.triggerSessionStart();
+    const noticesBefore = host.notifyCalls.length;
+    host.inputCustom("\r");
+    await invoked;
+
+    // Settled exactly once, silent, and with nothing persisted: a stale
+    // authority may close its overlay but may never write.
+    expect(host.customDoneCalls).toBe(1);
+    expect(await storedSelection(store)).toBeNull();
+    expect(host.notifyCalls.slice(noticesBefore)).toEqual([]);
+  });
+
+  it("settles the custom promise once however many keys arrive", async () => {
+    await Promise.resolve();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const store = createInMemoryRuntimeStore();
+    installExtension(host, {
+      runtimeStoreFactory: { open: () => okAsync(store) },
+    } as unknown as Partial<PiExtensionDeps>);
+    await host.triggerSessionStart();
+
+    const invoked = host.invokeCommand(WEAVE_PI_CONFIG_COMMAND_NAME);
+    await waitForCustomMount(host);
+    host.inputCustom("a");
+    host.inputCustom("\r"); // save settles the overlay
+    host.inputCustom("\r");
+    host.inputCustom("\u001b");
+    host.inputCustom("n");
+    await invoked;
+    expect(host.customDoneCalls).toBe(1);
+    // One outcome means one notice, and it is the save's own wording.
     expect(
-      (
-        await store.preferences.get(
-          PI_PREFERENCE_NAMESPACE,
-          CHILD_EXTENSION_SELECTION_KEY,
-        )
-      )._unsafeUnwrap(),
-    ).toBeNull();
+      host.notifyCalls.filter((call) =>
+        call.message.startsWith("Weave children will"),
+      ),
+    ).toHaveLength(1);
+    expect(lastNotice(host)).toContain("Weave children will load 1 selected");
   });
 });

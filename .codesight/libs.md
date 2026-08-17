@@ -748,13 +748,13 @@
   - class NullPathContainmentPort
   - _...11 more_
 - `packages/adapters/pi/src/pi-config-ui.ts`
+  - function mergePiConfigEntries: (entries, record) => readonly PiConfigExtensionEntry[]
   - function buildPiConfigRows: (entries) => readonly PiConfigRow[]
   - function initialPiConfigSelection: (record, entries) => PiConfigSelectionState
   - function buildPiConfigSaveIntent: (input) => Result<PiConfigSaveIntent, PiConfigSaveError>
   - function piConfigRowBudget: (terminalRows) => number
   - function piConfigVisibleRows: (rows) => number
-  - function piConfigMaxScroll: (rowCount, rows) => number
-  - _...18 more_
+  - _...23 more_
 - `packages/adapters/pi/src/pi-extension-inventory-port.ts`
   - function createBunPiExtensionInventoryPort: (host) => PiExtensionInventoryPort
   - function createPiReadOnlyPackageManager: (input, unknown>>;

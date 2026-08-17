@@ -274,6 +274,7 @@ import {
 import {
   createPiConfigComponent,
   type PiConfigKeybindingsPort,
+  type PiConfigSaveError,
   type PiConfigSaveIntent,
   type PiConfigThemePort,
 } from "./pi-config-ui.js";
@@ -2010,6 +2011,20 @@ function extractFullAssistantText(message: JsonValue): string | undefined {
   }
   return output;
 }
+
+/**
+ * What one `/weave:pi-config` overlay reported when it closed.
+ *
+ * The overlay settles with exactly one of these and performs no I/O. The
+ * command awaits the outcome and only then writes, so a save can never be a
+ * detached promise racing the Runtime Store's close or a session restart, and
+ * a stale generation can settle without writing anything at all.
+ */
+type PiConfigOverlayOutcome =
+  | { readonly kind: "cancel" }
+  | { readonly kind: "stale" }
+  | { readonly kind: "save"; readonly intent: PiConfigSaveIntent }
+  | { readonly kind: "rejected"; readonly error: PiConfigSaveError };
 
 function commandDescription(name: WeaveCommandName): string {
   switch (name) {
@@ -4462,22 +4477,33 @@ export function createPiExtension(
     piConfigOverlayCell.close = undefined;
     previous?.();
 
-    await ctx.ui.custom<void>(
+    // The overlay reports an outcome; it never performs the write itself. The
+    // command owns persistence so the write cannot outlive this handler and
+    // race the store's close or a session restart.
+    const outcome = await ctx.ui.custom<PiConfigOverlayOutcome | undefined>(
       (tui, theme, keybindings, done) => {
         const host = tui as PiCustomOverlayTui;
         let settled = false;
+        let ownsCell = false;
         // The single settlement path: save, cancel, a refused payload, a stale
         // generation, and replacement all funnel through it, and only the
         // first caller ever reaches `done()`.
-        const settle = (): void => {
+        const settle = (result: PiConfigOverlayOutcome): void => {
           if (settled) return;
           settled = true;
-          if (piConfigOverlayCell.close === settle) {
+          if (ownsCell) {
+            ownsCell = false;
             piConfigOverlayCell.close = undefined;
           }
-          done(undefined);
+          done(result);
         };
-        piConfigOverlayCell.close = settle;
+        // Replacement and a stale generation are the same outcome: settle, and
+        // never write on behalf of an authority that no longer holds.
+        const settleStale = (): void => {
+          settle({ kind: "stale" });
+        };
+        piConfigOverlayCell.close = settleStale;
+        ownsCell = true;
         const component = createPiConfigComponent({
           entries: collected.inventory.entries,
           record: decoded.record,
@@ -4486,43 +4512,15 @@ export function createPiExtension(
           keybindings: keybindings as PiConfigKeybindingsPort | undefined,
           getTerminalRows: () => overlayTerminalRows(tui),
           isCurrent: authorityIsCurrent,
-          onStale: settle,
+          onStale: settleStale,
           onCancel: () => {
-            const wasSettled = settled;
-            settle();
-            if (wasSettled || !authorityIsCurrent()) return;
-            ctx.ui.notify("Weave child-extension selection unchanged.", "info");
+            settle({ kind: "cancel" });
           },
           onRejected: (rejection) => {
-            deps.logger.warn(
-              { reason: rejection.reason },
-              "pi-config save payload rejected",
-            );
-            ctx.ui.notify(
-              "Weave could not save that child-extension selection.",
-              "warning",
-            );
+            settle({ kind: "rejected", error: rejection });
           },
           onSave: (intent) => {
-            settle();
-            // The write outlives the overlay: `ctx.ui.custom()` settles first
-            // so the user is never held in a surface waiting on a database.
-            void persistPiConfigIntent(store, intent).then((written) => {
-              if (!authorityIsCurrent()) return;
-              if (written.isErr()) {
-                ctx.ui.notify(
-                  "Weave could not save the child-extension selection.",
-                  "warning",
-                );
-                return;
-              }
-              ctx.ui.notify(
-                intent.kind === "inherit-all"
-                  ? "Weave children will inherit every Pi extension again. This applies to children spawned after this session's next start, never to running children."
-                  : `Weave children will load ${intent.record.entries.length} selected extension${intent.record.entries.length === 1 ? "" : "s"} plus Weave. This applies to children spawned after this session's next start, never to running children.`,
-                "info",
-              );
-            });
+            settle({ kind: "save", intent });
           },
           onChange: () => {
             host.requestRender?.();
@@ -4539,6 +4537,46 @@ export function createPiExtension(
         };
       },
       { overlay: true },
+    );
+
+    // A host that resolves without an outcome is treated as a replaced
+    // overlay: settled, silent, and never a write.
+    if (outcome === undefined || outcome.kind === "stale") return;
+    if (outcome.kind === "rejected") {
+      deps.logger.warn(
+        { reason: outcome.error.reason },
+        "pi-config save payload rejected",
+      );
+      if (!authorityIsCurrent()) return;
+      ctx.ui.notify(
+        "Weave could not save that child-extension selection.",
+        "warning",
+      );
+      return;
+    }
+    if (outcome.kind === "cancel") {
+      if (!authorityIsCurrent()) return;
+      ctx.ui.notify("Weave child-extension selection unchanged.", "info");
+      return;
+    }
+    // A generation replaced while the overlay was open may settle, but its
+    // stale selection must never reach the store.
+    if (!authorityIsCurrent()) return;
+    const intent = outcome.intent;
+    const written = await persistPiConfigIntent(store, intent);
+    if (!authorityIsCurrent()) return;
+    if (written.isErr()) {
+      ctx.ui.notify(
+        "Weave could not save the child-extension selection.",
+        "warning",
+      );
+      return;
+    }
+    ctx.ui.notify(
+      intent.kind === "inherit-all"
+        ? "Weave children will inherit every Pi extension again. This applies to children spawned after this session's next start, never to running children."
+        : `Weave children will load ${intent.record.entries.length} selected extension${intent.record.entries.length === 1 ? "" : "s"} plus Weave. This applies to children spawned after this session's next start, never to running children.`,
+      "info",
     );
   }
 

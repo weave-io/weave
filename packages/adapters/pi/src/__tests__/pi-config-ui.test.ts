@@ -7,8 +7,13 @@ import {
   buildPiConfigSaveIntent,
   createPiConfigComponent,
   initialPiConfigSelection,
+  mergePiConfigEntries,
+  PI_CONFIG_DROPPED_TAG,
   PI_CONFIG_INHERIT_ROW_LABEL,
   PI_CONFIG_MANDATORY_ROW_LABEL,
+  PI_CONFIG_MANDATORY_UNLISTED_TAG,
+  PI_CONFIG_STORED_ONLY_SCOPE,
+  PI_CONFIG_UNAVAILABLE_TAG,
   type PiConfigExtensionEntry,
   type PiConfigSaveError,
   type PiConfigSaveIntent,
@@ -59,6 +64,35 @@ const INVENTORY: readonly PiConfigExtensionEntry[] = [
   }),
   WEAVE_ENTRY,
 ];
+
+/**
+ * A stored record whose selection has drifted: one entry the inventory still
+ * offers, one it now reports unavailable, and one it no longer knows at all.
+ */
+const STORED_WITH_MISSING: ChildExtensionSelectionRecord = {
+  schemaVersion: 1,
+  mode: "explicit",
+  entries: [
+    {
+      id: "npm:pi-vim",
+      source: "npm:pi-vim",
+      path: "/ext/npm-pi-vim.ts",
+      label: "pi-vim",
+    },
+    {
+      id: "/project/.pi/extensions/gone.ts",
+      source: "/project/.pi/extensions/gone.ts",
+      path: "/project/.pi/extensions/gone.ts",
+      label: "gone",
+    },
+    {
+      id: "npm:removed",
+      source: "npm:removed",
+      path: "/ext/removed.ts",
+      label: "removed",
+    },
+  ],
+};
 
 interface Harness {
   readonly component: ReturnType<typeof createPiConfigComponent>;
@@ -185,31 +219,171 @@ describe("pi-config overlay rows and state", () => {
     );
   });
 
-  it("seeds from a stored record and drops entries the inventory lost", async () => {
+  it("seeds from a stored record and never selects what a child cannot load", async () => {
     await Promise.resolve();
-    const state = initialPiConfigSelection(
-      {
+    const state = initialPiConfigSelection(STORED_WITH_MISSING, INVENTORY);
+    expect(state.mode).toBe("explicit");
+    expect([...state.selected]).toEqual(["npm:pi-vim"]);
+    // Remembered rather than forgotten: "removed" is gone from the inventory
+    // and "gone" is present but unavailable; both were part of the stored
+    // selection, and both have to be visible before the user decides.
+    expect([...(state.unavailableStored ?? [])].sort()).toEqual([
+      "/project/.pi/extensions/gone.ts",
+      "npm:removed",
+    ]);
+  });
+});
+
+describe("pi-config mandatory row without inventory evidence", () => {
+  it("still pins one locked Weave row when no entry is mandatory", async () => {
+    await Promise.resolve();
+    // Task 10 degradation can legitimately return an inventory that never
+    // observed the adapter. The row states a contract, so it stays.
+    const degraded = INVENTORY.filter((item) => !item.mandatory);
+    const rows = buildPiConfigRows(degraded);
+    expect(rows[0]).toEqual({ kind: "mandatory" });
+    expect(rows[1]).toEqual({ kind: "inherit" });
+    expect(rows.filter((row) => row.kind === "mandatory")).toHaveLength(1);
+
+    const lines = harness({
+      entries: degraded,
+      readOnly: true,
+    }).component.render(140);
+    const mandatory = lineFor(lines, PI_CONFIG_MANDATORY_ROW_LABEL);
+    expect(mandatory).toBeDefined();
+    expect(mandatory).toContain("mandatory");
+    // Honest about the gap instead of implying evidence it does not have.
+    expect(mandatory).toContain(PI_CONFIG_MANDATORY_UNLISTED_TAG);
+    // No checkbox, no toggle, no payload.
+    expect(mandatory).not.toContain("[x]");
+    expect(mandatory).not.toContain("[ ]");
+  });
+
+  it("keeps the locked row un-toggleable and out of every payload", async () => {
+    await Promise.resolve();
+    const degraded = INVENTORY.filter((item) => !item.mandatory);
+    const { component, saves } = harness({ entries: degraded });
+    component.handleInput(KEY_UP); // onto the pinned row
+    component.handleInput(KEY_SPACE); // deliberate no-op
+    component.handleInput("a");
+    component.handleInput(KEY_ENTER);
+    const intent = saves[0];
+    expect(intent?.kind).toBe("explicit");
+    const ids =
+      intent?.kind === "explicit"
+        ? intent.record.entries.map((item) => item.id)
+        : [];
+    expect(ids).toEqual(["npm:pi-vim", "/project/.pi/extensions/lint.ts"]);
+  });
+});
+
+describe("pi-config stored entries the live inventory lost", () => {
+  it("merges a stored-only entry as an unavailable row it can recognize", async () => {
+    await Promise.resolve();
+    const merged = mergePiConfigEntries(INVENTORY, STORED_WITH_MISSING);
+    const stored = merged.find((item) => item.id === "npm:removed");
+    expect(stored).toEqual({
+      id: "npm:removed",
+      label: "removed",
+      source: "npm:removed",
+      path: "/ext/removed.ts",
+      scope: PI_CONFIG_STORED_ONLY_SCOPE,
+      mandatory: false,
+      available: false,
+    });
+    // A live entry is never duplicated or overwritten by the stored copy.
+    expect(merged.filter((item) => item.id === "npm:pi-vim")).toHaveLength(1);
+    expect(mergePiConfigEntries(INVENTORY, undefined)).toEqual(INVENTORY);
+  });
+
+  it("shows the drift, its consequence, and the way to keep it", async () => {
+    await Promise.resolve();
+    const lines = harness({ record: STORED_WITH_MISSING }).component.render(
+      160,
+    );
+    const rendered = lines.join("\n");
+    const row = lineFor(lines, "removed");
+    expect(row).toBeDefined();
+    // Scope claims only what is known, and the row says what saving costs.
+    expect(row).toContain(PI_CONFIG_STORED_ONLY_SCOPE);
+    expect(row).toContain(PI_CONFIG_UNAVAILABLE_TAG);
+    expect(row).toContain(PI_CONFIG_DROPPED_TAG);
+    // A stored row is not an unchecked box the user forgot to tick.
+    expect(row).not.toContain("[ ]");
+    // The live-but-unavailable stored entry gets the same treatment.
+    expect(lineFor(lines, "gone")).toContain(PI_CONFIG_DROPPED_TAG);
+    expect(rendered).toContain(
+      "2 stored extensions are unavailable and saving drops them; cancel keeps the stored selection.",
+    );
+    // Stored-only rows sort last, after every scope the inventory proved.
+    const optional = buildPiConfigRows(
+      mergePiConfigEntries(INVENTORY, STORED_WITH_MISSING),
+    ).flatMap((item) => (item.kind === "optional" ? [item.entry.label] : []));
+    expect(optional).toEqual(["pi-vim", "gone", "lint", "removed"]);
+  });
+
+  it("never lets a stored-only row be toggled or saved", async () => {
+    await Promise.resolve();
+    const { component, saves } = harness({ record: STORED_WITH_MISSING });
+    // inherit -> pi-vim -> gone -> lint -> removed
+    for (let step = 0; step < 4; step += 1) component.handleInput(KEY_DOWN);
+    expect(
+      component.render(160).find((line) => line.startsWith("\u203a")),
+    ).toContain("removed");
+    component.handleInput(KEY_SPACE);
+    component.handleInput(KEY_ENTER);
+    // Saving a corrected selection persists only what a child could load,
+    // matching the spawn path's dropped-entry semantics.
+    expect(saves[0]).toEqual({
+      kind: "explicit",
+      record: {
         schemaVersion: 1,
         mode: "explicit",
         entries: [
           {
             id: "npm:pi-vim",
             source: "npm:pi-vim",
-            path: "/ext/pi-vim.ts",
+            path: "/ext/npm-pi-vim.ts",
             label: "pi-vim",
-          },
-          {
-            id: "npm:removed",
-            source: "npm:removed",
-            path: "/ext/removed.ts",
-            label: "removed",
           },
         ],
       },
-      INVENTORY,
-    );
-    expect(state.mode).toBe("explicit");
-    expect([...state.selected]).toEqual(["npm:pi-vim"]);
+    });
+  });
+
+  it("select-all still refuses every unavailable stored entry", async () => {
+    await Promise.resolve();
+    const { component, saves } = harness({ record: STORED_WITH_MISSING });
+    component.handleInput("a");
+    component.handleInput(KEY_ENTER);
+    const intent = saves[0];
+    const ids =
+      intent?.kind === "explicit"
+        ? intent.record.entries.map((item) => item.id)
+        : [];
+    expect(ids).toEqual(["npm:pi-vim", "/project/.pi/extensions/lint.ts"]);
+  });
+
+  it("cancelling proposes no change at all, so the stored record survives", async () => {
+    await Promise.resolve();
+    const { component, saves, cancels } = harness({
+      record: STORED_WITH_MISSING,
+    });
+    component.handleInput(KEY_DOWN);
+    component.handleInput(KEY_SPACE);
+    component.handleInput(KEY_ESCAPE);
+    expect(saves).toEqual([]);
+    expect(cancels.count).toBe(1);
+  });
+
+  it("keeps every line inside the terminal with stored-only rows merged", async () => {
+    await Promise.resolve();
+    const { component } = harness({ record: STORED_WITH_MISSING });
+    for (const width of [1, 4, 12, 40, 200]) {
+      for (const line of component.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 });
 
