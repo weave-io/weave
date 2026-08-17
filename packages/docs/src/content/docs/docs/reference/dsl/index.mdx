@@ -24,7 +24,7 @@ Rules:
 | Feature | Syntax |
 | --- | --- |
 | Comments | `# comment` |
-| Strings | Double-quoted strings, or triple-quoted multiline strings. |
+| Strings | Double-quoted strings, or triple-quoted `""" ... """` multiline strings. The repository's [Multiline strings](https://github.com/weaveio/weave/blob/main/docs/reference/dsl.md#multiline-strings) section is the normative contract: raw content with no escapes, closing at the first `"""`, minimum-count dedent, and normalized line endings. |
 | Arrays | JSON-style arrays such as `["a", "b"]`. |
 | Enums | Bare identifiers such as `allow`, `deny`, `primary`, `subagent`. |
 | Numbers | Bare numeric literals. |

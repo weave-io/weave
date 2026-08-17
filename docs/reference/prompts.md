@@ -310,6 +310,83 @@ any `{{#delegation.targets}}` section renders nothing.
 
 ---
 
+## Inline Multiline Prompts
+
+Inline `prompt` and `prompt_append` values may span lines using the DSL's
+triple-quoted string form. [DSL Reference — Multiline strings](dsl.md#multiline-strings)
+is the normative contract: content is raw with no escape processing, the string
+closes at the first `"""`, indentation is removed by the smallest leading
+whitespace character count, and line endings are normalized.
+
+Agent `prompt` and `prompt_append`:
+
+```weave
+agent release-notes {
+  description "Writes release notes for a milestone from the changelog"
+  prompt """
+  You are {{agent.name}}. Write release notes for the current milestone.
+
+  Keep each entry to one line, and group entries by change type.
+  """
+  prompt_append """
+  Never invent an issue number. Cite only issues present in the changelog.
+  """
+  mode subagent
+}
+```
+
+Workflow step `prompt` and `prompt_append`:
+
+```weave
+workflow ship {
+  description "Draft release notes and confirm them"
+  version 1
+
+  step draft {
+    name "Draft the notes"
+    type interactive
+    agent release-notes
+    prompt """
+    Draft release notes for: {{instance.goal}}
+
+    Read the changelog first, then write one section per change type.
+    """
+    prompt_append """
+    Stop after the draft. Do not tag or publish anything.
+    """
+    completion user_confirm
+  }
+}
+```
+
+A multiline value is an ordinary Prompt Template. `{{tag}}` renders, `\{{tag}}`
+renders a literal tag, and the unsupported-feature rules above apply unchanged.
+Because triple-quoted content is raw, the backslash in `\{{tag}}` reaches the
+renderer exactly as written.
+
+### When to use a prompt file instead
+
+Prefer `prompt_file` or `prompt_append_file` when:
+
+- the prompt is long enough that it would dominate the config file
+- the content contains a literal `"""`, or ends with a `"` that would abut the
+  closing delimiter — such content cannot be represented inline at all
+- the same text is shared across agents or scopes, or is edited and reviewed as
+  its own Markdown document
+
+Inline prompts suit short, agent-specific text that is easier to read next to
+the rest of the agent block.
+
+### Change detection
+
+An inline prompt is part of its config file, not a separate source. The Pi
+adapter's config refresh digests each config file and each referenced prompt
+file on its own, so an inline prompt edit is detected through the owning config
+file's digest; there is no separate manifest entry for inline prompt text. A
+`prompt_file` edit is detected through that file's own digest.
+
+---
+
 ## Composition Order
 
 ### Agent prompt composition

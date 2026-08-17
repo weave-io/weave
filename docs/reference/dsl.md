@@ -45,13 +45,88 @@ Plan files are always stored under `.weave/plans/`. Plan-related learnings and e
 | --- | --- |
 | Comments | `# line comment` |
 | Strings | `"double-quoted"` |
-| Multi-line strings | `""" ... """` |
+| Multi-line strings | `""" ... """` — see [Multiline strings](#multiline-strings) |
 | Arrays | `["item1", "item2"]` |
 | Booleans | bare `true` / `false` |
 | Enums | bare identifiers (`allow`, `deny`, `primary`, …) |
 | Numbers | bare numeric literals (`0.1`, `1`) |
 | Named blocks | `keyword name { ... }` |
 | Scalar key-value | `key value` (no colon, no semicolon) |
+
+### Multiline strings
+
+A triple-quoted string (`""" ... """`) holds inline text that spans lines. It is the only multiline form: the DSL has no heredoc, backtick string, indented block, or line-continuation syntax, and triple-quoted content supports no escapes and no interpolation.
+
+The form is lexical, so any string value may use it. It exists for inline prompt text, and every scope the schema gives an inline prompt string accepts it:
+
+| Scope | Fields |
+| --- | --- |
+| `agent` | `prompt`, `prompt_append` |
+| `category` | `prompt_append` |
+| `workflow` | `prompt_append` |
+| workflow `step` | `prompt`, `prompt_append` |
+
+```weave
+agent my-helper {
+  description "Answers questions about the current repository"
+  prompt """
+  You are a careful assistant.
+
+  Rules:
+    - Quote code like "this", and even ""this"".
+    - Backslashes stay literal: C:\path\to\file
+    - # does not start a comment here.
+    - { } [ ] , agent workflow are ordinary text.
+  """
+  mode subagent
+}
+```
+
+That `prompt` value is:
+
+```text
+You are a careful assistant.
+
+Rules:
+  - Quote code like "this", and even ""this"".
+  - Backslashes stay literal: C:\path\to\file
+  - # does not start a comment here.
+  - { } [ ] , agent workflow are ordinary text.
+```
+
+The rules below are normative. The lexer implements them in `packages/core/src/lexer.ts`.
+
+**Delimiters.** The string opens at `"""` and closes at the **first** later `"""`.
+
+**One optional line break after the opening delimiter.** A single line break immediately after the opening `"""` is dropped, whether it is `LF` or `CRLF`. A second break is content, so it becomes a leading blank line and is then removed by blank-line trimming.
+
+**Universal newline normalization.** Every `CRLF` and every remaining lone `CR` in the content becomes `LF` before dedent. A multiline value never contains a carriage return, whatever the file's line endings are.
+
+**Raw content — no escape processing.** Unlike single-line double-quoted strings, triple-quoted content processes no escape sequences. A backslash is a literal backslash: `\"`, `\\`, `\n`, `\t`, and `\#` reach the value as their exact source characters. Write a quote by typing a quote; write a newline by pressing Enter; write a backslash by typing one.
+
+**Comment-like and block-like text is literal.** `#` starts no comment, and `{`, `}`, `[`, `]`, `,`, and DSL keywords such as `agent` and `workflow` are ordinary text. A content line reading `agent x {` or `}` changes nothing about the enclosing block.
+
+**The first `"""` closes, even after a backslash.** A backslash does not escape the delimiter. `"""ends with a backslash \"""` is a complete string whose value ends with one literal backslash.
+
+**Unrepresentable content.** Two shapes cannot be written inline:
+
+- content containing a literal `"""`, because the string closes there;
+- content whose final character is `"` directly abutting the closing delimiter, because the run of quotes closes early. `prompt """say "hi""""` closes after `say "hi` and leaves a stray `"`, which then fails as an unterminated single-line string.
+
+Use `prompt_file` or `prompt_append_file` for such content. A single `"` and a `""` pair inside content are fine; only the three-quote run is special.
+
+**Dedent removes a minimum character count, not a prefix.** The lexer counts the leading whitespace characters of every line that contains non-whitespace, takes the smallest count, and removes that many characters from the start of every line. Whitespace is counted **per character**: a tab counts as one character, exactly like a space, and no tab-to-column arithmetic happens. So a line indented with one tab next to a line indented with four spaces yields a minimum of one character: the tab line loses its tab, and the space line keeps three spaces. Indent multiline content with one style to get predictable results. Trailing whitespace inside a line is preserved.
+
+**Blank-line handling.** Leading and trailing blank lines (empty or whitespace-only) are removed. Interior blank lines are preserved as empty lines, which is what makes paragraph breaks inside a prompt work. Content with no non-blank line yields an empty string.
+
+**Same-line form.** `"""content"""` with no line breaks yields `content` through the same dedent and trim pass, so `prompt """one line"""` is exactly `one line`.
+
+**End of input before the closing delimiter.** An unclosed multiline string is a typed `UnterminatedString { line, column }` positioned at the **opening** delimiter, not at end of file. It is collected with every other lex diagnostic under the bounded-diagnostics policy (`packages/core/src/config-error-policy.ts`); the lexer returns a `Result` and never throws. A config left mid-edit therefore fails to load with a diagnostic that points at the prompt that was opened.
+
+#### Migration and compatibility
+
+- **LF configs are unchanged.** Every LF-only source that parsed before produces byte-identical values now. Nothing to migrate.
+- **CRLF and lone-CR configs are normalized.** These sources previously kept their carriage returns, so a two-line prompt became `"line one\r\nline two\r"`, and the stray `\r` characters also skewed dedent and blank-line trimming. Content is now universal-newline normalized, so those files produce the same values as their LF equivalents. This is a bug fix, and it changes composed prompt text for configs stored with Windows line endings. If a prompt carried a workaround for the old behavior, remove it.
 
 ---
 
@@ -599,7 +674,7 @@ See [Prompt Composition](prompts.md) for the full specification and [ADR 0001](.
 - **Block-structured** — `keyword name { ... }` for named blocks; flat `key value` for scalars
 - **Minimal punctuation** — No semicolons, no trailing commas, no colons for key-value pairs
 - **Comments** — `#` line comments only
-- **Strings** — Double-quoted; multi-line strings use triple-quote `""" ... """`
+- **Strings** — Double-quoted; multi-line strings use triple-quote `""" ... """` (see [Multiline strings](#multiline-strings))
 - **Arrays** — `["item1", "item2"]` — JSON-style for familiarity
 - **Booleans** — bare `true` / `false`
 - **Enums** — bare identifiers for fixed value sets (e.g. `allow`, `deny`, `ask`, `primary`, `subagent`)
