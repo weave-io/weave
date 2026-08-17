@@ -234,6 +234,22 @@ const ownEnumerableDataValue = (
 };
 
 /**
+ * The event kind the record itself stated.
+ *
+ * Kind dispatch reads `type` exactly once, through this helper. An accessor,
+ * inherited value, non-enumerable property, or non-string is not a stated
+ * kind: the getter is never invoked and the value never selects a known
+ * parser or normalizer.
+ */
+const ownEventTypeString = (
+  record: object,
+): Result<string, OwnValueRejection> => {
+  const value = ownEnumerableDataValue(record, "type");
+  if (value.isErr()) return err(value.error);
+  return typeof value.value === "string" ? ok(value.value) : err("malformed");
+};
+
+/**
  * The exact strings a host-stated queue list holds.
  *
  * The list must be a plain, dense array of primitive strings that already fit
@@ -875,12 +891,14 @@ const nativeToolEndIsError = (record: Record<string, unknown>): boolean => {
  * `{ size: 0 }` from it would state, with the host's own authority, that a
  * steered child has nothing queued.
  *
- * Every field and every element is read through its own property DESCRIPTOR,
- * so no getter on the observed payload is ever invoked and no value is ever
- * repaired: a queued string that exceeds the bound is rejected rather than
- * truncated, because a truncated entry would be a queue fact the host never
- * stated. A descriptor read that throws (a revoked or hostile proxy) is a
- * rejection like any other, so this function never throws.
+ * The record's `type` must already have been proven to be an own enumerable
+ * data string before this function runs. Every queue field and every element
+ * is then read through its own property DESCRIPTOR, so no getter on the
+ * observed payload is ever invoked and no value is ever repaired: a queued
+ * string that exceeds the bound is rejected rather than truncated, because a
+ * truncated entry would be a queue fact the host never stated. A descriptor
+ * read that throws (a revoked or hostile proxy) is a rejection like any
+ * other, so this function never throws.
  */
 const normalizeQueueUpdateEvent = (
   record: Record<string, unknown>,
@@ -897,12 +915,11 @@ const normalizeQueueUpdateEvent = (
   return { type: "queue_change", size: items.length, queue: items };
 };
 
-const normalizeNativeToolEvent = (value: unknown): unknown => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return value;
-  }
-  const record = value as Record<string, unknown>;
-  switch (record["type"]) {
+const normalizeNativeToolEvent = (
+  record: Record<string, unknown>,
+  eventType: string,
+): unknown => {
+  switch (eventType) {
     case "queue_update":
       return normalizeQueueUpdateEvent(record);
     case "tool_execution_start":
@@ -940,23 +957,37 @@ const normalizeNativeToolEvent = (value: unknown): unknown => {
         result: boundNativeToolValue(record["result"]),
       };
     default:
-      return value;
+      return record;
   }
 };
 
 /** Validate known events; preserve only genuinely unknown event kinds. */
 const parseChildSessionEvent = (value: unknown) => {
-  const normalized = normalizeNativeToolEvent(value);
+  if (typeof value !== "object" || value === null) {
+    return PiChildSessionEventSchema.safeParse(value);
+  }
+  const arrayShaped = isArrayValue(value);
+  if (arrayShaped.isErr()) return unreadableChildEvent();
+  if (arrayShaped.value) return PiChildSessionEventSchema.safeParse(value);
+
+  const record = value as Record<string, unknown>;
+  // One descriptor-safe read. Ordinary `record.type` would invoke getters and
+  // accept inherited kinds; either would select a known parser or the queue
+  // normalizer from a value the host never stated as own data.
+  const typeRead = ownEventTypeString(record);
+  if (typeRead.isErr()) return unreadableChildEvent();
+  const eventType = typeRead.value;
+  if (eventType.length > 256) {
+    return {
+      success: true as const,
+      data: preserveUnknownChildEvent(value),
+    };
+  }
+
+  const normalized = normalizeNativeToolEvent(record, eventType);
   const parsed = PiChildSessionEventSchema.safeParse(normalized);
   if (parsed.success) return parsed;
-  const eventType =
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof (value as Record<string, unknown>).type === "string"
-      ? (value as Record<string, string>).type
-      : undefined;
-  if (eventType !== undefined && !KNOWN_CHILD_EVENT_TYPES.has(eventType)) {
+  if (!KNOWN_CHILD_EVENT_TYPES.has(eventType)) {
     return { success: true as const, data: preserveUnknownChildEvent(value) };
   }
   return parsed;
@@ -988,11 +1019,11 @@ const unreadableChildEvent = () =>
  * the schema reaches it.
  *
  * Those throws are reachable from every step of this parser, not just one:
- * normalization reads `type` and enumerates tool payloads, schema validation
- * reads every member the shapes name, the fallback path reads `type` again, and
- * unknown-event preservation enumerates the whole record. Guarding one step
- * would leave the others open, so the complete unit of work is wrapped and a
- * hostile input becomes the ordinary typed parser failure every caller already
+ * the descriptor-safe `type` read, normalization enumerating tool payloads,
+ * schema validation reading every member the shapes name, and unknown-event
+ * preservation enumerating the whole record. Guarding one step would leave
+ * the others open, so the complete unit of work is wrapped and a hostile
+ * input becomes the ordinary typed parser failure every caller already
  * handles — the overlay controller ignores the event, the replay mapper skips
  * the entry, and the RPC reader rejects the frame.
  *

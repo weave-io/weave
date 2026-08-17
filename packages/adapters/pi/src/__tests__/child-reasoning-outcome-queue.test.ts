@@ -513,6 +513,70 @@ describe("queue depth stays optional through every boundary", () => {
     expect(childOverlayRailFacts(view).queueCount).toBe(0);
   });
 
+  it("keeps a type-getter or inherited queue_update off the rail, card and replay", async () => {
+    let reads = 0;
+    const accessorType: Record<string, unknown> = {
+      steering: ["steer"],
+      followUp: ["later"],
+    };
+    Object.defineProperty(accessorType, "type", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        reads += 1;
+        return "queue_update";
+      },
+    });
+
+    const inherited = Object.create({ type: "queue_update" }) as Record<
+      string,
+      unknown
+    >;
+    inherited.steering = ["steer"];
+    inherited.followUp = ["later"];
+
+    for (const rejected of [accessorType, inherited]) {
+      const view = await openView({ status: "live" }, [rejected]);
+      const rail = childOverlayRailFacts(view);
+      expect(rail.queueCount).toBeUndefined();
+      expect(rail.firstQueued).toBeUndefined();
+      const text = railText(rail);
+      expect(text).toContain(OVERLAY_UNKNOWN);
+      expect(text).not.toContain("queue empty");
+      expect(text).not.toContain("queue 0");
+      expect(text).not.toContain("queue 2");
+      expect(
+        childOverlayPromptFacts(view, { draft: "", confirmingCancel: false })
+          .queueCount,
+      ).toBeUndefined();
+      expect(overlayRows(view)).not.toContain("queue: 2");
+
+      const parsed = parsePiChildSessionEvent(rejected);
+      expect(() => parsePiChildSessionEvent(rejected)).not.toThrow();
+      if (parsed.success) {
+        expect(parsed.data.type).not.toBe("queue_change");
+        expect(
+          mapPiChildSessionEventToCompactInput(parsed.data)._unsafeUnwrap()
+            ?.kind,
+        ).not.toBe("queue");
+        const facts = projectDelegationCardFacts(
+          applyDelegationCardEvent(
+            startedCard(),
+            parsed.data,
+            () => 2_000,
+            "assistant",
+          )._unsafeUnwrap(),
+        );
+        expect(facts.run.phase).not.toBe("steered");
+        expect(facts.activity?.kind).not.toBe("queue");
+      } else {
+        expect(parsed.success).toBe(false);
+      }
+    }
+
+    expect(reads).toBe(0);
+  });
+
   it("keeps a partial `queue_update` off the compact render and the card", () => {
     const parsed = parsePiChildSessionEvent({
       type: "queue_update",

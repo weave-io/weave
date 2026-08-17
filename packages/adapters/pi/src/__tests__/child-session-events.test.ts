@@ -219,23 +219,30 @@ describe("Pi child session event hostile boundary", () => {
     }
   };
 
-  it("returns a typed failure for a throwing type getter", () => {
-    expectTypedFailure({
-      get type(): string {
-        return throwing("hostile type getter");
-      },
-    });
-  });
-
-  it("returns a typed failure for a type getter that throws on a later read", () => {
+  it("returns a typed failure for a throwing type getter without invoking it", () => {
     let reads = 0;
-    expectTypedFailure({
+    const value = {
       get type(): string {
         reads += 1;
-        // Survives normalization, then throws on the fallback read.
-        return reads > 1 ? throwing("hostile second read") : "not_a_known_kind";
+        return throwing("hostile type getter");
       },
-    });
+    };
+    expectTypedFailure(value);
+    expect(reads).toBe(0);
+  });
+
+  it("reads type once through a descriptor and never invokes a type getter", () => {
+    let reads = 0;
+    const value = {
+      get type(): string {
+        reads += 1;
+        return "not_a_known_kind";
+      },
+    };
+    expect(() => parsePiChildSessionEvent(value)).not.toThrow();
+    const parsed = parsePiChildSessionEvent(value);
+    expect(reads).toBe(0);
+    expect(parsed.success).toBe(false);
   });
 
   it("returns a typed failure for a throwing ownKeys trap", () => {
@@ -360,5 +367,143 @@ describe("Pi child session event hostile boundary", () => {
         expect(preserved.data.originalType).toBe("brand_new_host_kind");
       }
     }
+  });
+});
+
+/**
+ * Event-kind dispatch may consult `type` only as an own enumerable data
+ * string. A getter, inherited value, or other non-stated kind must not select
+ * a known parser or the Pi 0.84 queue normalizer.
+ */
+describe("Pi child session event type authority", () => {
+  const expectNotKnownKind = (value: unknown): void => {
+    expect(() => parsePiChildSessionEvent(value)).not.toThrow();
+    const parsed = parsePiChildSessionEvent(value);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe("unknown");
+      expect(JSON.stringify(parsed.data)).not.toContain("queue_change");
+      expect(JSON.stringify(parsed.data)).not.toContain("tool_call");
+    } else {
+      expect(parsed.success).toBe(false);
+    }
+  };
+
+  it("does not invoke a type getter that names queue_update", () => {
+    let reads = 0;
+    const value: Record<string, unknown> = {
+      steering: ["steer"],
+      followUp: ["later"],
+    };
+    Object.defineProperty(value, "type", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        reads += 1;
+        return "queue_update";
+      },
+    });
+    expectNotKnownKind(value);
+    expect(reads).toBe(0);
+  });
+
+  it("does not invoke a type getter that names a known text event", () => {
+    let reads = 0;
+    const value = {
+      get type(): string {
+        reads += 1;
+        return "text";
+      },
+      text: "bounded",
+    };
+    expectNotKnownKind(value);
+    expect(reads).toBe(0);
+  });
+
+  it("does not accept an inherited queue_update as a queue report", () => {
+    const value = Object.create({ type: "queue_update" }) as Record<
+      string,
+      unknown
+    >;
+    value.steering = ["steer"];
+    value.followUp = ["later"];
+    expectNotKnownKind(value);
+  });
+
+  it("does not accept an inherited tool_execution_start as a tool call", () => {
+    const value = Object.create({
+      type: "tool_execution_start",
+    }) as Record<string, unknown>;
+    value.toolCallId = "call-1";
+    value.toolName = "read";
+    value.args = { path: "README.md" };
+    expectNotKnownKind(value);
+  });
+
+  it("does not accept a non-enumerable type as a queue report", () => {
+    const value: Record<string, unknown> = {
+      steering: ["steer"],
+      followUp: ["later"],
+    };
+    Object.defineProperty(value, "type", {
+      enumerable: false,
+      configurable: true,
+      writable: true,
+      value: "queue_update",
+    });
+    expectNotKnownKind(value);
+  });
+
+  it("does not accept a boxed or non-string type as a queue report", () => {
+    expectNotKnownKind({
+      type: new String("queue_update"),
+      steering: ["steer"],
+      followUp: ["later"],
+    });
+    expectNotKnownKind({
+      type: 42,
+      steering: ["steer"],
+      followUp: ["later"],
+    });
+  });
+
+  it("preserves an overbound type as unknown rather than a known kind", () => {
+    const parsed = parsePiChildSessionEvent({
+      type: `text${"x".repeat(300)}`,
+      text: "bounded",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe("unknown");
+      if (parsed.data.type === "unknown") {
+        expect(parsed.data.originalType).toHaveLength(256);
+      }
+    }
+  });
+
+  it("still accepts an own enumerable data type for known and unknown events", () => {
+    const text = parsePiChildSessionEvent({ type: "text", text: "hello" });
+    expect(text.success).toBe(true);
+    if (text.success) expect(text.data.type).toBe("text");
+
+    const queued = parsePiChildSessionEvent({
+      type: "queue_update",
+      steering: ["steer"],
+      followUp: ["later"],
+    });
+    expect(queued.success).toBe(true);
+    if (queued.success) {
+      expect(queued.data).toMatchObject({
+        type: "queue_change",
+        size: 2,
+        queue: ["steer", "later"],
+      });
+    }
+
+    const preserved = parsePiChildSessionEvent({
+      type: "brand_new_host_kind",
+      detail: "kept",
+    });
+    expect(preserved.success).toBe(true);
+    if (preserved.success) expect(preserved.data.type).toBe("unknown");
   });
 });
