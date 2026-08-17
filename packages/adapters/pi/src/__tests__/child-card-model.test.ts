@@ -262,7 +262,7 @@ describe("child-card-model event coverage", () => {
     });
   });
 
-  it("tool_partial_result reports call plus progress and stays live", () => {
+  it("tool_partial_result reports the call as running and stays live, without its payload", () => {
     let state = applyEvent(started(), {
       type: "tool_call",
       toolCallId: "call-1",
@@ -274,14 +274,17 @@ describe("child-card-model event coverage", () => {
       partialResult: "18 of 24",
     });
     const f = facts(state);
+    // Tool payload prose never crosses the card boundary; the canonical
+    // lifecycle state derived from the event type does.
     expect(f.activity).toEqual({
       kind: "tool",
-      text: "bash · 18 of 24",
+      text: "bash · running",
       live: true,
     });
+    expect(JSON.stringify(f)).not.toContain("18 of 24");
   });
 
-  it("tool_result states the call plus its result", () => {
+  it("tool_result states the call as done, never its result payload", () => {
     let state = applyEvent(started(), {
       type: "tool_call",
       toolCallId: "call-1",
@@ -295,9 +298,10 @@ describe("child-card-model event coverage", () => {
     const f = facts(state);
     expect(f.activity).toEqual({
       kind: "tool",
-      text: "edit · 1 replacement · +6 −3",
+      text: "edit · done",
       live: false,
     });
+    expect(JSON.stringify(f)).not.toContain("1 replacement");
   });
 
   it("tool_error keeps error vocabulary and error tone", () => {
@@ -314,9 +318,10 @@ describe("child-card-model event coverage", () => {
     const f = facts(state);
     expect(f.activity).toEqual({
       kind: "error",
-      text: "bash · exit status 1",
+      text: "bash · failed",
       live: false,
     });
+    expect(JSON.stringify(f)).not.toContain("exit status 1");
     expect(f.tone).toBe("bad");
     expect(f.viewport.rows.at(-1)?.kind).toBe("error");
   });
@@ -521,8 +526,11 @@ describe("child-card-model settlement", () => {
       verdict: "COMPLETED",
       glyph: "✓",
       headline: "Suffix reserved and the sweep is green.",
-      evidence: "verified · bun test · 24 pass",
+      // The evidence names the last tool and its canonical state. The tool's
+      // own output stays in the child transcript.
+      evidence: "verified · bun test · done",
     });
+    expect(JSON.stringify(f)).not.toContain("24 pass");
     expect(JSON.stringify(f)).not.toContain("never printed");
   });
 

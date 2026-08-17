@@ -1647,11 +1647,20 @@ async function activateChildModeIfApplicable(
       await runtime.admitControlLine(parsed.value, {
         onBootstrap: (body) =>
           applyChildBootstrap(pi, ctx, deps, state, runtime, body),
-        onCancel: () =>
-          runtime.reportCancelled().match(
+        onCancel: () => {
+          // Cancellation is terminal, so it must close the compaction gate
+          // BEFORE `cancelled` is published: a deferred or compacting gate
+          // still holds an armed timer, and a timer that survived this point
+          // would publish a second authenticated `settled` failure after the
+          // parent already recorded the cancellation. `dispose()` is
+          // synchronous, so no await can interleave between closing the gate
+          // and reporting.
+          abortGate.dispose();
+          return runtime.reportCancelled().match(
             () => undefined,
             () => undefined,
-          ),
+          );
+        },
       });
     },
   });

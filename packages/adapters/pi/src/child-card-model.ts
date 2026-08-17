@@ -509,6 +509,24 @@ function applyThinking(
   };
 }
 
+/**
+ * Tool activity, reported as NAME PLUS CANONICAL STATE and nothing else.
+ *
+ * `input.detail` is child-authored tool payload prose: a command's stdout, a
+ * file read, a raw provider error body, an exception message. The delegation
+ * card is not a place that prose may reach. Its facts become the model-visible
+ * activity line of every tool result AND the `details` payload Pi persists with
+ * the transcript entry and replays in a later session, so a single tool result
+ * carrying an absolute path, a credential, a signed URL, or a stack frame would
+ * copy that value into the parent's own context and onto disk.
+ *
+ * The rule is structural omission, not redaction: no pattern matcher decides
+ * what is safe here, because the payload is simply never read. The card states
+ * which tool ran and whether it is running, done, or failed - facts the card
+ * derives from the event TYPE. The rich child payload stays where it already
+ * lives, in the child overlay and the child transcript, which the human opens
+ * deliberately and which the parent model never reads.
+ */
 function applyTool(
   state: PiDelegationCardState,
   input: Extract<ChildCompactReducerInput, { kind: "tool" }>,
@@ -517,10 +535,6 @@ function applyTool(
   const toolName = boundText(
     sanitizeChildCompactText(input.toolName ?? ""),
     CARD_ROW_HEAD_MAX,
-  );
-  const detail = boundText(
-    sanitizeChildCompactText(input.detail ?? ""),
-    CARD_ROW_TEXT_MAX,
   );
   const call =
     toolName.length > 0
@@ -537,7 +551,7 @@ function applyTool(
         id: `tool:${input.itemId}`,
         kind: "tool",
         head: call,
-        text: detail,
+        text: "",
       }),
       phase: "tool call",
       toolCalls,
@@ -545,9 +559,9 @@ function applyTool(
     };
   }
 
-  // A RESULT IS REPORTED AS ITS CALL PLUS ITS RESULT, which is what makes the
-  // collapsed row read the same as the child's own terminal row.
-  const term = detail.length > 0 ? detail : phaseTerm(phase);
+  // A RESULT IS REPORTED AS ITS CALL PLUS ITS CANONICAL STATE - never the
+  // result payload itself.
+  const term = phaseTerm(phase);
   const text = boundText(`${call} · ${term}`, CARD_ROW_TEXT_MAX);
   const failed = phase === "error";
   const withRow = pushRow(state, {

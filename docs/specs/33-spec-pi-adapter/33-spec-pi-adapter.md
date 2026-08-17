@@ -252,6 +252,13 @@ Behavior:
   activity. Whitespace-only and control-only fragments are skipped. Reasoning is
   rendered as a bounded summary only; raw chain-of-thought never reaches the
   card.
+- Tool activity is the tool NAME plus its CANONICAL STATE — `running`, `done`,
+  or `failed` — derived from the event type. A tool result, partial result, or
+  tool error payload is never read into the card, so command output, file
+  content, raw provider bodies, and exception text cannot reach the Native Line,
+  a viewport row, the settled evidence line, the model-visible
+  `content[0].text`, or the persisted `details`. That payload stays in the child
+  overlay and the child transcript, which the reader opens deliberately.
 - Settlement is **native**: the authoritative settlement rewrites the rail state
   word, the Native Line, and the footer verb, and adds no row, banner, border
   verdict, or action deck. Nothing on the card ever offers retry, steer, resume,

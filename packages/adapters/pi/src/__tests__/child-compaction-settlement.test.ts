@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { okAsync, type ResultAsync } from "neverthrow";
 import {
+  DEFAULT_COMPACTION_EVIDENCE_GRACE_MS,
+  DEFAULT_COMPACTION_RESUME_TIMEOUT_MS,
+} from "../child-compaction-settlement.js";
+import {
   bytesToHex,
   generateNonceHex,
   WebCryptoHmacPort,
@@ -178,6 +182,16 @@ function flush(): Promise<void> {
 }
 
 /**
+ * Drains enough macrotasks for a signed envelope to have reached the port if
+ * one was ever queued. Used only by assertions that nothing was published:
+ * a single `flush()` can outrun the runtime's serialized send tail and report
+ * an absence that is really a race.
+ */
+async function quiesce(rounds = 12): Promise<void> {
+  for (let round = 0; round < rounds; round += 1) await flush();
+}
+
+/**
  * Waits for a settled envelope to actually reach the port. One `flush()` is
  * not enough: every outgoing envelope is HMAC-signed and queued on the child
  * runtime's serialized send tail, so it can land several macrotasks later.
@@ -245,6 +259,34 @@ async function buildChildExtension(overrides: Partial<PiExtensionDeps> = {}) {
 
 function settledLines(output: FakeOutputPort): Record<string, unknown>[] {
   return output.lines.filter((line) => line.kind === "settled");
+}
+
+function cancelledLines(output: FakeOutputPort): Record<string, unknown>[] {
+  return output.lines.filter((line) => line.kind === "cancelled");
+}
+
+/** Delivers one authenticated parent `cancel` control envelope. */
+async function sendCancel(
+  host: MinimalFakeHost,
+  secretBytes: Uint8Array,
+  sequence = 1,
+): Promise<void> {
+  const envelope = await signEnvelope(
+    {
+      childId: "child-1",
+      generationId: "gen-1",
+      direction: "parent-to-child",
+      sequence,
+      nonce: generateNonceHex(randomPort),
+      correlationId: "child-1",
+      kind: "cancel",
+      body: { reason: "parent-cancelled" },
+    },
+    secretBytes,
+    hmacPort,
+  );
+  const control = host.commands.get("weave:__control__");
+  await control?.handler(JSON.stringify(envelope._unsafeUnwrap()), fakeCtx());
 }
 
 function settledBody(
@@ -531,24 +573,177 @@ describe("private child settlement across a forced context compaction", () => {
     expect(settledLines(output)).toHaveLength(0);
   });
 
+  // -------------------------------------------------------------------------
+  // Settlement authority: a captured failure is discarded ONLY on structural
+  // compaction evidence. An unrelated later turn is not evidence.
+  // -------------------------------------------------------------------------
+
+  it("does not convert an observed abort into a later unrelated turn's success", async () => {
+    const { host, output } = await buildChildExtension();
+
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    expect(settledLines(output)).toHaveLength(0);
+
+    // A new turn with NO compaction lifecycle event anywhere. Nothing here is
+    // evidence of a compaction, so the recorded failure still owns the run.
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "unrelated",
+      stopReason: "stop",
+      text: "unrelated success",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    const body = settledBody(output);
+    expect(body?.outcome).toBe("failed");
+    expect(body?.reason).toBe("assistant stop reason: aborted");
+    expect(body?.assistantOutput).toBeUndefined();
+  });
+
+  it("still publishes the deferred failure when an unrelated turn starts and no settlement follows", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    expect(timers.pending()).toHaveLength(1);
+
+    // An unrelated turn must not disarm the grace timer.
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await flush();
+    expect(timers.pending()).toHaveLength(1);
+
+    timers.fireAll();
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+    expect(settledBody(output)?.reason).toBe("assistant stop reason: aborted");
+  });
+
+  it("discards the captured failure only when compaction evidence precedes the resumed turn", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await compactionLifecycle(host);
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await flush();
+
+    // Evidence-backed resumption: nothing captured, nothing armed.
+    expect(timers.pending()).toHaveLength(0);
+
+    await assistantMessageEnd(host, {
+      id: "resumed",
+      stopReason: "stop",
+      text: "resumed verdict",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("completed");
+  });
+
+  it("records compaction evidence that arrives before Weave observes the abort (compaction extension loaded first)", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+    // Handler order B: the compaction extension is loaded BEFORE Weave, so its
+    // `agent_settled` handler already drove `ctx.compact()` to completion by
+    // the time Weave's own handler runs.
+    await compactionLifecycle(host);
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+
+    expect(settledLines(output)).toHaveLength(0);
+    // The evidence was recorded, so the child waits on the bounded RESUME
+    // budget, not on the short evidence grace that would fail a healthy child
+    // mid-compaction.
+    const pending = timers.pending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.delayMs).toBe(DEFAULT_COMPACTION_RESUME_TIMEOUT_MS);
+
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "resumed",
+      stopReason: "stop",
+      text: "verdict after compaction",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("completed");
+    expect(timers.pending()).toHaveLength(0);
+  });
+
+  it("bounds a compaction-evidence window that no abort ever follows", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    await compactionLifecycle(host);
+    await flush();
+    const pending = timers.pending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.delayMs).toBe(DEFAULT_COMPACTION_EVIDENCE_GRACE_MS);
+
+    // The window closes on its own and publishes nothing.
+    timers.fireAll();
+    await flush();
+    expect(settledLines(output)).toHaveLength(0);
+    expect(timers.pending()).toHaveLength(0);
+
+    // A genuine failure observed after the window is ordinary again: it is
+    // deferred on the short grace and published unchanged.
+    await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    timers.fireAll();
+    await waitForSettlement(output);
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+  });
+
+  it("ignores compaction evidence that arrives after the failure was already published", async () => {
+    const { host, output, timers } = await buildChildExtension();
+
+    await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    timers.fireAll();
+    await waitForSettlement(output);
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+
+    // Late evidence, a late resumed turn, and a late settlement all arrive
+    // after the terminal verdict. None of them may reopen a closed gate.
+    await compactionLifecycle(host);
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "late",
+      stopReason: "stop",
+      text: "late success",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    timers.fireAll();
+    await quiesce();
+
+    expect(settledLines(output)).toHaveLength(1);
+    expect(settledBody(output)?.outcome).toBe("failed");
+    expect(timers.pending()).toHaveLength(0);
+  });
+
   it("does not defer a genuine cancellation settlement after a cancel control envelope", async () => {
     const { host, output, secretBytes } = await buildChildExtension();
-    const envelope = await signEnvelope(
-      {
-        childId: "child-1",
-        generationId: "gen-1",
-        direction: "parent-to-child",
-        sequence: 1,
-        nonce: generateNonceHex(randomPort),
-        correlationId: "child-1",
-        kind: "cancel",
-        body: { reason: "parent-cancelled" },
-      },
-      secretBytes,
-      hmacPort,
-    );
-    const control = host.commands.get("weave:__control__");
-    await control?.handler(JSON.stringify(envelope._unsafeUnwrap()), fakeCtx());
+    await sendCancel(host, secretBytes);
     await flush();
 
     await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
@@ -558,5 +753,102 @@ describe("private child settlement across a forced context compaction", () => {
     // Cancellation already owns the terminal outcome; no `settled` envelope
     // is ever produced, deferred or otherwise.
     expect(settledLines(output)).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Cancellation is terminal: it closes the gate BEFORE `cancelled` is
+  // published, so no armed timer can publish a second authenticated verdict.
+  // -------------------------------------------------------------------------
+
+  it("closes the gate when cancellation arrives while a failure is deferred", async () => {
+    const { host, output, timers, secretBytes } = await buildChildExtension();
+
+    await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    expect(timers.pending()).toHaveLength(1);
+
+    await sendCancel(host, secretBytes);
+    await flush();
+
+    // The gate is disarmed as part of cancelling, not eventually.
+    expect(timers.pending()).toHaveLength(0);
+    expect(cancelledLines(output)).toHaveLength(1);
+    expect(settledLines(output)).toHaveLength(0);
+
+    // Even if the host still runs the expired callback, nothing is published.
+    timers.fireAll();
+    await quiesce();
+    expect(settledLines(output)).toHaveLength(0);
+    expect(cancelledLines(output)).toHaveLength(1);
+  });
+
+  it("closes the gate when cancellation arrives while the child is compacting", async () => {
+    const { host, output, timers, secretBytes } = await buildChildExtension();
+
+    await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await compactionLifecycle(host);
+    await flush();
+    expect(timers.pending()).toHaveLength(1);
+
+    await sendCancel(host, secretBytes);
+    await flush();
+
+    expect(timers.pending()).toHaveLength(0);
+    expect(cancelledLines(output)).toHaveLength(1);
+    expect(settledLines(output)).toHaveLength(0);
+
+    timers.fireAll();
+    await quiesce();
+    expect(settledLines(output)).toHaveLength(0);
+  });
+
+  it("never publishes an authenticated failed settlement after cancellation, in either gate state", async () => {
+    for (const compactFirst of [false, true]) {
+      const { host, output, timers, secretBytes } = await buildChildExtension();
+
+      await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+      await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+      if (compactFirst) await compactionLifecycle(host);
+      await sendCancel(host, secretBytes);
+      await flush();
+
+      // Whatever the host does with an already-scheduled callback, the
+      // parent has recorded `cancelled` and must never receive a second,
+      // authenticated terminal verdict for the same child.
+      timers.fireAll();
+      await quiesce();
+
+      expect(settledLines(output)).toHaveLength(0);
+      expect(cancelledLines(output)).toHaveLength(1);
+    }
+  });
+
+  it("publishes nothing more when late events follow a cancellation of a deferred failure", async () => {
+    const { host, output, timers, secretBytes } = await buildChildExtension();
+
+    await assistantMessageEnd(host, { id: "aborted", stopReason: "aborted" });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await sendCancel(host, secretBytes);
+    await flush();
+
+    // A duplicate cancel, a late compaction, a late resumed turn and a late
+    // settlement all arrive after the terminal cancellation.
+    await sendCancel(host, secretBytes, 2);
+    await compactionLifecycle(host);
+    await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
+    await assistantMessageEnd(host, {
+      id: "late",
+      stopReason: "stop",
+      text: "late success",
+    });
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    timers.fireAll();
+    await quiesce();
+
+    expect(settledLines(output)).toHaveLength(0);
+    expect(timers.pending()).toHaveLength(0);
   });
 });

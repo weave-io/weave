@@ -45,7 +45,7 @@ export type AbortSettlementDecision =
   | { readonly kind: "defer" }
   | {
       readonly kind: "suppress";
-      readonly why: "deferred" | "compacting" | "closed";
+      readonly why: "deferred" | "compacting" | "closed" | "resumed";
     };
 
 /** Whether a non-abort settlement may be reported now. */
@@ -55,6 +55,20 @@ export type SettlementAdmission =
 
 type GateState =
   | { readonly kind: "open" }
+  | {
+      /**
+       * Structural compaction evidence arrived while no failure was
+       * captured - the handler order where the compaction extension is
+       * loaded before Weave, so its `ctx.compact()` has already emitted
+       * `session_before_compact` by the time Weave's own `agent_settled`
+       * handler runs. The evidence is remembered for one bounded window and
+       * for nothing longer.
+       */
+      readonly kind: "evidenced";
+      /** A resumed run already started inside the same evidence window. */
+      readonly resumed: boolean;
+      readonly timer: TimerHandle;
+    }
   | {
       readonly kind: "deferred";
       readonly failure: DeferredChildFailure;
@@ -76,26 +90,36 @@ export interface PiChildAbortSettlementGateOptions {
 }
 
 /**
- * A four-state, fully bounded gate that separates a compaction-intent local
+ * A five-state, fully bounded gate that separates a compaction-intent local
  * abort from a genuine terminal failure using host lifecycle events only -
  * never error prose, never a third-party extension's private state.
  *
  * ```
- *                 abort/error agent_settled
- *   open ─────────────────────────────────────▶ deferred ──(grace expires)──▶ closed (publish)
- *     ▲                                            │  │
- *     │                                            │  └─ session_before_compact / session_compact
- *     │                                            │        │
- *     │           turn_start (resumed)             │        ▼
- *     └────────────────────────────────────────────┴─── compacting ──(resume timeout)──▶ closed (publish)
- *                                                            │
- *                                                            └─ turn_start (resumed) ──▶ open
+ *   session_before_compact / session_compact
+ *   open ──────────────────────────────────▶ evidenced ──(evidence window expires)──▶ open
+ *     │                                          │
+ *     │                                          └─ abort/error agent_settled ─┐
+ *     │ abort/error agent_settled                                              │
+ *     ▼                                                                        │
+ *   deferred ──(grace expires)──▶ closed (publish)                             │
+ *     │                                                                        │
+ *     └─ session_before_compact / session_compact ──▶ compacting ◀─────────────┘
+ *                                                        │  │
+ *                                                        │  └─(resume timeout)─▶ closed (publish)
+ *                                                        │
+ *                                                        └─ turn_start (resumed) ──▶ open
  *
  *   any state ── non-abort agent_settled ──▶ closed (admit the ordinary path)
  * ```
  *
- * Every non-`open` state that holds a captured failure also holds exactly one
- * live timer, so the child can never sit deferred forever.
+ * A captured failure is discarded ONLY when structural compaction evidence was
+ * recorded for it - either before the abort (`evidenced`) or after it
+ * (`compacting`). A `turn_start` with no such evidence is an unrelated turn and
+ * leaves the deferred failure on its grace timer, so a provider or local abort
+ * can never be converted into a later success.
+ *
+ * Every non-`open` state holds exactly one live timer, so the child can never
+ * sit deferred forever and no state is unbounded.
  */
 export class PiChildAbortSettlementGate {
   private state: GateState = { kind: "open" };
@@ -130,6 +154,27 @@ export class PiChildAbortSettlementGate {
     if (this.state.kind === "closed") {
       return { kind: "suppress", why: "closed" };
     }
+    if (this.state.kind === "evidenced") {
+      const { resumed, timer } = this.state;
+      timer.cancel();
+      if (resumed) {
+        // Compaction completed AND its resumed run already started before
+        // this settlement was observed. The verdict belongs to the aborted
+        // pre-compaction turn, and the run now in flight owns the next
+        // outcome, so nothing is captured and nothing is armed.
+        this.state = { kind: "open" };
+        return { kind: "suppress", why: "resumed" };
+      }
+      this.state = {
+        kind: "compacting",
+        failure,
+        timer: this.timerPort.schedule(
+          () => this.publish(),
+          this.resumeTimeoutMs,
+        ),
+      };
+      return { kind: "defer" };
+    }
     this.state = {
       kind: "deferred",
       failure,
@@ -143,10 +188,32 @@ export class PiChildAbortSettlementGate {
 
   /**
    * Records structural compaction evidence (`session_before_compact` or
-   * `session_compact`). Only meaningful while a settlement is deferred.
+   * `session_compact`).
+   *
+   * Pi awaits extension handlers sequentially in load order, so this evidence
+   * can arrive either after Weave captured the abort (the `deferred` state) or
+   * before Weave's own `agent_settled` handler ever ran (the `open` state,
+   * when the compaction extension is loaded first and drives `ctx.compact()`
+   * from its own handler). Both orders are recorded; neither blocks.
    */
   observeCompactionLifecycle(): void {
-    if (this.state.kind === "open" || this.state.kind === "closed") return;
+    if (this.state.kind === "closed") return;
+    // A second lifecycle event of the same compaction keeps the first bounded
+    // window rather than extending it.
+    if (this.state.kind === "evidenced" || this.state.kind === "compacting") {
+      return;
+    }
+    if (this.state.kind === "open") {
+      this.state = {
+        kind: "evidenced",
+        resumed: false,
+        timer: this.timerPort.schedule(
+          () => this.expireEvidence(),
+          this.evidenceGraceMs,
+        ),
+      };
+      return;
+    }
     const { failure } = this.state;
     this.state.timer.cancel();
     this.state = {
@@ -160,25 +227,46 @@ export class PiChildAbortSettlementGate {
   }
 
   /**
-   * Records a new `turn_start`. A turn that begins after a deferred abort is
-   * the resumed run, so the captured failure is discarded and the ordinary
-   * settlement path owns the next outcome.
+   * Records a new `turn_start`.
+   *
+   * A turn that begins after compaction evidence is the resumed run the
+   * compaction extension asked for, so the captured failure is discarded and
+   * the ordinary settlement path owns the next outcome. A turn that begins
+   * with no compaction evidence at all is an unrelated turn: it must NOT
+   * discard a deferred failure, or a genuine provider/local abort would be
+   * silently converted into whatever that later turn reports.
    */
   observeTurnStart(): void {
-    if (this.state.kind !== "deferred" && this.state.kind !== "compacting") {
+    if (this.state.kind === "compacting") {
+      this.state.timer.cancel();
+      this.state = { kind: "open" };
       return;
     }
-    this.state.timer.cancel();
-    this.state = { kind: "open" };
+    if (this.state.kind === "evidenced" && !this.state.resumed) {
+      // The resumed run is already in flight. Its own bounded evidence window
+      // still owns the timer, so nothing new is armed here.
+      this.state = { ...this.state, resumed: true };
+    }
   }
 
   /**
-   * Asks whether a non-abort `agent_settled` may be reported now. A genuine
-   * settlement always wins over a deferred failure, so no settlement is lost.
+   * Asks whether a non-abort `agent_settled` may be reported now.
+   *
+   * A settlement that follows compaction evidence is the resumed run's own
+   * outcome and is admitted: that is the whole point of the gate. A settlement
+   * that arrives while a failure is deferred with NO evidence belongs to some
+   * later, unrelated run, and admitting it would convert an observed provider
+   * or local abort into a success. The deferred failure is published instead
+   * and the newer settlement is suppressed, so the terminal outcome stays the
+   * first one the child actually reported.
    */
   admitSettlement(): SettlementAdmission {
     if (this.state.kind === "closed") return { kind: "suppress" };
-    if (this.state.kind === "deferred" || this.state.kind === "compacting") {
+    if (this.state.kind === "deferred") {
+      this.publish();
+      return { kind: "suppress" };
+    }
+    if (this.state.kind !== "open") {
       this.state.timer.cancel();
     }
     this.state = { kind: "closed" };
@@ -190,12 +278,24 @@ export class PiChildAbortSettlementGate {
     this.publish();
   }
 
-  /** Drops any armed timer without publishing. Used only on teardown paths. */
+  /**
+   * Drops any armed timer without publishing and closes the gate for good.
+   *
+   * Teardown paths only (session shutdown, cancellation). Once disposed, no
+   * later timer, evidence event, or abort settlement can publish anything.
+   */
   dispose(): void {
-    if (this.state.kind === "deferred" || this.state.kind === "compacting") {
+    if (this.state.kind !== "open" && this.state.kind !== "closed") {
       this.state.timer.cancel();
     }
     this.state = { kind: "closed" };
+  }
+
+  /** The bounded compaction-evidence window closed with no abort observed. */
+  private expireEvidence(): void {
+    if (this.state.kind !== "evidenced") return;
+    this.state.timer.cancel();
+    this.state = { kind: "open" };
   }
 
   private publish(): void {
