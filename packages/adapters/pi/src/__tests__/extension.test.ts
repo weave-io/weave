@@ -42,6 +42,8 @@ import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 import { MAX_FINAL_OUTPUT_BYTES } from "../child-tree.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
+import type { PiConfigCatalogState } from "../config-refresh.js";
+import { createPiConfigSourceManifest } from "../config-source-digests.js";
 import type {
   PiOverlayChildDescriptor,
   PiThreadCachePort,
@@ -9505,5 +9507,209 @@ describe("createPiExtension: provider fast intent", () => {
       extension.providerFastLatestForTest(),
       UNSUPPORTED_FAST_SNAPSHOT,
     );
+  });
+});
+
+describe("createPiExtension: the generation catalog cell", () => {
+  const CATALOG_PROJECT_ROOT = "/fake/project";
+
+  /**
+   * Builds a publishable catalog state through the activator's own pipeline.
+   * No refresh trigger exists yet, so tests publish directly into the cell.
+   */
+  async function catalogState(
+    plan: MaterializationPlan,
+    config: WeaveConfig = EMPTY_CONFIG,
+  ): Promise<PiConfigCatalogState> {
+    const activated = await fakeConfigActivator(plan, config).activate({
+      projectRoot: CATALOG_PROJECT_ROOT,
+      trust: "trusted",
+    });
+    return {
+      activation: activated._unsafeUnwrap(),
+      manifest: createPiConfigSourceManifest({
+        identity: { projectRoot: CATALOG_PROJECT_ROOT, trust: "trusted" },
+        globalConfigPath: "/fake/home/.weave/config.weave",
+        projectConfigPath: `${CATALOG_PROJECT_ROOT}/.weave/config.weave`,
+        promptFilePaths: [],
+      }),
+      contents: new Map(),
+    };
+  }
+
+  function installLoomOnly(host: RecordingFakePiHost): PiExtensionInstance {
+    return installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+    });
+  }
+
+  it("seeds one cell per generation from the boot activation", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installLoomOnly(host);
+
+    expect(extension.catalogCellForTest()).toBeUndefined();
+
+    await host.triggerSessionStart();
+
+    const cell = extension.catalogCellForTest();
+    expect(cell?.isLive()).toBe(true);
+    expect([...(cell?.descriptors().keys() ?? [])]).toEqual(["loom"]);
+    expect(cell?.workflows()).toEqual({});
+    // The seed manifest names its sources without having read any of them.
+    expect(cell?.manifest()?.files.map((file) => file.kind)).toEqual([
+      "global-config",
+      "project-config",
+    ]);
+  });
+
+  it("publishes a whole catalog without disturbing the committed primary", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installLoomOnly(host);
+    await host.triggerSessionStart();
+    const cell = extension.catalogCellForTest();
+
+    const published = await catalogState(
+      {
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({
+              composedPrompt: "You are Loom, rewritten by a later publish.",
+            }),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor(),
+          },
+        ],
+        errors: [],
+      },
+      DIRECT_STEP_CONFIG,
+    );
+    expect(cell?.publish(published)).toBe("accepted");
+
+    // Every facet of the catalog moved together, in one swap.
+    expect([...(cell?.descriptors().keys() ?? [])]).toEqual([
+      "loom",
+      "tapestry",
+    ]);
+    expect(Object.keys(cell?.workflows() ?? {})).toEqual(["direct-flow"]);
+    expect(cell?.refreshState()?.activation).toBe(published.activation);
+
+    // The committed primary is pinned: the badge still names the boot
+    // primary, and the turn still carries the prompt boot committed.
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · LOOM");
+    const turn = await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    expect(turn.systemPrompt).toContain("You are Loom, the main orchestrator.");
+    expect(turn.systemPrompt).not.toContain(
+      "You are Loom, rewritten by a later publish.",
+    );
+  });
+
+  it("resolves an explicit Alt+A switch against the published catalog", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installLoomOnly(host);
+    await host.triggerSessionStart();
+
+    // Boot activated a catalog with a single primary, so there is nowhere to
+    // cycle to until something is published.
+    await host.invokeShortcut("alt+a");
+    expect(host.notifyCalls.at(-1)).toEqual({
+      message: "No other Weave primary agent is available.",
+      level: "info",
+    });
+
+    extension.catalogCellForTest()?.publish(
+      await catalogState({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+    );
+
+    await host.invokeShortcut("alt+a");
+
+    expect(host.notifyCalls.at(-1)).toEqual({
+      message: "Switched Weave primary agent to tapestry.",
+      level: "info",
+    });
+    expect(shownAgentBadge(host)).toEqual("◆ WEAVE · TAPESTRY");
+    const turn = await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    expect(turn.systemPrompt).toContain(
+      "You are Tapestry, the workflow orchestrator.",
+    );
+  });
+
+  it("invalidates the replaced generation's cell", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installLoomOnly(host);
+    await host.triggerSessionStart();
+    const stale = extension.catalogCellForTest();
+    const staleGenerationId = stale?.generationId;
+
+    await host.triggerSessionStart();
+
+    // A closure that still holds the replaced generation's cell reads
+    // nothing usable, and can no longer publish into it.
+    expect(stale?.isLive()).toBe(false);
+    expect(stale?.activation()).toBeUndefined();
+    expect(stale?.descriptors().size).toBe(0);
+    expect(stale?.disabledSkills()).toEqual([]);
+    expect(stale?.workflows()).toEqual({});
+    expect(stale?.refreshState()).toBeUndefined();
+    expect(
+      stale?.publish(
+        await catalogState({
+          agents: [
+            {
+              agentName: "tapestry",
+              source: "explicit",
+              descriptor: tapestryDescriptor(),
+            },
+          ],
+          errors: [],
+        }),
+      ),
+    ).toBe("stale");
+
+    const current = extension.catalogCellForTest();
+    expect(current).not.toBe(stale);
+    expect(current?.isLive()).toBe(true);
+    expect(current?.generationId).not.toBe(staleGenerationId);
+  });
+
+  it("drops the cell when session shutdown revokes the generation", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installLoomOnly(host);
+    await host.triggerSessionStart();
+    const stale = extension.catalogCellForTest();
+
+    await host.triggerEvent("session_shutdown");
+    await flushBackgroundWork();
+
+    expect(extension.catalogCellForTest()).toBeUndefined();
+    expect(stale?.isLive()).toBe(false);
   });
 });

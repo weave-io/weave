@@ -53,6 +53,13 @@ import {
   WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
 } from "./capability-prober.js";
 import {
+  clearPiCatalogCell,
+  createPiCatalogCell,
+  createPiCatalogCellHolder,
+  derivePiCatalogSeedManifest,
+  type PiCatalogCell,
+} from "./catalog-cell.js";
+import {
   type ChildTurnEpoch,
   PiChildAbortSettlementGate,
 } from "./child-compaction-settlement.js";
@@ -783,8 +790,16 @@ interface PiActiveSession {
   /** One identity shared by future store, inspector, and recovery seams. */
   readonly childInspectionSettings: PiChildInspectionEffectiveSettings;
   readonly primarySession: PiPrimarySession;
-  readonly descriptors: ReadonlyMap<string, AgentDescriptor>;
-  readonly disabledSkills: readonly string[];
+  /**
+   * This generation's published catalog.
+   *
+   * Descriptors and `disabled.skills` are read through it rather than held on
+   * the session, so a later authorized publication reaches future dispatch
+   * resolution while `primarySession` keeps the committed primary exactly as
+   * it was activated. The cell is generation-bound and invalidated on every
+   * teardown path, so a retained session object cannot outlive its catalog.
+   */
+  readonly catalog: PiCatalogCell;
   pendingPrimaryName: string | undefined;
   primaryActivationAttempted: boolean;
   primaryActivationFailure: PiPrimarySessionFailure | undefined;
@@ -2540,6 +2555,13 @@ export type PiExtensionInstance = ((pi: PiExtensionApi) => void) & {
   readonly providerFastLatestForTest: () =>
     | ProviderFastPublicSnapshot
     | undefined;
+  /**
+   * The generation's published catalog cell, or `undefined` before boot
+   * activation and after every revoke. Exposed so tests can publish a
+   * candidate and observe live consumers without a real refresh trigger,
+   * which does not exist yet.
+   */
+  readonly catalogCellForTest: () => PiCatalogCell | undefined;
 };
 
 export function createPiExtension(
@@ -2750,10 +2772,12 @@ export function createPiExtension(
   const generationResourcesCell: {
     owner: PiGenerationResourceOwner | undefined;
   } = { owner: undefined };
-  let currentWorkflows: Record<
-    string,
-    import("@weaveio/weave-engine").WorkflowExecutionContext["workflows"][string]
-  > = {};
+  /**
+   * The generation's published catalog, held module-scoped so every revoke
+   * path can invalidate it even after the active session was taken.
+   * Populated only once boot activation has been validated.
+   */
+  const catalogCellHolder = createPiCatalogCellHolder();
   let activeSession: PiActiveSession | undefined;
   /**
    * The reconstruction summary the *current* generation and *live* parent may
@@ -2968,6 +2992,19 @@ export function createPiExtension(
   const childInspectionSettingsUi: {
     ui: PiSessionContext["ui"] | undefined;
   } = { ui: undefined };
+  /**
+   * The descriptors a *future* dispatch resolves against.
+   *
+   * The live generation's published catalog when one holds authority, and
+   * otherwise the preflight activation the tool registration was built from.
+   * That fallback can never widen authority: without an active session
+   * `getInvocationContext` and `getController` already deny delegation, so no
+   * caller reaching it can dispatch.
+   */
+  const dispatchDescriptors = (
+    fallback: ReadonlyMap<string, AgentDescriptor>,
+  ): ReadonlyMap<string, AgentDescriptor> =>
+    activeSession?.catalog.descriptors() ?? fallback;
   const controllerDeps: PiExtensionControllerDeps = {
     safeInitializer: new PiSafeInitializer({
       hostPackageReader: deps.hostPackageReader,
@@ -3022,7 +3059,7 @@ export function createPiExtension(
                       activeDescriptor:
                         activeSession.primarySession.getCurrent()?.descriptor,
                       pendingPrimaryName: activeSession.pendingPrimaryName,
-                      descriptors: activeSession.descriptors,
+                      descriptors: activeSession.catalog.descriptors(),
                       primaryActivationAttempted:
                         activeSession.primaryActivationAttempted,
                       primaryActivationFailure:
@@ -3044,7 +3081,7 @@ export function createPiExtension(
             idGenerator: deps.idGenerator,
             buildBootstrap: (target, _task, childId, ctx, parentAgentName) =>
               buildChildBootstrapBody(
-                activation.descriptors.byName,
+                dispatchDescriptors(activation.descriptors.byName),
                 target,
                 childId,
                 {
@@ -3056,7 +3093,7 @@ export function createPiExtension(
                 (descriptor) =>
                   activeSession?.primarySession.prepareComposedPrompt(
                     descriptor,
-                    activeSession.disabledSkills,
+                    activeSession.catalog.disabledSkills(),
                   ) ?? descriptor.composedPrompt,
               ),
             buildEnv: () => ({}),
@@ -3067,7 +3104,7 @@ export function createPiExtension(
               latestSessionCtx === undefined
                 ? {}
                 : resolveAgentRuntimeMeta(
-                    activation.descriptors.byName,
+                    dispatchDescriptors(activation.descriptors.byName),
                     agentName,
                     latestSessionCtx,
                   ),
@@ -3122,7 +3159,7 @@ export function createPiExtension(
       cycleCandidateCount:
         session === undefined
           ? 0
-          : listCycleablePrimaryAgents(session.descriptors).length,
+          : listCycleablePrimaryAgents(session.catalog.descriptors()).length,
       snapshot: view?.kind === "active" ? view.snapshot : undefined,
       activeTask: view?.kind === "active" ? view.activeTask : undefined,
     });
@@ -3308,15 +3345,19 @@ export function createPiExtension(
         activeWorkflowInstanceCell.value = instance;
       },
       listPlanNames: () => deps.planCatalogPort.listPlanNames(projectRoot),
-      listWorkflowNames: () => Object.keys(currentWorkflows),
+      listWorkflowNames: () =>
+        Object.keys(catalogCellHolder.cell?.workflows() ?? {}),
       buildContext: (workflowName) => {
-        const workflow = currentWorkflows[workflowName];
+        // One read of the published catalog: the listed names and the context
+        // handed to the engine always come from the same workflows object.
+        const workflows = catalogCellHolder.cell?.workflows() ?? {};
+        const workflow = workflows[workflowName];
         if (workflow === undefined) return undefined;
         return {
           workflowName,
           goal: workflowName,
           slug: workflowName,
-          workflows: currentWorkflows,
+          workflows,
         };
       },
       currentAgentName: () =>
@@ -3880,7 +3921,9 @@ export function createPiExtension(
       return errAsync({ type: "DirectStepActive" });
     }
 
-    const descriptor = session.descriptors.get(agentName);
+    // An explicit switch is a reactivation, so it resolves against the
+    // published catalog rather than the one boot happened to activate.
+    const descriptor = session.catalog.descriptors().get(agentName);
     if (descriptor === undefined) {
       return errAsync({ type: "PrimaryDescriptorMissing", agentName });
     }
@@ -3954,7 +3997,7 @@ export function createPiExtension(
           currentModel: ctx.model,
           modelApplier: createPiModelApplyPort(pi),
           thinkingApplier: createPiThinkingApplyPort(pi),
-          disabledSkills: session.disabledSkills,
+          disabledSkills: session.catalog.disabledSkills(),
         })
         .mapErr((cause): PiPrimarySwitchFailure => {
           session.primaryActivationFailure = cause;
@@ -4075,7 +4118,7 @@ export function createPiExtension(
       return errAsync(failure);
     };
 
-    const descriptor = session.descriptors.get(agentName);
+    const descriptor = session.catalog.descriptors().get(agentName);
     if (descriptor === undefined) {
       return fail({ type: "PrimaryDescriptorMissing", agentName });
     }
@@ -4116,7 +4159,7 @@ export function createPiExtension(
         currentModel: ctx.model,
         modelApplier: createPiModelApplyPort(pi),
         thinkingApplier: createPiThinkingApplyPort(pi),
-        disabledSkills: session.disabledSkills,
+        disabledSkills: session.catalog.disabledSkills(),
       })
       .mapErr((cause): PiBootPrimaryActivationFailure => {
         const failure: PiBootPrimaryActivationFailure = {
@@ -4299,7 +4342,7 @@ export function createPiExtension(
 
     const current = session.primarySession.getCurrent();
     const next = nextCycleablePrimaryAgent(
-      session.descriptors,
+      session.catalog.descriptors(),
       current?.descriptor.name ?? session.pendingPrimaryName,
     );
     if (next === undefined) {
@@ -4402,7 +4445,10 @@ export function createPiExtension(
       threadSourcesRequired = required;
     },
     clearCurrentWorkflows: () => {
-      currentWorkflows = {};
+      // The workflows projection is part of the published catalog, so the one
+      // clear drops the whole cell: a revoked generation's catalog can never
+      // serve a later reader, including through a retained cell reference.
+      clearPiCatalogCell(catalogCellHolder);
     },
     cancelDirectStep: () =>
       directStepChildRegistry.cancel() ?? okAsync(undefined),
@@ -4779,7 +4825,26 @@ export function createPiExtension(
         }
       }
 
-      currentWorkflows = configActivation.config.workflows ?? {};
+      // This generation's one published catalog. Seeded from the activation
+      // preflight already validated, so every consumer starts on exactly the
+      // state the captured closures used to hold. The manifest records which
+      // sources this catalog was derived from without stat'ing, reading, or
+      // hashing any of them, so seeding cannot slow or fail boot.
+      const seedHomeDir = deps.envPort.read("HOME");
+      const seedManifest = derivePiCatalogSeedManifest({
+        identity: {
+          projectRoot: ctx.cwd,
+          trust: generation.preflight.trust,
+        },
+        config: configActivation.config,
+        ...(seedHomeDir === undefined ? {} : { homeDir: seedHomeDir }),
+      });
+      const catalogCell = createPiCatalogCell({
+        generationId: generation.id,
+        activation: configActivation,
+        ...(seedManifest === undefined ? {} : { manifest: seedManifest }),
+      });
+      catalogCellHolder.cell = catalogCell;
       planStateProviderCell.value =
         deps.planStateProviderFactory?.(ctx.cwd) ??
         createPiPlanStateProvider(ctx.cwd);
@@ -4792,8 +4857,7 @@ export function createPiExtension(
           logger: deps.logger,
           parentSessionProbe: ctx.sessionManager,
         }),
-        descriptors: configActivation.descriptors.byName,
-        disabledSkills: configActivation.config.disabled?.skills ?? [],
+        catalog: catalogCell,
         pendingPrimaryName: DEFAULT_PRIMARY_AGENT_NAME,
         primaryActivationAttempted: false,
         primaryActivationFailure: undefined,
@@ -4835,7 +4899,7 @@ export function createPiExtension(
           clearThreadSources(threadSourcesCell);
           clearChildReconstruction(childReconstructionCell);
           threadSourcesRequired = false;
-          currentWorkflows = {};
+          clearPiCatalogCell(catalogCellHolder);
           planStateProviderCell.value = undefined;
           activeWorkflowInstanceCell.value = undefined;
           setActiveAgent(ctx, undefined);
@@ -4878,6 +4942,7 @@ export function createPiExtension(
           controller.shutdown();
           clearThreadSources(threadSourcesCell);
           clearChildReconstruction(childReconstructionCell);
+          clearPiCatalogCell(catalogCellHolder);
           threadSourcesRequired = false;
           setActiveAgent(ctx, undefined);
           ctx.ui.setStatus(
@@ -5196,7 +5261,8 @@ export function createPiExtension(
             threadWorkspaceKey: () => ctx.cwd,
             threadSourcesRequired,
             resolveRootDelegationTarget: (name) =>
-              configActivation.descriptors.byName
+              catalogCell
+                .descriptors()
                 .get(DEFAULT_PRIMARY_AGENT_NAME)
                 ?.delegationTargets.find((target) => target.name === name),
             rootAgentName: () =>
@@ -5207,7 +5273,8 @@ export function createPiExtension(
             // `delegationTargets`, never the full descriptor set - exactly
             // the same restriction the root's own tool already applies.
             resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
-              configActivation.descriptors.byName
+              catalogCell
+                .descriptors()
                 .get(requestingAgentName)
                 ?.delegationTargets.find(
                   (target) => target.name === targetAgentName,
@@ -5216,11 +5283,10 @@ export function createPiExtension(
             // configure resolves to `undefined`, so the header prints no role
             // rather than inventing one.
             resolveAgentRole: (agentName) =>
-              configActivation.descriptors.byName.get(agentName)?.category
-                ?.name,
+              catalogCell.descriptors().get(agentName)?.category?.name,
             buildBootstrap: (target, childId, context) =>
               buildChildBootstrapBody(
-                configActivation.descriptors.byName,
+                catalogCell.descriptors(),
                 target,
                 childId,
                 context,
@@ -5228,7 +5294,7 @@ export function createPiExtension(
                 (descriptor) =>
                   session.primarySession.prepareComposedPrompt(
                     descriptor,
-                    session.disabledSkills,
+                    catalogCell.disabledSkills(),
                   ),
               ),
             onTreeChanged: () => {
@@ -5397,10 +5463,9 @@ export function createPiExtension(
             countdownSeconds:
               generation.preflight.childInspection.settings
                 .recovery_countdown_seconds,
-            resolveDescriptor: (name) =>
-              configActivation.descriptors.byName.get(name),
+            resolveDescriptor: (name) => catalogCell.descriptors().get(name),
             currentModel: ctx.model?.id,
-            currentPolicy: configActivation.config.settings,
+            currentPolicy: () => catalogCell.activation()?.config.settings,
             currentLimits: generation.preflight.childInspection.settings,
             ui: {
               select: (title, options, optionsConfig) =>
@@ -5593,14 +5658,13 @@ export function createPiExtension(
             //) - never the engine effect's own always-empty
             // `agentDescriptor` fields.
             resolveAgentDescriptor: (agentName) => {
-              const descriptor =
-                configActivation.descriptors.byName.get(agentName);
+              const descriptor = catalogCell.descriptors().get(agentName);
               if (descriptor === undefined) return undefined;
               return {
                 ...descriptor,
                 composedPrompt: session.primarySession.prepareComposedPrompt(
                   descriptor,
-                  session.disabledSkills,
+                  catalogCell.disabledSkills(),
                 ),
               };
             },
@@ -6352,6 +6416,7 @@ export function createPiExtension(
   };
   piAdapterExtension.providerFastLatestForTest = () =>
     resolveProviderFastState();
+  piAdapterExtension.catalogCellForTest = () => catalogCellHolder.cell;
   return piAdapterExtension;
 }
 

@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import type { PiChildRefRecord, PiChildRefStatus } from "../child-session-refs.js";
 import {
   findOrdinaryRecoveryCandidates,
-  type PiChildRecoveryRecord,
   PiChildRecoveryCoordinator,
+  type PiChildRecoveryRecord,
   RECOVERY_CHOICES,
   RECOVERY_CONTINUATION,
 } from "../child-recovery.js";
+import type {
+  PiChildRefRecord,
+  PiChildRefStatus,
+} from "../child-session-refs.js";
 
 /**
  * Since ADR 0014 the recovery record is the parent session's child-ref record.
@@ -72,7 +75,7 @@ function coordinator(
     countdownSeconds: 10,
     resolveDescriptor: (name) => ({ name, current: true }),
     currentModel: "current-model",
-    currentPolicy: { tools: ["read"] },
+    currentPolicy: () => ({ tools: ["read"] }),
     currentLimits: { turns: 4 },
     spawn: (input) => {
       spawned.push(input);

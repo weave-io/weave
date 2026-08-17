@@ -4,8 +4,8 @@ import {
   ResultAsync,
   type ResultAsync as ResultAsyncType,
 } from "neverthrow";
-import type { PiChildRefRecord } from "./child-session-refs.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
+import type { PiChildRefRecord } from "./child-session-refs.js";
 import { MAX_FINAL_OUTPUT_BYTES } from "./child-tree.js";
 
 /**
@@ -79,7 +79,12 @@ export interface PiChildRecoveryDeps {
     name: string,
   ) => PiChildRecoveryDescriptor | undefined;
   readonly currentModel?: string;
-  readonly currentPolicy?: unknown;
+  /**
+   * Read per validation, never captured: a restore must carry the policy the
+   * published catalog holds when the user accepts it, not the one activated
+   * at boot.
+   */
+  readonly currentPolicy?: () => unknown;
   readonly currentLimits?: unknown;
   /** Starts a child and resolves only with its authenticated terminal result. */
   readonly spawn: (
@@ -223,7 +228,7 @@ export class PiChildRecoveryCoordinator {
         descriptor,
         generationId: this.deps.generationId,
         model: this.deps.currentModel,
-        policy: this.deps.currentPolicy,
+        policy: this.deps.currentPolicy?.(),
         limits: this.deps.currentLimits,
         continuation: RECOVERY_CONTINUATION,
       });
@@ -237,8 +242,7 @@ export class PiChildRecoveryCoordinator {
       if (!this.current(input.generationId))
         return unavailable("The recovery generation is stale.");
       const running = safely(
-        () =>
-          this.deps.history.updateStatus(record, "running"),
+        () => this.deps.history.updateStatus(record, "running"),
         "Child ref update failed.",
       );
       const spawned = running.andThen(() =>
@@ -255,8 +259,7 @@ export class PiChildRecoveryCoordinator {
           .mapErr(() => ({ type: "ChildRecoverySpawnFailed" as const }))
           .orElse((failure) =>
             safely(
-              () =>
-                this.deps.history.updateStatus(record, "failed"),
+              () => this.deps.history.updateStatus(record, "failed"),
               "Child ref rollback failed.",
             )
               .mapErr(() => failure)
@@ -278,8 +281,7 @@ export class PiChildRecoveryCoordinator {
             : "",
         );
         return safely(
-          () =>
-            this.deps.history.updateStatus(record, "completed"),
+          () => this.deps.history.updateStatus(record, "completed"),
           "Child ref settlement update failed.",
         )
           .mapErr(() => ({ type: "ChildRecoverySpawnFailed" as const }))
