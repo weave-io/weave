@@ -1,9 +1,10 @@
 /**
  * Read-only runtime inspection commands.
  *
- * Implements `weave runtime status` and `weave runtime journal --limit <n>`.
+ * Implements `weave runtime status`, `weave runtime journal --limit <n>`, and
+ * `weave runtime preferences --namespace <ns> [--limit <n>]`.
  *
- * Both commands open the default Runtime Store path in read-only inspection
+ * Every subcommand opens the default Runtime Store path in read-only inspection
  * mode. If the store does not exist, they report a friendly message and exit 0
  * without creating any files.
  *
@@ -14,7 +15,9 @@
 import { Database } from "bun:sqlite";
 import { resolve } from "node:path";
 import {
+  type AdapterPreferenceRecord,
   CURRENT_SCHEMA_VERSION,
+  clampAdapterPreferenceListLimit,
   createSqliteRuntimeStore,
   type ExecutionLease,
   isDeniedKey,
@@ -42,10 +45,18 @@ const DEFAULT_RUNTIME_DB_PATH = ".weave/runtime/weave.db";
 export interface RuntimeCommandContext {
   terminal: TerminalIO;
   theme: ThemeColors;
-  /** Subcommand: "status" or "journal". */
-  subcommand: "status" | "journal";
-  /** --limit flag for journal (default: 50). */
+  /** Subcommand: "status", "journal", or "preferences". */
+  subcommand: "status" | "journal" | "preferences";
+  /** --limit flag for journal (default: 50) and preferences (default: 100). */
   limit?: number;
+  /**
+   * --namespace flag for `preferences`.
+   *
+   * The Runtime Store preference repository is namespace-scoped: `list` takes
+   * one namespace and there is no cross-namespace enumeration. The CLI does
+   * not invent one, so this flag is required for `preferences`.
+   */
+  namespace?: string;
   /** Project root directory (defaults to cwd). */
   cwd?: string;
   /**
@@ -193,6 +204,75 @@ function formatJournalEntry(
 }
 
 // ---------------------------------------------------------------------------
+// Preference value preview
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum size, in UTF-8 bytes, of a rendered preference value preview.
+ * A single-character ellipsis is appended when the value is truncated, so a
+ * truncated preview renders `PREFERENCE_VALUE_PREVIEW_MAX_BYTES` payload bytes
+ * plus that marker.
+ */
+const PREFERENCE_VALUE_PREVIEW_MAX_BYTES = 120;
+
+/** Marker appended to a preview that was cut short. */
+const PREFERENCE_VALUE_TRUNCATION_MARKER = "…";
+
+/**
+ * Replace every run of control characters with a single space and drop leading
+ * and trailing runs, so the result is always one printable line.
+ */
+function collapseControlCharacters(value: string): string {
+  let out = "";
+  let pendingSpace = false;
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0x1f || code === 0x7f) {
+      pendingSpace = out.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      out += " ";
+      pendingSpace = false;
+    }
+    out += char;
+  }
+  return out;
+}
+
+/**
+ * Render a one-line, byte-bounded preview of an opaque preference value.
+ *
+ * Control characters (including newlines and tabs) collapse to single spaces so
+ * one record always occupies exactly one output line. Truncation is measured in
+ * UTF-8 bytes, not characters, and never splits a visible character: the byte
+ * slice is decoded leniently and any trailing replacement characters produced by
+ * a split multi-byte sequence are removed.
+ */
+function previewPreferenceValue(valueJson: string): string {
+  const singleLine = collapseControlCharacters(valueJson);
+  const bytes = new TextEncoder().encode(singleLine);
+  if (bytes.byteLength <= PREFERENCE_VALUE_PREVIEW_MAX_BYTES) return singleLine;
+  const head = new TextDecoder("utf-8")
+    .decode(bytes.slice(0, PREFERENCE_VALUE_PREVIEW_MAX_BYTES))
+    .replace(/\uFFFD+$/, "");
+  return `${head}${PREFERENCE_VALUE_TRUNCATION_MARKER}`;
+}
+
+/**
+ * Render one preference row as `namespace  key  updated_at  <value preview>`.
+ *
+ * Values stored under a denied key name are never printed. Preferences must not
+ * hold secrets, so this is a defensive backstop rather than a supported use.
+ */
+function formatPreferenceRecord(record: AdapterPreferenceRecord): string {
+  const preview = isDeniedKey(record.key)
+    ? "<redacted>"
+    : previewPreferenceValue(record.valueJson);
+  return `${record.namespace}  ${record.key}  ${record.updatedAt}  ${preview}`;
+}
+
+// ---------------------------------------------------------------------------
 // runtime status
 // ---------------------------------------------------------------------------
 
@@ -328,6 +408,76 @@ async function runRuntimeJournal(
 }
 
 // ---------------------------------------------------------------------------
+// runtime preferences
+// ---------------------------------------------------------------------------
+
+/**
+ * List stored adapter preferences for one namespace.
+ *
+ * Read-only: the command opens the existing store, calls `list`, and closes it.
+ * It never writes, creates, or migrates anything.
+ */
+async function runRuntimePreferences(
+  ctx: RuntimeCommandContext,
+  _dbPath: string,
+  store: RuntimeStore,
+): Promise<Result<number, CliError>> {
+  const { terminal, theme } = ctx;
+  const namespace = ctx.namespace;
+
+  // The preference repository lists one namespace at a time and exposes no
+  // namespace enumeration, so there is no honest "all namespaces" listing to
+  // print. Say so instead of guessing a namespace or implying the store is empty.
+  if (namespace === undefined) {
+    terminal.stderr(
+      [
+        `${theme.boldYellow("Usage:")} weave runtime preferences --namespace <ns> [--limit <n>]`,
+        "",
+        `  ${theme.dim("Preferences are stored per namespace and are listed one namespace at a time.")}`,
+      ].join("\n"),
+    );
+    await store.close();
+    return ok(1);
+  }
+
+  const limit = clampAdapterPreferenceListLimit(ctx.limit);
+  const recordsResult = await store.preferences.list(namespace, limit);
+
+  if (recordsResult.isErr()) {
+    terminal.stderr(
+      `Error querying preferences: ${recordsResult.error.message}`,
+    );
+    await store.close();
+    return ok(1);
+  }
+
+  const records = recordsResult.value.slice(0, limit);
+
+  const lines: string[] = [
+    "",
+    `${theme.boldCyan("Adapter Preferences")} ${theme.dim(`(namespace: ${namespace}, limit: ${limit}, showing: ${records.length})`)}`,
+    "",
+  ];
+
+  if (records.length === 0) {
+    lines.push(
+      `  ${theme.dim(`No preferences stored in namespace "${namespace}".`)}`,
+    );
+    lines.push("");
+  } else {
+    for (const record of records) {
+      lines.push(formatPreferenceRecord(record));
+    }
+    lines.push("");
+  }
+
+  terminal.stdout(lines.join("\n"));
+
+  await store.close();
+  return ok(0);
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -373,6 +523,10 @@ export async function runRuntime(
       );
     }
     return runRuntimeStatus(ctx, dbPath, store, schemaVersion);
+  }
+
+  if (ctx.subcommand === "preferences") {
+    return runRuntimePreferences(ctx, dbPath, store);
   }
 
   return runRuntimeJournal(ctx, dbPath, store);

@@ -52,10 +52,12 @@ export interface ParsedArgs {
     project: boolean;
     /** --global flag for validate */
     global: boolean;
-    /** --limit <n> for runtime journal */
+    /** --limit <n> for runtime journal and runtime preferences */
     limit?: number;
-    /** runtime subcommand: status | journal */
-    runtimeSubcommand?: "status" | "journal";
+    /** --namespace <ns> for runtime preferences */
+    namespace?: string;
+    /** runtime subcommand: status | journal | preferences */
+    runtimeSubcommand?: "status" | "journal" | "preferences";
     /** prompt subcommand: inspect | list | self-modify */
     promptSubcommand?: "inspect" | "list" | "self-modify";
     /** agent name for `prompt inspect <agent>` */
@@ -362,6 +364,18 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       flags.limit = parsed;
       continue;
     }
+    if (arg === "--namespace") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--namespace",
+          message: "--namespace requires a preference namespace",
+        });
+      }
+      flags.namespace = val;
+      continue;
+    }
     if (arg === "--agent") {
       const val = args[++i];
       if (!val || val.startsWith("-")) {
@@ -442,9 +456,9 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       }
     }
 
-    // runtime subcommands: status, journal
+    // runtime subcommands: status, journal, preferences
     if (command === "runtime" && flags.runtimeSubcommand === undefined) {
-      if (arg === "status" || arg === "journal") {
+      if (arg === "status" || arg === "journal" || arg === "preferences") {
         flags.runtimeSubcommand = arg;
         continue;
       }

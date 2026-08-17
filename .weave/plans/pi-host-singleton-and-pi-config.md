@@ -206,7 +206,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - Tests cover: fresh initialization at v6; upgrade from a v5 fixture; set/get round-trip; overwrite updates `updated_at`; bounds rejections; `list` limit clamping; removal; in-memory parity.
     - `bun run --filter '@weaveio/weave-engine' test` and `bun run typecheck` pass.
 
-- [ ] 8. Add the bounded read-only CLI query
+- [x] 8. Add the bounded read-only CLI query
   - **What**: `weave runtime preferences` prints stored adapter preferences with bounded output, matching the existing read-only runtime command style.
   - **Files**: `packages/cli/src/args.ts`, `packages/cli/src/commands/runtime.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`
   - **Depends on**: Task 7
