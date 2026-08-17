@@ -747,6 +747,14 @@
   - class BunPathContainmentPort
   - class NullPathContainmentPort
   - _...11 more_
+- `packages/adapters/pi/src/pi-extension-inventory.ts`
+  - function collectPiExtensionInventory: (port, options) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
+  - interface PiExtensionInventoryDirectoryEntry
+  - interface PiExtensionInventoryConfiguredPackage
+  - interface PiExtensionInventoryToolInfo
+  - interface PiExtensionInventoryPort
+  - interface PiExtensionInventoryEntry
+  - _...17 more_
 - `packages/adapters/pi/src/plan-catalog.ts`
   - class BunPiPlanCatalogPort
   - class FakePiPlanCatalogPort

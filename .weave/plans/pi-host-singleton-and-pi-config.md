@@ -241,7 +241,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
   - **Acceptance**:
     - Tests cover: absent record; malformed record; `inherit-all`; `explicit` with all entries available; `explicit` with some entries missing; `explicit` with zero surviving entries; bounds rejections; Weave always first and never duplicated.
 
-- [ ] 10. Enumerate the Pi extension inventory
+- [x] 10. Enumerate the Pi extension inventory
   - **What**: A best-effort, read-only inventory of the extensions the host can load, marked with mandatory/optional status and availability, with typed degradation when host APIs are missing.
   - **Files**: `packages/adapters/pi/src/pi-extension-inventory.ts`, `packages/adapters/pi/src/__tests__/pi-extension-inventory.test.ts`
   - **Depends on**: Task 9
