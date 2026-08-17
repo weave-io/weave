@@ -3380,16 +3380,92 @@ export function createPiExtension(
           foregroundPlanEntry(planName),
         ),
       () => undefined,
-    )().mapErr(() => {
-      // A host that cannot record the entry still shows the rail for this
-      // session; only the restart reconstruction is lost.
-      deps.logger.warn(
-        {},
-        "could not record the foreground plan display entry",
-      );
-      return undefined;
+    )().match(
+      () => undefined,
+      () => {
+        // A host that cannot record the entry still shows the rail for this
+        // session; only the restart reconstruction is lost.
+        deps.logger.warn(
+          {},
+          "could not record the foreground plan display entry",
+        );
+      },
+    );
+    refreshPlanSurfaces(ctx);
+  }
+
+  // -------------------------------------------------------------------------
+  // Foreground plan observation: one bounded generation/root/latest guard
+  // -------------------------------------------------------------------------
+
+  /**
+   * What one foreground-plan observation was started for.
+   *
+   * Every observation awaits at least a directory listing, and some await a
+   * plan read as well. Three things can change underneath that await: the
+   * session can be replaced (`session_start` bumps the generation), the
+   * project root can change with it, and the user can send a newer message.
+   * A token records all three at the START, and nothing is adopted, recorded
+   * or painted unless all three still hold.
+   */
+  interface ForegroundPlanToken {
+    readonly generation: number;
+    readonly root: string;
+    readonly ctx: PiSessionContext;
+    readonly request: number;
+  }
+
+  /**
+   * Bounded latest-request counter. It wraps rather than growing, because only
+   * "is this still the newest observation?" is ever asked of it.
+   */
+  const foregroundPlanObservations = { latest: 0 };
+  const MAX_FOREGROUND_PLAN_REQUEST_ID = 1_000_000;
+
+  function beginForegroundPlanObservation(
+    ctx: PiSessionContext,
+  ): ForegroundPlanToken {
+    foregroundPlanObservations.latest =
+      foregroundPlanObservations.latest >= MAX_FOREGROUND_PLAN_REQUEST_ID
+        ? 1
+        : foregroundPlanObservations.latest + 1;
+    return {
+      generation: sessionStartSequence,
+      root: ctx.cwd,
+      ctx,
+      request: foregroundPlanObservations.latest,
+    };
+  }
+
+  /**
+   * True when the session, the project root and the request this observation
+   * was started for are all still the current ones.
+   *
+   * An older slow observation therefore cannot overwrite a newer one, and a
+   * prior session's observation cannot restore its plan into the session that
+   * replaced it.
+   */
+  function foregroundPlanObservationCurrent(
+    token: ForegroundPlanToken,
+  ): boolean {
+    return (
+      token.generation === sessionStartSequence &&
+      token.request === foregroundPlanObservations.latest &&
+      token.root === latestSessionCtx?.cwd
+    );
+  }
+
+  /**
+   * Runs one fire-and-forget observation without letting a rejection escape.
+   *
+   * These run beside the user's turn, never inside it, so a failure is a
+   * bounded log line and an unchanged rail - never an unhandled rejection.
+   */
+  function runForegroundPlanObservation(work: Promise<void>): void {
+    const settle = (): void => undefined;
+    void work.then(settle, () => {
+      deps.logger.warn({}, "foreground plan observation failed");
     });
-    void syncActivePlanSurfaces(ctx);
   }
 
   /**
@@ -3418,32 +3494,71 @@ export function createPiExtension(
       return;
     }
     planRefreshCell.running = true;
-    void syncActivePlanSurfaces(ctx).then(() => {
+    const generation = sessionStartSequence;
+    const root = ctx.cwd;
+    // The resolver's own last-request-wins guard, given this refresh's session
+    // and root: a lookup that outlives either paints nothing rather than
+    // repainting a session that has been replaced.
+    const stillCurrent = (): boolean =>
+      generation === sessionStartSequence && root === latestSessionCtx?.cwd;
+    const settle = (): void => {
       planRefreshCell.running = false;
       if (!planRefreshCell.dirty) return;
       planRefreshCell.dirty = false;
+      if (!stillCurrent()) return;
       refreshPlanSurfaces(ctx);
-    });
+    };
+    // Both arms: a rejected lookup must not leave the coalescing cell latched,
+    // and must not escape as an unhandled rejection either.
+    void syncActivePlanSurfaces(ctx, stillCurrent).then(settle, settle);
   }
 
   /**
    * Reconstructs the foreground plan identity from this session's own bounded
-   * adapter-owned entry.
+   * adapter-owned entry, and adopts it only if it is still a plan of THIS
+   * project root.
    *
    * Only that entry is read. Model prose, assistant text, tool output and
    * every other extension's entries are structurally excluded, so a restart
-   * cannot be steered into displaying a plan the user never selected.
+   * cannot be steered into displaying a plan the user never selected. The
+   * recorded name is then revalidated against the current root's catalog
+   * before it reaches the rail: a session moved to another worktree, or one
+   * whose plan has since been deleted or renamed, shows nothing rather than a
+   * plan that is not there.
    */
   function restoreForegroundPlanFromSession(ctx: PiSessionContext): void {
     const entries = readSessionManagerEntries(ctx, () => undefined);
     const recorded = readForegroundPlanEntry(entries);
-    if (recorded !== undefined) foregroundPlanDisplay.select(recorded);
+    if (recorded === undefined) return;
+    const token = beginForegroundPlanObservation(ctx);
+    runForegroundPlanObservation(
+      adoptCataloguedForegroundPlan(token, recorded),
+    );
+  }
+
+  /**
+   * Adopts `planName` only if it is in the current root's plan catalog and the
+   * observation is still the current one.
+   *
+   * The catalog is listed for the token's OWN root, never for whatever root
+   * the session happens to have by the time the listing returns.
+   */
+  async function adoptCataloguedForegroundPlan(
+    token: ForegroundPlanToken,
+    planName: string,
+  ): Promise<void> {
+    if (!foregroundPlanObservationCurrent(token)) return;
+    const listed = await deps.planCatalogPort.listPlanNames(token.root);
+    if (!foregroundPlanObservationCurrent(token)) return;
+    if (listed.isErr() || !listed.value.includes(planName)) return;
+    if (!foregroundPlanDisplay.select(planName)) return;
+    refreshPlanSurfaces(token.ctx);
   }
 
   /**
    * Adopts a foreground plan named by one direct interactive message.
    *
-   * Three independent proofs are required before a single column of the rail
+   * Four independent proofs are required before a single column of the rail
    * moves, and any one of them failing leaves the rail exactly as it was:
    *
    * 1. the message is the USER's own interactive submission;
@@ -3451,7 +3566,11 @@ export function createPiExtension(
    *    `.weave/plans/<safe-name>.md` inside an explicit execution request;
    * 3. that name is in THIS project root's plan catalog and its snapshot
    *    reads, so a plan that exists only in another worktree is never read
-   *    across roots and never displayed.
+   *    across roots and never displayed;
+   * 4. the session, the root and the request are still the current ones when
+   *    each await returns - so an older slow message cannot overwrite a newer
+   *    one, and a message observed just before a session switch cannot paint
+   *    into the session that replaced it.
    *
    * Read-only throughout: it lists a directory, reads a plan, and repaints.
    */
@@ -3470,11 +3589,14 @@ export function createPiExtension(
     if (planName === foregroundPlanDisplay.planName()) return;
     const workflowController = workflowControllerCell.controller;
     if (workflowController === undefined) return;
-    const listed = await deps.planCatalogPort.listPlanNames(ctx.cwd);
+    const token = beginForegroundPlanObservation(ctx);
+    const listed = await deps.planCatalogPort.listPlanNames(token.root);
+    if (!foregroundPlanObservationCurrent(token)) return;
     if (listed.isErr() || !listed.value.includes(planName)) return;
     const snapshot = await workflowController.readPlanSnapshot(planName);
+    if (!foregroundPlanObservationCurrent(token)) return;
     if (snapshot.isErr()) return;
-    adoptForegroundPlan(pi, ctx, planName);
+    adoptForegroundPlan(pi, token.ctx, planName);
   }
 
   function buildWorkflowTracker(projectRoot: string): PiActiveWorkflowTracker {
@@ -4735,7 +4857,9 @@ export function createPiExtension(
       // handler, and the parse is strict enough that a message merely
       // mentioning a plan file moves nothing. It never changes the input's
       // routing: the adoption runs beside the decision below, not inside it.
-      void observeForegroundPlanRequest(pi, event, ctx);
+      runForegroundPlanObservation(
+        observeForegroundPlanRequest(pi, event, ctx),
+      );
       if (!directStepChildRegistry.isActive()) return { action: "continue" };
       const confirmed = await ctx.ui.confirm(
         "Weave workflow active",

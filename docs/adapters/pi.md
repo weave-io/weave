@@ -131,20 +131,39 @@ The third source is **display-only**. It starts, resumes, and authorizes
 nothing, acquires no lease, and writes no runtime state. Exactly two
 user-authorized paths may set it: `/weave:start`, from the plan the user
 selected and confirmed, and one direct interactive message that explicitly asks
-for exactly one contained `.weave/plans/<name>.md` to be executed. The direct
-path is strict: the message is parsed within a bounded length, must name one
-safe plan basename inside this project root, must carry an explicit execution
-request, and the name must be in this root's plan catalog with a readable
-snapshot. Prose about "the plan", assistant text, system prompts, tool output,
-a traversal or absolute path, and two different plans in one message all set
-nothing.
+for exactly one contained `.weave/plans/<name>.md` to be executed.
+
+The direct path is parsed by a closed grammar, not by searching for keywords.
+The message must be within a bounded length; the clause immediately before the
+plan path must be, in full, an optional lead-in (`please`, `let's`, `go ahead
+and`, …), one execution verb (`execute`, `run`, `start`, `implement`,
+`continue`, `resume`, `finish`, `work through`, …), and optional connectors
+(`the`, `this`, `plan`, `at`, `through`, …); and the name must be in this
+root's plan catalog with a readable snapshot. A question mark anywhere, a
+negation anywhere (`don't run …`, `run the tests, not …`), and any clause that
+is not an execution request all set nothing.
+
+A plan-path-like mention the parser will not accept rejects the **whole**
+message, even when a valid path sits beside it: a traversal, an absolute path,
+a nested subdirectory, a different slash or case spelling, an unsafe basename,
+an ambiguous tail such as `alpha.md.bak`, or two different plans. Prose about
+"the plan", assistant text, system prompts, and tool output never reach this
+path at all.
 
 A selection is recorded as one bounded adapter-owned session entry, and a
 restart reconstructs the identity from that entry alone — never by re-reading
-conversation. A newer explicit selection supersedes it, a new session clears
-it, and a plan with no incomplete task left clears it too. A plan that exists
-only in another worktree is not read across roots: the rail shows the agent row
-alone.
+conversation. The whole envelope is validated (a Pi `custom` entry with this
+adapter's `customType` and a strict payload), so an ordinary message that
+happens to carry those fields reconstructs nothing, and the reconstructed name
+is revalidated against this root's plan catalog before it reaches the rail. A
+newer explicit selection supersedes it, a new session clears it, and a plan
+with no incomplete task left clears it too. A plan that exists only in another
+worktree is not read across roots: the rail shows the agent row alone.
+
+Every one of these observations is guarded by the session generation, the
+project root, and its own request ordinal, rechecked after each read: an older
+slow request never overwrites a newer one, and an observation started before a
+session switch never paints into the session that replaced it.
 
 Progress is re-read when the work can have changed it — after a turn settles
 and after the tool completions that can write a plan file — so the task marks,

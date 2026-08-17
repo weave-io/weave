@@ -9872,3 +9872,188 @@ describe("createPiExtension: the Plan Rail follows a foreground plan execution",
     expect(lease.isOk() ? lease.value : "unreadable").toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bug B — every foreground plan observation is guarded by session, root and
+// request
+// ---------------------------------------------------------------------------
+
+/**
+ * A catalog port whose listing is released by the test, one call at a time.
+ *
+ * Every foreground observation awaits this listing, which is exactly where a
+ * newer message, a session switch, or a root replacement can overtake it.
+ */
+class DeferredPlanCatalogPort {
+  readonly pending: (() => void)[] = [];
+
+  constructor(private readonly names: readonly string[]) {}
+
+  listPlanNames(
+    _projectRoot: string,
+  ): ResultAsync<readonly string[], PiAdapterFailure> {
+    return ResultAsync.fromSafePromise(
+      new Promise<readonly string[]>((resolve) => {
+        this.pending.push(() => resolve([...this.names]));
+      }),
+    );
+  }
+}
+
+/** A plan state provider that can answer for more than one plan. */
+function multiPlanProvider(
+  snapshots: readonly PlanTaskSnapshot[],
+): MutablePlanStateProvider {
+  const byName = new Map(snapshots.map((snap) => [snap.planName, snap]));
+  const provider = new MutablePlanStateProvider(snapshots[0]);
+  provider.readSnapshot = (planName: string) => {
+    const found = byName.get(planName);
+    return found === undefined
+      ? (errAsync({ type: "PlanMissing" as const, planName }) as ReturnType<
+          MutablePlanStateProvider["readSnapshot"]
+        >)
+      : (okAsync(found) as ReturnType<
+          MutablePlanStateProvider["readSnapshot"]
+        >);
+  };
+  return provider;
+}
+
+function installDeferredForegroundExtension(
+  host: RecordingFakePiHost,
+  provider: MutablePlanStateProvider,
+  catalog: DeferredPlanCatalogPort,
+): void {
+  installExtension(host, "0.81.1", {
+    capabilityProber: allOkCapabilityProber(),
+    configActivator: fakeConfigActivator({
+      agents: [
+        { agentName: "loom", source: "explicit", descriptor: loomDescriptor() },
+        {
+          agentName: "tapestry",
+          source: "explicit",
+          descriptor: tapestryDescriptor(),
+        },
+      ],
+      errors: [],
+    }),
+    runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+    planStateProviderFactory: () => provider,
+    planCatalogPort: catalog as unknown as FakePiPlanCatalogPort,
+    telemetryJournal: { write: (_entry: unknown) => okAsync(undefined) },
+    telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+  });
+}
+
+describe("createPiExtension: foreground plan observations are race-safe", () => {
+  it("lets the newest request win when an older one finishes last", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const catalog = new DeferredPlanCatalogPort(["alpha-plan", "beta-plan"]);
+    installDeferredForegroundExtension(
+      host,
+      multiPlanProvider([
+        foregroundPlanSnapshot("alpha-plan"),
+        foregroundPlanSnapshot("beta-plan"),
+      ]),
+      catalog,
+    );
+    await host.triggerSessionStart();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/alpha-plan.md",
+    });
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/beta-plan.md",
+    });
+    expect(catalog.pending).toHaveLength(2);
+
+    // The NEWER observation completes first, then the older one returns. The
+    // older result describes a request the user has already superseded.
+    catalog.pending[1]?.();
+    await settlePlanSurfaces();
+    catalog.pending[0]?.();
+    await settlePlanSurfaces();
+
+    const rows = planRailPlainLines(host);
+    expect(rows[0]).toContain("beta-plan");
+    expect(rows[0]).not.toContain("alpha-plan");
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "beta-plan" },
+      },
+    ]);
+  });
+
+  it("drops an observation whose session was replaced while it awaited", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const catalog = new DeferredPlanCatalogPort(["alpha-plan"]);
+    installDeferredForegroundExtension(
+      host,
+      multiPlanProvider([foregroundPlanSnapshot("alpha-plan")]),
+      catalog,
+    );
+    await host.triggerSessionStart();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/alpha-plan.md",
+    });
+    expect(catalog.pending).toHaveLength(1);
+
+    // A new session starts before the listing returns. The observation belongs
+    // to the session that is gone, so it may not paint into its successor.
+    await host.triggerSessionStart();
+    catalog.pending[0]?.();
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(
+      host.appendedEntries.some(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toBe(false);
+  });
+
+  it("revalidates a reconstructed plan against this root's catalog", async () => {
+    // The session entry records a plan this project root does not have: the
+    // worktree moved, or the plan was deleted or renamed. A restart shows the
+    // agent identity alone rather than a plan that is not there.
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: {
+        getSessionId: () => "fake-session-2",
+        getSessionFile: () => "/fake/sessions/fake-session-2.jsonl",
+        isPersisted: () => true,
+        getHeader: () => ({ id: "fake-session-2" }),
+        getEntries: () => [
+          {
+            type: "custom",
+            customType: FOREGROUND_PLAN_ENTRY_TYPE,
+            data: { v: 1, planName: "other-worktree-plan" },
+          },
+        ],
+      } as never,
+    });
+    const provider = new MutablePlanStateProvider(
+      foregroundPlanSnapshot("other-worktree-plan"),
+    );
+    installForegroundPlanRailExtension(host, provider, ["foreground-plan"]);
+
+    await host.triggerSessionStart();
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(planRailPlainLines(host)[0]).not.toContain("other-worktree-plan");
+  });
+});
