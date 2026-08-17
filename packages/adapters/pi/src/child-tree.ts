@@ -409,8 +409,20 @@ export interface PiChildTreeNode {
   readonly startedAtMs: number;
   readonly elapsedMs: number;
   readonly usage: PiChildUsageAggregate;
-  /** Latest streamed output, truncated to \<=4 KiB valid UTF-8 at a code-point boundary. Transient only. */
+  /**
+   * Latest streamed ANSWER text, truncated to \<=4 KiB valid UTF-8 at a
+   * code-point boundary. Transient only.
+   *
+   * Raw chain-of-thought never reaches this field. It is the parent-visible
+   * preview the picker, the tree render and the delegation card all read, so a
+   * reasoning fallback here would publish the model's private reasoning.
+   */
   readonly latestOutput: string;
+  /**
+   * Content-free marker that the child streamed raw reasoning and has not yet
+   * produced answer text for this turn. Carries no chain-of-thought prose.
+   */
+  readonly reasoningObserved?: boolean;
 }
 
 export const MAX_LATEST_OUTPUT_BYTES = 4 * 1024;

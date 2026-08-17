@@ -4,7 +4,10 @@ import {
   type PiChildProviderError,
 } from "./child-provider-error.js";
 import { formatPiChildProviderError } from "./child-provider-error-render.js";
-import type { PiChildSessionEvent } from "./child-session-events.js";
+import {
+  type PiChildSessionEvent,
+  redactRawReasoningFromEvent,
+} from "./child-session-events.js";
 /** Maximum size of one private transcript event, measured as UTF-8 JSON bytes. */
 export const MAX_TRANSCRIPT_HISTORY_EVENT_BYTES = 2 * 1024 * 1024;
 /** Maximum total bytes retained by the in-memory event history. */
@@ -169,8 +172,17 @@ export interface PiChildTranscriptUsageEntry
 export interface PiChildTranscriptQueueEntry
   extends PiChildTranscriptBaseEntry {
   readonly kind: "queue";
-  readonly queue: readonly unknown[];
-  readonly size: number;
+  /**
+   * The queued items the host actually named, or `undefined` when the report
+   * carried none. An unreported queue is UNKNOWN, never empty.
+   */
+  readonly queue?: readonly unknown[];
+  /**
+   * The depth the host stated, or `undefined` when it stated none. Only an
+   * explicit numeric size or a complete item list may produce a number,
+   * including zero.
+   */
+  readonly size?: number;
 }
 
 export interface PiChildTranscriptStatusEntry
@@ -240,7 +252,8 @@ export interface PiChildTranscriptState {
   readonly activeMessageId?: string;
   readonly selectedMessageId?: string;
   readonly usage: PiChildTranscriptUsage;
-  readonly queue: readonly unknown[];
+  /** Newest reported queue contents; absent while the child has reported none. */
+  readonly queue?: readonly unknown[];
   readonly status?: string;
   readonly statusMessage?: string;
   readonly retry?: { readonly attempt?: number; readonly reason?: string };
@@ -291,7 +304,6 @@ export const EMPTY_PI_CHILD_TRANSCRIPT_STATE: PiChildTranscriptState = {
   branchOrder: [{ id: DEFAULT_BRANCH_ID, order: 0 }],
   selectedBranchId: DEFAULT_BRANCH_ID,
   usage: {},
-  queue: [],
   extensionUi: [],
 };
 
@@ -656,6 +668,11 @@ function contentBlocksText(value: unknown): string | undefined {
     }
     const record = recordValue(block);
     if (record === undefined) continue;
+    // Raw chain-of-thought is never body text. A carried message that blends a
+    // `thinking` block into its content would otherwise print the model's
+    // private reasoning as the assistant's own answer.
+    const blockType = stringValue(record.type);
+    if (blockType === "thinking" || blockType === "reasoning") continue;
     const blockText = stringValue(record.text);
     if (blockText !== undefined) text += blockText;
   }
@@ -947,50 +964,15 @@ function addEntry(
   return ok({ ...state, entries: [...state.entries, entry] });
 }
 
-/**
- * Strips raw chain-of-thought TEXT out of one event while preserving its
- * SHAPE, so the reducer still learns that the child reasoned.
- *
- * It runs before the bounded history append as well as before the entry
- * reduce: raw reasoning is never rendered, so retaining it anywhere in
- * transcript state would only create a surface for it to escape from.
- */
-function withoutRawReasoning(event: PiChildSessionEvent): PiChildSessionEvent {
-  if (event.type === "thinking") {
-    return event.text === undefined ? event : { ...event, text: "" };
-  }
-  if (event.type !== "message_update") return event;
-  const record = event as unknown as RecordValue;
-  const delta = recordValue(record.delta);
-  const assistantEvent = recordValue(record.assistantMessageEvent);
-  const redactedDelta =
-    delta !== undefined && typeof delta.thinking === "string"
-      ? { ...delta, thinking: "" }
-      : undefined;
-  const redactedAssistant =
-    assistantEvent !== undefined &&
-    assistantEvent.type === "thinking_delta" &&
-    typeof assistantEvent.delta === "string"
-      ? { ...assistantEvent, delta: "" }
-      : undefined;
-  if (redactedDelta === undefined && redactedAssistant === undefined) {
-    return event;
-  }
-  return {
-    ...event,
-    ...(redactedDelta === undefined ? {} : { delta: redactedDelta }),
-    ...(redactedAssistant === undefined
-      ? {}
-      : { assistantMessageEvent: redactedAssistant }),
-  } as PiChildSessionEvent;
-}
-
 function applyEventBody(
   state: PiChildTranscriptState,
   rawEvent: PiChildSessionEvent,
   sequence: number,
 ): Result<PiChildTranscriptState, PiChildTranscriptError> {
-  const event = withoutRawReasoning(rawEvent);
+  // Redaction runs before the bounded history append as well as before the
+  // entry reduce: raw reasoning is never rendered, so retaining it anywhere in
+  // transcript state would only create a surface for it to escape from.
+  const event = redactRawReasoningFromEvent(rawEvent);
   const history = appendHistory(state, event, sequence);
   if (history.isErr()) return err(history.error);
   let next: PiChildTranscriptState = { ...state, ...history.value };
@@ -1302,7 +1284,14 @@ function applyEventBody(
 
   if (eventType === "queue_change") {
     const eventRecord = event as unknown as RecordValue;
-    const queue = Array.isArray(eventRecord.queue) ? eventRecord.queue : [];
+    // An unreported queue stays UNKNOWN. A `queue_change` that names neither a
+    // size nor a list states nothing, and inferring `0` from the missing
+    // fields would tell the reader, with the child's own authority, that a
+    // steered child has nothing queued.
+    const queue = Array.isArray(eventRecord.queue)
+      ? eventRecord.queue
+      : undefined;
+    const size = numberValue(eventRecord.size) ?? queue?.length;
     const entry: PiChildTranscriptQueueEntry = {
       ...baseEntry(
         nextEntryId(next, "queue", sequence),
@@ -1311,11 +1300,14 @@ function applyEventBody(
         eventType,
       ),
       kind: "queue",
-      queue,
-      size: numberValue(eventRecord.size) ?? queue.length,
+      ...(queue === undefined ? {} : { queue }),
+      ...(size === undefined ? {} : { size }),
     };
     const added = addEntry(next, entry);
-    return added.map((value) => ({ ...value, queue }));
+    return added.map((value) => ({
+      ...value,
+      ...(queue === undefined ? {} : { queue }),
+    }));
   }
 
   if (eventType === "status") {
@@ -1701,7 +1693,7 @@ export type PiTranscriptComponentPayload =
       readonly error?: string;
     }
   | { readonly type: "usage"; readonly usage: PiChildTranscriptUsage }
-  | { readonly type: "queue"; readonly size: number }
+  | { readonly type: "queue"; readonly size?: number }
   | {
       readonly type: "status";
       readonly status: string;
@@ -2238,7 +2230,11 @@ function renderEntry(
         entry.sequence,
         entry.kind,
         "queue",
-        `queue: size=${entry.size} ${summarizeTranscriptValue(entry.queue)}`,
+        `queue: size=${entry.size ?? "unknown"}${
+          entry.queue === undefined
+            ? ""
+            : ` ${summarizeTranscriptValue(entry.queue)}`
+        }`,
         width,
       ),
     );
@@ -2461,7 +2457,10 @@ function payloadFor(
     case "usage":
       return { type: "usage", usage: entry.usage };
     case "queue":
-      return { type: "queue", size: entry.size };
+      return {
+        type: "queue",
+        ...(entry.size === undefined ? {} : { size: entry.size }),
+      };
     case "status":
       return {
         type: "status",

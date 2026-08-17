@@ -2828,7 +2828,7 @@ describe("PiRpcChild", () => {
     expect(streamingUpdates.at(-1)?.latestOutput).toBe("second turn");
   });
 
-  it("streams thinking deltas so a reasoning child never looks frozen, and yields to answer text once it starts", async () => {
+  it("announces reasoning as a content-free marker and never previews chain-of-thought", async () => {
     const processPort = new FakeChildProcessPort();
     const streamingUpdates: PiChildTreeNode[] = [];
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
@@ -2846,6 +2846,7 @@ describe("PiRpcChild", () => {
     await responder.send("handshake", "child-1", {}, secretBytes);
     await spawnPromise;
 
+    const updatesBeforeThinking = streamingUpdates.length;
     spawned.emitLine({
       type: "message_update",
       assistantMessageEvent: { type: "thinking_delta", delta: "weigh" },
@@ -2854,16 +2855,23 @@ describe("PiRpcChild", () => {
       type: "message_update",
       assistantMessageEvent: { type: "thinking_delta", delta: "ing it" },
     });
-    expect(child.snapshot().latestOutput).toBe("weighing it");
-    expect(streamingUpdates.at(-1)?.latestOutput).toBe("weighing it");
+    // The child still says something is happening, so a long reasoning stretch
+    // does not look frozen - but it says it WITHOUT the reasoning prose.
+    expect(streamingUpdates.length).toBeGreaterThan(updatesBeforeThinking);
+    expect(child.snapshot().latestOutput).toBe("");
+    expect(child.snapshot().reasoningObserved).toBe(true);
+    expect(streamingUpdates.at(-1)?.latestOutput).toBe("");
+    expect(streamingUpdates.at(-1)?.reasoningObserved).toBe(true);
+    expect(JSON.stringify(streamingUpdates)).not.toContain("weigh");
 
-    // Real answer text always wins: the reasoning preview is dropped the
-    // moment the model actually starts speaking.
+    // Real answer text always wins: the marker is dropped the moment the
+    // model actually starts speaking.
     spawned.emitLine({
       type: "message_update",
       assistantMessageEvent: { type: "text_delta", delta: "answer" },
     });
     expect(child.snapshot().latestOutput).toBe("answer");
+    expect(child.snapshot().reasoningObserved).toBe(false);
     expect(streamingUpdates.at(-1)?.latestOutput).toBe("answer");
 
     // Once text exists, later thinking never overwrites it.
@@ -2873,14 +2881,18 @@ describe("PiRpcChild", () => {
     });
     expect(child.snapshot().latestOutput).toBe("answer");
 
-    // A new turn retains the previous preview until its first delta arrives.
+    // A new turn retains the previous preview until its first delta arrives,
+    // and a reasoning-only new turn clears it to nothing rather than to
+    // chain-of-thought.
     spawned.emitLine({ type: "turn_start" });
     expect(child.snapshot().latestOutput).toBe("answer");
     spawned.emitLine({
       type: "message_update",
       assistantMessageEvent: { type: "thinking_delta", delta: "next thought" },
     });
-    expect(child.snapshot().latestOutput).toBe("next thought");
+    expect(child.snapshot().latestOutput).toBe("");
+    expect(child.snapshot().reasoningObserved).toBe(true);
+    expect(JSON.stringify(child.snapshot())).not.toContain("next thought");
   });
 
   it("settles from the latest completed assistant message, not transient or control text", async () => {

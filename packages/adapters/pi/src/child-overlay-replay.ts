@@ -43,6 +43,7 @@ import {
 import {
   type PiChildSessionEvent,
   parsePiChildSessionEvent,
+  redactRawReasoningFromEvent,
 } from "./child-session-events.js";
 import {
   createPiChildTranscriptState,
@@ -94,7 +95,15 @@ export {
 function replayEvent(candidate: unknown): ChildOverlayReplayStep | undefined {
   const parsed = parsePiChildSessionEvent(candidate);
   if (!parsed.success) return undefined;
-  return { kind: "event", event: redactProviderErrorFromEvent(parsed.data) };
+  // Replay steps are retained state: they are serialized with the overlay
+  // window and re-reduced on every rebuild, so raw reasoning is stripped
+  // before the step exists rather than at the point it would be rendered.
+  return {
+    kind: "event",
+    event: redactRawReasoningFromEvent(
+      redactProviderErrorFromEvent(parsed.data),
+    ),
+  };
 }
 
 export function pushReplayEvent(
@@ -805,7 +814,11 @@ export function projectLiveEntry(
   expanded: boolean,
   assistantEntryId?: string,
 ): ChildOverlayEntry | undefined {
-  const replay: readonly ChildOverlayReplayStep[] = [{ kind: "event", event }];
+  // Same contract as the historical mapper's `replayEvent`: a retained step
+  // never carries chain-of-thought prose, only the fact that it happened.
+  const replay: readonly ChildOverlayReplayStep[] = [
+    { kind: "event", event: redactRawReasoningFromEvent(event) },
+  ];
   switch (event.type) {
     case "message_start":
     case "message_update":
@@ -925,25 +938,34 @@ export function projectLiveEntry(
     // row, so a live child showed the parent's queued follow-ups while the
     // same window rebuilt through `transcriptFromOverlayEntries` showed none.
     // The row stays suppressed in the full pane; only the fact is retained.
-    case "queue_change":
+    case "queue_change": {
+      const size = queueChangeSize(event);
       return {
         id: `live-queue-${sequence}`,
         sequence,
         kind: "status",
-        text: boundText(`queue: ${queueChangeSize(event)}`),
+        text: boundText(`queue: ${size ?? "unknown"}`),
         expanded,
         replay,
       };
+    }
     default:
       return undefined;
   }
 }
 
-/** Queued follow-ups a `queue_change` reports; an unstated count reads as 0. */
-function queueChangeSize(event: PiChildSessionEvent): number {
+/**
+ * Queued follow-ups a `queue_change` reports, or `undefined` when it reported
+ * none.
+ *
+ * An unstated count is UNKNOWN, never zero: reading a missing size as `0`
+ * published the child's own authority for a claim it never made, and the rail
+ * then told the reader that a steered child had an empty queue.
+ */
+function queueChangeSize(event: PiChildSessionEvent): number | undefined {
   const record = event as unknown as Record<string, unknown>;
   if (typeof record.size === "number") return record.size;
-  return Array.isArray(record.queue) ? record.queue.length : 0;
+  return Array.isArray(record.queue) ? record.queue.length : undefined;
 }
 
 // ---------------------------------------------------------------------------

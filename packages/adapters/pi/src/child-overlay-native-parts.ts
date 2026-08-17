@@ -59,6 +59,10 @@ export function messageText(message: unknown): {
     }
     const b = recordOf(block);
     if (b === undefined) continue;
+    // Raw chain-of-thought is never body text. A message that blends a
+    // `thinking` block into its content would otherwise print the model's
+    // private reasoning as the assistant's own answer.
+    if (b.type === "thinking" || b.type === "reasoning") continue;
     if (typeof b.text === "string") text += b.text;
   }
   return { role, text: boundText(text) };

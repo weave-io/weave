@@ -326,12 +326,17 @@ function aggregateCost(usage: Record<string, unknown>): number | undefined {
 /** The newest queue report, or `undefined` when the child reported none. */
 function latestQueue(
   transcript: PiChildTranscriptState,
-): { readonly size: number; readonly first?: string } | undefined {
+): { readonly size?: number; readonly first?: string } | undefined {
   for (let i = transcript.entries.length - 1; i >= 0; i -= 1) {
     const entry = transcript.entries[i];
     if (entry?.kind !== "queue") continue;
-    const first = overlayPayloadText(entry.queue[0]);
-    return { size: entry.size, ...(first.length === 0 ? {} : { first }) };
+    // A report that named no depth leaves the count UNKNOWN, so the caller
+    // falls back to the descriptor's proven depth instead of printing zero.
+    const first = overlayPayloadText(entry.queue?.[0]);
+    return {
+      ...(entry.size === undefined ? {} : { size: entry.size }),
+      ...(first.length === 0 ? {} : { first }),
+    };
   }
   return undefined;
 }
@@ -358,7 +363,11 @@ function liveActivity(view: ChildOverlayView): string | undefined {
       return `running ${name}`;
     }
     if (newest.kind === "thinking") return "reasoning";
-    if (newest.kind === "queue" && newest.size > 0) {
+    if (
+      newest.kind === "queue" &&
+      newest.size !== undefined &&
+      newest.size > 0
+    ) {
       return `${newest.size} queued`;
     }
   }

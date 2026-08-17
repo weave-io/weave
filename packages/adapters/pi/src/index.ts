@@ -485,6 +485,7 @@ export type {
 export {
   buildChildPickerEntries,
   buildChildPickerMetadataEntries,
+  childPickerPreview,
   collectChildPickerCandidates,
   createChildPickerEntries,
   createChildPickerMetadataEntries,

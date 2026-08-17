@@ -725,10 +725,12 @@ function renderEntryRows(
     }
 
     case "queue": {
-      const first = overlayPayloadText(entry.queue[0]);
+      // An unreported depth prints as `unknown`: the row may not invent a
+      // number the child never stated.
+      const first = overlayPayloadText(entry.queue?.[0]);
       return [
         headRow(
-          `${gutter(paint, "queue", "warn")} ${paint.warn(`queue ${entry.size}`)}`,
+          `${gutter(paint, "queue", "warn")} ${paint.warn(`queue ${entry.size ?? "unknown"}`)}`,
           width,
         ),
         ...(first.length === 0

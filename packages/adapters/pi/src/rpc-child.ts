@@ -824,12 +824,15 @@ export class PiRpcChild {
   private usage: PiChildUsageAggregate = EMPTY_USAGE_AGGREGATE;
   private latestOutput = "";
   /**
-   * Transient reasoning preview for the current turn, held separately from
-   * `latestOutput` so visible answer text always takes precedence. Cleared
-   * when a new turn emits its first delta and as soon as real text arrives;
-   * never persisted and never part of the parent-visible projection.
+   * Content-free marker that the current turn has streamed raw reasoning.
+   *
+   * The prose itself is NEVER kept. A reasoning model can think for a long
+   * time before its first visible token, and this flag is what lets the parent
+   * say "the child is reasoning" during that stretch without restating a
+   * single word of chain-of-thought. Cleared when a new turn emits its first
+   * delta and as soon as real answer text arrives.
    */
-  private latestThinking = "";
+  private reasoningObserved = false;
   private resetPreviewOnNextDelta = false;
   private latestCompletedAssistantOutput = "";
   /**
@@ -992,8 +995,12 @@ export class PiRpcChild {
       startedAtMs: this.startedAtMs,
       elapsedMs: Math.max(0, this.now() - this.startedAtMs),
       usage: this.usage,
-      latestOutput:
-        this.latestOutput.length > 0 ? this.latestOutput : this.latestThinking,
+      // Answer text only. Raw reasoning never becomes the parent-visible
+      // preview: this value reaches the child picker, the tree render and the
+      // delegation card, so a thinking fallback here would publish
+      // chain-of-thought in four places at once.
+      latestOutput: this.latestOutput,
+      reasoningObserved: this.reasoningObserved,
     };
   }
 
@@ -2278,7 +2285,7 @@ export class PiRpcChild {
       if (preview !== undefined) {
         if (this.resetPreviewOnNextDelta) {
           this.latestOutput = "";
-          this.latestThinking = "";
+          this.reasoningObserved = false;
           this.resetPreviewOnNextDelta = false;
         }
         // Accumulate streamed deltas into the current transient buffer
@@ -2286,10 +2293,9 @@ export class PiRpcChild {
         // `truncateLatestOutput` keeps the combined buffer bounded to
         // <=4KiB of valid UTF-8 at a code-point boundary.
         this.latestOutput = truncateLatestOutput(this.latestOutput + preview);
-        // Real answer text always wins over reasoning: once the model
-        // starts speaking, the thinking buffer stops being what the parent
-        // shows, so drop it instead of letting it linger behind the text.
-        this.latestThinking = "";
+        // Real answer text always wins over reasoning: once the model starts
+        // speaking, the reasoning marker stops being what the parent shows.
+        this.reasoningObserved = false;
         this.onStreamingUpdate?.(this.snapshot());
         return;
       }
@@ -2297,15 +2303,15 @@ export class PiRpcChild {
       if (thinking !== undefined) {
         if (this.resetPreviewOnNextDelta) {
           this.latestOutput = "";
-          this.latestThinking = "";
+          this.reasoningObserved = false;
           this.resetPreviewOnNextDelta = false;
         }
-        this.latestThinking = truncateLatestOutput(
-          this.latestThinking + thinking,
-        );
-        // Only surface reasoning while there is no visible answer text yet -
+        // The delta's PROSE is discarded here and nowhere kept; only the fact
+        // that it arrived survives.
+        this.reasoningObserved = true;
+        // Only announce reasoning while there is no visible answer text yet -
         // a reasoning model can think for a long time before its first
-        // token, and an empty preview makes a working child look frozen.
+        // token, and a silent snapshot makes a working child look frozen.
         if (this.latestOutput.length === 0) {
           this.onStreamingUpdate?.(this.snapshot());
         }

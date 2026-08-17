@@ -13,6 +13,13 @@ export interface PiChildPickerNode {
   readonly kind: PiChildPickerKind;
   readonly parentId?: string;
   readonly status: string;
+  /**
+   * A short, user-visible activity line.
+   *
+   * It carries the child's own ANSWER text or a canonical activity fact, never
+   * raw chain-of-thought. Build it with {@link childPickerPreview} rather than
+   * from a reasoning buffer.
+   */
   readonly preview?: string;
   readonly live: boolean;
   readonly recoverable?: boolean;
@@ -724,6 +731,30 @@ export function buildChildPickerEntries(
 export const createChildPickerEntries = buildChildPickerEntries;
 export function sanitizeChildPickerPreview(value: string | undefined): string {
   return sanitize(value);
+}
+
+/** The bounded facts a live child snapshot may contribute to its preview. */
+export interface PiChildPickerPreviewSource {
+  readonly latestOutput?: string;
+  readonly currentTool?: string;
+  readonly reasoningObserved?: boolean;
+}
+
+/**
+ * The safe preview for one live child, in priority order.
+ *
+ * Answer text first, then the canonical activity fact of the tool the child is
+ * running, then the content-free statement that it is reasoning. Raw
+ * chain-of-thought has no rank here at all: the picker is a user-visible
+ * surface, and a reasoning buffer projected into it would publish the model's
+ * private reasoning to every reader of the list.
+ */
+export function childPickerPreview(source: PiChildPickerPreviewSource): string {
+  const output = sanitize(source.latestOutput);
+  if (output.length > 0) return output;
+  const tool = sanitize(source.currentTool);
+  if (tool.length > 0) return `running ${tool}`;
+  return source.reasoningObserved === true ? "reasoning" : "";
 }
 
 export interface PiChildPickerState {

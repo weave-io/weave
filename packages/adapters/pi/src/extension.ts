@@ -141,6 +141,7 @@ import {
 } from "./child-overlay-keys.js";
 import {
   buildChildPickerEntries,
+  childPickerPreview,
   type PiChildPickerNode,
   sanitizeChildPickerPreview,
 } from "./child-picker.js";
@@ -3312,7 +3313,8 @@ export function createPiExtension(
         kind: registration.kind,
         parentId: snapshot.parentId,
         status: snapshot.status,
-        preview: sanitizeChildPickerPreview(snapshot.latestOutput),
+        // Answer text, else a canonical activity fact. Never chain-of-thought.
+        preview: childPickerPreview(snapshot),
         live: true,
         currentTool: snapshot.currentTool,
         generationId,

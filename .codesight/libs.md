@@ -445,8 +445,8 @@
   - function collectChildPickerCandidates: (input) => ResultAsync<readonly PiChildPickerCandidate[], PiChildPickerError>
   - function buildChildPickerEntries: (input) => Result<readonly PiChildPickerEntry[], PiChildPickerError>
   - function sanitizeChildPickerPreview: (value) => string
-  - function moveChildPicker: (state, delta) => PiChildPickerState
-  - _...23 more_
+  - function childPickerPreview: (source) => string
+  - _...25 more_
 - `packages/adapters/pi/src/child-process-port.ts`
   - function writeAllToSink: (sink, bytes) => ResultAsync<void, ChildProcessError>
   - function resolveKillSignal: (mode) => number | undefined
@@ -493,10 +493,10 @@
   - function parsePiChildUsageReport: (event) => Result<PiChildUsageReport, PiChildUsageError>
   - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
+  - function redactRawReasoningFromEvent: (event) => PiChildSessionEvent
   - function parsePiChildSessionEvent
   - interface PiChildUsageReport
-  - interface PiAssistantUsageFacts
-  - _...12 more_
+  - _...13 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority

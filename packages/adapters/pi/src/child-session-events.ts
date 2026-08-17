@@ -647,23 +647,36 @@ const nativeToolEndIsError = (record: Record<string, unknown>): boolean => {
  * consumer — the compact reducer, the card, the overlay rail — on one queue
  * fact, exactly as the native tool events above are normalized.
  *
- * The queue is REPORTED, never inferred: an absent or malformed array
- * contributes nothing, and the size is the count of the entries the host
- * actually named.
+ * The queue is REPORTED, never inferred, and a report is all-or-nothing.
+ * `queue_update` is the host's COMPLETE statement of both queues, so a size
+ * may only be derived from a record whose named lists are readable in full:
+ *
+ * - neither list present, or a present list that is not an array of strings,
+ *   or more entries than the bound admits, states NOTHING. The record is
+ *   returned untouched, so it leaves this parser as the existing typed
+ *   unknown variant and every consumer keeps the last proven depth.
+ * - at least one readable list makes the report authoritative, including the
+ *   authoritative zero of a host that named both lists and both were empty.
+ *
+ * Fabricating `{ size: 0 }` for an unreadable record would state, with the
+ * host's own authority, that a steered child has nothing queued.
  */
 const normalizeQueueUpdateEvent = (
   record: Record<string, unknown>,
 ): unknown => {
   const items: string[] = [];
+  let reported = false;
   for (const key of ["steering", "followUp"] as const) {
     const list = record[key];
-    if (!Array.isArray(list)) continue;
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) return record;
     for (const item of list) {
-      if (typeof item !== "string") continue;
-      if (items.length >= MAX_CHILD_EVENT_ITEMS) break;
+      if (typeof item !== "string") return record;
       items.push(item.slice(0, MAX_CHILD_EVENT_STRING));
     }
+    reported = true;
   }
+  if (!reported || items.length > MAX_CHILD_EVENT_ITEMS) return record;
   return { type: "queue_change", size: items.length, queue: items };
 };
 
@@ -777,3 +790,123 @@ export const parsePiChildSessionEvent = (value: unknown) => {
   )();
   return guarded.isOk() ? guarded.value : unreadableChildEvent();
 };
+
+// ---------------------------------------------------------------------------
+// Raw reasoning redaction
+// ---------------------------------------------------------------------------
+
+/** Content-block types that carry raw chain-of-thought, never a summary. */
+const RAW_REASONING_BLOCK_TYPES = new Set(["thinking", "reasoning"]);
+/** Fields a raw reasoning block may carry its prose in. */
+const RAW_REASONING_BLOCK_FIELDS = ["text", "thinking", "reasoning"] as const;
+
+const plainRecord = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+/**
+ * Blanks the prose of every raw reasoning block while keeping the block, so
+ * the reader still learns that the child reasoned.
+ *
+ * Returns `undefined` when nothing needed redacting, so callers can keep the
+ * caller's own event identity instead of cloning it.
+ */
+const redactReasoningContentBlocks = (
+  content: unknown,
+): unknown[] | undefined => {
+  if (!Array.isArray(content)) return undefined;
+  let redacted = false;
+  const next = content.map((block) => {
+    const record = plainRecord(block);
+    if (record === undefined) return block;
+    const type = record.type;
+    if (typeof type !== "string" || !RAW_REASONING_BLOCK_TYPES.has(type)) {
+      return block;
+    }
+    const fields = RAW_REASONING_BLOCK_FIELDS.filter(
+      (field) => typeof record[field] === "string" && record[field] !== "",
+    );
+    if (fields.length === 0) return block;
+    redacted = true;
+    const cleaned: Record<string, unknown> = { ...record };
+    for (const field of fields) cleaned[field] = "";
+    return cleaned;
+  });
+  return redacted ? next : undefined;
+};
+
+/** Blanks raw reasoning prose carried inside a message's content blocks. */
+const redactMessageReasoning = (
+  message: unknown,
+): Record<string, unknown> | undefined => {
+  const record = plainRecord(message);
+  if (record === undefined) return undefined;
+  const content = redactReasoningContentBlocks(record.content);
+  return content === undefined ? undefined : { ...record, content };
+};
+
+/**
+ * Strips raw chain-of-thought TEXT out of one parsed event while preserving
+ * its SHAPE, so every consumer still learns that the child reasoned.
+ *
+ * Raw reasoning is never rendered anywhere in this adapter, so retaining it in
+ * transcript state, in an overlay entry's replay steps, or in a rebuilt page
+ * would only create another surface for it to escape from. It is applied at
+ * every boundary that keeps an event: the transcript reducer, the live overlay
+ * projection, and the replay-step builder.
+ *
+ * Three carriers exist, and all three are content-free after this:
+ * - the standalone `thinking` event's `text`;
+ * - a `message_update`'s `thinking_delta` / legacy `delta.thinking`;
+ * - a `thinking` or `reasoning` content block on a carried message.
+ *
+ * `reasoning_summary` is deliberately untouched: it is the host's own explicit
+ * summary surface and the ONE trusted place reasoning prose may be read from.
+ */
+export function redactRawReasoningFromEvent(
+  event: PiChildSessionEvent,
+): PiChildSessionEvent {
+  if (event.type === "thinking") {
+    return event.text === undefined || event.text === ""
+      ? event
+      : { ...event, text: "" };
+  }
+  if (event.type === "message_start" || event.type === "message_end") {
+    const record = event as unknown as Record<string, unknown>;
+    const message = redactMessageReasoning(record.message);
+    return message === undefined
+      ? event
+      : ({ ...event, message } as unknown as PiChildSessionEvent);
+  }
+  if (event.type !== "message_update") return event;
+  const record = event as unknown as Record<string, unknown>;
+  const delta = plainRecord(record.delta);
+  const assistantEvent = plainRecord(record.assistantMessageEvent);
+  const redactedDelta =
+    delta !== undefined && typeof delta.thinking === "string"
+      ? { ...delta, thinking: "" }
+      : undefined;
+  const redactedAssistant =
+    assistantEvent !== undefined &&
+    assistantEvent.type === "thinking_delta" &&
+    typeof assistantEvent.delta === "string"
+      ? { ...assistantEvent, delta: "" }
+      : undefined;
+  const redactedMessage = redactMessageReasoning(record.message);
+  if (
+    redactedDelta === undefined &&
+    redactedAssistant === undefined &&
+    redactedMessage === undefined
+  ) {
+    return event;
+  }
+  return {
+    ...event,
+    ...(redactedDelta === undefined ? {} : { delta: redactedDelta }),
+    ...(redactedAssistant === undefined
+      ? {}
+      : { assistantMessageEvent: redactedAssistant }),
+    ...(redactedMessage === undefined ? {} : { message: redactedMessage }),
+  } as unknown as PiChildSessionEvent;
+}

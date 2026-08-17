@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 304 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~33,000 tokens. Without it, AI exploration would cost ~98,100 tokens. **Saves ~65,000 tokens per conversation.**
-> **Last scanned:** 2026-08-17 16:46 — re-run after significant changes
+> **Last scanned:** 2026-08-17 17:34 — re-run after significant changes
 
 ---
 
@@ -456,8 +456,8 @@
   - function collectChildPickerCandidates: (input) => ResultAsync<readonly PiChildPickerCandidate[], PiChildPickerError>
   - function buildChildPickerEntries: (input) => Result<readonly PiChildPickerEntry[], PiChildPickerError>
   - function sanitizeChildPickerPreview: (value) => string
-  - function moveChildPicker: (state, delta) => PiChildPickerState
-  - _...23 more_
+  - function childPickerPreview: (source) => string
+  - _...25 more_
 - `packages/adapters/pi/src/child-process-port.ts`
   - function writeAllToSink: (sink, bytes) => ResultAsync<void, ChildProcessError>
   - function resolveKillSignal: (mode) => number | undefined
@@ -504,10 +504,10 @@
   - function parsePiChildUsageReport: (event) => Result<PiChildUsageReport, PiChildUsageError>
   - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
+  - function redactRawReasoningFromEvent: (event) => PiChildSessionEvent
   - function parsePiChildSessionEvent
   - interface PiChildUsageReport
-  - interface PiAssistantUsageFacts
-  - _...12 more_
+  - _...13 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority
@@ -1897,7 +1897,7 @@
 - `packages/adapters/pi/src/child-timer.ts` — imported by **21** files
 - `packages/adapters/pi/src/errors.ts` — imported by **21** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `packages/adapters/pi/src/child-session-events.ts` — imported by **19** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **16** files
@@ -1942,7 +1942,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 335 test files found
+> 336 test files found
 
 ---
 
