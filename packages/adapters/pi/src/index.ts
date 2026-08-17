@@ -890,6 +890,17 @@ export {
   renderPlanRailWidgetLines,
 } from "./plan-render.js";
 export type {
+  PiPrimaryContractCandidate,
+  PiPrimaryContractDecision,
+  PiPrimaryContractFacet,
+  PiPrimaryContractInput,
+} from "./primary-contract.js";
+export {
+  decidePiPrimaryContract,
+  PI_PRIMARY_CONTRACT_FACETS,
+  toPiPrimaryContractCandidate,
+} from "./primary-contract.js";
+export type {
   PiActivePrimary,
   PiParentMutationOperation,
   PiParentSessionProbePort,
@@ -901,6 +912,7 @@ export type {
   PiPrimaryRequestSnapshot,
   PiPrimarySessionDeps,
   PiPrimarySnapshotStale,
+  PiSkillResolutionPort,
 } from "./primary-session.js";
 export {
   appendWeaveBlockOnce,
@@ -911,6 +923,7 @@ export {
   renderRequiredSkillsPrompt,
   renderWeavePromptBlock,
   requirePersistentParentSession,
+  resolveDescriptorSkillResolution,
   UNKNOWN_PARENT_SESSION,
 } from "./primary-session.js";
 export {

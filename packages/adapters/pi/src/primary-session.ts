@@ -1,4 +1,8 @@
-import type { AgentDescriptor, ResolvedSkill } from "@weaveio/weave-engine";
+import type {
+  AgentDescriptor,
+  ResolvedSkill,
+  SkillResolutionResult,
+} from "@weaveio/weave-engine";
 import {
   err,
   errAsync,
@@ -84,6 +88,41 @@ export function appendWeaveBlockOnce(
   const block = renderWeavePromptBlock(descriptor, resolvedSkills);
   if (systemPrompt.length === 0) return block;
   return `${systemPrompt}\n\n${block}`;
+}
+
+// ---------------------------------------------------------------------------
+// Shared skill resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * The single {@link PiSkillCatalog} method prompt rendering needs.
+ *
+ * Kept narrow so a pure caller — the primary-contract guard — can render a
+ * descriptor's prompt exactly as activation would without holding session
+ * state or any part of the catalog it does not read.
+ */
+export type PiSkillResolutionPort = Pick<PiSkillCatalog, "resolveForAgent">;
+
+/**
+ * Resolves one descriptor's skills against Pi's current discovery snapshot.
+ *
+ * The one place that answers "which skills would this descriptor's prompt
+ * render": {@link PiPrimarySession} uses it for activation (and then reports
+ * the warnings as deduplicated capability warnings), and the primary-contract
+ * guard uses it to render a candidate descriptor the same way. Warnings are
+ * returned rather than recorded, because only the session surfaces them.
+ */
+export function resolveDescriptorSkillResolution(
+  skills: PiSkillResolutionPort,
+  descriptor: AgentDescriptor,
+  disabledSkills: readonly string[] = [],
+): SkillResolutionResult {
+  return skills
+    .resolveForAgent(descriptor.name, descriptor.skills, disabledSkills)
+    .match(
+      (value) => value,
+      (impossible) => impossible,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -468,12 +507,11 @@ export class PiPrimarySession {
     descriptor: AgentDescriptor,
     disabledSkills: readonly string[] = [],
   ): readonly ResolvedSkill[] {
-    const resolution = this.deps.skillCatalog
-      .resolveForAgent(descriptor.name, descriptor.skills, disabledSkills)
-      .match(
-        (value) => value,
-        (impossible) => impossible,
-      );
+    const resolution = resolveDescriptorSkillResolution(
+      this.deps.skillCatalog,
+      descriptor,
+      disabledSkills,
+    );
     for (const warning of resolution.warnings) {
       this.recordWarning({
         capability: "skill",
