@@ -103,7 +103,21 @@ export type ChildCompactReducerInput =
   | {
       readonly kind: "assistant_fragment";
       readonly itemId: string;
-      readonly dedupKey: string;
+      /**
+       * The fragment's AUTHORITATIVE identity, when the host gave it one.
+       *
+       * Present only for a frame whose identity the protocol states — a
+       * message's `message_start`, which happens exactly once per assistant
+       * lifecycle. A repeat of such a frame is a duplicate report of the same
+       * event and is suppressed.
+       *
+       * ABSENT for streamed text, and deliberately so: the wire carries no
+       * identity or sequence for a delta, and a key derived from the delta's
+       * own words makes two legitimate repeats of a word (` the` … ` the`)
+       * look like one frame delivered twice. Content is not identity, so a
+       * fragment without a key is applied unconditionally.
+       */
+      readonly dedupKey?: string;
       readonly text: string;
       /** Default `append`. `replace` overwrites the item text. */
       readonly mode?: "append" | "replace";
@@ -346,6 +360,11 @@ export function mapPiChildSessionEventToCompactInput(
     (): ChildCompactReducerInput | undefined => {
       switch (event.type) {
         case "message_start":
+          // Keyed by the message's own lifecycle identity, not by its content:
+          // a message starts exactly once, so a second `message_start` for the
+          // same message is a duplicate report. Suppressing it matters because
+          // this input REPLACES the item text with "", which would otherwise
+          // erase an answer already streamed into it.
           return {
             kind: "assistant_fragment",
             itemId,
@@ -357,11 +376,23 @@ export function mapPiChildSessionEventToCompactInput(
           const record = event as unknown as Record<string, JsonValue>;
           const preview = extractAssistantTextDeltaPreview(record);
           if (preview !== undefined) {
-            const dedupKey = `${itemId}:frag:${stableFragmentKey(preview)}`;
+            // NO dedup key. A streamed delta is not identified by what it
+            // says: `" the"` can legitimately arrive many times in one answer,
+            // and keying on its text deleted every repeat after the first, so
+            // the card printed an answer the child never gave.
+            //
+            // Nothing else on the wire identifies a delta either. Pi 0.84's
+            // RPC/JSON protocol strips the cumulative `partial` snapshot from
+            // `message_update` (`toJsonEvent`) and sends only
+            // `{ type, usage, assistantMessageEvent: { type: "text_delta",
+            // contentIndex, delta } }` — no message id, no sequence, and
+            // `contentIndex` names the content BLOCK, which every delta of one
+            // answer shares. The frames arrive over an ordered JSONL pipe that
+            // has no retransmission, so a repeated delta is a repeated token,
+            // not a repeated frame.
             return {
               kind: "assistant_fragment",
               itemId,
-              dedupKey,
               text: preview,
               mode: "append",
             };
@@ -394,10 +425,11 @@ export function mapPiChildSessionEventToCompactInput(
         case "markdown": {
           const text = typeof event.text === "string" ? event.text : "";
           if (!isMeaningfulText(text)) return undefined;
+          // Also unkeyed. These events carry no identity either, and a host
+          // that says the same thing twice said it twice.
           return {
             kind: "assistant_fragment",
             itemId,
-            dedupKey: `${itemId}:text:${stableFragmentKey(text)}`,
             text,
             mode: "replace",
           };
@@ -664,12 +696,6 @@ function extractAssistantEndText(message: unknown): string | undefined {
   return text.length > 0 ? text : undefined;
 }
 
-function stableFragmentKey(text: string): string {
-  const clean = sanitizeChildCompactText(text);
-  if (clean.length <= 64) return clean;
-  return `${clean.slice(0, 32)}…${clean.slice(-16)}:${clean.length}`;
-}
-
 // ---------------------------------------------------------------------------
 // Reduce
 // ---------------------------------------------------------------------------
@@ -782,8 +808,12 @@ function reduceAssistantFragment(
   const current = currentMutableRun(state);
   if (current === undefined) return state;
 
-  const dedupKey = boundOpaqueId(input.dedupKey);
-  if (current.dedupKeys.has(dedupKey)) return state;
+  // Only a fragment the host gave an authoritative identity may be suppressed.
+  // An unkeyed fragment (every streamed delta) is always applied: two frames
+  // that merely say the same thing are two things the child said.
+  const dedupKey =
+    input.dedupKey === undefined ? undefined : boundOpaqueId(input.dedupKey);
+  if (dedupKey !== undefined && current.dedupKeys.has(dedupKey)) return state;
 
   const mode = input.mode ?? "append";
   const incoming = sanitizeChildCompactText(input.text);
@@ -810,7 +840,10 @@ function reduceAssistantFragment(
 
   const items = upsertItem(current.items, nextItem);
   const itemIds = mergeItemIds(current.itemIds, itemId);
-  const dedupKeys = extendDedupKeys(current.dedupKeys, dedupKey);
+  const dedupKeys =
+    dedupKey === undefined
+      ? current.dedupKeys
+      : extendDedupKeys(current.dedupKeys, dedupKey);
 
   return replaceCurrentRun(state, {
     ...current,
@@ -1007,8 +1040,8 @@ export function parseReducerInput(
     case "assistant_fragment": {
       if (
         typeof record.itemId !== "string" ||
-        typeof record.dedupKey !== "string" ||
-        typeof record.text !== "string"
+        typeof record.text !== "string" ||
+        (record.dedupKey !== undefined && typeof record.dedupKey !== "string")
       ) {
         return err({
           type: "ChildCompactFailed",
@@ -1020,10 +1053,14 @@ export function parseReducerInput(
         record.mode === "replace" || record.mode === "append"
           ? record.mode
           : undefined;
+      // An absent key is the ordinary streamed-delta case, not a defect: the
+      // fragment is applied unconditionally rather than rejected.
+      const dedupKey =
+        typeof record.dedupKey === "string" ? record.dedupKey : undefined;
       return ok({
         kind: "assistant_fragment",
         itemId: record.itemId,
-        dedupKey: record.dedupKey,
+        ...(dedupKey !== undefined ? { dedupKey } : {}),
         text: record.text,
         ...(mode !== undefined ? { mode } : {}),
       });

@@ -109,7 +109,9 @@ const FULL_ANSWER = ANSWER_DELTAS.join("");
 /**
  * The wire form the RPC/JSON protocol actually sends: `message_update` carries
  * `usage` plus `assistantMessageEvent`, and the cumulative `partial` snapshot
- * is stripped (`toJsonEvent`). There is no `message` field and no message id.
+ * is stripped (`toJsonEvent`). There is no `message` field, no message id, and
+ * no per-delta sequence — `contentIndex` names the content BLOCK, which every
+ * delta of one answer shares. That is the whole identity a reader ever gets.
  */
 const update = (assistantMessageEvent: Record<string, unknown>) => ({
   type: "message_update",
@@ -125,8 +127,8 @@ function streamingLifecycle(): readonly Record<string, unknown>[] {
     update({ type: "thinking_delta", contentIndex: 0, delta: RAW_COT }),
     update({ type: "thinking_end", contentIndex: 0, content: RAW_COT }),
     update({ type: "text_start", contentIndex: 1 }),
-    ...ANSWER_DELTAS.map((delta, index) =>
-      update({ type: "text_delta", contentIndex: 1, delta, sequence: index }),
+    ...ANSWER_DELTAS.map((delta) =>
+      update({ type: "text_delta", contentIndex: 1, delta }),
     ),
     update({ type: "text_end", contentIndex: 1, content: FULL_ANSWER }),
   ];
@@ -461,5 +463,145 @@ describe("Bug A · the inspector renders one growing live assistant row", () => 
     const body = rows.filter((row) => row.includes("The reporter drops rows"));
     expect(body).toHaveLength(1);
     expect(rows.join("\n")).not.toContain(RAW_COT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. Repeated identical deltas
+// ---------------------------------------------------------------------------
+
+/**
+ * Bug B — a streamed delta must never be discarded because an earlier delta
+ * said the same thing.
+ *
+ * Deltas were keyed by their own sanitized text, so the second ` the` of an
+ * answer was read as the first ` the` delivered twice and silently dropped.
+ * The card then printed a sentence the child never produced.
+ *
+ * There is nothing on the wire to key a delta by: `toJsonEvent` strips the
+ * cumulative `partial` snapshot, so a `text_delta` arrives as
+ * `{ type, usage, assistantMessageEvent: { type, contentIndex, delta } }` —
+ * `contentIndex` names the content block every delta of one answer shares, and
+ * the JSONL pipe carrying them has no retransmission. A repeated delta is a
+ * repeated token.
+ *
+ * Identity a host DOES state is still honoured: `message_start` happens once
+ * per message, and a repeat of it must not erase the answer already streamed.
+ */
+
+/** An answer whose words genuinely repeat, split on word boundaries. */
+const REPEAT_DELTAS = [
+  "the ",
+  "cat ",
+  "and ",
+  "the ",
+  "hat ",
+  "and ",
+  "the ",
+  "cat",
+] as const;
+
+const REPEAT_ANSWER = REPEAT_DELTAS.join("");
+
+/** What content-keyed dedup produced instead: every repeat deleted. */
+const DEDUPED_ANSWER = "the cat and hat";
+
+function repeatingLifecycle(): readonly Record<string, unknown>[] {
+  return [
+    { type: "message_start", message: assistantMessage("") },
+    update({ type: "thinking_start", contentIndex: 0 }),
+    update({ type: "thinking_delta", contentIndex: 0, delta: RAW_COT }),
+    update({ type: "thinking_end", contentIndex: 0, content: RAW_COT }),
+    update({ type: "text_start", contentIndex: 1 }),
+    ...REPEAT_DELTAS.map((delta) =>
+      update({ type: "text_delta", contentIndex: 1, delta }),
+    ),
+    update({ type: "text_end", contentIndex: 1, content: REPEAT_ANSWER }),
+  ];
+}
+
+describe("Bug B · repeated identical deltas all reach the answer", () => {
+  it("accumulates the exact answer through the real card projection", () => {
+    const card = projection();
+    for (const raw of repeatingLifecycle()) card.applySessionEvent(parsed(raw));
+
+    const facts = card.facts();
+    expect(facts.activity.kind).toBe("say");
+    expect(facts.activity.text).toBe(REPEAT_ANSWER);
+    expect(facts.activity.text).not.toBe(DEDUPED_ANSWER);
+    // Every repeat is present, in order, exactly as many times as it was sent.
+    expect(facts.activity.text.split("the ")).toHaveLength(4);
+    expect(facts.activity.text.split("and ")).toHaveLength(3);
+  });
+
+  it("paints the exact answer on the rendered card", () => {
+    const card = projection();
+    for (const raw of repeatingLifecycle()) card.applySessionEvent(parsed(raw));
+
+    const rows = cardRows(card);
+    expect(rows.some((row) => row.includes(REPEAT_ANSWER))).toBe(true);
+    expect(rows.some((row) => row.includes(DEDUPED_ANSWER))).toBe(false);
+    expect(rows.join("\n")).not.toContain(RAW_COT);
+  });
+
+  it("keeps raw chain-of-thought off every card surface", () => {
+    const card = projection();
+    for (const raw of repeatingLifecycle()) card.applySessionEvent(parsed(raw));
+    card.applySessionEvent(
+      parsed({ type: "message_end", message: assistantMessage(REPEAT_ANSWER) }),
+    );
+
+    expect(JSON.stringify(card.facts())).not.toContain(RAW_COT);
+    expect(cardRows(card).join("\n")).not.toContain(RAW_COT);
+  });
+
+  it("still suppresses a repeated `message_start` a host identified", () => {
+    // A host that names its messages states real identity: one message starts
+    // once. The repeat is a duplicate report, and applying it would replace the
+    // streamed answer with the empty message it carries.
+    const named = (text: string) => ({
+      ...assistantMessage(text),
+      id: "asst-77",
+    });
+    const card = projection();
+    card.applySessionEvent(
+      parsed({ type: "message_start", message: named("") }),
+    );
+    for (const delta of REPEAT_DELTAS) {
+      card.applySessionEvent(
+        parsed(update({ type: "text_delta", contentIndex: 1, delta })),
+      );
+    }
+    expect(card.facts().activity.text).toBe(REPEAT_ANSWER);
+
+    card.applySessionEvent(
+      parsed({ type: "message_start", message: named("") }),
+    );
+    expect(card.facts().activity.text).toBe(REPEAT_ANSWER);
+  });
+
+  it("keeps every repeat in the inspector's live row and its rebuild", async () => {
+    const { controller, component } = open(liveChild());
+    (await controller.open(CHILD_ID))._unsafeUnwrap();
+
+    for (const raw of repeatingLifecycle()) {
+      controller.applyLiveEvent(raw)._unsafeUnwrap();
+    }
+
+    const rows = transcriptRows(component);
+    expect(rows.some((row) => row.includes(REPEAT_ANSWER))).toBe(true);
+    expect(rows.some((row) => row.includes(DEDUPED_ANSWER))).toBe(false);
+
+    // The same answer must survive the reconstruction every trim, page merge
+    // and search fetch runs.
+    const view = currentView(controller);
+    const rebuilt = transcriptFromOverlayEntries(view.entries);
+    const streamed = rebuilt.entries.filter(
+      (entry) => entry.kind === "assistant",
+    );
+    expect(streamed).toHaveLength(1);
+    expect(streamed[0]?.text).toBe(REPEAT_ANSWER);
+    expect(JSON.stringify(view.entries)).not.toContain(RAW_COT);
+    expect(JSON.stringify(rebuilt)).not.toContain(RAW_COT);
   });
 });

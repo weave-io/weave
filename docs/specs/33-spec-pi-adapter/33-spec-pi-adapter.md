@@ -279,10 +279,12 @@ Behavior:
 - The model-visible `content[0].text` stays a bounded activity line and never
   carries card chrome.
 - Rendering uses Pi's normal render scheduling and the parser-approved child
-  event flow, with stable per-item IDs, deduplication, and placeholder slots for
-  out-of-order arrival. Updates are coalesced through the injected timer port,
-  and run start, tool error, provider error, queue change, and settlement always
-  publish immediately. Settlement drains final events before classification and
+  event flow, with stable per-item IDs, placeholder slots for out-of-order
+  arrival, and duplicate suppression only where the host states an event's
+  identity. Matching text is never treated as identity, so a repeated answer
+  delta is kept. Updates are coalesced through the injected timer port, and run
+  start, tool error, provider error, queue change, and settlement always publish
+  immediately. Settlement drains final events before classification and
   always flushes.
 - All child-sourced text is sanitized for terminal control sequences before
   render, and box-drawing glyphs are reachable only through the frame

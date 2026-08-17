@@ -1135,9 +1135,10 @@ export interface PiChildCardStartRunInput {
  * The single authoritative reducer behind one delegation card.
  *
  * It correlates stable message ids across `message_start`/`update`/`end`, uses
- * `toolCallId` for tools, dedups repeated fragments by the mapper's own dedup
- * key, routes sanitized provider failures through the overlay's formatter, and
- * settles only from an authoritative settlement.
+ * `toolCallId` for tools, suppresses a repeated frame only where the mapper
+ * gave it an authoritative dedup key (never by matching text), routes sanitized
+ * provider failures through the overlay's formatter, and settles only from an
+ * authoritative settlement.
  *
  * Two freezes make the honesty structural rather than remembered:
  *
@@ -1247,7 +1248,12 @@ export class PiChildCardProjection {
     }
     const input = mapped.value;
     if (input.kind === "settle") return this.facts();
-    if (input.kind === "assistant_fragment") {
+    // Only a fragment the mapper could identify authoritatively is eligible for
+    // duplicate suppression. Streamed deltas carry no identity on the wire, so
+    // they arrive unkeyed and are always applied: repeating a word is not
+    // repeating a frame, and dropping the repeat printed an answer the child
+    // never gave.
+    if (input.kind === "assistant_fragment" && input.dedupKey !== undefined) {
       const dedupKey = boundChildCompactId(input.dedupKey);
       if (this.dedupKeys.has(dedupKey)) return this.facts();
       this.retainDedupKey(dedupKey);
