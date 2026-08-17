@@ -618,3 +618,20 @@ export class BunPiHostModuleEnvironment implements PiHostModuleEnvironmentPort {
     )();
   }
 }
+
+let recordedHostModuleOutcome: PiHostModuleOutcome | undefined;
+
+/**
+ * Set-once process accessor for the loader outcome. The thin extension
+ * entry records after resolve; the implementation reads without importing
+ * the loader entry. A later record is ignored.
+ */
+export function recordHostModuleOutcome(outcome: PiHostModuleOutcome): void {
+  if (recordedHostModuleOutcome !== undefined) return;
+  recordedHostModuleOutcome = outcome;
+}
+
+/** The outcome recorded by the extension entry, if any. */
+export function getHostModuleOutcome(): PiHostModuleOutcome | undefined {
+  return recordedHostModuleOutcome;
+}

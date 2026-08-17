@@ -4,7 +4,7 @@ import {
   delegationControllerGenerationsAgree,
   type PiDelegationInvocationSource,
   resolveDelegationInvocationContext,
-} from "../extension.js";
+} from "../extension-impl.js";
 
 const GENERATION_ID = "gen-1";
 

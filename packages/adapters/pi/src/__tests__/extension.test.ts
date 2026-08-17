@@ -57,7 +57,7 @@ import {
   parsePiSkillsFromSystemPrompt,
   readOverlaySessionEntryPage,
   resolveDirectStepBadgeAgent,
-} from "../extension.js";
+} from "../extension-impl.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
 import {

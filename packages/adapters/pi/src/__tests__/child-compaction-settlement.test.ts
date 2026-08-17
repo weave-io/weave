@@ -17,7 +17,7 @@ import {
 } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
 import type { TimerHandle, TimerPort } from "../child-timer.js";
-import { createPiExtension, type PiExtensionDeps } from "../extension.js";
+import { createPiExtension, type PiExtensionDeps } from "../extension-impl.js";
 import type { JsonValue } from "../strict-json.js";
 import type {
   PiCommandRegistration,

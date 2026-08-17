@@ -13,7 +13,7 @@ import {
   PiChildSessionRefStore,
 } from "../child-session-refs.js";
 import { PiConfigActivator } from "../config-activator.js";
-import { createPiExtension } from "../extension.js";
+import { createPiExtension } from "../extension-impl.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_SURFACE_IDS } from "../host-inventory.js";
 import { createBunPiNativeSessionFs } from "../native-session-fs.js";

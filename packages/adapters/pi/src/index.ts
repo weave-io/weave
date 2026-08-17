@@ -750,11 +750,11 @@ export {
   PiAdapterFailureRecoverySchema,
   PiDiagnosticCodeSchema,
 } from "./errors.js";
-export type { PiExtensionDeps } from "./extension.js";
+export type { PiExtensionDeps } from "./extension-impl.js";
 export {
   createDefaultPiExtensionDeps,
   createPiExtension,
-} from "./extension.js";
+} from "./extension-impl.js";
 export type {
   HostPackageInfo,
   HostPackageReader,

@@ -112,7 +112,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - Unit tests with a fake environment cover: successful redirect registration for all three specifiers; `$bunfs`-style main path producing `host-root-unproven`; missing/malformed host `package.json`; local resolution failure producing `no-local-copy`; the disable env var; and idempotent double invocation.
     - No test in this file calls `Bun.plugin` or performs real I/O.
 
-- [ ] 3. Split the extension entry into loader and implementation
+- [x] 3. Split the extension entry into loader and implementation
   - **What**: Move the current extension body to `extension-impl.ts` and make `extension.ts` a thin async factory that resolves host modules first, then delegates. The shipped `dist/extension.js` must contain no bare `@earendil-works/*` import.
   - **Files**: `packages/adapters/pi/src/extension-impl.ts` (moved from `packages/adapters/pi/src/extension.ts`), `packages/adapters/pi/src/extension.ts` (new thin loader), `packages/adapters/pi/src/index.ts`, `scripts/release/constants.ts`, `packages/adapters/pi/api-extractor.extension.json`, and the ten test files importing `../extension.js` (`child-ref-live-session-manager.test.ts`, `extension.test.ts`, `child-inspection-privacy.test.ts`, `child-compaction-settlement.test.ts`, `child-mode.test.ts`, and the remaining five found with `grep -rl "\.\./extension\.js" src/__tests__`)
   - **Depends on**: Task 2

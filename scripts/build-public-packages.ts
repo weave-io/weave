@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 
@@ -94,6 +94,16 @@ function hasPrivateDeclarationPathReference(contents: string): boolean {
   return /(?:from|import\()\s*["'][^"']*(?:packages\/(?:core|config|engine)|\.\.\/(?:core|config|engine))(?:\/|["'])/.test(
     contents,
   );
+}
+
+/** Keep sibling public entries as runtime imports so they are not inlined. */
+function siblingEntryExternals(
+  entries: readonly { source: string }[],
+  currentSource: string,
+): readonly string[] {
+  return entries
+    .filter((entry) => entry.source !== currentSource)
+    .map((entry) => resolve(entry.source.replace(/\.tsx?$/, ".js")));
 }
 
 /** Bun-only filesystem operations required to assemble public package outputs. */
@@ -393,7 +403,10 @@ export class PublicPackageBuilder {
             outdir: join(entry.output, ".."),
             target: "bun",
             format: "esm",
-            external,
+            external: [
+              ...external,
+              ...siblingEntryExternals(entries, entry.source),
+            ],
             define,
           }),
           () => ({

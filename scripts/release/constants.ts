@@ -216,8 +216,16 @@ export const PUBLIC_PACKAGE_BUILDS = {
         output: "packages/adapters/pi/dist/cli.js",
       },
       {
+        source: "packages/adapters/pi/src/host-module-loader.ts",
+        output: "packages/adapters/pi/dist/host-module-loader.js",
+      },
+      {
         source: "packages/adapters/pi/src/extension.ts",
         output: "packages/adapters/pi/dist/extension.js",
+      },
+      {
+        source: "packages/adapters/pi/src/extension-impl.ts",
+        output: "packages/adapters/pi/dist/extension-impl.js",
       },
     ],
     declarations: [
@@ -232,6 +240,10 @@ export const PUBLIC_PACKAGE_BUILDS = {
       {
         config: "packages/adapters/pi/api-extractor.extension.json",
         output: "packages/adapters/pi/dist/extension.d.ts",
+      },
+      {
+        config: "packages/adapters/pi/api-extractor.extension-impl.json",
+        output: "packages/adapters/pi/dist/extension-impl.d.ts",
       },
     ],
   },

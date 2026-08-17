@@ -5,7 +5,7 @@ import {
   truncateLatestOutput,
 } from "../child-tree.js";
 import { TransportDirectDispatchPort } from "../direct-dispatch.js";
-import { createPiExtension } from "../extension.js";
+import { createPiExtension } from "../extension-impl.js";
 import {
   FakeClock,
   FakeIdGenerator,

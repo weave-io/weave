@@ -23,7 +23,7 @@ import {
   buildChildBootstrapBody,
   createPiExtension,
   type PiExtensionDeps,
-} from "../extension.js";
+} from "../extension-impl.js";
 import { canonicalizeToBytes, type JsonValue } from "../strict-json.js";
 import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "../structured-completion.js";
 import type {

@@ -9,6 +9,7 @@ const CONFIG_PATHS = [
   "packages/adapters/claude-code/api-extractor.json",
   "packages/adapters/pi/api-extractor.index.json",
   "packages/adapters/pi/api-extractor.extension.json",
+  "packages/adapters/pi/api-extractor.extension-impl.json",
 ] as const;
 
 type ApiExtractorConfigError = {

@@ -37,7 +37,7 @@ import {
   PiDelegationController,
   type PiThreadRefPort,
 } from "../delegation-controller.js";
-import { createPiExtension, type PiExtensionDeps } from "../extension.js";
+import { createPiExtension, type PiExtensionDeps } from "../extension-impl.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import {
   PI_HOST_SURFACE_IDS,

@@ -2587,7 +2587,7 @@ describe("ChildOverlayController", () => {
       new URL("../child-overlay.ts", import.meta.url),
     ).text();
     const extensionSrc = await Bun.file(
-      new URL("../extension.ts", import.meta.url),
+      new URL("../extension-impl.ts", import.meta.url),
     ).text();
     expect(overlaySrc).not.toContain("createReadSessionEntriesOverlaySource");
     expect(extensionSrc).not.toContain("createReadSessionEntriesOverlaySource");

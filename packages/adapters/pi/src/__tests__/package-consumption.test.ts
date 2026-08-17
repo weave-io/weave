@@ -111,7 +111,7 @@ describe("public package entry points", () => {
   it("exposes exactly one default extension factory from the /extension subpath", async () => {
     const extensionModule = await import("@weaveio/weave-adapter-pi/extension");
     expect(typeof extensionModule.default).toBe("function");
-    expect(typeof extensionModule.createPiExtension).toBe("function");
+    expect("createPiExtension" in extensionModule).toBe(false);
   });
 
   it("the default extension factory is safe to construct repeatedly without side effects", async () => {
