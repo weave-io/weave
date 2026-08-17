@@ -123,6 +123,8 @@ export interface PublicBuildEntry {
   source: string;
   output: string;
   executable?: boolean;
+  /** Type-strip without bundling so Bun does not inject unused runtime helpers. */
+  transpileOnly?: boolean;
 }
 
 export interface PublicPackageBuild {
@@ -222,6 +224,7 @@ export const PUBLIC_PACKAGE_BUILDS = {
       {
         source: "packages/adapters/pi/src/extension.ts",
         output: "packages/adapters/pi/dist/extension.js",
+        transpileOnly: true,
       },
       {
         source: "packages/adapters/pi/src/extension-impl.ts",

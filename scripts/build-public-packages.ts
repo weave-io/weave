@@ -8,6 +8,7 @@ import {
   PUBLIC_PACKAGE_BUILDS,
   PUBLIC_PACKAGES,
   PUBLIC_RUNTIME_EXTERNALS,
+  type PublicBuildEntry,
   type PublicDeclarationBuild,
   type PublicPackageBuild,
   type PublicPackageName,
@@ -383,11 +384,7 @@ export class PublicPackageBuilder {
 
   private buildEntries(
     packageName: PublicPackageName,
-    entries: readonly {
-      source: string;
-      output: string;
-      executable?: boolean;
-    }[],
+    entries: readonly PublicBuildEntry[],
   ): ResultAsync<void, PublicPackageBuildError> {
     const build: PublicPackageBuild = PUBLIC_PACKAGE_BUILDS[packageName];
     const external = [
@@ -397,31 +394,9 @@ export class PublicPackageBuilder {
     let result = this.getBuildDefines(packageName);
     for (const entry of entries) {
       result = result.andThen((define) =>
-        ResultAsync.fromPromise(
-          Bun.build({
-            entrypoints: [entry.source],
-            outdir: join(entry.output, ".."),
-            target: "bun",
-            format: "esm",
-            external: [
-              ...external,
-              ...siblingEntryExternals(entries, entry.source),
-            ],
-            define,
-          }),
-          () => ({
-            type: "BuildDiagnostics" as const,
-            packageName,
-            diagnostics: "Bun.build rejected",
-          }),
-        ).andThen((result) => {
-          if (result.success) return okAsync(define);
-          return errAsync({
-            type: "BuildDiagnostics" as const,
-            packageName,
-            diagnostics: result.logs.map((log) => log.message).join("\n"),
-          });
-        }),
+        entry.transpileOnly === true
+          ? this.transpileEntry(packageName, entry).map(() => define)
+          : this.bundleEntry(packageName, entry, entries, external, define),
       );
       if (entry.executable) {
         result = result.andThen((define) =>
@@ -430,6 +405,62 @@ export class PublicPackageBuilder {
       }
     }
     return result.map(() => undefined);
+  }
+
+  private transpileEntry(
+    packageName: PublicPackageName,
+    entry: PublicBuildEntry,
+  ): ResultAsync<void, PublicPackageBuildError> {
+    return this.fileSystem.readText(entry.source).andThen((source) => {
+      const transpiled = Result.fromThrowable(
+        () => new Bun.Transpiler({ loader: "ts" }).transformSync(source),
+        () => ({
+          type: "BuildDiagnostics" as const,
+          packageName,
+          diagnostics: "Bun.Transpiler rejected",
+        }),
+      )();
+      if (transpiled.isErr()) return errAsync(transpiled.error);
+      return this.fileSystem
+        .ensureDirectory(join(entry.output, ".."))
+        .andThen(() =>
+          this.fileSystem.writeText(entry.output, transpiled.value),
+        );
+    });
+  }
+
+  private bundleEntry(
+    packageName: PublicPackageName,
+    entry: PublicBuildEntry,
+    entries: readonly PublicBuildEntry[],
+    external: readonly string[],
+    define: Record<string, string>,
+  ): ResultAsync<Record<string, string>, PublicPackageBuildError> {
+    return ResultAsync.fromPromise(
+      Bun.build({
+        entrypoints: [entry.source],
+        outdir: join(entry.output, ".."),
+        target: "bun",
+        format: "esm",
+        external: [
+          ...external,
+          ...siblingEntryExternals(entries, entry.source),
+        ],
+        define,
+      }),
+      () => ({
+        type: "BuildDiagnostics" as const,
+        packageName,
+        diagnostics: "Bun.build rejected",
+      }),
+    ).andThen((result) => {
+      if (result.success) return okAsync(define);
+      return errAsync({
+        type: "BuildDiagnostics" as const,
+        packageName,
+        diagnostics: result.logs.map((log) => log.message).join("\n"),
+      });
+    });
   }
 
   private getBuildDefines(

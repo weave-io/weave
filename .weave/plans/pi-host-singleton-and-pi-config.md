@@ -172,7 +172,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - `bun run verify:pi-host-singleton` prints PASS with the positive run clean and the negative control detected, against the installed Pi host.
     - Unit tests cover the script's pure parts (proof-line parsing, `lsof` output classification, skip logic) with fixtures.
 
-- [ ] 6. Lock the artifact invariants with a build-output test
+- [x] 6. Lock the artifact invariants with a build-output test
   - **What**: A test that fails if a future change reintroduces a bare Pi import into the loader entry or mis-registers the impl entry.
   - **Files**: `packages/adapters/pi/src/__tests__/extension-entry-artifact.test.ts`, `scripts/release/__tests__/` (extend the existing build-constants test if one covers entries)
   - **Depends on**: Task 3

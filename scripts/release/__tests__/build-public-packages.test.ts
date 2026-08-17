@@ -61,4 +61,24 @@ describe("public package build guard", () => {
       PUBLIC_PACKAGE_BUILDS["@weaveio/weave-adapter-pi"].runtimeExternals,
     ).toEqual(["kysely", "pino"]);
   });
+
+  it("declares both Pi extension loader and implementation entries", () => {
+    const piBuild = PUBLIC_PACKAGE_BUILDS["@weaveio/weave-adapter-pi"];
+    const outputs = piBuild.entries.map((entry) => entry.output);
+    expect(outputs).toContain("packages/adapters/pi/dist/extension.js");
+    expect(outputs).toContain("packages/adapters/pi/dist/extension-impl.js");
+    expect(
+      piBuild.entries.find(
+        (entry) => entry.output === "packages/adapters/pi/dist/extension.js",
+      )?.transpileOnly,
+    ).toBe(true);
+  });
+
+  it("keeps the three Pi host packages as public runtime externals", () => {
+    expect(PUBLIC_RUNTIME_EXTERNALS).toContain(
+      "@earendil-works/pi-coding-agent",
+    );
+    expect(PUBLIC_RUNTIME_EXTERNALS).toContain("@earendil-works/pi-ai");
+    expect(PUBLIC_RUNTIME_EXTERNALS).toContain("@earendil-works/pi-tui");
+  });
 });
