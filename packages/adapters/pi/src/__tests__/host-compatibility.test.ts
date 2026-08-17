@@ -1,12 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import {
+  BunHostPackageReader,
   checkHostCompatibility,
   HOST_PACKAGE_NAME,
+  HOST_RUNTIME_DUPLICATE_REASON,
   HOST_VERSION_FLOOR,
   type HostCapabilityGapDiagnostic,
+  hostRuntimeHealthLineFromOutcome,
   isSupportedHostVersion,
   parseSemver,
   renderHostCapabilityGapDiagnostic,
+  renderHostRuntimeHealthLine,
+  resolveReportedHostIdentity,
   UNKNOWN_HOST_VERSION,
 } from "../host-compatibility.js";
 
@@ -217,5 +222,107 @@ describe("checkHostCompatibility", () => {
     const failure = result._unsafeUnwrapErr();
     expect(failure.impact).toBe("health-only");
     expect(failure.retryable).toBe(false);
+  });
+});
+
+describe("resolveReportedHostIdentity", () => {
+  it("lets the proven host version win over a mismatched imported VERSION", () => {
+    const identity = resolveReportedHostIdentity({
+      importedVersion: "0.81.1",
+      provenVersion: "0.84.2",
+    });
+    expect(identity.version).toBe("0.84.2");
+    expect(identity.diagnostic).toEqual({
+      type: HOST_RUNTIME_DUPLICATE_REASON,
+      importedVersion: "0.81.1",
+      provenVersion: "0.84.2",
+      mode: "warning",
+    });
+    expect(identity.diagnostic?.mode).not.toBe("health-only");
+  });
+
+  it("records no diagnostic when imported VERSION matches the proven host", () => {
+    const identity = resolveReportedHostIdentity({
+      importedVersion: "0.84.2",
+      provenVersion: "0.84.2",
+    });
+    expect(identity.version).toBe("0.84.2");
+    expect(identity.diagnostic).toBeUndefined();
+  });
+
+  it("keeps the imported VERSION when the host package was not proven", () => {
+    const identity = resolveReportedHostIdentity({
+      importedVersion: "0.81.1",
+    });
+    expect(identity.version).toBe("0.81.1");
+    expect(identity.diagnostic).toBeUndefined();
+  });
+});
+
+describe("renderHostRuntimeHealthLine", () => {
+  it("renders the single-copy state with the redirected count", () => {
+    const line = renderHostRuntimeHealthLine({
+      importedVersion: "0.84.2",
+      provenVersion: "0.84.2",
+      redirectedCount: 3,
+    });
+    expect(line).toBe("host runtime: single-copy; redirected 3");
+    expect(line).not.toContain("health-only");
+    expect(line.includes("/")).toBe(false);
+  });
+
+  it("renders the duplicate-detected state with a bounded reason", () => {
+    const line = renderHostRuntimeHealthLine({
+      importedVersion: "0.81.1",
+      provenVersion: "0.84.2",
+      redirectedCount: 0,
+    });
+    expect(line).toBe(
+      "host runtime: duplicate-detected (host-runtime-duplicate); redirected 0",
+    );
+    expect(line).not.toContain("health-only");
+    expect(line.includes("/")).toBe(false);
+  });
+
+  it("treats a missing outcome as single-copy with zero redirects", () => {
+    expect(hostRuntimeHealthLineFromOutcome(undefined)).toBe(
+      "host runtime: single-copy; redirected 0",
+    );
+  });
+});
+
+describe("BunHostPackageReader proven-version precedence", () => {
+  it("returns the proven version and records a warning-only diagnostic", async () => {
+    const recorded: unknown[] = [];
+    const reader = new BunHostPackageReader({
+      importedVersion: "0.81.1",
+      provenVersion: "0.84.2",
+      onDuplicateDiagnostic: (diagnostic) => {
+        recorded.push(diagnostic);
+      },
+    });
+    const result = await reader.read();
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toEqual({
+      name: HOST_PACKAGE_NAME,
+      version: "0.84.2",
+    });
+    expect(reader.duplicateDiagnostic()?.type).toBe(
+      HOST_RUNTIME_DUPLICATE_REASON,
+    );
+    expect(reader.duplicateDiagnostic()?.mode).toBe("warning");
+    expect(reader.duplicateDiagnostic()?.mode).not.toBe("health-only");
+    expect(recorded).toEqual([reader.duplicateDiagnostic()]);
+    expect(checkHostCompatibility(result._unsafeUnwrap()).isOk()).toBe(true);
+  });
+
+  it("does not treat a matching pair as a duplicate", async () => {
+    const reader = new BunHostPackageReader({
+      importedVersion: "0.84.2",
+      provenVersion: "0.84.2",
+    });
+    const result = await reader.read();
+    expect(result._unsafeUnwrap().version).toBe("0.84.2");
+    expect(reader.duplicateDiagnostic()).toBeUndefined();
   });
 });

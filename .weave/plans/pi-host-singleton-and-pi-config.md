@@ -135,7 +135,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - `bun test src` in the Pi package passes with no behavioral test changes beyond import paths.
     - `bun run typecheck` and `bun run lint` pass.
 
-- [ ] 4. Surface the host-module outcome in diagnostics and health
+- [x] 4. Surface the host-module outcome in diagnostics and health
   - **What**: Cross-check the imported host version against the proven host `package.json`, expose one bounded line in `/weave:health`, and emit an opt-in machine-readable proof line.
   - **Files**: `packages/adapters/pi/src/host-compatibility.ts`, `packages/adapters/pi/src/extension-impl.ts`, `packages/adapters/pi/src/host-module-loader.ts`, `packages/adapters/pi/src/__tests__/host-compatibility.test.ts` (extend), `packages/adapters/pi/src/__tests__/host-module-proof.test.ts`
   - **Depends on**: Task 3

@@ -27,6 +27,12 @@ import { safelyAwaitPortResult } from "./port-safety.js";
 export const WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT_ENV =
   "WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT";
 
+/** Opt-in proof line. Honor only the value `1`; it contains absolute paths. */
+export const WEAVE_PI_HOST_MODULE_PROOF_ENV = "WEAVE_PI_HOST_MODULE_PROOF";
+
+/** Single-line JSON budget for the opt-in proof record. */
+export const MAX_HOST_MODULE_PROOF_LINE_LENGTH = 32_768;
+
 /**
  * Dedicated skip reason when the operator disables the redirect. Not part of
  * the planner's closed reason union: the loader never asks the planner.
@@ -73,6 +79,24 @@ export interface PiHostModuleEnvironmentPort {
 export interface ResolveHostModulesOptions {
   /** When omitted, production reads `Bun.env`. Tests pass an isolated table. */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Test seam for the opt-in proof line. Production writes to stderr. */
+  readonly proofWrite?: (line: string) => void;
+}
+
+export interface PiHostModuleProofLineSpecifier {
+  readonly specifier: PiHostModuleSpecifier;
+  readonly bareResolution?: string;
+  readonly loadedFrom?: string;
+  readonly redirected: boolean;
+}
+
+/** Machine-readable proof payload. Absolute paths are allowed only here. */
+export interface PiHostModuleProofLine {
+  readonly weaveHostModuleProof: {
+    readonly hostRoot?: string;
+    readonly hostVersion?: string;
+    readonly specifiers: readonly PiHostModuleProofLineSpecifier[];
+  };
 }
 
 export type PiHostLocalResolutions = {
@@ -259,6 +283,95 @@ function disableRedirectRequested(
 ): boolean {
   const source = options?.env ?? Bun.env;
   return source[WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT_ENV] === "1";
+}
+
+function hostModuleProofRequested(
+  options: ResolveHostModulesOptions | undefined,
+): boolean {
+  const source = options?.env ?? Bun.env;
+  return source[WEAVE_PI_HOST_MODULE_PROOF_ENV] === "1";
+}
+
+function boundProofPath(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isSafeAbsoluteHostPath(value)) return undefined;
+  return value;
+}
+
+function boundProofVersion(value: string | undefined): string | undefined {
+  if (value === undefined || value.length === 0) return undefined;
+  if (value.length <= 64) return value;
+  return value.slice(0, 64);
+}
+
+function writeProofLineToStderr(line: string): void {
+  Result.fromThrowable(
+    (): void => {
+      const written = Bun.stderr.write(`${line}\n`);
+      if (written instanceof Promise) {
+        void written;
+      }
+    },
+    () => undefined,
+  )();
+}
+
+/**
+ * Project the detailed proof record to the opt-in stderr JSON shape.
+ * One line, valid JSON, bounded, with absolute paths only.
+ */
+export function renderHostModuleProofLine(
+  outcome: PiHostModuleOutcome,
+): string {
+  const proof: PiHostModuleProofLine = {
+    weaveHostModuleProof: {
+      ...(boundProofPath(outcome.proofRecord.hostRoot) === undefined
+        ? {}
+        : { hostRoot: boundProofPath(outcome.proofRecord.hostRoot) }),
+      ...(boundProofVersion(outcome.proofRecord.hostVersion) === undefined
+        ? {}
+        : { hostVersion: boundProofVersion(outcome.proofRecord.hostVersion) }),
+      specifiers: outcome.proofRecord.specifiers.map((entry) => ({
+        specifier: entry.specifier,
+        ...(boundProofPath(entry.bareResolution) === undefined
+          ? {}
+          : { bareResolution: boundProofPath(entry.bareResolution) }),
+        ...(boundProofPath(entry.loadedFrom) === undefined
+          ? {}
+          : { loadedFrom: boundProofPath(entry.loadedFrom) }),
+        redirected: entry.redirected,
+      })),
+    },
+  };
+  const json = JSON.stringify(proof);
+  if (
+    json.length <= MAX_HOST_MODULE_PROOF_LINE_LENGTH &&
+    !json.includes("\n")
+  ) {
+    return json;
+  }
+  return JSON.stringify({
+    weaveHostModuleProof: {
+      ...(boundProofVersion(outcome.proofRecord.hostVersion) === undefined
+        ? {}
+        : { hostVersion: boundProofVersion(outcome.proofRecord.hostVersion) }),
+      specifiers: [],
+    },
+  });
+}
+
+/**
+ * Write exactly one proof line to the writer when the env var is strictly
+ * `1`. Never logs. Returns whether a line was written.
+ */
+export function maybeWriteHostModuleProofLine(
+  outcome: PiHostModuleOutcome,
+  options?: ResolveHostModulesOptions,
+): boolean {
+  if (!hostModuleProofRequested(options)) return false;
+  const write = options?.proofWrite ?? writeProofLineToStderr;
+  write(renderHostModuleProofLine(outcome));
+  return true;
 }
 
 function callEnv<T>(
@@ -513,7 +626,12 @@ export function resolveHostModules(
   return ResultAsync.fromPromise(
     runResolveHostModules(env, options),
     (): PiHostModuleOutcome => skipAllOutcome({ reason: "plugin-unavailable" }),
-  ).orElse((fallback) => okAsync(fallback));
+  )
+    .orElse((fallback) => okAsync(fallback))
+    .map((outcome) => {
+      maybeWriteHostModuleProofLine(outcome, options);
+      return outcome;
+    });
 }
 
 /**

@@ -141,11 +141,127 @@ export interface HostPackageReader {
  * Pi exposes that exact module through its extension loader even when the
  * peer package is absent from the extension's own node_modules tree.
  */
+/** Closed diagnostic type for an imported VERSION that disagrees with the proven host. */
+export const HOST_RUNTIME_DUPLICATE_REASON = "host-runtime-duplicate" as const;
+
+const MAX_REPORTED_HOST_VERSION_LENGTH = 64;
+const MAX_REPORTED_REDIRECTED_COUNT = 3;
+
+/**
+ * Duplicate host-runtime detection is warning-only. It must not enter
+ * health-only mode: a VERSION mismatch removes no declared capability, and
+ * health-only would break users mid-upgrade while two copies still exist.
+ */
+export interface HostRuntimeDuplicateDiagnostic {
+  readonly type: typeof HOST_RUNTIME_DUPLICATE_REASON;
+  readonly importedVersion: string;
+  readonly provenVersion: string;
+  readonly mode: "warning";
+}
+
+export interface ReportedHostIdentity {
+  readonly version: string;
+  readonly diagnostic: HostRuntimeDuplicateDiagnostic | undefined;
+}
+
+export interface BunHostPackageReaderOptions {
+  readonly importedVersion?: string;
+  readonly provenVersion?: string;
+  readonly onDuplicateDiagnostic?: (
+    diagnostic: HostRuntimeDuplicateDiagnostic,
+  ) => void;
+}
+
+function boundReportedHostVersion(value: string): string {
+  if (value.length <= MAX_REPORTED_HOST_VERSION_LENGTH) return value;
+  return value.slice(0, MAX_REPORTED_HOST_VERSION_LENGTH);
+}
+
+function boundRedirectedCount(value: number): number {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.min(Math.floor(value), MAX_REPORTED_REDIRECTED_COUNT);
+}
+
+/**
+ * Cross-check the imported host `VERSION` against the proven host package
+ * version. The proven value wins on mismatch. The diagnostic is a warning;
+ * callers must not map it to health-only mode.
+ */
+export function resolveReportedHostIdentity(input: {
+  readonly importedVersion: string;
+  readonly provenVersion?: string;
+}): ReportedHostIdentity {
+  const importedVersion = boundReportedHostVersion(input.importedVersion);
+  if (input.provenVersion === undefined) {
+    return { version: importedVersion, diagnostic: undefined };
+  }
+  const provenVersion = boundReportedHostVersion(input.provenVersion);
+  if (provenVersion === importedVersion) {
+    return { version: provenVersion, diagnostic: undefined };
+  }
+  return {
+    version: provenVersion,
+    diagnostic: {
+      type: HOST_RUNTIME_DUPLICATE_REASON,
+      importedVersion,
+      provenVersion,
+      mode: "warning",
+    },
+  };
+}
+
+/** Path-free `/weave:health` line for the host-module outcome. */
+export function renderHostRuntimeHealthLine(input: {
+  readonly importedVersion: string;
+  readonly provenVersion?: string;
+  readonly redirectedCount: number;
+}): string {
+  const redirected = boundRedirectedCount(input.redirectedCount);
+  const identity = resolveReportedHostIdentity(input);
+  if (identity.diagnostic === undefined) {
+    return `host runtime: single-copy; redirected ${redirected}`;
+  }
+  return `host runtime: duplicate-detected (${identity.diagnostic.type}); redirected ${redirected}`;
+}
+
+/** Health line from the recorded loader outcome and the imported `VERSION`. */
+export function hostRuntimeHealthLineFromOutcome(
+  outcome:
+    | {
+        readonly hostVersion?: string;
+        readonly redirected: readonly unknown[];
+      }
+    | undefined,
+): string {
+  return renderHostRuntimeHealthLine({
+    importedVersion: PI_HOST_VERSION,
+    provenVersion: outcome?.hostVersion,
+    redirectedCount: outcome?.redirected.length ?? 0,
+  });
+}
+
 export class BunHostPackageReader implements HostPackageReader {
+  private recordedDuplicate: HostRuntimeDuplicateDiagnostic | undefined;
+
+  constructor(private readonly options: BunHostPackageReaderOptions = {}) {}
+
+  /** Last `host-runtime-duplicate` diagnostic recorded by `read`, if any. */
+  duplicateDiagnostic(): HostRuntimeDuplicateDiagnostic | undefined {
+    return this.recordedDuplicate;
+  }
+
   read(): ResultAsync<HostPackageInfo, PiAdapterFailure> {
+    const identity = resolveReportedHostIdentity({
+      importedVersion: this.options.importedVersion ?? PI_HOST_VERSION,
+      provenVersion: this.options.provenVersion,
+    });
+    this.recordedDuplicate = identity.diagnostic;
+    if (identity.diagnostic !== undefined) {
+      this.options.onDuplicateDiagnostic?.(identity.diagnostic);
+    }
     const parsed = HostPackageInfoSchema.safeParse({
       name: HOST_PACKAGE_NAME,
-      version: PI_HOST_VERSION,
+      version: identity.version,
     });
     if (!parsed.success) {
       return errAsync(makeHostIdentityUnknownFailure("host-package-malformed"));

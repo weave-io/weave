@@ -242,6 +242,7 @@ import {
 import {
   BunHostPackageReader,
   type HostPackageReader,
+  hostRuntimeHealthLineFromOutcome,
   renderHostCapabilityGapDiagnostic,
 } from "./host-compatibility.js";
 import {
@@ -251,6 +252,7 @@ import {
   readValidatedCommands,
   safeReadHostSurfaceReport,
 } from "./host-inventory.js";
+import { getHostModuleOutcome } from "./host-module-loader.js";
 import {
   PiModelActivator,
   type PiModelApplyPort,
@@ -717,7 +719,20 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
   const log = logger.child({ module: "adapter-pi" });
   const envPort = new BunEnvPort();
   return {
-    hostPackageReader: new BunHostPackageReader(),
+    hostPackageReader: new BunHostPackageReader({
+      provenVersion: getHostModuleOutcome()?.hostVersion,
+      onDuplicateDiagnostic: (diagnostic) => {
+        log.warn(
+          {
+            type: diagnostic.type,
+            importedVersion: diagnostic.importedVersion,
+            provenVersion: diagnostic.provenVersion,
+            mode: diagnostic.mode,
+          },
+          "host-runtime-duplicate",
+        );
+      },
+    }),
     hostSurfaceReader: new DefaultPiHostSurfaceReader(),
     hostKeybindings: () => getHostKeybindings(),
     capabilityProber: new DefaultPiCapabilityProber({
@@ -2031,6 +2046,7 @@ function renderHealthMessage(
   );
   const mode = effectiveHealthOnly(generation) ? "health-only" : "ready";
   const result = [`Weave adapter mode: ${mode}`, ...lines];
+  result.push(hostRuntimeHealthLineFromOutcome(getHostModuleOutcome()));
 
   for (const diagnostic of generation.preflight.hostSurfaceGapDiagnostics.slice(
     0,
