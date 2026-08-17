@@ -21,6 +21,7 @@ import {
   type PiChildPickerNode,
 } from "../child-picker.js";
 import {
+  MAX_CHILD_EVENT_STRING,
   type PiChildSessionEvent,
   parsePiChildSessionEvent,
 } from "../child-session-events.js";
@@ -44,6 +45,86 @@ const parsed = (value: unknown): PiChildSessionEvent => {
 };
 
 const serialized = (value: unknown): string => JSON.stringify(value) ?? "";
+
+/**
+ * Every `queue_update` shape whose queues cannot be read as the host's own
+ * complete statement. None of them may ever state a depth.
+ *
+ * They are rebuilt per call because some carry one-shot state (a revoked
+ * proxy, an accessor with a side-effect counter).
+ */
+const rejectedQueueReports = (): readonly unknown[] => {
+  const accessorField: Record<string, unknown> = {
+    type: "queue_update",
+    followUp: [],
+  };
+  Object.defineProperty(accessorField, "steering", {
+    enumerable: true,
+    configurable: true,
+    get: () => [],
+  });
+
+  const hiddenField: Record<string, unknown> = {
+    type: "queue_update",
+    steering: [],
+  };
+  Object.defineProperty(hiddenField, "followUp", {
+    enumerable: false,
+    configurable: true,
+    writable: true,
+    value: [],
+  });
+
+  const accessorIndex: unknown[] = [];
+  Object.defineProperty(accessorIndex, "0", {
+    enumerable: true,
+    configurable: true,
+    get: () => "steer",
+  });
+
+  const hiddenIndex: unknown[] = [];
+  Object.defineProperty(hiddenIndex, "0", {
+    enumerable: false,
+    configurable: true,
+    writable: true,
+    value: "steer",
+  });
+
+  const sparse: unknown[] = [];
+  sparse.length = 2;
+
+  const decorated: unknown[] = ["steer"];
+  (decorated as unknown as Record<string, unknown>).note = "extra";
+
+  const revocable = Proxy.revocable(["steer"], {});
+  revocable.revoke();
+
+  return [
+    accessorField,
+    hiddenField,
+    { type: "queue_update", steering: accessorIndex, followUp: [] },
+    { type: "queue_update", steering: hiddenIndex, followUp: [] },
+    { type: "queue_update", steering: sparse, followUp: [] },
+    { type: "queue_update", steering: decorated, followUp: [] },
+    { type: "queue_update", steering: revocable.proxy, followUp: [] },
+    {
+      type: "queue_update",
+      steering: new Proxy(["steer"], {
+        getOwnPropertyDescriptor: () => {
+          throw new Error("hostile descriptor trap");
+        },
+      }),
+      followUp: [],
+    },
+    {
+      type: "queue_update",
+      steering: ["q".repeat(MAX_CHILD_EVENT_STRING + 1)],
+      followUp: [],
+    },
+    { type: "queue_update", steering: [7], followUp: [] },
+    { type: "queue_update", steering: [] },
+  ];
+};
 
 const reduceAll = (events: readonly unknown[]): PiChildTranscriptState => {
   let state = createPiChildTranscriptState();
@@ -371,6 +452,192 @@ describe("queue depth is reported, never inferred", () => {
     expect(rebuilt.queue).toBeUndefined();
   });
 
+  it("never invokes an accessor while reading a report, and states nothing for one", () => {
+    // A getter is the payload's own CODE, not a value the host stated. Running
+    // it to decide a queue depth would execute observed private-protocol data
+    // inside the parser.
+    let fieldReads = 0;
+    const accessorField: Record<string, unknown> = {
+      type: "queue_update",
+      followUp: [],
+    };
+    Object.defineProperty(accessorField, "steering", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        fieldReads += 1;
+        return [];
+      },
+    });
+    expect(parsed(accessorField).type).toBe("unknown");
+    expect(fieldReads).toBe(0);
+
+    let elementReads = 0;
+    const accessorElement: unknown[] = [];
+    Object.defineProperty(accessorElement, "0", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        elementReads += 1;
+        return "steer";
+      },
+    });
+    expect(
+      parsed({
+        type: "queue_update",
+        steering: accessorElement,
+        followUp: [],
+      }).type,
+    ).toBe("unknown");
+    expect(elementReads).toBe(0);
+  });
+
+  it("states nothing for a non-enumerable field or a non-enumerable index", () => {
+    const hiddenField: Record<string, unknown> = {
+      type: "queue_update",
+      steering: [],
+    };
+    Object.defineProperty(hiddenField, "followUp", {
+      enumerable: false,
+      configurable: true,
+      writable: true,
+      value: [],
+    });
+    expect(parsed(hiddenField).type).toBe("unknown");
+
+    const hiddenIndex: unknown[] = [];
+    Object.defineProperty(hiddenIndex, "0", {
+      enumerable: false,
+      configurable: true,
+      writable: true,
+      value: "steer",
+    });
+    expect(hiddenIndex.length).toBe(1);
+    expect(
+      parsed({ type: "queue_update", steering: hiddenIndex, followUp: [] })
+        .type,
+    ).toBe("unknown");
+  });
+
+  it("states nothing for an array carrying an extra own enumerable property", () => {
+    const decorated: unknown[] = ["steer"];
+    (decorated as unknown as Record<string, unknown>).note = "extra";
+    expect(
+      parsed({ type: "queue_update", steering: decorated, followUp: [] }).type,
+    ).toBe("unknown");
+  });
+
+  it("states nothing for an array subclass", () => {
+    class QueueList extends Array<string> {}
+    const subclass = QueueList.from(["steer"]);
+    expect(Array.isArray(subclass)).toBe(true);
+    expect(
+      parsed({ type: "queue_update", steering: subclass, followUp: [] }).type,
+    ).toBe("unknown");
+  });
+
+  it("rejects an overbound entry rather than truncating it", () => {
+    const overbound = "q".repeat(MAX_CHILD_EVENT_STRING + 1);
+    const event = parsed({
+      type: "queue_update",
+      steering: [overbound],
+      followUp: [],
+    });
+    // A shortened entry would be a queue fact the host never stated.
+    expect(event.type).toBe("unknown");
+    expect(serialized(event)).not.toContain("queue_change");
+
+    // The exact bound is still admitted, unchanged.
+    const exact = "q".repeat(MAX_CHILD_EVENT_STRING);
+    expect(
+      parsed({ type: "queue_update", steering: [exact], followUp: [] }),
+    ).toMatchObject({ type: "queue_change", size: 1, queue: [exact] });
+  });
+
+  it("states nothing for a boxed string entry", () => {
+    expect(
+      parsed({
+        type: "queue_update",
+        // An intentionally boxed String object, which is not a primitive.
+        steering: [new String("steer")],
+        followUp: [],
+      }).type,
+    ).toBe("unknown");
+  });
+
+  it("states nothing when a descriptor read throws, and never throws itself", () => {
+    const hostile = new Proxy(["steer"], {
+      getOwnPropertyDescriptor: () => {
+        throw new Error("hostile descriptor trap");
+      },
+    });
+    expect(() =>
+      parsePiChildSessionEvent({
+        type: "queue_update",
+        steering: hostile,
+        followUp: [],
+      }),
+    ).not.toThrow();
+    expect(
+      parsed({ type: "queue_update", steering: hostile, followUp: [] }).type,
+    ).toBe("unknown");
+
+    const revocable = Proxy.revocable(["steer"], {});
+    revocable.revoke();
+    expect(
+      parsed({
+        type: "queue_update",
+        steering: revocable.proxy,
+        followUp: [],
+      }).type,
+    ).toBe("unknown");
+
+    const lying = new Proxy(["steer"], {
+      getOwnPropertyDescriptor: (target, key) =>
+        key === "0"
+          ? { get: () => "steer", enumerable: true, configurable: true }
+          : Object.getOwnPropertyDescriptor(target, key),
+    });
+    expect(
+      parsed({ type: "queue_update", steering: lying, followUp: [] }).type,
+    ).toBe("unknown");
+  });
+
+  it("never runs a proxy's `get` trap while reading a report", () => {
+    let trapped = 0;
+    const watched = new Proxy(["steer"], {
+      get: (target, key, receiver) => {
+        trapped += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    parsed({ type: "queue_update", steering: watched, followUp: [] });
+    expect(trapped).toBe(0);
+  });
+
+  it("carries every rejected report shape as unknown through the transcript, its render and a rebuilt replay", () => {
+    for (const rejected of rejectedQueueReports()) {
+      const state = reduceAll([rejected]);
+      expect(state.queue).toBeUndefined();
+      expect(
+        state.entries.find((candidate) => candidate.kind === "queue"),
+      ).toBeUndefined();
+      const rendered = renderPiChildTranscriptLines(state, 80).join("\n");
+      expect(rendered).not.toContain("size=");
+      expect(rendered).not.toContain("queue:");
+
+      const entry = projectLiveEntry(parsed(rejected), 0, false);
+      expect(entry?.kind).not.toBe("queue");
+      const rebuilt = transcriptFromOverlayEntries(
+        entry === undefined ? [] : [entry],
+      );
+      expect(rebuilt.queue).toBeUndefined();
+      expect(
+        rebuilt.entries.find((candidate) => candidate.kind === "queue"),
+      ).toBeUndefined();
+    }
+  });
+
   it("accepts a complete empty report as an authoritative zero", () => {
     const event = parsed({
       type: "queue_update",
@@ -426,6 +693,17 @@ describe("queue depth is reported, never inferred", () => {
     const entry = state.entries.find((candidate) => candidate.kind === "queue");
     expect(entry?.kind === "queue" && entry.size).toBe(2);
     expect(state.queue).toEqual(["a", "b"]);
+  });
+
+  it("preserves the exact queued strings and size of a `queue_update` report", () => {
+    const exact = "q".repeat(MAX_CHILD_EVENT_STRING);
+    const state = reduceAll([
+      { type: "queue_update", steering: ["steer"], followUp: [exact] },
+    ]);
+    const entry = state.entries.find((candidate) => candidate.kind === "queue");
+    expect(entry?.kind === "queue" && entry.size).toBe(2);
+    // Byte for byte: nothing was sliced on the way in.
+    expect(state.queue).toEqual(["steer", exact]);
   });
 
   it("states `unknown` rather than zero on the live replay row", () => {

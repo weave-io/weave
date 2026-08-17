@@ -53,7 +53,10 @@ import type {
   ChildOverlaySourcePort,
   ChildOverlayView,
 } from "../child-overlay-types.js";
-import { parsePiChildSessionEvent } from "../child-session-events.js";
+import {
+  MAX_CHILD_EVENT_STRING,
+  parsePiChildSessionEvent,
+} from "../child-session-events.js";
 import {
   createPiChildTranscriptState,
   reducePiChildTranscript,
@@ -334,6 +337,20 @@ describe("queue depth stays optional through every boundary", () => {
   const railText = (facts: OverlayRailFacts): string =>
     renderRailStatusMatrix(plainPaint(), facts, 40, 40).join("\n");
 
+  /** A card with one run already started, ready to apply an event to. */
+  const startedCard = () =>
+    applyDelegationCardInput(
+      createDelegationCardState({ agentName: "shuttle", assignment: "probe" }),
+      {
+        kind: "start_run",
+        threadId: "thread-opaque-1",
+        runNumber: 1,
+        action: "start",
+        agentName: "shuttle",
+      },
+      () => 2_000,
+    )._unsafeUnwrap();
+
   it("reports unknown when no authority named a depth (live)", async () => {
     const view = await openView({ status: "live" });
     const rail = childOverlayRailFacts(view);
@@ -374,6 +391,119 @@ describe("queue depth stays optional through every boundary", () => {
       ).toBeUndefined();
       expect(overlayRows(view)).not.toContain("queue: 0");
     }
+  });
+
+  it("reports unknown for a `queue_update` whose queues cannot be read, without running its accessors", async () => {
+    // Descriptor-only reading: a getter is the payload's own code, an
+    // overbound entry is a string the host never queued, and a hostile or
+    // revoked proxy states nothing at all. None of them may reach the rail.
+    let fieldReads = 0;
+    let elementReads = 0;
+
+    const accessorField: Record<string, unknown> = {
+      type: "queue_update",
+      followUp: [],
+    };
+    Object.defineProperty(accessorField, "steering", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        fieldReads += 1;
+        return ["steer"];
+      },
+    });
+
+    const accessorIndex: unknown[] = [];
+    Object.defineProperty(accessorIndex, "0", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        elementReads += 1;
+        return "steer";
+      },
+    });
+
+    const revocable = Proxy.revocable(["steer"], {});
+    revocable.revoke();
+
+    for (const rejected of [
+      accessorField,
+      { type: "queue_update", steering: accessorIndex, followUp: [] },
+      {
+        type: "queue_update",
+        steering: ["q".repeat(MAX_CHILD_EVENT_STRING + 1)],
+        followUp: [],
+      },
+      { type: "queue_update", steering: revocable.proxy, followUp: [] },
+    ]) {
+      const view = await openView({ status: "live" }, [rejected]);
+      const rail = childOverlayRailFacts(view);
+      expect(rail.queueCount).toBeUndefined();
+      expect(rail.firstQueued).toBeUndefined();
+      const text = railText(rail);
+      expect(text).toContain(OVERLAY_UNKNOWN);
+      expect(text).not.toContain("queue empty");
+      expect(text).not.toContain("queue 0");
+      expect(text).not.toContain("queue 1");
+      expect(
+        childOverlayPromptFacts(view, { draft: "", confirmingCancel: false })
+          .queueCount,
+      ).toBeUndefined();
+      expect(overlayRows(view)).not.toContain("queue: 0");
+      expect(overlayRows(view)).not.toContain("queue: 1");
+
+      // The compact render and the card learn nothing either.
+      const parsed = parsePiChildSessionEvent(rejected);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) throw new Error("unreachable");
+      expect(
+        mapPiChildSessionEventToCompactInput(parsed.data)._unsafeUnwrap()?.kind,
+      ).not.toBe("queue");
+      const facts = projectDelegationCardFacts(
+        applyDelegationCardEvent(
+          startedCard(),
+          parsed.data,
+          () => 2_000,
+          "assistant",
+        )._unsafeUnwrap(),
+      );
+      expect(facts.run.phase).not.toBe("steered");
+      expect(facts.activity?.kind).not.toBe("queue");
+    }
+
+    // Proof the decision never consulted the payload's own code.
+    expect(fieldReads).toBe(0);
+    expect(elementReads).toBe(0);
+  });
+
+  it("preserves the exact strings and size of a valid report on the rail and the card", async () => {
+    const exact = "q".repeat(MAX_CHILD_EVENT_STRING);
+    const view = await openView({ status: "live" }, [
+      { type: "queue_update", steering: ["steer"], followUp: [exact] },
+    ]);
+    expect(childOverlayRailFacts(view).queueCount).toBe(2);
+
+    const parsed = parsePiChildSessionEvent({
+      type: "queue_update",
+      steering: ["steer"],
+      followUp: [exact],
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("unreachable");
+    expect(parsed.data).toMatchObject({
+      type: "queue_change",
+      size: 2,
+      queue: ["steer", exact],
+    });
+    const facts = projectDelegationCardFacts(
+      applyDelegationCardEvent(
+        startedCard(),
+        parsed.data,
+        () => 2_000,
+        "assistant",
+      )._unsafeUnwrap(),
+    );
+    expect(facts.run.phase).toBe("steered");
   });
 
   it("reports zero for a complete empty `queue_update`", async () => {
