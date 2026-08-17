@@ -589,7 +589,6 @@
   - type WeaveCommandClassification
   - const WEAVE_INSPECT_COMMAND_NAME
   - _...7 more_
-- `packages/adapters/pi/src/config-activation-diagnostics.ts` — function projectConfigLoadIssues: (errors, projectRoot) => readonly string[]
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -597,7 +596,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...8 more_
+  - _...7 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -689,6 +688,14 @@
   - function selectsCustomEditorFallback: (report) => boolean
   - function createDefaultPiHostProbePort: (input) => PiHostProbePort
   - _...11 more_
+- `packages/adapters/pi/src/host-module-redirect.ts`
+  - function hostEntrySpecifierFor: (specifier) => string
+  - function isSafeAbsoluteHostPath: (value) => boolean
+  - function planHostModuleRedirect: (input) => Result<PiHostRedirectPlan, PiHostRedirectDiagnostic>
+  - function renderHostReexportStub: (input) => string
+  - function summarizeHostRedirect: (plan) => string
+  - interface PiHostSpecifierFacts
+  - _...13 more_
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator

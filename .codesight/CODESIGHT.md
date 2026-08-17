@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 304 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~33,000 tokens. Without it, AI exploration would cost ~98,100 tokens. **Saves ~65,000 tokens per conversation.**
-> **Last scanned:** 2026-08-17 18:03 — re-run after significant changes
+> **Token savings:** this file is ~33,100 tokens. Without it, AI exploration would cost ~98,100 tokens. **Saves ~65,000 tokens per conversation.**
+> **Last scanned:** 2026-08-17 18:34 — re-run after significant changes
 
 ---
 
@@ -600,7 +600,6 @@
   - type WeaveCommandClassification
   - const WEAVE_INSPECT_COMMAND_NAME
   - _...7 more_
-- `packages/adapters/pi/src/config-activation-diagnostics.ts` — function projectConfigLoadIssues: (errors, projectRoot) => readonly string[]
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -608,7 +607,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...8 more_
+  - _...7 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -700,6 +699,14 @@
   - function selectsCustomEditorFallback: (report) => boolean
   - function createDefaultPiHostProbePort: (input) => PiHostProbePort
   - _...11 more_
+- `packages/adapters/pi/src/host-module-redirect.ts`
+  - function hostEntrySpecifierFor: (specifier) => string
+  - function isSafeAbsoluteHostPath: (value) => boolean
+  - function planHostModuleRedirect: (input) => Result<PiHostRedirectPlan, PiHostRedirectDiagnostic>
+  - function renderHostReexportStub: (input) => string
+  - function summarizeHostRedirect: (plan) => string
+  - interface PiHostSpecifierFacts
+  - _...13 more_
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator
@@ -1942,7 +1949,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 336 test files found
+> 337 test files found
 
 ---
 
