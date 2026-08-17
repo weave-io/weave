@@ -77,13 +77,13 @@
   - type TranslateAgentError
   - type OpenCodeFastActivationReport
 - `packages/adapters/pi/src/active-plan-ui-state.ts`
+  - function activePlanWorkflowInstanceId: (identity) => string | undefined
   - function isTerminalWorkflowStatus: (status) => boolean
   - function resolveActivePlanIdentity: (port) => ResultAsync<ActivePlanIdentity | ActivePlanEmptyReason, ActivePlanUiError>
   - function resolveActivePlanView: (port) => ResultAsync<ActivePlanView, ActivePlanUiError>
   - function createActivePlanUiState: () => ActivePlanUiState
-  - interface ActivePlanIdentity
   - interface ActivePlanUiError
-  - _...7 more_
+  - _...8 more_
 - `packages/adapters/pi/src/adapter-cli-commands.ts`
   - function encodeResultPageBase64: (bytes) => string
   - function decodeResultPageBase64: (value) => Uint8Array
@@ -658,6 +658,14 @@
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
   - _...11 more_
+- `packages/adapters/pi/src/foreground-plan-display.ts`
+  - function parseForegroundPlanRequest: (text) => Result<string, ForegroundPlanRequestRejection>
+  - function isSafeForegroundPlanName: (value) => value is string
+  - function foregroundPlanEntry: (planName) => ForegroundPlanEntry
+  - function readForegroundPlanEntry: (entries) => string | undefined
+  - function createForegroundPlanDisplayState: () => ForegroundPlanDisplayState
+  - interface ForegroundPlanDisplayState
+  - _...7 more_
 - `packages/adapters/pi/src/generation-resources.ts`
   - function createGenerationSessionCtxCell: () => PiGenerationSessionCtxCell
   - function readSessionManagerEntries: (ctx, report) => void

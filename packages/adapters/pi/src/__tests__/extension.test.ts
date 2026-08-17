@@ -58,6 +58,7 @@ import {
   readOverlaySessionEntryPage,
   resolveDirectStepBadgeAgent,
 } from "../extension.js";
+import { FOREGROUND_PLAN_ENTRY_TYPE } from "../foreground-plan-display.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
 import {
@@ -770,7 +771,7 @@ function installExtension(
 }
 
 describe("createPiExtension factory (layer C: compiled extension against a fake host)", () => {
-  it("registers commands, the palette shortcut, and six lifecycle delegates without a tool-call interceptor", () => {
+  it("registers commands, the palette shortcut, and seven lifecycle delegates without a tool-call interceptor", () => {
     const host = new RecordingFakePiHost();
     installExtension(host);
     expect(host.registerCommandCalls.map((call) => call.name).sort()).toEqual(
@@ -805,6 +806,10 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       "session_before_tree",
       "session_shutdown",
       "session_start",
+      // Plan progress is re-read after the tool completions that can write a
+      // plan file, so the rail's checkbox marks, `now` and `next` move with
+      // the work instead of freezing at the value they were resolved with.
+      "tool_execution_end",
     ]);
   });
 
@@ -9505,5 +9510,365 @@ describe("createPiExtension: provider fast intent", () => {
       extension.providerFastLatestForTest(),
       UNSUPPORTED_FAST_SNAPSHOT,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug B — the Plan Rail must name the plan a FOREGROUND execution is running
+// ---------------------------------------------------------------------------
+
+/**
+ * A session with a real workflow controller, a readable plan, and a plan
+ * catalog — i.e. everything a foreground `/weave:start` has in production,
+ * except a workflow instance, which a foreground run never creates.
+ */
+function installForegroundPlanRailExtension(
+  host: RecordingFakePiHost,
+  provider: MutablePlanStateProvider,
+  planNames: readonly string[] = ["foreground-plan"],
+): void {
+  installExtension(host, "0.81.1", {
+    capabilityProber: allOkCapabilityProber(),
+    configActivator: fakeConfigActivator({
+      agents: [
+        { agentName: "loom", source: "explicit", descriptor: loomDescriptor() },
+        {
+          agentName: "tapestry",
+          source: "explicit",
+          descriptor: tapestryDescriptor(),
+        },
+      ],
+      errors: [],
+    }),
+    runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+    planStateProviderFactory: () => provider,
+    planCatalogPort: new FakePiPlanCatalogPort([...planNames]),
+    telemetryJournal: { write: (_entry: unknown) => okAsync(undefined) },
+    telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+  });
+}
+
+/** A plan with three parent tasks, the second of which is in progress. */
+function foregroundPlanSnapshot(
+  planName = "foreground-plan",
+  states: readonly ("completed" | "in_progress" | "pending")[] = [
+    "completed",
+    "in_progress",
+    "pending",
+  ],
+): PlanTaskSnapshot {
+  return {
+    planName,
+    contentRevision: "rev-1",
+    format: "canonical",
+    totalParentCount: states.length,
+    complete: states.every((state) => state === "completed"),
+    parents: states.map((state, index) => ({
+      id: `${index + 1}`,
+      title: `Task ${index + 1}`,
+      state,
+      children: [],
+    })),
+  } as PlanTaskSnapshot;
+}
+
+/** The ANSI-free lines the Plan Rail last painted. */
+function planRailPlainLines(host: RecordingFakePiHost): string[] {
+  return planRailLines(host).map((line) =>
+    line.replace(ANSI, "").replace(/\s+$/u, ""),
+  );
+}
+
+/**
+ * Lets every fire-and-forget plan resolution finish.
+ *
+ * Plan resolution is deliberately asynchronous and last-request-wins, so the
+ * rail repaints after the turn/tool event that triggered it returns. Yielding
+ * both the microtask and the macrotask queue is what makes the assertion see
+ * the frame a reader would.
+ */
+async function settlePlanSurfaces(): Promise<void> {
+  for (let round = 0; round < 4; round += 1) {
+    await flushBackgroundWork();
+    await Bun.sleep(1);
+  }
+}
+
+describe("createPiExtension: the Plan Rail follows a foreground plan execution", () => {
+  it("names the plan, its marks, now and next after /weave:start", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    await host.invokeCommand("weave:start", "foreground-plan");
+    await settlePlanSurfaces();
+
+    const rows = planRailPlainLines(host);
+    expect(rows[0]).toContain("◆ WEAVE · TAPESTRY");
+    expect(rows[0]).toContain("foreground-plan");
+    expect(rows[1]).toContain("2/3");
+    expect(rows[2]).toBe("┃ now   Task 2");
+    expect(rows[3]).toBe("┗ next  Task 3");
+    // Display-only: the kickoff turn is the only thing that was started.
+    expect(host.sentUserMessages).toHaveLength(1);
+  });
+
+  it("records the selection as one bounded adapter-owned session entry", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    await host.invokeCommand("weave:start", "foreground-plan");
+    await settlePlanSurfaces();
+
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "foreground-plan" },
+      },
+    ]);
+  });
+
+  it("adopts one explicit direct request naming a contained plan path", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/foreground-plan.md end to end",
+    });
+    await settlePlanSurfaces();
+
+    const rows = planRailPlainLines(host);
+    expect(rows[0]).toContain("foreground-plan");
+    expect(rows[2]).toBe("┃ now   Task 2");
+  });
+
+  it("ignores prose, traversal, several plans, and non-interactive input", async () => {
+    for (const event of [
+      {
+        source: "interactive",
+        text: "execute the foreground plan we discussed",
+      },
+      {
+        source: "interactive",
+        text: "what does .weave/plans/foreground-plan.md say?",
+      },
+      {
+        source: "interactive",
+        text: "execute .weave/plans/../../etc/passwd.md",
+      },
+      {
+        source: "interactive",
+        text: "execute ../other/.weave/plans/foreground-plan.md",
+      },
+      {
+        source: "interactive",
+        text: "execute .weave/plans/foreground-plan.md and .weave/plans/other-plan.md",
+      },
+      {
+        source: "extension",
+        text: "execute .weave/plans/foreground-plan.md",
+      },
+    ]) {
+      const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+      const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+      installForegroundPlanRailExtension(host, provider, [
+        "foreground-plan",
+        "other-plan",
+      ]);
+      await host.triggerSessionStart();
+
+      await host.triggerEvent("input", { type: "input", ...event });
+      await settlePlanSurfaces();
+
+      expect({ text: event.text, task: planRailShowsTask(host) }).toEqual({
+        text: event.text,
+        task: false,
+      });
+      expect(
+        host.appendedEntries.some(
+          (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("refuses a plan that is not in this project root's catalog", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const provider = new MutablePlanStateProvider(
+      foregroundPlanSnapshot("other-worktree-plan"),
+    );
+    installForegroundPlanRailExtension(host, provider, ["foreground-plan"]);
+    await host.triggerSessionStart();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/other-worktree-plan.md",
+    });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+  });
+
+  it("reconstructs the plan on restart from the adapter-owned entry alone", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: {
+        getSessionId: () => "fake-session-1",
+        getSessionFile: () => "/fake/sessions/fake-session-1.jsonl",
+        isPersisted: () => true,
+        getHeader: () => ({ id: "fake-session-1" }),
+        getEntries: () => [
+          {
+            type: "message",
+            role: "user",
+            content: "execute .weave/plans/prose-only-plan.md",
+          },
+          {
+            type: "custom",
+            customType: FOREGROUND_PLAN_ENTRY_TYPE,
+            data: { v: 1, planName: "foreground-plan" },
+          },
+        ],
+      } as never,
+    });
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+
+    await host.triggerSessionStart();
+    await settlePlanSurfaces();
+
+    const rows = planRailPlainLines(host);
+    expect(rows[0]).toContain("foreground-plan");
+    expect(rows[2]).toBe("┃ now   Task 2");
+  });
+
+  it("moves now, next and the marks when a tool edits the plan", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    await host.invokeCommand("weave:start", "foreground-plan");
+    await settlePlanSurfaces();
+    expect(planRailPlainLines(host)[2]).toBe("┃ now   Task 2");
+
+    provider.setSnapshot(
+      foregroundPlanSnapshot("foreground-plan", [
+        "completed",
+        "completed",
+        "in_progress",
+      ]),
+    );
+    await host.triggerEvent("tool_execution_end", {
+      type: "tool_execution_end",
+      toolName: "edit",
+      toolCallId: "call-1",
+      isError: false,
+    });
+    await settlePlanSurfaces();
+
+    const rows = planRailPlainLines(host);
+    expect(rows[1]).toContain("3/3");
+    expect(rows[2]).toBe("┃ now   Task 3");
+    expect(rows[3]).toBeUndefined();
+  });
+
+  it("clears the rail's plan tiers once the plan has nothing left to do", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    await host.invokeCommand("weave:start", "foreground-plan");
+    await settlePlanSurfaces();
+    expect(planRailShowsTask(host)).toBe(true);
+
+    provider.setSnapshot(
+      foregroundPlanSnapshot("foreground-plan", [
+        "completed",
+        "completed",
+        "completed",
+      ]),
+    );
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(planRailPlainLines(host)[0]).toContain("◆ WEAVE · TAPESTRY");
+
+    // The identity itself is dropped, so a later turn does not resurrect the
+    // finished plan when its file is read again.
+    provider.setSnapshot(foregroundPlanSnapshot());
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await settlePlanSurfaces();
+    expect(planRailShowsTask(host)).toBe(false);
+  });
+
+  it("does not start, resume, or lease anything for a display-only plan", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const store = createInMemoryRuntimeStore();
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: { open: () => okAsync(store) },
+      planStateProviderFactory: () => provider,
+      planCatalogPort: new FakePiPlanCatalogPort(["foreground-plan"]),
+      telemetryJournal: { write: (_entry: unknown) => okAsync(undefined) },
+      telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+    });
+    await host.triggerSessionStart();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/foreground-plan.md",
+    });
+    await settlePlanSurfaces();
+    expect(planRailShowsTask(host)).toBe(true);
+
+    // Nothing executes for a display identity: the store holds no workflow
+    // instance and no lease, and the status line says nothing about the plan.
+    await host.invokeCommand("weave:status");
+    const status = host.notifyCalls.at(-1)?.message ?? "";
+    expect(status).toContain("health-only: false");
+    expect(status).not.toContain("foreground-plan");
+    const instances = await store.instances.list();
+    expect(instances.isOk() ? instances.value : ["unreadable"]).toEqual([]);
+    const lease = await store.leases.findActive();
+    expect(lease.isOk() ? lease.value : "unreadable").toBeNull();
   });
 });

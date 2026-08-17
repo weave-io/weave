@@ -234,6 +234,13 @@ import {
   type PiAdapterFailure,
 } from "./errors.js";
 import {
+  createForegroundPlanDisplayState,
+  FOREGROUND_PLAN_ENTRY_TYPE,
+  foregroundPlanEntry,
+  parseForegroundPlanRequest,
+  readForegroundPlanEntry,
+} from "./foreground-plan-display.js";
+import {
   createGenerationSessionCtxCell,
   type PiChildRefEntryReadDegradation,
   PiGenerationResourceOwner,
@@ -2117,6 +2124,19 @@ const WEAVE_CHILD_TREE_WIDGET_KEY = "weave-children";
 const WEAVE_PLAN_WIDGET_KEY = "weave-plan";
 
 /**
+ * Host tools whose completion can have changed a plan file.
+ *
+ * Named rather than "any tool", so an ordinary read-only turn does not
+ * re-resolve the plan on every tool call. `bash` is included because a plan
+ * checkbox is as easily moved by a script as by the editor.
+ */
+const PLAN_MUTATING_TOOLS: ReadonlySet<string> = new Set([
+  "edit",
+  "write",
+  "bash",
+]);
+
+/**
  * The non-widget fallback for agent identity.
  *
  * The Plan Rail owns ambient parent context wherever it can mount. This
@@ -2210,10 +2230,14 @@ export function resolveDirectStepBadgeAgent(
 function buildActivePlanReadPort(
   controller: PiWorkflowController | undefined,
   currentWorkflowInstanceId: string | undefined,
+  foregroundPlanName: string | undefined,
 ): ActivePlanReadPort | undefined {
   if (controller === undefined) return undefined;
   return {
     currentWorkflowInstanceId,
+    // Display-only, and resolved last: it can fill the gap a foreground
+    // `/weave:start` leaves, never outrank the tracker or a live pointer.
+    foregroundPlanName,
     inspect: (workflowInstanceId) =>
       controller.inspect(workflowInstanceId).map((snapshot) => ({
         slug: snapshot.slug,
@@ -3088,6 +3112,29 @@ export function createPiExtension(
   const activePlanUiState = createActivePlanUiState();
 
   /**
+   * The DISPLAY-ONLY plan identity of a foreground execution.
+   *
+   * `/weave:start` and a direct "execute `.weave/plans/<name>.md`" request run
+   * Tapestry in this session's own turn, so there is no workflow instance for
+   * the resolver to find and the rail had nothing to say beyond the agent
+   * name. This cell names the plan those two user-authorized paths selected,
+   * and nothing else: it starts nothing, resumes nothing, authorizes nothing,
+   * and holds no lease. It is read last, behind the tracker and behind an
+   * eligible recovery pointer.
+   */
+  const foregroundPlanDisplay = createForegroundPlanDisplayState();
+
+  /**
+   * Serializes plan-state refreshes without a timer.
+   *
+   * Plan progress changes when a tool edits the plan file, so the refresh is
+   * driven by tool completions and turn settlement rather than by polling. A
+   * refresh that arrives while one is in flight sets a dirty bit instead of
+   * starting a second lookup, so a burst of edits costs one extra resolution.
+   */
+  const planRefreshCell = { running: false, dirty: false };
+
+  /**
    * The whole of this session's ambient parent context, in one place.
    *
    * The Plan Rail shows the selected agent *and* the active plan together, so
@@ -3178,6 +3225,7 @@ export function createPiExtension(
     const port = buildActivePlanReadPort(
       workflowControllerCell.controller,
       currentWorkflowInstanceId,
+      foregroundPlanDisplay.planName(),
     );
     if (port === undefined) {
       activePlanUiState.clear();
@@ -3226,6 +3274,13 @@ export function createPiExtension(
       currentWorkflowInstanceId !== undefined
     ) {
       tracker.setActiveInstance(undefined);
+    }
+    // The same rule for the display-only identity: a plan with no incomplete
+    // task left is finished work, so the identity is dropped rather than
+    // re-resolved on every later turn. An unreadable plan is NOT dropped - it
+    // may be a transient read - it simply shows nothing meanwhile.
+    if (view.kind === "empty" && view.reason === "foreground-plan-complete") {
+      foregroundPlanDisplay.clear();
     }
     // Recovery-sourced identity carries no tracker id, so the tracker recheck
     // above compares `undefined` with `undefined` and proves nothing: the
@@ -3289,6 +3344,129 @@ export function createPiExtension(
   function clearActivePlanSurfaces(ctx: PiSessionContext | undefined): void {
     activePlanUiState.clear();
     if (ctx !== undefined) setActivePlanView(ctx, undefined);
+  }
+
+  /**
+   * Adopts a user-authorized foreground plan as DISPLAY state and repaints.
+   *
+   * Two callers, both of which already proved the user asked for this exact
+   * plan: `/weave:start` after its own catalog check and confirmation, and one
+   * direct interactive request after strict parsing, catalog membership, and a
+   * successful snapshot read. The selection is recorded as one bounded
+   * adapter-owned session entry so a restart can reconstruct it without
+   * re-reading a word of conversation.
+   *
+   * It writes no runtime state and starts nothing: the only observable effects
+   * are the session entry and the repaint.
+   */
+  function adoptForegroundPlan(
+    pi: PiExtensionApi,
+    ctx: PiSessionContext,
+    planName: string,
+  ): void {
+    if (!foregroundPlanDisplay.select(planName)) return;
+    Result.fromThrowable(
+      () =>
+        pi.appendEntry(
+          FOREGROUND_PLAN_ENTRY_TYPE,
+          foregroundPlanEntry(planName),
+        ),
+      () => undefined,
+    )().mapErr(() => {
+      // A host that cannot record the entry still shows the rail for this
+      // session; only the restart reconstruction is lost.
+      deps.logger.warn(
+        {},
+        "could not record the foreground plan display entry",
+      );
+      return undefined;
+    });
+    void syncActivePlanSurfaces(ctx);
+  }
+
+  /**
+   * Re-resolves the plan surfaces after something may have changed the plan
+   * file, coalescing concurrent requests onto one lookup.
+   *
+   * No timer and no polling: the callers are tool completions and turn
+   * settlement, which is exactly when a checkbox, the active task, and the
+   * next task can have moved.
+   */
+  /**
+   * True when a plan is on screen (or claimed) and therefore worth re-reading.
+   * With no plan at all a refresh could only ever resolve to nothing, so the
+   * ordinary no-plan session does no work per turn.
+   */
+  function hasPlanSurfaceToRefresh(): boolean {
+    return (
+      foregroundPlanDisplay.planName() !== undefined ||
+      parentContextCell.view?.kind === "active"
+    );
+  }
+
+  function refreshPlanSurfaces(ctx: PiSessionContext): void {
+    if (planRefreshCell.running) {
+      planRefreshCell.dirty = true;
+      return;
+    }
+    planRefreshCell.running = true;
+    void syncActivePlanSurfaces(ctx).then(() => {
+      planRefreshCell.running = false;
+      if (!planRefreshCell.dirty) return;
+      planRefreshCell.dirty = false;
+      refreshPlanSurfaces(ctx);
+    });
+  }
+
+  /**
+   * Reconstructs the foreground plan identity from this session's own bounded
+   * adapter-owned entry.
+   *
+   * Only that entry is read. Model prose, assistant text, tool output and
+   * every other extension's entries are structurally excluded, so a restart
+   * cannot be steered into displaying a plan the user never selected.
+   */
+  function restoreForegroundPlanFromSession(ctx: PiSessionContext): void {
+    const entries = readSessionManagerEntries(ctx, () => undefined);
+    const recorded = readForegroundPlanEntry(entries);
+    if (recorded !== undefined) foregroundPlanDisplay.select(recorded);
+  }
+
+  /**
+   * Adopts a foreground plan named by one direct interactive message.
+   *
+   * Three independent proofs are required before a single column of the rail
+   * moves, and any one of them failing leaves the rail exactly as it was:
+   *
+   * 1. the message is the USER's own interactive submission;
+   * 2. it parses, strictly, to exactly one contained
+   *    `.weave/plans/<safe-name>.md` inside an explicit execution request;
+   * 3. that name is in THIS project root's plan catalog and its snapshot
+   *    reads, so a plan that exists only in another worktree is never read
+   *    across roots and never displayed.
+   *
+   * Read-only throughout: it lists a directory, reads a plan, and repaints.
+   */
+  async function observeForegroundPlanRequest(
+    pi: PiExtensionApi,
+    event: unknown,
+    ctx: PiSessionContext,
+  ): Promise<void> {
+    const record = asJsonRecord(event);
+    if (record === undefined) return;
+    if (record.source !== "interactive") return;
+    if (typeof record.text !== "string") return;
+    const parsed = parseForegroundPlanRequest(record.text);
+    if (parsed.isErr()) return;
+    const planName = parsed.value;
+    if (planName === foregroundPlanDisplay.planName()) return;
+    const workflowController = workflowControllerCell.controller;
+    if (workflowController === undefined) return;
+    const listed = await deps.planCatalogPort.listPlanNames(ctx.cwd);
+    if (listed.isErr() || !listed.value.includes(planName)) return;
+    const snapshot = await workflowController.readPlanSnapshot(planName);
+    if (snapshot.isErr()) return;
+    adoptForegroundPlan(pi, ctx, planName);
   }
 
   function buildWorkflowTracker(projectRoot: string): PiActiveWorkflowTracker {
@@ -4156,6 +4334,10 @@ export function createPiExtension(
       )
       .andThen(() => ensureForegroundStartReady(ctx, generationGuard))
       .andThen(() => {
+        // The plan the user selected and confirmed becomes the rail's display
+        // identity BEFORE the turn is submitted, so the rail names the plan
+        // from the first frame of the run rather than after it.
+        adoptForegroundPlan(pi, ctx, planName);
         const sendStartPrompt = Result.fromThrowable(
           () => pi.sendUserMessage(renderPlanStartPrompt(planName)),
           (): PiForegroundPlanStartFailure => ({
@@ -4508,8 +4690,26 @@ export function createPiExtension(
     // A settled turn is the point where the session's committed intent is
     // known and stable, so the bounded terminal unsupported outcome is
     // recorded here. Telemetry dedupes it to one durable record.
-    pi.on("agent_settled", () => {
+    pi.on("agent_settled", (_event, ctx: PiSessionContext) => {
       reportProviderFastIntent();
+      // Plan progress moves when a turn edits the plan file, so the rail is
+      // re-resolved at turn settlement (and, below, after the tool completions
+      // that can write one). Both are events the host already emits: nothing
+      // here polls, and concurrent requests coalesce onto one lookup.
+      if (childModeState.active) return;
+      if (!hasPlanSurfaceToRefresh()) return;
+      refreshPlanSurfaces(ctx);
+    });
+
+    pi.on("tool_execution_end", (event, ctx: PiSessionContext) => {
+      if (childModeState.active) return;
+      if (!hasPlanSurfaceToRefresh()) return;
+      const record = asJsonRecord(event);
+      const toolName = record?.toolName;
+      if (typeof toolName !== "string" || !PLAN_MUTATING_TOOLS.has(toolName)) {
+        return;
+      }
+      refreshPlanSurfaces(ctx);
     });
 
     // Parent-chat/workflow concurrency (Pi adapter contract): an ordinary prompt
@@ -4518,8 +4718,16 @@ export function createPiExtension(
     // confirmed pause cancels the direct-step subtree and lets the prompt
     // continue to Loom - a reject leaves the workflow running untouched and
     // never submits the prompt.
-    pi.on("input", async (_event, ctx: PiSessionContext) => {
+    pi.on("input", async (event, ctx: PiSessionContext) => {
       if (childModeState.active) return { action: "continue" };
+      // A direct, explicit request to execute one contained plan is the second
+      // (and last) way the Plan Rail may learn about a foreground plan. It is
+      // observed here, on the user's own interactive submission, and nowhere
+      // else: assistant text, tool output and system prompts never reach this
+      // handler, and the parse is strict enough that a message merely
+      // mentioning a plan file moves nothing. It never changes the input's
+      // routing: the adoption runs beside the decision below, not inside it.
+      void observeForegroundPlanRequest(pi, event, ctx);
       if (!directStepChildRegistry.isActive()) return { action: "continue" };
       const confirmed = await ctx.ui.confirm(
         "Weave workflow active",
@@ -4584,6 +4792,13 @@ export function createPiExtension(
       // generation's identity and painted surfaces would otherwise survive
       // into a session that has no controller to back them.
       clearActivePlanSurfaces(ctx);
+      // The foreground plan identity is session state, not generation state:
+      // a new session starts with none, and this session's own bounded
+      // adapter-owned entry is the ONLY thing that may put one back. A newer
+      // explicit selection later in the session supersedes whatever is
+      // reconstructed here, because both paths write through the same cell.
+      foregroundPlanDisplay.clear();
+      restoreForegroundPlanFromSession(ctx);
       // The active-agent badge is generation-scoped exactly like those
       // surfaces. A prior generation may have committed a primary and
       // painted its name; nothing in *this* generation is committed yet, so

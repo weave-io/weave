@@ -11,6 +11,7 @@ import type { PlanTaskSnapshot } from "@weaveio/weave-engine";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import {
   type ActivePlanReadPort,
+  activePlanWorkflowInstanceId,
   createActivePlanUiState,
   resolveActivePlanIdentity,
   resolveActivePlanView,
@@ -185,8 +186,8 @@ describe("resolveActivePlanView", () => {
     }
     expect(fromCurrent.snapshot).toEqual(fromRecovery.snapshot);
     expect(fromCurrent.activeTask).toEqual(fromRecovery.activeTask);
-    expect(fromCurrent.identity.workflowInstanceId).toBe(
-      fromRecovery.identity.workflowInstanceId,
+    expect(activePlanWorkflowInstanceId(fromCurrent.identity)).toBe(
+      activePlanWorkflowInstanceId(fromRecovery.identity),
     );
     expect(fromCurrent.identity.source).toBe("current");
     expect(fromRecovery.identity.source).toBe("recovery");
@@ -280,7 +281,7 @@ describe("createActivePlanUiState", () => {
   it("cannot retain the previous workflow across a current/recovery transition", async () => {
     const state = createActivePlanUiState();
     await state.resolve(makePort({ currentWorkflowInstanceId: "wf-old" }).port);
-    expect(state.identity()?.workflowInstanceId).toBe("wf-old");
+    expect(activePlanWorkflowInstanceId(state.identity())).toBe("wf-old");
 
     await state.resolve(
       makePort({ pointer: pointer({ workflowId: "wf-new" }) }).port,
@@ -306,7 +307,7 @@ describe("createActivePlanUiState", () => {
   ] as const)("drops the retained identity on %s", async (_label, input) => {
     const state = createActivePlanUiState();
     await state.resolve(makePort({ currentWorkflowInstanceId: "wf-old" }).port);
-    expect(state.identity()?.workflowInstanceId).toBe("wf-old");
+    expect(activePlanWorkflowInstanceId(state.identity())).toBe("wf-old");
 
     await state.resolve(makePort(input).port);
     expect(state.identity()).toBeUndefined();
@@ -376,7 +377,7 @@ describe("createActivePlanUiState", () => {
         )
       )._unsafeUnwrap();
       expect(resolvedB.status).toBe("applied");
-      expect(state.identity()?.workflowInstanceId).toBe("wf-b");
+      expect(activePlanWorkflowInstanceId(state.identity())).toBe("wf-b");
 
       older.release();
       const resolvedA = (await pendingA)._unsafeUnwrap();

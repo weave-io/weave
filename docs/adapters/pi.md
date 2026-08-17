@@ -115,6 +115,42 @@ The rail names the running direct workflow step's own agent while one is active,
 
 The rail is removed, not frozen, when there is nothing to name: no Weave primary agent, no tracked workflow, no readable plan task, or a completed, failed, or cancelled workflow. Row 1 still shows the agent when no plan is active, because the plan half is a structural absence rather than a row of blanks. When the session tracks no workflow but an eligible recovered pointer exists, the rail may show that paused plan as read-only state. Showing a recovered plan authorizes nothing; only `/weave:resume`, with its own confirmation and lease recheck, continues that work.
 
+#### Which plan the rail names
+
+Three sources, in descending authority. Each is used only when the one above it
+has nothing to say.
+
+1. **The tracked durable workflow.** This session's own workflow instance.
+2. **An eligible recovery pointer.** A paused execution, shown as read-only
+   state; showing it authorizes nothing.
+3. **The foreground plan.** The plan this session is working through in its own
+   turn, with no workflow instance behind it — which is what `/weave:start`
+   produces.
+
+The third source is **display-only**. It starts, resumes, and authorizes
+nothing, acquires no lease, and writes no runtime state. Exactly two
+user-authorized paths may set it: `/weave:start`, from the plan the user
+selected and confirmed, and one direct interactive message that explicitly asks
+for exactly one contained `.weave/plans/<name>.md` to be executed. The direct
+path is strict: the message is parsed within a bounded length, must name one
+safe plan basename inside this project root, must carry an explicit execution
+request, and the name must be in this root's plan catalog with a readable
+snapshot. Prose about "the plan", assistant text, system prompts, tool output,
+a traversal or absolute path, and two different plans in one message all set
+nothing.
+
+A selection is recorded as one bounded adapter-owned session entry, and a
+restart reconstructs the identity from that entry alone — never by re-reading
+conversation. A newer explicit selection supersedes it, a new session clears
+it, and a plan with no incomplete task left clears it too. A plan that exists
+only in another worktree is not read across roots: the rail shows the agent row
+alone.
+
+Progress is re-read when the work can have changed it — after a turn settles
+and after the tool completions that can write a plan file — so the task marks,
+`┃ now`, and `┗ next` move with the plan's checkboxes. There is no polling
+timer; concurrent refreshes coalesce onto one lookup.
+
 ### Alt+T plan-task list
 
 `Alt+T` opens a read-only, scrollable list of the active plan's parent tasks. It reads the same active-plan and recovery source as the Plan Rail, marks each task `[ ]`, `[~]`, or `[x]`, points a cursor at the active task, and opens on that task rather than at the top. The viewport is bounded on both ends, so a small terminal still scrolls and a tall terminal does not become a full-screen takeover; when tasks are hidden the last line says how many.
