@@ -260,3 +260,90 @@ All three adapters therefore ship with `provider-fast-activation` declared `unsu
 This is the shipped result, not a staging point: Pi reports `harness-seam-unavailable`, OpenCode reports `response-proof-unavailable`, and Claude Code materialization reports `harness-seam-unavailable`. No adapter adds a provider field, header, or service-tier control, so `fast true` leaves every request byte-identical to the same config without it.
 
 Any change to these ceilings requires new evidence. Raising an adapter to `requested` requires a proven safe request seam under this note's contract; raising one to `applied` requires an official harness response seam and tests against the exact provider evidence contract.
+
+## Appendix: Pi 0.84.2 provider-seam audit
+
+Probe date: 2026-08-17.
+
+Harness under test: `@earendil-works/pi-coding-agent` 0.84.2 and `@earendil-works/pi-ai` 0.84.2, installed globally and executed under Bun. Comparison versions read from the public npm registry: pi-ai 0.81.1, 0.82.0, 0.83.0, 0.84.0.
+
+This appendix is evidence only. It records what the pinned host does. It does not change the Decision section above. The hook-seam verdict in "Pi 0.84.1 — unsupported for this adapter" still stands: the audit below tests a different seam, a Weave-registered provider override.
+
+### Method
+
+A disposable extension at `/tmp/weave-task1-probe/probe.ts` wrapped the native `openai-codex` provider and registered the wrapper through `pi.registerProvider(provider)`. The extension was never installed. Every run used `pi -ne -e <path> --no-session -nt`, so extension discovery was off, no session was written, and no tool ran. Runs used the real `~/.pi/agent` directory so the ChatGPT OAuth credential rotated in place.
+
+Probe modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `record-only` | Delegate to the native implementation with the caller's options object unchanged. |
+| `observe` | Force `transport: "sse"` and install an observing `fetch`. Write no body field and no header. |
+| `tier-only` | Set `service_tier: "priority"` in the body. Write no header. |
+| `fast` | Set `service_tier: "priority"`, then set `originator: codex_cli_rs` and `x-codex-routing-hint: model=<id>;tier=priority`. |
+| `collision` | A second handler sets `service_tier` first. The wrapper must decline. |
+
+Evidence files, sanitized, machine-readable: `/tmp/weave-task1-probe/evidence-summary.json` (SHA-256 `a63aec84afead450781ae8347afe9b8f9e05be79946be2ce2ddf4ca31f78e4f4`), consolidated from the per-run `report*.jsonl` and `timing-*.jsonl` files in the same directory. Probe source: `/tmp/weave-task1-probe/probe.ts` (SHA-256 `d5aa6882fb6bb5c20cdda5ca3a5cafbc928193884d06710d4f1af2accd47a43d`). The probe recorded only enums, booleans, small integers, header names, and the two non-secret literal values the adapter itself would write.
+
+### Results
+
+| # | Assumption | Result | Evidence |
+| --- | --- | --- | --- |
+| A1 | An extension can register a full `Provider` under the existing id `openai-codex`. | Pass | `pi.registerProvider` is a function; registration returned without error. |
+| A2 | Pi routes real generations for existing codex models through the registered override. | Pass | Every live run recorded `wrappedInvoked: true` on entry `streamSimple` for `gpt-5.6-luna` and `gpt-5.6-sol`, api `openai-codex-responses`. |
+| A3 | The coding agent calls `streamSimple`, not `stream`. | Pass | Entry `streamSimple` in all runs. `stream` was never observed. |
+| A4 | OAuth and `/login` survive the override. | Pass, with one part untested | The wrapper preserves the native `auth` object by reference, the same id, name, and model list, and the `login`, `refresh`, and `toAuth` functions. `pi auth check --provider openai-codex` reported `ready` / `oauth` before and after the probe run set. Live generations succeeded on the stored subscription credential. An interactive `/login` was not run: it would replace the user's real credential, so it is not safely testable here. |
+| A5 | `models.json` composes above a registered native provider. | Pass | With a temporary `openai-codex.baseUrl` override, the wrapper received `effectiveBaseUrlClass: "other"` instead of the first-party value. `models.json` wins, so a gateway override is detectable at the seam and must classify as `transport-not-first-party`. The file was restored and its SHA-256 verified. |
+| A6 | `models.json` provider headers reach the seam as `options.headers`. | Pass | The wrapper observed the two configured header names on this machine in `options.headers`. |
+| A7 | The wrapper receives the post-auth effective transport. | Pass | Without the override, `model.baseUrl` equaled the first-party ChatGPT backend exactly. |
+| A8 | The wrapper receives the resolved credential. | Pass | `options.apiKey` parsed as a three-part JWT carrying a ChatGPT account claim. Neither the token nor the account id was recorded. |
+| A9 | The caller's `onPayload` runs before the wrapper's, and its output is what the wrapper sees. | Pass | Caller hook order 1, wrapper order 2, `callerRanFirst: true`. In `collision` mode the wrapper observed the caller's `service_tier: "flex"`. |
+| A10 | `transport: "sse"` is honored end to end. | Pass | Forced-SSE runs reached the wrapper `fetch` and completed normally. The host default is `transport: "auto"`, which prefers WebSocket. |
+| A11 | `options.fetch` is honored on the codex SSE path. | Pass on 0.84.2 | `fetchInvoked: true`, method `POST`, first-party codex responses URL. |
+| A12 | The wrapper owns `originator` at the fetch seam. | Pass | Before the write the header was `pi`. After the write it was `codex_cli_rs`, and `x-codex-routing-hint` carried `model=<id>;tier=priority`. Hook-based headers cannot do this, because the api sets `originator: "pi"` after applying extension headers. |
+| A13 | The final body carries the wrapper's tier. | Pass | The outgoing zstd body decoded to `service_tier: "priority"` with a `model` field equal to the request model. |
+| A14 | Collision handling can fail closed. | Pass | With a foreign `service_tier: "flex"`, the wrapper did not overwrite the value and activated no header. The backend answered `400` with `Unsupported service_tier: flex`, which also shows the backend validates the field rather than ignoring it. |
+| A15 | The backend accepts the two-part fast contract. | Pass | HTTP 200 and a normal completed stream for `gpt-5.6-luna` and `gpt-5.6-sol`. No rejection, no warning, no changed stop reason. |
+| A16 | The SSE response exposes `service_tier`. | Pass | `response.created` and `response.in_progress` reported `"auto"`; `response.completed` reported `"default"`. |
+| A17 | The two-part contract produces positive response evidence. | **Fail** | `response.completed` reported `"default"` in every fast, tier-only, and control run. Fast and control were indistinguishable in the response evidence. |
+| A18 | Passthrough stays out of the way. | Pass | `record-only` runs delegated with the same options reference and completed normally. |
+| A19 | Forcing SSE does not regress latency here. | Pass, bounded sample | Three runs each on one prompt and one machine: `transport: "auto"` 2.14 s, 1.55 s, 1.68 s; forced SSE 1.32 s, 1.39 s, 1.19 s. |
+| A20 | The seam exists at the declared peer floor. | **Fail** | `registerProvider(provider: Provider)` exists in pi-coding-agent 0.81.1. But `options.fetch` on the codex SSE path, and `fetch` in `buildBaseOptions`, first appear in pi-ai 0.83.0; 0.81.1 and 0.82.0 call `fetch` directly. Below 0.83.0 the wrapper could set the body tier but never the headers. |
+
+### Open decision resolutions
+
+**OD-2 — does the ChatGPT backend expose `service_tier` in the SSE response objects?**
+
+Resolved: yes, the field is exposed and readable, but it did not confirm acceleration.
+
+The response channel exists. A bounded SSE sniffer read `response.created.service_tier`, `response.in_progress.service_tier`, and `response.completed.service_tier` without disturbing the stream. On the pinned host, `response.completed` reported `"default"` for the full two-part fast request, for a tier-only request, and for the untouched control. Under this contract's evidence rules, `"default"` is documented negative evidence.
+
+Consequence for the implementation: the evidence kind `openai-service-tier` is available and must be read, and the evidence outcome must be reported honestly. The observed outcome is `standard`, not `absent` or `inaccessible`. Therefore the shipped ceiling for a successful eligible fast request on this host is `not-confirmed` with evidence outcome `standard`. `applied` stays reachable in code only through a genuine `"priority"` value on the same attempt, and no such value was observed. Request mutation must never be labeled `applied`.
+
+Caveats that this probe cannot separate, all of which must be restated in Task 2:
+
+- the backend may ignore the two-part control for this transport;
+- the probed subscription may not be entitled to priority admission. The account's credit-balance response headers reported no available credits at probe time;
+- the backend may report `"default"` while still routing the request differently.
+
+Because these are indistinguishable from outside, the adapter must not infer acceleration from anything other than a positive `service_tier` value.
+
+**OD-3 — is forcing `transport: "sse"` for fast requests acceptable?**
+
+Resolved: yes. Force SSE for eligible fast requests only. Do not vendor the WebSocket transport.
+
+The host default is `transport: "auto"`, which prefers WebSocket, so forcing SSE is a real change and must apply only to requests that pass every eligibility rule. The WebSocket path builds its own connection and exposes no request seam, so header authority is unprovable there. Forced SSE completed normally in every run and was not slower in a bounded three-run sample. Fast-off and ineligible requests keep the native transport untouched.
+
+**OD-4 — peer floor or runtime gate?**
+
+Resolved: keep the declared peer floor and gate on the host version, then fail closed per attempt.
+
+Do not raise `@earendil-works/pi-coding-agent` beyond the current `>=0.81.1`. The rest of the Pi adapter works on those hosts, and this capability is optional. Instead:
+
+1. Register the wrapped provider only when the host's public `VERSION` export from `@earendil-works/pi-coding-agent` is at least `0.83.0`. pi-coding-agent pins pi-ai in lockstep on the minor (`^0.81.1`, `^0.83.0`, `^0.84.2`), so this is a reliable proxy for `options.fetch` support and, unlike reading a package manifest, it is safe under Pi's extension loader.
+2. Require the dynamic import of `@earendil-works/pi-ai/providers/openai-codex` to resolve and expose `openaiCodexProvider`, and require `pi.registerProvider` to be a function. Any failure means register nothing and report `unsupported` with `harness-seam-unavailable`.
+3. Keep the per-attempt correlation as the backstop. Claim `requested` only when the wrapper's own `fetch` actually ran for that attempt and wrote both parts. Rule 8 stays both-or-nothing, so a host that silently drops `options.fetch` yields no partial mutation.
+
+### Recheck obligations
+
+Every finding above is host-specific and account-specific. Recheck A11, A12, A16, A17, and A20 on each Pi and pi-ai upgrade, and recheck A17 before any claim that the mapping accelerates anything. The `originator` and `x-codex-routing-hint` pair is not first-party API documentation and carries no stability guarantee.
