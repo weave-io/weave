@@ -29,6 +29,7 @@ import {
   parseReleasePrEnvelope,
   planProseReuse,
   preparationBlock,
+  RELEASE_PR_BOUNDS,
   RELEASE_PR_ENVELOPE_MARKER,
   RELEASE_PR_ENVELOPE_SCHEMA_VERSION,
   RELEASE_PR_LABEL,
@@ -46,6 +47,7 @@ import {
 } from "../release-pr.js";
 
 const REF_PATH = markerRefPath();
+const ENVELOPE_BYTES = RELEASE_PR_BOUNDS.envelopeBytes;
 const CLI_MANIFEST = "packages/cli/package.json";
 const CLI_CHANGELOG = "packages/cli/CHANGELOG.md";
 
@@ -69,7 +71,8 @@ function envelopeSized(bytes: number) {
   });
   const measure = (): number => {
     const rendered = renderReleasePrEnvelope(build());
-    if (rendered.isOk()) return rendered.value.length;
+    if (rendered.isOk())
+      return new TextEncoder().encode(rendered.value).byteLength;
     if (rendered.error.type === "ReleasePrEnvelopeTooLarge")
       return rendered.error.bytes;
     throw new Error(
@@ -94,6 +97,18 @@ function envelopeSized(bytes: number) {
     throw new Error(`sized envelope was ${measure()}, wanted ${bytes}`);
   return build();
 }
+
+/** Adds metadata whose UTF-8 width exceeds its UTF-16 code-unit width. */
+function unicodeEnvelopeSized(bytes: number) {
+  const ascii = envelopeSized(bytes - 3);
+  return {
+    ...ascii,
+    entryProse: ascii.entryProse.map((record, index) =>
+      index === 0 ? { ...record, key: `😀${record.key.slice(1)}` } : record,
+    ),
+  };
+}
+
 function sha(seed: string): string {
   return hex(seed).slice(0, 40);
 }
@@ -699,20 +714,59 @@ describe("release-pr ownership envelope", () => {
   });
 
   it("renders an exact-bound envelope that still parses", () => {
-    const exact = envelopeSized(128 * 1024);
+    const exact = envelopeSized(ENVELOPE_BYTES);
     const rendered = renderReleasePrEnvelope(exact);
     expect(rendered.isOk()).toBe(true);
-    expect(rendered._unsafeUnwrap().length).toBe(128 * 1024);
+    expect(new TextEncoder().encode(rendered._unsafeUnwrap()).byteLength).toBe(
+      ENVELOPE_BYTES,
+    );
     expect(parseReleasePrEnvelope(rendered._unsafeUnwrap()).isOk()).toBe(true);
   });
 
+  it("counts Unicode metadata as UTF-8 bytes at the exact bound", () => {
+    const exact = unicodeEnvelopeSized(ENVELOPE_BYTES);
+    const rendered = renderReleasePrEnvelope(exact);
+    expect(rendered.isOk()).toBe(true);
+    const text = rendered._unsafeUnwrap();
+    expect(text.length).toBeLessThan(ENVELOPE_BYTES);
+    expect(new TextEncoder().encode(text).byteLength).toBe(ENVELOPE_BYTES);
+    expect(parseReleasePrEnvelope(text).isOk()).toBe(true);
+  });
+
+  it("rejects Unicode metadata over the bound during render and parse", () => {
+    const exact = unicodeEnvelopeSized(ENVELOPE_BYTES);
+    const exactText = renderReleasePrEnvelope(exact)._unsafeUnwrap();
+    const overText = exactText.replace("😀", "😀😀");
+    const over = {
+      ...exact,
+      entryProse: exact.entryProse.map((record, index) =>
+        index === 0
+          ? { ...record, key: record.key.replace("😀", "😀😀") }
+          : record,
+      ),
+    };
+    const expectedBytes = ENVELOPE_BYTES + 4;
+    expect(overText.length).toBe(ENVELOPE_BYTES);
+    expect(new TextEncoder().encode(overText).byteLength).toBe(expectedBytes);
+    expect(renderReleasePrEnvelope(over)._unsafeUnwrapErr()).toEqual({
+      type: "ReleasePrEnvelopeTooLarge",
+      bytes: expectedBytes,
+      limit: ENVELOPE_BYTES,
+    });
+    expect(parseReleasePrEnvelope(overText)._unsafeUnwrapErr()).toEqual({
+      type: "ReleasePrEnvelopeTooLarge",
+      bytes: expectedBytes,
+      limit: ENVELOPE_BYTES,
+    });
+  });
+
   it("refuses to render an over-bound envelope", () => {
-    const over = envelopeSized(128 * 1024 + 1);
+    const over = envelopeSized(ENVELOPE_BYTES + 1);
     const rendered = renderReleasePrEnvelope(over);
     expect(rendered._unsafeUnwrapErr()).toEqual({
       type: "ReleasePrEnvelopeTooLarge",
-      bytes: 128 * 1024 + 1,
-      limit: 128 * 1024,
+      bytes: ENVELOPE_BYTES + 1,
+      limit: ENVELOPE_BYTES,
     });
   });
 });
