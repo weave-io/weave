@@ -35,7 +35,7 @@
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
-- `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
+- `USERPROFILE` (has default) — packages/adapters/pi/src/config-source-digests.ts
 - `VOLTA_HOME` (has default) — scripts/release/pi-child-inspection-smoke.ts
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts

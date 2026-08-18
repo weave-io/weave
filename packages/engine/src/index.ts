@@ -70,12 +70,15 @@ export type {
   CategoryMetadata,
   ComposeError,
   DelegationTarget,
+  PromptFileReader,
+  PromptFileReadFailure,
   PromptTemplateReason,
   WorkflowStepComposedPrompt,
 } from "./compose.js";
 export {
   composeAgentDescriptor,
   composeWorkflowStepPrompt,
+  defaultPromptFileReader,
   detectAppendCollisions,
 } from "./compose.js";
 export type {

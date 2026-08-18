@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 314 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~34,500 tokens. Without it, AI exploration would cost ~100,700 tokens. **Saves ~66,200 tokens per conversation.**
-> **Last scanned:** 2026-08-18 02:39 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 319 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~35,100 tokens. Without it, AI exploration would cost ~102,000 tokens. **Saves ~66,900 tokens per conversation.**
+> **Last scanned:** 2026-08-18 02:51 — re-run after significant changes
 
 ---
 
@@ -136,6 +136,14 @@
   - class DefaultPiCapabilityProber
   - interface PiCandidatePlanContext
   - interface PiPreflightContext
+  - _...6 more_
+- `packages/adapters/pi/src/catalog-cell.ts`
+  - function createPiCatalogCell: (seed) => PiCatalogCell
+  - function derivePiCatalogSeedManifest: (input) => PiConfigSourceManifest | undefined
+  - function createPiCatalogCellHolder: () => PiCatalogCellHolder
+  - function clearPiCatalogCell: (holder) => void
+  - interface PiCatalogPublication
+  - interface PiDeferredCatalogCandidate
   - _...6 more_
 - `packages/adapters/pi/src/child-card-model.ts`
   - function createDelegationCardState: (config) => PiDelegationCardState
@@ -617,6 +625,22 @@
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
   - _...7 more_
+- `packages/adapters/pi/src/config-refresh.ts`
+  - function toPiConfigRefreshFailure: (failure) => PiConfigRefreshFailure
+  - function buildPiConfigRefreshCandidate: (current, refresh, deps) => ResultAsync<PiConfigRefreshCandidate, PiConfigRefreshFailure>
+  - function refreshPiConfigCandidate: (current, deps) => ResultAsync<PiConfigRefreshCandidate, PiConfigRefreshFailure>
+  - function toPiConfigRefreshPublicReason: (failure) => PiConfigRefreshFailureReason
+  - function toPiConfigRefreshPublicState: (outcome) => PiConfigRefreshPublicState | undefined
+  - function renderPiConfigRefreshStatusLine: (diagnostics) => string
+  - _...19 more_
+- `packages/adapters/pi/src/config-source-digests.ts`
+  - function createPiConfigSourceFsPort: (open) => void
+  - function hashConfigSourceContent: (content) => string
+  - function getPiBuiltinSourceDigest: () => string
+  - function resolvePiConfigSourcePaths: (input) => PiConfigSourcePaths
+  - function createPiConfigSourceManifest: (input) => PiConfigSourceManifest
+  - function discoverPromptSourcePaths: (config) => readonly string[]
+  - _...28 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -633,12 +657,12 @@
   - _...1 more_
 - `packages/adapters/pi/src/delegation-controller.ts`
   - class PiDelegationController
-  - interface PiDelegationContext
   - interface PiDelegationControllerDeps
   - interface PiOverlayChildDescriptor
   - interface PiOverlayChildUsage
   - interface PiThreadRunAssignment
-  - _...13 more_
+  - interface PiThreadRunRequest
+  - _...12 more_
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function formatDelegationAgentName: (agentName) => string
   - function parseDelegationCardDetails: (details) => Result<PiDelegationCardDetails, PiDelegationCardDetailsError>
@@ -662,14 +686,21 @@
   - interface PiDirectDispatchPort
   - interface DirectDispatchSettlement
   - _...1 more_
+- `packages/adapters/pi/src/dispatch-snapshot.ts`
+  - function createPiDispatchSnapshot: (input) => PiDispatchSnapshot
+  - interface PiDelegationContext
+  - interface PiChildDispatchBudgets
+  - interface PiDispatchSnapshot
+  - interface PiDispatchSnapshotInput
+  - const EMPTY_PI_DISPATCH_SNAPSHOT: PiDispatchSnapshot
 - `packages/adapters/pi/src/errors.ts`
   - function makeHostIdentityUnknownFailure: (reason) => PiAdapterFailure
   - function makeHostVersionUnsupportedFailure: (version, reason) => PiAdapterFailure
   - function makeInteractiveTuiRequiredFailure: (mode) => PiAdapterFailure
   - function makePersistentParentSessionRequiredFailure: (operation, reason) => PiAdapterFailure
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
-  - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
-  - _...92 more_
+  - function makeConfigRefreshFailedFailure: (reason) => PiAdapterFailure
+  - _...95 more_
 - `packages/adapters/pi/src/extension-impl.ts`
   - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
@@ -824,14 +855,22 @@
   - function safelyAwaitPortResult: (call) => void
   - function safelyListAvailableModels: (modelRegistry, "getAvailable">) => Result<readonly PiModelInfo[], string>
   - const MODEL_REGISTRY_THREW_REASON
+- `packages/adapters/pi/src/primary-contract.ts`
+  - function toPiPrimaryContractCandidate: (activation) => PiPrimaryContractCandidate
+  - function decidePiPrimaryContract: (input) => PiPrimaryContractDecision
+  - interface PiPrimaryContractCandidate
+  - interface PiPrimaryContractInput
+  - type PiPrimaryContractFacet
+  - type PiPrimaryContractDecision
+  - _...1 more_
 - `packages/adapters/pi/src/primary-session.ts`
   - function renderRequiredSkillsPrompt: (composedPrompt, resolvedSkills) => string
   - function renderWeavePromptBlock: (descriptor, resolvedSkills) => string
   - function appendWeaveBlockOnce: (systemPrompt, descriptor, resolvedSkills) => string
+  - function resolveDescriptorSkillResolution: (skills, descriptor, disabledSkills) => SkillResolutionResult
   - function probeParentSession: (probe) => PiParentSessionState
   - function requirePersistentParentSession: (state, operation) => Result<PiParentSessionState, PiAdapterFailure>
-  - function isReadOnlyChildAccessAllowed: (_state) => boolean
-  - _...15 more_
+  - _...17 more_
 - `packages/adapters/pi/src/prompt-chunking.ts`
   - function promptTransferNackReason: (error) => PromptTransferNackReason
   - function encodePromptChunksBounded: (task, transferId) => Result<readonly PromptChunk[], PromptChunkError>
@@ -1421,12 +1460,12 @@
   - _...30 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
-  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
+  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext, promptFileReader?) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function buildReviewRoutingContext: (reviewVariants, delegationTargetNames) => ReviewRoutingContext | undefined
-  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?) => ResultAsync<AgentDescriptor, ComposeError>
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, promptFileReader?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
-  - _...7 more_
+  - _...10 more_
 - `packages/engine/src/delegation-limits.ts`
   - function resolveEffectiveDelegationLimits: (config, agentName?) => Result<EffectiveDelegationLimits, DelegationLimitsError>
   - function authorizeDelegation: (input) => Result<
@@ -1930,7 +1969,7 @@
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
-- `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
+- `USERPROFILE` (has default) — packages/adapters/pi/src/config-source-digests.ts
 - `VOLTA_HOME` (has default) — scripts/release/pi-child-inspection-smoke.ts
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
@@ -1968,21 +2007,21 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/adapters/pi/src/types.ts` — imported by **55** files
+- `packages/adapters/pi/src/types.ts` — imported by **59** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **28** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
-- `packages/adapters/pi/src/strict-json.ts` — imported by **27** files
 - `packages/adapters/pi/src/native-session-fs.ts` — imported by **25** files
 - `packages/adapters/pi/src/ui-paint.ts` — imported by **24** files
+- `packages/adapters/pi/src/errors.ts` — imported by **22** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
 - `packages/adapters/pi/src/child-timer.ts` — imported by **21** files
-- `packages/adapters/pi/src/errors.ts` — imported by **21** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
 - `packages/adapters/pi/src/child-session-events.ts` — imported by **18** files
+- `packages/adapters/pi/src/rpc-child.ts` — imported by **18** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
-- `packages/adapters/pi/src/rpc-child.ts` — imported by **16** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **16** files
 - `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
@@ -1991,15 +2030,15 @@
 
 ## Import Map (who imports what)
 
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +50 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +54 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
+- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +23 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
-- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +22 more
 - `packages/adapters/pi/src/native-session-fs.ts` ← `packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts`, `packages/adapters/pi/src/__tests__/adapter-cli-production-delete.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-bounded-reads.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-create.integration.test.ts` +20 more
 - `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +19 more
+- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/delegation-invocation-context.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts` +17 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
 - `packages/adapters/pi/src/child-timer.ts` ← `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-render-parity.test.ts` +16 more
-- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts` +16 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +15 more
 
 ---
@@ -2023,7 +2062,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 352 test files found
+> 357 test files found
 
 ---
 

@@ -3,6 +3,10 @@ import { parseConfig } from "@weaveio/weave-core";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { PiDelegationController } from "../delegation-controller.js";
 import { createDirectDispatchTransport } from "../direct-dispatch-transport.js";
+import {
+  EMPTY_PI_DISPATCH_SNAPSHOT,
+  type PiDispatchSnapshot,
+} from "../dispatch-snapshot.js";
 import { PiRpcChild, type PiRpcChildSpawnInput } from "../rpc-child.js";
 import { FakeChildProcessPort } from "./fakes/fake-child-process-port.js";
 import { FakeIdGenerator } from "./fakes/fake-pi-host.js";
@@ -23,6 +27,16 @@ const hmacPort = new WebCryptoHmacPort();
 const AUTHORITY = await createTestOnlyGrantedSessionStorageAuthority("/tmp");
 const SESSION_DIR = "/tmp/weave-sessions";
 const SESSION_PATH = `${SESSION_DIR}/child-1.jsonl`;
+
+/**
+ * The handshake budget these spawn-argv tests run under. Since the config
+ * hot-reload work, lifecycle budgets reach a child only through the pinned
+ * dispatch snapshot, so the budget is stated here exactly as production
+ * states it.
+ */
+function fastHandshakeDispatch(): PiDispatchSnapshot {
+  return { ...EMPTY_PI_DISPATCH_SNAPSHOT, budgets: { handshakeTimeoutMs: 10 } };
+}
 
 const WEAVE_PATH = "/opt/weave/packages/adapters/pi/dist/extension.js";
 const OTHER_PATH = "/home/user/.pi/agent/extensions/pi-vim/index.ts";
@@ -255,7 +269,7 @@ describe("child extension arguments in spawn argv", () => {
     const parsed = parseConfig("agent shuttle {\n}\n");
     if (parsed.isErr()) throw new Error("test setup: config did not parse");
     const controller = new PiDelegationController({
-      config: parsed.value,
+      currentConfig: () => parsed.value,
       generationId: "gen-1",
       idGenerator: new FakeIdGenerator(),
       logger: noopLogger(),
@@ -263,7 +277,7 @@ describe("child extension arguments in spawn argv", () => {
       sessionStorageAuthority: AUTHORITY,
       randomPort,
       hmacPort,
-      handshakeTimeoutMs: 10,
+      currentDispatch: fastHandshakeDispatch,
       cancelGraceMs: 10,
       resolveExtensionArgs: () => ["--no-extensions", "-e", WEAVE_PATH],
     });
@@ -309,7 +323,7 @@ describe("child extension arguments in spawn argv", () => {
         hmacPort,
         logger: noopLogger(),
         idGenerator: new FakeIdGenerator(),
-        handshakeTimeoutMs: 10,
+        currentDispatch: fastHandshakeDispatch,
         resolveExtensionArgs: () => ["--no-extensions", "-e", WEAVE_PATH],
       },
       "gen-1",

@@ -45,6 +45,7 @@ import type {
   DirectDispatchTransport,
   PiDirectDispatchInput,
 } from "./direct-dispatch.js";
+import type { PiDispatchSnapshot } from "./dispatch-snapshot.js";
 import {
   makeChildAbortFailedFailure,
   makeChildRecordCorruptFailure,
@@ -97,10 +98,18 @@ export interface PiDirectDispatchTransportDeps {
    * an empty result, keeps today's inherit-all argv.
    */
   readonly resolveExtensionArgs?: () => readonly string[];
-  readonly handshakeTimeoutMs?: number;
-  readonly replyTimeoutMs?: number;
-  readonly settlementTimeoutMs?: number;
-  readonly runtimeBudgetMs?: number;
+  /**
+   * Samples the catalog snapshot this step's child pins.
+   *
+   * Read exactly once per dispatch, before the child exists, and then held
+   * for the whole step. It supplies the four lifecycle budgets as one
+   * coherent sample and travels with every nested request the step relays, so
+   * a catalog published mid-step can neither retime the running child nor
+   * change which agents it may still reach. Omitted by embeddings that pin no
+   * catalog; the step then runs on the transport's own defaults and relays
+   * against the controller's current catalog.
+   */
+  readonly currentDispatch?: () => PiDispatchSnapshot;
   /**
    * Optional shared registry (Pi adapter contract) letting the extension's
    * `/weave:abort` command and its Esc-at-root editor binding reach the one
@@ -296,6 +305,12 @@ export function createDirectDispatchTransport(
       );
     }
 
+    // Sampled once, here, before an id is drawn: everything this step decides
+    // about its own child - budgets now, nested authority later - comes from
+    // this one reference. `undefined` means this embedding pinned no catalog,
+    // so the step claims none rather than asserting an empty one.
+    const snapshot: PiDispatchSnapshot | undefined = deps.currentDispatch?.();
+
     const childId = `direct-${input.workflowInstanceId}-${input.stepName}-${deps.idGenerator.next()}`;
     /**
      * Complete private terminal output captured by `PiRpcChild` before the
@@ -327,10 +342,10 @@ export function createDirectDispatchTransport(
         logger: deps.logger,
         command: deps.command,
         resolveExtensionArgs: deps.resolveExtensionArgs,
-        handshakeTimeoutMs: deps.handshakeTimeoutMs,
-        replyTimeoutMs: deps.replyTimeoutMs,
-        settlementTimeoutMs: deps.settlementTimeoutMs,
-        runtimeBudgetMs: deps.runtimeBudgetMs,
+        handshakeTimeoutMs: snapshot?.budgets.handshakeTimeoutMs,
+        replyTimeoutMs: snapshot?.budgets.replyTimeoutMs,
+        settlementTimeoutMs: snapshot?.budgets.settlementTimeoutMs,
+        runtimeBudgetMs: snapshot?.budgets.runtimeBudgetMs,
         baseEnv: deps.baseEnv,
         sessionObserver: {
           onEvent: (event) => {
@@ -367,6 +382,10 @@ export function createDirectDispatchTransport(
             agentName: body.agentName,
             task: body.task,
             cwd: input.cwd,
+            // This child is outside the controller's tracked tree, so it hands
+            // over the snapshot it was dispatched with rather than letting the
+            // controller resolve a newer one on its behalf.
+            ...(snapshot === undefined ? {} : { snapshot }),
           }).match(
             (settlement) => {
               respondToDelegation(correlationId, { ok: true, settlement });

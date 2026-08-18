@@ -462,6 +462,246 @@ settings {
   });
 });
 
+describe("parseConfig — multiline inline prompts", () => {
+  it("preserves exact multiline values at every supported prompt scope", () => {
+    const source = `agent helper {
+  prompt """
+    Agent prompt "quoted" # literal
+      { agent: [prompt] }
+
+    Agent prompt end
+  """
+  prompt_append """
+    Agent append "quoted" # literal
+      { agent: [append] }
+
+    Agent append end
+  """
+}
+
+category backend {
+  description "Backend work"
+  prompt_append """
+    Category append "quoted" # literal
+      { category: [append] }
+
+    Category append end
+  """
+}
+
+workflow flow {
+  version 1
+  prompt_append """
+    Workflow append "quoted" # literal
+      { workflow: [append] }
+
+    Workflow append end
+  """
+
+  step run {
+    type autonomous
+    agent helper
+    prompt """
+      Step prompt "quoted" # literal
+        { step: [prompt] }
+
+      Step prompt end
+    """
+    prompt_append """
+      Step append "quoted" # literal
+        { step: [append] }
+
+      Step append end
+    """
+    completion agent_signal
+  }
+}`;
+
+    const result = parseConfig(source);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+
+    expect(config.agents.helper?.prompt).toBe(
+      [
+        'Agent prompt "quoted" # literal',
+        "  { agent: [prompt] }",
+        "",
+        "Agent prompt end",
+      ].join("\n"),
+    );
+    expect(config.agents.helper?.prompt_append).toBe(
+      [
+        'Agent append "quoted" # literal',
+        "  { agent: [append] }",
+        "",
+        "Agent append end",
+      ].join("\n"),
+    );
+    expect(config.categories.backend?.prompt_append).toBe(
+      [
+        'Category append "quoted" # literal',
+        "  { category: [append] }",
+        "",
+        "Category append end",
+      ].join("\n"),
+    );
+
+    const workflow = config.workflows.flow;
+    expect(workflow?.prompt_append).toBe(
+      [
+        'Workflow append "quoted" # literal',
+        "  { workflow: [append] }",
+        "",
+        "Workflow append end",
+      ].join("\n"),
+    );
+    expect(workflow?.steps[0]?.prompt).toBe(
+      [
+        'Step prompt "quoted" # literal',
+        "  { step: [prompt] }",
+        "",
+        "Step prompt end",
+      ].join("\n"),
+    );
+    expect(workflow?.steps[0]?.prompt_append).toBe(
+      [
+        'Step append "quoted" # literal',
+        "  { step: [append] }",
+        "",
+        "Step append end",
+      ].join("\n"),
+    );
+  });
+
+  it.each([
+    ["comment-shaped line", "# note"],
+    ["block opener", "agent x {"],
+    ["lone closing brace", "}"],
+    ["JSON-looking array", '["one", {"two": 2}]'],
+    ["two quote characters", '""'],
+  ])("round-trips an ambiguous-looking %s literally", (_label, line) => {
+    const result = parseConfig(`agent helper {
+  prompt """
+    ${line}
+  """
+}`);
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.helper?.prompt).toBe(line);
+  });
+
+  it("normalizes CRLF throughout an end-to-end parseConfig fixture", () => {
+    const source = `agent helper {
+  prompt """
+    First line
+    Second line
+  """
+  prompt_append """
+    Third line
+
+    Fourth line
+  """
+}`.replace(/\n/g, "\r\n");
+
+    const result = parseConfig(source);
+    expect(result.isOk()).toBe(true);
+    const helper = result._unsafeUnwrap().agents.helper;
+
+    expect(helper?.prompt).toBe("First line\nSecond line");
+    expect(helper?.prompt_append).toBe("Third line\n\nFourth line");
+    expect(`${helper?.prompt}\n${helper?.prompt_append}`).not.toContain("\r");
+  });
+
+  it("keeps the agent prompt conflict on its existing validation path", () => {
+    const result = parseConfig(`agent bad {
+  prompt """
+    Multiline prompt
+    remains inline
+  """
+  prompt_file "bad.md"
+}`);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual({
+      type: "ValidationError",
+      path: "agents.bad",
+      message: "prompt and prompt_file are mutually exclusive",
+    });
+  });
+
+  it.each([
+    [
+      "agent",
+      `agent bad {
+  prompt "Base"
+  prompt_append """
+    Multiline append
+    remains inline
+  """
+  prompt_append_file "bad.md"
+}`,
+      "agents.bad",
+    ],
+    [
+      "category",
+      `category bad {
+  description "Bad category"
+  prompt_append """
+    Multiline append
+    remains inline
+  """
+  prompt_append_file "bad.md"
+}`,
+      "categories.bad",
+    ],
+    [
+      "workflow",
+      `workflow bad {
+  version 1
+  prompt_append """
+    Multiline append
+    remains inline
+  """
+  prompt_append_file "bad.md"
+  step run {
+    type autonomous
+    agent helper
+    prompt "Run"
+    completion agent_signal
+  }
+}`,
+      "workflows.bad",
+    ],
+    [
+      "workflow step",
+      `workflow bad {
+  version 1
+  step run {
+    type autonomous
+    agent helper
+    prompt "Run"
+    prompt_append """
+      Multiline append
+      remains inline
+    """
+    prompt_append_file "bad.md"
+    completion agent_signal
+  }
+}`,
+      "workflows.bad.steps.0",
+    ],
+  ] as const)("keeps the %s append conflict on its existing validation path", (_scope, source, path) => {
+    const result = parseConfig(source);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual({
+      type: "ValidationError",
+      path,
+      message: "prompt_append and prompt_append_file are mutually exclusive",
+    });
+  });
+});
+
 describe("parseConfig — lex errors", () => {
   it("unterminated string → err with UnterminatedString", () => {
     const result = parseConfig('agent loom { prompt "unterminated }');

@@ -126,6 +126,14 @@
   - interface PiCandidatePlanContext
   - interface PiPreflightContext
   - _...6 more_
+- `packages/adapters/pi/src/catalog-cell.ts`
+  - function createPiCatalogCell: (seed) => PiCatalogCell
+  - function derivePiCatalogSeedManifest: (input) => PiConfigSourceManifest | undefined
+  - function createPiCatalogCellHolder: () => PiCatalogCellHolder
+  - function clearPiCatalogCell: (holder) => void
+  - interface PiCatalogPublication
+  - interface PiDeferredCatalogCandidate
+  - _...6 more_
 - `packages/adapters/pi/src/child-card-model.ts`
   - function createDelegationCardState: (config) => PiDelegationCardState
   - function applyDelegationCardInput: (state, input, now) => Result<PiDelegationCardState, PiDelegationCardError>
@@ -606,6 +614,22 @@
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
   - _...7 more_
+- `packages/adapters/pi/src/config-refresh.ts`
+  - function toPiConfigRefreshFailure: (failure) => PiConfigRefreshFailure
+  - function buildPiConfigRefreshCandidate: (current, refresh, deps) => ResultAsync<PiConfigRefreshCandidate, PiConfigRefreshFailure>
+  - function refreshPiConfigCandidate: (current, deps) => ResultAsync<PiConfigRefreshCandidate, PiConfigRefreshFailure>
+  - function toPiConfigRefreshPublicReason: (failure) => PiConfigRefreshFailureReason
+  - function toPiConfigRefreshPublicState: (outcome) => PiConfigRefreshPublicState | undefined
+  - function renderPiConfigRefreshStatusLine: (diagnostics) => string
+  - _...19 more_
+- `packages/adapters/pi/src/config-source-digests.ts`
+  - function createPiConfigSourceFsPort: (open) => void
+  - function hashConfigSourceContent: (content) => string
+  - function getPiBuiltinSourceDigest: () => string
+  - function resolvePiConfigSourcePaths: (input) => PiConfigSourcePaths
+  - function createPiConfigSourceManifest: (input) => PiConfigSourceManifest
+  - function discoverPromptSourcePaths: (config) => readonly string[]
+  - _...28 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -622,12 +646,12 @@
   - _...1 more_
 - `packages/adapters/pi/src/delegation-controller.ts`
   - class PiDelegationController
-  - interface PiDelegationContext
   - interface PiDelegationControllerDeps
   - interface PiOverlayChildDescriptor
   - interface PiOverlayChildUsage
   - interface PiThreadRunAssignment
-  - _...13 more_
+  - interface PiThreadRunRequest
+  - _...12 more_
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function formatDelegationAgentName: (agentName) => string
   - function parseDelegationCardDetails: (details) => Result<PiDelegationCardDetails, PiDelegationCardDetailsError>
@@ -651,14 +675,21 @@
   - interface PiDirectDispatchPort
   - interface DirectDispatchSettlement
   - _...1 more_
+- `packages/adapters/pi/src/dispatch-snapshot.ts`
+  - function createPiDispatchSnapshot: (input) => PiDispatchSnapshot
+  - interface PiDelegationContext
+  - interface PiChildDispatchBudgets
+  - interface PiDispatchSnapshot
+  - interface PiDispatchSnapshotInput
+  - const EMPTY_PI_DISPATCH_SNAPSHOT: PiDispatchSnapshot
 - `packages/adapters/pi/src/errors.ts`
   - function makeHostIdentityUnknownFailure: (reason) => PiAdapterFailure
   - function makeHostVersionUnsupportedFailure: (version, reason) => PiAdapterFailure
   - function makeInteractiveTuiRequiredFailure: (mode) => PiAdapterFailure
   - function makePersistentParentSessionRequiredFailure: (operation, reason) => PiAdapterFailure
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
-  - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
-  - _...92 more_
+  - function makeConfigRefreshFailedFailure: (reason) => PiAdapterFailure
+  - _...95 more_
 - `packages/adapters/pi/src/extension-impl.ts`
   - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
@@ -813,14 +844,22 @@
   - function safelyAwaitPortResult: (call) => void
   - function safelyListAvailableModels: (modelRegistry, "getAvailable">) => Result<readonly PiModelInfo[], string>
   - const MODEL_REGISTRY_THREW_REASON
+- `packages/adapters/pi/src/primary-contract.ts`
+  - function toPiPrimaryContractCandidate: (activation) => PiPrimaryContractCandidate
+  - function decidePiPrimaryContract: (input) => PiPrimaryContractDecision
+  - interface PiPrimaryContractCandidate
+  - interface PiPrimaryContractInput
+  - type PiPrimaryContractFacet
+  - type PiPrimaryContractDecision
+  - _...1 more_
 - `packages/adapters/pi/src/primary-session.ts`
   - function renderRequiredSkillsPrompt: (composedPrompt, resolvedSkills) => string
   - function renderWeavePromptBlock: (descriptor, resolvedSkills) => string
   - function appendWeaveBlockOnce: (systemPrompt, descriptor, resolvedSkills) => string
+  - function resolveDescriptorSkillResolution: (skills, descriptor, disabledSkills) => SkillResolutionResult
   - function probeParentSession: (probe) => PiParentSessionState
   - function requirePersistentParentSession: (state, operation) => Result<PiParentSessionState, PiAdapterFailure>
-  - function isReadOnlyChildAccessAllowed: (_state) => boolean
-  - _...15 more_
+  - _...17 more_
 - `packages/adapters/pi/src/prompt-chunking.ts`
   - function promptTransferNackReason: (error) => PromptTransferNackReason
   - function encodePromptChunksBounded: (task, transferId) => Result<readonly PromptChunk[], PromptChunkError>
@@ -1410,12 +1449,12 @@
   - _...30 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
-  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
+  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext, promptFileReader?) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function buildReviewRoutingContext: (reviewVariants, delegationTargetNames) => ReviewRoutingContext | undefined
-  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?) => ResultAsync<AgentDescriptor, ComposeError>
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, promptFileReader?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
-  - _...7 more_
+  - _...10 more_
 - `packages/engine/src/delegation-limits.ts`
   - function resolveEffectiveDelegationLimits: (config, agentName?) => Result<EffectiveDelegationLimits, DelegationLimitsError>
   - function authorizeDelegation: (input) => Result<

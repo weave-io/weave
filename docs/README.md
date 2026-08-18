@@ -47,6 +47,7 @@ User-facing tutorials and product reference live in the [public docs package](..
 | [Author Agent Evals](guides/evals.md) | Add cases, run dry checks, and interpret results |
 | [Troubleshoot Pi Child Sessions](guides/pi-child-troubleshooting.md) | Read doctor checks, diagnostic codes, and child session commands |
 | [Verify an Adapter](testing/adapter-verification.md) | Prove a packaged adapter loads, becomes ready, and works in its real harness |
+| [Pi Config Hot-Reload Live Proof](testing/pi-adapter-config-hot-reload-live-proof.md) | Recorded real-harness evidence for the Pi delegation-boundary config refresh |
 
 ## Contributing
 

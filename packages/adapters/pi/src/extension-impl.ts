@@ -53,6 +53,13 @@ import {
   WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
 } from "./capability-prober.js";
 import {
+  clearPiCatalogCell,
+  createPiCatalogCell,
+  createPiCatalogCellHolder,
+  derivePiCatalogSeedManifest,
+  type PiCatalogCell,
+} from "./catalog-cell.js";
+import {
   type ChildTurnEpoch,
   PiChildAbortSettlementGate,
 } from "./child-compaction-settlement.js";
@@ -211,8 +218,20 @@ import { renderChildTreeLines } from "./child-tree-render.js";
 import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
 import {
   logMaterializationErrors,
+  type PiConfigActivationResult,
   PiConfigActivator,
 } from "./config-activator.js";
+import {
+  createPiConfigRefreshCoordinator,
+  DEFAULT_PI_CONFIG_REFRESH_MIN_INTERVAL_MS,
+  type PiConfigRefreshCoordinator,
+  type PiConfigRefreshDiagnostics,
+  renderPiConfigRefreshStatusLine,
+} from "./config-refresh.js";
+import {
+  defaultPiConfigSourceFsPort,
+  type PiConfigSourceFsPort,
+} from "./config-source-digests.js";
 import {
   PiExtensionController,
   type PiExtensionControllerDeps,
@@ -232,6 +251,11 @@ import {
   createDirectDispatchTransport,
   PiDirectStepChildRegistry,
 } from "./direct-dispatch-transport.js";
+import {
+  createPiDispatchSnapshot,
+  EMPTY_PI_DISPATCH_SNAPSHOT,
+  type PiDispatchSnapshot,
+} from "./dispatch-snapshot.js";
 import {
   makeChildAbortFailedFailure,
   makeLogWriteFailedFailure,
@@ -727,6 +751,22 @@ export interface PiExtensionDeps {
    * emit an authenticated `cancelled` ack.
    */
   readonly childCancelGraceMs?: number;
+  /**
+   * Filesystem seam the delegation-boundary config refresh stats and reads
+   * through. Production wiring MUST use `defaultPiConfigSourceFsPort`; tests
+   * MUST override with an in-memory port, because refresh otherwise touches
+   * the user's own `.weave` files.
+   *
+   * `undefined` disables refresh for the generation: no coordinator is built
+   * and no delegation boundary triggers one. Embeddings that supply their own
+   * logger opt out this way unless they pass a port explicitly.
+   */
+  readonly configSourceFsPort?: PiConfigSourceFsPort;
+  /**
+   * Smallest gap between two boundary probes. Absent keeps the production
+   * default; tests set `0` so every boundary probes deterministically.
+   */
+  readonly configRefreshMinIntervalMs?: number;
 }
 
 /** Production child-side stdout writer: writes directly to this process's own real stdout, interleaved with Pi's own event/response lines. */
@@ -801,6 +841,8 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     pathContainmentPort: new BunPathContainmentPort(),
     planCatalogPort: new BunPiPlanCatalogPort(),
     threadSourceFactory: createProductionPiThreadSourceFactory(),
+    configSourceFsPort: defaultPiConfigSourceFsPort,
+    configRefreshMinIntervalMs: DEFAULT_PI_CONFIG_REFRESH_MIN_INTERVAL_MS,
   };
 }
 
@@ -829,11 +871,27 @@ interface PiActiveSession {
   /** One identity shared by future store, inspector, and recovery seams. */
   readonly childInspectionSettings: PiChildInspectionEffectiveSettings;
   readonly primarySession: PiPrimarySession;
-  readonly descriptors: ReadonlyMap<string, AgentDescriptor>;
-  readonly disabledSkills: readonly string[];
+  /**
+   * This generation's published catalog.
+   *
+   * Descriptors and `disabled.skills` are read through it rather than held on
+   * the session, so a later authorized publication reaches future dispatch
+   * resolution while `primarySession` keeps the committed primary exactly as
+   * it was activated. The cell is generation-bound and invalidated on every
+   * teardown path, so a retained session object cannot outlive its catalog.
+   */
+  readonly catalog: PiCatalogCell;
   pendingPrimaryName: string | undefined;
   primaryActivationAttempted: boolean;
   primaryActivationFailure: PiPrimarySessionFailure | undefined;
+  /**
+   * The exact `disabled.skills` list the committed primary was rendered with.
+   *
+   * Recorded at each activation rather than re-read from the catalog, so the
+   * primary-contract guard compares a candidate against the prompt the harness
+   * actually received, not against a re-render under a later published list.
+   */
+  committedDisabledSkills: readonly string[];
 }
 
 /** Reads `event.systemPrompt` (Pi adapter contract) without assuming any other event shape. */
@@ -2159,6 +2217,11 @@ function renderStatusMessage(
   delegationController?: PiDelegationController,
   reconstructed?: PiChildReconstructionSummary | undefined,
   providerFastLatest?: ProviderFastPublicSnapshot,
+  /**
+   * Bounded refresh diagnostics, absent for a generation that runs no
+   * delegation-boundary refresh at all (health-only or trust-withheld).
+   */
+  configRefresh?: PiConfigRefreshDiagnostics,
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
@@ -2170,6 +2233,9 @@ function renderStatusMessage(
     `mode: ${generation.preflight.mode}`,
     `health-only: ${effectiveHealthOnly(generation)}`,
   ];
+  if (configRefresh !== undefined) {
+    lines.push(renderPiConfigRefreshStatusLine(configRefresh));
+  }
   const fastLine = renderProviderFastStatusLine(providerFastLatest);
   if (fastLine.isOk() && fastLine.value !== undefined) {
     lines.push(fastLine.value);
@@ -2673,6 +2739,19 @@ export type PiExtensionInstance = ((pi: PiExtensionApi) => void) & {
   readonly providerFastLatestForTest: () =>
     | ProviderFastPublicSnapshot
     | undefined;
+  /**
+   * The generation's published catalog cell, or `undefined` before boot
+   * activation and after every revoke. Exposed so tests can publish a
+   * candidate and observe live consumers directly, without driving a real
+   * delegation boundary.
+   */
+  readonly catalogCellForTest: () => PiCatalogCell | undefined;
+  /**
+   * The generation's refresh coordinator, or `undefined` for a generation
+   * that registers no delegation surface. Exposed so tests can run the exact
+   * boundary attempt the triggers run, without spawning a child process.
+   */
+  readonly configRefreshForTest: () => PiConfigRefreshCoordinator | undefined;
 };
 
 export function createPiExtension(
@@ -2687,6 +2766,12 @@ export function createPiExtension(
     // unless they explicitly pass `threadSourceFactory` (including `undefined`).
     ...(!("threadSourceFactory" in overrides) && overrides.logger !== undefined
       ? { threadSourceFactory: undefined }
+      : {}),
+    // Same rule for config refresh: an embedding with its own logger never
+    // stats or reads the real `~/.weave` and `<project>/.weave` files unless
+    // it hands over a port of its own.
+    ...(!("configSourceFsPort" in overrides) && overrides.logger !== undefined
+      ? { configSourceFsPort: undefined }
       : {}),
   };
   // A custom logger denotes an embedding/test-owned sink. Production uses
@@ -2883,10 +2968,40 @@ export function createPiExtension(
   const generationResourcesCell: {
     owner: PiGenerationResourceOwner | undefined;
   } = { owner: undefined };
-  let currentWorkflows: Record<
-    string,
-    import("@weaveio/weave-engine").WorkflowExecutionContext["workflows"][string]
-  > = {};
+  /**
+   * The generation's published catalog, held module-scoped so every revoke
+   * path can invalidate it even after the active session was taken.
+   * Populated only once boot activation has been validated.
+   */
+  const catalogCellHolder = createPiCatalogCellHolder();
+  /**
+   * The generation's refresh coordinator, or `undefined` for a generation
+   * that registers no delegation surface (health-only, trust-withheld, or an
+   * embedding that opted out of the config-source filesystem port). Every
+   * boundary trigger reads it lazily, so an absent coordinator is simply a
+   * generation that never refreshes.
+   */
+  const configRefreshCell: {
+    coordinator: PiConfigRefreshCoordinator | undefined;
+  } = { coordinator: undefined };
+  /**
+   * Drops the generation's published catalog and the coordinator that writes
+   * into it, together. Splitting them would leave a live coordinator able to
+   * publish into a revoked generation.
+   */
+  const clearCatalogState = (): void => {
+    configRefreshCell.coordinator?.dispose();
+    configRefreshCell.coordinator = undefined;
+    clearPiCatalogCell(catalogCellHolder);
+  };
+  /**
+   * Runs the boundary refresh for the live generation. Total: an absent
+   * coordinator, a failed probe, and a deferred candidate all resolve
+   * successfully so the delegation continues on the published catalog.
+   */
+  const ensureFreshCatalog = (): ResultAsync<void, never> =>
+    configRefreshCell.coordinator?.ensureFresh() ??
+    okAsync<void, never>(undefined);
   let activeSession: PiActiveSession | undefined;
   /**
    * The reconstruction summary the *current* generation and *live* parent may
@@ -3117,6 +3232,19 @@ export function createPiExtension(
   const childInspectionSettingsUi: {
     ui: PiSessionContext["ui"] | undefined;
   } = { ui: undefined };
+  /**
+   * The descriptors a *future* dispatch resolves against.
+   *
+   * The live generation's published catalog when one holds authority, and
+   * otherwise the preflight activation the tool registration was built from.
+   * That fallback can never widen authority: without an active session
+   * `getInvocationContext` and `getController` already deny delegation, so no
+   * caller reaching it can dispatch.
+   */
+  const dispatchDescriptors = (
+    fallback: ReadonlyMap<string, AgentDescriptor>,
+  ): ReadonlyMap<string, AgentDescriptor> =>
+    activeSession?.catalog.descriptors() ?? fallback;
   const controllerDeps: PiExtensionControllerDeps = {
     safeInitializer: new PiSafeInitializer({
       hostPackageReader: deps.hostPackageReader,
@@ -3162,6 +3290,12 @@ export function createPiExtension(
           buildDelegationToolRegistration({
             targets,
             sessionMutationGate,
+            // The root delegation boundary. Awaited before the invocation
+            // context, the target, and the bootstrap are resolved below, so
+            // this call dispatches against the newest authorized catalog.
+            ensureFresh: async () => {
+              await ensureFreshCatalog();
+            },
             getInvocationContext: () =>
               resolveDelegationInvocationContext(
                 activeSession === undefined
@@ -3171,7 +3305,7 @@ export function createPiExtension(
                       activeDescriptor:
                         activeSession.primarySession.getCurrent()?.descriptor,
                       pendingPrimaryName: activeSession.pendingPrimaryName,
-                      descriptors: activeSession.descriptors,
+                      descriptors: activeSession.catalog.descriptors(),
                       primaryActivationAttempted:
                         activeSession.primaryActivationAttempted,
                       primaryActivationFailure:
@@ -3193,7 +3327,7 @@ export function createPiExtension(
             idGenerator: deps.idGenerator,
             buildBootstrap: (target, _task, childId, ctx, parentAgentName) =>
               buildChildBootstrapBody(
-                activation.descriptors.byName,
+                dispatchDescriptors(activation.descriptors.byName),
                 target,
                 childId,
                 {
@@ -3205,7 +3339,7 @@ export function createPiExtension(
                 (descriptor) =>
                   activeSession?.primarySession.prepareComposedPrompt(
                     descriptor,
-                    activeSession.disabledSkills,
+                    activeSession.catalog.disabledSkills(),
                   ) ?? descriptor.composedPrompt,
               ),
             buildEnv: () => ({}),
@@ -3216,7 +3350,7 @@ export function createPiExtension(
               latestSessionCtx === undefined
                 ? {}
                 : resolveAgentRuntimeMeta(
-                    activation.descriptors.byName,
+                    dispatchDescriptors(activation.descriptors.byName),
                     agentName,
                     latestSessionCtx,
                   ),
@@ -3307,7 +3441,7 @@ export function createPiExtension(
       cycleCandidateCount:
         session === undefined
           ? 0
-          : listCycleablePrimaryAgents(session.descriptors).length,
+          : listCycleablePrimaryAgents(session.catalog.descriptors()).length,
       snapshot: view?.kind === "active" ? view.snapshot : undefined,
       activeTask: view?.kind === "active" ? view.activeTask : undefined,
     });
@@ -3871,15 +4005,19 @@ export function createPiExtension(
         activeWorkflowInstanceCell.value = instance;
       },
       listPlanNames: () => deps.planCatalogPort.listPlanNames(projectRoot),
-      listWorkflowNames: () => Object.keys(currentWorkflows),
+      listWorkflowNames: () =>
+        Object.keys(catalogCellHolder.cell?.workflows() ?? {}),
       buildContext: (workflowName) => {
-        const workflow = currentWorkflows[workflowName];
+        // One read of the published catalog: the listed names and the context
+        // handed to the engine always come from the same workflows object.
+        const workflows = catalogCellHolder.cell?.workflows() ?? {};
+        const workflow = workflows[workflowName];
         if (workflow === undefined) return undefined;
         return {
           workflowName,
           goal: workflowName,
           slug: workflowName,
-          workflows: currentWorkflows,
+          workflows,
         };
       },
       currentAgentName: () =>
@@ -4123,6 +4261,7 @@ export function createPiExtension(
           delegationControllerCell.controller,
           currentChildReconstruction(),
           resolveProviderFastState(),
+          configRefreshCell.coordinator?.diagnostics(),
         ),
         "info",
       );
@@ -4450,7 +4589,9 @@ export function createPiExtension(
       return errAsync({ type: "DirectStepActive" });
     }
 
-    const descriptor = session.descriptors.get(agentName);
+    // An explicit switch is a reactivation, so it resolves against the
+    // published catalog rather than the one boot happened to activate.
+    const descriptor = session.catalog.descriptors().get(agentName);
     if (descriptor === undefined) {
       return errAsync({ type: "PrimaryDescriptorMissing", agentName });
     }
@@ -4518,13 +4659,14 @@ export function createPiExtension(
         );
       }
 
+      const disabledSkills = session.catalog.disabledSkills();
       return session.primarySession
         .activate(descriptor, {
           availableModels: availableModels.unwrapOr([]),
           currentModel: ctx.model,
           modelApplier: createPiModelApplyPort(pi),
           thinkingApplier: createPiThinkingApplyPort(pi),
-          disabledSkills: session.disabledSkills,
+          disabledSkills,
         })
         .mapErr((cause): PiPrimarySwitchFailure => {
           session.primaryActivationFailure = cause;
@@ -4545,10 +4687,20 @@ export function createPiExtension(
           session.pendingPrimaryName = descriptor.name;
           session.primaryActivationAttempted = true;
           session.primaryActivationFailure = undefined;
+          session.committedDisabledSkills = disabledSkills;
           resetProviderFastReporting();
           setActiveAgent(ctx, descriptor.name);
           return undefined;
         })
+        .andThen(
+          () =>
+            // The one authorized reactivation point. A candidate held back for
+            // the *previous* primary is not published from its stored snapshot:
+            // the sources are re-probed and rebuilt, and the result is guarded
+            // against the primary that just committed.
+            configRefreshCell.coordinator?.refreshAfterPrimaryReactivation() ??
+            okAsync<void, never>(undefined),
+        )
         .map((value) => {
           activationReservation.release();
           return value;
@@ -4645,7 +4797,7 @@ export function createPiExtension(
       return errAsync(failure);
     };
 
-    const descriptor = session.descriptors.get(agentName);
+    const descriptor = session.catalog.descriptors().get(agentName);
     if (descriptor === undefined) {
       return fail({ type: "PrimaryDescriptorMissing", agentName });
     }
@@ -4680,13 +4832,16 @@ export function createPiExtension(
     }
 
     session.primarySession.refreshSkills(skills.value);
+    // Read once and recorded on commit: the guard compares candidates against
+    // exactly the list this activation rendered with.
+    const disabledSkills = session.catalog.disabledSkills();
     return session.primarySession
       .activate(descriptor, {
         availableModels: availableModels.value,
         currentModel: ctx.model,
         modelApplier: createPiModelApplyPort(pi),
         thinkingApplier: createPiThinkingApplyPort(pi),
-        disabledSkills: session.disabledSkills,
+        disabledSkills,
       })
       .mapErr((cause): PiBootPrimaryActivationFailure => {
         const failure: PiBootPrimaryActivationFailure = {
@@ -4708,6 +4863,7 @@ export function createPiExtension(
       .map(() => {
         session.pendingPrimaryName = descriptor.name;
         session.primaryActivationFailure = undefined;
+        session.committedDisabledSkills = disabledSkills;
         return undefined;
       });
   }
@@ -5117,7 +5273,7 @@ export function createPiExtension(
 
     const current = session.primarySession.getCurrent();
     const next = nextCycleablePrimaryAgent(
-      session.descriptors,
+      session.catalog.descriptors(),
       current?.descriptor.name ?? session.pendingPrimaryName,
     );
     if (next === undefined) {
@@ -5220,7 +5376,12 @@ export function createPiExtension(
       threadSourcesRequired = required;
     },
     clearCurrentWorkflows: () => {
-      currentWorkflows = {};
+      // The workflows projection is part of the published catalog, so the one
+      // clear drops the whole cell: a revoked generation's catalog can never
+      // serve a later reader, including through a retained cell reference.
+      // The refresh coordinator goes with it, so a probe still in flight when
+      // the session was replaced can neither publish nor leak.
+      clearCatalogState();
     },
     cancelDirectStep: () =>
       directStepChildRegistry.cancel() ?? okAsync(undefined),
@@ -5724,26 +5885,92 @@ export function createPiExtension(
       const resolveChildExtensionArgs = (): readonly string[] =>
         childExtensionArgs;
 
-      currentWorkflows = configActivation.config.workflows ?? {};
+      // This generation's one published catalog. Seeded from the activation
+      // preflight already validated, so every consumer starts on exactly the
+      // state the captured closures used to hold. The manifest records which
+      // sources this catalog was derived from without stat'ing, reading, or
+      // hashing any of them, so seeding cannot slow or fail boot.
+      const seedHomeDir = deps.envPort.read("HOME");
+      const seedManifest = derivePiCatalogSeedManifest({
+        identity: {
+          projectRoot: ctx.cwd,
+          trust: generation.preflight.trust,
+        },
+        config: configActivation.config,
+        ...(seedHomeDir === undefined ? {} : { homeDir: seedHomeDir }),
+      });
+      const catalogCell = createPiCatalogCell({
+        generationId: generation.id,
+        activation: configActivation,
+        ...(seedManifest === undefined ? {} : { manifest: seedManifest }),
+      });
+      catalogCellHolder.cell = catalogCell;
       planStateProviderCell.value =
         deps.planStateProviderFactory?.(ctx.cwd) ??
         createPiPlanStateProvider(ctx.cwd);
 
+      // Held beside the session because two consumers share this one
+      // discovery snapshot: `PiPrimarySession` renders the committed primary
+      // from it, and the primary-contract guard renders candidate descriptors
+      // the same way. `refreshSkills` mutates this object, so both always see
+      // the same skills.
+      const skillCatalog = new PiSkillCatalog([]);
       const session: PiActiveSession = {
         generationId: generation.id,
         childInspectionSettings: generation.preflight.childInspection,
         primarySession: new PiPrimarySession({
-          skillCatalog: new PiSkillCatalog([]),
+          skillCatalog,
           logger: deps.logger,
           parentSessionProbe: ctx.sessionManager,
         }),
-        descriptors: configActivation.descriptors.byName,
-        disabledSkills: configActivation.config.disabled?.skills ?? [],
+        catalog: catalogCell,
         pendingPrimaryName: DEFAULT_PRIMARY_AGENT_NAME,
         primaryActivationAttempted: false,
         primaryActivationFailure: undefined,
+        committedDisabledSkills: [],
       };
       activeSession = session;
+
+      // One snapshot per published catalog, memoized on the activation object
+      // itself. Repeated samples of an unchanged catalog therefore hand back
+      // the identical reference, so pinning costs nothing and a pinned child
+      // can be compared against the catalog it was dispatched under.
+      const dispatchSnapshots = new WeakMap<
+        PiConfigActivationResult,
+        PiDispatchSnapshot
+      >();
+      const currentDispatchSnapshot = (): PiDispatchSnapshot => {
+        const activation = catalogCell.activation();
+        // A revoked generation resolves nothing rather than serving the
+        // catalog it used to hold.
+        if (activation === undefined) return EMPTY_PI_DISPATCH_SNAPSHOT;
+        const memoized = dispatchSnapshots.get(activation);
+        if (memoized !== undefined) return memoized;
+        const built = createPiDispatchSnapshot({
+          catalog: activation,
+          buildBootstrap: (
+            descriptors,
+            disabledSkills,
+            target,
+            childId,
+            context,
+          ) =>
+            buildChildBootstrapBody(
+              descriptors,
+              target,
+              childId,
+              context,
+              ctx,
+              (descriptor) =>
+                session.primarySession.prepareComposedPrompt(
+                  descriptor,
+                  disabledSkills,
+                ),
+            ),
+        });
+        dispatchSnapshots.set(activation, built);
+        return built;
+      };
 
       const sessionHealthOnly = effectiveHealthOnly(generation);
 
@@ -5780,7 +6007,7 @@ export function createPiExtension(
           clearThreadSources(threadSourcesCell);
           clearChildReconstruction(childReconstructionCell);
           threadSourcesRequired = false;
-          currentWorkflows = {};
+          clearCatalogState();
           planStateProviderCell.value = undefined;
           activeWorkflowInstanceCell.value = undefined;
           setActiveAgent(ctx, undefined);
@@ -5823,6 +6050,7 @@ export function createPiExtension(
           controller.shutdown();
           clearThreadSources(threadSourcesCell);
           clearChildReconstruction(childReconstructionCell);
+          clearCatalogState();
           threadSourcesRequired = false;
           setActiveAgent(ctx, undefined);
           ctx.ui.setStatus(
@@ -5836,6 +6064,52 @@ export function createPiExtension(
           }
           return;
         }
+      }
+
+      // The delegation-boundary refresh coordinator, built only for a
+      // generation that actually registers delegation surfaces: a health-only
+      // or trust-withheld generation registers none, so it builds none and no
+      // boundary can ever trigger one. It owns no timer and no watcher - every
+      // probe happens inside a boundary call.
+      const configSourceFs = deps.configSourceFsPort;
+      if (
+        !sessionHealthOnly &&
+        !generation.healthOnlyMode &&
+        generation.preflight.trust === "trusted" &&
+        configSourceFs !== undefined
+      ) {
+        configRefreshCell.coordinator = createPiConfigRefreshCoordinator({
+          catalog: catalogCell,
+          // Two independent proofs of authority: the startup handle, and the
+          // session object this coordinator was built for.
+          ownsGeneration: () =>
+            startupOwnsGeneration() && activeSession === session,
+          fs: configSourceFs,
+          primary: () => session.primarySession.getCurrent()?.descriptor,
+          primaryDisabledSkills: () => session.committedDisabledSkills,
+          skills: () => skillCatalog,
+          clock: deps.clock,
+          minIntervalMs:
+            deps.configRefreshMinIntervalMs ??
+            DEFAULT_PI_CONFIG_REFRESH_MIN_INTERVAL_MS,
+          // One notice per distinct failure or deferral state, minted by the
+          // coordinator. A boundary that keeps failing the same way is
+          // silent after the first, so a broken config cannot flood the log
+          // or the toast area at every delegation.
+          onNotice: (notice) => {
+            const detail =
+              notice.state.kind === "failed"
+                ? { reason: notice.state.reason }
+                : { facets: notice.state.facets.join(",") };
+            deps.logger.warn(
+              { refresh: notice.state.kind, ...detail },
+              notice.message,
+            );
+            // The freshest context this generation has seen: a notice can
+            // land long after `session_start` built this coordinator.
+            (latestSessionCtx ?? ctx).ui.notify(notice.message, "warning");
+          },
+        });
       }
 
       if (!startupOwnsGeneration()) {
@@ -6088,7 +6362,11 @@ export function createPiExtension(
         if (allowDelegationController) {
           delegationControllerCell.generationId = generation.id;
           delegationControllerCell.controller = new PiDelegationController({
-            config: configActivation.config,
+            // Read through the cell, never captured: a limit lowered by a
+            // later publication binds the next admission and leaves every
+            // already-running child alone.
+            currentConfig: () =>
+              catalogCell.activation()?.config ?? configActivation.config,
             generationId: generation.id,
             idGenerator: deps.idGenerator,
             logger: deps.logger,
@@ -6096,15 +6374,10 @@ export function createPiExtension(
             sessionStorageAuthority: sessionAuthority,
             randomPort: deps.randomPort,
             hmacPort: deps.hmacPort,
-            handshakeTimeoutMs:
-              configActivation.childLifecycleSettings.handshakeTimeoutMs,
-            replyTimeoutMs:
-              configActivation.childLifecycleSettings.replyTimeoutMs,
-            settlementTimeoutMs:
-              configActivation.childLifecycleSettings
-                .settlementInactivityTimeoutMs,
-            runtimeBudgetMs:
-              configActivation.childLifecycleSettings.absoluteRuntimeBudgetMs,
+            // Sampled once per dispatched child. Lifecycle budgets, nested
+            // targets and the bootstrap all come from that one sample, so a
+            // child never straddles two catalogs.
+            currentDispatch: currentDispatchSnapshot,
             ...(deps.childResponseDrainMs === undefined
               ? {}
               : { responseDrainMs: deps.childResponseDrainMs }),
@@ -6141,42 +6414,15 @@ export function createPiExtension(
             threadCache: () => threadSourcesCell.cache,
             threadWorkspaceKey: () => ctx.cwd,
             threadSourcesRequired,
+            ensureFreshCatalog,
             resolveRootDelegationTarget: (name) =>
-              configActivation.descriptors.byName
+              catalogCell
+                .descriptors()
                 .get(DEFAULT_PRIMARY_AGENT_NAME)
                 ?.delegationTargets.find((target) => target.name === name),
             rootAgentName: () =>
               activeSession?.primarySession.getCurrent()?.descriptor.name ??
               DEFAULT_PRIMARY_AGENT_NAME,
-            // Nested/descendant delegation (Pi adapter contract): a requesting
-            // child is only ever resolved against ITS OWN declared
-            // `delegationTargets`, never the full descriptor set - exactly
-            // the same restriction the root's own tool already applies.
-            resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
-              configActivation.descriptors.byName
-                .get(requestingAgentName)
-                ?.delegationTargets.find(
-                  (target) => target.name === targetAgentName,
-                ),
-            // The inspector's `role` fact. An agent this session did not
-            // configure resolves to `undefined`, so the header prints no role
-            // rather than inventing one.
-            resolveAgentRole: (agentName) =>
-              configActivation.descriptors.byName.get(agentName)?.category
-                ?.name,
-            buildBootstrap: (target, childId, context) =>
-              buildChildBootstrapBody(
-                configActivation.descriptors.byName,
-                target,
-                childId,
-                context,
-                ctx,
-                (descriptor) =>
-                  session.primarySession.prepareComposedPrompt(
-                    descriptor,
-                    session.disabledSkills,
-                  ),
-              ),
             onTreeChanged: () => {
               if (!startupOwnsGeneration()) return;
               // The focused child leaving the live set is the only settlement
@@ -6343,10 +6589,9 @@ export function createPiExtension(
             countdownSeconds:
               generation.preflight.childInspection.settings
                 .recovery_countdown_seconds,
-            resolveDescriptor: (name) =>
-              configActivation.descriptors.byName.get(name),
+            resolveDescriptor: (name) => catalogCell.descriptors().get(name),
             currentModel: ctx.model?.id,
-            currentPolicy: configActivation.config.settings,
+            currentPolicy: () => catalogCell.activation()?.config.settings,
             currentLimits: generation.preflight.childInspection.settings,
             ui: {
               select: (title, options, optionsConfig) =>
@@ -6359,13 +6604,17 @@ export function createPiExtension(
                 ),
             },
             // The authenticated restore seam is intentionally owned by the
-            // controller. Until a controller is active, fail closed.
+            // controller. Until a controller is active, fail closed. A
+            // restored child is a new dispatch, so this boundary refreshes
+            // the catalog before the controller resolves anything from it.
             spawn: (input) =>
-              deps.restoreOrdinaryChild !== undefined
-                ? deps.restoreOrdinaryChild(input)
-                : (delegationControllerCell.controller?.restoreOrdinaryChild(
-                    input,
-                  ) ?? errAsync({ type: "unavailable" })),
+              ensureFreshCatalog().andThen(() =>
+                deps.restoreOrdinaryChild !== undefined
+                  ? deps.restoreOrdinaryChild(input)
+                  : (delegationControllerCell.controller?.restoreOrdinaryChild(
+                      input,
+                    ) ?? errAsync({ type: "unavailable" })),
+              ),
             injectParentContext: (content, _options) => {
               const sendMessage = pi.sendMessage;
               if (!startupOwnsGeneration() || sendMessage === undefined) {
@@ -6485,16 +6734,9 @@ export function createPiExtension(
                   randomPort: deps.randomPort,
                   hmacPort: deps.hmacPort,
                   logger: deps.logger,
-                  handshakeTimeoutMs:
-                    configActivation.childLifecycleSettings.handshakeTimeoutMs,
-                  replyTimeoutMs:
-                    configActivation.childLifecycleSettings.replyTimeoutMs,
-                  settlementTimeoutMs:
-                    configActivation.childLifecycleSettings
-                      .settlementInactivityTimeoutMs,
-                  runtimeBudgetMs:
-                    configActivation.childLifecycleSettings
-                      .absoluteRuntimeBudgetMs,
+                  // One sample per step: the child's budgets and the catalog
+                  // its nested relays resolve against are the same reference.
+                  currentDispatch: currentDispatchSnapshot,
                   idGenerator: deps.idGenerator,
                   // The exact executable that launched this host, never a
                   // bare "pi" a spawner would have to re-resolve via `PATH`
@@ -6534,20 +6776,23 @@ export function createPiExtension(
                 generation.id,
               ),
             ),
+            // The direct-step boundary: `PiWorkflowController` awaits this
+            // before it consults `resolveAgentDescriptor` below, so a step
+            // resolves against the newest authorized catalog.
+            ensureFreshCatalog,
             // Resolves a direct-step agent's own real descriptor (composed
             // prompt, models, delegation targets) from this
             // generation's own activated catalog by name (Pi adapter contract,
             //) - never the engine effect's own always-empty
             // `agentDescriptor` fields.
             resolveAgentDescriptor: (agentName) => {
-              const descriptor =
-                configActivation.descriptors.byName.get(agentName);
+              const descriptor = catalogCell.descriptors().get(agentName);
               if (descriptor === undefined) return undefined;
               return {
                 ...descriptor,
                 composedPrompt: session.primarySession.prepareComposedPrompt(
                   descriptor,
-                  session.disabledSkills,
+                  catalogCell.disabledSkills(),
                 ),
               };
             },
@@ -7304,6 +7549,8 @@ export function createPiExtension(
   };
   piAdapterExtension.providerFastLatestForTest = () =>
     resolveProviderFastState();
+  piAdapterExtension.catalogCellForTest = () => catalogCellHolder.cell;
+  piAdapterExtension.configRefreshForTest = () => configRefreshCell.coordinator;
   return piAdapterExtension;
 }
 

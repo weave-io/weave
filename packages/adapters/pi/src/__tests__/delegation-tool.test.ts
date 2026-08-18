@@ -159,6 +159,33 @@ function abortFailure(code: string): PiAdapterFailure {
   } as PiAdapterFailure;
 }
 
+/** Reads the tool schema's `agent` property without asserting a union shape. */
+function agentParameter(registration: { readonly parameters: unknown }): {
+  readonly type?: string;
+  readonly minLength?: number;
+  readonly maxLength?: number;
+  readonly description?: string;
+  readonly enum?: unknown;
+  readonly anyOf?: unknown;
+  readonly const?: unknown;
+} {
+  return (
+    registration.parameters as {
+      properties: {
+        agent: {
+          type?: string;
+          minLength?: number;
+          maxLength?: number;
+          description?: string;
+          enum?: unknown;
+          anyOf?: unknown;
+          const?: unknown;
+        };
+      };
+    }
+  ).properties.agent;
+}
+
 function ctx(): PiSessionContext {
   return {
     mode: "tui",
@@ -179,23 +206,55 @@ function ctx(): PiSessionContext {
 }
 
 describe("buildDelegationToolRegistration", () => {
-  it("exposes the fixed tool identity and restricts the schema enum to the supplied targets", () => {
+  it("exposes the fixed tool identity and a bounded plain-string agent parameter", () => {
     const registration = buildDelegationToolRegistration(baseDeps());
     expect(registration.name).toBe(WEAVE_DELEGATION_TOOL_NAME);
     expect(registration.label).toBe("Delegate to a Weave subagent");
-    const parameters = registration.parameters as {
-      properties: { agent: { enum: string[]; description: string } };
-    };
-    expect(parameters.properties.agent.enum.sort()).toEqual([
-      "shuttle",
-      "shuttle-backend",
-    ]);
-    expect(parameters.properties.agent.description).toContain(
-      "Exact normalized subagent name",
+    const agent = agentParameter(registration);
+    expect(agent.type).toBe("string");
+    expect(agent.minLength).toBe(1);
+    expect(agent.maxLength).toBe(256);
+    // No name-shaped union survives in the schema. That keeps providers which
+    // reject `anyOf`/`const` unions supported, and it means the schema itself
+    // carries no registration-time authority at all.
+    expect(agent.enum).toBeUndefined();
+    expect(agent.anyOf).toBeUndefined();
+    expect(agent.const).toBeUndefined();
+    expect(JSON.stringify(registration.parameters)).not.toContain("shuttle");
+    // The eligible-target list lives in the invoking agent's composed prompt.
+    expect(agent.description).toContain(
+      "eligible delegation targets listed in this agent's own prompt",
     );
     expect(registration.promptGuidelines).toEqual([
-      "Pass the exact normalized subagent name from the `agent` enum; never use a display label, description, or alias.",
+      "Pass the exact normalized subagent name from this agent's eligible delegation targets, as listed in its own prompt; never use a display label, description, or alias.",
     ]);
+  });
+
+  // Pi requires parameters at registration time, so a schema derived from the
+  // registration-time target names would pin the callable set for the whole
+  // generation. A constant schema removes that obstacle; authority stays with
+  // the runtime invocation context.
+  it("keeps the schema byte-identical regardless of registration-time targets", () => {
+    const baseline = JSON.stringify(
+      buildDelegationToolRegistration(baseDeps()).parameters,
+    );
+    const emptyTargets = buildDelegationToolRegistration(
+      baseDeps({ targets: [] }),
+    );
+    const otherTargets = buildDelegationToolRegistration(
+      baseDeps({
+        targets: [
+          {
+            name: "brand-new-agent",
+            description: "added after registration",
+            triggers: [],
+            isCategory: false,
+          },
+        ],
+      }),
+    );
+    expect(JSON.stringify(emptyTargets.parameters)).toBe(baseline);
+    expect(JSON.stringify(otherTargets.parameters)).toBe(baseline);
   });
 
   it("renders the called subagent name instead of the protocol tool name", () => {
@@ -616,6 +675,118 @@ describe("buildDelegationToolRegistration", () => {
       ok: false,
       error: "invalid-delegation-target",
     });
+  });
+
+  // The point of the stable schema: a name the registration never knew about is
+  // reachable as soon as the runtime context carries it, with no tool
+  // re-registration and no static union standing in the way. When the runtime
+  // context may legitimately change is decided elsewhere, not here.
+  it("execute: dispatches a runtime target that registration-time targets never listed", async () => {
+    let capturedRequest: PiDelegationRequest | undefined;
+    const added: DelegationTarget = {
+      name: "shuttle-added-later",
+      description: "Published after this tool was registered",
+      triggers: [],
+      isCategory: false,
+    };
+    let bootstrapTarget: DelegationTarget | undefined;
+    const registration = buildDelegationToolRegistration({
+      ...baseDeps({
+        getController: () =>
+          fakeController((request) => {
+            capturedRequest = request;
+            return okAsync({ outcome: "completed", assistantOutput: "done" });
+          }),
+        buildBootstrap: (target) => {
+          bootstrapTarget = target;
+          return {};
+        },
+      }),
+      getInvocationContext: () => ({
+        parentAgentName: "loom",
+        targets: [added],
+      }),
+    });
+    // Sanity: the name is genuinely absent from the registration-time data.
+    expect(TARGETS.some((target) => target.name === added.name)).toBe(false);
+
+    const result = await registration.execute(
+      "call-1",
+      { agent: added.name, task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
+      ok: true,
+      settlement: {
+        outcome: "completed",
+        finalOutput: "done",
+        interventionCount: 0,
+      },
+    });
+    expect(capturedRequest?.agentName).toBe(added.name);
+    // The dispatched target object is the runtime one, never a re-derived copy.
+    expect(bootstrapTarget).toBe(added);
+  });
+
+  it("execute: fails closed when the runtime invocation context is unavailable, never dispatching", async () => {
+    let delegated = false;
+    const registration = buildDelegationToolRegistration({
+      ...baseDeps({
+        getController: () =>
+          fakeController(() => {
+            delegated = true;
+            return okAsync({ outcome: "completed", assistantOutput: "x" });
+          }),
+      }),
+      getInvocationContext: () => undefined,
+    });
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
+      ok: false,
+      error: "delegation-transport-unavailable",
+    });
+    expect(delegated).toBe(false);
+  });
+
+  // An empty runtime target set denies everything; it never widens back to the
+  // registration-time targets the tool was built with.
+  it("execute: rejects every name when the runtime context carries no targets", async () => {
+    let delegated = false;
+    const registration = buildDelegationToolRegistration({
+      ...baseDeps({
+        getController: () =>
+          fakeController(() => {
+            delegated = true;
+            return okAsync({ outcome: "completed", assistantOutput: "x" });
+          }),
+      }),
+      getInvocationContext: () => ({
+        parentAgentName: "loom",
+        targets: [],
+      }),
+    });
+    for (const agent of ["shuttle", "shuttle-backend"]) {
+      const result = await registration.execute(
+        "call-1",
+        { agent, task: "do it" },
+        undefined,
+        undefined,
+        ctx(),
+      );
+      expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
+        ok: false,
+        error: "invalid-delegation-target",
+      });
+    }
+    expect(delegated).toBe(false);
   });
 
   it("execute: surfaces a controller failure as a structured error code, never throwing", async () => {
@@ -1376,6 +1547,59 @@ describe("weave_delegate thread lifecycle", () => {
       recovery: "none",
     });
     expect(JSON.stringify(text)).not.toContain("/");
+  });
+
+  // A parent-side snapshot update must never imply a child-side schema
+  // mismatch, so the relayed schema is the same constant shape whatever targets
+  // this child's bootstrap carried.
+  it("gives the relayed child tool the same stable agent parameter", () => {
+    const withTargets = buildRelayedDelegationToolRegistration({
+      targets: TARGETS,
+      sessionMutationGate: createOpenSessionMutationGate(),
+      getRuntime: () => undefined,
+    });
+    const withoutTargets = buildRelayedDelegationToolRegistration({
+      targets: [],
+      sessionMutationGate: createOpenSessionMutationGate(),
+      getRuntime: () => undefined,
+    });
+    const agent = agentParameter(withTargets);
+    expect(agent.type).toBe("string");
+    expect(agent.minLength).toBe(1);
+    expect(agent.maxLength).toBe(256);
+    expect(agent.enum).toBeUndefined();
+    expect(agent.anyOf).toBeUndefined();
+    expect(agent.const).toBeUndefined();
+    expect(JSON.stringify(withTargets.parameters)).not.toContain("shuttle");
+    expect(JSON.stringify(withoutTargets.parameters)).toBe(
+      JSON.stringify(withTargets.parameters),
+    );
+  });
+
+  // Bootstrap-pinned defence in depth: the authenticated parent re-resolves
+  // every relayed name against the same pinned snapshot before dispatching.
+  it("refuses a relayed name outside this child's bootstrap-pinned targets without relaying", async () => {
+    let relayed = false;
+    const registration = buildRelayedDelegationToolRegistration({
+      targets: TARGETS,
+      sessionMutationGate: createOpenSessionMutationGate(),
+      getRuntime: () => {
+        relayed = true;
+        return undefined;
+      },
+    });
+    const result = await registration.execute(
+      "call-1",
+      { agent: "not-a-target", task: "nested" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
+      ok: false,
+      error: "invalid-delegation-target",
+    });
+    expect(relayed).toBe(false);
   });
 
   it("keeps a relayed child tool restricted to starting new delegations", async () => {

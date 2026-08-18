@@ -8,7 +8,7 @@
  */
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { DelegationTarget } from "@weaveio/weave-engine";
-import { err, ok, Result, type ResultAsync } from "neverthrow";
+import { err, ok, Result, ResultAsync } from "neverthrow";
 import { Type } from "typebox";
 import {
   CARD_AGENT_NAME_MAX,
@@ -92,30 +92,56 @@ export const WEAVE_DELEGATION_TOOL_NAME = "weave_delegate";
 // becoming (or being reachable from) a schema-layer dependency.
 
 /**
+ * The documented ceiling of one normalized agent name carried by the tool
+ * schema. Names are adapter-normalized identifiers, never paths or prose.
+ */
+const MAX_AGENT_NAME_LENGTH = 256;
+
+/** The root tool's `agent` description. Points at the caller's own prompt. */
+const ROOT_AGENT_PARAMETER_DESCRIPTION =
+  "Exact normalized subagent name, taken from the eligible delegation targets listed in this agent's own prompt. Required to start a new thread; omitted when retrying or continuing one.";
+
+/** The relayed child tool's `agent` description. The parent stays authoritative. */
+const RELAYED_AGENT_PARAMETER_DESCRIPTION =
+  "Exact normalized subagent name, taken from the eligible delegation targets listed in this agent's own prompt. The authenticated parent validates eligibility.";
+
+/**
  * The real Pi-compatible TypeBox parameter schema for `weave_delegate`
  * (Pi adapter contract) - built from the actual `typebox` package Pi itself
- * validates tool arguments against, using `@earendil-works/pi-ai`'s
- * `StringEnum` helper so the `agent` enum stays compatible with providers
- * (e.g. Google) that reject `anyOf`/`const`-shaped unions. `task` is a
- * non-empty string, never a bare unconstrained JSON-schema object literal.
+ * validates tool arguments against. `task` is a non-empty string, never a bare
+ * unconstrained JSON-schema object literal.
+ *
+ * `agent` is one bounded plain string, never a union of the target names known
+ * when the tool was registered. Three reasons:
+ *
+ * - **Authority.** The schema grants none. Eligibility is decided at execution
+ *   time against the live invocation context (root) or by the authenticated
+ *   parent (relay). A name-shaped union in the schema only ever duplicated that
+ *   decision in a place that could go stale.
+ * - **Stability.** Pi requires parameters at registration time, so a
+ *   name-derived schema pinned the callable set to the registration-time
+ *   catalog: a later authorized target-set change would need tool
+ *   re-registration to become reachable. A constant schema removes that
+ *   obstacle without making anything callable earlier - the runtime context
+ *   still has to change first.
+ * - **Provider compatibility.** A bounded `Type.String` keeps the schema free of
+ *   `anyOf`/`const`-shaped unions that some providers (e.g. Google) reject, the
+ *   original reason the enum went through `@earendil-works/pi-ai`'s
+ *   `StringEnum` helper, and it stays byte-identical for a whole generation so
+ *   tool/prompt caching never observes a mid-session schema change.
+ *
+ * The eligible target list the model should choose from is rendered in that
+ * agent's own composed prompt (`delegation.targets`), which the description
+ * points at.
  */
-function buildDelegationParameters(
-  allowedNames: ReadonlySet<string>,
-  acceptParentAuthorizedName = false,
-) {
+function buildDelegationParameters(agentDescription: string) {
   return Type.Object({
     agent: Type.Optional(
-      acceptParentAuthorizedName
-        ? Type.String({
-            minLength: 1,
-            maxLength: 256,
-            description:
-              "Normalized subagent name. The authenticated parent validates eligibility.",
-          })
-        : StringEnum(Array.from(allowedNames), {
-            description:
-              "Exact normalized subagent name from this agent's eligible delegation targets. Required to start a new thread; omitted when retrying or continuing one.",
-          }),
+      Type.String({
+        minLength: 1,
+        maxLength: MAX_AGENT_NAME_LENGTH,
+        description: agentDescription,
+      }),
     ),
     task: Type.Optional(
       Type.String({
@@ -157,7 +183,14 @@ export interface PiDelegationInvocationContext {
 }
 
 export interface PiDelegationToolDeps {
-  /** Union used by Pi's static tool schema. Runtime eligibility comes from `getInvocationContext` when supplied. */
+  /**
+   * Advisory registration-time target data. It shapes no schema and grants no
+   * authority: `buildDelegationToolRegistrations` (extension-impl) uses it only
+   * for the registration-time decision of whether to register the tool at all,
+   * and `readInvocationContext` falls back to it for call sites that supply no
+   * `getInvocationContext`. Runtime eligibility always comes from
+   * `getInvocationContext` when supplied.
+   */
   readonly targets: readonly DelegationTarget[];
   /** Reads the active primary identity and its current target set at execution time. */
   readonly getInvocationContext?: () =>
@@ -171,6 +204,17 @@ export interface PiDelegationToolDeps {
    * somehow did.
    */
   readonly getController: () => PiDelegationController | undefined;
+  /**
+   * Refreshes the generation's published catalog before this call resolves a
+   * target, a descriptor, or a bootstrap, so a config edit made since the last
+   * dispatch reaches the next child.
+   *
+   * Total by contract and by construction: the wired coordinator never fails,
+   * and this tool additionally swallows a hook that breaks that contract. A
+   * refresh can never refuse a delegation, so a stale-but-valid catalog always
+   * serves.
+   */
+  readonly ensureFresh?: () => Promise<void>;
   readonly parentId: string;
   readonly parentDepth: number;
   /** The invoking primary's own agent name - limits are the parent's own budget, never the target's (Pi adapter contract). */
@@ -1307,6 +1351,28 @@ function parseDelegationCall(call: unknown): PiDelegationCall | undefined {
   return undefined;
 }
 
+/**
+ * Runs the injected boundary refresh without ever letting it fail this call.
+ *
+ * A hook that throws or rejects is a broken contract, not a reason to refuse a
+ * delegation: the catalog simply stays where it was.
+ */
+async function ensureCatalogFresh(
+  ensureFresh: () => Promise<void>,
+): Promise<void> {
+  await ResultAsync.fromPromise(
+    Promise.resolve().then(() => ensureFresh()),
+    () => undefined,
+  ).unwrapOr(undefined);
+}
+
+/**
+ * Reads the one authoritative target gate for a root delegation. When the call
+ * site wires `getInvocationContext`, its answer is final - including
+ * `undefined`, which fails closed. Only call sites that wire no hook fall back
+ * to the advisory registration-time data, which then *is* their invocation
+ * context; production always wires the hook.
+ */
 function readInvocationContext(
   deps: PiDelegationToolDeps,
 ): PiDelegationInvocationContext | undefined {
@@ -1323,16 +1389,14 @@ function readInvocationContext(
 export function buildDelegationToolRegistration(
   deps: PiDelegationToolDeps,
 ): PiToolRegistration {
-  const allowedNames = new Set(deps.targets.map((target) => target.name));
-
   const tool: PiToolRegistration = {
     name: WEAVE_DELEGATION_TOOL_NAME,
     label: "Delegate to a Weave subagent",
     description:
       "Delegates one task to a single eligible normalized Weave subagent name, run as a private ephemeral child, and returns its structured result. Never advances or creates workflow state.",
-    parameters: buildDelegationParameters(allowedNames),
+    parameters: buildDelegationParameters(ROOT_AGENT_PARAMETER_DESCRIPTION),
     promptGuidelines: [
-      "Pass the exact normalized subagent name from the `agent` enum; never use a display label, description, or alias.",
+      "Pass the exact normalized subagent name from this agent's eligible delegation targets, as listed in its own prompt; never use a display label, description, or alias.",
     ],
     // The card owns its own frame, so Pi's coloured tool shell must stand down.
     renderShell: "self",
@@ -1377,6 +1441,13 @@ export function buildDelegationToolRegistration(
       const controller = deps.getController();
       if (controller === undefined) {
         return failureResult("delegation-transport-unavailable");
+      }
+      // The delegation boundary: the published catalog is refreshed here,
+      // before any target, descriptor, or bootstrap is resolved, and before a
+      // thread run samples its own dispatch snapshot. A call site that wires
+      // no hook keeps its exact prior control flow - no await is introduced.
+      if (deps.ensureFresh !== undefined) {
+        await ensureCatalogFresh(deps.ensureFresh);
       }
       if (parsed.kind !== "start") {
         // A thread run reuses the thread's own recorded agent, model, and
@@ -1434,9 +1505,10 @@ export function buildDelegationToolRegistration(
             (failure) => threadFailureResult(parsed.threadId, failure),
           );
       }
-      if (!allowedNames.has(parsed.agent)) {
-        return failureResult("invalid-delegation-target");
-      }
+      // The one and only target gate: the live invocation context, then an
+      // exact lookup inside it. No registration-time union is consulted, so a
+      // target the runtime context gained is reachable without re-registering
+      // this tool, and a target it lost is unreachable from the next call on.
       const invocation = readInvocationContext(deps);
       if (invocation === undefined) {
         return failureResult("delegation-transport-unavailable");
@@ -1542,6 +1614,13 @@ export function buildDelegationToolRegistration(
 const RELAY_CARD_THREAD_LABEL = "nested";
 
 export interface PiRelayedDelegationToolDeps {
+  /**
+   * This child's own bootstrap-pinned targets. They shape no schema. They are
+   * runtime data, not registration-time config: the authenticated parent built
+   * them from the exact catalog snapshot pinned to this child's dispatch, so
+   * they cannot go stale under it. An empty list means the parent named none
+   * and the parent alone decides eligibility.
+   */
   readonly targets: readonly DelegationTarget[];
   /** Lazily reads this child's own private-control runtime; `undefined` before bootstrap has applied (fails closed). */
   readonly getRuntime: () => PiChildRuntime | undefined;
@@ -1578,17 +1657,21 @@ export interface PiRelayedDelegationToolDeps {
 export function buildRelayedDelegationToolRegistration(
   deps: PiRelayedDelegationToolDeps,
 ): PiToolRegistration {
-  const allowedNames = new Set(deps.targets.map((target) => target.name));
+  // Bootstrap-pinned defence in depth, never the authority: the parent
+  // re-resolves every relayed name against the same pinned snapshot before it
+  // dispatches anything. Keeping the check here refuses an impossible name
+  // without spending a control round-trip.
+  const pinnedTargetNames = new Set(deps.targets.map((target) => target.name));
 
   const tool: PiToolRegistration = {
     name: WEAVE_DELEGATION_TOOL_NAME,
     label: "Delegate to a Weave agent",
     description:
       "Delegates one task to a single eligible Weave agent, run as a private ephemeral child of this session, and returns its structured result. Never advances or creates workflow state.",
-    parameters: buildDelegationParameters(
-      allowedNames,
-      deps.targets.length === 0,
-    ),
+    // Unconditionally the stable shape, exactly like the root tool: a
+    // parent-side snapshot update can then never imply a child-side schema
+    // mismatch, whatever targets this child's bootstrap happened to carry.
+    parameters: buildDelegationParameters(RELAYED_AGENT_PARAMETER_DESCRIPTION),
     promptGuidelines: [
       deps.targets.length === 0
         ? "Pass a normalized agent name; the authenticated parent validates eligibility."
@@ -1630,7 +1713,7 @@ export function buildRelayedDelegationToolRegistration(
       if (
         parsed === undefined ||
         parsed.kind !== "start" ||
-        (allowedNames.size > 0 && !allowedNames.has(parsed.agent))
+        (pinnedTargetNames.size > 0 && !pinnedTargetNames.has(parsed.agent))
       ) {
         return {
           content: [

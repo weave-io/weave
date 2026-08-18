@@ -23,6 +23,10 @@ import {
   type PiThreadSessionPort,
 } from "../delegation-controller.js";
 import {
+  EMPTY_PI_DISPATCH_SNAPSHOT,
+  type PiDispatchSnapshot,
+} from "../dispatch-snapshot.js";
+import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
@@ -44,6 +48,16 @@ function config(source: string): WeaveConfig {
   const result = parseConfig(source);
   if (result.isErr()) throw new Error(JSON.stringify(result.error));
   return result.value;
+}
+
+/**
+ * One catalog snapshot for a test dispatch. Defaults resolve nothing, so a
+ * test states exactly the catalog facts it exercises.
+ */
+function dispatchSnapshot(
+  overrides: Partial<PiDispatchSnapshot> = {},
+): PiDispatchSnapshot {
+  return { ...EMPTY_PI_DISPATCH_SNAPSHOT, ...overrides };
 }
 
 function limitsSource(opts: {
@@ -295,7 +309,7 @@ function makeController(
   > = {},
 ): PiDelegationController {
   return new PiDelegationController({
-    config: cfg,
+    currentConfig: () => cfg,
     generationId: "gen-1",
     idGenerator: new SequentialIdGenerator(),
     logger: noopLogger,
@@ -620,6 +634,24 @@ function instrumentedRegistry(
   return registry;
 }
 
+const RECOVERY_BOOTSTRAP: PiDispatchSnapshot["buildBootstrap"] = (
+  _target,
+  childId,
+  context,
+) =>
+  ({
+    mode: "ordinary",
+    agentName: "shuttle",
+    composedPrompt: "You are Shuttle.",
+    models: [],
+    correlationId: childId,
+    context: {
+      parentAgentName: context.parentAgentName,
+      parentDepth: context.parentDepth,
+      cwd: context.cwd,
+    },
+  }) as never;
+
 function recoveryController(
   port: FakeChildProcessPort,
   overrides: Partial<
@@ -630,19 +662,8 @@ function recoveryController(
     randomPort: new DeterministicRandomPort(),
     rootAgentName: () => "shuttle",
     resolveRootDelegationTarget: () => ({ name: "shuttle" }) as never,
-    buildBootstrap: (_target, childId, context) =>
-      ({
-        mode: "ordinary",
-        agentName: "shuttle",
-        composedPrompt: "You are Shuttle.",
-        models: [],
-        correlationId: childId,
-        context: {
-          parentAgentName: context.parentAgentName,
-          parentDepth: context.parentDepth,
-          cwd: context.cwd,
-        },
-      }) as never,
+    currentDispatch: () =>
+      dispatchSnapshot({ buildBootstrap: RECOVERY_BOOTSTRAP }),
     pathContainment: {
       verifyContainment: () => okAsync("/history/children/safe"),
     },
@@ -1301,23 +1322,26 @@ describe("PiDelegationController", () => {
       ),
       port,
       {
-        resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
-          requestingAgentName === "tapestry" &&
-          targetAgentName === "tapestry-worker"
-            ? { name: "tapestry-worker", triggers: [], isCategory: false }
-            : undefined,
-        buildBootstrap: (target, childId, context) => ({
-          mode: "ordinary" as const,
-          agentName: target.name,
-          composedPrompt: `You are ${target.name}.`,
-          models: [],
-          correlationId: childId,
-          context: {
-            parentAgentName: context.parentAgentName,
-            parentDepth: context.parentDepth,
-            cwd: context.cwd,
-          },
-        }),
+        currentDispatch: () =>
+          dispatchSnapshot({
+            resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
+              requestingAgentName === "tapestry" &&
+              targetAgentName === "tapestry-worker"
+                ? { name: "tapestry-worker", triggers: [], isCategory: false }
+                : undefined,
+            buildBootstrap: (target, childId, context) => ({
+              mode: "ordinary" as const,
+              agentName: target.name,
+              composedPrompt: `You are ${target.name}.`,
+              models: [],
+              correlationId: childId,
+              context: {
+                parentAgentName: context.parentAgentName,
+                parentDepth: context.parentDepth,
+                cwd: context.cwd,
+              },
+            }),
+          }),
       },
     );
 
@@ -1351,6 +1375,40 @@ describe("PiDelegationController", () => {
     controller.disposeAll();
   });
 
+  it("refreshes the published catalog before an authenticated relay resolves its target", async () => {
+    const port = new FakeChildProcessPort();
+    const order: string[] = [];
+    const controller = makeController(config(GENEROUS), port, {
+      ensureFreshCatalog: () => {
+        order.push("refresh");
+        return okAsync(undefined);
+      },
+      currentDispatch: () =>
+        dispatchSnapshot({
+          resolveDelegationTarget: () => {
+            order.push("resolve");
+            return undefined;
+          },
+        }),
+    });
+
+    const settlement = await controller.delegateFromAuthenticatedParent({
+      parentId: "direct-workflow-step",
+      parentDepth: 0,
+      parentAgentName: "tapestry",
+      agentName: "tapestry-worker",
+      task: "Reply exactly TAPESTRY_CHILD_OK",
+      cwd: "/project",
+    });
+
+    // The refresh is the boundary: it runs before the relay's target lookup,
+    // and a target the refreshed catalog does not carry still fails closed.
+    expect(order).toEqual(["refresh", "resolve"]);
+    expect(settlement.isErr()).toBe(true);
+    expect(port.spawnedProcesses.length).toBe(0);
+    controller.disposeAll();
+  });
+
   it("relays a live child's delegate-request through the same tracked global budget, not an independent one", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(
@@ -1364,22 +1422,25 @@ describe("PiDelegationController", () => {
       ),
       port,
       {
-        resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
-          requestingAgentName === "shuttle" && targetAgentName === "shuttle"
-            ? { name: "shuttle", triggers: [], isCategory: false }
-            : undefined,
-        buildBootstrap: (target, childId) => ({
-          mode: "ordinary" as const,
-          agentName: target.name,
-          composedPrompt: `You are ${target.name}.`,
-          models: [],
-          correlationId: childId,
-          context: {
-            parentAgentName: "shuttle",
-            parentDepth: 1,
-            cwd: "/project",
-          },
-        }),
+        currentDispatch: () =>
+          dispatchSnapshot({
+            resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
+              requestingAgentName === "shuttle" && targetAgentName === "shuttle"
+                ? { name: "shuttle", triggers: [], isCategory: false }
+                : undefined,
+            buildBootstrap: (target, childId) => ({
+              mode: "ordinary" as const,
+              agentName: target.name,
+              composedPrompt: `You are ${target.name}.`,
+              models: [],
+              correlationId: childId,
+              context: {
+                parentAgentName: "shuttle",
+                parentDepth: 1,
+                cwd: "/project",
+              },
+            }),
+          }),
       },
     );
     void controller.delegate(request());
@@ -1455,19 +1516,22 @@ describe("PiDelegationController", () => {
   it("fails closed with exactly one delegate-response error and never spawns when the target is not eligible for that child", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(config(GENEROUS), port, {
-      resolveDelegationTarget: () => undefined,
-      buildBootstrap: (target, childId) => ({
-        mode: "ordinary" as const,
-        agentName: target.name,
-        composedPrompt: `You are ${target.name}.`,
-        models: [],
-        correlationId: childId,
-        context: {
-          parentAgentName: "shuttle",
-          parentDepth: 1,
-          cwd: "/project",
-        },
-      }),
+      currentDispatch: () =>
+        dispatchSnapshot({
+          resolveDelegationTarget: () => undefined,
+          buildBootstrap: (target, childId) => ({
+            mode: "ordinary" as const,
+            agentName: target.name,
+            composedPrompt: `You are ${target.name}.`,
+            models: [],
+            correlationId: childId,
+            context: {
+              parentAgentName: "shuttle",
+              parentDepth: 1,
+              cwd: "/project",
+            },
+          }),
+        }),
     });
     void controller.delegate(request());
     await flush();
@@ -2040,9 +2104,12 @@ describe("PiDelegationController", () => {
   it("releases reservation after bootstrap failure, allowing the next restore", async () => {
     const port = new FakeChildProcessPort();
     const controller = recoveryController(port, {
-      buildBootstrap: () => {
-        throw new Error("raw canary");
-      },
+      currentDispatch: () =>
+        dispatchSnapshot({
+          buildBootstrap: () => {
+            throw new Error("raw canary");
+          },
+        }),
     });
     const failed = await controller.restoreOrdinaryChild({
       generationId: "gen-1",
@@ -2109,14 +2176,15 @@ describe("PiDelegationController", () => {
         }) as never,
     });
     const controller = recoveryController(port, {
-      config: config(
-        limitsSource({
-          maxChildren: 1,
-          maxConcurrency: 1,
-          maxDepth: 3,
-          maxProcesses: 1,
-        }),
-      ),
+      currentConfig: () =>
+        config(
+          limitsSource({
+            maxChildren: 1,
+            maxConcurrency: 1,
+            maxDepth: 3,
+            maxProcesses: 1,
+          }),
+        ),
       inspectionRegistry: registry,
     });
     const failed = await controller.restoreOrdinaryChild({
@@ -2157,14 +2225,15 @@ describe("PiDelegationController", () => {
       const port = new FakeChildProcessPort();
       const registry = instrumentedRegistry(events);
       const controller = recoveryController(port, {
-        config: config(
-          limitsSource({
-            maxChildren: 1,
-            maxConcurrency: 1,
-            maxDepth: 3,
-            maxProcesses: 1,
-          }),
-        ),
+        currentConfig: () =>
+          config(
+            limitsSource({
+              maxChildren: 1,
+              maxConcurrency: 1,
+              maxDepth: 3,
+              maxProcesses: 1,
+            }),
+          ),
         inspectionRegistry: registry,
       });
       const promise = controller.restoreOrdinaryChild({
@@ -2251,19 +2320,24 @@ describe("PiDelegationController", () => {
   it("recovered running children route authenticated nested delegation through the shared budget", async () => {
     const port = new FakeChildProcessPort();
     const controller = recoveryController(port, {
-      config: config(
-        limitsSource({
-          maxChildren: 2,
-          maxConcurrency: 2,
-          maxDepth: 3,
-          maxProcesses: 3,
+      currentConfig: () =>
+        config(
+          limitsSource({
+            maxChildren: 2,
+            maxConcurrency: 2,
+            maxDepth: 3,
+            maxProcesses: 3,
+          }),
+        ),
+      currentDispatch: () =>
+        dispatchSnapshot({
+          buildBootstrap: RECOVERY_BOOTSTRAP,
+          resolveDelegationTarget: () => ({
+            name: "shuttle",
+            triggers: [],
+            isCategory: false,
+          }),
         }),
-      ),
-      resolveDelegationTarget: () => ({
-        name: "shuttle",
-        triggers: [],
-        isCategory: false,
-      }),
     });
     const restore = controller.restoreOrdinaryChild({
       generationId: "gen-1",
@@ -2806,5 +2880,345 @@ describe("PiDelegationController", () => {
     ).toBeUndefined();
     expect(JSON.stringify(descriptor)).not.toContain("/Users/");
     controller.disposeAll();
+  });
+});
+
+/**
+ * A timer port that records the delays it was asked to schedule.
+ *
+ * A child's sampled lifecycle budgets are otherwise invisible from outside:
+ * they only ever surface as the delays `PiRpcChild` schedules. Recording them
+ * is what makes "this child ran on the catalog it was dispatched under"
+ * observable without reaching into the child.
+ */
+class RecordingTimerPort {
+  readonly delays: number[] = [];
+
+  schedule(callback: () => void, delayMs: number) {
+    this.delays.push(delayMs);
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      if (!cancelled) callback();
+    }, delayMs);
+    return {
+      cancel: () => {
+        cancelled = true;
+        clearTimeout(handle);
+      },
+    };
+  }
+}
+
+describe("PiDelegationController catalog snapshot pinning", () => {
+  it("resolves each admission against the current config while never retiming or retro-killing admitted work", async () => {
+    const port = new FakeChildProcessPort();
+    let current = config(
+      limitsSource({
+        maxChildren: 2,
+        maxConcurrency: 2,
+        maxDepth: 3,
+        maxProcesses: 4,
+      }),
+    );
+    const controller = makeController(current, port, {
+      currentConfig: () => current,
+    });
+
+    const first = controller.delegate(request());
+    await flush();
+    expect(port.spawnedProcesses.length).toBe(1);
+
+    // A later publication lowers the parent's parallel capacity to one.
+    current = config(
+      limitsSource({
+        maxChildren: 1,
+        maxConcurrency: 1,
+        maxDepth: 3,
+        maxProcesses: 4,
+      }),
+    );
+
+    // The running child keeps running: a lowered limit binds admissions, not
+    // work that was already admitted.
+    const denied = await controller.delegate(request());
+    expect(denied._unsafeUnwrapErr().code).toBe("ChildCapacityExceeded");
+    expect(port.spawnedProcesses.length).toBe(1);
+    expect(spawnedAt(port, 0).killed).toBe(false);
+
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    expect((await first).isOk()).toBe(true);
+
+    // `max_children` is parallel capacity, so the settled child's slot comes
+    // back rather than counting against the cumulative history.
+    const third = controller.delegate(request());
+    await flushUntil(
+      () => port.spawnedProcesses.length === 2,
+      "the freed capacity to admit the next child",
+    );
+    await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
+    expect((await third).isOk()).toBe(true);
+    controller.disposeAll();
+  });
+
+  it("samples lifecycle budgets once per dispatch, so a published catalog retimes only later children", async () => {
+    const port = new FakeChildProcessPort();
+    const timerPort = new RecordingTimerPort();
+    const before = dispatchSnapshot({
+      budgets: { handshakeTimeoutMs: 4321 },
+      buildBootstrap: () => null,
+    });
+    const after = dispatchSnapshot({
+      budgets: { handshakeTimeoutMs: 8765 },
+      buildBootstrap: () => null,
+    });
+    let published = before;
+    const controller = makeController(config(GENEROUS), port, {
+      timerPort,
+      currentDispatch: () => published,
+    });
+
+    void controller.delegate(request());
+    await flush();
+    expect(timerPort.delays).toContain(4321);
+    expect(timerPort.delays).not.toContain(8765);
+
+    published = after;
+    void controller.delegate(request());
+    await flush();
+    expect(timerPort.delays).toContain(8765);
+
+    // The first child stayed on the catalog it was dispatched under.
+    const pinned = controller.pinnedDispatchSnapshotsForTest();
+    const [firstChildId, secondChildId] = port.spawnedProcesses.map((process) =>
+      childIdOf(process, port),
+    );
+    expect(pinned.get(firstChildId as string)).toBe(before);
+    expect(pinned.get(secondChildId as string)).toBe(after);
+    controller.disposeAll();
+  });
+
+  it("keeps a queued child on the budgets it was admitted with, even though it spawns after a publication", async () => {
+    const port = new FakeChildProcessPort();
+    const timerPort = new RecordingTimerPort();
+    const before = dispatchSnapshot({
+      budgets: { handshakeTimeoutMs: 4321 },
+      buildBootstrap: () => null,
+    });
+    const after = dispatchSnapshot({
+      budgets: { handshakeTimeoutMs: 8765 },
+      buildBootstrap: () => null,
+    });
+    let published = before;
+    // One process at a time, so the second request is admitted and then waits.
+    const controller = makeController(
+      config(
+        limitsSource({
+          maxChildren: 9,
+          maxConcurrency: 9,
+          maxDepth: 3,
+          maxProcesses: 1,
+        }),
+      ),
+      port,
+      { timerPort, currentDispatch: () => published },
+    );
+
+    const first = controller.delegate(request());
+    await flush();
+    expect(port.spawnedProcesses.length).toBe(1);
+    void controller.delegate(request());
+    await flushUntil(
+      () => controller.pinnedDispatchSnapshotsForTest().size === 2,
+      "the second request to be admitted into the queue",
+    );
+    expect(port.spawnedProcesses.length).toBe(1);
+
+    published = after;
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    expect((await first).isOk()).toBe(true);
+    await flushUntil(
+      () => port.spawnedProcesses.length === 2,
+      "the queued child to be promoted after the first settled",
+    );
+
+    // Admission, not spawn, is when a dispatch samples its catalog.
+    expect(timerPort.delays).not.toContain(8765);
+    expect(
+      controller
+        .pinnedDispatchSnapshotsForTest()
+        .get(childIdOf(spawnedAt(port, 1), port)),
+    ).toBe(before);
+    controller.disposeAll();
+  });
+
+  it("authorizes a live child's nested request against its pinned catalog, and the nested child inherits it", async () => {
+    const port = new FakeChildProcessPort();
+    const bootstrap: PiDispatchSnapshot["buildBootstrap"] = (
+      target,
+      childId,
+    ) => ({
+      mode: "ordinary" as const,
+      agentName: target.name,
+      composedPrompt: `You are ${target.name}.`,
+      models: [],
+      correlationId: childId,
+      context: { parentAgentName: "shuttle", parentDepth: 1, cwd: "/project" },
+    });
+    const before = dispatchSnapshot({
+      resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
+        requestingAgentName === "shuttle" && targetAgentName === "old-worker"
+          ? { name: "old-worker", triggers: [], isCategory: false }
+          : undefined,
+      buildBootstrap: bootstrap,
+    });
+    const after = dispatchSnapshot({
+      resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
+        requestingAgentName === "shuttle" && targetAgentName === "new-worker"
+          ? { name: "new-worker", triggers: [], isCategory: false }
+          : undefined,
+      buildBootstrap: bootstrap,
+    });
+    let published = before;
+    const controller = makeController(config(GENEROUS), port, {
+      currentDispatch: () => published,
+    });
+
+    void controller.delegate(request());
+    await flush();
+    const parent = spawnedAt(port, 0);
+    const parentId = childIdOf(parent, port);
+    await sendChildToRunning(parent, port, "gen-1");
+
+    // A whole new catalog is published while that child runs.
+    published = after;
+
+    const secret = extractSecret(parent, port);
+    const hmacPort = new WebCryptoHmacPort();
+    const randomPort = new WebCryptoRandomPort();
+    const relay = async (
+      sequence: number,
+      agentName: string,
+    ): Promise<void> => {
+      const envelope = await signEnvelope(
+        {
+          childId: parentId,
+          generationId: "gen-1",
+          direction: "child-to-parent",
+          sequence,
+          nonce: Buffer.from(randomPort.randomBytes(16)).toString("hex"),
+          correlationId: `${parentId}-delegate-${sequence}`,
+          kind: "delegate-request",
+          body: { agentName, task: "nested task" },
+        },
+        secret,
+        hmacPort,
+      );
+      parent.emitLine(envelope._unsafeUnwrap());
+    };
+
+    // The target the *pinned* catalog names is still reachable.
+    await relay(3, "old-worker");
+    await flushUntil(
+      () => port.spawnedProcesses.length === 2,
+      "the nested child authorized by the pinned catalog to spawn",
+    );
+    const nestedId = childIdOf(spawnedAt(port, 1), port);
+    // A nested child inherits its live parent's snapshot, so the whole
+    // in-flight subtree stays on one catalog.
+    expect(controller.pinnedDispatchSnapshotsForTest().get(nestedId)).toBe(
+      before,
+    );
+
+    // The target only the *new* catalog names is not reachable from a child
+    // whose bootstrap never listed it.
+    await relay(4, "new-worker");
+    const responses = await waitForDelegateResponses(parent);
+    const refusal = responses.find(
+      (envelope) => envelope.correlationId === `${parentId}-delegate-4`,
+    );
+    expect(refusal?.body).toEqual({
+      ok: false,
+      error: "invalid-delegation-target",
+    });
+    expect(port.spawnedProcesses.length).toBe(2);
+
+    // A brand-new root dispatch, by contrast, takes the published catalog.
+    void controller.delegate(request());
+    await flushUntil(
+      () => port.spawnedProcesses.length === 3,
+      "the post-publication root dispatch to spawn",
+    );
+    const laterParent = spawnedAt(port, 2);
+    const laterId = childIdOf(laterParent, port);
+    expect(controller.pinnedDispatchSnapshotsForTest().get(laterId)).toBe(
+      after,
+    );
+    await sendChildToRunning(laterParent, port, "gen-1");
+    const laterSecret = extractSecret(laterParent, port);
+    const laterRelay = await signEnvelope(
+      {
+        childId: laterId,
+        generationId: "gen-1",
+        direction: "child-to-parent",
+        sequence: 3,
+        nonce: Buffer.from(randomPort.randomBytes(16)).toString("hex"),
+        correlationId: `${laterId}-delegate-new`,
+        kind: "delegate-request",
+        body: { agentName: "new-worker", task: "new nested task" },
+      },
+      laterSecret,
+      hmacPort,
+    );
+    laterParent.emitLine(laterRelay._unsafeUnwrap());
+    await flushUntil(
+      () => port.spawnedProcesses.length === 4,
+      "the new catalog's nested target to spawn",
+    );
+    const laterNestedId = childIdOf(spawnedAt(port, 3), port);
+    expect(controller.pinnedDispatchSnapshotsForTest().get(laterNestedId)).toBe(
+      after,
+    );
+
+    controller.disposeAll();
+    expect(controller.pinnedDispatchSnapshotsForTest().size).toBe(0);
+  });
+
+  it("holds exactly one snapshot reference per live child and releases it on every settle and dispose path", async () => {
+    const port = new FakeChildProcessPort();
+    const pinned = dispatchSnapshot({ buildBootstrap: () => null });
+    const controller = makeController(
+      config(
+        limitsSource({
+          maxChildren: 1,
+          maxConcurrency: 1,
+          maxDepth: 3,
+          maxProcesses: 4,
+        }),
+      ),
+      port,
+      { currentDispatch: () => pinned },
+    );
+
+    const settlement = controller.delegate(request());
+    await flush();
+    expect(controller.pinnedDispatchSnapshotsForTest().size).toBe(1);
+
+    // A refused admission never leaves a reference behind.
+    const denied = await controller.delegate(request());
+    expect(denied._unsafeUnwrapErr().code).toBe("ChildCapacityExceeded");
+    expect(controller.pinnedDispatchSnapshotsForTest().size).toBe(1);
+
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    expect((await settlement).isOk()).toBe(true);
+    expect(controller.pinnedDispatchSnapshotsForTest().size).toBe(0);
+
+    // A child still live at teardown is released by disposal itself.
+    void controller.delegate(request());
+    await flushUntil(
+      () => controller.pinnedDispatchSnapshotsForTest().size === 1,
+      "the replacement child to pin its catalog",
+    );
+    controller.disposeAll();
+    expect(controller.pinnedDispatchSnapshotsForTest().size).toBe(0);
   });
 });

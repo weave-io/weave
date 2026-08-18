@@ -49,6 +49,10 @@ import {
   type PiThreadRunRequest,
   type PiThreadSessionPort,
 } from "../delegation-controller.js";
+import {
+  EMPTY_PI_DISPATCH_SNAPSHOT,
+  type PiDispatchSnapshot,
+} from "../dispatch-snapshot.js";
 import type { JsonValue } from "../strict-json.js";
 import {
   FakeChildProcessPort,
@@ -653,7 +657,7 @@ function harness(
       ? new FakeSessionStore()
       : overrides.sessions;
   const controller = new PiDelegationController({
-    config: config(overrides.maxChildren ?? 1),
+    currentConfig: () => config(overrides.maxChildren ?? 1),
     generationId: GENERATION,
     idGenerator: overrides.idGenerator ?? new SequentialIdGenerator(),
     logger: noopLogger,
@@ -672,24 +676,27 @@ function harness(
         : OWNER_SESSION,
     resolveRootDelegationTarget: () =>
       "target" in overrides ? overrides.target : TARGET,
-    buildBootstrap: (_target, childId) =>
-      (overrides.bootstrap ?? {
-        mode: "ordinary",
-        agentName: "shuttle",
-        composedPrompt: "You are Shuttle.",
-        models: [],
-        correlationId: childId,
-        resolvedModel: { provider: "anthropic", id: "model-x" },
-        thinkingLevel: "high",
-        context: {
-          parentAgentName: "shuttle",
-          parentDepth: 0,
-          cwd: "/project",
-        },
-      }) as JsonValue,
-    ...(overrides.resolveAgentRole === undefined
-      ? {}
-      : { resolveAgentRole: overrides.resolveAgentRole }),
+    currentDispatch: (): PiDispatchSnapshot => ({
+      ...EMPTY_PI_DISPATCH_SNAPSHOT,
+      ...(overrides.resolveAgentRole === undefined
+        ? {}
+        : { resolveAgentRole: overrides.resolveAgentRole }),
+      buildBootstrap: (_target, childId) =>
+        (overrides.bootstrap ?? {
+          mode: "ordinary",
+          agentName: "shuttle",
+          composedPrompt: "You are Shuttle.",
+          models: [],
+          correlationId: childId,
+          resolvedModel: { provider: "anthropic", id: "model-x" },
+          thinkingLevel: "high",
+          context: {
+            parentAgentName: "shuttle",
+            parentDepth: 0,
+            cwd: "/project",
+          },
+        }) as JsonValue,
+    }),
     threadRefs: () => refs,
     threadSessions: () => sessions,
     threadCache: () => cache,
@@ -1219,7 +1226,7 @@ describe("thread lifecycle: source integrity", () => {
     const h = harness();
     await startThread(h, "failed");
     const bare = new PiDelegationController({
-      config: config(),
+      currentConfig: () => config(),
       generationId: GENERATION,
       idGenerator: new SequentialIdGenerator(),
       logger: noopLogger,

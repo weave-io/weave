@@ -291,6 +291,78 @@ describe("PiWorkflowController — authorization", () => {
   });
 });
 
+describe("PiWorkflowController — the direct-step refresh boundary", () => {
+  it("refreshes the published catalog before it resolves a step's descriptor", async () => {
+    const order: string[] = [];
+    const { store, directDispatch, controller } = buildHarness({
+      ensureFreshCatalog: () => {
+        order.push("refresh");
+        return okAsync(undefined);
+      },
+      resolveAgentDescriptor: (agentName) => {
+        order.push(`resolve:${agentName}`);
+        return {
+          name: agentName,
+          composedPrompt: `You are ${agentName}.`,
+          models: [],
+          mode: "subagent",
+          effectiveToolPolicy: {
+            read: "allow",
+            write: "allow",
+            execute: "allow",
+            delegate: "deny",
+            network: "deny",
+          },
+          rawToolPolicy: undefined,
+          delegationTargets: [],
+          skills: [],
+        };
+      },
+    });
+    const workflowInstanceId = await createInstance(store);
+    directDispatch.enqueue(okAsync(successCandidate()) as never);
+    directDispatch.enqueue(okAsync(successCandidate()) as never);
+
+    const auth = authorizeByExplicitUser(true);
+    expect(auth.isOk()).toBe(true);
+    if (!auth.isOk()) return;
+    const result = await controller.startExecution(
+      { workflowInstanceId, context: buildContext() },
+      auth.value,
+    );
+
+    expect(result.isOk()).toBe(true);
+    // One refresh per dispatched step, each before that step's catalog read.
+    expect(order).toEqual([
+      "refresh",
+      "resolve:pattern",
+      "refresh",
+      "resolve:shuttle",
+    ]);
+  });
+
+  it("dispatches normally for an embedding that wires no refresh", async () => {
+    const { store, directDispatch, controller } = buildHarness();
+    const workflowInstanceId = await createInstance(store);
+    directDispatch.enqueue(okAsync(successCandidate()) as never);
+    directDispatch.enqueue(okAsync(successCandidate()) as never);
+
+    const auth = authorizeByExplicitUser(true);
+    expect(auth.isOk()).toBe(true);
+    if (!auth.isOk()) return;
+    const result = await controller.startExecution(
+      { workflowInstanceId, context: buildContext() },
+      auth.value,
+    );
+
+    expect(result.isOk()).toBe(true);
+    expect(directDispatch.calls.map((call) => call.stepName)).toEqual([
+      "plan",
+      "implement",
+    ]);
+  });
+});
+
 describe("PiWorkflowController — startExecution drives the full lifecycle", () => {
   it("dispatches every step through the direct-dispatch port and completes the workflow", async () => {
     const { store, directDispatch, controller } = buildHarness();
@@ -935,10 +1007,7 @@ describe("PiWorkflowController — inspectExecution stays read-only", () => {
 describe("PiWorkflowController — handleUserInterrupt routes to pause/cancel exactly", () => {
   it("releases the lease after cancelling a review wait", async () => {
     const { store, directDispatch, controller } = buildHarness();
-    const workflowInstanceId = await createInstance(
-      store,
-      "review-wait-flow",
-    );
+    const workflowInstanceId = await createInstance(store, "review-wait-flow");
     directDispatch.enqueue(
       okAsync({
         outcome: "success",
@@ -1036,10 +1105,7 @@ describe("PiWorkflowController — handleUserInterrupt routes to pause/cancel ex
       },
     });
     const { directDispatch, controller } = buildHarness({ store });
-    const workflowInstanceId = await createInstance(
-      store,
-      "review-wait-flow",
-    );
+    const workflowInstanceId = await createInstance(store, "review-wait-flow");
     directDispatch.enqueue(
       okAsync({
         outcome: "success",

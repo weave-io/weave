@@ -9,13 +9,16 @@ import type {
   WorkflowStep,
 } from "@weaveio/weave-core";
 import { parseConfig } from "@weaveio/weave-core";
+import { errAsync, okAsync } from "neverthrow";
 
 import {
   type AppendCollision,
   type CategoryMetadata,
   composeAgentDescriptor,
   composeWorkflowStepPrompt,
+  defaultPromptFileReader,
   detectAppendCollisions,
+  type PromptFileReader,
 } from "../compose.js";
 import { generateCategoryShuttles } from "../descriptors.js";
 import { buildTemplateContext } from "../template-context.js";
@@ -214,6 +217,51 @@ describe("composeAgentDescriptor", () => {
 
       expect(descriptor.composedPrompt).toBe(
         "Base prompt.\n\nAdditional guidance.",
+      );
+    });
+
+    it("Multiline_agent_and_category_appends_preserve_composed_order", async () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt """
+            Base "quoted" line.
+            Base {literal} [line].
+          """
+          prompt_append """
+            Agent append one.
+            Agent append two.
+          """
+        }
+        category frontend {
+          description "Frontend UI"
+          prompt_append """
+            Category append one.
+            Category append two.
+          """
+        }
+      `);
+      const generatedResult = generateCategoryShuttles(config);
+      expect(generatedResult.isOk()).toBe(true);
+      const generated = generatedResult._unsafeUnwrap()["shuttle-frontend"];
+      expect(generated).toBeDefined();
+      if (generated === undefined) {
+        throw new Error("expected generated frontend shuttle");
+      }
+
+      expect(generated.config.prompt_append).toBe(
+        "Agent append one.\nAgent append two.\nCategory append one.\nCategory append two.",
+      );
+
+      const descriptor = await descriptorFor(
+        "shuttle-frontend",
+        generated.config,
+        config,
+        { ...config.agents, "shuttle-frontend": generated.config },
+        generated.categoryMeta,
+      );
+
+      expect(descriptor.composedPrompt).toBe(
+        'Base "quoted" line.\nBase {literal} [line].\n\nAgent append one.\nAgent append two.\nCategory append one.\nCategory append two.',
       );
     });
 
@@ -1761,6 +1809,87 @@ function makeWorkflow(overrides: Partial<WorkflowConfig> = {}): WorkflowConfig {
 }
 
 describe("composeWorkflowStepPrompt — execution lifecycle contract", () => {
+  describe("multiline inline prompts", () => {
+    it("renders Mustache tags and preserves non-tag braces at workflow and step scope", async () => {
+      const config = cfg(`workflow multiline {
+  version 1
+  prompt_append """
+    Workflow append for {{agent.name}}.
+    Keep {workflow} and }.
+  """
+
+  step fallback {
+    type autonomous
+    agent helper
+    prompt """
+      Fallback {{agent.name}}.
+      Keep {prompt} and ["array"].
+    """
+    completion agent_signal
+  }
+
+  step local {
+    type autonomous
+    agent helper
+    prompt """
+      Local {{agent.name}}.
+      Keep {"json": true}.
+    """
+    prompt_append """
+      Local append for {{agent.mode}}.
+      Keep {append} and }.
+    """
+    completion agent_signal
+  }
+}`);
+      const workflow = config.workflows.multiline;
+      const fallbackStep = workflow?.steps.find(
+        (step) => step.name === "fallback",
+      );
+      const localStep = workflow?.steps.find((step) => step.name === "local");
+      expect(workflow).toBeDefined();
+      expect(fallbackStep).toBeDefined();
+      expect(localStep).toBeDefined();
+      if (
+        workflow === undefined ||
+        fallbackStep === undefined ||
+        localStep === undefined
+      ) {
+        throw new Error("expected parsed multiline workflow fixtures");
+      }
+      const ctx = makeStepTemplateContext("composed-agent");
+
+      const fallbackResult = await composeWorkflowStepPrompt(
+        "fallback",
+        fallbackStep,
+        workflow,
+        ctx,
+      );
+      const localResult = await composeWorkflowStepPrompt(
+        "local",
+        localStep,
+        workflow,
+        ctx,
+      );
+
+      expect(fallbackResult.isOk()).toBe(true);
+      expect(localResult.isOk()).toBe(true);
+      if (fallbackResult.isErr() || localResult.isErr()) {
+        throw new Error("expected multiline workflow prompts to compose");
+      }
+      expect(fallbackResult.value).toEqual({
+        composedPrompt:
+          'Fallback composed-agent.\nKeep {prompt} and ["array"].\n\nWorkflow append for composed-agent.\nKeep {workflow} and }.',
+        appendScope: "workflow",
+      });
+      expect(localResult.value).toEqual({
+        composedPrompt:
+          'Local composed-agent.\nKeep {"json": true}.\n\nLocal append for subagent.\nKeep {append} and }.',
+        appendScope: "step",
+      });
+    });
+  });
+
   describe("no appends", () => {
     it("Step_with_no_appends_returns_step_prompt_unchanged", async () => {
       const step = makeStep({ prompt: "Do the work." });
@@ -3028,6 +3157,336 @@ describe("detectAppendCollisions", () => {
       // prompt_append: only base defines it → no collision
       // prompt_append_file: only override defines it → no collision
       expect(result).toEqual([]);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PromptFileReader — injectable prompt-source seam
+// ---------------------------------------------------------------------------
+
+/** A `PromptFileReader` stub that records every path it is asked to read. */
+interface SpyPromptFileReader extends PromptFileReader {
+  readonly calls: string[];
+}
+
+/**
+ * Build a reader that serves `contents` and fails for `failures`, recording
+ * every consulted path in call order. Unknown paths fail loudly so a test can
+ * never silently fall through to the filesystem.
+ */
+function spyReader(
+  contents: Record<string, string>,
+  failures: Record<string, string> = {},
+): SpyPromptFileReader {
+  const calls: string[] = [];
+
+  return {
+    calls,
+    read(path: string) {
+      calls.push(path);
+
+      const failure = failures[path];
+      if (failure !== undefined) return errAsync({ message: failure });
+
+      const content = contents[path];
+      if (content === undefined) {
+        return errAsync({ message: `unexpected path: ${path}` });
+      }
+
+      return okAsync(content);
+    },
+  };
+}
+
+// Virtual paths: they never exist on disk, so any real read would fail.
+const virtualPromptPath = "/weave-virtual/prompt.md";
+const virtualAppendPath = "/weave-virtual/append.md";
+
+describe("composeAgentDescriptor — injectable prompt file reader", () => {
+  describe("default behavior", () => {
+    it("Omitted_reader_still_reads_prompt_file_and_prompt_append_file_from_disk", async () => {
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt_file: tempPromptFilePath,
+        prompt_append_file: tempAppendFilePath,
+      };
+
+      const descriptor = await descriptorFor(
+        "default-reader-agent",
+        agentConfig,
+        config,
+        { "default-reader-agent": agentConfig },
+      );
+
+      expect(descriptor.composedPrompt).toBe(
+        "Prompt loaded from file.\n\nAppend loaded from file.",
+      );
+    });
+
+    it("Default_reader_returns_file_contents_and_a_non_empty_failure_message", async () => {
+      const ok = await defaultPromptFileReader.read(tempPromptFilePath);
+      expect(ok.isOk()).toBe(true);
+      if (ok.isErr()) throw new Error("expected ok");
+      expect(ok.value).toBe("Prompt loaded from file.");
+
+      const missingPath = join(
+        tmpdir(),
+        `weave-compose-default-reader-missing-${randomUUID()}.md`,
+      );
+      const failed = await defaultPromptFileReader.read(missingPath);
+      expect(failed.isErr()).toBe(true);
+      if (failed.isOk()) throw new Error("expected err");
+      expect(failed.error.message).toBeTypeOf("string");
+      expect(failed.error.message.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("injected reader", () => {
+    it("Injected_reader_supplies_prompt_file_contents", async () => {
+      const reader = spyReader({
+        [virtualPromptPath]: "Injected prompt for {{agent.name}}.",
+      });
+      const config = cfg();
+      const agentConfig: AgentConfig = { prompt_file: virtualPromptPath };
+
+      const result = await composeAgentDescriptor(
+        "injected-prompt-agent",
+        agentConfig,
+        config,
+        { "injected-prompt-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) throw new Error(JSON.stringify(result.error));
+      expect(result.value.composedPrompt).toBe(
+        "Injected prompt for injected-prompt-agent.",
+      );
+      expect(reader.calls).toEqual([virtualPromptPath]);
+    });
+
+    it("Injected_reader_supplies_prompt_append_file_contents", async () => {
+      const reader = spyReader({
+        [virtualAppendPath]: "Injected append for {{agent.name}}.",
+      });
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt: "Base prompt.",
+        prompt_append_file: virtualAppendPath,
+      };
+
+      const result = await composeAgentDescriptor(
+        "injected-append-agent",
+        agentConfig,
+        config,
+        { "injected-append-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) throw new Error(JSON.stringify(result.error));
+      expect(result.value.composedPrompt).toBe(
+        "Base prompt.\n\nInjected append for injected-append-agent.",
+      );
+      expect(reader.calls).toEqual([virtualAppendPath]);
+    });
+
+    it("Injected_reader_serves_both_file_sources_in_one_composition", async () => {
+      const reader = spyReader({
+        [virtualPromptPath]: "Injected prompt.",
+        [virtualAppendPath]: "Injected append.",
+      });
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt_file: virtualPromptPath,
+        prompt_append_file: virtualAppendPath,
+      };
+
+      const result = await composeAgentDescriptor(
+        "injected-both-agent",
+        agentConfig,
+        config,
+        { "injected-both-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) throw new Error(JSON.stringify(result.error));
+      expect(result.value.composedPrompt).toBe(
+        "Injected prompt.\n\nInjected append.",
+      );
+      expect(reader.calls).toEqual([virtualPromptPath, virtualAppendPath]);
+    });
+  });
+
+  describe("source selection is unchanged", () => {
+    it("Inline_prompt_and_prompt_append_win_and_the_reader_is_never_consulted", async () => {
+      const reader = spyReader({
+        [virtualPromptPath]: "File prompt.",
+        [virtualAppendPath]: "File append.",
+      });
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt: "Inline prompt.",
+        prompt_file: virtualPromptPath,
+        prompt_append: "Inline append.",
+        prompt_append_file: virtualAppendPath,
+      };
+
+      const result = await composeAgentDescriptor(
+        "inline-wins-agent",
+        agentConfig,
+        config,
+        { "inline-wins-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) throw new Error(JSON.stringify(result.error));
+      expect(result.value.composedPrompt).toBe(
+        "Inline prompt.\n\nInline append.",
+      );
+      expect(reader.calls).toEqual([]);
+    });
+
+    it("Missing_prompt_and_prompt_file_still_returns_PromptSourceMissingError", async () => {
+      const reader = spyReader({});
+      const config = cfg();
+      const agentConfig: AgentConfig = { models: ["claude-sonnet-4-5"] };
+
+      const result = await composeAgentDescriptor(
+        "injected-missing-source-agent",
+        agentConfig,
+        config,
+        { "injected-missing-source-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) throw new Error("expected prompt source error");
+      expect(result.error).toEqual({
+        type: "PromptSourceMissingError",
+        agentName: "injected-missing-source-agent",
+        message:
+          'Agent "injected-missing-source-agent" must define either prompt or prompt_file.',
+      });
+      expect(reader.calls).toEqual([]);
+    });
+  });
+
+  describe("reader failures", () => {
+    it("Reader_failure_for_prompt_file_maps_to_PromptFileReadError", async () => {
+      const reader = spyReader({}, { [virtualPromptPath]: "reader exploded" });
+      const config = cfg();
+      const agentConfig: AgentConfig = { prompt_file: virtualPromptPath };
+
+      const result = await composeAgentDescriptor(
+        "injected-prompt-failure-agent",
+        agentConfig,
+        config,
+        { "injected-prompt-failure-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) throw new Error("expected PromptFileReadError");
+      expect(result.error).toEqual({
+        type: "PromptFileReadError",
+        agentName: "injected-prompt-failure-agent",
+        promptFilePath: virtualPromptPath,
+        message: `Failed to read prompt file for agent "injected-prompt-failure-agent": ${virtualPromptPath}`,
+        fileErrorMessage: "reader exploded",
+      });
+    });
+
+    it("Reader_failure_for_prompt_append_file_maps_to_PromptFileReadError", async () => {
+      const reader = spyReader({}, { [virtualAppendPath]: "append exploded" });
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt: "Base prompt.",
+        prompt_append_file: virtualAppendPath,
+      };
+
+      const result = await composeAgentDescriptor(
+        "injected-append-failure-agent",
+        agentConfig,
+        config,
+        { "injected-append-failure-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) throw new Error("expected PromptFileReadError");
+      expect(result.error).toEqual({
+        type: "PromptFileReadError",
+        agentName: "injected-append-failure-agent",
+        promptFilePath: virtualAppendPath,
+        message: `Failed to read prompt_append_file for "injected-append-failure-agent": ${virtualAppendPath}`,
+        fileErrorMessage: "append exploded",
+      });
+    });
+  });
+});
+
+describe("composeWorkflowStepPrompt — injectable prompt file reader", () => {
+  it("Injected_reader_supplies_the_effective_step_append_file", async () => {
+    const reader = spyReader({ [virtualAppendPath]: "Injected step append." });
+    const step = makeStep({ prompt_append_file: virtualAppendPath });
+    const workflow = makeWorkflow();
+
+    const result = await composeWorkflowStepPrompt(
+      "reader-step",
+      step,
+      workflow,
+      makeStepTemplateContext(),
+      reader,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) throw new Error(JSON.stringify(result.error));
+    expect(result.value.composedPrompt).toBe(
+      "Execute the task.\n\nInjected step append.",
+    );
+    expect(result.value.appendScope).toBe("step");
+    expect(reader.calls).toEqual([virtualAppendPath]);
+  });
+
+  it("Injected_reader_failure_maps_to_PromptFileReadError_with_the_step_context_label", async () => {
+    const reader = spyReader({}, { [virtualAppendPath]: "step read failed" });
+    const step = makeStep();
+    const workflow = makeWorkflow({ prompt_append_file: virtualAppendPath });
+
+    const result = await composeWorkflowStepPrompt(
+      "reader-failure-step",
+      step,
+      workflow,
+      makeStepTemplateContext(),
+      reader,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) throw new Error("expected PromptFileReadError");
+    expect(result.error).toEqual({
+      type: "PromptFileReadError",
+      agentName: "workflow-step:reader-failure-step",
+      promptFilePath: virtualAppendPath,
+      message: `Failed to read prompt_append_file for "workflow-step:reader-failure-step": ${virtualAppendPath}`,
+      fileErrorMessage: "step read failed",
     });
   });
 });

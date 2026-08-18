@@ -17,6 +17,7 @@ The Pi adapter owns:
 - exact host compatibility checks and runtime probes;
 - concrete model and thinking-level activation;
 - private child processes, RPC framing, queues, cancellation, and UI;
+- config source digests, delegation-boundary refresh, and catalog publication;
 - no-follow plan and artifact file providers;
 - translation of engine effects into Pi operations.
 
@@ -55,7 +56,7 @@ During `session_start`, the adapter reads Pi's host-owned skill catalog from the
 
 If boot activation fails, the adapter remains unavailable and does not retry when a message arrives. The later `before_agent_start` event only appends the committed agent's delimited prompt block without replacing Pi or other-extension context. A native model change after boot governs the active period until an explicit agent switch applies new model intent.
 
-Alt+A cycles healthy `primary` and `all` descriptors in materialization order while Pi is idle. It skips subagents and switches atomically. The [Plan Rail](#plan-rail) above the editor shows `◆ WEAVE · <NORMALIZED-NAME>`, follows a direct workflow agent while it runs, restores the primary after settlement, and clears in health-only mode or at shutdown. When the host cannot mount a widget, the same name falls back to Pi's status line.
+Alt+A cycles healthy `primary` and `all` descriptors in materialization order while Pi is idle. It skips subagents, resolves the new primary against the currently published catalog, and switches atomically. It is also the one in-session point at which a deferred config change may be applied; see [Config refresh at delegation boundaries](#config-refresh-at-delegation-boundaries). The [Plan Rail](#plan-rail) above the editor shows `◆ WEAVE · <NORMALIZED-NAME>`, follows a direct workflow agent while it runs, restores the primary after settlement, and clears in health-only mode or at shutdown. When the host cannot mount a widget, the same name falls back to Pi's status line.
 
 The badge tints the agent name with a stable background drawn only from theme background tokens Pi itself supports. The choice is deterministic: the normalized agent name (trimmed, whitespace-collapsed, case-folded) always selects the same token in every session and on every machine, with no stored assignment, so you learn one color per agent. Distinct agents may share a color; the same agent never changes color. The agent name keeps its accent foreground. If the active theme exposes no background helper, the badge renders foreground-only — accent, bold agent name, no tint — rather than substituting a different color.
 
@@ -71,7 +72,107 @@ The adapter records that outcome when a turn settles (`agent_settled`). A bounde
 
 This is an optional-capability gap. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or bootstrap. `/weave:status` may show `fast: unsupported (harness-seam-unavailable)`; it never says applied, active, or confirmed. Raising Pi above `unsupported` requires a documented host seam that reports the effective transport of one prepared request plus correlated official response-body evidence for that same request, proven in a fresh real harness under [Adapter Verification](../testing/adapter-verification.md). Unit confidence is not that proof.
 
-The registered `weave_delegate` schema is static because Pi requires it at registration time. Each invocation still resolves the live primary identity and that descriptor's current eligible targets, so switching primary agents cannot reuse stale authority.
+## Config refresh at delegation boundaries
+
+A generation's catalog is no longer frozen at `session_start`. Before each child dispatch — root `weave_delegate`, an authenticated nested relay, a direct workflow step, and a recovery restore — the adapter re-checks its config sources and may publish a newer validated catalog for later work. Nothing already committed moves: the active primary keeps the contract it was activated with, and every live child keeps the catalog it was dispatched with.
+
+### Source graph and digests
+
+The catalog is derived from four kinds of source:
+
+| Source | Digest |
+| --- | --- |
+| Builtin layer | One immutable in-process source — the builtin DSL string plus its embedded prompt contents — hashed once per process and never re-probed |
+| `~/.weave/config.weave` | Its own SHA-256 |
+| `<projectRoot>/.weave/config.weave` | Its own SHA-256; not a source at all while project trust is withheld |
+| Each referenced `prompt_file` and `prompt_append_file` | Its own SHA-256, one entry per path |
+
+Every file source keeps its **own** SHA-256 over the raw bytes as read. A digest is never taken over a concatenation of several files, and DSL-level normalization happens after hashing, so detection is byte-level.
+
+Inline prompts are not separate sources. A single-line `prompt` and a triple-quoted multiline `prompt` are both content of the config file that declares them, so an inline prompt edit is detected through that file's digest; there is no separate manifest entry for inline prompt text. See [Prompt Composition — Change detection](../reference/prompts.md#change-detection), and [DSL Reference — Multiline strings](../reference/dsl.md#multiline-strings) for the multiline syntax itself.
+
+The project root and the trust state are identity inputs, not sources. A change to either is a different source graph and is handled by session replacement, never by refresh.
+
+### The unchanged fast path
+
+A boundary check first stats every known file source and compares byte size and modification time. When nothing moved, the check ends there: no file is read, no digest is computed, no config is parsed, no descriptor is materialized, and nothing is published. Concurrent delegations join one in-flight attempt, and a minimum interval between probes — 250 ms in production — keeps a burst of parallel delegations to a single probe round.
+
+Metadata is a bound, not a guarantee. A rewrite that keeps the same byte size and lands inside the same filesystem timestamp tick is invisible to the probe and is reported as unchanged until another source changes. Size participates in the comparison to narrow that window; it does not close it. Where metadata is unreliable the production port reports a value that never compares equal, so the source is re-hashed. The probe always fails toward hashing, never toward assuming a source is unchanged.
+
+### Exact-byte candidate builds
+
+Only the sources a probe could not rule out are read — once each — and hashed. When the new digest equals the cached one, the stored metadata is updated and nothing is rebuilt, so an identical-content rewrite costs one read and the next boundary is a pure fast path again.
+
+The bytes that were hashed are the bytes the candidate is built from. A caching config reader feeds the config loader and a memoized prompt reader feeds engine composition, both serving the bytes this attempt already read; anything the pipeline still needs is read and hashed exactly once, memoized by path. Both caches live for one attempt, so bytes from one candidate build never leak into the next.
+
+The classification decides which path runs:
+
+- **prompt-only** — no config file changed. The config loader is never called: the current merged config is reused, descriptors are re-materialized with the memoized reader, and the Pi-local lifecycle and inspection settings carry through unchanged.
+- **config-changed** — the full pipeline runs once: parse, merge, materialize, and re-resolve the Pi-local lifecycle settings.
+
+After either rebuild the prompt references are rediscovered from the resulting config. A newly referenced prompt file is read and hashed there; a reference the config dropped simply leaves the manifest.
+
+### Validate, then publish atomically
+
+A candidate is fully validated before anything is published, and publication assigns one frozen reference. No reader can observe descriptors from one config beside workflows from another.
+
+Refresh failures are values from a closed set: an unreadable source, a config that did not parse or validate, a missing prompt file, out-of-range lifecycle settings, or a materialization that produced no plan. A failed attempt publishes nothing. The last valid catalog keeps serving, the delegation that triggered the refresh proceeds against it, and the next boundary probes again. A config saved mid-edit — an unterminated `"""` string, for example — is an ordinary parse failure with exactly that effect.
+
+Per-agent composition failures follow the same policy as activation: they are accumulated rather than fatal, the affected descriptors are absent from the candidate, and the candidate is still publishable. The refresh call itself is total, so a delegation never fails because a refresh did.
+
+### What refreshes automatically
+
+A candidate publishes automatically when it leaves the active primary's contract exactly as committed. That covers most editing: subagent prompts (inline or file), model lists and thinking levels, temperature, `fast` intent, tool policy, declared skills, delegation limits, child lifecycle timeouts, workflow definitions and steps, disabled agents and skills, and agents added or removed outside the active primary's target set. The next root dispatch, nested relay, direct workflow step, or recovery restore resolves against the published catalog, with no restart and no re-registration.
+
+### Active-primary pinning and deferral
+
+The committed primary is compared with the candidate on a closed facet list: `primary-missing`, `primary-disabled`, `primary-demoted`, `prompt`, `models`, `thinking`, `temperature`, `fast`, `tool-policy`, and `delegation-targets`.
+
+The prompt facet compares rendered output, not source form — the exact block the adapter appends to Pi's system prompt, skills line included, rendered with the candidate's `disabled.skills`. Rewriting the primary's prompt from a single-line inline string into a triple-quoted one, or moving it into a `prompt_file`, is not primary-affecting when the rendered block is byte-identical.
+
+Delegation targets normalize to name plus description, sorted by name. Reordering the same targets changes nothing; **adding a target, removing a target, or changing a target's description is primary-affecting**. An agent newly aimed at the active primary is therefore not delegable at the next dispatch, and a target removed from the config keeps serving until an authorized publication.
+
+A primary-affecting candidate is deferred, not published. The current catalog keeps serving, and the primary's rendered prompt, model, thinking level, temperature, `fast` intent, tool policy, badge, and delegation targets stay exactly as committed.
+
+### Explicit reactivation and restart
+
+An `Alt+A` switch is the one in-session authorization point. It resolves the new primary against the published catalog, and once it commits, the deferred candidate is *dropped* rather than published: it was validated against the previous primary and may have been built from bytes that have since changed. The sources are re-probed and rebuilt, and the result is guarded against the primary that just committed. Cycling back then activates whatever that rebuild published.
+
+Session replacement and restart are the other path. They revoke the generation, clear every piece of refresh state, and make boot activation authoritative again. A trust change is a session-replacement concern for the same reason: refresh never re-evaluates trust.
+
+### The stable `weave_delegate` schema
+
+The registered `weave_delegate` schema is constant: `agent` is one bounded plain string, never a union of the target names known at registration time. Pi requires parameters at registration time, so a name-derived schema would pin the callable set to the registration-time catalog. It also keeps the schema free of the `anyOf`/`const` unions some providers reject, and byte-identical for a whole generation, so tool and prompt caching never observe a mid-session schema change. The schema therefore grants no authority. Every invocation resolves the live primary identity and that descriptor's current eligible targets and authorizes the requested name against them, so switching primary agents cannot reuse stale authority, and an ineligible or unresolvable name is refused before the delegation controller is reached. A relayed child's tool uses the same constant schema; its own bootstrap-pinned targets refuse an impossible name locally, and the authenticated parent re-resolves every relayed name against the snapshot pinned to that child.
+
+Schema stability removes the re-registration obstacle and nothing else. It decides no authorization and authorizes no publication: a candidate that would change the active primary's target set still defers. The two rules compose — the tool's shape is fixed for the generation, while its runtime authority follows the active primary's pinned targets until an explicit reactivation or a session replacement publishes a new set.
+
+### Per-child snapshot pinning
+
+At dispatch a child pins one immutable catalog by reference. Its four lifecycle budgets — handshake, reply, settlement inactivity, and absolute runtime — and its nested-target authority come from one read of that one catalog, so a publication can never give a child one catalog's handshake timeout beside another's runtime budget. The reference is released when the child settles or is disposed; the bound is one reference per live child.
+
+A live child's nested request resolves against its own pinned snapshot, and the nested child inherits that same snapshot, so an in-flight subtree stays on one catalog for its whole life. A direct-step child carries its snapshot into the authenticated relay for the same reason. Refreshed delegation limits apply to future admission decisions only: a running child is never cancelled because a limit shrank.
+
+### What refresh never does
+
+- **No watchers, no timers.** There is no file watcher, no polling interval, and no background job. Every probe happens inside a boundary call, so a generation that stops delegating stops refreshing.
+- **No trust reload.** Trust is decided once per generation. Refresh never re-evaluates it and never widens what a trust state may read: with trust withheld the project config is not a source, and both readers refuse every path under `<projectRoot>/.weave/` before touching the filesystem.
+- **No health-only transition.** Refresh never changes the generation's mode, never re-probes host surfaces or capabilities, and never re-resolves child-inspection settings. Health-only and trust-withheld generations register no delegation surfaces, so they build no refresh coordinator at all.
+- **No silent primary mutation.** The active primary's prompt, model, thinking level, temperature, tool policy, badge, and delegation targets change only through an explicit `Alt+A` reactivation or a session replacement.
+- **No tool re-registration.** Registered commands and tools stay fixed for the whole generation.
+
+### Refresh diagnostics
+
+A new deferral or a new failure emits one notice, and only one: notices are deduped by classification and digest state, so a config left broken does not warn at every delegation boundary. A deferral always reads `Weave config change affects the active primary; switch primary or restart to apply.`
+
+`/weave:status` carries one refresh row:
+
+```text
+config refresh: fresh; published 2
+config refresh: deferred: primary-affecting; published 2; facets prompt, delegation-targets
+config refresh: failed: config-invalid; published 2
+```
+
+`published` counts catalog publications in this generation. Failure reasons are the closed set `source-unreadable`, `config-invalid`, `prompt-unavailable`, `settings-invalid`, and `composition-failed`. At most four facet names are printed, followed by `(+N)`. The row is absent for a generation that runs no refresh at all. Nothing in it can carry a path, a filesystem message, config content, or prompt text.
 
 ## User surface
 

@@ -1,10 +1,23 @@
 import { describe, expect, it } from "bun:test";
-import type { AgentDescriptor } from "@weaveio/weave-engine";
+import type { AgentDescriptor, DelegationTarget } from "@weaveio/weave-engine";
+import { okAsync, type ResultAsync } from "neverthrow";
+import type {
+  PiDelegationController,
+  PiDelegationRequest,
+} from "../delegation-controller.js";
+import {
+  buildDelegationToolRegistration,
+  type PiDelegationToolDeps,
+} from "../delegation-tool.js";
+import type { PiAdapterFailure } from "../errors.js";
 import {
   delegationControllerGenerationsAgree,
   type PiDelegationInvocationSource,
   resolveDelegationInvocationContext,
 } from "../extension-impl.js";
+import { createOpenSessionMutationGate } from "../required-capability-gate.js";
+import type { PiChildSettlement } from "../rpc-child.js";
+import type { PiSessionContext } from "../types.js";
 
 const GENERATION_ID = "gen-1";
 
@@ -256,5 +269,151 @@ describe("delegationControllerGenerationsAgree", () => {
     expect(
       delegationControllerGenerationsAgree(undefined, "gen-1", "gen-1"),
     ).toBe(false);
+  });
+});
+
+/**
+ * The resolved invocation context is the delegation tool's only target gate.
+ * These tests connect the two units directly: whatever
+ * `resolveDelegationInvocationContext` answers is exactly what the tool
+ * authorizes, with no registration-time union able to widen or narrow it.
+ */
+describe("the resolved context is the delegation tool's only target gate", () => {
+  /** A registration-time target set that names none of the runtime targets. */
+  const STALE_REGISTRATION_TARGETS: readonly DelegationTarget[] = [
+    {
+      name: "stale-shuttle",
+      description: "known when the tool was registered",
+      triggers: [],
+      isCategory: false,
+    },
+  ];
+
+  function ctx(): PiSessionContext {
+    return {
+      mode: "tui",
+      cwd: "/project",
+      isProjectTrusted: () => true,
+      isIdle: () => true,
+      ui: {
+        notify: () => {},
+        setStatus: () => {},
+        setWidget: () => {},
+        select: async () => undefined,
+        confirm: async () => false,
+      },
+      hasUI: true,
+      model: undefined,
+      modelRegistry: { getAvailable: () => [] },
+    } as unknown as PiSessionContext;
+  }
+
+  function toolFor(
+    resolvedSource: PiDelegationInvocationSource | undefined,
+    onDelegate: (request: PiDelegationRequest) => void,
+  ) {
+    const controller = {
+      delegate: (
+        request: PiDelegationRequest,
+      ): ResultAsync<PiChildSettlement, PiAdapterFailure> => {
+        onDelegate(request);
+        return okAsync({ outcome: "completed", assistantOutput: "done" });
+      },
+      threadStatus: () => undefined,
+    } as unknown as PiDelegationController;
+    const deps: PiDelegationToolDeps = {
+      targets: STALE_REGISTRATION_TARGETS,
+      getInvocationContext: () =>
+        resolveDelegationInvocationContext(resolvedSource, GENERATION_ID),
+      getController: () => controller,
+      parentId: "root",
+      parentDepth: 0,
+      parentAgentName: "loom",
+      idGenerator: { next: () => "child-1" },
+      buildBootstrap: () => ({}),
+      buildEnv: () => ({}),
+      getParentSessionState: () => ({
+        persistence: "persistent",
+        sessionId: "session-test",
+        runtimeSessionId: "session-test",
+        identitySource: "session-header",
+        sessionFile: "/sessions/test.jsonl",
+      }),
+      sessionMutationGate: createOpenSessionMutationGate(),
+    };
+    return buildDelegationToolRegistration(deps);
+  }
+
+  async function delegateTo(
+    registration: ReturnType<typeof buildDelegationToolRegistration>,
+    agent: string,
+  ): Promise<{ readonly ok: boolean; readonly error?: string }> {
+    const result = await registration.execute(
+      "call-1",
+      { agent, task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    return JSON.parse((result.content[0] as { text: string }).text) as {
+      ok: boolean;
+      error?: string;
+    };
+  }
+
+  it("dispatches a target the registration never knew, taken only from the resolved context", async () => {
+    const tapestry = descriptor("tapestry");
+    let dispatched: PiDelegationRequest | undefined;
+    const registration = toolFor(
+      source({ activeDescriptor: tapestry }),
+      (request) => {
+        dispatched = request;
+      },
+    );
+    expect(
+      STALE_REGISTRATION_TARGETS.some(
+        (target) => target.name === "tapestry-shuttle",
+      ),
+    ).toBe(false);
+
+    expect(await delegateTo(registration, "tapestry-shuttle")).toEqual({
+      ok: true,
+      settlement: {
+        outcome: "completed",
+        finalOutput: "done",
+        interventionCount: 0,
+      },
+    } as never);
+    expect(dispatched?.agentName).toBe("tapestry-shuttle");
+    expect(dispatched?.parentAgentName).toBe("tapestry");
+  });
+
+  it("still refuses the registration-time name the resolved context does not carry", async () => {
+    let dispatched = false;
+    const registration = toolFor(
+      source({ activeDescriptor: descriptor("tapestry") }),
+      () => {
+        dispatched = true;
+      },
+    );
+    expect(await delegateTo(registration, "stale-shuttle")).toEqual({
+      ok: false,
+      error: "invalid-delegation-target",
+    });
+    expect(dispatched).toBe(false);
+  });
+
+  it("fails closed for every name once the context resolves to nothing", async () => {
+    let dispatched = false;
+    const registration = toolFor(undefined, () => {
+      dispatched = true;
+    });
+    for (const agent of ["tapestry-shuttle", "stale-shuttle"]) {
+      expect(await delegateTo(registration, agent)).toEqual({
+        ok: false,
+        error: "delegation-transport-unavailable",
+      });
+    }
+    expect(dispatched).toBe(false);
   });
 });

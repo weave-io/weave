@@ -3,6 +3,10 @@
  *
  * Converts raw source text into a flat `Token[]` stream.
  * All errors are collected and returned together — the lexer never throws.
+ *
+ * The normative lexical contract for triple-quoted (multiline) strings lives on
+ * `#readTripleQuotedString` and `trimIndent` below, and is mirrored in
+ * `docs/reference/dsl.md`.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -101,8 +105,43 @@ class Lexer {
   }
 
   /**
-   * Read a triple-quoted string `""" ... """`.
-   * Strips common leading whitespace from all non-empty lines (trimIndent semantics).
+   * Read a triple-quoted (multiline) string `""" ... """`.
+   *
+   * Lexical contract (normative; mirrored in `docs/reference/dsl.md`):
+   *
+   * - **Delimiters.** The string opens at `"""` and closes at the *first*
+   *   subsequent `"""`. Exactly one optional line break immediately after the
+   *   opening delimiter is dropped; both `\n` and `\r\n` are accepted there.
+   * - **Raw content.** No escape sequences are processed (unlike single-line
+   *   strings read by `#readString`). Backslashes are preserved literally, so
+   *   `\"`, `\\`, `\n`, `\t`, and `\#` stay as their exact source characters.
+   *   `#`, `{`, `}`, `[`, `]`, `,`, and DSL keywords are literal text;
+   *   comments are not recognized inside content.
+   * - **Unrepresentable content.** Because the string closes at the first
+   *   `"""` — even when a backslash immediately precedes it — a literal `"""`
+   *   cannot appear in content, and content whose final character is `"`
+   *   directly abutting the closing delimiter closes early. Use
+   *   `prompt_file` / `prompt_append_file` for such content. A single `"` or a
+   *   `""` pair inside content is fine.
+   * - **Line endings.** Raw content is universal-newline normalized before
+   *   dedent: every `\r\n` and every remaining lone `\r` becomes `\n`. The
+   *   emitted value never contains `\r`. LF-only sources are unaffected and
+   *   keep byte-identical values.
+   * - **Dedent and blank lines.** See {@link trimIndent}: the common leading
+   *   whitespace of lines containing non-whitespace is removed (counted per
+   *   character — a tab counts as one character, with no column arithmetic),
+   *   leading and trailing blank lines are dropped, and interior blank lines
+   *   are preserved as empty lines.
+   * - **Same-line form.** `"""content"""` (no line breaks) yields `content`
+   *   after the same dedent/trim pass.
+   * - **EOF diagnostic.** Reaching end of input before the closing delimiter
+   *   returns a typed `UnterminatedString { line, column }` positioned at the
+   *   *opening* delimiter. Callers collect it through `boundConfigErrors` like
+   *   every other lex error; the lexer never throws.
+   * - **Token position.** The whole literal becomes a single
+   *   `TokenType.String` token positioned at the opening delimiter. Content is
+   *   consumed through the per-character `#advance`, so line/column tracking
+   *   stays correct for tokens that follow the closing delimiter.
    */
   #readTripleQuotedString(
     startLine: number,
@@ -113,8 +152,14 @@ class Lexer {
     this.#advance();
     this.#advance();
 
-    // skip optional leading newline immediately after opening """
-    if (this.#peek() === "\n") this.#advance();
+    // skip one optional line break immediately after the opening """ —
+    // both LF and CRLF, so CRLF sources do not keep a leading \r.
+    if (this.#peek() === "\r" && this.#peek(1) === "\n") {
+      this.#advance();
+      this.#advance();
+    } else if (this.#peek() === "\n") {
+      this.#advance();
+    }
 
     let raw = "";
     while (this.#pos < this.#source.length) {
@@ -127,7 +172,7 @@ class Lexer {
         this.#advance();
         this.#advance();
         this.#advance();
-        return ok(trimIndent(raw));
+        return ok(trimIndent(normalizeLineEndings(raw)));
       }
       raw += this.#advance();
     }
@@ -386,8 +431,32 @@ export function tokenize(source: string): Result<Token[], LexError[]> {
 // ---------------------------------------------------------------------------
 
 /**
- * Strips the common leading whitespace from all non-empty lines.
+ * Universal-newline normalization for raw multiline-string content.
+ *
+ * Every `\r\n` and every remaining lone `\r` becomes `\n`, so downstream
+ * `split("\n")` dedent math, blank-line trimming, and the emitted value are
+ * `\r`-free regardless of the source file's line endings. LF-only input is
+ * returned unchanged.
+ */
+function normalizeLineEndings(raw: string): string {
+  return raw.replace(/\r\n?/g, "\n");
+}
+
+/**
+ * Strips the common leading whitespace from all non-blank lines.
  * Equivalent to Kotlin's `trimIndent()`.
+ *
+ * Expects LF-normalized input (see {@link normalizeLineEndings}).
+ *
+ * - The indent removed from every line is the *smallest* number of leading
+ *   whitespace characters found on any line that contains non-whitespace.
+ * - Whitespace is counted **per character**: a tab counts as one character,
+ *   exactly like a space, and no tab-to-column expansion is performed. When
+ *   indentation styles are mixed, removal is therefore by character count.
+ * - Leading and trailing blank lines (lines that are empty or whitespace-only)
+ *   are removed; interior blank lines are preserved as empty lines.
+ * - Trailing whitespace inside a line is preserved.
+ * - Content with no non-blank line yields the trimmed input (usually `""`).
  */
 function trimIndent(raw: string): string {
   const lines = raw.split("\n");

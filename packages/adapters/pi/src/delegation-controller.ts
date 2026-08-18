@@ -80,6 +80,11 @@ import {
   subtreeIds,
 } from "./child-tree.js";
 import {
+  EMPTY_PI_DISPATCH_SNAPSHOT,
+  type PiDelegationContext,
+  type PiDispatchSnapshot,
+} from "./dispatch-snapshot.js";
+import {
   makeChildAbortFailedFailure,
   makeChildCapacityExceededFailure,
   makeChildInteractionUnavailableFailure,
@@ -111,15 +116,20 @@ import type { JsonValue } from "./strict-json.js";
 import type { PiTelemetryUsageSink } from "./telemetry.js";
 import type { IdGenerator, PiAdapterLogger } from "./types.js";
 
-/** A task/context object echoed at multiple layers (Pi adapter contract). */
-export interface PiDelegationContext {
-  readonly parentAgentName: string;
-  readonly parentDepth: number;
-  readonly cwd: string;
-}
+export type { PiDelegationContext };
 
 export interface PiDelegationControllerDeps {
-  readonly config: WeaveConfig;
+  /**
+   * Reads this generation's *current* config.
+   *
+   * An accessor, not a captured value: a generation may republish its catalog
+   * between delegations, and every future admission decision - per-parent
+   * limits, queue capacity, `max_children` - must resolve against the config
+   * in force when that admission happens. Work already admitted keeps the
+   * decision it was admitted under; a lowered limit never retro-kills a
+   * running child.
+   */
+  readonly currentConfig: () => WeaveConfig;
   readonly generationId: string;
   readonly idGenerator: IdGenerator;
   readonly logger: PiAdapterLogger;
@@ -135,10 +145,19 @@ export interface PiDelegationControllerDeps {
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly timerPort?: TimerPort;
-  readonly handshakeTimeoutMs?: number;
-  readonly replyTimeoutMs?: number;
-  readonly settlementTimeoutMs?: number;
-  readonly runtimeBudgetMs?: number;
+  /**
+   * Samples the catalog snapshot a *new* dispatch pins.
+   *
+   * Read exactly once per dispatched child, at the moment that child is
+   * admitted, and then held on the live-child record for its whole life. It
+   * supplies that child's lifecycle budgets, its nested-target authority and
+   * its bootstrap, so a catalog published mid-flight can never change what a
+   * running child was dispatched with.
+   *
+   * Omitted only by embeddings that never delegate; a controller without it
+   * resolves {@link EMPTY_PI_DISPATCH_SNAPSHOT} and fails every target closed.
+   */
+  readonly currentDispatch?: () => PiDispatchSnapshot;
   readonly cancelGraceMs?: number;
   /** Bounded post-settlement drain window for the child result contract. */
   readonly responseDrainMs?: number;
@@ -165,29 +184,6 @@ export interface PiDelegationControllerDeps {
    * delegation, or before the primary has activated.
    */
   readonly rootAgentName?: () => string | undefined;
-  /**
-   * Resolves a nested/descendant delegation target (Pi adapter contract): given
-   * the *requesting* child's own agent name and the target agent name it
-   * asked for, returns that target only if it is one of the requester's
-   * OWN normalized `delegationTargets` - never any arbitrary agent in the
-   * project. Returns `undefined` to fail closed (invalid/ineligible
-   * target, or nested delegation not wired for this generation).
-   */
-  readonly resolveDelegationTarget?: (
-    requestingAgentName: string,
-    targetAgentName: string,
-  ) => DelegationTarget | undefined;
-  /**
-   * Builds the bootstrap payload for a resolved nested delegation target,
-   * given the pre-generated child id (used as the bootstrap's
-   * `correlationId`, as required by the Pi adapter contract) and the requesting child's own
-   * delegation context.
-   */
-  readonly buildBootstrap?: (
-    target: DelegationTarget,
-    childId: string,
-    context: PiDelegationContext,
-  ) => JsonValue;
   /**
    * Invoked whenever the inspectable tree may have changed (Pi adapter contract
    *) - immediately on spawn/settle/cancel/dispose, and on a bounded
@@ -225,12 +221,13 @@ export interface PiDelegationControllerDeps {
     name: string,
   ) => DelegationTarget | undefined;
   /**
-   * Resolves the configured engine descriptor's category name for one agent,
-   * used as the inspector's `role` fact. Returns `undefined` for an agent this
-   * session did not configure, or for a configured agent with no category:
-   * a role is only ever reported, never invented.
+   * Refreshes the generation's published catalog at the authenticated nested
+   * relay boundary, before that relay resolves its target and bootstrap.
+   *
+   * Total: its error type is `never`, so a refresh can never refuse a relay.
+   * Omitted by embeddings that publish no catalog of their own.
    */
-  readonly resolveAgentRole?: (agentName: string) => string | undefined;
+  readonly ensureFreshCatalog?: () => ResultAsync<void, never>;
   /**
    * Reads the live parent session id (Task 7's persistent-parent probe). Thread
    * ownership is measured against it, so a session transition can never let a
@@ -554,6 +551,16 @@ export interface PiAuthenticatedDelegationRequest extends PiDelegationContext {
   readonly parentId: string;
   readonly agentName: string;
   readonly task: string;
+  /**
+   * The requesting parent's own pinned catalog snapshot.
+   *
+   * A direct-step child is deliberately outside this controller's tracked
+   * tree, so the controller cannot look its pinned snapshot up by id: the
+   * transport that owns that child hands it over here instead. Absent only
+   * for embeddings that never pinned one, which then resolve against the
+   * current catalog.
+   */
+  readonly snapshot?: PiDispatchSnapshot;
 }
 
 export interface PiDelegationRequest {
@@ -712,6 +719,16 @@ export class PiDelegationController {
    * dropped with the child, so this stays bounded by the live child count.
    */
   private readonly liveQueueDepths = new Map<string, number>();
+  /**
+   * The catalog snapshot each live child is pinned to, keyed by child id.
+   *
+   * One reference per live child is the whole bound: the entry is written when
+   * that child is admitted and dropped the moment it settles, is aborted, or
+   * is disposed. A snapshot only outlives its publication for as long as some
+   * child dispatched under it is still running, so replaced catalogs cannot
+   * accumulate.
+   */
+  private readonly pinnedSnapshots = new Map<string, PiDispatchSnapshot>();
   /** Explicit thread transfers: thread id to the ancestor child id granted it. */
   private readonly threadTransfers = new Map<string, string>();
   /**
@@ -749,6 +766,60 @@ export class PiDelegationController {
 
   constructor(private readonly deps: PiDelegationControllerDeps) {
     this.sessionStorageAuthority = deps.sessionStorageAuthority;
+  }
+
+  /**
+   * Samples the catalog a *new* dispatch pins. Every root dispatch, direct
+   * step, retry/continue run and recovery restore starts here, so they always
+   * see the newest published catalog.
+   */
+  private currentDispatchSnapshot(): PiDispatchSnapshot {
+    return this.deps.currentDispatch?.() ?? EMPTY_PI_DISPATCH_SNAPSHOT;
+  }
+
+  /**
+   * The snapshot a request originating from `childId` must resolve against.
+   *
+   * A live child's nested delegation is authorized by the catalog *it* was
+   * dispatched under - the same one whose targets its bootstrap already named
+   * - so a publication mid-flight can neither widen nor narrow what it may
+   * reach. An id with no pinned entry is not a live requester, so it falls
+   * back to the current catalog.
+   */
+  private pinnedSnapshotFor(childId: string | undefined): PiDispatchSnapshot {
+    const pinned =
+      childId === undefined ? undefined : this.pinnedSnapshots.get(childId);
+    return pinned ?? this.currentDispatchSnapshot();
+  }
+
+  /**
+   * Pins one snapshot to one child for its whole life and releases it once the
+   * dispatch settles, however it settles: a capacity denial, a queue refusal,
+   * a spawn failure and an ordinary completion all drop the reference.
+   */
+  private pinDispatch(
+    childId: string,
+    snapshot: PiDispatchSnapshot,
+    dispatch: () => ResultAsync<PiChildSettlement, PiAdapterFailure>,
+  ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
+    this.pinnedSnapshots.set(childId, snapshot);
+    return dispatch()
+      .map((settlement) => {
+        this.pinnedSnapshots.delete(childId);
+        return settlement;
+      })
+      .mapErr((failure) => {
+        this.pinnedSnapshots.delete(childId);
+        return failure;
+      });
+  }
+
+  /**
+   * The catalog snapshots live children currently hold. Test visibility for
+   * the one-reference-per-live-child bound; production reads the map directly.
+   */
+  pinnedDispatchSnapshotsForTest(): ReadonlyMap<string, PiDispatchSnapshot> {
+    return new Map(this.pinnedSnapshots);
   }
 
   private requireSessionStorageAuthority(
@@ -830,6 +901,18 @@ export class PiDelegationController {
   delegate(
     request: PiDelegationRequest,
   ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
+    return this.dispatchPinned(request, undefined);
+  }
+
+  /**
+   * The one admission path. `pinned` is the requesting child's own snapshot
+   * for a nested dispatch; a root dispatch passes none and samples the
+   * current catalog instead.
+   */
+  private dispatchPinned(
+    request: PiDelegationRequest,
+    pinned: PiDispatchSnapshot | undefined,
+  ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     const storageAuthority = this.requireSessionStorageAuthority("delegation");
     if (storageAuthority.isErr()) return errAsync(storageAuthority.error);
     const childId = request.childId ?? this.deps.idGenerator.next();
@@ -839,7 +922,11 @@ export class PiDelegationController {
     if (identity.isErr()) {
       return errAsync(makeChildAbortFailedFailure(childId, identity.error));
     }
-    return this.authorizeAndDispatch(childId, request);
+    return this.pinDispatch(
+      childId,
+      pinned ?? this.currentDispatchSnapshot(),
+      () => this.authorizeAndDispatch(childId, request),
+    );
   }
 
   /**
@@ -854,22 +941,40 @@ export class PiDelegationController {
   ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     const storageAuthority = this.requireSessionStorageAuthority("delegation");
     if (storageAuthority.isErr()) return errAsync(storageAuthority.error);
+    // The nested delegation boundary: refresh runs before the target and the
+    // bootstrap are resolved below.
+    const refreshed =
+      this.deps.ensureFreshCatalog?.() ?? okAsync<void, never>(undefined);
+    return refreshed.andThen(() => this.relayFromAuthenticatedParent(request));
+  }
+
+  /** Resolves and dispatches one already-refreshed authenticated relay. */
+  private relayFromAuthenticatedParent(
+    request: PiAuthenticatedDelegationRequest,
+  ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     const childId = this.deps.idGenerator.next();
-    const target = this.deps.resolveDelegationTarget?.(
+    // The direct-step parent is deliberately outside this controller's tree,
+    // so it carries its own pinned snapshot rather than being looked up here.
+    const snapshot = request.snapshot ?? this.currentDispatchSnapshot();
+    const target = snapshot.resolveDelegationTarget(
       request.parentAgentName,
       request.agentName,
     );
-    const buildBootstrap = this.deps.buildBootstrap;
-    if (target === undefined || buildBootstrap === undefined) {
+    if (target === undefined) {
       return errAsync(
         makeChildAbortFailedFailure(childId, "invalid delegation target"),
       );
     }
     const delegationRequest: PiDelegationRequest = {
-      ...request,
+      parentId: request.parentId,
+      parentDepth: request.parentDepth,
+      parentAgentName: request.parentAgentName,
+      agentName: request.agentName,
+      task: request.task,
+      cwd: request.cwd,
       env: {},
       childId,
-      bootstrap: buildBootstrap(target, childId, {
+      bootstrap: snapshot.buildBootstrap(target, childId, {
         parentAgentName: request.parentAgentName,
         parentDepth: request.parentDepth,
         cwd: request.cwd,
@@ -877,7 +982,9 @@ export class PiDelegationController {
     };
     const validation = this.validateRequest(childId, delegationRequest);
     if (validation.isErr()) return errAsync(validation.error);
-    return this.authorizeAndDispatch(childId, delegationRequest);
+    return this.pinDispatch(childId, snapshot, () =>
+      this.authorizeAndDispatch(childId, delegationRequest),
+    );
   }
 
   private validateRequest(
@@ -942,7 +1049,7 @@ export class PiDelegationController {
     let dispatchReserved = false;
     if (queued) {
       const limits = resolveEffectiveDelegationLimits(
-        this.deps.config,
+        this.deps.currentConfig(),
         request.parentAgentName,
       );
       if (
@@ -1219,7 +1326,7 @@ export class PiDelegationController {
     DelegationAuthorizationError | DelegationLimitsError
   > {
     const limits = resolveEffectiveDelegationLimits(
-      this.deps.config,
+      this.deps.currentConfig(),
       request.parentAgentName,
     );
     if (limits.isErr()) return err(limits.error);
@@ -1359,7 +1466,7 @@ export class PiDelegationController {
         // The tree node's own `name` IS the agent name it was spawned with,
         // so this is authoritative even before thread registration lands.
         agentName: snap.name,
-        ...this.roleFact(snap.name),
+        ...this.roleFact(snap.name, childId),
         ...this.liveOperationalFacts(childId, snap),
       };
     }
@@ -1401,7 +1508,7 @@ export class PiDelegationController {
       sessionRef: record?.sessionRef,
       agentName: state.agentName,
       parentAgentName: state.parentAgentName,
-      ...this.roleFact(state.agentName),
+      ...this.roleFact(state.agentName, state.latestChildId),
       ...(state.model === undefined ? {} : { model: state.model }),
       ...(state.reasoning === undefined ? {} : { reasoning: state.reasoning }),
       ...this.liveOperationalFacts(state.latestChildId, treeChild?.snapshot()),
@@ -1413,11 +1520,14 @@ export class PiDelegationController {
    *
    * An unconfigured agent, or a configured agent with no category, yields an
    * empty fragment: the inspector then prints no role at all rather than a
-   * fabricated one.
+   * fabricated one. A live child's role is read from the catalog it was
+   * dispatched under, so a running child's reported role never changes
+   * underneath it; history, which pins nothing, reads the current catalog.
    */
-  private roleFact(agentName: string): { role?: string } {
+  private roleFact(agentName: string, childId?: string): { role?: string } {
+    const snapshot = this.pinnedSnapshotFor(childId);
     const role = Result.fromThrowable(
-      () => this.deps.resolveAgentRole?.(agentName),
+      () => snapshot.resolveAgentRole(agentName),
       () => undefined,
     )().match(
       (value) => value,
@@ -1575,7 +1685,7 @@ export class PiDelegationController {
     request: PiDelegationRequest,
   ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     const limits = resolveEffectiveDelegationLimits(
-      this.deps.config,
+      this.deps.currentConfig(),
       request.parentAgentName,
     );
     if (limits.isErr() || this.queue.length >= limits.value.maxProcesses) {
@@ -1791,14 +1901,14 @@ export class PiDelegationController {
       if (authority.isErr()) return errAsync(authority.error);
       const readiness = this.checkThreadReadiness(state, request.action);
       if (readiness.isErr()) return errAsync(readiness.error);
-      const target = this.resolveThreadTarget(state);
+      // Sampled once for this run: a nested thread stays on its live parent's
+      // pinned catalog, a root thread takes the newest published one.
+      const snapshot =
+        state.parentId === ROOT_NODE_ID
+          ? this.currentDispatchSnapshot()
+          : this.pinnedSnapshotFor(state.parentId);
+      const target = this.resolveThreadTarget(state, snapshot);
       if (target.isErr()) return errAsync(target.error);
-      const buildBootstrap = this.deps.buildBootstrap;
-      if (buildBootstrap === undefined) {
-        return errAsync(
-          makeThreadResumeUnavailableFailure(threadId, "lifecycle-unavailable"),
-        );
-      }
 
       return this.resolveThreadSource(state).andThen((source) => {
         // Capacity is revalidated here, after every authority and integrity
@@ -1872,7 +1982,7 @@ export class PiDelegationController {
               task: instruction.value,
               cwd: state.cwd,
               env: state.env,
-              bootstrap: buildBootstrap(target.value, runChildId, {
+              bootstrap: snapshot.buildBootstrap(target.value, runChildId, {
                 parentAgentName: state.parentAgentName,
                 parentDepth: state.parentDepth,
                 cwd: state.cwd,
@@ -1891,7 +2001,11 @@ export class PiDelegationController {
                   agentName: state.agentName,
                   childId: runChildId,
                 });
-                const settled = await this.spawnNow(runChildId, runRequest);
+                const settled = await this.pinDispatch(
+                  runChildId,
+                  snapshot,
+                  () => this.spawnNow(runChildId, runRequest),
+                );
                 this.settleThread(threadId, settled);
                 this.recordThreadSettlement(
                   divider,
@@ -2133,14 +2247,22 @@ export class PiDelegationController {
     return ok(undefined);
   }
 
-  /** Re-reads the current config's own eligibility for this thread's agent. */
+  /**
+   * Re-reads eligibility for this thread's agent.
+   *
+   * A new run is a new dispatch, so a root thread resolves against the current
+   * catalog. A nested thread resolves against its parent's pinned snapshot
+   * while that parent is still live, and against the current catalog once it
+   * is not.
+   */
   private resolveThreadTarget(
     state: PiThreadState,
+    snapshot: PiDispatchSnapshot,
   ): Result<DelegationTarget, PiAdapterFailure> {
     const target =
       state.parentId === ROOT_NODE_ID
         ? this.deps.resolveRootDelegationTarget?.(state.agentName)
-        : this.deps.resolveDelegationTarget?.(
+        : snapshot.resolveDelegationTarget(
             state.parentAgentName,
             state.agentName,
           );
@@ -2566,6 +2688,10 @@ export class PiDelegationController {
     onRegistered?: () => void,
   ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     const depth = request.parentDepth + 1;
+    // The budgets this child runs under come from the snapshot pinned when it
+    // was admitted, so a catalog published while it waited in the queue never
+    // changes its timing contract.
+    const budgets = this.pinnedSnapshotFor(childId).budgets;
     const child = new PiRpcChild(
       childId,
       request.parentId,
@@ -2578,10 +2704,10 @@ export class PiDelegationController {
         randomPort: this.deps.randomPort,
         hmacPort: this.deps.hmacPort,
         timerPort: this.deps.timerPort,
-        handshakeTimeoutMs: this.deps.handshakeTimeoutMs,
-        replyTimeoutMs: this.deps.replyTimeoutMs,
-        settlementTimeoutMs: this.deps.settlementTimeoutMs,
-        runtimeBudgetMs: this.deps.runtimeBudgetMs,
+        handshakeTimeoutMs: budgets.handshakeTimeoutMs,
+        replyTimeoutMs: budgets.replyTimeoutMs,
+        settlementTimeoutMs: budgets.settlementTimeoutMs,
+        runtimeBudgetMs: budgets.runtimeBudgetMs,
         cancelGraceMs: this.deps.cancelGraceMs,
         responseDrainMs: this.deps.responseDrainMs,
         baseEnv: this.deps.baseEnv,
@@ -2702,11 +2828,17 @@ export class PiDelegationController {
   ): void {
     const requester = this.children.get(childId);
     if (requester === undefined) return;
-    const target = this.deps.resolveDelegationTarget?.(
+    // The requester's OWN pinned catalog decides this, not the newest one: the
+    // targets it is asking against are exactly the ones its bootstrap named,
+    // and a publication that happened while it ran must not silently add or
+    // remove any of them mid-run. A nested child then inherits this same
+    // snapshot, so a whole in-flight subtree stays on one catalog.
+    const snapshot = this.pinnedSnapshotFor(childId);
+    const target = snapshot.resolveDelegationTarget(
       requester.getAgentName(),
       body.agentName,
     );
-    if (target === undefined || this.deps.buildBootstrap === undefined) {
+    if (target === undefined) {
       void requester.sendDelegationResponse(correlationId, {
         ok: false,
         error: "invalid-delegation-target",
@@ -2718,22 +2850,25 @@ export class PiDelegationController {
     // `childId` - the child that eventually spawns cross-checks the two
     // against each other and rejects a mismatch.
     const nestedChildId = this.deps.idGenerator.next();
-    const bootstrap = this.deps.buildBootstrap(target, nestedChildId, {
+    const bootstrap = snapshot.buildBootstrap(target, nestedChildId, {
       parentAgentName: requester.getAgentName(),
       parentDepth: requester.getDepth(),
       cwd: requester.getCwd(),
     });
-    void this.delegate({
-      parentId: childId,
-      parentDepth: requester.getDepth(),
-      parentAgentName: requester.getAgentName(),
-      agentName: body.agentName,
-      task: body.task,
-      cwd: requester.getCwd(),
-      env: {},
-      bootstrap,
-      childId: nestedChildId,
-    }).match(
+    void this.dispatchPinned(
+      {
+        parentId: childId,
+        parentDepth: requester.getDepth(),
+        parentAgentName: requester.getAgentName(),
+        agentName: body.agentName,
+        task: body.task,
+        cwd: requester.getCwd(),
+        env: {},
+        bootstrap,
+        childId: nestedChildId,
+      },
+      snapshot,
+    ).match(
       (settlement) => {
         void requester.sendDelegationResponse(correlationId, {
           ok: true,
@@ -3191,14 +3326,12 @@ export class PiDelegationController {
     const target = this.deps.resolveRootDelegationTarget?.(
       input.descriptor.name,
     );
-    const buildBootstrap = this.deps.buildBootstrap;
+    // A restore is a new dispatch, so it samples the newest published catalog
+    // once, here, and the restored child stays pinned to it.
+    const snapshot = this.currentDispatchSnapshot();
     const sessions = this.deps.threadSessions?.();
     const rootAgentName = this.deps.rootAgentName?.();
-    if (
-      target === undefined ||
-      buildBootstrap === undefined ||
-      sessions === undefined
-    )
+    if (target === undefined || sessions === undefined)
       return unavailable("restore dependencies unavailable");
     if (rootAgentName === undefined)
       return unavailable("root authority unavailable");
@@ -3272,10 +3405,10 @@ export class PiDelegationController {
             randomPort: this.deps.randomPort,
             hmacPort: this.deps.hmacPort,
             timerPort: this.deps.timerPort,
-            handshakeTimeoutMs: this.deps.handshakeTimeoutMs,
-            replyTimeoutMs: this.deps.replyTimeoutMs,
-            settlementTimeoutMs: this.deps.settlementTimeoutMs,
-            runtimeBudgetMs: this.deps.runtimeBudgetMs,
+            handshakeTimeoutMs: snapshot.budgets.handshakeTimeoutMs,
+            replyTimeoutMs: snapshot.budgets.replyTimeoutMs,
+            settlementTimeoutMs: snapshot.budgets.settlementTimeoutMs,
+            runtimeBudgetMs: snapshot.budgets.runtimeBudgetMs,
             cancelGraceMs: this.deps.cancelGraceMs,
             responseDrainMs: this.deps.responseDrainMs,
             baseEnv: this.deps.baseEnv,
@@ -3342,6 +3475,7 @@ export class PiDelegationController {
           session,
         };
         this.restoreReservations.add(childId);
+        this.pinnedSnapshots.set(childId, snapshot);
         const attached =
           this.deps.inspectionRegistry?.attachRecovered({
             id: childId,
@@ -3372,6 +3506,7 @@ export class PiDelegationController {
                 child.dispose();
                 this.children.delete(childId);
                 this.restoreReservations.delete(childId);
+                this.pinnedSnapshots.delete(childId);
                 this.promoteQueued();
                 this.notifyTreeChanged();
                 return ok(undefined);
@@ -3380,6 +3515,7 @@ export class PiDelegationController {
                 child.dispose();
                 this.children.delete(childId);
                 this.restoreReservations.delete(childId);
+                this.pinnedSnapshots.delete(childId);
                 this.promoteQueued();
                 this.notifyTreeChanged();
                 return err({
@@ -3392,7 +3528,7 @@ export class PiDelegationController {
         };
         const bootstrap = Result.fromThrowable(
           () =>
-            buildBootstrap(target, childId, {
+            snapshot.buildBootstrap(target, childId, {
               parentAgentName: rootAgentName,
               parentDepth: 0,
               cwd,
@@ -3439,6 +3575,10 @@ export class PiDelegationController {
   disposeAll(): void {
     if (this.disposedAll) return;
     this.disposedAll = true;
+    // Nothing this controller launched can still be live after this, so every
+    // pinned catalog reference is dropped in one place rather than waiting on
+    // settlement paths that will never run.
+    this.pinnedSnapshots.clear();
     for (const entry of this.queue.splice(0)) {
       entry.resolve(
         err(makeChildAbortFailedFailure(entry.childId, "controller shut down")),

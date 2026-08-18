@@ -129,7 +129,7 @@ pipeline:
 
 2. **Load prompt source**
    - If `agentConfig.prompt` is defined, use it directly.
-   - Otherwise read `agentConfig.prompt_file` from disk.
+   - Otherwise read `agentConfig.prompt_file` through the [prompt file reader](#prompt-file-reader).
    - If neither exists, return `PromptSourceMissingError`.
    - If file reading fails, return `PromptFileReadError`.
 
@@ -144,8 +144,9 @@ pipeline:
    - If `prompt_append` is present, it is rendered as Mustache using the same
      Template Context.
    - If `prompt_append_file` is present (and `prompt_append` is absent), the
-     file is read from disk and rendered as Mustache using the same Template
-     Context. `prompt_append` and `prompt_append_file` are mutually exclusive.
+     file is read through the same [prompt file reader](#prompt-file-reader) and
+     rendered as Mustache using the same Template Context. `prompt_append` and
+     `prompt_append_file` are mutually exclusive.
 
 5. **Resolve tool policy**
    - The engine calls `evaluateEffectiveToolPolicy(agentConfig.tool_policy)`.
@@ -159,6 +160,43 @@ pipeline:
 
 The implementation lives in
 [`packages/engine/src/compose.ts`](../../packages/engine/src/compose.ts).
+
+### Prompt file reader
+
+`prompt_file` and `prompt_append_file` are read through an optional injected
+reader:
+
+```ts
+interface PromptFileReader {
+  read(path: string): ResultAsync<string, { message: string }>;
+}
+```
+
+Supply one as the trailing `promptFileReader` argument of
+`composeAgentDescriptor()` or as `MaterializationInput.promptFileReader`. Omit
+it and composition uses `defaultPromptFileReader`, which reads the path with
+`Bun.file(path).text()` exactly as before. Default behavior is unchanged, and
+existing positional callers are unaffected.
+
+Materialization memoizes the reader by path, so each distinct prompt path is
+read at most once per `materializeAgents()` call and agents that share a prompt
+file compose from the same bytes. Concurrent agents share one in-flight read and
+observe the same content, or the same failure.
+
+The reader substitutes I/O only:
+
+- it never decides which prompt source wins — inline `prompt` still takes
+  precedence over `prompt_file`, and the [trust boundary for prompt
+  appends](#trust-boundary-for-prompt-appends) is unchanged;
+- it does not change [composition order](#composition-order), template
+  rendering, or the Template Context;
+- a reader failure produces the same `PromptFileReadError`, with the reader's
+  `message` copied verbatim into `fileErrorMessage`.
+
+The seam exists so a caller that already read (and hashed) those bytes can
+compose from the very same bytes instead of re-reading the path. The Pi adapter
+uses it for [config refresh at delegation
+boundaries](../adapters/pi.md#config-refresh-at-delegation-boundaries).
 
 ---
 
@@ -307,6 +345,85 @@ Example using a `{{#delegation.targets}}` loop:
 
 If there are no eligible targets, `delegation.targets` is an empty array and
 any `{{#delegation.targets}}` section renders nothing.
+
+---
+
+## Inline Multiline Prompts
+
+Inline `prompt` and `prompt_append` values may span lines using the DSL's
+triple-quoted string form. [DSL Reference — Multiline strings](dsl.md#multiline-strings)
+is the normative contract: content is raw with no escape processing, the string
+closes at the first `"""`, indentation is removed by the smallest leading
+whitespace character count, and line endings are normalized.
+
+Agent `prompt` and `prompt_append`:
+
+```weave
+agent release-notes {
+  description "Writes release notes for a milestone from the changelog"
+  prompt """
+  You are {{agent.name}}. Write release notes for the current milestone.
+
+  Keep each entry to one line, and group entries by change type.
+  """
+  prompt_append """
+  Never invent an issue number. Cite only issues present in the changelog.
+  """
+  mode subagent
+}
+```
+
+Workflow step `prompt` and `prompt_append`:
+
+```weave
+workflow ship {
+  description "Draft release notes and confirm them"
+  version 1
+
+  step draft {
+    name "Draft the notes"
+    type interactive
+    agent release-notes
+    prompt """
+    Draft release notes for: {{instance.goal}}
+
+    Read the changelog first, then write one section per change type.
+    """
+    prompt_append """
+    Stop after the draft. Do not tag or publish anything.
+    """
+    completion user_confirm
+  }
+}
+```
+
+A multiline value is an ordinary Prompt Template. `{{tag}}` renders, `\{{tag}}`
+renders a literal tag, and the unsupported-feature rules above apply unchanged.
+Because triple-quoted content is raw, the backslash in `\{{tag}}` reaches the
+renderer exactly as written.
+
+### When to use a prompt file instead
+
+Prefer `prompt_file` or `prompt_append_file` when:
+
+- the prompt is long enough that it would dominate the config file
+- the content contains a literal `"""`, or ends with a `"` that would abut the
+  closing delimiter — such content cannot be represented inline at all
+- the same text is shared across agents or scopes, or is edited and reviewed as
+  its own Markdown document
+
+Inline prompts suit short, agent-specific text that is easier to read next to
+the rest of the agent block.
+
+### Change detection
+
+An inline prompt is part of its config file, not a separate source. The Pi
+adapter's config refresh digests each config file and each referenced prompt
+file on its own, so an inline prompt edit is detected through the owning config
+file's digest; there is no separate manifest entry for inline prompt text. A
+`prompt_file` edit is detected through that file's own digest. See [Pi — Config
+refresh at delegation
+boundaries](../adapters/pi.md#config-refresh-at-delegation-boundaries).
 
 ---
 

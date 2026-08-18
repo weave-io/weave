@@ -14,6 +14,7 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "InteractiveTuiRequired",
   "PersistentParentSessionRequired",
   "ActivationFailed",
+  "ConfigRefreshFailed",
   "CommandCollision",
   "RequiredCapabilityUnavailable",
   "ControllerGenerationStale",
@@ -315,6 +316,57 @@ export function makeActivationFailedFailure(reason: string): PiAdapterFailure {
     retryable: false,
     recovery: "health-check",
     safeMessage: "Weave activation could not complete.",
+    correlation: { reason },
+  };
+}
+
+/**
+ * Closed set of public reasons a delegation-boundary config refresh did not
+ * apply (Pi adapter contract).
+ *
+ * The internal `PiConfigRefreshFailure` union (see `config-refresh.ts`) may
+ * name the offending source and carry a filesystem message, because it never
+ * leaves the adapter's own call stack. Everything an operator sees —
+ * a log line, a `ctx.ui.notify` toast, a `/weave:status` row — is one of these
+ * literals instead: no path, no raw port message, no config content, and no
+ * prompt text.
+ */
+export const PI_CONFIG_REFRESH_FAILURE_REASONS = [
+  /** A config or prompt source could not be stat'ed or read. */
+  "source-unreadable",
+  /** The changed config did not parse or did not validate. */
+  "config-invalid",
+  /** A referenced prompt file is missing. */
+  "prompt-unavailable",
+  /** The Pi-local lifecycle settings block is out of range. */
+  "settings-invalid",
+  /** Descriptor composition could not produce a plan at all. */
+  "composition-failed",
+] as const;
+
+/** One public reason a config refresh attempt produced no new catalog. */
+export type PiConfigRefreshFailureReason =
+  (typeof PI_CONFIG_REFRESH_FAILURE_REASONS)[number];
+
+/**
+ * A refresh attempt that produced no candidate.
+ *
+ * Never fatal: the last valid catalog keeps serving and the delegation that
+ * triggered the refresh proceeds against it, so the impact is `degraded` and
+ * the recovery is `retry` — the next delegation boundary probes again.
+ */
+export function makeConfigRefreshFailedFailure(
+  reason: PiConfigRefreshFailureReason,
+): PiAdapterFailure {
+  return {
+    code: "ConfigRefreshFailed",
+    phase: "activation",
+    scope: ADAPTER_SCOPE,
+    impact: "degraded",
+    retryable: true,
+    recovery: "retry",
+    safeMessage:
+      "Weave could not apply a configuration change; the last valid configuration keeps serving.",
     correlation: { reason },
   };
 }

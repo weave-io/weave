@@ -673,6 +673,73 @@ export {
   PiConfigActivator,
 } from "./config-activator.js";
 export type {
+  PiConfigCatalogState,
+  PiConfigRefreshCandidate,
+  PiConfigRefreshClock,
+  PiConfigRefreshCoordinator,
+  PiConfigRefreshCoordinatorDeps,
+  PiConfigRefreshDeps,
+  PiConfigRefreshDiagnostics,
+  PiConfigRefreshFailure,
+  PiConfigRefreshMaterializationReason,
+  PiConfigRefreshNotice,
+  PiConfigRefreshNoticeState,
+  PiConfigRefreshOutcome,
+  PiConfigRefreshPublicState,
+  PiConfigRefreshUnavailableReason,
+  PiConfigSourceCachedContent,
+  PiConfigSourceContents,
+} from "./config-refresh.js";
+export {
+  buildPiConfigRefreshCandidate,
+  createPiConfigRefreshCoordinator,
+  DEFAULT_PI_CONFIG_REFRESH_MIN_INTERVAL_MS,
+  PI_CONFIG_REFRESH_DEFERRAL_MESSAGE,
+  refreshPiConfigCandidate,
+  renderPiConfigRefreshStatusLine,
+  toPiConfigRefreshFailure,
+  toPiConfigRefreshPublicReason,
+  toPiConfigRefreshPublicState,
+} from "./config-refresh.js";
+export type {
+  PiBuiltinSourceEntry,
+  PiConfigFileSourceKind,
+  PiConfigSourceChange,
+  PiConfigSourceChangeKind,
+  PiConfigSourceEntry,
+  PiConfigSourceFailure,
+  PiConfigSourceFileHandle,
+  PiConfigSourceFileOpener,
+  PiConfigSourceFileStat,
+  PiConfigSourceFsError,
+  PiConfigSourceFsPort,
+  PiConfigSourceIdentity,
+  PiConfigSourceKind,
+  PiConfigSourceManifest,
+  PiConfigSourceManifestInput,
+  PiConfigSourcePaths,
+  PiConfigSourcePresence,
+  PiConfigSourceProbe,
+  PiConfigSourceProbeStatus,
+  PiConfigSourceRead,
+  PiConfigSourceRefresh,
+  PiConfigSourceRefreshedSource,
+} from "./config-source-digests.js";
+export {
+  classifyConfigSourceChange,
+  createPiConfigSourceFsPort,
+  createPiConfigSourceManifest,
+  defaultPiConfigSourceFsPort,
+  discoverPromptSourcePaths,
+  getPiBuiltinSourceDigest,
+  hashConfigSourceContent,
+  PI_CONFIG_SOURCE_DIGEST_PATTERN,
+  probeConfigSources,
+  refreshChangedSources,
+  refreshConfigSourceManifest,
+  resolvePiConfigSourcePaths,
+} from "./config-source-digests.js";
+export type {
   PiCommandGateDecision,
   PiExtensionControllerDeps,
   PiGeneration,
@@ -714,12 +781,22 @@ export {
   WEAVE_DELEGATION_TOOL_NAME,
 } from "./delegation-tool.js";
 export type {
+  PiChildDispatchBudgets,
+  PiDispatchSnapshot,
+  PiDispatchSnapshotInput,
+} from "./dispatch-snapshot.js";
+export {
+  createPiDispatchSnapshot,
+  EMPTY_PI_DISPATCH_SNAPSHOT,
+} from "./dispatch-snapshot.js";
+export type {
   PiAdapterFailure,
   PiAdapterFailureCode,
   PiAdapterFailureImpact,
   PiAdapterFailurePhase,
   PiAdapterFailureRecovery,
   PiAdapterFailureScope,
+  PiConfigRefreshFailureReason,
   PiDiagnosticCode,
 } from "./errors.js";
 export {
@@ -736,6 +813,7 @@ export {
   makeChildRecoveryUnavailableFailure,
   makeChildSchemaInvalidFailure,
   makeCommandCollisionFailure,
+  makeConfigRefreshFailedFailure,
   makeControllerGenerationStaleFailure,
   makeHostIdentityUnknownFailure,
   makeHostVersionUnsupportedFailure,
@@ -744,6 +822,7 @@ export {
   makePersistentParentSessionRequiredFailure,
   makeRequiredCapabilityUnavailableFailure,
   makeUiBridgeUnavailableFailure,
+  PI_CONFIG_REFRESH_FAILURE_REASONS,
   PiAdapterFailureCodeSchema,
   PiAdapterFailureImpactSchema,
   PiAdapterFailurePhaseSchema,
@@ -838,6 +917,17 @@ export {
   renderPlanRailWidgetLines,
 } from "./plan-render.js";
 export type {
+  PiPrimaryContractCandidate,
+  PiPrimaryContractDecision,
+  PiPrimaryContractFacet,
+  PiPrimaryContractInput,
+} from "./primary-contract.js";
+export {
+  decidePiPrimaryContract,
+  PI_PRIMARY_CONTRACT_FACETS,
+  toPiPrimaryContractCandidate,
+} from "./primary-contract.js";
+export type {
   PiActivePrimary,
   PiParentMutationOperation,
   PiParentSessionProbePort,
@@ -849,6 +939,7 @@ export type {
   PiPrimaryRequestSnapshot,
   PiPrimarySessionDeps,
   PiPrimarySnapshotStale,
+  PiSkillResolutionPort,
 } from "./primary-session.js";
 export {
   appendWeaveBlockOnce,
@@ -859,6 +950,7 @@ export {
   renderRequiredSkillsPrompt,
   renderWeavePromptBlock,
   requirePersistentParentSession,
+  resolveDescriptorSkillResolution,
   UNKNOWN_PARENT_SESSION,
 } from "./primary-session.js";
 export {
