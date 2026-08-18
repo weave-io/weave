@@ -1,4 +1,5 @@
 # @weaveio/weave-cli
+<<<<<<< HEAD
 
 ## 0.1.0
 
@@ -25,3 +26,5 @@
   - @weaveio/weave-adapter-claude-code@0.1.0
   - @weaveio/weave-core@0.1.0
   - @weaveio/weave-engine@0.1.0
+=======
+>>>>>>> 0598b0fe (chore(release): add package license metadata)
