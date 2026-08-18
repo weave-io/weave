@@ -666,6 +666,31 @@ describe("headless changelog agent", () => {
     });
   });
 
+  test("scrubs the provider key from driver failures", async () => {
+    const evidence = evidenceValue(assembleEvidence(evidenceInput()));
+    const driver: HeadlessSessionDriver = {
+      open: () =>
+        errAsync({
+          type: "HeadlessSessionFailed",
+          reason: `unavailable ${SECRET}`,
+        }),
+    };
+    const error = expectErr(
+      await withApiKey(() =>
+        runChangelogAgent({
+          evidence,
+          versions: [{ packageName: CLI, version: "0.1.0" }],
+          driver,
+        }),
+      ),
+    );
+    expect(error).toEqual({
+      type: "HeadlessSessionFailed",
+      reason: "unavailable [redacted]",
+    });
+    expect(JSON.stringify(error)).not.toContain(SECRET);
+  });
+
   test("keeps the publication module graph isolated from ai/", async () => {
     expect(await moduleGraphReaches(AGENT_MODULE, PUBLISH_MAIN)).toBe(false);
     if (await Bun.file(PUBLISH_MAIN).exists()) {

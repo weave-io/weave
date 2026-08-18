@@ -32,6 +32,7 @@ import {
   CHANGELOG_AGENT_MODEL,
   createChangelogSessionConfig,
   type HeadlessSession,
+  type HeadlessSessionConfigError,
   type HeadlessSessionDriver,
   type HeadlessSessionError,
   type HeadlessThinkingLevel,
@@ -146,7 +147,8 @@ export function runChangelogAgent(
         session,
         prepared.value.apiKey,
       ),
-    );
+    )
+    .mapErr((error) => scrubSecret(error, prepared.value.apiKey));
 }
 
 function finishSession(
@@ -274,7 +276,7 @@ function prepareRun(
     input.thinking === undefined
       ? createChangelogSessionConfig()
       : createChangelogSessionConfig({ thinking: input.thinking });
-  if (config.isErr()) return err(config.error);
+  if (config.isErr()) return err(mapSessionConfigError(config.error));
   const versions = readVersions(input);
   if (versions.isErr()) return err(versions.error);
   const required = requiredIdentities(input.evidence.packages);
@@ -302,6 +304,21 @@ function prepareRun(
     evidenceDigest: input.evidence.digest,
     apiKey,
   });
+}
+
+function mapSessionConfigError(
+  error: HeadlessSessionConfigError,
+): ChangelogAgentError {
+  switch (error.type) {
+    case "InvalidChangelogThinking":
+    case "ChangelogApiKeyMissing":
+      return error;
+    default:
+      return {
+        type: "InvalidChangelogAgentInput",
+        issues: ["session-config"],
+      };
+  }
 }
 
 function readVersions(
