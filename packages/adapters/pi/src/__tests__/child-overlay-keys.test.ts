@@ -22,6 +22,7 @@ import {
   createChildOverlayConflictPort,
   createChildOverlayKeyMachine,
   isChildOverlayCancelKey,
+  isChildOverlaySearchAliasInput,
   isChildOverlaySearchOpenInput,
   isPiChildOverlayActionId,
   PI_CHILD_OVERLAY_ACTION_IDS,
@@ -582,6 +583,40 @@ describe("child overlay search openers", () => {
     expect(isChildOverlaySearchOpenInput("x", "", alias)).toBe(false);
   });
 
+  it("accepts every encoding a live pane sends for the enabled alias", () => {
+    const alias = PI_CHILD_OVERLAY_SEARCH_TRIGGER;
+    for (const form of [
+      // Legacy control byte.
+      "\x06",
+      // Kitty press, as a Kitty-negotiating pane sends it.
+      "\x1b[102;5u",
+      // Kitty press with an explicit event type.
+      "\x1b[102;5:1u",
+    ]) {
+      expect(
+        `${JSON.stringify(form)}:${isChildOverlaySearchAliasInput(form, alias)}`,
+      ).toBe(`${JSON.stringify(form)}:true`);
+      // The alias ignores the draft in every encoding, exactly as `\x06` did.
+      expect(isChildOverlaySearchOpenInput(form, "a draft", alias)).toBe(true);
+      // A disabled alias rejects every encoding, so the host keeps the key.
+      expect(isChildOverlaySearchAliasInput(form, undefined)).toBe(false);
+      expect(isChildOverlaySearchOpenInput(form, "", undefined)).toBe(false);
+    }
+  });
+
+  it("rejects a Kitty release, so one press is never read twice", () => {
+    const alias = PI_CHILD_OVERLAY_SEARCH_TRIGGER;
+    expect(isChildOverlaySearchAliasInput("\x1b[102;5:3u", alias)).toBe(false);
+    expect(isChildOverlaySearchOpenInput("\x1b[102;5:3u", "", alias)).toBe(
+      false,
+    );
+    // Neighbouring keys are not the alias in any encoding.
+    expect(isChildOverlaySearchAliasInput("\x1b[103;5u", alias)).toBe(false);
+    expect(isChildOverlaySearchAliasInput("\x1b[102;1u", alias)).toBe(false);
+    expect(isChildOverlaySearchAliasInput("f", alias)).toBe(false);
+    expect(isChildOverlaySearchAliasInput("", alias)).toBe(false);
+  });
+
   it("keeps the alias when no host binding owns ctrl+f", () => {
     const route = resolveChildOverlaySearchRoute(
       createChildOverlayConflictPort({ "app.something": "ctrl+g" }),
@@ -687,6 +722,64 @@ describe("overlay search keyboard", () => {
     expect(
       stepOverlaySearch(CLOSED_OVERLAY_SEARCH, "n", "", ALIAS).claimed,
     ).toBe(false);
+  });
+
+  it("opens and re-opens on every alias encoding, and only when enabled", () => {
+    const forms = ["\x06", "\x1b[102;5u", "\x1b[102;5:1u"] as const;
+    const navigating: OverlaySearchState = {
+      mode: "navigate",
+      query: "needle",
+      matchIndex: 3,
+      accepted: true,
+    };
+    for (const form of forms) {
+      // 1. Opening, whatever the draft holds.
+      const opened = stepOverlaySearch(
+        CLOSED_OVERLAY_SEARCH,
+        form,
+        "a draft",
+        ALIAS,
+      );
+      expect(opened.claimed).toBe(true);
+      expect(opened.state.mode).toBe("typing");
+      expect(opened.effect).toEqual({ kind: "preview", query: "" });
+
+      // 2. Re-opening from navigate mode, with the draft still non-empty: the
+      //    committed query is kept for editing and the pages fetched for it
+      //    lose their licence before anything repaints.
+      const reopened = stepOverlaySearch(navigating, form, "a draft", ALIAS);
+      expect(reopened.claimed).toBe(true);
+      expect(reopened.state.mode).toBe("typing");
+      expect(reopened.state.query).toBe("needle");
+      expect(reopened.state.matchIndex).toBe(3);
+      expect(reopened.effect).toEqual({ kind: "reopen" });
+
+      // 3. A disabled alias claims nothing, and never re-opens: in navigate
+      //    mode the key stays swallowed like every other non-walk key.
+      expect(
+        stepOverlaySearch(CLOSED_OVERLAY_SEARCH, form, "", undefined).claimed,
+      ).toBe(false);
+      const swallowed = stepOverlaySearch(navigating, form, "", undefined);
+      expect(swallowed.claimed).toBe(true);
+      expect(swallowed.state).toEqual(navigating);
+      expect(swallowed.effect).toEqual({ kind: "none" });
+    }
+  });
+
+  it("never opens or re-opens on a Kitty alias release", () => {
+    const release = "\x1b[102;5:3u";
+    expect(
+      stepOverlaySearch(CLOSED_OVERLAY_SEARCH, release, "", ALIAS).claimed,
+    ).toBe(false);
+    const navigating: OverlaySearchState = {
+      mode: "navigate",
+      query: "needle",
+      matchIndex: 0,
+      accepted: true,
+    };
+    const stepped = stepOverlaySearch(navigating, release, "", ALIAS);
+    expect(stepped.state.mode).toBe("navigate");
+    expect(stepped.effect).toEqual({ kind: "none" });
   });
 
   it("previews every query edit so the rail counts what it prints", () => {

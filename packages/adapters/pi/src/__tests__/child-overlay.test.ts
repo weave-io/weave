@@ -55,6 +55,14 @@ const PAGE_DOWN = "\x1b[6~";
 const HOME = "\x1b[H";
 const END = "\x1b[F";
 const CTRL_E = "\x05";
+/**
+ * The three encodings a real pane can deliver Ctrl+F in: the legacy control
+ * byte, the Kitty form Pi 0.84 negotiates, and the event-aware Kitty press.
+ * All three are one physical press of the search alias.
+ */
+const SEARCH_ALIAS_PRESSES = ["\x06", "\x1b[102;5u", "\x1b[102;5:1u"] as const;
+/** The Kitty RELEASE of that same press, which must reach nothing. */
+const SEARCH_ALIAS_RELEASE = "\x1b[102;5:3u";
 
 function message(
   id: string,
@@ -3672,6 +3680,58 @@ describe("createChildOverlayCustomComponent", () => {
     expect(controller.view()._unsafeUnwrap().scrollOffset).toBe(firstOffset);
   });
 
+  it("opens search from every ctrl+f encoding, and never from a release", async () => {
+    for (const press of SEARCH_ALIAS_PRESSES) {
+      const { component } = await mount({
+        status: "settled",
+        entryCount: 12,
+      });
+      component.render(80);
+      // The release arrives first in a live pane's byte stream order only when
+      // the reader has already pressed the key; on its own it opens nothing.
+      component.handleInput(SEARCH_ALIAS_RELEASE);
+      expect(
+        `${JSON.stringify(press)}:${component.render(80).join("\n").includes("SEARCH")}`,
+      ).toBe(`${JSON.stringify(press)}:false`);
+      component.handleInput(press);
+      expect(
+        `${JSON.stringify(press)}:${component.render(80).join("\n").includes("SEARCH")}`,
+      ).toBe(`${JSON.stringify(press)}:true`);
+    }
+  });
+
+  it("re-opens the committed query from a Kitty ctrl+f, draft untouched", async () => {
+    const { component, controller } = await mount({
+      status: "live",
+      entryCount: 40,
+      pageSize: 40,
+    });
+    component.render(80);
+    // A non-empty steer is what makes this the ALIAS path: `/` would belong to
+    // the draft here, so only ctrl+f can open or re-open search.
+    component.handleInput("keep this steer");
+    await flush();
+    expect(controller.view()._unsafeUnwrap().draft).toBe("keep this steer");
+
+    component.handleInput("\x1b[102;5u");
+    for (const key of "e-text-1") component.handleInput(key);
+    component.handleInput(ENTER);
+    await flush();
+    expect(controller.view()._unsafeUnwrap().searchQuery).toBe("e-text-1");
+    expect(component.render(80).join("\n")).toContain("match    1/11");
+
+    // Navigate mode swallows printable keys, so a query edit here proves the
+    // event-aware press re-opened search for editing rather than being eaten.
+    component.handleInput("\x1b[102;5:1u");
+    await flush();
+    component.handleInput("9");
+    await flush();
+    expect(component.render(80).join("\n")).toContain("e-text-19");
+    // Re-opening edits the query only: the steer the reader typed is still
+    // theirs, and nothing was submitted.
+    expect(controller.view()._unsafeUnwrap().draft).toBe("keep this steer");
+  });
+
   it("navigates matches that span more than one fetched page", async () => {
     // Markers on the newest page and on two older pages. Search must fetch and
     // merge them all before navigation, so `n` walks the full match set.
@@ -3790,10 +3850,17 @@ describe("createChildOverlayCustomComponent", () => {
       { trigger: undefined },
     );
     component.render(80);
-    component.handleInput("\x06");
-    await flush();
-    // No prompt opened, so the key kept its host meaning and Escape still closes.
-    expect(component.render(80).join("\n")).not.toContain("Search:");
+    // A disabled alias rejects EVERY encoding of the key, not just the byte:
+    // the host binding keeps its meaning however the terminal spells it.
+    for (const form of [...SEARCH_ALIAS_PRESSES, SEARCH_ALIAS_RELEASE]) {
+      component.handleInput(form);
+      await flush();
+      const frame = component.render(80).join("\n");
+      expect(`${JSON.stringify(form)}:${frame.includes("SEARCH")}`).toBe(
+        `${JSON.stringify(form)}:false`,
+      );
+      expect(frame).not.toContain("Search:");
+    }
     component.handleInput("\x1b");
     expect(closed).toBe(1);
   });

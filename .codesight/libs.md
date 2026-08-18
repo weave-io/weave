@@ -362,7 +362,7 @@
   - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
-  - _...52 more_
+  - _...53 more_
 - `packages/adapters/pi/src/child-overlay-layout.ts`
   - function overlayHeaderTier: (width) => OverlayHeaderTier
   - function overlaySettlementFacts: (phase, word?) => OverlaySettlementFacts

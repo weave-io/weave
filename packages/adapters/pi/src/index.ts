@@ -445,6 +445,7 @@ export {
   createChildOverlayConflictPort,
   createChildOverlayKeyInterceptor,
   createChildOverlayKeyMachine,
+  isChildOverlaySearchAliasInput,
   isChildOverlaySearchOpenInput,
   isPiChildOverlayActionId,
   PI_CHILD_OVERLAY_ACTION_IDS,

@@ -26,7 +26,7 @@
  * `KeybindingsManager.getResolvedBindings()`); a taken key is skipped and
  * reported once, never registered.
  */
-import { type KeyId, matchesKey } from "@earendil-works/pi-tui";
+import { isKeyRelease, type KeyId, matchesKey } from "@earendil-works/pi-tui";
 import { err, ok, Result } from "neverthrow";
 import { boundText } from "./child-overlay-replay.js";
 
@@ -1027,6 +1027,39 @@ export const PI_CHILD_OVERLAY_SEARCH_KEY_USUAL_OWNER =
   "tui.editor.cursorRight" as const;
 
 /**
+ * True when `data` is the enabled `Ctrl+F` alias, in ANY encoding a real pane
+ * can deliver it in.
+ *
+ * This is the single authority for "is this the alias?", because the alias is
+ * read in two places — opening search and re-opening it from navigate mode —
+ * and a byte-only comparison in either of them is a different keyboard. Pi
+ * 0.84 negotiates the Kitty keyboard protocol, so the same physical press
+ * arrives as the legacy control byte `\x06`, as the Kitty form
+ * `ESC [ 102 ; 5 u`, or as the event-aware press `ESC [ 102 ; 5 : 1 u`. All
+ * three are the reader pressing Ctrl+F, so all three open search.
+ *
+ * The enabled/disabled gate is unchanged and remains the presence of
+ * `aliasTrigger`: when the host already owns `ctrl+f` the route resolves to
+ * `undefined` and EVERY encoding is rejected here, so the key keeps its
+ * existing meaning rather than being silently stolen.
+ *
+ * A key RELEASE is not a press. The mounted component already drops releases
+ * before its precedence chain and stays the first guard; this rejects them too
+ * because `matchesKey` names a release `ctrl+f` just as it names a press, so a
+ * pure caller of this predicate would otherwise act on one physical press
+ * twice.
+ */
+export function isChildOverlaySearchAliasInput(
+  data: string,
+  aliasTrigger: string | undefined,
+): boolean {
+  if (aliasTrigger === undefined) return false;
+  if (isKeyRelease(data)) return false;
+  if (data === aliasTrigger) return true;
+  return matchesKey(data, PI_CHILD_OVERLAY_SEARCH_KEY);
+}
+
+/**
  * True when `data` should open in-overlay search right now.
  *
  * One predicate for both openers, so the empty-draft gate cannot drift between
@@ -1042,7 +1075,7 @@ export function isChildOverlaySearchOpenInput(
   aliasTrigger: string | undefined,
 ): boolean {
   if (data === PI_CHILD_OVERLAY_SEARCH_OPEN_KEY) return draft.length === 0;
-  return aliasTrigger !== undefined && data === aliasTrigger;
+  return isChildOverlaySearchAliasInput(data, aliasTrigger);
 }
 
 export interface PiChildOverlaySearchRoute {

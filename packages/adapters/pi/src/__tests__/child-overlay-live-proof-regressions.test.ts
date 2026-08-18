@@ -12,7 +12,10 @@
  * 2. **Search.** `⚙ bash(timeout: 180)` was plainly on screen while the search
  *    rail reported `match 0/0 · no match in this transcript`, because search
  *    indexed the overlay window entry (a tool entry carries only its tool
- *    name) instead of the rows the reader was reading.
+ *    name) instead of the rows the reader was reading. The same pane's Kitty
+ *    frames also reach the search keyboard itself: Enter, Backspace and the
+ *    `Ctrl+F` alias all arrive as `ESC [ … u`, so every one of them is matched
+ *    by key identity rather than by byte, and a RELEASE reaches none of them.
  * 3. **Queue reporting.** Pi 0.84 `AgentSession` emits
  *    `{ type: "queue_update", steering, followUp }`. The adapter read only
  *    `queue_change`, so a steered or queued live child kept `queue 0` and
@@ -37,6 +40,10 @@ import {
   CLOSED_OVERLAY_SEARCH,
   stepOverlaySearch,
 } from "../child-overlay-input-modes.js";
+import {
+  isChildOverlaySearchOpenInput,
+  PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+} from "../child-overlay-keys.js";
 import {
   overlayTranscriptSearchIndex,
   renderOverlayTranscript,
@@ -95,6 +102,71 @@ describe("live scroll frame encodings (Pi 0.84.2)", () => {
 });
 
 describe("in-overlay search keyboard", () => {
+  /**
+   * The search ALIAS under the same protocol the live pane negotiated.
+   *
+   * The pane whose frames this file records delivered Alt+I as the Kitty
+   * `ESC [ 105 ; 3 : 1 u` above, so it spells Ctrl+F `ESC [ 102 ; 5 u` and
+   * `ESC [ 102 ; 5 : 1 u` — never the legacy `\x06` a byte-only alias was
+   * written for. Ctrl+F therefore did nothing in that pane, on a draft where
+   * `/` belongs to the steer and the alias is the ONLY opener.
+   */
+  it("opens on the alias in every encoding that pane can send", () => {
+    for (const press of ["\x06", "\x1b[102;5u", "\x1b[102;5:1u"]) {
+      const opened = stepOverlaySearch(
+        CLOSED_OVERLAY_SEARCH,
+        press,
+        "fix packages/",
+        PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+      );
+      expect(`${JSON.stringify(press)}:${opened.state.mode}`).toBe(
+        `${JSON.stringify(press)}:typing`,
+      );
+      // And the same press re-opens the committed query for editing.
+      const reopened = stepOverlaySearch(
+        { mode: "navigate", query: "needle", matchIndex: 2, accepted: true },
+        press,
+        "fix packages/",
+        PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+      );
+      expect(`${JSON.stringify(press)}:${reopened.effect.kind}`).toBe(
+        `${JSON.stringify(press)}:reopen`,
+      );
+      expect(reopened.state.query).toBe("needle");
+    }
+  });
+
+  it("ignores the alias release, so one press never toggles twice", () => {
+    const release = "\x1b[102;5:3u";
+    expect(
+      stepOverlaySearch(
+        CLOSED_OVERLAY_SEARCH,
+        release,
+        "",
+        PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+      ).claimed,
+    ).toBe(false);
+    // The mounted component drops releases before its precedence chain; the
+    // predicate refuses them too, so neither layer can act on the same press.
+    expect(
+      isChildOverlaySearchOpenInput(
+        release,
+        "",
+        PI_CHILD_OVERLAY_SEARCH_TRIGGER,
+      ),
+    ).toBe(false);
+  });
+
+  it("leaves every encoding to the host when the alias is disabled", () => {
+    for (const press of ["\x06", "\x1b[102;5u", "\x1b[102;5:1u"]) {
+      expect(
+        `${JSON.stringify(press)}:${isChildOverlaySearchOpenInput(press, "", undefined)}`,
+      ).toBe(`${JSON.stringify(press)}:false`);
+    }
+    // Losing the alias never loses search.
+    expect(isChildOverlaySearchOpenInput("/", "", undefined)).toBe(true);
+  });
+
   it("commits and edits under Kitty encodings, not only raw bytes", () => {
     const typing = stepOverlaySearch(
       CLOSED_OVERLAY_SEARCH,

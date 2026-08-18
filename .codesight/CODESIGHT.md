@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 319 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~35,200 tokens. Without it, AI exploration would cost ~102,000 tokens. **Saves ~66,800 tokens per conversation.**
-> **Last scanned:** 2026-08-18 08:38 — re-run after significant changes
+> **Last scanned:** 2026-08-18 09:25 — re-run after significant changes
 
 ---
 
@@ -373,7 +373,7 @@
   - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
   - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
   - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
-  - _...52 more_
+  - _...53 more_
 - `packages/adapters/pi/src/child-overlay-layout.ts`
   - function overlayHeaderTier: (width) => OverlayHeaderTier
   - function overlaySettlementFacts: (phase, word?) => OverlaySettlementFacts

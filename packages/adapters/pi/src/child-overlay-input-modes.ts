@@ -17,6 +17,7 @@
  */
 import { matchesKey } from "@earendil-works/pi-tui";
 import {
+  isChildOverlaySearchAliasInput,
   isChildOverlaySearchOpenInput,
   PI_CHILD_OVERLAY_SEARCH_OPEN_KEY,
 } from "./child-overlay-keys.js";
@@ -130,7 +131,9 @@ const isQueryText = (data: string): boolean =>
  * so a reader typing a steer that contains a slash keeps typing it.
  * `aliasTrigger` is the resolved `Ctrl+F` alias, or `undefined` when the host
  * already owns that key — which never removes search, because `/` still opens
- * it.
+ * it. Both alias readings below go through
+ * {@link isChildOverlaySearchAliasInput}, so opening and re-opening can never
+ * accept different encodings of the same press.
  */
 export function stepOverlaySearch(
   state: OverlaySearchState,
@@ -151,8 +154,11 @@ export function stepOverlaySearch(
   if (data === SEARCH_KEYS.cancel || matchesKey(data, "escape")) {
     return claimed(CLOSED_OVERLAY_SEARCH, { kind: "close" });
   }
-  if (aliasTrigger !== undefined && data === aliasTrigger) {
-    // Re-opening from navigate mode edits the committed query again.
+  if (isChildOverlaySearchAliasInput(data, aliasTrigger)) {
+    // Re-opening from navigate mode edits the committed query again. It is
+    // matched by the same authority the opener uses, because a reader whose
+    // terminal sends the Kitty form opened search with it and would otherwise
+    // find that the very same key no longer works once search is open.
     return claimed({ ...state, mode: "typing" }, { kind: "reopen" });
   }
   if (state.mode === "navigate") {
