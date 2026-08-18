@@ -17,6 +17,14 @@ import {
   type ArtifactManifest,
   type StableTrainRecord,
 } from "./model.js";
+import {
+  type ReleasePlan,
+  type ReleasePlanBinding,
+  type ReleasePlanError,
+  releasePlanDigest,
+  verifyReleasePlanBinding,
+  verifyReleasePlanDigest,
+} from "./release-plan.js";
 
 export interface UploadedArtifact {
   name: string;
@@ -67,6 +75,86 @@ export interface BindingVerificationContext {
   expectedManifest: ArtifactManifest;
   expectedManifestDigest: string;
   expectedFiles: readonly { filename: string; sha256: string }[];
+}
+
+/** Why uploaded artifacts cannot be bound to a plan. */
+export type PlanBindingError =
+  | ReleasePlanError
+  | { type: "InvalidBoundArtifacts"; reason: string };
+
+/**
+ * A build's outputs, tied to the plan they were built for.
+ *
+ * The uploaded artifacts are cache: losing them never blocks publication
+ * (Task 14 reconstructs), and holding them never authorizes it. Authority is
+ * the plan, and the plan is authoritative only after recomputation.
+ */
+export interface PlanBoundArtifact {
+  /** The digest of the plan these bytes were built for. */
+  planDigest: string;
+  binding: ReleasePlanBinding;
+  artifacts: readonly UploadedArtifact[];
+}
+
+/**
+ * Attaches uploaded artifacts to the plan their build proved.
+ *
+ * The binding is accepted only when it was built at the plan's non-null
+ * `releasedSha`, so a build from any other commit can never become the bytes a
+ * release publishes.
+ */
+export function bindArtifactsToPlan(input: {
+  plan: ReleasePlan;
+  binding: unknown;
+  artifacts: readonly UploadedArtifact[];
+}): Result<PlanBoundArtifact, PlanBindingError> {
+  return validateUploadedArtifacts(input.artifacts).andThen(() =>
+    verifyReleasePlanBinding(input.plan, input.binding).map((binding) => ({
+      planDigest: releasePlanDigest(input.plan),
+      binding,
+      artifacts: input.artifacts,
+    })),
+  );
+}
+
+/** Re-proves a cached plan-bound artifact against a recomputed plan. */
+export function verifyPlanBoundArtifact(
+  bound: PlanBoundArtifact,
+  plan: ReleasePlan,
+): Result<ReleasePlanBinding, PlanBindingError> {
+  return validateUploadedArtifacts(bound.artifacts)
+    .andThen(() => verifyReleasePlanDigest(plan, bound.planDigest))
+    .andThen(() => verifyReleasePlanBinding(plan, bound.binding));
+}
+
+function validateUploadedArtifacts(
+  artifacts: readonly UploadedArtifact[],
+): Result<readonly UploadedArtifact[], PlanBindingError> {
+  if (artifacts.length === 0)
+    return err({
+      type: "InvalidBoundArtifacts",
+      reason: "a build binds at least one uploaded artifact",
+    });
+  if (
+    new Set(artifacts.map((artifact) => artifact.name)).size !==
+    artifacts.length
+  )
+    return err({
+      type: "InvalidBoundArtifacts",
+      reason: "artifact names must be unique",
+    });
+  if (
+    artifacts.some(
+      (artifact) =>
+        !Number.isInteger(artifact.serverArtifactId) ||
+        artifact.serverArtifactId <= 0,
+    )
+  )
+    return err({
+      type: "InvalidBoundArtifacts",
+      reason: "every artifact needs a positive server ID",
+    });
+  return ok(artifacts);
 }
 
 /** Creates the content-addressed record only after all upload responses exist. */
