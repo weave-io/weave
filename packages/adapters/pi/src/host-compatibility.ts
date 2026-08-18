@@ -145,7 +145,13 @@ export interface HostPackageReader {
 export const HOST_RUNTIME_DUPLICATE_REASON = "host-runtime-duplicate" as const;
 
 const MAX_REPORTED_HOST_VERSION_LENGTH = 64;
-const MAX_REPORTED_REDIRECTED_COUNT = 3;
+/**
+ * The health line can never truthfully report more redirects than the closed
+ * host-module set has members: three package entries plus the codex provider
+ * subpath. Kept as a literal so this module never imports the redirect
+ * planner, and asserted against it in the tests.
+ */
+const MAX_REPORTED_REDIRECTED_COUNT = 4;
 
 /**
  * Duplicate host-runtime detection is warning-only. It must not enter

@@ -66,8 +66,11 @@ and `@earendil-works/pi-tui` as peers. They must resolve from the running Pi
 host. A nested copy beside the adapter changes module identity, and with it
 every host-version gate and capability probe.
 
-The Pi extension loader now redirects those three specifiers to the proven host
-copy, so a nested copy no longer silently wins. That redirect is deliberately
+The Pi extension loader now redirects those three specifiers — plus the
+`@earendil-works/pi-ai/providers/openai-codex` subpath the adapter imports
+directly — to the proven host copy, so a nested copy no longer silently wins.
+A subpath resolves to its own file, so redirecting the `pi-ai` package entry
+does not cover it and it is proven on its own. That redirect is deliberately
 fail-open, so it is a safety net rather than permission: keep packaged installs
 free of nested host copies, and when preparing a local extracted package with
 Bun use `bun install --production --omit=peer`. Prove the outcome instead of
@@ -89,8 +92,9 @@ against that host:
 
 - **Positive control.** It starts `pi --mode rpc` with the built extension and
   `WEAVE_PI_HOST_MODULE_PROOF=1`, then requires the proof line's host version to
-  match the host `package.json`, every specifier to load from under the host
-  root, and the live process's OS mappings to contain no `@earendil-works` file
+  match the host `package.json`, every closed specifier to be present and to
+  load from under the host root — including the codex provider subpath, whose
+  effective resolution must be a host file — and the live process's OS mappings to contain no `@earendil-works` file
   under the checkout's `node_modules`.
 - **Negative control.** It repeats the run with
   `WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT=1` and requires those same assertions

@@ -215,7 +215,7 @@ import type {
   CodexFastIntentPort,
 } from "./codex-fast/provider.js";
 import {
-  type CodexFastRegistrationDegradation,
+  type CodexFastRegistrationFailure,
   registerCodexFastProvider,
 } from "./codex-fast/register.js";
 import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
@@ -267,7 +267,12 @@ import {
   readValidatedCommands,
   safeReadHostSurfaceReport,
 } from "./host-inventory.js";
-import { getHostModuleOutcome } from "./host-module-loader.js";
+import {
+  getHostModuleOutcome,
+  getHostModuleProvenance,
+  type PiHostModuleProvenance,
+} from "./host-module-loader.js";
+import { CODEX_PROVIDER_SUBPATH_SPECIFIER } from "./host-module-redirect.js";
 import {
   PiModelActivator,
   type PiModelApplyPort,
@@ -749,6 +754,12 @@ export interface PiCodexFastProviderSeam {
   readonly readHostVersion: () => unknown;
   /** Dynamic import of `@earendil-works/pi-ai/providers/openai-codex`. */
   readonly importProviderModule: () => Promise<unknown>;
+  /**
+   * Provenance of that exact subpath, from this process's host-module proof.
+   * The registration gate refuses to wrap a module it cannot prove is the
+   * host's own copy, because only that copy honors `options.fetch`.
+   */
+  readonly readProviderModuleProvenance: () => PiHostModuleProvenance;
 }
 
 /**
@@ -762,6 +773,11 @@ export const productionCodexFastProviderSeam: PiCodexFastProviderSeam =
       (PiPublicExports as { readonly VERSION?: unknown }).VERSION,
     importProviderModule: (): Promise<unknown> =>
       import("@earendil-works/pi-ai/providers/openai-codex"),
+    // The same literal the import above uses, proven as its own member of the
+    // closed host-module set: redirecting the bare `pi-ai` entry says nothing
+    // about where this subpath loads from.
+    readProviderModuleProvenance: (): PiHostModuleProvenance =>
+      getHostModuleProvenance(CODEX_PROVIDER_SUBPATH_SPECIFIER),
   });
 
 /** Production child-side stdout writer: writes directly to this process's own real stdout, interleaved with Pi's own event/response lines. */
@@ -3162,6 +3178,8 @@ export function createPiExtension(
     const outcome = await registerCodexFastProvider({
       readHostVersion: deps.codexFastProviderSeam.readHostVersion,
       importProviderModule: deps.codexFastProviderSeam.importProviderModule,
+      readProviderModuleProvenance:
+        deps.codexFastProviderSeam.readProviderModuleProvenance,
       // Bound to the host object: a detached method would lose its receiver.
       // A host without the surface passes the raw value through, and the seam
       // reports `register-provider-unavailable` for it.
@@ -3181,9 +3199,14 @@ export function createPiExtension(
           "registered the Weave codex subscription fast provider",
         );
       },
-      (failure: { readonly reason: CodexFastRegistrationDegradation }) => {
+      (failure: CodexFastRegistrationFailure) => {
         deps.logger.warn(
-          { reason: failure.reason },
+          {
+            reason: failure.reason,
+            ...(failure.provenance === undefined
+              ? {}
+              : { provenance: failure.provenance }),
+          },
           "codex subscription fast provider not registered; the host keeps its native provider",
         );
       },

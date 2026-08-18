@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import {
+  CODEX_PROVIDER_SUBPATH_SPECIFIER,
   hostEntrySpecifierFor,
   isSafeAbsoluteHostPath,
   MAX_HOST_MODULE_PATH_LENGTH,
@@ -21,6 +22,7 @@ const HOST_ENTRIES = {
   "@earendil-works/pi-coding-agent": `${HOST_ROOT}/dist/index.js`,
   "@earendil-works/pi-ai": `${HOST_ROOT}/node_modules/@earendil-works/pi-ai/dist/compat.js`,
   "@earendil-works/pi-tui": `${HOST_ROOT}/node_modules/@earendil-works/pi-tui/dist/index.js`,
+  [CODEX_PROVIDER_SUBPATH_SPECIFIER]: `${HOST_ROOT}/node_modules/@earendil-works/pi-ai/dist/providers/openai-codex.js`,
 } as const;
 
 const LOCAL_ROOT = "/Users/jose/projects/weave/node_modules/@earendil-works";
@@ -28,6 +30,7 @@ const LOCAL_ENTRIES = {
   "@earendil-works/pi-coding-agent": `${LOCAL_ROOT}/pi-coding-agent/dist/index.js`,
   "@earendil-works/pi-ai": `${LOCAL_ROOT}/pi-ai/dist/index.js`,
   "@earendil-works/pi-tui": `${LOCAL_ROOT}/pi-tui/dist/index.js`,
+  [CODEX_PROVIDER_SUBPATH_SPECIFIER]: `${LOCAL_ROOT}/pi-ai/dist/providers/openai-codex.js`,
 } as const;
 
 function defaultFacts(specifier: PiHostModuleSpecifier): {
@@ -58,6 +61,9 @@ function facts(
     "@earendil-works/pi-tui":
       overrides?.["@earendil-works/pi-tui"] ??
       defaultFacts("@earendil-works/pi-tui"),
+    [CODEX_PROVIDER_SUBPATH_SPECIFIER]:
+      overrides?.[CODEX_PROVIDER_SUBPATH_SPECIFIER] ??
+      defaultFacts(CODEX_PROVIDER_SUBPATH_SPECIFIER),
   };
 }
 
@@ -73,12 +79,24 @@ function input(
 }
 
 describe("closed host specifier and reason sets", () => {
-  it("names the three Pi host specifiers in loader order", () => {
+  it("names the four Pi host modules in loader order", () => {
     expect(PI_HOST_MODULE_SPECIFIERS).toEqual([
       "@earendil-works/pi-coding-agent",
       "@earendil-works/pi-ai",
       "@earendil-works/pi-tui",
+      "@earendil-works/pi-ai/providers/openai-codex",
     ]);
+  });
+
+  it("keeps the codex provider subpath as its own proof member", () => {
+    // The bare pi-ai entry maps to the compat entry; the subpath resolves to
+    // its own file and must be proven separately.
+    expect(hostEntrySpecifierFor(CODEX_PROVIDER_SUBPATH_SPECIFIER)).toBe(
+      CODEX_PROVIDER_SUBPATH_SPECIFIER,
+    );
+    expect(hostEntrySpecifierFor("@earendil-works/pi-ai")).not.toBe(
+      CODEX_PROVIDER_SUBPATH_SPECIFIER,
+    );
   });
 
   it("closes the redirect-reason union", () => {
@@ -104,7 +122,7 @@ describe("planHostModuleRedirect", () => {
     expect(result.isOk()).toBe(true);
     const plan = result._unsafeUnwrap();
     expect(plan.hostVersion).toBe(HOST_VERSION);
-    expect(plan.redirects).toHaveLength(3);
+    expect(plan.redirects).toHaveLength(4);
     expect(plan.skipped).toEqual([]);
     expect(plan.redirects[0]).toEqual({
       specifier: "@earendil-works/pi-coding-agent",
@@ -130,6 +148,7 @@ describe("planHostModuleRedirect", () => {
     expect(plan.redirects.map((entry) => entry.specifier)).toEqual([
       "@earendil-works/pi-coding-agent",
       "@earendil-works/pi-ai",
+      CODEX_PROVIDER_SUBPATH_SPECIFIER,
     ]);
     expect(plan.skipped).toEqual([
       { specifier: "@earendil-works/pi-tui", reason: "already-host" },
@@ -154,7 +173,7 @@ describe("planHostModuleRedirect", () => {
       specifier: "@earendil-works/pi-ai",
       reason: "no-local-copy",
     });
-    expect(plan.redirects).toHaveLength(2);
+    expect(plan.redirects).toHaveLength(3);
   });
 
   it("skips a local copy when the host entry is missing", () => {
@@ -352,7 +371,7 @@ describe("summarizeHostRedirect and proof record", () => {
     )._unsafeUnwrap();
     const summary = summarizeHostRedirect(plan);
     expect(summary).toBe(
-      "host modules: redirected 2, skipped 1 (no-local-copy)",
+      "host modules: redirected 3, skipped 1 (no-local-copy)",
     );
     expect(summary.length).toBeLessThanOrEqual(160);
     expect(summary).not.toContain(HOST_ROOT);
@@ -366,7 +385,7 @@ describe("summarizeHostRedirect and proof record", () => {
     const plan = planHostModuleRedirect(input())._unsafeUnwrap();
     expect(plan.proof.hostRoot).toBe(HOST_ROOT);
     expect(plan.proof.hostVersion).toBe(HOST_VERSION);
-    expect(plan.proof.specifiers).toHaveLength(3);
+    expect(plan.proof.specifiers).toHaveLength(4);
     expect(plan.proof.specifiers[0]).toEqual({
       specifier: "@earendil-works/pi-coding-agent",
       hostSpecifier: "@earendil-works/pi-coding-agent",

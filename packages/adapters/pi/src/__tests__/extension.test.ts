@@ -67,6 +67,7 @@ import {
   type PiHostSurfaceId,
   type PiHostSurfaceReader,
 } from "../host-inventory.js";
+import type { PiHostModuleProvenance } from "../host-module-loader.js";
 import { FakePathContainmentPort } from "../path-containment.js";
 import { FakePiPlanCatalogPort } from "../plan-catalog.js";
 import type { ProviderFastPublicSnapshot } from "../provider-fast-activation.js";
@@ -9540,6 +9541,32 @@ describe("createPiExtension: provider fast intent", () => {
 /** Never echoed by a log, a status line, a journal entry, or a snapshot. */
 const CODEX_IMPORT_SECRET = "sk-proj-codex-import-secret-DO-NOT-ECHO-77aa11bc";
 
+/** Handed to the seam as a hostile provenance "reason"; never renderable. */
+const CODEX_PROVENANCE_SECRET =
+  "sk-proj-codex-provenance-secret-DO-NOT-ECHO-91ff22de";
+
+/** The other shape a hostile reason takes: an absolute host path. */
+const CODEX_PROVENANCE_SECRET_PATH =
+  "/Users/fixture/node_modules/@earendil-works/pi-ai/providers/openai-codex.js";
+
+/**
+ * The loader's closed provenance reason enum, restated at the assertion site.
+ * A token outside this list reaching a log is the boundary failure these
+ * tests exist to catch.
+ */
+const CODEX_FAST_PROVENANCE_REASON_TOKENS: readonly unknown[] = [
+  "host-root-unproven",
+  "host-package-mismatch",
+  "no-local-copy",
+  "already-host",
+  "local-path-unsafe",
+  "plugin-unavailable",
+  "redirect-registered",
+  "redirect-disabled",
+  "outcome-missing",
+  "specifier-unknown",
+];
+
 const CODEX_PROVIDER_ID = "openai-codex";
 const CODEX_ELIGIBLE_MODEL_ID = "gpt-5.6-sol";
 const CODEX_ELIGIBLE_RULE_ID = "codex-sub-06";
@@ -9583,6 +9610,7 @@ type CodexSeamHarness = {
   readonly nativeCalls: RecordedNativeCall[];
   readonly factoryCalls: () => number;
   readonly importCalls: () => number;
+  readonly provenanceCalls: () => number;
   readonly nativeProviders: () => readonly Record<string, unknown>[];
   /** Attaches `registerProvider` to the fake host, as a real Pi 0.84 host has. */
   readonly attachTo: (host: RecordingFakePiHost) => void;
@@ -9599,6 +9627,12 @@ function codexSeamHarness(
     readonly hostVersion?: string;
     readonly importProviderModule?: () => Promise<unknown>;
     readonly moduleNamespace?: unknown;
+    /**
+     * Provenance of the codex provider subpath itself. Defaults to the proven
+     * host copy; a test that wants the live blocker's shape passes an
+     * `unproven` verdict here while leaving the host version supported.
+     */
+    readonly providerModuleProvenance?: () => PiHostModuleProvenance;
   } = {},
 ): CodexSeamHarness {
   const registered: unknown[] = [];
@@ -9606,6 +9640,7 @@ function codexSeamHarness(
   const nativeProviders: Record<string, unknown>[] = [];
   let factoryCalls = 0;
   let importCalls = 0;
+  let provenanceCalls = 0;
 
   const createNative = (): Record<string, unknown> => {
     const nativeResult = { kind: "native-stream" };
@@ -9636,6 +9671,13 @@ function codexSeamHarness(
 
   const seam: PiCodexFastProviderSeam = {
     readHostVersion: () => options.hostVersion ?? CODEX_SUPPORTED_HOST_VERSION,
+    readProviderModuleProvenance: (): PiHostModuleProvenance => {
+      provenanceCalls += 1;
+      if (options.providerModuleProvenance !== undefined) {
+        return options.providerModuleProvenance();
+      }
+      return { kind: "host", outcome: "redirected" };
+    },
     importProviderModule: () => {
       importCalls += 1;
       if (options.importProviderModule !== undefined) {
@@ -9651,6 +9693,7 @@ function codexSeamHarness(
     nativeCalls,
     factoryCalls: () => factoryCalls,
     importCalls: () => importCalls,
+    provenanceCalls: () => provenanceCalls,
     nativeProviders: () => nativeProviders,
     attachTo: (host) => {
       host.api.registerProvider = (provider: unknown) => {
@@ -9945,6 +9988,321 @@ describe("createPiExtension: codex subscription fast provider", () => {
     ).toContain("health-only");
     expect(harness.registered).toHaveLength(0);
     expect(harness.importCalls()).toBe(0);
+  });
+
+  /**
+   * The Task 11 live blocker, in one test.
+   *
+   * The host package was 0.84.2 — comfortably above the seam floor — while
+   * `@earendil-works/pi-ai/providers/openai-codex` still resolved to the
+   * checkout's pi-ai 0.81.1, whose codex path ignores `options.fetch`. The
+   * wrapper therefore mutated the body to `service_tier: "priority"` and could
+   * never write the routing pair. Registration must refuse before the import,
+   * so no wrapper exists and no `onPayload` of this adapter's can run.
+   */
+  it("refuses to register when the provider subpath is not the proven host copy", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness({
+      hostVersion: CODEX_SUPPORTED_HOST_VERSION,
+      providerModuleProvenance: () => ({
+        kind: "unproven",
+        reason: "no-local-copy",
+      }),
+    });
+    harness.attachTo(host);
+    const logger = new RecordingLogger();
+    const extension = installCodexPrimary(host, harness, {
+      fast: true,
+      overrides: { logger },
+    });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(0);
+    expect(harness.wrapped()).toBeUndefined();
+    // Refused before the import: the unproven module is never even loaded,
+    // so nothing of this adapter's can reach a request body.
+    expect(harness.importCalls()).toBe(0);
+    expect(harness.factoryCalls()).toBe(0);
+    expect(harness.provenanceCalls()).toBe(1);
+    const degradations = logger.entries.filter(
+      (entry) => entry.obj.reason === "provider-module-unproven",
+    );
+    expect(degradations).toHaveLength(1);
+    expect(degradations[0]?.obj.provenance).toBe("no-local-copy");
+    const serialized = JSON.stringify(logger.entries);
+    expect(serialized).not.toContain("@earendil-works/pi-ai");
+    expect(serialized).not.toContain("/node_modules/");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+  });
+
+  it.each([
+    [
+      "a bare-package-only proof, which says nothing about the subpath",
+      (): PiHostModuleProvenance => ({
+        kind: "unproven",
+        reason: "specifier-unknown",
+      }),
+      "specifier-unknown",
+    ],
+    [
+      "a disabled redirect",
+      (): PiHostModuleProvenance => ({
+        kind: "unproven",
+        reason: "redirect-disabled",
+      }),
+      "redirect-disabled",
+    ],
+    [
+      "a plugin that could not install the override",
+      (): PiHostModuleProvenance => ({
+        kind: "unproven",
+        reason: "plugin-unavailable",
+      }),
+      "plugin-unavailable",
+    ],
+    [
+      "no recorded host-module outcome at all",
+      (): PiHostModuleProvenance => ({
+        kind: "unproven",
+        reason: "outcome-missing",
+      }),
+      "outcome-missing",
+    ],
+    [
+      "a probe that throws",
+      (): PiHostModuleProvenance => {
+        throw new Error(CODEX_IMPORT_SECRET);
+      },
+      "outcome-missing",
+    ],
+  ] as const)("registers nothing for %s", async (_label, provenance, expectedToken) => {
+    const host = codexHost();
+    const harness = codexSeamHarness({
+      providerModuleProvenance: provenance,
+    });
+    harness.attachTo(host);
+    const logger = new RecordingLogger();
+    installCodexPrimary(host, harness, { fast: true, overrides: { logger } });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(0);
+    expect(harness.importCalls()).toBe(0);
+    const degradations = logger.entries.filter(
+      (entry) => entry.obj.reason === "provider-module-unproven",
+    );
+    expect(degradations).toHaveLength(1);
+    expect(degradations[0]?.obj.provenance).toBe(expectedToken);
+    expect(JSON.stringify(logger.entries)).not.toContain(CODEX_IMPORT_SECRET);
+  });
+
+  /**
+   * The probe's declared return type is a promise, not a proof.
+   *
+   * `readProviderModuleProvenance` is injected — by `extension-impl`, by a
+   * test, and in principle by anything else holding the seam — and its answer
+   * becomes the `provenance` field of a bounded failure the caller logs
+   * verbatim. So the seam re-checks every answer against the loader's closed
+   * reason enum: an unknown string, a secret- or path-shaped string, a
+   * non-string, an accessor, a throwing trap, and a malformed `host` verdict
+   * all collapse to one of this module's own tokens, and nothing of the
+   * caller's text is ever carried through.
+   */
+  it.each([
+    [
+      "an invented reason token",
+      (): unknown => ({ kind: "unproven", reason: "totally-made-up-reason" }),
+      "outcome-missing",
+    ],
+    [
+      "a secret-shaped reason",
+      (): unknown => ({ kind: "unproven", reason: CODEX_PROVENANCE_SECRET }),
+      "outcome-missing",
+    ],
+    [
+      "a path-shaped reason",
+      (): unknown => ({
+        kind: "unproven",
+        reason: CODEX_PROVENANCE_SECRET_PATH,
+      }),
+      "outcome-missing",
+    ],
+    [
+      "a reason that is an object with a hostile `toString`",
+      (): unknown => ({
+        kind: "unproven",
+        reason: {
+          toString: () => CODEX_PROVENANCE_SECRET,
+        },
+      }),
+      "outcome-missing",
+    ],
+    [
+      "a reason that is not a string at all",
+      (): unknown => ({ kind: "unproven", reason: 42 }),
+      "outcome-missing",
+    ],
+    [
+      "a reason behind a getter that leaks on read",
+      (): unknown => {
+        const verdict = { kind: "unproven" };
+        Object.defineProperty(verdict, "reason", {
+          enumerable: true,
+          get: () => CODEX_PROVENANCE_SECRET,
+        });
+        return verdict;
+      },
+      "outcome-missing",
+    ],
+    [
+      "a reason behind a getter that throws",
+      (): unknown => {
+        const verdict = { kind: "unproven" };
+        Object.defineProperty(verdict, "reason", {
+          enumerable: true,
+          get: () => {
+            throw new Error(CODEX_PROVENANCE_SECRET);
+          },
+        });
+        return verdict;
+      },
+      "outcome-missing",
+    ],
+    [
+      "a reason inherited from a prototype rather than stated as data",
+      (): unknown =>
+        Object.create({ kind: "unproven", reason: "no-local-copy" }) as object,
+      "outcome-missing",
+    ],
+    [
+      "a proxy whose traps throw",
+      (): unknown =>
+        new Proxy(
+          { kind: "unproven", reason: "no-local-copy" },
+          {
+            getOwnPropertyDescriptor: () => {
+              throw new Error(CODEX_PROVENANCE_SECRET);
+            },
+            get: () => {
+              throw new Error(CODEX_PROVENANCE_SECRET);
+            },
+          },
+        ),
+      "outcome-missing",
+    ],
+    [
+      "a bare string where a verdict belongs",
+      (): unknown => CODEX_PROVENANCE_SECRET,
+      "outcome-missing",
+    ],
+    ["a null verdict", (): unknown => null, "outcome-missing"],
+    ["an undefined verdict", (): unknown => undefined, "outcome-missing"],
+    [
+      "a `host` verdict whose outcome is the caller's own string",
+      (): unknown => ({ kind: "host", outcome: CODEX_PROVENANCE_SECRET }),
+      "specifier-unknown",
+    ],
+    [
+      "a `host` verdict whose outcome hides behind a getter",
+      (): unknown => {
+        const verdict = { kind: "host" };
+        Object.defineProperty(verdict, "outcome", {
+          enumerable: true,
+          get: () => "redirected",
+        });
+        return verdict;
+      },
+      "specifier-unknown",
+    ],
+    [
+      "a `kind` that hides behind a getter claiming the host copy",
+      (): unknown => {
+        const verdict = { outcome: "redirected", reason: "no-local-copy" };
+        Object.defineProperty(verdict, "kind", {
+          enumerable: true,
+          get: () => "host",
+        });
+        return verdict;
+      },
+      "no-local-copy",
+    ],
+  ] as const)("bounds the logged provenance token for %s", async (_label, verdict, expectedToken) => {
+    const host = codexHost();
+    const harness = codexSeamHarness({
+      providerModuleProvenance:
+        verdict as unknown as () => PiHostModuleProvenance,
+    });
+    harness.attachTo(host);
+    const logger = new RecordingLogger();
+    const extension = installCodexPrimary(host, harness, {
+      fast: true,
+      overrides: { logger },
+    });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(0);
+    expect(harness.wrapped()).toBeUndefined();
+    expect(harness.importCalls()).toBe(0);
+    expect(harness.factoryCalls()).toBe(0);
+    const degradations = logger.entries.filter(
+      (entry) => entry.obj.reason === "provider-module-unproven",
+    );
+    expect(degradations).toHaveLength(1);
+    expect(degradations[0]?.obj.provenance).toBe(expectedToken);
+    // The token is a member of the loader's closed enum, so a consumer may
+    // render it as-is.
+    expect(CODEX_FAST_PROVENANCE_REASON_TOKENS).toContain(
+      degradations[0]?.obj.provenance,
+    );
+    const serialized = JSON.stringify([
+      logger.entries,
+      host.statusCalls,
+      extension.providerFastLatestForTest(),
+    ]);
+    expect(serialized).not.toContain(CODEX_PROVENANCE_SECRET);
+    expect(serialized).not.toContain("totally-made-up-reason");
+    expect(serialized).not.toContain("/node_modules/");
+    expect(serialized).not.toContain("@earendil-works/pi-ai");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+  });
+
+  it("registers when the subpath is already the host copy, with no redirect", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness({
+      providerModuleProvenance: () => ({
+        kind: "host",
+        outcome: "already-host",
+      }),
+    });
+    harness.attachTo(host);
+    installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(1);
+    expect(harness.wrapped()?.id).toBe(CODEX_PROVIDER_ID);
+  });
+
+  it("checks provenance even when the host version passes", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness({ hostVersion: "0.82.9" });
+    harness.attachTo(host);
+    installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+
+    // Version is the first gate, so an unsupported host stops before the
+    // provenance probe and the reported token stays the version one.
+    expect(harness.provenanceCalls()).toBe(0);
   });
 
   it.each([

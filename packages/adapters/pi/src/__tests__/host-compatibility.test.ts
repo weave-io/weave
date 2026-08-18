@@ -14,6 +14,7 @@ import {
   resolveReportedHostIdentity,
   UNKNOWN_HOST_VERSION,
 } from "../host-compatibility.js";
+import { PI_HOST_MODULE_SPECIFIERS } from "../host-module-redirect.js";
 
 describe("renderHostCapabilityGapDiagnostic", () => {
   const diagnostic: HostCapabilityGapDiagnostic = {
@@ -264,9 +265,22 @@ describe("renderHostRuntimeHealthLine", () => {
     const line = renderHostRuntimeHealthLine({
       importedVersion: "0.84.2",
       provenVersion: "0.84.2",
-      redirectedCount: 3,
+      // The closed host-module set: three package entries plus the codex
+      // provider subpath.
+      redirectedCount: PI_HOST_MODULE_SPECIFIERS.length,
     });
-    expect(line).toBe("host runtime: single-copy; redirected 3");
+    expect(line).toBe("host runtime: single-copy; redirected 4");
+    // The rendered ceiling must stay the closed set's size, so the line can
+    // never claim more redirects than there are host modules.
+    expect(
+      renderHostRuntimeHealthLine({
+        importedVersion: "0.84.2",
+        provenVersion: "0.84.2",
+        redirectedCount: PI_HOST_MODULE_SPECIFIERS.length + 5,
+      }),
+    ).toBe(
+      `host runtime: single-copy; redirected ${PI_HOST_MODULE_SPECIFIERS.length}`,
+    );
     expect(line).not.toContain("health-only");
     expect(line.includes("/")).toBe(false);
   });

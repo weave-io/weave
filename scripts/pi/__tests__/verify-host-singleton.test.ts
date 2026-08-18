@@ -33,8 +33,11 @@ const HOST_AI_ENTRY =
   "/opt/pi/node_modules/@earendil-works/pi-ai/dist/compat.js";
 const HOST_TUI_ENTRY =
   "/opt/pi/node_modules/@earendil-works/pi-tui/dist/index.js";
+const HOST_CODEX_SUBPATH_ENTRY =
+  "/opt/pi/node_modules/@earendil-works/pi-ai/dist/providers/openai-codex.js";
 const CHECKOUT_ROOT = "/Users/jose/projects/weave";
 const LOCAL_ENTRY = `${CHECKOUT_ROOT}/node_modules/.bun/@earendil-works+pi-coding-agent@0.81.1/node_modules/@earendil-works/pi-coding-agent/dist/index.js`;
+const LOCAL_CODEX_SUBPATH_ENTRY = `${CHECKOUT_ROOT}/node_modules/.bun/@earendil-works+pi-ai@0.81.1/node_modules/@earendil-works/pi-ai/dist/providers/openai-codex.js`;
 
 function redirectedProof(): ParsedHostModuleProof {
   return {
@@ -57,6 +60,12 @@ function redirectedProof(): ParsedHostModuleProof {
         loadedFrom: HOST_TUI_ENTRY,
         redirected: true,
       },
+      {
+        specifier: "@earendil-works/pi-ai/providers/openai-codex",
+        bareResolution: LOCAL_CODEX_SUBPATH_ENTRY,
+        loadedFrom: HOST_CODEX_SUBPATH_ENTRY,
+        redirected: true,
+      },
     ],
   };
 }
@@ -74,6 +83,11 @@ function disabledProof(): ParsedHostModuleProof {
       },
       {
         specifier: "@earendil-works/pi-tui",
+        redirected: false,
+      },
+      {
+        specifier: "@earendil-works/pi-ai/providers/openai-codex",
+        bareResolution: LOCAL_CODEX_SUBPATH_ENTRY,
         redirected: false,
       },
     ],
@@ -357,18 +371,16 @@ describe("evaluateSingletonProof", () => {
   });
 
   it("requires a differing bareResolution when a checkout copy exists", () => {
+    const clean = redirectedProof();
     const result = evaluateSingletonProof({
       proof: {
         hostRoot: HOST_ROOT,
         hostVersion: "0.84.2",
-        specifiers: [
-          {
-            specifier: "@earendil-works/pi-coding-agent",
-            bareResolution: HOST_ENTRY,
-            loadedFrom: HOST_ENTRY,
-            redirected: false,
-          },
-        ],
+        specifiers: clean.specifiers.map((entry) => ({
+          ...entry,
+          bareResolution: entry.loadedFrom,
+          redirected: false,
+        })),
       },
       expectedHostVersion: "0.84.2",
       expectedHostRoot: HOST_ROOT,
@@ -377,6 +389,56 @@ describe("evaluateSingletonProof", () => {
       checkoutRoot: CHECKOUT_ROOT,
     });
     expect(result.verdict).toBe("redirect-not-observed");
+  });
+
+  it("detects a codex subpath that resolves to a second copy", () => {
+    // Exactly the live blocker: the three package entries are redirected to
+    // the host while the provider subpath still loads the checkout's pi-ai.
+    const proof = redirectedProof();
+    const result = evaluateSingletonProof({
+      proof: {
+        ...proof,
+        specifiers: proof.specifiers.map((entry) =>
+          entry.specifier === "@earendil-works/pi-ai/providers/openai-codex"
+            ? {
+                specifier: entry.specifier,
+                bareResolution: LOCAL_CODEX_SUBPATH_ENTRY,
+                redirected: false,
+              }
+            : entry,
+        ),
+      },
+      expectedHostVersion: "0.84.2",
+      expectedHostRoot: HOST_ROOT,
+      checkoutCopyExists: true,
+      mappedPaths: [HOST_ENTRY, HOST_AI_ENTRY],
+      checkoutRoot: CHECKOUT_ROOT,
+    });
+    expect(result.verdict).toBe("subpath-not-host");
+    expect(
+      result.reasons.some((reason) =>
+        reason.includes("providers/openai-codex"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a proof line that omits the codex subpath entirely", () => {
+    const proof = redirectedProof();
+    const result = evaluateSingletonProof({
+      proof: {
+        ...proof,
+        specifiers: proof.specifiers.filter(
+          (entry) =>
+            entry.specifier !== "@earendil-works/pi-ai/providers/openai-codex",
+        ),
+      },
+      expectedHostVersion: "0.84.2",
+      expectedHostRoot: HOST_ROOT,
+      checkoutCopyExists: true,
+      mappedPaths: [HOST_ENTRY, HOST_AI_ENTRY],
+      checkoutRoot: CHECKOUT_ROOT,
+    });
+    expect(result.verdict).toBe("proof-incomplete");
   });
 });
 

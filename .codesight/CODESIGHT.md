@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 316 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~34,700 tokens. Without it, AI exploration would cost ~101,200 tokens. **Saves ~66,500 tokens per conversation.**
-> **Last scanned:** 2026-08-18 08:52 — re-run after significant changes
+> **Last scanned:** 2026-08-18 09:19 — re-run after significant changes
 
 ---
 
@@ -748,21 +748,21 @@
   - function createDefaultPiHostProbePort: (input) => PiHostProbePort
   - _...11 more_
 - `packages/adapters/pi/src/host-module-loader.ts`
+  - function resolveHostModuleProvenance: (specifier, outcome) => PiHostModuleProvenance
   - function escapeExactPathRegExp: (value) => string
   - function exactPathLoadFilter: (exactPath) => RegExp
   - function deriveHostPackageRoot: (cliEntryPath) => Result<string,
   - function renderHostModuleProofLine: (outcome) => string
   - function maybeWriteHostModuleProofLine: (outcome, options?) => boolean
-  - function resolveHostModules: (env, options?) => ResultAsync<PiHostModuleOutcome, never>
-  - _...20 more_
+  - _...24 more_
 - `packages/adapters/pi/src/host-module-redirect.ts`
   - function hostEntrySpecifierFor: (specifier) => string
+  - function isPiHostModuleSpecifier: (value) => value is PiHostModuleSpecifier
   - function isSafeAbsoluteHostPath: (value) => boolean
   - function planHostModuleRedirect: (input) => Result<PiHostRedirectPlan, PiHostRedirectDiagnostic>
   - function renderHostReexportStub: (input) => string
   - function summarizeHostRedirect: (plan) => string
-  - interface PiHostSpecifierFacts
-  - _...13 more_
+  - _...15 more_
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator

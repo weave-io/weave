@@ -324,3 +324,70 @@ Post-restoration checks:
    `verify:pi-host-singleton` cannot report `single-copy` while a subpath loads a different copy.
 5. Re-run all five stages, including the fast, control, gateway, delegation, and direct-step probes
    in this note.
+
+## 8. Remediation (2026-08-18, later the same day)
+
+The failure record above stands as written. This section records what was
+changed in response to it. **Task 11 remains unchecked**: the five stages have
+not been re-run, and nothing here is a substitute for them.
+
+### What changed
+
+1. **The closed host-module proof set now has four members.**
+   `@earendil-works/pi-ai/providers/openai-codex` joins the three package
+   entries as a distinct exact specifier, with its own host resolution, local
+   resolution, exact-path `onLoad` override, and proof entry. A subpath
+   resolves to its own file, which is exactly why redirecting the `pi-ai`
+   package entry proved nothing about it (§4.5, item 4).
+2. **Registration now demands positive provenance for that exact module.**
+   `registerCodexFastProvider` gains a `readProviderModuleProvenance` probe and
+   evaluates it after the host-version floor and *before* the dynamic import.
+   Only `host` / `redirected` and `host` / `already-host` allow registration.
+   `no-local-copy`, `host-root-unproven`, `host-package-mismatch`,
+   `local-path-unsafe`, `plugin-unavailable`, `redirect-disabled`,
+   `specifier-unknown` (the bare-package-only proof), `outcome-missing`, and a
+   throwing probe all register nothing, import nothing, and report the bounded
+   token `provider-module-unproven` with a bounded `provenance` reason. Because
+   nothing is registered, the host keeps its native provider and no `onPayload`
+   of this adapter's can run — which is the terminal, bounded answer to §7
+   items 1 and 2 at the registration seam.
+3. **`verify:pi-host-singleton` can no longer print PASS over this gap.** The
+   evaluator now requires every closed specifier to appear in the proof line
+   (`proof-incomplete` otherwise) and requires the codex subpath's effective
+   resolution — `loadedFrom` when redirected, `bareResolution` when not — to be
+   a file under the host root, with the new verdict `subpath-not-host`.
+4. **Health output stays bounded and path-free.** The line is unchanged in
+   shape; only its truthful ceiling moved from 3 to 4
+   (`host runtime: single-copy; redirected 4`).
+
+### Checks run for the remediation
+
+| Check | Result |
+| --- | --- |
+| `bun test packages/adapters/pi/src scripts/pi` | **3746 pass, 0 fail** (164 files) |
+| `bun run typecheck` | pass |
+| `bun run lint` | pass; 362 warnings / 71 infos, identical to the pre-change baseline |
+| `bun scripts/build-public-packages.ts` | pass |
+| `bun run docs:check-links` | pass |
+| `bun run verify:pi-host-singleton` | **PASS** `hostVersion=0.84.2 positive=single-copy negative=duplicate-detected` |
+
+The real-process proof line from that run shows the previously escaping module
+redirected, in the same worktree whose checkout copy caused the failure:
+
+```
+@earendil-works/pi-ai/providers/openai-codex
+  bareResolution  <worktree>/node_modules/.bun/@earendil-works+pi-ai@0.81.1+…/dist/providers/openai-codex.js
+  loadedFrom      <host root>/node_modules/@earendil-works/pi-ai/dist/providers/openai-codex.js
+  redirected      true
+```
+
+New unit coverage reproduces the exact old shape — host `0.84.2` with an
+unproven provider subpath — and proves registration is refused before the
+import, with no wrapped provider and no native provider even constructed.
+
+### Still outstanding for Task 11
+
+Items 3 and 5 of §7 are untouched by this commit: no terminal snapshot is
+emitted for an eligible attempt that never reached `requested` beyond the
+existing hook-seam fallback, and the five stages must be re-run in full,
+including the fast, control, gateway, delegation, and direct-step probes.
