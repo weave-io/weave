@@ -1,11 +1,4 @@
-import {
-  err,
-  errAsync,
-  ok,
-  okAsync,
-  type Result,
-  ResultAsync,
-} from "neverthrow";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { RELEASE_CONTROL_REF } from "./constants.js";
 import type { GitHubError } from "./errors.js";
 
@@ -1037,8 +1030,11 @@ export class GitHubRestClient
     bounds: { maxPages: number } = this.greenHeadBounds,
   ): ResultAsync<readonly T[], GitHubError> {
     return fromAsync(async () => {
+      const startUrl = this.repoUrl(startPath);
+      const initialUrl = parsePaginationUrl(startUrl, startUrl);
+      if (initialUrl.isErr()) return err(initialUrl.error);
       const collected: T[] = [];
-      let url: string | null = this.repoUrl(startPath);
+      let url: string | null = startUrl;
       for (let page = 1; page <= bounds.maxPages; page += 1) {
         if (url === null) break;
         const pageDocument: Result<
@@ -1060,7 +1056,18 @@ export class GitHubRestClient
               `reported ${parsed.value.totalCount} items but only ${collected.length} were returned`,
             ),
           );
-        url = pageDocument.value.nextUrl;
+        if (pageDocument.value.nextUrl !== null) {
+          const next = validatePaginationContinuation(
+            pageDocument.value.nextUrl,
+            initialUrl.value,
+            url,
+            page,
+          );
+          if (next.isErr()) return err(next.error);
+          url = next.value;
+        } else {
+          url = null;
+        }
         if (url !== null && page === bounds.maxPages)
           return err(
             truncatedResponse(url, `exceeded ${bounds.maxPages} pages`),
@@ -1101,10 +1108,15 @@ export class GitHubRestClient
       return ResultAsync.fromThrowable(
         () => response.json(),
         () => invalidResponse(url),
-      )().map((value) => ({
-        value,
-        nextUrl: nextLink(response.headers.get("link")),
-      }));
+      )().andThen((value) => {
+        const next = nextLink(response.headers.get("link"), url);
+        if (next.isErr())
+          return errAsync<
+            { value: unknown; nextUrl: string | null },
+            GitHubError
+          >(next.error);
+        return okAsync({ value, nextUrl: next.value });
+      });
     });
   }
 
@@ -1937,13 +1949,326 @@ function parseLabelNames(value: unknown): readonly string[] | undefined {
     : (names as string[]);
 }
 
-function nextLink(header: string | null): string | null {
-  if (header === null || header.length === 0) return null;
-  for (const part of header.split(",")) {
-    const match = part.match(/<([^>]+)>\s*;\s*rel="?next"?/i);
-    if (match?.[1] !== undefined) return match[1];
+interface ParsedLinkValue {
+  target: string;
+  relations: readonly string[];
+}
+
+/**
+ * Parses the Link header before the collector considers whether to continue.
+ * A missing header is the only complete-page signal for "no next page";
+ * present-but-invalid syntax is always a typed refusal.
+ */
+function nextLink(
+  header: string | null,
+  operation: string,
+): Result<string | null, GitHubError> {
+  if (header === null) return ok(null);
+  if (header.trim().length === 0)
+    return err(paginationError(operation, "Link header is empty"));
+
+  const parsed = parseLinkValues(header, operation);
+  if (parsed.isErr()) return err(parsed.error);
+  let next: string | undefined;
+  for (const link of parsed.value) {
+    const nextRelations = link.relations.filter(
+      (relation) => relation.toLowerCase() === "next",
+    );
+    if (nextRelations.length > 1)
+      return err(
+        paginationError(operation, "a link contains duplicate rel=next values"),
+      );
+    if (nextRelations.length === 0) continue;
+    if (next !== undefined)
+      return err(
+        paginationError(
+          operation,
+          "Link header contains multiple rel=next links",
+        ),
+      );
+    next = link.target;
   }
-  return null;
+  return ok(next ?? null);
+}
+
+function parseLinkValues(
+  header: string,
+  operation: string,
+): Result<readonly ParsedLinkValue[], GitHubError> {
+  const links: ParsedLinkValue[] = [];
+  let index = 0;
+  while (index < header.length) {
+    while (isLinkWhitespace(header[index])) index += 1;
+    if (index >= header.length)
+      return err(
+        paginationError(operation, "Link header has a trailing comma"),
+      );
+    if (header[index] !== "<")
+      return err(paginationError(operation, "Link value must start with '<'"));
+    index += 1;
+    const targetStart = index;
+    while (index < header.length && header[index] !== ">") {
+      if (header[index] === "\r" || header[index] === "\n")
+        return err(
+          paginationError(operation, "Link URI contains a line break"),
+        );
+      index += 1;
+    }
+    if (index >= header.length)
+      return err(paginationError(operation, "Link URI is not closed"));
+    const target = header.slice(targetStart, index);
+    if (target.length === 0 || /\s/.test(target))
+      return err(paginationError(operation, "Link URI is malformed"));
+    index += 1;
+
+    const parameters = new Map<string, string>();
+    let nextEntry = false;
+    while (true) {
+      while (isLinkWhitespace(header[index])) index += 1;
+      if (index >= header.length) break;
+      if (header[index] === ",") {
+        index += 1;
+        nextEntry = true;
+        break;
+      }
+      if (header[index] !== ";")
+        return err(
+          paginationError(
+            operation,
+            "Link parameters must be separated by ';'",
+          ),
+        );
+      index += 1;
+      while (isLinkWhitespace(header[index])) index += 1;
+      const nameStart = index;
+      while (index < header.length && isLinkTokenChar(header[index]))
+        index += 1;
+      if (nameStart === index)
+        return err(
+          paginationError(operation, "Link parameter name is missing"),
+        );
+      const name = header.slice(nameStart, index).toLowerCase();
+      while (isLinkWhitespace(header[index])) index += 1;
+      if (header[index] !== "=")
+        return err(
+          paginationError(operation, `Link parameter ${name} has no value`),
+        );
+      index += 1;
+      while (isLinkWhitespace(header[index])) index += 1;
+      const parameter = readLinkParameterValue(header, index);
+      if (parameter === undefined)
+        return err(
+          paginationError(operation, `Link parameter ${name} is malformed`),
+        );
+      index = parameter.nextIndex;
+      if (parameters.has(name))
+        return err(
+          paginationError(operation, `Link parameter ${name} is duplicated`),
+        );
+      parameters.set(name, parameter.value);
+    }
+    const rel = parameters.get("rel");
+    const relations =
+      rel === undefined
+        ? []
+        : rel.split(/[ \t]+/u).filter((relation) => relation.length > 0);
+    if (rel !== undefined && relations.length === 0)
+      return err(paginationError(operation, "Link rel is empty"));
+    links.push({ target, relations });
+    if (!nextEntry) break;
+  }
+  return ok(links);
+}
+
+function readLinkParameterValue(
+  header: string,
+  start: number,
+): { value: string; nextIndex: number } | undefined {
+  if (header[start] === '"') {
+    let index = start + 1;
+    let value = "";
+    while (index < header.length) {
+      const character = header[index];
+      if (character === "\\") {
+        if (index + 1 >= header.length) return undefined;
+        value += header[index + 1];
+        index += 2;
+        continue;
+      }
+      if (character === '"') return { value, nextIndex: index + 1 };
+      if (character === "\r" || character === "\n") return undefined;
+      value += character;
+      index += 1;
+    }
+    return undefined;
+  }
+  let index = start;
+  while (
+    index < header.length &&
+    !isLinkWhitespace(header[index]) &&
+    header[index] !== ";" &&
+    header[index] !== ","
+  ) {
+    if (!isLinkTokenChar(header[index])) return undefined;
+    index += 1;
+  }
+  if (index === start) return undefined;
+  return { value: header.slice(start, index), nextIndex: index };
+}
+
+function isLinkWhitespace(value: string | undefined): boolean {
+  return value === " " || value === "\t";
+}
+
+function isLinkTokenChar(value: string | undefined): boolean {
+  return value !== undefined && /^[A-Za-z0-9!#$%&'*+\-.^_`|~]$/u.test(value);
+}
+
+function parsePaginationUrl(
+  value: string,
+  operation: string,
+  base?: string,
+): Result<URL, GitHubError> {
+  return Result.fromThrowable(
+    () => (base === undefined ? new URL(value) : new URL(value, base)),
+    () => paginationError(operation, "URL is malformed"),
+  )();
+}
+
+function validatePaginationContinuation(
+  nextUrl: string,
+  initialUrl: URL,
+  currentUrl: string,
+  currentPage: number,
+): Result<string, GitHubError> {
+  const parsed = parsePaginationUrl(nextUrl, currentUrl, currentUrl);
+  if (parsed.isErr()) return err(parsed.error);
+  const candidate = parsed.value;
+  if (candidate.origin !== initialUrl.origin)
+    return err(
+      paginationError(
+        currentUrl,
+        "next URL is outside the configured API origin",
+      ),
+    );
+  if (candidate.username !== "" || candidate.password !== "")
+    return err(paginationError(currentUrl, "next URL contains userinfo"));
+  if (candidate.hash !== "")
+    return err(paginationError(currentUrl, "next URL contains a fragment"));
+  if (candidate.pathname !== initialUrl.pathname)
+    return err(
+      paginationError(
+        currentUrl,
+        "next URL does not target the initial repository collection",
+      ),
+    );
+
+  const initialQuery = queryEntries(initialUrl, currentUrl);
+  if (initialQuery.isErr()) return err(initialQuery.error);
+  const continuationQuery = queryEntries(candidate, currentUrl);
+  if (continuationQuery.isErr()) return err(continuationQuery.error);
+
+  const initialNonPage = new Map(
+    initialQuery.value.filter(([name]) => name !== "page"),
+  );
+  const continuationNonPage = new Map(
+    continuationQuery.value.filter(([name]) => name !== "page"),
+  );
+  if (initialNonPage.size !== continuationNonPage.size)
+    return err(
+      paginationError(currentUrl, "next URL changes the collection query"),
+    );
+  for (const [name, value] of initialNonPage) {
+    if (continuationNonPage.get(name) !== value)
+      return err(
+        paginationError(currentUrl, "next URL changes the collection query"),
+      );
+  }
+
+  const initialPage = initialQuery.value.find(([name]) => name === "page")?.[1];
+  if (initialPage !== undefined) {
+    if (
+      rawQueryValue(initialUrl, "page") !== initialPage ||
+      parseCanonicalPage(initialPage) !== 1
+    )
+      return err(
+        paginationError(
+          currentUrl,
+          "initial page must be the canonical page 1",
+        ),
+      );
+  }
+  const continuationPage = continuationQuery.value.find(
+    ([name]) => name === "page",
+  )?.[1];
+  if (continuationPage === undefined)
+    return err(paginationError(currentUrl, "next URL has no page parameter"));
+  if (rawQueryValue(candidate, "page") !== continuationPage)
+    return err(
+      paginationError(currentUrl, "next URL page must use canonical encoding"),
+    );
+  const page = parseCanonicalPage(continuationPage);
+  if (page === undefined)
+    return err(
+      paginationError(
+        currentUrl,
+        "next URL page must be a canonical positive integer",
+      ),
+    );
+  if (page !== currentPage + 1)
+    return err(
+      paginationError(
+        currentUrl,
+        `next URL page must advance to ${currentPage + 1}`,
+      ),
+    );
+  return ok(candidate.href);
+}
+
+function queryEntries(
+  url: URL,
+  operation: string,
+): Result<readonly [string, string][], GitHubError> {
+  const rawQuery = url.search.slice(1);
+  if (rawQuery !== "" && rawQuery.split("&").some((part) => part === ""))
+    return err(paginationError(operation, "query contains an empty parameter"));
+  const entries: [string, string][] = [];
+  const names = new Set<string>();
+  for (const [name, value] of url.searchParams.entries()) {
+    if (names.has(name))
+      return err(
+        paginationError(operation, `query parameter ${name} is duplicated`),
+      );
+    names.add(name);
+    entries.push([name, value]);
+  }
+  return ok(entries);
+}
+
+function rawQueryValue(url: URL, name: string): string | undefined {
+  for (const part of url.search.slice(1).split("&")) {
+    const separator = part.indexOf("=");
+    const rawName = separator === -1 ? part : part.slice(0, separator);
+    if (rawName === name)
+      return separator === -1 ? "" : part.slice(separator + 1);
+  }
+  return undefined;
+}
+
+function parseCanonicalPage(value: string): number | undefined {
+  if (!/^[1-9][0-9]*$/u.test(value)) return undefined;
+  const page = Number(value);
+  return Number.isSafeInteger(page) && String(page) === value
+    ? page
+    : undefined;
+}
+
+function paginationError(operation: string, message: string): GitHubError {
+  return {
+    type: "GitHubError",
+    operation,
+    message: `invalid GitHub pagination: ${message}`,
+  };
 }
 
 function isNonNegativeInt(value: unknown): value is number {

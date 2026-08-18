@@ -167,6 +167,7 @@ interface FakeHooks {
   beforeCreatePullRequest?: () => void;
   afterCreatePullRequest?: () => void;
   afterUpdatePullRequest?: () => void;
+  beforeListOpenPullRequestsByLabel?: (count: number) => void;
   beforeReadMain?: (count: number) => void;
 }
 
@@ -180,6 +181,7 @@ class FakeGitHub {
   readonly log: string[] = [];
   readonly createdRefs: { ref: string; sha: string }[] = [];
   mainReads = 0;
+  labeledPullReads = 0;
   private commitCounter = 0;
   private generationCounter = 0;
   private pullCounter = 0;
@@ -332,6 +334,8 @@ class FakeGitHub {
   listOpenPullRequestsByLabel(
     label: string,
   ): ResultAsync<readonly GitHubPullRequestSummary[], GitHubError> {
+    this.labeledPullReads += 1;
+    this.hooks.beforeListOpenPullRequestsByLabel?.(this.labeledPullReads);
     if (this.consume("listPulls"))
       return errAsync(failure("listOpenPullRequestsByLabel"));
     return okAsync(
@@ -972,6 +976,58 @@ describe("discovery", () => {
     expect((await discover(world)).kind).toBe("absent");
   });
 
+  it("stabilizes a marker and PR created between the initial reads", async () => {
+    const world = new FakeGitHub();
+    const ownership = await acquire(world);
+    const markerCommit = world.commits.get(ownership.expectedMarkerSha);
+    const markerEnvelope = parseReleasePrEnvelope(
+      markerCommit?.message ?? "",
+    )._unsafeUnwrap();
+    const markerBody = renderReleasePrEnvelope(markerEnvelope)._unsafeUnwrap();
+    world.refs.delete(REF_PATH);
+    world.labeledPullReads = 0;
+    let interleaved = false;
+    world.hooks.beforeListOpenPullRequestsByLabel = (count) => {
+      if (count !== 1 || interleaved) return;
+      interleaved = true;
+      world.refs.set(REF_PATH, ownership.expectedMarkerSha);
+      world.openPullRequest({
+        title: "release",
+        body: markerBody,
+        headRef: RELEASE_PR_MARKER_REF,
+        baseRef: "main",
+        labels: [RELEASE_PR_LABEL],
+      });
+    };
+
+    const result = await manager(world).discover();
+    expect(interleaved).toBe(true);
+    expect(result._unsafeUnwrap()).toMatchObject({
+      kind: "live",
+      marker: { sha: ownership.expectedMarkerSha },
+      pullRequest: { number: 1 },
+    });
+    expect(world.createdRefs).toHaveLength(1);
+  });
+
+  it("keeps a genuine orphan PR anomalous after the authoritative re-read", async () => {
+    const world = new FakeGitHub();
+    world.openPullRequest({
+      title: "release",
+      body: "",
+      headRef: RELEASE_PR_MARKER_REF,
+      baseRef: "main",
+      labels: [RELEASE_PR_LABEL],
+    });
+    const result = await manager(world).discover();
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "ReleasePrProtocolAnomaly",
+      ref: RELEASE_PR_MARKER_REF,
+      url: "https://github.com/weave-io/weave/pull/1",
+    });
+    expect(world.labeledPullReads).toBe(2);
+  });
+
   it("reports creation in progress, then live, then marker cleanup pending", async () => {
     const world = new FakeGitHub();
     await acquire(world);
@@ -1011,19 +1067,6 @@ describe("discovery", () => {
       kind: "creation-cleanup-pending",
       generationMatches: false,
     });
-  });
-
-  it("is a typed protocol anomaly when a release PR has no marker", async () => {
-    const world = new FakeGitHub();
-    world.openPullRequest({
-      title: "release",
-      body: "",
-      headRef: RELEASE_PR_MARKER_REF,
-      baseRef: "main",
-      labels: [RELEASE_PR_LABEL],
-    });
-    const state = await manager(world).discover();
-    expect(state._unsafeUnwrapErr().type).toBe("ReleasePrProtocolAnomaly");
   });
 
   it("blocks discovery on a stable-labeled PR from a noncanonical head", async () => {

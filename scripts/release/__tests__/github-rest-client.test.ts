@@ -36,6 +36,7 @@ interface Call {
   method: string;
   url: string;
   body: string | null;
+  authorization?: string | null;
 }
 
 const REPO_NODE_ID = "R_weave";
@@ -199,6 +200,7 @@ function isString(value: unknown): value is string {
 function client(
   routes: Record<string, Route>,
   options: GitHubRestClientOptions = {},
+  token = "token",
 ): {
   client: GitHubRestClient;
   calls: Call[];
@@ -213,6 +215,7 @@ function client(
       method,
       url,
       body: typeof init?.body === "string" ? init.body : null,
+      authorization: new Headers(init?.headers).get("authorization"),
     });
     const key = `${method} ${url.replace("https://api.github.com", "")}`;
     const route = routes[key];
@@ -228,7 +231,7 @@ function client(
   return {
     client: new GitHubRestClient(
       "weave-io/weave",
-      "token",
+      token,
       fetchLike,
       "https://api.github.com",
       options,
@@ -959,6 +962,166 @@ test("release PR collection follows Link pagination before filtering", async () 
     "open",
   );
   expect(byHead._unsafeUnwrap().map((pull) => pull.number)).toEqual([7]);
+});
+
+const PAGINATION_TOKEN = "release-pagination-token-sentinel";
+const PULLS_PAGE_ONE = "/repos/weave-io/weave/pulls?state=open&per_page=1";
+
+function pagedPullClient(link: string) {
+  return client(
+    {
+      [`GET ${PULLS_PAGE_ONE}`]: {
+        body: [],
+        headers: { link },
+      },
+    },
+    { pullRequestBounds: { pageSize: 1, maxPages: 3 } },
+    PAGINATION_TOKEN,
+  );
+}
+
+async function expectRejectedPullContinuation(link: string): Promise<void> {
+  const world = pagedPullClient(link);
+  const result =
+    await world.client.listOpenPullRequestsByLabel("release:stable");
+  expect(result.isErr()).toBe(true);
+  if (result.isErr()) expect(result.error.type).toBe("GitHubError");
+  expect(world.calls).toHaveLength(1);
+  expect(world.calls[0]?.authorization).toBe(`Bearer ${PAGINATION_TOKEN}`);
+}
+
+test("absent Link means complete, but malformed Link is a typed error", async () => {
+  const complete = client(
+    { [`GET ${PULLS_PAGE_ONE}`]: { body: [] } },
+    { pullRequestBounds: { pageSize: 1, maxPages: 3 } },
+    PAGINATION_TOKEN,
+  );
+  expect(
+    (
+      await complete.client.listOpenPullRequestsByLabel("release:stable")
+    )._unsafeUnwrap(),
+  ).toEqual([]);
+
+  await expectRejectedPullContinuation("not a Link value");
+});
+
+test("rejects an off-origin next URL before sending the bearer token", async () => {
+  await expectRejectedPullContinuation(
+    '<https://evil.example.invalid/repos/weave-io/weave/pulls?state=open&per_page=1&page=2>; rel="next"',
+  );
+});
+
+test("rejects same-origin repository and collection-path changes", async () => {
+  await expectRejectedPullContinuation(
+    '<https://api.github.com/repos/other/repo/pulls?state=open&per_page=1&page=2>; rel="next"',
+  );
+  await expectRejectedPullContinuation(
+    '<https://api.github.com/repos/weave-io/weave/issues?state=open&per_page=1&page=2>; rel="next"',
+  );
+});
+
+test("rejects duplicate rel=next links", async () => {
+  await expectRejectedPullContinuation(
+    '<https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&page=2>; rel="next", <https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&page=2>; rel="next"',
+  );
+});
+
+test("rejects duplicate, bad, and skipped page values", async () => {
+  for (const page of ["2&page=2", "0", "not-a-number", "3"]) {
+    await expectRejectedPullContinuation(
+      `<https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&page=${page}>; rel="next"`,
+    );
+  }
+});
+
+test("rejects a changed state query before fetching the next page", async () => {
+  await expectRejectedPullContinuation(
+    '<https://api.github.com/repos/weave-io/weave/pulls?state=closed&per_page=1&page=2>; rel="next"',
+  );
+});
+
+test("rejects a changed head query before fetching the next page", async () => {
+  const initial =
+    "/repos/weave-io/weave/pulls?state=open&per_page=1&head=weave-io%3Arelease-pr%2Fstable";
+  const world = client(
+    {
+      [`GET ${initial}`]: {
+        body: [],
+        headers: {
+          link: '<https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&head=weave-io%3Aother&page=2>; rel="next"',
+        },
+      },
+    },
+    { pullRequestBounds: { pageSize: 1, maxPages: 3 } },
+    PAGINATION_TOKEN,
+  );
+  const result = await world.client.listPullRequestsForHead(
+    "release-pr/stable",
+    "open",
+  );
+  expect(result.isErr()).toBe(true);
+  expect(world.calls).toHaveLength(1);
+  expect(world.calls[0]?.authorization).toBe(`Bearer ${PAGINATION_TOKEN}`);
+});
+
+test("rejects a changed check-run filter before fetching the next page", async () => {
+  const world = client(
+    {
+      "GET /repos/weave-io/weave/git/ref/heads/main": {
+        body: { object: { sha: BASE } },
+      },
+      [`GET /repos/weave-io/weave/commits/${BASE}/statuses?per_page=1`]: {
+        body: [],
+      },
+      [`GET /repos/weave-io/weave/commits/${BASE}/check-runs?per_page=1&filter=latest`]:
+        {
+          body: { total_count: 0, check_runs: [] },
+          headers: {
+            link: `<https://api.github.com/repos/weave-io/weave/commits/${BASE}/check-runs?per_page=1&filter=other&page=2>; rel="next"`,
+          },
+        },
+    },
+    {
+      requiredChecks: [{ name: "ci", source: "check-run" }],
+      greenHeadBounds: { pageSize: 1, maxPages: 3 },
+    },
+    PAGINATION_TOKEN,
+  );
+  const result = await world.client.readGreenMainHead();
+  expect(result.isErr()).toBe(true);
+  if (result.isErr()) expect(result.error.message).toContain("pagination");
+  expect(world.calls).toHaveLength(3);
+  expect(world.calls[2]?.authorization).toBe(`Bearer ${PAGINATION_TOKEN}`);
+});
+
+test("accepts the canonical page-two continuation", async () => {
+  const world = client(
+    {
+      [`GET ${PULLS_PAGE_ONE}`]: {
+        body: [],
+        headers: {
+          link: '<https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&page=2>; rel="next"',
+        },
+      },
+      "GET /repos/weave-io/weave/pulls?state=open&per_page=1&page=2": {
+        body: [],
+      },
+    },
+    { pullRequestBounds: { pageSize: 1, maxPages: 3 } },
+    PAGINATION_TOKEN,
+  );
+  const result =
+    await world.client.listOpenPullRequestsByLabel("release:stable");
+  expect(result.isOk()).toBe(true);
+  expect(world.calls.map((call) => call.url)).toEqual([
+    "https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1",
+    "https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&page=2",
+  ]);
+  expect(
+    world.calls.every(
+      (call) => call.authorization === `Bearer ${PAGINATION_TOKEN}`,
+    ),
+  ).toBe(true);
 });
 
 test("release PR collection fails closed when a next link exceeds its page bound", async () => {
