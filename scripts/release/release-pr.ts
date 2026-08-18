@@ -1045,6 +1045,26 @@ export type MarkerDeletionOutcome =
   | { kind: "deleted"; ref: string; markerSha: string }
   | { kind: "already-absent"; ref: string };
 
+interface PublishedPrAuthority {
+  markerSha: string;
+  envelope: ReleasePrEnvelope;
+}
+
+interface PublishedPrTarget extends PublishedPrAuthority {
+  title: string;
+  body: string;
+}
+
+interface RenderedPrMetadata {
+  title: string;
+  body: string;
+}
+
+interface PublishedPrMetadata extends PublishedPrAuthority {
+  pullRequest: GitHubPullRequestSummary;
+  superseded: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // The manager
 // ---------------------------------------------------------------------------
@@ -1743,6 +1763,8 @@ export class StableReleasePrManager {
         title: rendered.value.title,
         body: `${rendered.value.body}\n\n${nextEnvelope.value}\n`,
         expected: parsedNext.value,
+        expectedHead: commit.value,
+        builder,
       });
       if (published.isErr())
         return err({
@@ -1751,7 +1773,15 @@ export class StableReleasePrManager {
           pending: prMetadataGaps(pullRequest, parsedNext.value),
           message: describeError(published.error),
         });
-      pullRequest = published.value;
+      pullRequest = published.value.pullRequest;
+      if (published.value.superseded)
+        return ok({
+          kind: "PrMetadataReconciled",
+          pullRequest,
+          baseSha: published.value.envelope.baseSha,
+          commitSha: published.value.markerSha,
+          pending: prMetadataGaps(pullRequest, published.value.envelope),
+        });
       return ok({
         kind: "Regenerated",
         pullRequest,
@@ -2034,15 +2064,25 @@ export class StableReleasePrManager {
     );
     if (listed.isErr())
       return err(portFailure("listOpenPullRequestsByLabel", listed.error));
-    const matching = listed.value.filter(
-      (pull) => pull.headRef === RELEASE_PR_MARKER_REF,
-    );
-    if (matching.length > 1)
+    // Inspect the complete labeled set before narrowing to the canonical head.
+    // A stable-labeled PR on another branch is a protocol identity, not an
+    // irrelevant PR: ignoring it would make creation report a false absence.
+    const labeled = listed.value;
+    if (labeled.length > 1)
       return err({
         type: "DuplicateReleasePr",
-        urls: matching.map((pull) => pull.url),
+        urls: labeled.map((pull) => pull.url),
       });
-    if (matching[0] !== undefined) return ok(matching[0]);
+    const labeledPull = labeled[0];
+    if (labeledPull !== undefined) {
+      if (labeledPull.headRef !== RELEASE_PR_MARKER_REF)
+        return err({
+          type: "ReleasePrProtocolAnomaly",
+          ref: RELEASE_PR_MARKER_REF,
+          url: labeledPull.url,
+        });
+      return ok(labeledPull);
+    }
     // Create and label are separate writes. An unlabeled PR on the marker
     // head is still the lock; label-only discovery would stall forever.
     const onHead = await this.listReleasePullRequestsForHead("open");
@@ -2294,8 +2334,8 @@ export class StableReleasePrManager {
     return ok({
       kind: "PrMetadataReconciled",
       pullRequest: reconciled.value.pullRequest,
-      baseSha: envelope.baseSha,
-      commitSha: expectedHead,
+      baseSha: reconciled.value.envelope.baseSha,
+      commitSha: reconciled.value.markerSha,
       pending: reconciled.value.pending,
     });
   }
@@ -2315,6 +2355,8 @@ export class StableReleasePrManager {
       {
         repaired: boolean;
         pullRequest: GitHubPullRequestSummary;
+        markerSha: string;
+        envelope: ReleasePrEnvelope;
         pending: readonly PrMetadataGap[];
       },
       ReleasePrError
@@ -2325,123 +2367,379 @@ export class StableReleasePrManager {
       return ok({
         repaired: false,
         pullRequest: input.pullRequest,
+        markerSha: input.expectedHead,
+        envelope: input.envelope,
         pending,
       });
-    let pullRequest = input.pullRequest;
+
+    let title = input.pullRequest.title;
+    let body = input.pullRequest.body;
     if (pending.includes("envelope")) {
-      const built = await settle(
-        input.builder.build({
-          baseSha: input.envelope.baseSha,
-          expectedHead: input.expectedHead,
-        }),
-      );
-      if (built.isErr())
-        return err({
-          type: "ReleasePreparationFailed",
-          stage: built.error.stage,
-          message: built.error.message,
-          retryable: built.error.retryable ?? true,
-        });
-      if (built.value.docsAuditedSha !== input.envelope.baseSha)
-        return err({
-          type: "DocsAuditNotBoundToBase",
-          auditedSha: built.value.docsAuditedSha,
-          baseSha: input.envelope.baseSha,
-        });
-      const resolved = resolveRegeneratedEntries({
-        generated: built.value.generated,
-        current: built.value.current,
-        recorded: input.envelope.entryProse,
-        recordedEvidenceDigest: input.envelope.evidenceDigest,
-        evidence: built.value.evidence,
+      const rendered = await this.renderMetadataForMarker({
+        markerSha: input.expectedHead,
+        envelope: input.envelope,
+        builder: input.builder,
       });
-      if (resolved.isErr()) return err(resolved.error);
-      const rendered = await settle(
-        input.builder.render({
-          baseSha: input.envelope.baseSha,
-          entries: resolved.value.entries,
-        }),
-      );
-      if (rendered.isErr())
-        return err({
-          type: "ReleasePreparationFailed",
-          stage: rendered.error.stage,
-          message: rendered.error.message,
-          retryable: rendered.error.retryable ?? true,
-        });
-      const hidden = renderReleasePrEnvelope(input.envelope);
-      if (hidden.isErr()) return err(hidden.error);
-      const published = await this.publishPullRequestMetadata({
-        pullRequest,
-        title: rendered.value.title,
-        body: `${rendered.value.body}\n\n${hidden.value}\n`,
-        expected: input.envelope,
-      });
-      if (published.isErr())
-        return err({
-          type: "ReleasePrMetadataPending",
-          url: pullRequest.url,
-          pending,
-          message: describeError(published.error),
-        });
-      pullRequest = published.value;
-    } else {
-      const labeled = await this.repairPullRequestLabels(pullRequest);
-      if (labeled.isErr())
-        return err({
-          type: "ReleasePrMetadataPending",
-          url: pullRequest.url,
-          pending,
-          message: describeError(labeled.error),
-        });
-      pullRequest = labeled.value;
+      if (rendered.isErr()) return err(rendered.error);
+      title = rendered.value.title;
+      body = rendered.value.body;
     }
-    return ok({ repaired: true, pullRequest, pending });
+    const published = await this.publishPullRequestMetadata({
+      pullRequest: input.pullRequest,
+      title,
+      body,
+      expected: input.envelope,
+      expectedHead: input.expectedHead,
+      builder: input.builder,
+      writeMetadata: pending.includes("envelope"),
+    });
+    if (published.isErr())
+      return err({
+        type: "ReleasePrMetadataPending",
+        url: input.pullRequest.url,
+        pending,
+        message: describeError(published.error),
+      });
+    return ok({
+      repaired: true,
+      pullRequest: published.value.pullRequest,
+      markerSha: published.value.markerSha,
+      envelope: published.value.envelope,
+      pending,
+    });
   }
 
+  /**
+   * Publishes derived PR metadata only after proving which marker envelope is
+   * authoritative. Every successful PATCH and label repair is followed by a
+   * fresh marker read. If another writer moved the marker, this loop rebuilds
+   * title/body from that newer envelope before it writes again. Thus a stale
+   * writer can converge the PR, but it cannot report `Regenerated` for its
+   * superseded commit.
+   */
   private async publishPullRequestMetadata(input: {
     pullRequest: GitHubPullRequestSummary;
     title: string;
     body: string;
     expected: ReleasePrEnvelope;
-  }): Promise<Result<GitHubPullRequestSummary, ReleasePrError>> {
-    let last: ReleasePrError | null = null;
+    expectedHead: string;
+    builder: RegenerationBuilder;
+    writeMetadata?: boolean;
+  }): Promise<Result<PublishedPrMetadata, ReleasePrError>> {
+    let pullRequest = input.pullRequest;
+    let target: PublishedPrTarget = {
+      markerSha: input.expectedHead,
+      envelope: input.expected,
+      title: input.title,
+      body: input.body,
+    };
+    let superseded = false;
+    let writeMetadata = input.writeMetadata ?? true;
+    let lastError: ReleasePrError | null = null;
+    let lastAuthoritative: PublishedPrTarget = target;
+
     for (
       let attempt = 1;
       attempt <= this.bounds.metadataRepairAttempts;
       attempt += 1
     ) {
-      const updated = await settle(
-        this.ports.pullRequests.updatePullRequest({
-          number: input.pullRequest.number,
-          title: input.title,
-          body: input.body,
-        }),
+      const before = await this.readAuthoritativePrMetadata(
+        input.pullRequest.url,
       );
-      if (updated.isErr()) {
-        last = {
-          type: "ReleasePrPortFailed",
-          port: "updatePullRequest",
-          message: describeError(updated.error),
-        };
+      if (before.isErr()) {
+        lastError = before.error;
         if (attempt < this.bounds.metadataRepairAttempts)
           await this.sleep(this.bounds.pollDelayMs);
         continue;
       }
-      const labeled = await this.repairPullRequestLabels(updated.value);
-      if (labeled.isOk()) return ok(labeled.value);
-      last = labeled.error;
+      lastAuthoritative = {
+        ...lastAuthoritative,
+        markerSha: before.value.markerSha,
+        envelope: before.value.envelope,
+      };
+      if (
+        before.value.markerSha !== target.markerSha ||
+        !releasePrEnvelopesMatch(before.value.envelope, target.envelope)
+      ) {
+        const rebuilt = await this.renderMetadataForMarker({
+          markerSha: before.value.markerSha,
+          envelope: before.value.envelope,
+          builder: input.builder,
+        });
+        if (rebuilt.isErr()) return err(rebuilt.error);
+        target = {
+          markerSha: before.value.markerSha,
+          envelope: before.value.envelope,
+          title: rebuilt.value.title,
+          body: rebuilt.value.body,
+        };
+        superseded = true;
+        writeMetadata = true;
+      }
+
+      const metadataNeedsWrite =
+        writeMetadata ||
+        pullRequest.title !== target.title ||
+        pullRequest.body !== target.body;
+      if (metadataNeedsWrite) {
+        const updated = await settle(
+          this.ports.pullRequests.updatePullRequest({
+            number: pullRequest.number,
+            title: target.title,
+            body: target.body,
+          }),
+        );
+        if (updated.isErr()) {
+          lastError = {
+            type: "ReleasePrPortFailed",
+            port: "updatePullRequest",
+            message: describeError(updated.error),
+          };
+          if (attempt < this.bounds.metadataRepairAttempts)
+            await this.sleep(this.bounds.pollDelayMs);
+          continue;
+        }
+        pullRequest = updated.value;
+        // The PATCH may have raced a marker CAS. Never trust its response as
+        // authority; read the marker immediately after the write.
+        const afterPatch = await this.readAuthoritativePrMetadata(
+          input.pullRequest.url,
+        );
+        if (afterPatch.isErr()) {
+          lastError = afterPatch.error;
+          if (attempt < this.bounds.metadataRepairAttempts)
+            await this.sleep(this.bounds.pollDelayMs);
+          continue;
+        }
+        lastAuthoritative = {
+          ...lastAuthoritative,
+          markerSha: afterPatch.value.markerSha,
+          envelope: afterPatch.value.envelope,
+        };
+        if (
+          afterPatch.value.markerSha !== target.markerSha ||
+          !releasePrEnvelopesMatch(afterPatch.value.envelope, target.envelope)
+        ) {
+          const rebuilt = await this.renderMetadataForMarker({
+            markerSha: afterPatch.value.markerSha,
+            envelope: afterPatch.value.envelope,
+            builder: input.builder,
+          });
+          if (rebuilt.isErr()) return err(rebuilt.error);
+          target = {
+            markerSha: afterPatch.value.markerSha,
+            envelope: afterPatch.value.envelope,
+            title: rebuilt.value.title,
+            body: rebuilt.value.body,
+          };
+          superseded = true;
+          writeMetadata = true;
+          if (attempt < this.bounds.metadataRepairAttempts)
+            await this.sleep(this.bounds.pollDelayMs);
+          continue;
+        }
+        writeMetadata = false;
+      }
+
+      if (!pullRequest.labels.includes(RELEASE_PR_LABEL)) {
+        const labeled = await this.repairPullRequestLabels(pullRequest);
+        if (labeled.isErr()) {
+          lastError = labeled.error;
+          // Label POSTs are writes too. Re-read the marker before retrying so
+          // an ambiguous label result cannot hide a newer owner.
+          const afterLabelFailure = await this.readAuthoritativePrMetadata(
+            input.pullRequest.url,
+          );
+          if (afterLabelFailure.isOk())
+            lastAuthoritative = {
+              ...lastAuthoritative,
+              markerSha: afterLabelFailure.value.markerSha,
+              envelope: afterLabelFailure.value.envelope,
+            };
+          if (attempt < this.bounds.metadataRepairAttempts)
+            await this.sleep(this.bounds.pollDelayMs);
+          continue;
+        }
+        pullRequest = labeled.value;
+        const afterLabel = await this.readAuthoritativePrMetadata(
+          input.pullRequest.url,
+        );
+        if (afterLabel.isErr()) {
+          lastError = afterLabel.error;
+          if (attempt < this.bounds.metadataRepairAttempts)
+            await this.sleep(this.bounds.pollDelayMs);
+          continue;
+        }
+        lastAuthoritative = {
+          ...lastAuthoritative,
+          markerSha: afterLabel.value.markerSha,
+          envelope: afterLabel.value.envelope,
+        };
+        if (
+          afterLabel.value.markerSha !== target.markerSha ||
+          !releasePrEnvelopesMatch(afterLabel.value.envelope, target.envelope)
+        ) {
+          const rebuilt = await this.renderMetadataForMarker({
+            markerSha: afterLabel.value.markerSha,
+            envelope: afterLabel.value.envelope,
+            builder: input.builder,
+          });
+          if (rebuilt.isErr()) return err(rebuilt.error);
+          target = {
+            markerSha: afterLabel.value.markerSha,
+            envelope: afterLabel.value.envelope,
+            title: rebuilt.value.title,
+            body: rebuilt.value.body,
+          };
+          superseded = true;
+          writeMetadata = true;
+          if (attempt < this.bounds.metadataRepairAttempts)
+            await this.sleep(this.bounds.pollDelayMs);
+          continue;
+        }
+      }
+
+      // Verify the complete envelope, title, labels, and marker once more
+      // before returning. This closes the check-to-PATCH race even when the
+      // initial read happened just before another writer's CAS.
+      const final = await this.readAuthoritativePrMetadata(
+        input.pullRequest.url,
+      );
+      if (final.isErr()) {
+        lastError = final.error;
+        if (attempt < this.bounds.metadataRepairAttempts)
+          await this.sleep(this.bounds.pollDelayMs);
+        continue;
+      }
+      lastAuthoritative = {
+        ...lastAuthoritative,
+        markerSha: final.value.markerSha,
+        envelope: final.value.envelope,
+      };
+      if (
+        final.value.markerSha !== target.markerSha ||
+        !releasePrEnvelopesMatch(final.value.envelope, target.envelope)
+      ) {
+        const rebuilt = await this.renderMetadataForMarker({
+          markerSha: final.value.markerSha,
+          envelope: final.value.envelope,
+          builder: input.builder,
+        });
+        if (rebuilt.isErr()) return err(rebuilt.error);
+        target = {
+          markerSha: final.value.markerSha,
+          envelope: final.value.envelope,
+          title: rebuilt.value.title,
+          body: rebuilt.value.body,
+        };
+        superseded = true;
+        writeMetadata = true;
+        if (attempt < this.bounds.metadataRepairAttempts)
+          await this.sleep(this.bounds.pollDelayMs);
+        continue;
+      }
+      const pending = prMetadataGaps(pullRequest, final.value.envelope);
+      if (
+        pending.length === 0 &&
+        pullRequest.title === target.title &&
+        pullRequest.body === target.body
+      )
+        return ok({
+          pullRequest,
+          markerSha: final.value.markerSha,
+          envelope: final.value.envelope,
+          superseded,
+        });
+      lastError = {
+        type: "ReleasePrMetadataPending",
+        url: input.pullRequest.url,
+        pending,
+        message: "pull request metadata does not match the marker envelope",
+      };
+      writeMetadata = true;
       if (attempt < this.bounds.metadataRepairAttempts)
         await this.sleep(this.bounds.pollDelayMs);
     }
+
+    const pending = prMetadataGaps(pullRequest, lastAuthoritative.envelope);
     return err(
-      last ?? {
+      lastError ?? {
         type: "ReleasePrMetadataPending",
         url: input.pullRequest.url,
-        pending: prMetadataGaps(input.pullRequest, input.expected),
+        pending,
         message: "pull request metadata repair exhausted",
       },
     );
+  }
+
+  private async readAuthoritativePrMetadata(
+    url: string,
+  ): Promise<Result<PublishedPrAuthority, ReleasePrError>> {
+    const marker = await this.readMarker();
+    if (marker.isErr()) return err(marker.error);
+    if (marker.value === null)
+      return err({
+        type: "ReleasePrMetadataPending",
+        url,
+        pending: ["envelope"],
+        message: "the authoritative release marker is absent",
+      });
+    const envelope = await this.readEnvelopeAt(marker.value);
+    if (envelope.isErr()) return err(envelope.error);
+    return ok({ markerSha: marker.value, envelope: envelope.value });
+  }
+
+  private async renderMetadataForMarker(input: {
+    markerSha: string;
+    envelope: ReleasePrEnvelope;
+    builder: RegenerationBuilder;
+  }): Promise<Result<RenderedPrMetadata, ReleasePrError>> {
+    const built = await settle(
+      input.builder.build({
+        baseSha: input.envelope.baseSha,
+        expectedHead: input.markerSha,
+      }),
+    );
+    if (built.isErr())
+      return err({
+        type: "ReleasePreparationFailed",
+        stage: built.error.stage,
+        message: built.error.message,
+        retryable: built.error.retryable ?? true,
+      });
+    if (built.value.docsAuditedSha !== input.envelope.baseSha)
+      return err({
+        type: "DocsAuditNotBoundToBase",
+        auditedSha: built.value.docsAuditedSha,
+        baseSha: input.envelope.baseSha,
+      });
+    const resolved = resolveRegeneratedEntries({
+      generated: built.value.generated,
+      current: built.value.current,
+      recorded: input.envelope.entryProse,
+      recordedEvidenceDigest: input.envelope.evidenceDigest,
+      evidence: built.value.evidence,
+    });
+    if (resolved.isErr()) return err(resolved.error);
+    const rendered = await settle(
+      input.builder.render({
+        baseSha: input.envelope.baseSha,
+        entries: resolved.value.entries,
+      }),
+    );
+    if (rendered.isErr())
+      return err({
+        type: "ReleasePreparationFailed",
+        stage: rendered.error.stage,
+        message: rendered.error.message,
+        retryable: rendered.error.retryable ?? true,
+      });
+    const hidden = renderReleasePrEnvelope(input.envelope);
+    if (hidden.isErr()) return err(hidden.error);
+    return ok({
+      title: rendered.value.title,
+      body: `${rendered.value.body}\n\n${hidden.value}\n`,
+    });
   }
 
   private async repairPullRequestLabels(

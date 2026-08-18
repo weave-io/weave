@@ -545,6 +545,7 @@ function checkRunPage(
     name: string;
     status: string;
     conclusion: string | null;
+    app?: { id: number };
   }[],
   extra: Partial<Route> = {},
 ) {
@@ -590,19 +591,93 @@ test("readGreenMainHead reads required checks from protection and rulesets", asy
           {
             type: "required_status_checks",
             parameters: {
-              required_status_checks: [{ context: "release-policy" }],
+              required_status_checks: [
+                { context: "release-policy", integration_id: 31415 },
+              ],
             },
           },
         ],
       },
       ...statusPage([{ context: "legacy-ci", state: "success" }]),
       ...checkRunPage([
-        { name: "ci", status: "completed", conclusion: "success" },
-        { name: "release-policy", status: "completed", conclusion: "success" },
+        {
+          name: "ci",
+          status: "completed",
+          conclusion: "success",
+          app: { id: 15368 },
+        },
+        {
+          name: "release-policy",
+          status: "completed",
+          conclusion: "success",
+          app: { id: 31415 },
+        },
       ]),
     }),
   );
   expect((await world.client.readGreenMainHead())._unsafeUnwrap()).toBe(BASE);
+});
+
+test("a required check-run is green only for the configured App", async () => {
+  const world = client(
+    trunkRoutes({
+      "GET /repos/weave-io/weave/branches/main/protection/required_status_checks":
+        {
+          body: { checks: [{ context: "ci", app_id: 15368 }] },
+        },
+      ...statusPage([]),
+      ...checkRunPage([
+        {
+          name: "ci",
+          status: "completed",
+          conclusion: "success",
+          app: { id: 15368 },
+        },
+      ]),
+    }),
+  );
+  expect((await world.client.readGreenMainHead())._unsafeUnwrap()).toBe(BASE);
+});
+
+test("a same-name check-run from the wrong App does not satisfy protection", async () => {
+  const world = client(
+    trunkRoutes({
+      "GET /repos/weave-io/weave/branches/main/protection/required_status_checks":
+        {
+          body: { checks: [{ context: "ci", app_id: 15368 }] },
+        },
+      ...statusPage([]),
+      ...checkRunPage([
+        {
+          name: "ci",
+          status: "completed",
+          conclusion: "success",
+          app: { id: 99999 },
+        },
+      ]),
+    }),
+  );
+  expect(
+    (await world.client.readGreenMainHead())._unsafeUnwrapErr().message,
+  ).toContain("App 15368");
+});
+
+test("a same-name check-run without an App does not satisfy protection", async () => {
+  const world = client(
+    trunkRoutes({
+      "GET /repos/weave-io/weave/branches/main/protection/required_status_checks":
+        {
+          body: { checks: [{ context: "ci", app_id: 15368 }] },
+        },
+      ...statusPage([]),
+      ...checkRunPage([
+        { name: "ci", status: "completed", conclusion: "success" },
+      ]),
+    }),
+  );
+  expect(
+    (await world.client.readGreenMainHead())._unsafeUnwrapErr().message,
+  ).toContain("App 15368");
 });
 
 test("readGreenMainHead refuses a missing required check", async () => {

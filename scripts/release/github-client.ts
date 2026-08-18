@@ -246,6 +246,8 @@ export type GitHubRequiredCheckSource = "status" | "check-run" | "either";
 export interface GitHubRequiredCheck {
   name: string;
   source?: GitHubRequiredCheckSource;
+  /** Provider App ID when the check-run policy identifies one. */
+  appId?: number;
 }
 
 /** Bounds so a green-head proof cannot walk GitHub without a stop. */
@@ -1482,6 +1484,8 @@ function mainBranchName(): string {
 interface RequiredCheck {
   name: string;
   source: GitHubRequiredCheckSource;
+  /** Provider App ID for check-run requirements, when policy supplies one. */
+  appId?: number;
 }
 
 interface CommitStatusReading {
@@ -1496,6 +1500,8 @@ interface CheckRunReading {
   conclusion: string | null;
   startedAt: string;
   id: number;
+  /** GitHub reports the check-run provider as `app.id`. */
+  appId?: number;
 }
 
 const KNOWN_STATUS_STATES = new Set(["success", "pending", "failure", "error"]);
@@ -1524,14 +1530,16 @@ function normalizeRequiredChecks(
   operation: string,
   bounds: GreenMainHeadBounds,
 ): ResultAsync<readonly RequiredCheck[], GitHubError> {
-  return mergeRequiredChecks(
-    checks.map((check) => ({
+  const normalized = checks.map((check) => {
+    const required: RequiredCheck = {
       name: check.name,
-      source: check.source ?? "either",
-    })),
-    operation,
-    bounds,
-  );
+      source:
+        check.appId !== undefined ? "check-run" : (check.source ?? "either"),
+    };
+    if (check.appId !== undefined) required.appId = check.appId;
+    return required;
+  });
+  return mergeRequiredChecks(normalized, operation, bounds);
 }
 
 function mergeRequiredChecks(
@@ -1547,15 +1555,37 @@ function mergeRequiredChecks(
         operation,
         message: `required check name must be 1..${bounds.checkNameLength} characters`,
       });
+    if (check.appId !== undefined && !isPositiveInt(check.appId))
+      return errAsync({
+        type: "GitHubError",
+        operation,
+        message: "required check provider App ID must be a positive integer",
+      });
     const existing = merged.get(check.name);
     if (existing === undefined) {
       merged.set(check.name, check);
       continue;
     }
-    merged.set(check.name, {
+    if (
+      existing.appId !== undefined &&
+      check.appId !== undefined &&
+      existing.appId !== check.appId
+    )
+      return errAsync({
+        type: "GitHubError",
+        operation,
+        message: `required check ${check.name} has conflicting provider App IDs`,
+      });
+    const appId = existing.appId ?? check.appId;
+    const mergedCheck: RequiredCheck = {
       name: check.name,
-      source: narrowerSource(existing.source, check.source),
-    });
+      source:
+        appId === undefined
+          ? narrowerSource(existing.source, check.source)
+          : "check-run",
+    };
+    if (appId !== undefined) mergedCheck.appId = appId;
+    merged.set(check.name, mergedCheck);
   }
   if (merged.size === 0)
     return errAsync({
@@ -1655,10 +1685,12 @@ function parseNamedCheck(
   const appId = value.app_id ?? value.integration_id;
   if (appId !== undefined && appId !== null && !isPositiveInt(appId))
     return undefined;
-  return {
+  const check: RequiredCheck = {
     name: value[nameKey],
     source: isPositiveInt(appId) ? "check-run" : "either",
   };
+  if (isPositiveInt(appId)) check.appId = appId;
+  return check;
 }
 
 function parseCommitStatusPage(
@@ -1707,13 +1739,22 @@ function parseCheckRun(value: unknown): CheckRunReading | undefined {
   if (value.conclusion !== null && !isString(value.conclusion))
     return undefined;
   if (value.id !== undefined && !isPositiveInt(value.id)) return undefined;
-  return {
+  let appId: number | undefined;
+  if (value.app !== undefined && value.app !== null) {
+    if (!isRecord(value.app)) return undefined;
+    if (value.app.id !== undefined && !isPositiveInt(value.app.id))
+      return undefined;
+    appId = isPositiveInt(value.app.id) ? value.app.id : undefined;
+  }
+  const check: CheckRunReading = {
     name: value.name,
     status: value.status,
     conclusion: value.conclusion ?? null,
     startedAt: isString(value.started_at) ? value.started_at : "",
     id: isPositiveInt(value.id) ? value.id : 0,
   };
+  if (appId !== undefined) check.appId = appId;
+  return check;
 }
 
 function latestCommitStatuses(
@@ -1731,11 +1772,14 @@ function latestCommitStatuses(
 function latestCheckRuns(
   runs: readonly CheckRunReading[],
 ): readonly CheckRunReading[] {
+  // Keep provider identities separate. A newer run from the wrong App must
+  // not hide an older run from the App required by branch protection.
   const latest = new Map<string, CheckRunReading>();
   for (const run of runs) {
-    const current = latest.get(run.name);
+    const key = `${run.name}\u0000${run.appId ?? ""}`;
+    const current = latest.get(key);
     if (current === undefined || compareCheckRuns(run, current) >= 0)
-      latest.set(run.name, run);
+      latest.set(key, run);
   }
   return [...latest.values()];
 }
@@ -1756,7 +1800,11 @@ function proveOneRequiredCheck(
   runs: readonly CheckRunReading[],
 ): Result<void, GitHubError> {
   const status = statuses.find((entry) => entry.context === check.name);
-  const run = runs.find((entry) => entry.name === check.name);
+  const run = runs.find(
+    (entry) =>
+      entry.name === check.name &&
+      (check.appId === undefined || entry.appId === check.appId),
+  );
   const operation = `/commits/${sha}`;
   if (check.source === "status")
     return status === undefined
@@ -1764,10 +1812,22 @@ function proveOneRequiredCheck(
       : proveCommitStatus(operation, check.name, status);
   if (check.source === "check-run")
     return run === undefined
-      ? missingCheck(operation, check.name, "check-run")
+      ? missingCheck(
+          operation,
+          check.appId === undefined
+            ? check.name
+            : `${check.name} (App ${check.appId})`,
+          "check-run",
+        )
       : proveCheckRun(operation, check.name, run);
   if (status === undefined && run === undefined)
-    return missingCheck(operation, check.name, "either");
+    return missingCheck(
+      operation,
+      check.appId === undefined
+        ? check.name
+        : `${check.name} (App ${check.appId})`,
+      "either",
+    );
   if (status !== undefined) {
     const proved = proveCommitStatus(operation, check.name, status);
     if (proved.isErr()) return proved;
