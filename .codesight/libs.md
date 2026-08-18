@@ -433,13 +433,13 @@
   - interface PiChildOverlayTerminalInputDeps
   - _...1 more_
 - `packages/adapters/pi/src/child-overlay-types.ts`
+  - function boundOverlayText: (value) => string
   - function clampPageSize: (pageSize) => number
   - function clampWindowCap: (windowCap) => number
   - interface ChildOverlayEntry
   - interface ChildOverlayPage
   - interface ChildOverlaySourcePort
-  - interface ChildOverlayConfig
-  - _...36 more_
+  - _...37 more_
 - `packages/adapters/pi/src/child-overlay-window.ts`
   - function emptySaved: (threadId, touched) => SavedChildState
   - function isReadOnly: (child) => boolean

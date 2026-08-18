@@ -657,6 +657,28 @@ export function createChildOverlayCustomComponent(
     );
   };
 
+  /**
+   * Adopts the query being typed so the rail counts what it prints.
+   *
+   * Window-only and synchronous: no source read, no timer, no viewport move.
+   * A reader is still typing, so the transcript must not jump under them; the
+   * commit key owns both the historical search and the jump.
+   */
+  const previewSearchQuery = (query: string): void => {
+    controller.previewSearch(query).match(
+      () => requestPaint(),
+      (error) => {
+        if (isOverlayFallbackRequired(error)) {
+          emitFallback(error);
+          return;
+        }
+        // An overlay that is no longer open has nothing to preview; the query
+        // field stays exactly as the reader typed it.
+        requestPaint();
+      },
+    );
+  };
+
   const runSearchQuery = (query: string): void => {
     inputBusy = true;
     void controller.search(query).match(
@@ -695,6 +717,9 @@ export function createChildOverlayCustomComponent(
         return true;
       case "repaint":
         requestPaint();
+        return true;
+      case "preview":
+        previewSearchQuery(step.effect.query);
         return true;
       case "focus":
         focusSearchMatch();

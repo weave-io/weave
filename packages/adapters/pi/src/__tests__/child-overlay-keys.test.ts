@@ -663,7 +663,9 @@ describe("overlay search keyboard", () => {
     const shut = stepOverlaySearch(CLOSED_OVERLAY_SEARCH, "/", "", ALIAS);
     expect(shut.claimed).toBe(true);
     expect(shut.state.mode).toBe("typing");
-    expect(shut.effect).toEqual({ kind: "repaint" });
+    // Opening adopts the empty query, so the rail can never open still holding
+    // the previous search's counter.
+    expect(shut.effect).toEqual({ kind: "preview", query: "" });
 
     // A slash typed into a steer belongs to the draft, not to search.
     const typing = stepOverlaySearch(
@@ -685,6 +687,23 @@ describe("overlay search keyboard", () => {
     expect(
       stepOverlaySearch(CLOSED_OVERLAY_SEARCH, "n", "", ALIAS).claimed,
     ).toBe(false);
+  });
+
+  it("previews every query edit so the rail counts what it prints", () => {
+    expect(stepOverlaySearch(open(), "a", "", ALIAS).effect).toEqual({
+      kind: "preview",
+      query: "a",
+    });
+    expect(stepOverlaySearch(open("ab"), "\x7f", "", ALIAS).effect).toEqual({
+      kind: "preview",
+      query: "a",
+    });
+    // An edit invalidates the ordinal the reader was on, so `n` starts again
+    // from the first match of the NEW query rather than from a stale offset.
+    expect(
+      stepOverlaySearch({ ...open("ab"), matchIndex: 4 }, "c", "", ALIAS).state
+        .matchIndex,
+    ).toBe(0);
   });
 
   it("edits the query with printable bytes and backspace, and bounds it", () => {

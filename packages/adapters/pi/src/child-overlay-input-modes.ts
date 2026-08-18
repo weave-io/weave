@@ -77,6 +77,17 @@ export type OverlaySearchEffect =
   | { readonly kind: "none" }
   /** Consumed; the surface must repaint. */
   | { readonly kind: "repaint" }
+  /**
+   * The query being typed changed: match it against the loaded window, without
+   * moving the viewport and without fetching history.
+   *
+   * This exists so the rail can never print one query and count another. The
+   * rail prints the query the reader is TYPING, so the counter beside it must
+   * describe that same query; before this effect existed it described the last
+   * COMMITTED query - `""` until Enter - and the rail therefore answered `match
+   * 0/0 · no match in this transcript` about text plainly on screen.
+   */
+  | { readonly kind: "preview"; readonly query: string }
   /** Run this query, then focus the first match. */
   | { readonly kind: "run"; readonly query: string }
   /** Focus the match the new `matchIndex` points at. */
@@ -122,7 +133,9 @@ export function stepOverlaySearch(
     if (!isChildOverlaySearchOpenInput(data, draft, aliasTrigger)) {
       return unclaimed(state);
     }
-    return claimed(OPEN_OVERLAY_SEARCH, { kind: "repaint" });
+    // Opening starts from an empty query, and the empty query matches nothing:
+    // the rail opens with no counter rather than with the previous search's.
+    return claimed(OPEN_OVERLAY_SEARCH, { kind: "preview", query: "" });
   }
   // Escape closes SEARCH ONLY. The overlay stays open and the child keeps
   // running; that is the whole reason search outranks the overlay keys.
@@ -169,18 +182,19 @@ export function stepOverlaySearch(
     SEARCH_KEYS.backspace.includes(data as never) ||
     matchesKey(data, "backspace")
   ) {
+    const edited = state.query.slice(0, -1);
+    // A shortened query is a different query, so the counter must be recounted
+    // rather than left describing the longer one.
     return claimed(
-      { ...state, query: state.query.slice(0, -1) },
-      { kind: "repaint" },
+      { ...state, query: edited, matchIndex: 0 },
+      { kind: "preview", query: edited },
     );
   }
   if (isQueryText(data) && state.query.length < OVERLAY_SEARCH_QUERY_MAX) {
+    const edited = `${state.query}${data}`.slice(0, OVERLAY_SEARCH_QUERY_MAX);
     return claimed(
-      {
-        ...state,
-        query: `${state.query}${data}`.slice(0, OVERLAY_SEARCH_QUERY_MAX),
-      },
-      { kind: "repaint" },
+      { ...state, query: edited, matchIndex: 0 },
+      { kind: "preview", query: edited },
     );
   }
   return claimed(state, { kind: "none" });

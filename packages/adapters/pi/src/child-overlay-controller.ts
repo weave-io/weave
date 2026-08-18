@@ -65,6 +65,7 @@ import {
   terminalErrorView,
 } from "./child-overlay-telemetry.js";
 import {
+  boundOverlayText,
   CHILD_OVERLAY_BOUNDS,
   type ChildOverlayAnchor,
   type ChildOverlayChild,
@@ -84,7 +85,6 @@ import {
   type ChildOverlayView,
   clampPageSize,
   clampWindowCap,
-  OverlayTextSchema,
 } from "./child-overlay-types.js";
 import {
   appendLiveAssistantDelta,
@@ -489,21 +489,19 @@ export class ChildOverlayController {
   /**
    * Searches the whole bounded historical range, not just the loaded window.
    * Stopping at the first page with a match reported a fraction of the real
-   * matches and made `n` / `N` navigation skip the rest, because fetching
-   * older pages trims the newest entries out of the window. Every page within
-   * the existing `maxSearchPages` budget is scanned, and matches from all of
-   * them are merged in transcript order without duplicates.
+   * matches and made `n` / `N` skip the rest, because fetching older pages
+   * trims the newest entries out of the window. Every page within the existing
+   * `maxSearchPages` budget is scanned and merged in transcript order.
+   *
+   * The query is adopted through `previewSearch`, so the committed query and
+   * the typed one can never be bounded or stored two different ways.
    */
   search(query: string): ResultAsync<ChildOverlayView, ChildOverlayError> {
-    const bounded = OverlayTextSchema.safeParse(query);
-    const text = bounded.success
-      ? bounded.data
-      : query.slice(0, CHILD_OVERLAY_BOUNDS.maxTextLength);
+    const adopted = this.previewSearch(query);
+    if (adopted.isErr()) return errAsync(adopted.error);
     return this.withOpen((child, state) => {
-      state.searchQuery = text;
-      state.searchMatchIds = [];
-      if (text.length === 0) return okAsync(this.toView(child, state));
-      const needle = text.toLowerCase();
+      const needle = state.searchQuery.toLowerCase();
+      if (needle.length === 0) return okAsync(this.toView(child, state));
       // Seed from the loaded window; older pages prepend ahead of it.
       state.searchMatchIds = matchingEntryIds(
         state.entries,
@@ -511,6 +509,26 @@ export class ChildOverlayController {
         state.renderedSearchText,
       );
       return this.searchFetchPages(child, state, needle, 0);
+    });
+  }
+
+  /**
+   * Adopts the query being TYPED, matched against the loaded window only.
+   *
+   * One query, one counter. The rail prints the query being typed, so this
+   * holds that same query. Holding the last COMMITTED one - empty until Enter
+   * - is what made a real 0.84.2 inspector report no match in a transcript
+   * whose rows the reader could read. Deliberately not the paged `search`:
+   * this runs per keystroke, so it reads no source and starts no timer, and
+   * Enter still only ADDS older matches to these.
+   */
+  previewSearch(query: string): Result<ChildOverlayView, ChildOverlayError> {
+    const text = boundOverlayText(query);
+    return this.mutateOpen((child, state) => {
+      state.searchQuery = text;
+      // Ids from the previous query would be counted against this one.
+      state.searchMatchIds = [];
+      return this.toView(child, state);
     });
   }
   /**
@@ -793,10 +811,7 @@ export class ChildOverlayController {
   }
 
   updateDraft(draft: string): Result<ChildOverlayView, ChildOverlayError> {
-    const bounded = OverlayTextSchema.safeParse(draft);
-    const text = bounded.success
-      ? bounded.data
-      : draft.slice(0, CHILD_OVERLAY_BOUNDS.maxTextLength);
+    const text = boundOverlayText(draft);
     return this.mutateOpen((child, state) => {
       if (isReadOnly(child)) return this.toView(child, state);
       state.draft = text;
@@ -942,10 +957,7 @@ export class ChildOverlayController {
     if (isReadOnly(child) || !child.generationId) {
       return okAsync({ kind: "consumed" });
     }
-    const bounded = OverlayTextSchema.safeParse(submittedText.trim());
-    const text = bounded.success
-      ? bounded.data
-      : submittedText.trim().slice(0, CHILD_OVERLAY_BOUNDS.maxTextLength);
+    const text = boundOverlayText(submittedText.trim());
     if (text.length === 0) return okAsync({ kind: "consumed" });
 
     const draftAtSubmit = state.draft;

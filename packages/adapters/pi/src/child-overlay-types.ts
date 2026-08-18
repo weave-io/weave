@@ -158,6 +158,20 @@ export const OverlayTextSchema = z
   .string()
   .max(CHILD_OVERLAY_BOUNDS.maxTextLength);
 
+/**
+ * The one bound applied to every caller-supplied overlay string.
+ *
+ * Drafts and search queries share it deliberately: a query bounded one way for
+ * display and another way for matching would let the rail print one string and
+ * count another.
+ */
+export function boundOverlayText(value: string): string {
+  const bounded = OverlayTextSchema.safeParse(value);
+  return bounded.success
+    ? bounded.data
+    : value.slice(0, CHILD_OVERLAY_BOUNDS.maxTextLength);
+}
+
 export const RunActionSchema = z.enum(["start", "retry", "continue"]);
 
 /** One run ordinal. Bounded by the ordinal ceiling, not the window size. */
