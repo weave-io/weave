@@ -355,7 +355,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
     - Evidence file recording: baseline versus post-fix mapped copies, RSS, thread counts; `/weave:health` output; child argv; delegation result; clean shutdown state.
     - Exactly one `@earendil-works/pi-coding-agent` copy is mapped by the Pi process after the fix (excluding copies owned by other extensions still installed).
 
-- [ ] 16. Remove `pi-cursor` from the local Pi configuration
+- [x] 16. Remove `pi-cursor` from the local Pi configuration
   - **What**: A local operational step, separate from repository code: drop the `pi-cursor` package entry so its own `@earendil-works` tree stops loading into the host process.
   - **Depends on**: Task 15 baseline capture
   - **Implementation outline**:

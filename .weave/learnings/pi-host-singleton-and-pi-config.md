@@ -118,3 +118,66 @@ bun packages/cli/src/main.ts runtime status       # lease state
 Poll `pgrep -P <host-pid>` in a short loop to catch a child's argv: the delegated task must stay
 alive long enough (a `sleep` inside the child's own shell command works) or the process exits before
 `ps` can read it.
+
+## Task 16: remove `pi-cursor` from the local Pi configuration (2026-08-17)
+
+- **Status**: PASS, with the removal itself an explicit idempotent no-op. Full evidence:
+  `.weave/evidence/pi-host-singleton-and-pi-config-task16.md`.
+- **Subject**: HEAD `bfa4410`, branch `feat/pi-native-child-stream-rendering`, Pi host `0.84.2`.
+  Fresh proof host PID `1586` (wrapper `1581`), started in a new Herdr tab with an isolated cwd.
+- **Net change to `~/.pi/agent/settings.json`**: none. Pre-task and post-task SHA-256 are both
+  `294f62a7abc6ac5039e415aa7b2b3f6b1f4c22077748c1f1e4eb9022c52e900f`.
+
+### Durable findings
+
+- **`pi --verbose` is the load-claim evidence; `lsof` is not.** Pi's verbose startup prints a full
+  `[Extensions]` inventory across every scope (directory files, directories, npm packages). That
+  inventory — 28 loaded extensions, zero `pi-cursor`, zero error lines — is what proves an extension
+  did not load. `lsof` can only corroborate, and only for packages that dlopen a native module.
+- **The `pi-cursor` checkout does ship the native fingerprint**, at
+  `node_modules/@earendil-works/pi-coding-agent/node_modules/@mariozechner/clipboard-darwin-universal/clipboard.darwin-universal.node`.
+  Its absence from `lsof` is therefore meaningful rather than vacuous. Always check that the thing
+  you expect to see would have been visible before treating absence as proof.
+- **Starting a proof TUI with `--provider`/`--model` rewrites the user's saved defaults.** Pi
+  persisted `defaultProvider: openai-codex` and `defaultModel: gpt-5.6-sol` into
+  `~/.pi/agent/settings.json` at startup, silently. Any future proof that passes those flags must
+  diff the settings file afterwards and restore from the backup. Taking the backup first is what made
+  the restore exact.
+- **Prove a no-op by digest, not by output.** The helper script reported `wrote: false`; the settings
+  digest being unchanged immediately afterwards is the actual proof that no write happened, as
+  opposed to a write of identical bytes.
+- **`pi list` and a direct JSON parse answer different questions.** `pi list` shows how Pi resolves
+  each configured package (installed path per entry); the JSON parse shows that no entry is a local
+  path at all (`nonNpmEntries: []`). Record both; the second is the stronger claim.
+- **`cursor/*` models were already gone** before this task, because `pi-cursor` had been unconfigured
+  since before Task 15. Do not attribute that loss to Task 16. `openai-codex/gpt-5.6-sol` is listed,
+  `pi auth check --provider openai-codex --json --no-refresh` reports
+  `{"status":"ready","authType":"oauth"}`, and a fresh host answered a live prompt with the
+  deterministic marker `TASK16_MODEL_OK`.
+- **`ps -Eww` cannot reveal a Pi session's current model.** The coordinator host's environment
+  carries no `PI_PROVIDER`/`PI_MODEL`; the model is a runtime selection. Verify model *availability*
+  and a *live turn* instead of trying to read another session's choice.
+- **Pi needs two `ctrl+c` presses in rapid succession to exit.** Two presses one second apart did
+  nothing. Send them back to back with no sleep between.
+- **A new Herdr tab is less disruptive than a pane split** when the coordinator must not be
+  disturbed: `herdr tab create --no-focus --cwd <isolated dir>` neither resizes nor refocuses the
+  coordinator's pane, and `herdr tab close <id>` reverses it completely.
+- **`~/.pi/agent` is a symlink into `/Users/jose/dotfiles/.pi/agent`.** `readlink -f` therefore
+  reports dotfiles paths for extension and npm locations, and `settings.json` is tracked in the
+  user's dotfiles repository. That repository already carries unrelated pre-existing drift for the
+  file; never commit it, and check `git -C ~/dotfiles diff` before assuming you caused a change.
+
+### Reusable commands
+
+```bash
+pi list                                                # configured packages and resolved paths
+pi --verbose ...                                       # full startup resource inventory
+pi --list-models <pattern>                             # model availability
+pi auth check --provider <p> --json --no-refresh       # readiness, prints no credential
+herdr tab create --workspace <w> --cwd <dir> --no-focus --label <l>
+herdr pane run <pane> '<cmd>'                          # start the proof host
+herdr pane read <pane> --source recent-unwrapped --lines 600
+herdr agent prompt <pane> '<text>' --wait --timeout 120000
+herdr agent send-keys <pane> ctrl+c                    # twice, back to back, to exit Pi
+herdr tab close <tab>
+```
