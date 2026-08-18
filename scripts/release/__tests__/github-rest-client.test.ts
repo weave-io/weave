@@ -904,6 +904,109 @@ test("release PRs are read by label and by owner-qualified head state", async ()
   );
 });
 
+test("release PR collection follows Link pagination before filtering", async () => {
+  const firstPage = {
+    number: 6,
+    html_url: "https://github.com/weave-io/weave/pull/6",
+    state: "open",
+    title: "other",
+    body: "",
+    head: { ref: "feature", sha: BASE },
+    base: { ref: "main" },
+    labels: [],
+  };
+  const stablePage = {
+    number: 7,
+    html_url: "https://github.com/weave-io/weave/pull/7",
+    state: "open",
+    title: "release",
+    body: "body",
+    head: { ref: "release-pr/stable", sha: MARKER },
+    base: { ref: "main" },
+    labels: [{ name: "release:stable" }],
+  };
+  const world = client(
+    {
+      "GET /repos/weave-io/weave/pulls?state=open&per_page=1": {
+        body: [firstPage],
+        headers: {
+          link: '<https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&page=2>; rel="next"',
+        },
+      },
+      "GET /repos/weave-io/weave/pulls?state=open&per_page=1&page=2": {
+        body: [stablePage],
+      },
+      "GET /repos/weave-io/weave/pulls?state=open&per_page=1&head=weave-io%3Arelease-pr%2Fstable":
+        {
+          body: [firstPage],
+          headers: {
+            link: '<https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&head=weave-io%3Arelease-pr%2Fstable&page=2>; rel="next"',
+          },
+        },
+      "GET /repos/weave-io/weave/pulls?state=open&per_page=1&head=weave-io%3Arelease-pr%2Fstable&page=2":
+        {
+          body: [stablePage],
+        },
+    },
+    { pullRequestBounds: { pageSize: 1, maxPages: 3 } },
+  );
+
+  const labelled =
+    await world.client.listOpenPullRequestsByLabel("release:stable");
+  expect(labelled._unsafeUnwrap().map((pull) => pull.number)).toEqual([7]);
+  const byHead = await world.client.listPullRequestsForHead(
+    "release-pr/stable",
+    "open",
+  );
+  expect(byHead._unsafeUnwrap().map((pull) => pull.number)).toEqual([7]);
+});
+
+test("release PR collection fails closed when a next link exceeds its page bound", async () => {
+  const page = {
+    number: 6,
+    html_url: "https://github.com/weave-io/weave/pull/6",
+    state: "open",
+    title: "other",
+    body: "",
+    head: { ref: "feature", sha: BASE },
+    base: { ref: "main" },
+    labels: [],
+  };
+  const listPath = "/repos/weave-io/weave/pulls?state=open&per_page=1";
+  const headPath =
+    "/repos/weave-io/weave/pulls?state=open&per_page=1&head=weave-io%3Arelease-pr%2Fstable";
+  const routes: Record<string, Route> = {};
+  for (const [path, next] of [
+    [listPath, `${listPath}&page=2`],
+    [`${listPath}&page=2`, `${listPath}&page=3`],
+    [`${listPath}&page=3`, `${listPath}&page=4`],
+    [headPath, `${headPath}&page=2`],
+    [`${headPath}&page=2`, `${headPath}&page=3`],
+    [`${headPath}&page=3`, `${headPath}&page=4`],
+  ] as const) {
+    routes[`GET ${path}`] = {
+      body: [page],
+      headers: {
+        link: `<https://api.github.com${next}>; rel="next"`,
+      },
+    };
+  }
+  const world = client(routes, {
+    pullRequestBounds: { pageSize: 1, maxPages: 3 },
+  });
+
+  const labelled =
+    await world.client.listOpenPullRequestsByLabel("release:stable");
+  expect(labelled._unsafeUnwrapErr()).toMatchObject({ type: "GitHubError" });
+  expect(labelled._unsafeUnwrapErr().message).toContain("truncated");
+  const byHead = await world.client.listPullRequestsForHead(
+    "release-pr/stable",
+    "open",
+  );
+  expect(byHead._unsafeUnwrapErr().message).toContain("truncated");
+  expect(world.calls.some((call) => call.url.includes("page=4"))).toBe(false);
+});
+
 test("a created PR whose body cannot be parsed is an ambiguous write", async () => {
   const world = client({
     "POST /repos/weave-io/weave/pulls": { body: { not: "a pull request" } },
