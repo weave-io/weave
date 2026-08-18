@@ -1,8 +1,31 @@
 import { logger } from "@weaveio/weave-engine";
-import { okAsync, type ResultAsync } from "neverthrow";
+import { okAsync, type Result, type ResultAsync } from "neverthrow";
 import type { RegistryError } from "./errors.js";
+import {
+  type ChannelProofBlocker,
+  type ChannelProofPass,
+  evaluateChannelProofs,
+  runPackagedChannelProofs,
+} from "./harness-proof.js";
 import type { NpmRegistryClient } from "./npm-registry-client.js";
 
+export {
+  adaptersInPublishSet,
+  resolveChangedAdapters,
+  resolveNextChangedAdapters,
+  resolveNightlyChangedAdapters,
+  resolveStableChangedAdapters,
+} from "./changed-adapters.js";
+export {
+  evaluateChannelProofs,
+  HARNESS_PROOF_STAGES,
+  proveChangedAdapters,
+  provePublishSetConsumers,
+  runCleanConsumer,
+  runHarnessProof,
+  runPackagedChannelProofs,
+  validateProofCredentials,
+} from "./harness-proof.js";
 export { FIXTURE_SHA } from "./release-fixtures.js";
 
 export interface ScenarioResult {
@@ -71,3 +94,15 @@ export const FIXTURE_VERSIONS = {
   "@weaveio/weave-adapter-opencode": "0.1.0",
   "@weaveio/weave-adapter-claude-code": "0.1.0",
 } as const;
+
+/**
+ * Channel gate used by later publish jobs: missing, skipped, failed, or
+ * digest-mismatched consumer/harness proof blocks the whole run before OIDC.
+ */
+export function runChannelProofGate(
+  input: Parameters<typeof evaluateChannelProofs>[0],
+): Result<ChannelProofPass, ChannelProofBlocker> {
+  return evaluateChannelProofs(input);
+}
+
+export const runPackagedProofChain = runPackagedChannelProofs;

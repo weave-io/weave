@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { join, resolve } from "node:path";
 import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import { PRIVATE_PACKAGE_NAMES } from "../constants.js";
+import { evaluateChannelProofs } from "../harness-proof.js";
 import { PackagePolicyValidator } from "../package-policy.js";
 import { BunPackageCommandRunner, PublicPackagePackager } from "../packager.js";
-import { TarInspector } from "../tar-inspector.js";
+import { sha256Digest, TarInspector } from "../tar-inspector.js";
 
 type ConsumerTestError =
   | { type: "Command"; command: readonly string[]; cwd: string; output: string }
@@ -175,6 +177,87 @@ describe("public consumer fixture", () => {
       const help = await consumer.run(["./node_modules/.bin/weave", "--help"]);
       if (help.isOk()) expect(help.value.stdout).toContain("USAGE");
       else throw failure(help.error);
+
+      const inspector = new TarInspector();
+      const consumerAttempts = [];
+      for (const tarball of tarballs.value) {
+        const bytes = await Bun.file(tarball).bytes();
+        const inspected = inspector.inspectInventory(bytes);
+        expect(inspected.isOk()).toBe(true);
+        if (inspected.isErr()) continue;
+        const packageName = inspected.value.packageName;
+        const manifest = JSON.parse(
+          new TextDecoder().decode(
+            inspected.value.entries.find(
+              (entry) => entry.path === "package/package.json",
+            )?.contents,
+          ),
+        ) as {
+          dependencies?: Record<string, string>;
+          optionalDependencies?: Record<string, string>;
+          peerDependencies?: Record<string, string>;
+        };
+        for (const field of [
+          manifest.dependencies,
+          manifest.optionalDependencies,
+          manifest.peerDependencies,
+        ]) {
+          for (const privateName of PRIVATE_PACKAGE_NAMES)
+            expect(field?.[privateName]).toBeUndefined();
+        }
+        const entryDigests = [];
+        for (const entry of inspected.value.entryPointDigests) {
+          const installed = await Bun.file(
+            join(
+              consumer.directory,
+              "node_modules",
+              packageName,
+              entry.entryPoint,
+            ),
+          ).bytes();
+          expect(sha256Digest(installed)).toBe(entry.digest);
+          entryDigests.push(entry);
+        }
+        consumerAttempts.push({
+          status: "pass" as const,
+          record: {
+            kind: "clean-consumer" as const,
+            packageName,
+            tarballDigest: inspected.value.tarballSha256,
+            importedExports: ["."],
+            entryDigests,
+          },
+        });
+      }
+      const gate = evaluateChannelProofs({
+        channel: "stable",
+        closedPublishSet: consumerAttempts.map(
+          (attempt) => attempt.record.packageName,
+        ),
+        claimedPublishSet: consumerAttempts.map(
+          (attempt) => attempt.record.packageName,
+        ),
+        binding: {
+          tarballs: consumerAttempts.map((attempt) => ({
+            packageName: attempt.record.packageName,
+            sha256: attempt.record.tarballDigest,
+          })),
+          entryPointDigests: consumerAttempts.flatMap(
+            (attempt) => attempt.record.entryDigests,
+          ),
+        },
+        consumerAttempts,
+        harnessAttempts: [],
+        weaveHelpObserved: true,
+      });
+      // The live consumer set may omit adapters; a publishing adapter still
+      // needs harness proof. CLI-only members must pass the consumer gate.
+      if (
+        consumerAttempts.every(
+          (attempt) => !attempt.record.packageName.includes("adapter"),
+        )
+      )
+        expect(gate.isOk()).toBe(true);
 
       for (const packageName of [
         "@weaveio/weave-adapter-claude-code",
