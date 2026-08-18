@@ -6,12 +6,15 @@
     "registry": "https://registry.npmjs.org/"
   },
   "description": "OpenCode plugin adapter for the Weave orchestration framework",
+  "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "module": "./dist/index.js",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "exports": {
     ".": {

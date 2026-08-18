@@ -2,6 +2,7 @@
   "name": "@weaveio/weave-adapter-pi",
   "version": "0.0.1",
   "description": "Pi adapter for the Weave orchestration framework",
+  "license": "MIT",
   "keywords": ["pi-package", "weave", "agent-orchestration"],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,7 +21,7 @@
       "import": "./dist/extension.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": ["dist", "README.md", "CHANGELOG.md", "LICENSE"],
   "pi": {
     "extensions": ["./dist/extension.js"]
   },
