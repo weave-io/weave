@@ -1,55 +1,24 @@
 ---
 title: Packages
-description: Public package responsibilities and ownership boundaries in the Weave workspace.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+description: Public Weave packages and their roles.
 ---
 
-## Public package surface
+## Installable packages
 
-Weave is a Bun workspace. Consumers install only public packages; core, config, and engine are bundled internal layers and are not npm APIs.
-
-## Package Responsibilities
-
-| Package | Responsibility |
+| Package | Role |
 | --- | --- |
-| `@weaveio/weave-cli` | Stable and nightly CLI; bundles Claude Code materialization. |
-| `@weaveio/weave-adapter-opencode` | Stable and nightly OpenCode plugin adapter. |
-| `@weaveio/weave-adapter-claude-code` | Nightly-only standalone Claude Code adapter. |
+| `@weaveio/weave-cli` | `latest` (stable), `next`, and `nightly`. Provides the `weave` command, configuration scaffolding, validation, inspection, evals, and adapter composition. |
+| `@weaveio/weave-adapter-opencode` | `latest` (stable), `next`, and `nightly` OpenCode plugin surface. |
+| `@weaveio/weave-adapter-claude-code` | `latest` (stable), `next`, and `nightly` standalone Claude Code adapter. Stable users can also use the adapter bundled in the CLI. |
+| `@weaveio/weave-adapter-pi` | `latest` (stable), `next`, and `nightly` shipped Pi extension. |
 
-## Ownership Rules
+The CLI bundles Weave's core, config, and engine layers. Those layers support the public packages but are not consumer-facing installation targets.
 
-| If you are changing | Check |
-| --- | --- |
-| DSL syntax or schemas | Update core tests and public DSL docs. |
-| Config discovery or merge | Keep config docs and compatibility behavior aligned. |
-| Engine APIs | Confirm the API accepts explicit adapter context and does not scan harness-owned resources. |
-| Adapter code | Keep harness-specific discovery, commands, models, and tool names inside the adapter. |
-| CLI commands | Update CLI reference and guide workflows in the same change. |
-| Public docs UI | Verify base-path-safe links and static build navigation. |
+## Choose a package
 
-## Common Commands
+- Install the CLI for `.weave` scaffolding, validation, prompt inspection, runtime inspection, evals, and Claude Code composition.
+- Install the OpenCode adapter when OpenCode should load Weave as a plugin.
+- Install the Pi adapter from the channel you want when Pi should load Weave as an extension.
+- Use the standalone Claude Code package when an integration needs the adapter library; most users should use the CLI's `compose` command.
 
-```bash
-bun install
-bun run build
-bun run typecheck
-bun test
-bun run docs:build
-bun run --filter '@weaveio/weave-docs' typecheck
-```
-
-## Boundary Examples
-
-Correct engine API shape: an adapter passes available skills, available models, selected model, or runtime context into an engine helper and receives normalized output.
-
-Incorrect engine API shape: engine code scans OpenCode directories, calls OpenCode runtime APIs, or registers OpenCode slash commands directly.
-
-## Current Adapter Implementation
-
-OpenCode is the stable runtime adapter. Claude Code is supported through CLI-bundled file materialization and a nightly standalone adapter. See [Releases](../releases/) for channels, checksums, provenance, and no-unpublish policy.
-
-## Related Guides
-
-Read [Concepts](../../concepts/) for architecture context and [Adapter Reference](adapters/) for harness support status.
+See [Releases](../releases/) for channels and [Support matrix](../adapters/) for implementation versus distribution status.
