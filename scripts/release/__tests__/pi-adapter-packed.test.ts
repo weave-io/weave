@@ -9,7 +9,7 @@ import { TarInspector } from "../tar-inspector.js";
  * policy (Pi adapter contract package and public surface, host compatibility,
  * packed tarball, acceptance manifest PI-PKG).
  *
- * Runs `npm pack --ignore-scripts` on the staged, publicly-approved files
+ * Runs `bun pm pack --ignore-scripts` on the staged, publicly-approved files
  * only (no lifecycle scripts, no network). Never starts Pi.
  */
 describe("pi adapter packed artifact (Pi adapter contract, PI-PKG)", () => {
@@ -42,6 +42,8 @@ describe("pi adapter packed artifact (Pi adapter contract, PI-PKG)", () => {
       const paths = inspected.value.map((entry) => entry.path).sort();
       expect(paths).toEqual(
         [
+          "package/CHANGELOG.md",
+          "package/LICENSE",
           "package/README.md",
           "package/dist/cli.d.ts",
           "package/dist/cli.js",
