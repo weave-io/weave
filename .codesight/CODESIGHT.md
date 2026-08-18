@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 306 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~33,300 tokens. Without it, AI exploration would cost ~98,600 tokens. **Saves ~65,300 tokens per conversation.**
-> **Last scanned:** 2026-08-18 00:37 — re-run after significant changes
+> **Last scanned:** 2026-08-18 01:49 — re-run after significant changes
 
 ---
 
@@ -506,9 +506,9 @@
   - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
   - function redactRawReasoningFromEvent: (event) => PiChildSessionEvent
+  - function retainedChildSessionEvent: (event) => PiChildSessionEvent | undefined
   - function parsePiChildSessionEvent
-  - interface PiChildUsageReport
-  - _...13 more_
+  - _...14 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority
@@ -715,7 +715,7 @@
   - function messageUpdateObservesRawReasoning: (record) => boolean
   - type PiMessageUpdateRejection
   - type PiMessageUpdateCarrier
-  - _...1 more_
+  - _...2 more_
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator
@@ -1913,7 +1913,7 @@
 - `packages/adapters/pi/src/child-timer.ts` — imported by **21** files
 - `packages/adapters/pi/src/errors.ts` — imported by **21** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `packages/adapters/pi/src/child-session-events.ts` — imported by **19** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **18** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files

@@ -9,7 +9,7 @@ import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   parsePiChildSessionEvent,
   preserveUnknownChildEvent,
-  redactRawReasoningFromEvent,
+  retainedChildSessionEvent,
 } from "./child-session-events.js";
 import {
   EMPTY_PI_CHILD_TRANSCRIPT_STATE,
@@ -200,7 +200,9 @@ export class PiChildInspectionRegistry {
    *
    * An event the parser refuses is not retained at all: history still learns
    * that a checkpoint happened, with no payload, because a value this boundary
-   * could not validate is a value it cannot describe honestly.
+   * could not validate is a value it cannot describe honestly. A parsed frame
+   * the carrier classification rejected is refused for the same reason and by
+   * the same shared decision every other retention boundary asks.
    */
   checkpointEvent(
     id: string,
@@ -209,7 +211,7 @@ export class PiChildInspectionRegistry {
     if (!this.live.has(id)) return okAsync(undefined);
     const parsed = parsePiChildSessionEvent(event);
     const retained = parsed.success
-      ? redactRawReasoningFromEvent(parsed.data)
+      ? retainedChildSessionEvent(parsed.data)
       : undefined;
     if (retained !== undefined) {
       const reducer =

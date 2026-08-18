@@ -421,14 +421,21 @@ describe("Pi child transcript reducer", () => {
     expect(reducer.queueFollowUp("user").isOk()).toBe(true);
     applyAll(reducer, [
       { type: "message_start", message: { id: "assistant-parity" } },
+      // Answer text and raw reasoning arrive in SEPARATE frames. One frame
+      // carrying both is ambiguous, and the shared retention decision refuses
+      // it outright, so a fixture that mixed them proved nothing about the
+      // facts each carrier produces.
       {
         type: "message_update",
         delta: {
           messageId: "assistant-parity",
           text: "assistant",
-          thinking: "thinking",
           markdown: "markdown",
         },
+      },
+      {
+        type: "message_update",
+        delta: { messageId: "assistant-parity", thinking: "thinking" },
       },
       { type: "text", text: "text" },
       { type: "thinking", text: "private" },

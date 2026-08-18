@@ -495,9 +495,9 @@
   - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
   - function redactRawReasoningFromEvent: (event) => PiChildSessionEvent
+  - function retainedChildSessionEvent: (event) => PiChildSessionEvent | undefined
   - function parsePiChildSessionEvent
-  - interface PiChildUsageReport
-  - _...13 more_
+  - _...14 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority
@@ -704,7 +704,7 @@
   - function messageUpdateObservesRawReasoning: (record) => boolean
   - type PiMessageUpdateRejection
   - type PiMessageUpdateCarrier
-  - _...1 more_
+  - _...2 more_
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator

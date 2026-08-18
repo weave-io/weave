@@ -294,15 +294,22 @@ Behavior:
   reasoning fact, framing that states nothing, or a typed rejection. A frame
   that declares an answer carrier and a raw-reasoning carrier at once is
   rejected fail-closed — it produces no text and no reasoning claim on any
-  surface, and both carriers are emptied before the event is retained. A
-  carrier is judged by what it HOLDS, not by the type it declares: prose under
-  a `thinking` / `reasoning` member, or in a nested thinking content block,
-  makes a `text_delta` or `answer` frame a raw-reasoning carrier too, and a
-  carrier the bounded descriptor-safe scan cannot read is rejected.
-- Every path that retains a child event retains the SAME parser-approved,
-  redacted event: the transcript reducer, the live overlay projection, the
-  replay-step builder, and the durable child-history port. An event the parser
-  refuses is retained nowhere — history records the checkpoint with no payload.
+  surface. A carrier is judged by what it HOLDS, not by the type it declares:
+  prose under a `thinking` / `reasoning` member, or in a nested thinking
+  content block, makes a `text_delta` or `answer` frame a raw-reasoning carrier
+  too, and a carrier the bounded descriptor-safe scan cannot read is rejected.
+- Every path that retains a child event asks ONE shared retention decision and
+  retains the SAME parser-approved event: the transcript reducer, the live
+  overlay projection, the replay-step builder, and the durable child-history
+  port. A `message_update` the classification REJECTED is retained nowhere: it
+  appends no history event, projects no entry, pushes no replay step, and hands
+  the history port no payload, because redaction can only blank the fields a
+  carrier declared and a rejected frame is precisely one whose carriers could
+  not be read — including a thought hidden under an undeclared member, past the
+  bounded scan's depth, or behind enough padding to exhaust it. A reasoning
+  frame is retained as its content-free shape; an unambiguous answer and pure
+  framing are retained unchanged. An event the parser refuses is likewise
+  retained nowhere — history records the checkpoint with no payload.
 - All child-sourced text is sanitized for terminal control sequences before
   render, and box-drawing glyphs are reachable only through the frame
   primitives, so child text structurally cannot forge a frame.

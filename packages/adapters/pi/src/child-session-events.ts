@@ -1378,9 +1378,10 @@ const redactMessageReasoning = (
  *
  * A `message_update` that carries answer text AND raw reasoning at once is a
  * fifth case, and the strictest: no reader can tell which carrier held the
- * chain-of-thought, so ALL of them are emptied. Redacting only the thinking
- * carrier left the ambiguous frame's `delta.text` in the retained history
- * event, where a rebuild, a search, or a snapshot could still read it.
+ * chain-of-thought, so ALL of them are emptied. That blanking is a SECOND line
+ * of defence only: a frame the carrier classification rejected is refused
+ * outright by {@link retainedChildSessionEvent}, which every retention
+ * boundary asks before it keeps anything.
  *
  * `reasoning_summary` is deliberately untouched: it is the host's own explicit
  * summary surface and the ONE trusted place reasoning prose may be read from.
@@ -1451,4 +1452,44 @@ export function redactRawReasoningFromEvent(
       : { assistantMessageEvent: redactedAssistant }),
     ...(redactedMessage === undefined ? {} : { message: redactedMessage }),
   } as unknown as PiChildSessionEvent;
+}
+
+/**
+ * The ONE value any retention boundary may keep for an observed child event,
+ * or `undefined` when the frame states nothing that can be retained honestly.
+ *
+ * {@link redactRawReasoningFromEvent} preserves a frame's SHAPE by blanking
+ * the prose fields its carriers DECLARED, which is the right rule for a frame
+ * this boundary understands. A REJECTED `message_update` is not such a frame:
+ * the carrier classification refused it precisely because it could not say
+ * what the frame carries, so no list of field names describes what to blank.
+ * A hidden thought parked under an undeclared member —
+ * `assistantMessageEvent.metadata.content[{ type: "thinking", text }]` — was
+ * therefore retained in full: in the transcript's bounded history, in the
+ * inspection registry's durable checkpoint, and in every search, rebuild and
+ * snapshot taken from them.
+ *
+ * So the rule is the simplest one that cannot leak: a rejected frame moves
+ * nothing and is not retained anywhere. The frame is still OBSERVED — the
+ * child ran, the turn advanced — it just leaves no payload behind.
+ *
+ * Every retention entrance asks this function, so the decision cannot drift
+ * between the transcript reducer, the live overlay projection, the replay-step
+ * builder and the inspection registry's durable history. Fixing only one of
+ * them is what left the other three holding the prose.
+ *
+ * Everything else is retained exactly as `redactRawReasoningFromEvent`
+ * describes: an unambiguous answer and pure framing unchanged, and a reasoning
+ * lifecycle kept as its content-free shape.
+ */
+export function retainedChildSessionEvent(
+  event: PiChildSessionEvent,
+): PiChildSessionEvent | undefined {
+  if (
+    event.type === "message_update" &&
+    classifyPiMessageUpdate(event).kind === "rejected"
+  ) {
+    return undefined;
+  }
+  return redactRawReasoningFromEvent(event);
 }

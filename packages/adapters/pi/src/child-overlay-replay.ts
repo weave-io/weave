@@ -43,7 +43,7 @@ import {
 import {
   type PiChildSessionEvent,
   parsePiChildSessionEvent,
-  redactRawReasoningFromEvent,
+  retainedChildSessionEvent,
 } from "./child-session-events.js";
 import {
   createPiChildTranscriptState,
@@ -95,14 +95,18 @@ function replayEvent(candidate: unknown): ChildOverlayReplayStep | undefined {
   const parsed = parsePiChildSessionEvent(candidate);
   if (!parsed.success) return undefined;
   // Replay steps are retained state: they are serialized with the overlay
-  // window and re-reduced on every rebuild, so raw reasoning is stripped
-  // before the step exists rather than at the point it would be rendered.
-  return {
-    kind: "event",
-    event: redactRawReasoningFromEvent(
-      redactProviderErrorFromEvent(parsed.data),
-    ),
-  };
+  // window and re-reduced on every rebuild, so the shared retention decision
+  // is asked here, on the OBSERVED frame, before the step exists.
+  //
+  // Order matters. `redactProviderErrorFromEvent` REBUILDS a `message_update`
+  // from its known carriers, which silently drops whatever a rejected frame
+  // hid under an undeclared member - and turns the refused frame into an
+  // ordinary answer step that publishes the text beside the hidden thought.
+  // Asking first is what keeps this entrance's verdict the same as the
+  // transcript reducer's and the registry's.
+  const retained = retainedChildSessionEvent(parsed.data);
+  if (retained === undefined) return undefined;
+  return { kind: "event", event: redactProviderErrorFromEvent(retained) };
 }
 
 export function pushReplayEvent(
@@ -813,10 +817,14 @@ export function projectLiveEntry(
   expanded: boolean,
   assistantEntryId?: string,
 ): ChildOverlayEntry | undefined {
-  // Same contract as the historical mapper's `replayEvent`: a retained step
-  // never carries chain-of-thought prose, only the fact that it happened.
+  // Same contract as the historical mapper's `replayEvent`, through the same
+  // shared decision: a retained step never carries chain-of-thought prose,
+  // only the fact that it happened, and a frame the carrier classification
+  // rejected projects no entry and no step at all.
+  const retained = retainedChildSessionEvent(event);
+  if (retained === undefined) return undefined;
   const replay: readonly ChildOverlayReplayStep[] = [
-    { kind: "event", event: redactRawReasoningFromEvent(event) },
+    { kind: "event", event: retained },
   ];
   switch (event.type) {
     case "message_start":

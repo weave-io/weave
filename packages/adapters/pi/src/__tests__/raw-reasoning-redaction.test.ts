@@ -31,7 +31,10 @@ import {
   pushReplayEvent,
   transcriptFromOverlayEntries,
 } from "../child-overlay-replay.js";
-import type { ChildOverlayReplayStep } from "../child-overlay-types.js";
+import type {
+  ChildOverlayEntry,
+  ChildOverlayReplayStep,
+} from "../child-overlay-types.js";
 import {
   type PiChildSessionEvent,
   parsePiChildSessionEvent,
@@ -39,13 +42,16 @@ import {
 } from "../child-session-events.js";
 import {
   createPiChildTranscriptState,
+  type PiChildTranscriptState,
   reducePiChildTranscript,
+  renderPiChildTranscript,
 } from "../child-transcript.js";
 import {
   EMPTY_USAGE_AGGREGATE,
   PiChildInspectionRegistry,
   ROOT_NODE_ID,
 } from "../child-tree.js";
+import { classifyPiMessageUpdate } from "../message-update-carrier.js";
 
 /**
  * One sentinel per carrier, so a failure names the exact field that leaked
@@ -535,46 +541,46 @@ describe("retained history carries no HIDDEN chain-of-thought", () => {
 // 4. The registry's two retention paths receive the SAME redacted event
 // ---------------------------------------------------------------------------
 
-describe("PiChildInspectionRegistry.checkpointEvent · one retained event", () => {
-  /** Captures exactly what the durable history port is handed. */
-  function capturingRegistry(): {
-    readonly registry: PiChildInspectionRegistry;
-    readonly captured: unknown[];
-  } {
-    const captured: unknown[] = [];
-    const registry = new PiChildInspectionRegistry({
-      checkpoint: (_id: string, event?: unknown) => {
-        captured.push(event);
-        return okAsync(undefined);
-      },
-    });
-    return { registry, captured };
-  }
+/** Captures exactly what the durable history port is handed. */
+function capturingRegistry(): {
+  readonly registry: PiChildInspectionRegistry;
+  readonly captured: unknown[];
+} {
+  const captured: unknown[] = [];
+  const registry = new PiChildInspectionRegistry({
+    checkpoint: (_id: string, event?: unknown) => {
+      captured.push(event);
+      return okAsync(undefined);
+    },
+  });
+  return { registry, captured };
+}
 
-  async function registerChild(
-    registry: PiChildInspectionRegistry,
-  ): Promise<void> {
-    const registered = await registry.register({
-      id: "child",
+async function registerChild(
+  registry: PiChildInspectionRegistry,
+): Promise<void> {
+  const registered = await registry.register({
+    id: "child",
+    parentId: ROOT_NODE_ID,
+    name: "child",
+    kind: "ordinary",
+    snapshot: () => ({
       parentId: ROOT_NODE_ID,
       name: "child",
-      kind: "ordinary",
-      snapshot: () => ({
-        parentId: ROOT_NODE_ID,
-        name: "child",
-        status: "running",
-        currentTurn: 0,
-        currentTool: undefined,
-        startedAtMs: 0,
-        elapsedMs: 0,
-        usage: EMPTY_USAGE_AGGREGATE,
-        latestOutput: "",
-        id: "child",
-      }),
-    });
-    expect(registered.isOk()).toBe(true);
-  }
+      status: "running",
+      currentTurn: 0,
+      currentTool: undefined,
+      startedAtMs: 0,
+      elapsedMs: 0,
+      usage: EMPTY_USAGE_AGGREGATE,
+      latestOutput: "",
+      id: "child",
+    }),
+  });
+  expect(registered.isOk()).toBe(true);
+}
 
+describe("PiChildInspectionRegistry.checkpointEvent · one retained event", () => {
   it("hands durable history the redacted thinking_end, not the raw frame", async () => {
     const { registry, captured } = capturingRegistry();
     await registerChild(registry);
@@ -633,5 +639,384 @@ describe("PiChildInspectionRegistry.checkpointEvent · one retained event", () =
 
     expect(captured).toEqual([undefined]);
     expectNoSentinel(JSON.stringify(captured));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. A REJECTED frame is retained NOWHERE
+// ---------------------------------------------------------------------------
+
+/**
+ * Redaction blanks the prose fields a carrier DECLARED, which is the right
+ * rule for a frame this boundary understands. A rejected frame is not one: the
+ * classifier refused it precisely because it could not say what it carries, so
+ * no field list describes what to blank. A thought parked under an undeclared
+ * member — `assistantMessageEvent.metadata.content[{ type: "thinking", text }]`
+ * — survived redaction untouched and was written into the transcript's bounded
+ * history and the registry's durable checkpoint in full.
+ *
+ * The rule below is the only one that cannot be walked around: a rejected
+ * `message_update` moves nothing and is retained nowhere. Each case drives
+ * EVERY retention entrance with one frame, because fixing a single entrance is
+ * what left the others holding the prose.
+ */
+const REFUSED = {
+  undeclared: "SENTINEL-UNDECLARED-MEMBER-PROSE",
+  depth: "SENTINEL-DEPTH-OVERFLOW-PROSE",
+  budget: "SENTINEL-NODE-BUDGET-PROSE",
+  conflicting: "SENTINEL-CONFLICTING-ANSWER-PROSE",
+  accessor: "SENTINEL-ACCESSOR-PROSE",
+  revoked: "SENTINEL-REVOKED-PROXY-PROSE",
+} as const;
+
+function expectAbsent(serialized: string, needles: readonly string[]): void {
+  for (const needle of needles) {
+    expect({ needle, present: serialized.includes(needle) }).toEqual({
+      needle,
+      present: false,
+    });
+  }
+}
+
+/** Buries a value under `depth` plain wrappers, past any scan bound. */
+function buried(depth: number, leaf: unknown): unknown {
+  let node: unknown = leaf;
+  for (let index = 0; index < depth; index += 1) node = { nested: node };
+  return node;
+}
+
+/** Enough nodes to exhaust one frame's whole hidden-carrier scan budget. */
+function scanPadding(): readonly unknown[] {
+  return Array.from({ length: 128 }, (_, outer) => ({
+    branch: Array.from({ length: 8 }, (_, inner) => ({
+      leaf: `${outer}:${inner}`,
+    })),
+  }));
+}
+
+/** Everything one observed frame left behind, at every retention entrance. */
+interface RetentionProbe {
+  readonly before: PiChildTranscriptState;
+  readonly after: PiChildTranscriptState;
+  readonly liveEntry: ChildOverlayEntry | undefined;
+  readonly steps: readonly ChildOverlayReplayStep[];
+  readonly captured: readonly unknown[];
+  readonly registryTranscript: PiChildTranscriptState;
+  /** Every surface above, plus the rebuild and the rendered rows. */
+  readonly serialized: string;
+}
+
+async function driveEveryRetentionEntrance(
+  raw: Record<string, unknown>,
+): Promise<RetentionProbe> {
+  const event = parsed(raw);
+
+  const before = createPiChildTranscriptState();
+  const reduced = reducePiChildTranscript(before, { kind: "event", event });
+  expect(reduced.isOk()).toBe(true);
+  const after = reduced.isOk() ? reduced.value : before;
+
+  const liveEntry = projectLiveEntry(event, 0, false);
+
+  const steps: ChildOverlayReplayStep[] = [];
+  expect(pushReplayEvent(steps, raw).isOk()).toBe(true);
+
+  const { registry, captured } = capturingRegistry();
+  await registerChild(registry);
+  await registry.checkpointEvent("child", raw);
+  await registry.drain();
+  const registryTranscript = registry.getTranscriptState("child");
+
+  return {
+    before,
+    after,
+    liveEntry,
+    steps,
+    captured,
+    registryTranscript,
+    serialized: JSON.stringify({
+      after,
+      liveEntry: liveEntry ?? null,
+      steps,
+      captured,
+      registryTranscript,
+      // What a search, a page merge or a snapshot would read back.
+      rebuilt: transcriptFromOverlayEntries(
+        liveEntry === undefined ? [] : [liveEntry],
+      ),
+      renderedTranscript: renderPiChildTranscript(after, 80).lines,
+      renderedRegistryTranscript: renderPiChildTranscript(
+        registryTranscript,
+        80,
+      ).lines,
+    }),
+  };
+}
+
+const REFUSED_FRAMES: readonly {
+  readonly name: string;
+  readonly reason: string;
+  readonly sentinel: string;
+  readonly raw: Record<string, unknown>;
+}[] = [
+  {
+    name: "a thinking block under an UNDECLARED carrier member",
+    reason: "mixed-carriers",
+    sentinel: REFUSED.undeclared,
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+        metadata: {
+          content: [{ type: "thinking", text: REFUSED.undeclared }],
+        },
+      },
+    },
+  },
+  {
+    name: "a thought buried past the hidden-carrier depth bound",
+    reason: "unreadable",
+    sentinel: REFUSED.depth,
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+        metadata: buried(12, { type: "thinking", text: REFUSED.depth }),
+      },
+    },
+  },
+  {
+    name: "a thought behind enough padding to exhaust the scan budget",
+    reason: "unreadable",
+    sentinel: REFUSED.budget,
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+        metadata: {
+          padding: scanPadding(),
+          content: [{ type: "thinking", text: REFUSED.budget }],
+        },
+      },
+    },
+  },
+  {
+    name: "two answer carriers that disagree about the text",
+    reason: "conflicting-answers",
+    sentinel: REFUSED.conflicting,
+    raw: {
+      type: "message_update",
+      delta: { text: `${REFUSED.conflicting}-legacy` },
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: `${REFUSED.conflicting}-event`,
+      },
+    },
+  },
+];
+
+describe("a rejected message_update is retained nowhere", () => {
+  for (const refused of REFUSED_FRAMES) {
+    it(`moves nothing for ${refused.name}`, async () => {
+      const event = parsed(refused.raw);
+      expect(classifyPiMessageUpdate(event)).toEqual({
+        kind: "rejected",
+        reason: refused.reason,
+      } as ReturnType<typeof classifyPiMessageUpdate>);
+
+      const probe = await driveEveryRetentionEntrance(refused.raw);
+
+      // Asserted FIRST, because it is the disclosure itself: the hidden
+      // thought is gone from every retained surface — and so is the answer
+      // that sat beside it, because the frame states nothing this boundary can
+      // attribute to either carrier.
+      expectAbsent(probe.serialized, [refused.sentinel, ANSWER]);
+      expectAbsent(probe.serialized, ALL_SENTINELS);
+
+      // The transcript reducer keeps its OWN state object: no history event,
+      // no placeholder entry, not even a consumed sequence number.
+      expect(probe.after).toBe(probe.before);
+      expect(probe.after.historyEvents).toEqual([]);
+      expect(probe.after.entries).toEqual([]);
+      // The overlay projects no entry and the replay builder pushes no step,
+      // so nothing reaches the window, a rebuild, or a search.
+      expect(probe.liveEntry).toBeUndefined();
+      expect(probe.steps).toEqual([]);
+      // Durable history learns that a checkpoint happened, with no payload.
+      expect(probe.captured).toEqual([undefined]);
+      expect(probe.registryTranscript.historyEvents).toEqual([]);
+      expect(probe.registryTranscript.entries).toEqual([]);
+    });
+  }
+
+  it("never invokes an accessor a hostile carrier defined", async () => {
+    let invoked = 0;
+    const hostile = {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: ANSWER,
+        metadata: {
+          get content() {
+            invoked += 1;
+            return [{ type: "thinking", text: REFUSED.accessor }];
+          },
+        },
+      },
+    };
+    // The parser materializes own DATA descriptors only, so the accessor is
+    // dropped with the carrier that defined it before any retention boundary
+    // sees the frame: what arrives is pure framing.
+    expect(classifyPiMessageUpdate(parsed(hostile))).toEqual({
+      kind: "framing",
+    });
+
+    const probe = await driveEveryRetentionEntrance(hostile);
+    expect(invoked).toBe(0);
+    expectAbsent(probe.serialized, [REFUSED.accessor, ANSWER]);
+  });
+
+  it("retains nothing from a revoked proxy or a throwing reflection trap", async () => {
+    const revocable = Proxy.revocable(
+      { type: "thinking", text: REFUSED.revoked },
+      {},
+    );
+    revocable.revoke();
+    const hostile: Record<string, unknown>[] = [
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          delta: ANSWER,
+          metadata: { content: [revocable.proxy] },
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          delta: ANSWER,
+          metadata: new Proxy(
+            {},
+            {
+              ownKeys() {
+                throw new Error("hostile reflection");
+              },
+            },
+          ),
+        },
+      },
+    ];
+
+    for (const raw of hostile) {
+      // Reflection that throws is a rejection, never an exception.
+      const probe = await driveEveryRetentionEntrance(raw);
+      expectAbsent(probe.serialized, [REFUSED.revoked]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. What the refusal must NOT take with it
+// ---------------------------------------------------------------------------
+
+describe("the retention decision keeps every unambiguous frame", () => {
+  it("retains an ordinary answer at every entrance", async () => {
+    const probe = await driveEveryRetentionEntrance({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+      },
+    });
+
+    expect(probe.after.historyEvents).toHaveLength(1);
+    expect(probe.liveEntry?.text).toBe(ANSWER);
+    expect(probe.steps).toHaveLength(1);
+    expect(probe.captured).toHaveLength(1);
+    expect(probe.serialized).toContain(ANSWER);
+  });
+
+  it("retains pure framing exactly as the child framed it", async () => {
+    for (const assistantMessageEvent of [
+      { type: "text_start", contentIndex: 0 },
+      { type: "text_end", contentIndex: 0 },
+      { type: "toolcall_start", contentIndex: 1 },
+    ]) {
+      const raw = { type: "message_update", assistantMessageEvent };
+      const probe = await driveEveryRetentionEntrance(raw);
+      expect(probe.after.historyEvents).toHaveLength(1);
+      expect(probe.after.historyEvents[0]?.event).toEqual(
+        raw as unknown as PiChildSessionEvent,
+      );
+      expect(probe.captured).toEqual([raw]);
+    }
+  });
+
+  it("retains a reasoning lifecycle as its content-free shape", async () => {
+    let state = createPiChildTranscriptState();
+    const captured: unknown[] = [];
+    const registry = new PiChildInspectionRegistry({
+      checkpoint: (_id: string, event?: unknown) => {
+        captured.push(event);
+        return okAsync(undefined);
+      },
+    });
+    await registerChild(registry);
+
+    const lifecycle: Record<string, unknown>[] = [
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_start",
+          contentIndex: 0,
+          content: COT.start,
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: COT.delta,
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 0,
+          content: [{ type: "thinking", text: COT.block }],
+        },
+      },
+    ];
+    for (const raw of lifecycle) {
+      const next = reducePiChildTranscript(state, {
+        kind: "event",
+        event: parsed(raw),
+      });
+      expect(next.isOk()).toBe(true);
+      if (next.isOk()) state = next.value;
+      await registry.checkpointEvent("child", raw);
+    }
+    await registry.drain();
+
+    // The shape of all three frames survives - the reader still learns THAT
+    // the child reasoned - while the prose survives nowhere.
+    expect(state.historyEvents).toHaveLength(3);
+    expect(captured).toHaveLength(3);
+    expect(
+      state.entries.some(
+        (entry) => entry.kind === "assistant" && entry.reasoningObserved,
+      ),
+    ).toBe(true);
+    expectNoSentinel(JSON.stringify({ state, captured }));
   });
 });

@@ -6,7 +6,7 @@ import {
 import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import {
   type PiChildSessionEvent,
-  redactRawReasoningFromEvent,
+  retainedChildSessionEvent,
 } from "./child-session-events.js";
 import { classifyPiMessageUpdate } from "./message-update-carrier.js";
 /** Maximum size of one private transcript event, measured as UTF-8 JSON bytes. */
@@ -968,13 +968,12 @@ function addEntry(
 
 function applyEventBody(
   state: PiChildTranscriptState,
-  rawEvent: PiChildSessionEvent,
+  event: PiChildSessionEvent,
   sequence: number,
 ): Result<PiChildTranscriptState, PiChildTranscriptError> {
-  // Redaction runs before the bounded history append as well as before the
-  // entry reduce: raw reasoning is never rendered, so retaining it anywhere in
-  // transcript state would only create a surface for it to escape from.
-  const event = redactRawReasoningFromEvent(rawEvent);
+  // The event arrives already retention-approved: raw reasoning is never
+  // rendered, so retaining it anywhere in transcript state - the bounded
+  // history included - would only create a surface for it to escape from.
   const history = appendHistory(state, event, sequence);
   if (history.isErr()) return err(history.error);
   let next: PiChildTranscriptState = { ...state, ...history.value };
@@ -1399,7 +1398,14 @@ function applyEvent(
   event: PiChildSessionEvent,
   sequence: number,
 ): Result<PiChildTranscriptState, PiChildTranscriptError> {
-  return applyEventBody(state, event, sequence).map((next) => ({
+  // The shared retention decision, asked once, before anything is kept. A
+  // frame the carrier classification rejected moves NOTHING here: no history
+  // event, no entry, not even a sequence number. Redacting it instead left
+  // whatever the frame hid under an undeclared member in the bounded history,
+  // where search, serialization and every rebuild could read it back.
+  const retained = retainedChildSessionEvent(event);
+  if (retained === undefined) return ok(state);
+  return applyEventBody(state, retained, sequence).map((next) => ({
     ...next,
     nextSequence: sequence + 1,
   }));
