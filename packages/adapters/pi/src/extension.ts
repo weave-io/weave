@@ -2235,16 +2235,21 @@ export interface PiInputDecision {
  *    submission is routed and before its text is parsed. Every interactive
  *    text therefore supersedes every older pending observation, whatever it
  *    turns out to say;
- * 2. the observation only COMPLETES when the host actually routed the message
- *    into the session. A declined pause confirmation returns `handled`, which
- *    submits nothing, so nothing may be adopted, recorded, or painted for it.
+ * 2. the request is only RECORDED AS PENDING when this adapter let the message
+ *    through. A declined pause confirmation returns `handled`, which submits
+ *    nothing, so there is nothing left for a later turn to redeem.
+ *
+ * `continue` is where this rule stops. It states that the adapter did not stop
+ * the message, not that the host accepted it, so it records intent and never
+ * adopts: the adoption itself waits for a real turn-start proof (see
+ * `redeemPendingForegroundPlan`).
  *
  * Previously the observation was fired beside the decision, so a user who
  * answered "no" to "pause the running workflow?" still moved the Plan Rail
  * onto a plan whose kickoff turn never existed.
  */
 export async function resolveWeaveInputDecision(input: {
-  /** Claims the generation; returns the completion to run iff routing succeeds. */
+  /** Claims the generation; returns the intent to record iff routing succeeds. */
   readonly claimObservation: () => (() => void) | undefined;
   readonly routeInput: () => Promise<PiInputDecision>;
 }): Promise<PiInputDecision> {
@@ -3466,6 +3471,29 @@ export function createPiExtension(
   };
 
   /**
+   * One direct request that has been PARSED but not yet proven to have started
+   * a turn.
+   *
+   * The `input` event is the adapter's own decision point, not the host's: a
+   * later handler may still answer `handled`, a skill or template expansion may
+   * replace the text, and the host may drop the submission entirely. Adopting
+   * there named a plan for a turn that might never exist. The parsed request is
+   * therefore held here as INTENT, scoped to the observation token that already
+   * carries this session's generation, root and request identity, plus the
+   * exact text that was submitted - and it is redeemed only against a real
+   * host turn-start proof for that same text.
+   */
+  const pendingForegroundPlanCell: {
+    pending:
+      | {
+          readonly token: ForegroundPlanToken;
+          readonly planName: string;
+          readonly text: string;
+        }
+      | undefined;
+  } = { pending: undefined };
+
+  /**
    * Supersedes every pending observation, and returns the marker that is now
    * current.
    *
@@ -3477,6 +3505,11 @@ export function createPiExtension(
   function invalidatePendingForegroundPlanObservations(): object {
     const marker = Object.freeze({});
     foregroundPlanObservations.latest = marker;
+    // An unredeemed intent belongs to the request that has just been
+    // superseded. Dropping it here means a newer submission, an authoritative
+    // `/weave:start`, or a session replacement leaves nothing behind that a
+    // later turn could redeem.
+    pendingForegroundPlanCell.pending = undefined;
     return marker;
   }
 
@@ -3628,7 +3661,11 @@ export function createPiExtension(
     event: unknown,
     ctx: PiSessionContext,
   ):
-    | { readonly token: ForegroundPlanToken; readonly planName: string }
+    | {
+        readonly token: ForegroundPlanToken;
+        readonly planName: string;
+        readonly text: string;
+      }
     | undefined {
     const record = asJsonRecord(event);
     if (record === undefined) return undefined;
@@ -3637,7 +3674,44 @@ export function createPiExtension(
     const token = beginForegroundPlanObservation(ctx);
     const parsed = parseForegroundPlanRequest(record.text);
     if (parsed.isErr()) return undefined;
-    return { token, planName: parsed.value };
+    return { token, planName: parsed.value, text: record.text };
+  }
+
+  /**
+   * Redeems the pending direct request against ONE host turn-start proof.
+   *
+   * `before_agent_start` is the earliest event Pi fires only for a submission
+   * it has actually accepted into the session: input interception is over,
+   * skill and template expansion have run, and the agent loop is about to
+   * begin. It also states the prompt that was accepted, which is what ties the
+   * proof to this exact request rather than to "some turn happened".
+   *
+   * The intent is consumed by the FIRST proof that arrives, whatever it proves.
+   * A turn whose prompt is not this request's text is evidence that the
+   * submission never reached the agent - something else is running - so the
+   * intent is dropped rather than left to be redeemed by a still later turn.
+   * A stale token (newer submission, replaced session, changed root) is dropped
+   * the same way.
+   *
+   * Nothing here reads assistant text, tool output, or model prose: the proof
+   * is a host lifecycle event and the user's own submitted string.
+   */
+  function redeemPendingForegroundPlan(
+    pi: PiExtensionApi,
+    event: unknown,
+    ctx: PiSessionContext,
+  ): void {
+    const pending = pendingForegroundPlanCell.pending;
+    if (pending === undefined) return;
+    pendingForegroundPlanCell.pending = undefined;
+    if (!foregroundPlanObservationCurrent(pending.token)) return;
+    if (ctx.cwd !== pending.token.root) return;
+    const record = asJsonRecord(event);
+    if (typeof record?.prompt !== "string") return;
+    if (record.prompt !== pending.text) return;
+    runForegroundPlanObservation(
+      completeForegroundPlanObservation(pi, pending.token, pending.planName),
+    );
   }
 
   /**
@@ -3649,10 +3723,11 @@ export function createPiExtension(
    * 1. the message is the USER's own interactive submission;
    * 2. it parses, strictly, to exactly one contained
    *    `.weave/plans/<safe-name>.md` inside an explicit execution request;
-   * 3. the host ACTUALLY ROUTED that submission into the session. A declined
-   *    pause confirmation, or any other decision that ends the message before
-   *    it is submitted, runs no observation at all: the rail would otherwise
-   *    name a plan for a turn that never happened;
+   * 3. the host ACTUALLY STARTED a turn for that submission, and said so
+   *    itself: `before_agent_start` names the accepted prompt, and only a
+   *    proof carrying this request's own text redeems it. A declined pause
+   *    confirmation, a later handler that answers `handled`, a submission the
+   *    host drops, and an unrelated turn all leave the rail exactly as it was;
    * 4. that name is in THIS project root's plan catalog and its snapshot
    *    reads, so a plan that exists only in another worktree is never read
    *    across roots and never displayed;
@@ -4949,20 +5024,26 @@ export function createPiExtension(
       // else: assistant text, tool output and system prompts never reach this
       // handler, and the parse is strict enough that a message merely
       // mentioning a plan file moves nothing. It never changes the input's
-      // routing: `resolveWeaveInputDecision` runs the adoption AFTER the
-      // routing decision, and only when the message was actually submitted.
+      // routing: `resolveWeaveInputDecision` records the intent AFTER the
+      // routing decision, and only when this adapter let the message through.
+      //
+      // Nothing is adopted, recorded or painted here. This adapter's own
+      // `continue` is not proof that the host accepted the submission - a
+      // later handler may still answer `handled`, expansion may rewrite the
+      // text, and the host may drop it - so the parsed request is held as
+      // pending intent and redeemed in `before_agent_start`, the first event
+      // Pi fires only for a turn it has actually started.
       return await resolveWeaveInputDecision({
         claimObservation: () => {
           const claimed = claimForegroundPlanObservation(event, ctx);
           if (claimed === undefined) return undefined;
-          return () =>
-            runForegroundPlanObservation(
-              completeForegroundPlanObservation(
-                pi,
-                claimed.token,
-                claimed.planName,
-              ),
-            );
+          return () => {
+            pendingForegroundPlanCell.pending = {
+              token: claimed.token,
+              planName: claimed.planName,
+              text: claimed.text,
+            };
+          };
         },
         routeInput: () => routeParentInput(ctx),
       });
@@ -6712,6 +6793,11 @@ export function createPiExtension(
       latestSessionCtx = ctx;
       noteGenerationSessionCtx(ctx);
       if (childModeState.active) return undefined;
+      // The turn-start proof a pending direct request waits for. It runs ahead
+      // of every early return below, because a session with no committed
+      // primary snapshot still started this turn, and the display-only plan
+      // identity does not depend on the primary that answers it.
+      redeemPendingForegroundPlan(pi, event, ctx);
       const session = activeSession;
       if (
         session === undefined ||

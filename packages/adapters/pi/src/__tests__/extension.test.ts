@@ -9595,6 +9595,27 @@ async function settlePlanSurfaces(): Promise<void> {
   }
 }
 
+/**
+ * One interactive submission, exactly as the host delivers it.
+ *
+ * The `input` event is only the adapter's own decision point. Pi accepts the
+ * submission afterwards, and `before_agent_start` - which names the accepted
+ * prompt - is the first event it fires only for a turn it actually started.
+ * A direct foreground-plan request is adopted at that proof and nowhere else,
+ * so every test that expects an adoption has to deliver both halves.
+ */
+async function submitInteractive(
+  host: RecordingFakePiHost,
+  text: string,
+): Promise<void> {
+  await host.triggerEvent("input", {
+    type: "input",
+    source: "interactive",
+    text,
+  });
+  await host.triggerBeforeAgentStart({ prompt: text });
+}
+
 describe("createPiExtension: the Plan Rail follows a foreground plan execution", () => {
   it("names the plan, its marks, now and next after /weave:start", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -9646,11 +9667,10 @@ describe("createPiExtension: the Plan Rail follows a foreground plan execution",
     installForegroundPlanRailExtension(host, provider);
     await host.triggerSessionStart();
 
-    await host.triggerEvent("input", {
-      type: "input",
-      source: "interactive",
-      text: "execute .weave/plans/foreground-plan.md end to end",
-    });
+    await submitInteractive(
+      host,
+      "execute .weave/plans/foreground-plan.md end to end",
+    );
     await settlePlanSurfaces();
 
     const rows = planRailPlainLines(host);
@@ -9694,6 +9714,8 @@ describe("createPiExtension: the Plan Rail follows a foreground plan execution",
       await host.triggerSessionStart();
 
       await host.triggerEvent("input", { type: "input", ...event });
+      // A real turn follows every submission; none of these may redeem one.
+      await host.triggerBeforeAgentStart({ prompt: event.text });
       await settlePlanSurfaces();
 
       expect({ text: event.text, task: planRailShowsTask(host) }).toEqual({
@@ -9716,11 +9738,10 @@ describe("createPiExtension: the Plan Rail follows a foreground plan execution",
     installForegroundPlanRailExtension(host, provider, ["foreground-plan"]);
     await host.triggerSessionStart();
 
-    await host.triggerEvent("input", {
-      type: "input",
-      source: "interactive",
-      text: "execute .weave/plans/other-worktree-plan.md",
-    });
+    await submitInteractive(
+      host,
+      "execute .weave/plans/other-worktree-plan.md",
+    );
     await settlePlanSurfaces();
 
     expect(planRailShowsTask(host)).toBe(false);
@@ -9853,11 +9874,7 @@ describe("createPiExtension: the Plan Rail follows a foreground plan execution",
     });
     await host.triggerSessionStart();
 
-    await host.triggerEvent("input", {
-      type: "input",
-      source: "interactive",
-      text: "execute .weave/plans/foreground-plan.md",
-    });
+    await submitInteractive(host, "execute .weave/plans/foreground-plan.md");
     await settlePlanSurfaces();
     expect(planRailShowsTask(host)).toBe(true);
 
@@ -9960,16 +9977,8 @@ describe("createPiExtension: foreground plan observations are race-safe", () => 
     );
     await host.triggerSessionStart();
 
-    await host.triggerEvent("input", {
-      type: "input",
-      source: "interactive",
-      text: "execute .weave/plans/alpha-plan.md",
-    });
-    await host.triggerEvent("input", {
-      type: "input",
-      source: "interactive",
-      text: "execute .weave/plans/beta-plan.md",
-    });
+    await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
+    await submitInteractive(host, "execute .weave/plans/beta-plan.md");
     expect(catalog.pending).toHaveLength(2);
 
     // The NEWER observation completes first, then the older one returns. The
@@ -10004,11 +10013,7 @@ describe("createPiExtension: foreground plan observations are race-safe", () => 
     );
     await host.triggerSessionStart();
 
-    await host.triggerEvent("input", {
-      type: "input",
-      source: "interactive",
-      text: "execute .weave/plans/alpha-plan.md",
-    });
+    await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
     expect(catalog.pending).toHaveLength(1);
 
     // A new session starts before the listing returns. The observation belongs
@@ -10092,18 +10097,10 @@ describe("createPiExtension: one monotonic foreground plan observation generatio
       );
       await host.triggerSessionStart();
 
-      await host.triggerEvent("input", {
-        type: "input",
-        source: "interactive",
-        text: "execute .weave/plans/alpha-plan.md",
-      });
+      await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
       expect(catalog.pending).toHaveLength(1);
 
-      await host.triggerEvent("input", {
-        type: "input",
-        source: "interactive",
-        text: superseding,
-      });
+      await submitInteractive(host, superseding);
 
       // The first observation's listing returns LAST, after the user has
       // already sent something else.
@@ -10147,11 +10144,7 @@ describe("createPiExtension: one monotonic foreground plan observation generatio
     await host.triggerSessionStart();
     await host.triggerBeforeAgentStart({ systemPrompt: "native" });
 
-    await host.triggerEvent("input", {
-      type: "input",
-      source: "interactive",
-      text: "execute .weave/plans/alpha-plan.md",
-    });
+    await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
     expect(catalog.pending).toHaveLength(1);
 
     // The user confirms a DIFFERENT plan through the command instead.
@@ -10193,17 +10186,9 @@ describe("createPiExtension: one monotonic foreground plan observation generatio
     // Two sessions, each with one pending observation. Neither may adopt into
     // the other, and the second session's own token is a fresh identity even
     // though it is the "first" request of that session.
-    await host.triggerEvent("input", {
-      type: "input",
-      source: "interactive",
-      text: "execute .weave/plans/alpha-plan.md",
-    });
+    await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
     await host.triggerSessionStart();
-    await host.triggerEvent("input", {
-      type: "input",
-      source: "interactive",
-      text: "execute .weave/plans/alpha-plan.md",
-    });
+    await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
     catalog.pending[0]?.();
     await settlePlanSurfaces();
 
@@ -10226,6 +10211,204 @@ describe("createPiExtension: one monotonic foreground plan observation generatio
         data: { v: 1, planName: "alpha-plan" },
       },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adoption waits for the host's own turn-start proof
+// ---------------------------------------------------------------------------
+
+describe("createPiExtension: a direct request adopts only at a turn-start proof", () => {
+  const REQUEST = "execute .weave/plans/foreground-plan.md";
+
+  /** Every adapter-owned foreground-plan entry recorded so far. */
+  function adoptedEntries(host: RecordingFakePiHost): unknown[] {
+    return host.appendedEntries.filter(
+      (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+    );
+  }
+
+  async function startedSession(): Promise<{
+    host: RecordingFakePiHost;
+    provider: MutablePlanStateProvider;
+  }> {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    return { host, provider };
+  }
+
+  it("holds the parsed request as intent while no turn has started", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    await settlePlanSurfaces();
+
+    // The adapter let the message through; the host has not said it accepted
+    // it. Nothing is adopted, recorded, or painted for a turn that may never
+    // exist.
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(planRailPlainLines(host).join("\n")).not.toContain(
+      "foreground-plan",
+    );
+    expect(adoptedEntries(host)).toEqual([]);
+  });
+
+  it("adopts once the host proves the turn started for that prompt", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    await settlePlanSurfaces();
+    expect(adoptedEntries(host)).toEqual([]);
+
+    await host.triggerBeforeAgentStart({ prompt: REQUEST });
+    await settlePlanSurfaces();
+
+    expect(planRailPlainLines(host)[0]).toContain("foreground-plan");
+    expect(planRailShowsTask(host)).toBe(true);
+    expect(adoptedEntries(host)).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "foreground-plan" },
+      },
+    ]);
+  });
+
+  it("adopts nothing when the turn never starts", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    // The session goes on living - tools finish, turns settle - without the
+    // host ever starting a turn for this submission.
+    await host.triggerEvent("tool_execution_end", {
+      type: "tool_execution_end",
+      toolName: "edit",
+      toolCallId: "call-1",
+      isError: false,
+    });
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(adoptedEntries(host)).toEqual([]);
+  });
+
+  it("adopts nothing for a turn-start proof naming another prompt", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    // An unrelated turn starts instead: the submission was handled, expanded,
+    // or dropped, and something else is running.
+    await host.triggerBeforeAgentStart({ prompt: "what changed in the diff?" });
+    await settlePlanSurfaces();
+    expect(adoptedEntries(host)).toEqual([]);
+
+    // The intent is spent, not parked: a later turn quoting the original text
+    // is not a second chance to adopt it.
+    await host.triggerBeforeAgentStart({ prompt: REQUEST });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(adoptedEntries(host)).toEqual([]);
+  });
+
+  it("adopts nothing for a proof with no prompt at all", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(adoptedEntries(host)).toEqual([]);
+  });
+
+  it("lets the superseding message win, and only at its own proof", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const provider = multiPlanProvider([
+      foregroundPlanSnapshot("alpha-plan"),
+      foregroundPlanSnapshot("beta-plan"),
+    ]);
+    installForegroundPlanRailExtension(host, provider, [
+      "alpha-plan",
+      "beta-plan",
+    ]);
+    await host.triggerSessionStart();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/alpha-plan.md",
+    });
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/beta-plan.md",
+    });
+
+    // The superseded request's own text no longer redeems anything.
+    await host.triggerBeforeAgentStart({
+      prompt: "execute .weave/plans/alpha-plan.md",
+    });
+    await settlePlanSurfaces();
+    expect(adoptedEntries(host)).toEqual([]);
+    expect(planRailPlainLines(host).join("\n")).not.toContain("alpha-plan");
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/beta-plan.md",
+    });
+    await host.triggerBeforeAgentStart({
+      prompt: "execute .weave/plans/beta-plan.md",
+    });
+    await settlePlanSurfaces();
+
+    expect(planRailPlainLines(host)[0]).toContain("beta-plan");
+    expect(adoptedEntries(host)).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "beta-plan" },
+      },
+    ]);
+  });
+
+  it("adopts nothing when the session was replaced before the proof", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    // The pending intent belongs to the session that is gone.
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ prompt: REQUEST });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(adoptedEntries(host)).toEqual([]);
   });
 });
 
