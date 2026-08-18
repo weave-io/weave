@@ -1,6 +1,9 @@
 import { err, ok, Result } from "neverthrow";
 import { z } from "zod";
-import { classifyPiMessageUpdate } from "./message-update-carrier.js";
+import {
+  classifyPiMessageUpdate,
+  isRawReasoningAssistantEventType,
+} from "./message-update-carrier.js";
 
 /** Bounds applied to observed private Pi protocol data. */
 export const MAX_CHILD_EVENT_STRING = 16_384;
@@ -1182,6 +1185,115 @@ const RAW_REASONING_BLOCK_TYPES = new Set(["thinking", "reasoning"]);
 /** Fields a raw reasoning block may carry its prose in. */
 const RAW_REASONING_BLOCK_FIELDS = ["text", "thinking", "reasoning"] as const;
 
+/**
+ * Every field a raw-reasoning CARRIER (`assistantMessageEvent`, or the legacy
+ * `delta` object) may hold chain-of-thought prose in.
+ *
+ * Pi 0.84 splits one reasoning block across three frames and does NOT use one
+ * field for them: `thinking_delta` carries `delta`, and `thinking_end` carries
+ * the completed block in `content` — which may itself be a string or an array
+ * of content blocks. Redacting `delta` alone left the whole completed thought
+ * in retained history, in every rebuilt page, and in everything serialized
+ * from them.
+ *
+ * The list is deliberately a closed superset of the fields observed on the
+ * wire: a carrier this boundary has already decided is raw reasoning states
+ * nothing a reader may see, so blanking a field it did not use costs nothing,
+ * while missing one is a disclosure.
+ */
+const RAW_REASONING_CARRIER_FIELDS = [
+  "delta",
+  "text",
+  "content",
+  "partial",
+  "partialText",
+  "thinking",
+  "reasoning",
+  "summary",
+] as const;
+
+/**
+ * The same treatment for the FRAME itself, minus its structural members.
+ *
+ * `delta`, `assistantMessageEvent` and `message` are carriers with their own
+ * rules above; everything else a reasoning frame declares is prose it has no
+ * reader for.
+ */
+const RAW_REASONING_FRAME_FIELDS = [
+  "text",
+  "content",
+  "partial",
+  "partialText",
+  "thinking",
+  "reasoning",
+] as const;
+
+/** Prose fields a carried MESSAGE may state reasoning in, beside its blocks. */
+const MESSAGE_REASONING_FIELDS = ["thinking", "reasoning"] as const;
+
+/** How deep redaction walks one carrier before it states nothing at all. */
+const MAX_REASONING_REDACTION_DEPTH = 32;
+
+/**
+ * True when any string this value can still reach holds prose.
+ *
+ * `type` is skipped: a block kind (`"thinking"`) is structure, not
+ * chain-of-thought, and keeping it is what lets a reader still learn THAT the
+ * child reasoned.
+ */
+function carriesReasoningProse(value: unknown, depth = 0): boolean {
+  if (typeof value === "string") return value !== "";
+  if (depth >= MAX_REASONING_REDACTION_DEPTH) return false;
+  if (Array.isArray(value)) {
+    return value.some((item) => carriesReasoningProse(item, depth + 1));
+  }
+  const record = plainRecord(value);
+  if (record === undefined) return false;
+  return Object.entries(record).some(
+    ([key, item]) => key !== "type" && carriesReasoningProse(item, depth + 1),
+  );
+}
+
+/**
+ * Blanks every string this value can reach while keeping its SHAPE and its
+ * block kinds, so the retained event still says "the child reasoned here" and
+ * says nothing else.
+ */
+function blankReasoningProse(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return "";
+  if (depth >= MAX_REASONING_REDACTION_DEPTH) return null;
+  if (Array.isArray(value)) {
+    return value.map((item) => blankReasoningProse(item, depth + 1));
+  }
+  const record = plainRecord(value);
+  if (record === undefined) return value;
+  const next: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record)) {
+    next[key] = key === "type" ? item : blankReasoningProse(item, depth + 1);
+  }
+  return next;
+}
+
+/**
+ * Blanks the named prose fields of one record, or returns `undefined` when the
+ * record stated no prose in any of them, so callers keep their own identity
+ * instead of cloning.
+ */
+function blankDeclaredProseFields(
+  record: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, unknown> | undefined {
+  let redacted: Record<string, unknown> | undefined;
+  for (const field of fields) {
+    if (!Object.hasOwn(record, field)) continue;
+    const value = record[field];
+    if (!carriesReasoningProse(value)) continue;
+    redacted ??= { ...record };
+    redacted[field] = blankReasoningProse(value);
+  }
+  return redacted;
+}
+
 const plainRecord = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -1218,14 +1330,22 @@ const redactReasoningContentBlocks = (
   return redacted ? next : undefined;
 };
 
-/** Blanks raw reasoning prose carried inside a message's content blocks. */
+/**
+ * Blanks raw reasoning prose carried inside a message's content blocks, and
+ * any reasoning prose the message states beside them.
+ */
 const redactMessageReasoning = (
   message: unknown,
 ): Record<string, unknown> | undefined => {
   const record = plainRecord(message);
   if (record === undefined) return undefined;
   const content = redactReasoningContentBlocks(record.content);
-  return content === undefined ? undefined : { ...record, content };
+  const fields = blankDeclaredProseFields(record, MESSAGE_REASONING_FIELDS);
+  if (content === undefined && fields === undefined) return undefined;
+  return {
+    ...(fields ?? record),
+    ...(content === undefined ? {} : { content }),
+  };
 };
 
 /**
@@ -1238,34 +1358,27 @@ const redactMessageReasoning = (
  * every boundary that keeps an event: the transcript reducer, the live overlay
  * projection, and the replay-step builder.
  *
- * Three carriers exist, and all three are content-free after this:
+ * Four carriers exist, and all four are content-free after this:
  * - the standalone `thinking` event's `text`;
- * - a `message_update`'s `thinking_delta` / legacy `delta.thinking`;
- * - a `thinking` or `reasoning` content block on a carried message.
+ * - a `message_update`'s `assistantMessageEvent` whose `type` is
+ *   `thinking_start`, `thinking_delta` or `thinking_end` — on EVERY prose
+ *   field it declared, not only `delta`. Pi 0.84 splits one thought across
+ *   those three frames and puts the completed block in `thinking_end.content`,
+ *   so redacting `thinking_delta.delta` alone retained the whole thought;
+ * - the legacy `delta: { thinking }` object, likewise on every prose field it
+ *   declared beside `thinking`;
+ * - a `thinking` or `reasoning` content block, or a reasoning prose field, on
+ *   a carried message.
  *
  * A `message_update` that carries answer text AND raw reasoning at once is a
- * fourth case, and the strictest: no reader can tell which carrier held the
- * chain-of-thought, so BOTH are emptied. Redacting only the thinking carrier
- * left the ambiguous frame's `delta.text` in the retained history event, where
- * a rebuild, a search, or a snapshot could still read it.
+ * fifth case, and the strictest: no reader can tell which carrier held the
+ * chain-of-thought, so ALL of them are emptied. Redacting only the thinking
+ * carrier left the ambiguous frame's `delta.text` in the retained history
+ * event, where a rebuild, a search, or a snapshot could still read it.
  *
  * `reasoning_summary` is deliberately untouched: it is the host's own explicit
  * summary surface and the ONE trusted place reasoning prose may be read from.
  */
-function redactDeltaCarrier(
-  delta: Record<string, unknown>,
-  ambiguous: boolean,
-): Record<string, unknown> | undefined {
-  const thinking = typeof delta.thinking === "string" && delta.thinking !== "";
-  const text = ambiguous && typeof delta.text === "string" && delta.text !== "";
-  if (!thinking && !text) return undefined;
-  return {
-    ...delta,
-    ...(thinking ? { thinking: "" } : {}),
-    ...(text ? { text: "" } : {}),
-  };
-}
-
 export function redactRawReasoningFromEvent(
   event: PiChildSessionEvent,
 ): PiChildSessionEvent {
@@ -1285,28 +1398,42 @@ export function redactRawReasoningFromEvent(
   const record = event as unknown as Record<string, unknown>;
   const delta = plainRecord(record.delta);
   const assistantEvent = plainRecord(record.assistantMessageEvent);
+  const carrier = classifyPiMessageUpdate(event);
   // An ambiguous frame is redacted on every carrier it declared, because the
   // classifier refused to say which of them the child's reasoning was in.
-  const ambiguous = classifyPiMessageUpdate(event).kind === "rejected";
+  const ambiguous = carrier.kind === "rejected";
+  // A frame the classifier already called raw reasoning states no answer at
+  // all, so every prose field on it - and on the frame itself - is redacted.
+  const reasoningFrame = carrier.kind === "reasoning" || ambiguous;
+  // The legacy object carrier is raw reasoning when it declared `thinking`,
+  // which is exactly the rule `observeLegacyDelta` classifies on.
+  const legacyReasoning =
+    delta !== undefined &&
+    (ambiguous ||
+      (Object.hasOwn(delta, "thinking") && delta.thinking !== undefined));
   const redactedDelta =
-    delta === undefined ? undefined : redactDeltaCarrier(delta, ambiguous);
+    delta === undefined || !legacyReasoning
+      ? undefined
+      : blankDeclaredProseFields(delta, RAW_REASONING_CARRIER_FIELDS);
   const redactedAssistant =
     assistantEvent !== undefined &&
-    (assistantEvent.type === "thinking_delta" || ambiguous) &&
-    typeof assistantEvent.delta === "string" &&
-    assistantEvent.delta !== ""
-      ? { ...assistantEvent, delta: "" }
+    (isRawReasoningAssistantEventType(assistantEvent.type) || ambiguous)
+      ? blankDeclaredProseFields(assistantEvent, RAW_REASONING_CARRIER_FIELDS)
       : undefined;
+  const redactedFrame = reasoningFrame
+    ? blankDeclaredProseFields(record, RAW_REASONING_FRAME_FIELDS)
+    : undefined;
   const redactedMessage = redactMessageReasoning(record.message);
   if (
     redactedDelta === undefined &&
     redactedAssistant === undefined &&
+    redactedFrame === undefined &&
     redactedMessage === undefined
   ) {
     return event;
   }
   return {
-    ...event,
+    ...(redactedFrame ?? event),
     ...(redactedDelta === undefined ? {} : { delta: redactedDelta }),
     ...(redactedAssistant === undefined
       ? {}

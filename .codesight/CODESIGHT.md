@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 306 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~33,300 tokens. Without it, AI exploration would cost ~98,600 tokens. **Saves ~65,300 tokens per conversation.**
-> **Last scanned:** 2026-08-17 23:42 — re-run after significant changes
+> **Last scanned:** 2026-08-18 00:29 — re-run after significant changes
 
 ---
 
@@ -669,7 +669,7 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
-  - _...11 more_
+  - _...13 more_
 - `packages/adapters/pi/src/foreground-plan-display.ts`
   - function parseForegroundPlanRequest: (text) => Result<string, ForegroundPlanRequestRejection>
   - function isSafeForegroundPlanName: (value) => value is string
@@ -709,12 +709,13 @@
   - function createDefaultPiHostProbePort: (input) => PiHostProbePort
   - _...11 more_
 - `packages/adapters/pi/src/message-update-carrier.ts`
+  - function isRawReasoningAssistantEventType: (type) => boolean
   - function classifyPiMessageUpdate: (record) => PiMessageUpdateCarrier
   - function messageUpdateAnswerText: (record) => string | undefined
   - function messageUpdateObservesRawReasoning: (record) => boolean
   - type PiMessageUpdateRejection
   - type PiMessageUpdateCarrier
-  - const MAX_MESSAGE_UPDATE_ANSWER_LENGTH
+  - _...1 more_
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator
@@ -1957,7 +1958,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 339 test files found
+> 340 test files found
 
 ---
 

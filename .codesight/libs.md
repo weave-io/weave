@@ -658,7 +658,7 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
-  - _...11 more_
+  - _...13 more_
 - `packages/adapters/pi/src/foreground-plan-display.ts`
   - function parseForegroundPlanRequest: (text) => Result<string, ForegroundPlanRequestRejection>
   - function isSafeForegroundPlanName: (value) => value is string
@@ -698,12 +698,13 @@
   - function createDefaultPiHostProbePort: (input) => PiHostProbePort
   - _...11 more_
 - `packages/adapters/pi/src/message-update-carrier.ts`
+  - function isRawReasoningAssistantEventType: (type) => boolean
   - function classifyPiMessageUpdate: (record) => PiMessageUpdateCarrier
   - function messageUpdateAnswerText: (record) => string | undefined
   - function messageUpdateObservesRawReasoning: (record) => boolean
   - type PiMessageUpdateRejection
   - type PiMessageUpdateCarrier
-  - const MAX_MESSAGE_UPDATE_ANSWER_LENGTH
+  - _...1 more_
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator

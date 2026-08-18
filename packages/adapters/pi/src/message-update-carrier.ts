@@ -97,6 +97,20 @@ const RAW_REASONING_EVENT_TYPES: ReadonlySet<string> = new Set([
   "thinking_end",
 ]);
 
+/**
+ * The ONE vocabulary of `assistantMessageEvent.type` values that state raw
+ * chain-of-thought.
+ *
+ * Exported so the redaction boundary in `child-session-events.ts` decides
+ * "is this carrier raw reasoning?" from the same closed set this classifier
+ * uses. A second, drifting copy of the list is exactly how `thinking_start`
+ * and `thinking_end` came to be classified as reasoning here while their
+ * prose was retained there.
+ */
+export function isRawReasoningAssistantEventType(type: unknown): boolean {
+  return typeof type === "string" && RAW_REASONING_EVENT_TYPES.has(type);
+}
+
 /** The `assistantMessageEvent.type` that declares an answer-text carrier. */
 const ANSWER_EVENT_TYPE = "text_delta";
 
