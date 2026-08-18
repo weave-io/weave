@@ -3142,11 +3142,39 @@ describe("PiDelegationController catalog snapshot pinning", () => {
       () => port.spawnedProcesses.length === 3,
       "the post-publication root dispatch to spawn",
     );
-    const laterId = childIdOf(spawnedAt(port, 2), port);
+    const laterParent = spawnedAt(port, 2);
+    const laterId = childIdOf(laterParent, port);
     expect(controller.pinnedDispatchSnapshotsForTest().get(laterId)).toBe(
       after,
     );
+    await sendChildToRunning(laterParent, port, "gen-1");
+    const laterSecret = extractSecret(laterParent, port);
+    const laterRelay = await signEnvelope(
+      {
+        childId: laterId,
+        generationId: "gen-1",
+        direction: "child-to-parent",
+        sequence: 3,
+        nonce: Buffer.from(randomPort.randomBytes(16)).toString("hex"),
+        correlationId: `${laterId}-delegate-new`,
+        kind: "delegate-request",
+        body: { agentName: "new-worker", task: "new nested task" },
+      },
+      laterSecret,
+      hmacPort,
+    );
+    laterParent.emitLine(laterRelay._unsafeUnwrap());
+    await flushUntil(
+      () => port.spawnedProcesses.length === 4,
+      "the new catalog's nested target to spawn",
+    );
+    const laterNestedId = childIdOf(spawnedAt(port, 3), port);
+    expect(controller.pinnedDispatchSnapshotsForTest().get(laterNestedId)).toBe(
+      after,
+    );
+
     controller.disposeAll();
+    expect(controller.pinnedDispatchSnapshotsForTest().size).toBe(0);
   });
 
   it("holds exactly one snapshot reference per live child and releases it on every settle and dispose path", async () => {

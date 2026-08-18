@@ -166,6 +166,28 @@ function countingLoader(): {
   };
 }
 
+function countingMaterializer(): {
+  readonly port: PiMaterializerPort;
+  readonly calls: Array<{
+    readonly config: WeaveConfig;
+    readonly promptFileReader: PromptFileReader | undefined;
+  }>;
+} {
+  const calls: Array<{
+    readonly config: WeaveConfig;
+    readonly promptFileReader: PromptFileReader | undefined;
+  }> = [];
+  return {
+    calls,
+    port: {
+      materialize: (config, promptFileReader) => {
+        calls.push({ config, promptFileReader });
+        return defaultPiMaterializerPort.materialize(config, promptFileReader);
+      },
+    },
+  };
+}
+
 function occurrences(values: readonly string[], value: string): number {
   return values.filter((entry) => entry === value).length;
 }
@@ -1072,6 +1094,12 @@ interface CoordinatorHarness {
   readonly cell: PiCatalogCell;
   readonly fs: FakeFs;
   readonly loader: { readonly calls: string[] };
+  readonly materializer: {
+    readonly calls: Array<{
+      readonly config: WeaveConfig;
+      readonly promptFileReader: PromptFileReader | undefined;
+    }>;
+  };
   readonly coordinator: PiConfigRefreshCoordinator;
   readonly control: {
     owns: boolean;
@@ -1103,6 +1131,7 @@ async function coordinatorHarness(
   const statFailures: Record<string, string> = { ...options.statFailures };
   const fs = fakeFs(files, { stat: statFailures });
   const loader = countingLoader();
+  const materializer = countingMaterializer();
   const control: CoordinatorHarness["control"] = {
     owns: true,
     nowMs: 0,
@@ -1117,6 +1146,7 @@ async function coordinatorHarness(
     ownsGeneration: () => control.owns,
     fs,
     configLoader: loader.port,
+    materializer: materializer.port,
     primary: () => control.primary,
     primaryDisabledSkills: () => control.disabledSkills,
     // Pi discovered no skills, so both sides of the guard render the same way.
@@ -1126,7 +1156,16 @@ async function coordinatorHarness(
     onOutcome: (outcome) => control.outcomes.push(outcome),
     onNotice: (notice) => control.notices.push(notice),
   });
-  return { files, seeded, cell, fs, loader, coordinator, control };
+  return {
+    files,
+    seeded,
+    cell,
+    fs,
+    loader,
+    materializer,
+    coordinator,
+    control,
+  };
 }
 
 function publishedPrompt(
@@ -1170,6 +1209,43 @@ describe("PiConfigRefreshCoordinator — unchanged fast path", () => {
     // A prompt-only change never re-parses config.
     expect(loader.calls).toEqual([]);
     expect(publishedPrompt(cell, "alpha")).toContain("alpha prompt v2");
+  });
+
+  it("updates metadata after one identical-content read, then returns to the pure fast path", async () => {
+    const { files, cell, fs, loader, materializer, coordinator } =
+      await coordinatorHarness();
+    const sourceCount = cell.manifest()?.files.length ?? 0;
+    const activation = cell.activation();
+    files[PROMPT_ALPHA] = { content: ALPHA_V1, mtimeMs: 9_000 };
+
+    await coordinator.ensureFresh();
+
+    expect(fs.statCalls).toHaveLength(sourceCount);
+    expect(fs.readCalls).toEqual([PROMPT_ALPHA]);
+    expect(loader.calls).toEqual([]);
+    expect(materializer.calls).toEqual([]);
+    expect(coordinator.lastOutcome()).toEqual({
+      kind: "published",
+      change: "unchanged",
+      changedPaths: [],
+    });
+    expect(cell.activation()).toBe(activation);
+    expect(
+      cell.manifest()?.files.find((source) => source.path === PROMPT_ALPHA),
+    ).toMatchObject({
+      mtimeMs: 9_000,
+      sha256: hashConfigSourceContent(ALPHA_V1),
+    });
+
+    fs.statCalls.length = 0;
+    fs.readCalls.length = 0;
+    await coordinator.ensureFresh();
+
+    expect(fs.statCalls).toHaveLength(sourceCount);
+    expect(fs.readCalls).toEqual([]);
+    expect(loader.calls).toEqual([]);
+    expect(materializer.calls).toEqual([]);
+    expect(coordinator.lastOutcome()).toEqual({ kind: "unchanged" });
   });
 
   it("spaces probes by the injected minimum interval", async () => {
@@ -1942,22 +2018,62 @@ describe("the root weave_delegate boundary refreshes before it resolves", () => 
     return { registration, dispatched };
   }
 
+  interface DelegationPayload {
+    readonly ok: boolean;
+    readonly error?: string;
+    readonly settlement?: {
+      readonly outcome: string;
+      readonly finalOutput: string;
+      readonly interventionCount: number;
+    };
+  }
+
   async function delegate(
     registration: PiToolRegistration,
     agent: string,
-  ): Promise<{ readonly ok: boolean; readonly error?: string }> {
+    callId = "call-1",
+  ): Promise<DelegationPayload> {
     const result = await registration.execute(
-      "call-1",
+      callId,
       { agent, task: "do it" },
       undefined,
       undefined,
       toolSessionContext(),
     );
-    return JSON.parse((result.content[0] as { text: string }).text) as {
-      ok: boolean;
-      error?: string;
-    };
+    return JSON.parse(
+      (result.content[0] as { text: string }).text,
+    ) as DelegationPayload;
   }
+
+  it("keeps N unchanged root boundaries read/parse/materialization-free with identical settlements", async () => {
+    const harness = await coordinatorHarness();
+    const { registration, dispatched } = delegationToolFor(harness);
+    const sourceCount = harness.cell.manifest()?.files.length ?? 0;
+    const boundaryCount = 5;
+
+    const settlements: DelegationPayload[] = [];
+    for (let index = 0; index < boundaryCount; index += 1) {
+      settlements.push(
+        await delegate(registration, "alpha", `unchanged-${index}`),
+      );
+    }
+
+    expect(harness.fs.statCalls).toHaveLength(sourceCount * boundaryCount);
+    expect(harness.fs.readCalls).toEqual([]);
+    expect(harness.loader.calls).toEqual([]);
+    expect(harness.materializer.calls).toEqual([]);
+    expect(dispatched).toHaveLength(boundaryCount);
+    expect(settlements).toEqual(
+      Array.from({ length: boundaryCount }, () => ({
+        ok: true,
+        settlement: {
+          outcome: "completed",
+          finalOutput: "done",
+          interventionCount: 0,
+        },
+      })),
+    );
+  });
 
   it("carries a subagent prompt edit into the next dispatch's bootstrap", async () => {
     const harness = await coordinatorHarness();
@@ -1967,9 +2083,140 @@ describe("the root weave_delegate boundary refreshes before it resolves", () => 
     expect(await delegate(registration, "alpha")).toMatchObject({ ok: true });
 
     expect(harness.coordinator.lastOutcome()?.kind).toBe("published");
+    expect(harness.fs.readCalls).toEqual([PROMPT_ALPHA]);
+    expect(harness.loader.calls).toEqual([]);
+    expect(harness.materializer.calls).toHaveLength(1);
     expect(
       (dispatched[0]?.bootstrap as { composedPrompt: string }).composedPrompt,
     ).toContain("alpha prompt v2");
+  });
+
+  it.each([
+    [
+      "single-line",
+      PRIMARY_CONFIG_V1.replace(
+        'prompt_file "alpha.md"',
+        'prompt "alpha inline single v2"',
+      ),
+      "alpha inline single v2",
+    ],
+    [
+      "triple-quoted multiline",
+      PRIMARY_CONFIG_V1.replace(
+        'prompt_file "alpha.md"',
+        `prompt """
+          alpha inline line one
+
+          alpha inline line two
+        """`,
+      ),
+      "alpha inline line one\n\nalpha inline line two",
+    ],
+  ] as const)("carries a %s config-owned prompt edit into the next bootstrap", async (_form, editedConfig, expectedPrompt) => {
+    const harness = await coordinatorHarness();
+    const { registration, dispatched } = delegationToolFor(harness);
+    harness.files[PROJECT_CONFIG] = {
+      content: editedConfig,
+      mtimeMs: 9_000,
+    };
+
+    expect(await delegate(registration, "alpha")).toMatchObject({ ok: true });
+
+    expect(harness.coordinator.lastOutcome()).toEqual({
+      kind: "published",
+      change: "config-changed",
+      changedPaths: [PROJECT_CONFIG],
+    });
+    expect(harness.fs.readCalls).toEqual([PROJECT_CONFIG]);
+    expect(harness.loader.calls).toEqual([PROJECT_ROOT]);
+    expect(harness.materializer.calls).toHaveLength(1);
+    expect(
+      (dispatched[0]?.bootstrap as { composedPrompt: string }).composedPrompt,
+    ).toContain(expectedPrompt);
+  });
+
+  it("repoints a prompt file atomically before the next bootstrap", async () => {
+    const harness = await coordinatorHarness();
+    const { registration, dispatched } = delegationToolFor(harness);
+    harness.files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_V1.replace(
+        'prompt_file "alpha.md"',
+        'prompt_file "gamma.md"',
+      ),
+      mtimeMs: 9_000,
+    };
+    harness.files[PROMPT_GAMMA] = {
+      content: GAMMA_PROMPT,
+      mtimeMs: 10_000,
+    };
+
+    expect(await delegate(registration, "alpha")).toMatchObject({ ok: true });
+
+    const manifestPaths =
+      harness.cell.manifest()?.files.map((source) => source.path) ?? [];
+    expect(manifestPaths).toContain(PROMPT_GAMMA);
+    expect(manifestPaths).not.toContain(PROMPT_ALPHA);
+    expect(harness.fs.readCalls).toEqual([PROJECT_CONFIG, PROMPT_GAMMA]);
+    expect(occurrences(harness.fs.readCalls, PROMPT_GAMMA)).toBe(1);
+    expect(
+      (dispatched[0]?.bootstrap as { composedPrompt: string }).composedPrompt,
+    ).toContain(GAMMA_PROMPT.trim());
+  });
+
+  it.each([
+    [
+      "a deleted prompt file",
+      (harness: CoordinatorHarness) => {
+        delete harness.files[PROMPT_ALPHA];
+      },
+      "PromptFileMissing",
+    ],
+    [
+      "a corrupt config",
+      (harness: CoordinatorHarness) => {
+        harness.files[PROJECT_CONFIG] = {
+          content: 'agent loom {\n  prompt "unterminated',
+          mtimeMs: 9_000,
+        };
+      },
+      "ConfigParseFailed",
+    ],
+    [
+      "an unterminated triple-quoted edit",
+      (harness: CoordinatorHarness) => {
+        harness.files[PROJECT_CONFIG] = {
+          content: PRIMARY_CONFIG_V1.replace(
+            'prompt_file "alpha.md"',
+            'prompt """\n  unfinished multiline prompt',
+          ),
+          mtimeMs: 9_000,
+        };
+      },
+      "ConfigParseFailed",
+    ],
+  ] as const)("keeps stale-catalog delegation green for %s", async (_case, mutate, expectedFailure) => {
+    const harness = await coordinatorHarness();
+    const { registration, dispatched } = delegationToolFor(harness);
+    mutate(harness);
+
+    expect(await delegate(registration, "alpha")).toEqual({
+      ok: true,
+      settlement: {
+        outcome: "completed",
+        finalOutput: "done",
+        interventionCount: 0,
+      },
+    });
+
+    expect(harness.coordinator.lastOutcome()).toMatchObject({
+      kind: "failed",
+      failure: { type: expectedFailure },
+    });
+    expect(dispatched).toHaveLength(1);
+    expect(
+      (dispatched[0]?.bootstrap as { composedPrompt: string }).composedPrompt,
+    ).toContain("alpha prompt v1");
+    expect(harness.cell.deferred()).toBeUndefined();
   });
 
   it("refuses a target the active primary has not been authorized to gain", async () => {

@@ -526,7 +526,8 @@ async function authenticateDirectChild(
   processPort: FakeChildProcessPort,
   process: FakeSpawnedProcess,
 ): Promise<(kind: PiControlKind, body: JsonValue) => Promise<void>> {
-  const input = processPort.spawnInputs.at(-1);
+  const processIndex = processPort.spawnedProcesses.indexOf(process);
+  const input = processPort.spawnInputs[processIndex];
   const childId = input?.env[WEAVE_CHILD_ID_ENV];
   const generationId = input?.env[WEAVE_CONTROLLER_GENERATION_ENV];
   const secretHex = input?.env[WEAVE_CHILD_SECRET_ENV];
@@ -9722,8 +9723,6 @@ describe("createPiExtension: the generation catalog cell", () => {
 
 describe("createPiExtension: the delegation-boundary config refresh", () => {
   const REFRESH_ROOT = "/fake/project";
-  const REFRESH_HOME = process.env.HOME ?? "/home/testuser";
-  const GLOBAL_CONFIG_PATH = `${REFRESH_HOME}/.weave/config.weave`;
   const PROJECT_CONFIG_PATH = `${REFRESH_ROOT}/.weave/config.weave`;
   const ALPHA_PROMPT_PATH = `${REFRESH_ROOT}/.weave/prompts/alpha.md`;
 
@@ -9748,6 +9747,59 @@ agent alpha {
   prompt_file "alpha.md"
   models ["m1"]
   mode subagent
+}
+`;
+
+  const NESTED_CONFIG_V1 = `${PROJECT_CONFIG_V1.replace(
+    "mode primary\n\n  tool_policy",
+    'mode primary\n\n  routing { delegation_exclude ["nested-worker"] }\n\n  tool_policy',
+  ).replace(
+    'agent alpha {\n  description "alpha subagent"',
+    'agent alpha {\n  description "alpha subagent"\n  tool_policy { delegate allow }',
+  )}`;
+
+  const NESTED_WORKER_BLOCK = `
+agent nested-worker {
+  description "nested-only worker"
+  prompt "nested worker v1"
+  models ["m1"]
+  mode subagent
+}
+`;
+
+  const PRIMARY_SWITCH_CONFIG_V1 = `${PROJECT_CONFIG_V1}
+disable agents ["tapestry"]
+
+agent scribe {
+  description "secondary primary"
+  prompt "scribe prompt v1"
+  models ["m1"]
+  mode primary
+  tool_policy { delegate deny }
+}
+`;
+
+  const BETA_AGENT_BLOCK = `
+agent beta {
+  description "beta subagent"
+  prompt "beta prompt v1"
+  models ["m1"]
+  mode subagent
+}
+`;
+
+  const WORKFLOW_CONFIG_V1 = `${PROJECT_CONFIG_V1}
+workflow hot-flow {
+  description "Refreshable workflow"
+  version 1
+
+  step run {
+    name "Run refreshed step"
+    type autonomous
+    agent alpha
+    prompt "workflow task v1"
+    completion agent_signal
+  }
 }
 `;
 
@@ -9786,6 +9838,36 @@ agent alpha {
     };
   }
 
+  interface RecordingConfigSourceFs extends PiConfigSourceFsPort {
+    readonly statCalls: string[];
+    readonly readCalls: string[];
+    clear(): void;
+  }
+
+  function recordingConfigSourceFs(
+    files: RefreshFiles,
+  ): RecordingConfigSourceFs {
+    const source = memoryConfigSourceFs(files);
+    const statCalls: string[] = [];
+    const readCalls: string[] = [];
+    return {
+      statCalls,
+      readCalls,
+      clear: () => {
+        statCalls.length = 0;
+        readCalls.length = 0;
+      },
+      statFile: (path) => {
+        statCalls.push(path);
+        return source.statFile(path);
+      },
+      readFile: (path) => {
+        readCalls.push(path);
+        return source.readFile(path);
+      },
+    };
+  }
+
   function memoryActivator(files: RefreshFiles): PiConfigActivator {
     return new PiConfigActivator({
       fileReader: {
@@ -9815,13 +9897,183 @@ agent alpha {
   function installWithRefresh(
     host: RecordingFakePiHost,
     files: RefreshFiles,
+    options: {
+      readonly sourceFs?: PiConfigSourceFsPort;
+      readonly overrides?: Partial<PiExtensionDeps>;
+    } = {},
   ): PiExtensionInstance {
     return installExtension(host, "0.81.1", {
       capabilityProber: allOkCapabilityProber(),
       configActivator: memoryActivator(files),
-      configSourceFsPort: memoryConfigSourceFs(files),
+      configSourceFsPort: options.sourceFs ?? memoryConfigSourceFs(files),
       configRefreshMinIntervalMs: 0,
+      ...options.overrides,
     });
+  }
+
+  function latestDelegateTool(host: RecordingFakePiHost) {
+    const registration = host.registerToolCalls
+      .filter((tool) => tool.name === "weave_delegate")
+      .at(-1);
+    if (registration === undefined) {
+      throw new Error("test setup: weave_delegate was not registered");
+    }
+    return registration;
+  }
+
+  function bootstrapBodyOf(
+    process: FakeSpawnedProcess,
+  ): Record<string, unknown> {
+    const prefix = "/weave:__control__ ";
+    for (const line of process.writtenLines() as Array<{
+      readonly type?: unknown;
+      readonly message?: unknown;
+    }>) {
+      if (
+        line.type !== "prompt" ||
+        typeof line.message !== "string" ||
+        !line.message.startsWith(prefix)
+      ) {
+        continue;
+      }
+      const envelope = JSON.parse(line.message.slice(prefix.length)) as {
+        readonly kind?: unknown;
+        readonly body?: unknown;
+      };
+      if (
+        envelope.kind === "bootstrap" &&
+        typeof envelope.body === "object" &&
+        envelope.body !== null
+      ) {
+        return envelope.body as Record<string, unknown>;
+      }
+    }
+    throw new Error("test setup: child bootstrap was not written");
+  }
+
+  function controlEnvelopesOf(process: FakeSpawnedProcess): Array<{
+    readonly kind?: string;
+    readonly correlationId?: string;
+    readonly body?: Record<string, unknown>;
+  }> {
+    const prefix = "/weave:__control__ ";
+    return (
+      process.writtenLines() as Array<{
+        readonly type?: unknown;
+        readonly message?: unknown;
+      }>
+    )
+      .filter(
+        (line): line is { readonly type: "prompt"; readonly message: string } =>
+          line.type === "prompt" &&
+          typeof line.message === "string" &&
+          line.message.startsWith(prefix),
+      )
+      .map(
+        (line) =>
+          JSON.parse(line.message.slice(prefix.length)) as {
+            readonly kind?: string;
+            readonly correlationId?: string;
+            readonly body?: Record<string, unknown>;
+          },
+      );
+  }
+
+  function taskPromptsOf(process: FakeSpawnedProcess): string[] {
+    const prefix = "/weave:__control__ ";
+    return (
+      process.writtenLines() as Array<{
+        readonly type?: unknown;
+        readonly message?: unknown;
+      }>
+    )
+      .filter(
+        (line): line is { readonly type: "prompt"; readonly message: string } =>
+          line.type === "prompt" &&
+          typeof line.message === "string" &&
+          !line.message.startsWith(prefix),
+      )
+      .map((line) => line.message);
+  }
+
+  async function waitForTaskPrompt(
+    process: FakeSpawnedProcess,
+  ): Promise<string[]> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const prompts = taskPromptsOf(process);
+      if (prompts.length > 0) return prompts;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return taskPromptsOf(process);
+  }
+
+  async function settleAuthenticatedChild(
+    process: FakeSpawnedProcess,
+    send: (kind: PiControlKind, body: JsonValue) => Promise<void>,
+    options: {
+      readonly output?: string;
+      readonly completionCandidate?: object;
+    } = {},
+  ): Promise<void> {
+    const output = options.output ?? "ok";
+    process.emitLine({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: output }],
+      },
+    });
+    await flushBackgroundWork();
+    await send("settled", {
+      outcome: "completed",
+      assistantOutput: output,
+      outputByteLength: new TextEncoder().encode(output).byteLength,
+      interventionCount: 0,
+      ...(options.completionCandidate === undefined
+        ? {}
+        : {
+            completionCandidate: serializeCompletionCandidate(
+              options.completionCandidate,
+            ),
+          }),
+    });
+    await flushBackgroundWork();
+  }
+
+  async function executeRootDelegation(
+    host: RecordingFakePiHost,
+    processPort: FakeChildProcessPort,
+    input: {
+      readonly callId: string;
+      readonly agent: string;
+      readonly task?: string;
+    },
+  ): Promise<{
+    readonly execution: ReturnType<
+      ReturnType<typeof latestDelegateTool>["execute"]
+    >;
+    readonly process: FakeSpawnedProcess;
+  }> {
+    const processIndex = processPort.spawnedProcesses.length;
+    const execution = latestDelegateTool(host).execute(
+      input.callId,
+      { agent: input.agent, task: input.task ?? "do it" },
+      undefined,
+      undefined,
+      host.createSessionContext(),
+    );
+    const process = await processPort.spawnPromises[processIndex];
+    return { execution, process };
+  }
+
+  function delegationPayload(
+    result: Awaited<
+      ReturnType<ReturnType<typeof latestDelegateTool>["execute"]>
+    >,
+  ): Record<string, unknown> {
+    return JSON.parse(
+      (result.content[0] as { readonly text: string }).text,
+    ) as Record<string, unknown>;
   }
 
   function composedPromptOf(
@@ -10029,6 +10281,594 @@ agent alpha {
     await flushBackgroundWork();
 
     expect(extension.configRefreshForTest()).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Task 13 scenario matrix: real extension boundaries with fake ports only
+  // -------------------------------------------------------------------------
+
+  it("adds and removes a nested-only target without re-registering the stable tool", async () => {
+    const files = refreshFiles();
+    files[PROJECT_CONFIG_PATH] = {
+      content: NESTED_CONFIG_V1,
+      mtimeMs: 2_000,
+    };
+    const sourceFs = recordingConfigSourceFs(files);
+    const processPort = new FakeChildProcessPort();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installWithRefresh(host, files, {
+      sourceFs,
+      overrides: {
+        processPort,
+        childCommand: ["/fake/pi"],
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+      },
+    });
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    const registrationCount = host.registerToolCalls.length;
+
+    files[PROJECT_CONFIG_PATH] = {
+      content: `${NESTED_CONFIG_V1}${NESTED_WORKER_BLOCK}`,
+      mtimeMs: 9_000,
+    };
+    const added = await executeRootDelegation(host, processPort, {
+      callId: "nested-added-root",
+      agent: "alpha",
+    });
+    const sendAddedParent = await authenticateDirectChild(
+      processPort,
+      added.process,
+    );
+    expect(extension.configRefreshForTest()?.lastOutcome()?.kind).toBe(
+      "published",
+    );
+    expect(
+      extension.catalogCellForTest()?.descriptors().has("nested-worker"),
+    ).toBe(true);
+    expect(host.registerToolCalls).toHaveLength(registrationCount);
+
+    await sendAddedParent("delegate-request", {
+      agentName: "nested-worker",
+      task: "nested work",
+    });
+    const nestedProcess = await processPort.spawnPromises[1];
+    const sendNested = await authenticateDirectChild(
+      processPort,
+      nestedProcess,
+    );
+    expect(bootstrapBodyOf(nestedProcess).composedPrompt).toContain(
+      "nested worker v1",
+    );
+    await settleAuthenticatedChild(nestedProcess, sendNested);
+    await flushBackgroundWork();
+    await settleAuthenticatedChild(added.process, sendAddedParent);
+    expect(delegationPayload(await added.execution)).toMatchObject({
+      ok: true,
+    });
+
+    files[PROJECT_CONFIG_PATH] = {
+      content: NESTED_CONFIG_V1,
+      mtimeMs: 11_000,
+    };
+    const removed = await executeRootDelegation(host, processPort, {
+      callId: "nested-removed-root",
+      agent: "alpha",
+    });
+    const sendRemovedParent = await authenticateDirectChild(
+      processPort,
+      removed.process,
+    );
+    expect(
+      extension.catalogCellForTest()?.descriptors().has("nested-worker"),
+    ).toBe(false);
+    expect(host.registerToolCalls).toHaveLength(registrationCount);
+
+    await sendRemovedParent("delegate-request", {
+      agentName: "nested-worker",
+      task: "must be refused",
+    });
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (
+        controlEnvelopesOf(removed.process).some(
+          (envelope) => envelope.kind === "delegate-response",
+        )
+      ) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(
+      controlEnvelopesOf(removed.process).find(
+        (envelope) => envelope.kind === "delegate-response",
+      )?.body,
+    ).toEqual({ ok: false, error: "invalid-delegation-target" });
+    expect(processPort.spawnedProcesses).toHaveLength(3);
+    await settleAuthenticatedChild(removed.process, sendRemovedParent);
+    expect(delegationPayload(await removed.execution)).toMatchObject({
+      ok: true,
+    });
+    expect(host.registerToolCalls).toHaveLength(registrationCount);
+    expect(
+      processPort.spawnedProcesses.every((process) => process.killed),
+    ).toBe(true);
+  });
+
+  it("defers primary prompt and model edits without mutating active surfaces", async () => {
+    const files = refreshFiles();
+    files[PROJECT_CONFIG_PATH] = {
+      content: PRIMARY_SWITCH_CONFIG_V1,
+      mtimeMs: 2_000,
+    };
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: { provider: "test", id: "m1" },
+      availableModels: [
+        { provider: "test", id: "m1" },
+        { provider: "test", id: "m2" },
+      ],
+    });
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    const setModelCount = host.setModelCalls.length;
+
+    files[PROJECT_CONFIG_PATH] = {
+      content: PRIMARY_SWITCH_CONFIG_V1.replace(
+        'prompt "loom prompt v1"',
+        'prompt "loom prompt v2"',
+      ).replace('models ["m1"]', 'models ["m2"]'),
+      mtimeMs: 9_000,
+    };
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    expect(extension.configRefreshForTest()?.lastOutcome()).toMatchObject({
+      kind: "deferred",
+      changedFacets: ["prompt", "models"],
+    });
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · LOOM");
+    expect(host.getCurrentModel()?.id).toBe("m1");
+    expect(host.setModelCalls).toHaveLength(setModelCount);
+    const pinnedTurn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(pinnedTurn.systemPrompt).toContain("loom prompt v1");
+    expect(pinnedTurn.systemPrompt).not.toContain("loom prompt v2");
+
+    await host.invokeShortcut("alt+a");
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · SCRIBE");
+    expect(extension.configRefreshForTest()?.lastOutcome()?.kind).toBe(
+      "published",
+    );
+    await host.invokeShortcut("alt+a");
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · LOOM");
+    expect(host.getCurrentModel()?.id).toBe("m2");
+    const reactivatedTurn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(reactivatedTurn.systemPrompt).toContain("loom prompt v2");
+  });
+
+  it("keeps an added primary target unavailable until reactivation, then dispatches through the same tool", async () => {
+    const files = refreshFiles();
+    files[PROJECT_CONFIG_PATH] = {
+      content: PRIMARY_SWITCH_CONFIG_V1,
+      mtimeMs: 2_000,
+    };
+    const processPort = new FakeChildProcessPort();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installWithRefresh(host, files, {
+      overrides: {
+        processPort,
+        childCommand: ["/fake/pi"],
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+      },
+    });
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    const stableTool = latestDelegateTool(host);
+    const registrationCount = host.registerToolCalls.length;
+
+    files[PROJECT_CONFIG_PATH] = {
+      content: `${PRIMARY_SWITCH_CONFIG_V1}${BETA_AGENT_BLOCK}`,
+      mtimeMs: 9_000,
+    };
+    const refused = await stableTool.execute(
+      "beta-before-reactivation",
+      { agent: "beta", task: "must defer" },
+      undefined,
+      undefined,
+      host.createSessionContext(),
+    );
+    expect(delegationPayload(refused)).toMatchObject({
+      ok: false,
+      error: "invalid-delegation-target",
+    });
+    expect(extension.configRefreshForTest()?.lastOutcome()).toMatchObject({
+      kind: "deferred",
+      changedFacets: ["delegation-targets"],
+    });
+    expect(processPort.spawnedProcesses).toHaveLength(0);
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · LOOM");
+    expect(host.registerToolCalls).toHaveLength(registrationCount);
+
+    await host.invokeShortcut("alt+a");
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · SCRIBE");
+    await host.invokeShortcut("alt+a");
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · LOOM");
+    expect(host.registerToolCalls).toHaveLength(registrationCount);
+    expect(latestDelegateTool(host)).toBe(stableTool);
+
+    const dispatched = await executeRootDelegation(host, processPort, {
+      callId: "beta-after-reactivation",
+      agent: "beta",
+    });
+    const send = await authenticateDirectChild(processPort, dispatched.process);
+    expect(bootstrapBodyOf(dispatched.process).composedPrompt).toContain(
+      "beta prompt v1",
+    );
+    await settleAuthenticatedChild(dispatched.process, send);
+    expect(delegationPayload(await dispatched.execution)).toMatchObject({
+      ok: true,
+    });
+    expect(dispatched.process.killed).toBe(true);
+  });
+
+  it("keeps a removed primary target serving until reactivation, then rejects it through the same tool", async () => {
+    const files = refreshFiles();
+    files[PROJECT_CONFIG_PATH] = {
+      content: `${PRIMARY_SWITCH_CONFIG_V1}${BETA_AGENT_BLOCK}`,
+      mtimeMs: 2_000,
+    };
+    const processPort = new FakeChildProcessPort();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installWithRefresh(host, files, {
+      overrides: {
+        processPort,
+        childCommand: ["/fake/pi"],
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+      },
+    });
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    const stableTool = latestDelegateTool(host);
+    const registrationCount = host.registerToolCalls.length;
+
+    files[PROJECT_CONFIG_PATH] = {
+      content: PRIMARY_SWITCH_CONFIG_V1,
+      mtimeMs: 9_000,
+    };
+    const pinned = await executeRootDelegation(host, processPort, {
+      callId: "beta-still-pinned",
+      agent: "beta",
+    });
+    const sendPinned = await authenticateDirectChild(
+      processPort,
+      pinned.process,
+    );
+    expect(extension.configRefreshForTest()?.lastOutcome()).toMatchObject({
+      kind: "deferred",
+      changedFacets: ["delegation-targets"],
+    });
+    expect(bootstrapBodyOf(pinned.process).composedPrompt).toContain(
+      "beta prompt v1",
+    );
+    await settleAuthenticatedChild(pinned.process, sendPinned);
+    expect(delegationPayload(await pinned.execution)).toMatchObject({
+      ok: true,
+    });
+
+    await host.invokeShortcut("alt+a");
+    await host.invokeShortcut("alt+a");
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · LOOM");
+    expect(latestDelegateTool(host)).toBe(stableTool);
+    expect(host.registerToolCalls).toHaveLength(registrationCount);
+
+    const processCount = processPort.spawnedProcesses.length;
+    const refused = await stableTool.execute(
+      "beta-after-removal",
+      { agent: "beta", task: "must be gone" },
+      undefined,
+      undefined,
+      host.createSessionContext(),
+    );
+    expect(delegationPayload(refused)).toMatchObject({
+      ok: false,
+      error: "invalid-delegation-target",
+    });
+    expect(processPort.spawnedProcesses).toHaveLength(processCount);
+    expect(pinned.process.killed).toBe(true);
+  });
+
+  it("single-flights concurrent root refreshes and settles every fake child without leaks", async () => {
+    const files = refreshFiles();
+    const sourceFs = recordingConfigSourceFs(files);
+    const processPort = new FakeChildProcessPort();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installWithRefresh(host, files, {
+      sourceFs,
+      overrides: {
+        processPort,
+        childCommand: ["/fake/pi"],
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+      },
+    });
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    sourceFs.clear();
+    const publishCountBefore =
+      extension.configRefreshForTest()?.diagnostics().publishCount ?? 0;
+    const sourceCount =
+      extension.catalogCellForTest()?.manifest()?.files.length ?? 0;
+    files[ALPHA_PROMPT_PATH] = {
+      content: "alpha prompt concurrent v2\n",
+      mtimeMs: 9_000,
+    };
+
+    const tool = latestDelegateTool(host);
+    const executions = Array.from({ length: 3 }, (_, index) =>
+      tool.execute(
+        `concurrent-${index}`,
+        { agent: "alpha", task: `task ${index}` },
+        undefined,
+        undefined,
+        host.createSessionContext(),
+      ),
+    );
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (processPort.spawnedProcesses.length === 3) break;
+      await flushBackgroundWork();
+    }
+    expect(processPort.spawnedProcesses).toHaveLength(3);
+
+    for (const process of processPort.spawnedProcesses) {
+      const send = await authenticateDirectChild(processPort, process);
+      expect(bootstrapBodyOf(process).composedPrompt).toContain(
+        "alpha prompt concurrent v2",
+      );
+      await settleAuthenticatedChild(process, send);
+    }
+    const results = await Promise.all(executions);
+
+    expect(results.map(delegationPayload)).toEqual(
+      Array.from({ length: 3 }, () => expect.objectContaining({ ok: true })),
+    );
+    expect(sourceFs.statCalls).toHaveLength(sourceCount);
+    expect(sourceFs.readCalls).toEqual([ALPHA_PROMPT_PATH]);
+    expect(extension.configRefreshForTest()?.diagnostics().publishCount).toBe(
+      publishCountBefore + 1,
+    );
+    expect(
+      processPort.spawnedProcesses.every((process) => process.killed),
+    ).toBe(true);
+  });
+
+  it("keeps an in-flight direct step pinned while the next workflow run uses refreshed workflow and descriptor text", async () => {
+    const files = refreshFiles();
+    files[PROJECT_CONFIG_PATH] = {
+      content: WORKFLOW_CONFIG_V1,
+      mtimeMs: 2_000,
+    };
+    const processPort = new FakeChildProcessPort();
+    const runtimeStore = createInMemoryRuntimeStore();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installWithRefresh(host, files, {
+      overrides: {
+        processPort,
+        childCommand: ["/fake/pi"],
+        runtimeStoreFactory: { open: () => okAsync(runtimeStore) },
+      },
+    });
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    host.scriptConfirm(true);
+    const firstRun = host.invokeCommand("weave:run", "hot-flow");
+    const firstProcess = await processPort.spawnPromises[0];
+    const sendFirst = await authenticateDirectChild(processPort, firstProcess);
+    const firstBootstrap = bootstrapBodyOf(firstProcess);
+    expect(firstBootstrap.composedPrompt).toContain("alpha prompt v1");
+    expect((await waitForTaskPrompt(firstProcess)).join("\n")).toContain(
+      "workflow task v1",
+    );
+
+    files[ALPHA_PROMPT_PATH] = {
+      content: "alpha prompt v2\n",
+      mtimeMs: 9_000,
+    };
+    files[PROJECT_CONFIG_PATH] = {
+      content: WORKFLOW_CONFIG_V1.replace(
+        'prompt "workflow task v1"',
+        'prompt "workflow task v2"',
+      ),
+      mtimeMs: 10_000,
+    };
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    expect(bootstrapBodyOf(firstProcess)).toEqual(firstBootstrap);
+    expect(taskPromptsOf(firstProcess).join("\n")).toContain(
+      "workflow task v1",
+    );
+    expect(taskPromptsOf(firstProcess).join("\n")).not.toContain(
+      "workflow task v2",
+    );
+    await settleAuthenticatedChild(firstProcess, sendFirst, {
+      completionCandidate: { outcome: "success", method: "agent_signal" },
+    });
+    await firstRun;
+    expect((await runtimeStore.leases.findActive())._unsafeUnwrap()).toBeNull();
+
+    host.scriptConfirm(true);
+    const secondRun = host.invokeCommand("weave:run", "hot-flow");
+    const secondProcess = await processPort.spawnPromises[1];
+    const sendSecond = await authenticateDirectChild(
+      processPort,
+      secondProcess,
+    );
+    expect(bootstrapBodyOf(secondProcess).composedPrompt).toContain(
+      "alpha prompt v2",
+    );
+    expect((await waitForTaskPrompt(secondProcess)).join("\n")).toContain(
+      "workflow task v2",
+    );
+    await settleAuthenticatedChild(secondProcess, sendSecond, {
+      completionCandidate: { outcome: "success", method: "agent_signal" },
+    });
+    await secondRun;
+    expect((await runtimeStore.leases.findActive())._unsafeUnwrap()).toBeNull();
+    expect(
+      processPort.spawnedProcesses.every((process) => process.killed),
+    ).toBe(true);
+  });
+
+  it("restores with the descriptor published while the recovery prompt is open", async () => {
+    const files = refreshFiles();
+    const sourceFs = recordingConfigSourceFs(files);
+    const history = mutableChildRefSource(
+      eligibleOrdinaryRecoveryRecord({ title: "alpha" }),
+    );
+    const restored: unknown[] = [];
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const pendingChoice = host.deferNextSelect();
+    const extension = installWithRefresh(host, files, {
+      sourceFs,
+      overrides: {
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+        threadSourceFactory: history.factory,
+        parentSessionId: () => "parent",
+        restoreOrdinaryChild: (input) => {
+          restored.push(input);
+          return okAsync({ finalOutput: "restored", interventionCount: 0 });
+        },
+      },
+    });
+    await host.triggerSessionStart();
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (host.selectCalls.length > 0) break;
+      await flushBackgroundWork();
+    }
+    expect(host.selectCalls).toHaveLength(1);
+    await extension.configRefreshForTest()?.ensureFresh();
+    files[ALPHA_PROMPT_PATH] = {
+      content: "alpha prompt restored v2\n",
+      mtimeMs: 9_000,
+    };
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    pendingChoice.settle("Recover now");
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (
+        restored.length > 0 &&
+        history.updates.some((update) => update.status === "completed")
+      ) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(restored).toHaveLength(1);
+    expect(
+      (restored[0] as { descriptor: AgentDescriptor }).descriptor
+        .composedPrompt,
+    ).toContain("alpha prompt restored v2");
+    expect(history.updates.map((update) => update.status)).toEqual([
+      "running",
+      "completed",
+    ]);
+    expect(history.records[0]?.status).toBe("completed");
+  });
+
+  it("discards an in-flight candidate and deferral when session replacement boots authoritative config", async () => {
+    const files = refreshFiles();
+    const source = memoryConfigSourceFs(files);
+    let holdProjectRead = false;
+    let releaseProjectRead: ((content: string) => void) | undefined;
+    let markProjectReadStarted: (() => void) | undefined;
+    const projectReadStarted = new Promise<void>((resolve) => {
+      markProjectReadStarted = resolve;
+    });
+    const delayedFs: PiConfigSourceFsPort = {
+      statFile: (path) => source.statFile(path),
+      readFile: (path) => {
+        if (!holdProjectRead || path !== PROJECT_CONFIG_PATH) {
+          return source.readFile(path);
+        }
+        markProjectReadStarted?.();
+        return ResultAsync.fromPromise(
+          new Promise<string>((resolve) => {
+            releaseProjectRead = resolve;
+          }),
+          () => ({
+            type: "ReadFailed" as const,
+            path,
+            message: "test gate failed",
+          }),
+        );
+      },
+    };
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installWithRefresh(host, files, {
+      sourceFs: delayedFs,
+    });
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    const oldCoordinator = extension.configRefreshForTest();
+    const oldCell = extension.catalogCellForTest();
+
+    files[PROJECT_CONFIG_PATH] = {
+      content: PROJECT_CONFIG_V1.replace(
+        'prompt "loom prompt v1"',
+        'prompt "loom prompt v2"',
+      ),
+      mtimeMs: 9_000,
+    };
+    await oldCoordinator?.ensureFresh();
+    expect(oldCell?.deferred()).toBeDefined();
+
+    files[PROJECT_CONFIG_PATH] = {
+      content: PROJECT_CONFIG_V1.replace(
+        'prompt "loom prompt v1"',
+        'prompt "loom prompt v3"',
+      ),
+      mtimeMs: 11_000,
+    };
+    holdProjectRead = true;
+    const staleRefresh = oldCoordinator?.ensureFresh();
+    await projectReadStarted;
+
+    await host.triggerSessionStart();
+    const replacementCoordinator = extension.configRefreshForTest();
+    const replacementCell = extension.catalogCellForTest();
+    releaseProjectRead?.(files[PROJECT_CONFIG_PATH]?.content ?? "");
+    await staleRefresh;
+    await flushBackgroundWork();
+
+    expect(oldCoordinator?.lastOutcome()).toBeUndefined();
+    expect(oldCell?.isLive()).toBe(false);
+    expect(oldCell?.deferred()).toBeUndefined();
+    expect(replacementCoordinator).not.toBe(oldCoordinator);
+    expect(replacementCoordinator?.diagnostics()).toEqual({
+      state: { kind: "fresh" },
+      publishCount: 0,
+    });
+    expect(replacementCell?.deferred()).toBeUndefined();
+    expect(
+      replacementCell?.descriptors().get("loom")?.composedPrompt,
+    ).toContain("loom prompt v3");
+    const turn = await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    expect(turn.systemPrompt).toContain("loom prompt v3");
+    expect(turn.systemPrompt).not.toContain("loom prompt v2");
   });
 
   // -------------------------------------------------------------------------
