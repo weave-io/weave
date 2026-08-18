@@ -102,7 +102,9 @@ export function formatError(error: ConfigError): string {
 
     case "ValidationError": {
       const location =
-        error.line != null ? `${error.line}:${error.column ?? 0}: ` : "";
+        error.line !== undefined && error.line !== null
+          ? `${error.line}:${error.column ?? 0}: `
+          : "";
       const path = error.path ? `[${error.path}] ` : "";
       return `${location}${path}${error.message}`;
     }

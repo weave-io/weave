@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import type { AstNode } from "../ast.js";
+import type { AstValue, Property } from "../ast.js";
 import { tokenize } from "../lexer.js";
 import { parse } from "../parser.js";
+import type { SourcePos } from "../tokens.js";
 import {
   MAX_VALIDATION_DIAGNOSTIC_SIZE,
   MAX_VALIDATION_ISSUES,
@@ -10,6 +11,32 @@ import {
   VALIDATION_DIAGNOSTICS_TRUNCATED,
   validate,
 } from "../validate.js";
+
+type ValidateResult = ReturnType<typeof validate>;
+type DirectAstField =
+  | string
+  | boolean
+  | SourcePos
+  | DirectAstField[]
+  | DirectAstRecord;
+type DirectAstRecord = {
+  [key: string]: DirectAstField;
+};
+type HostilePropertyHost = {
+  key?: string;
+  value?: AstValue;
+  pos?: SourcePos;
+};
+type CyclicCategoryNode = {
+  type: "category";
+  name: string;
+  properties: Property[];
+  pos: SourcePos;
+  self?: CyclicCategoryNode;
+};
+type OwnedAgentFields = {
+  models: string[];
+};
 
 /** Helper: lex + parse + validate a source string */
 function validateSource(src: string) {
@@ -20,6 +47,28 @@ function validateSource(src: string) {
   if (parseResult.isErr())
     throw new Error(`Parse errors: ${JSON.stringify(parseResult.error)}`);
   return validate(parseResult.value);
+}
+
+function expectValidationFailure(result: ValidateResult) {
+  expect(result.isErr()).toBe(true);
+  if (result.isOk()) {
+    throw new Error("Expected validation failure");
+  }
+  return result.error;
+}
+
+function expectValidationSuccess(result: ValidateResult) {
+  expect(result.isOk()).toBe(true);
+  if (result.isErr()) {
+    throw new Error(
+      `Expected validation success: ${JSON.stringify(result.error)}`,
+    );
+  }
+  return result.value;
+}
+
+function emptyDirectAstRecord(): DirectAstRecord {
+  return Object.setPrototypeOf({}, null);
 }
 
 describe("validate — fail-closed AST structure", () => {
@@ -241,7 +290,9 @@ describe("validate — fail-closed AST structure", () => {
   it("rejects unsafe direct AST graphs without executing getters", () => {
     const pos = { line: 1, column: 1 };
     let getterExecutions = 0;
-    const inheritedProperty = Object.create({ key: "description" }) as object;
+    const inheritedProperty: HostilePropertyHost = Object.create({
+      key: "description",
+    });
     Object.defineProperty(inheritedProperty, "value", {
       enumerable: true,
       configurable: true,
@@ -257,7 +308,39 @@ describe("validate — fail-closed AST structure", () => {
       writable: true,
     });
 
-    const unsafeGraphs: unknown[] = [
+    const symbolGraph = [
+      { type: "category", name: "helper", properties: [], pos },
+    ];
+    Object.defineProperty(symbolGraph[0], Symbol("unsafe"), {
+      value: true,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+
+    const readonlyGraph = [
+      { type: "category", name: "helper", properties: [], pos },
+    ];
+    Object.defineProperty(readonlyGraph[0], "name", {
+      value: "helper",
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    });
+
+    const cyclicNode: CyclicCategoryNode = {
+      type: "category",
+      name: "helper",
+      properties: [],
+      pos,
+    };
+    cyclicNode.self = cyclicNode;
+
+    const sparseGraph: never[] = [];
+    sparseGraph.length = 1;
+
+    class AstContainer extends Array<CyclicCategoryNode> {}
+    const unsafeGraphs = [
       [
         {
           type: "category",
@@ -277,55 +360,21 @@ describe("validate — fail-closed AST structure", () => {
         ],
         { extra: true },
       ),
-    ];
-    const symbolGraph = [
-      { type: "category", name: "helper", properties: [], pos },
-    ];
-    Object.defineProperty(symbolGraph[0], Symbol("unsafe"), {
-      value: true,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    unsafeGraphs.push(symbolGraph);
-
-    const readonlyGraph = [
-      { type: "category", name: "helper", properties: [], pos },
-    ];
-    Object.defineProperty(readonlyGraph[0], "name", {
-      value: "helper",
-      enumerable: true,
-      configurable: true,
-      writable: false,
-    });
-    unsafeGraphs.push(readonlyGraph);
-
-    const cyclicNode: Record<string, unknown> = {
-      type: "category",
-      name: "helper",
-      properties: [],
-      pos,
-    };
-    cyclicNode.self = cyclicNode;
-    unsafeGraphs.push([cyclicNode]);
-
-    const sparseGraph = new Array<unknown>(1);
-    unsafeGraphs.push(sparseGraph);
-
-    class AstContainer extends Array<unknown> {}
-    unsafeGraphs.push(
+      symbolGraph,
+      readonlyGraph,
+      [cyclicNode],
+      sparseGraph,
       new AstContainer({
         type: "category",
         name: "helper",
         properties: [],
         pos,
       }),
-    );
+    ];
 
     for (const graph of unsafeGraphs) {
-      const result = validate(graph as AstNode[]);
-      expect(result.isErr()).toBe(true);
-      expect(result._unsafeUnwrapErr()).toEqual([
+      const errors = expectValidationFailure(validate(graph));
+      expect(errors).toEqual([
         expect.objectContaining({
           type: "ValidationError",
           message: expect.stringContaining("own, enumerable, writable"),
@@ -337,7 +386,7 @@ describe("validate — fail-closed AST structure", () => {
 
   it("rejects callable direct AST nodes without executing getters", () => {
     let getterExecutions = 0;
-    const callable = () => undefined;
+    function callable(): void {}
     Object.defineProperty(callable, "type", {
       enumerable: true,
       configurable: true,
@@ -347,10 +396,9 @@ describe("validate — fail-closed AST structure", () => {
       },
     });
 
-    const result = validate([callable] as unknown as AstNode[]);
+    const errors = expectValidationFailure(validate([callable]));
 
-    expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr()).toEqual([
+    expect(errors).toEqual([
       expect.objectContaining({
         type: "ValidationError",
         path: "",
@@ -361,17 +409,11 @@ describe("validate — fail-closed AST structure", () => {
   });
 
   it("returns bounded errors for malformed safe direct AST shapes", () => {
-    const malformedGraphs: unknown[] = [
-      null,
-      {},
-      [null],
-      [{ type: "category" }],
-    ];
+    const malformedGraphs = [null, {}, [null], [{ type: "category" }]];
 
     for (const graph of malformedGraphs) {
-      const result = validate(graph as AstNode[]);
-      expect(result.isErr()).toBe(true);
-      expect(result._unsafeUnwrapErr()).toEqual([
+      const errors = expectValidationFailure(validate(graph));
+      expect(errors).toEqual([
         expect.objectContaining({
           type: "ValidationError",
           path: "",
@@ -383,43 +425,44 @@ describe("validate — fail-closed AST structure", () => {
 
   it("accepts safe direct and null-prototype AST graphs", () => {
     const pos = { line: 1, column: 1 };
-    const directResult = validate([
-      {
-        type: "category",
-        name: "plain",
-        properties: [
-          {
-            key: "description",
-            value: { kind: "string", value: "Plain category", pos },
-            pos,
-          },
-        ],
-        pos,
-      },
-    ]);
-    expect(directResult.isOk()).toBe(true);
+    const directConfig = expectValidationSuccess(
+      validate([
+        {
+          type: "category",
+          name: "plain",
+          properties: [
+            {
+              key: "description",
+              value: { kind: "string", value: "Plain category", pos },
+              pos,
+            },
+          ],
+          pos,
+        },
+      ]),
+    );
+    expect(directConfig.categories.plain).toEqual({
+      description: "Plain category",
+    });
 
-    const stringValue = Object.create(null) as Record<string, unknown>;
+    const stringValue = emptyDirectAstRecord();
     stringValue.kind = "string";
     stringValue.value = "Null category";
     stringValue.pos = pos;
-    const property = Object.create(null) as Record<string, unknown>;
+    const property = emptyDirectAstRecord();
     property.key = "description";
     property.value = stringValue;
     property.pos = pos;
-    const node = Object.create(null) as Record<string, unknown>;
+    const node = emptyDirectAstRecord();
     node.type = "category";
     node.name = "null-prototype";
     node.properties = [property];
     node.pos = pos;
 
-    const nullPrototypeResult = validate([node] as AstNode[]);
-    expect(nullPrototypeResult.isOk()).toBe(true);
-    if (nullPrototypeResult.isOk()) {
-      expect(nullPrototypeResult.value.categories["null-prototype"]).toEqual({
-        description: "Null category",
-      });
-    }
+    const nullPrototypeConfig = expectValidationSuccess(validate([node]));
+    expect(nullPrototypeConfig.categories["null-prototype"]).toEqual({
+      description: "Null category",
+    });
   });
 
   it("rejects dangerous declaration, property, nested block, and step names", () => {
@@ -441,59 +484,61 @@ describe("validate — fail-closed AST structure", () => {
   });
 
   it("does not admit inherited fast, triggers, or description values", () => {
-    const inherited = Object.create({
+    const inherited: OwnedAgentFields = Object.create({
       fast: true,
       triggers: ["inherited"],
       description: "inherited",
-    }) as Record<string, unknown>;
+    });
     inherited.models = ["model"];
-    const result = validate([
-      {
-        type: "agent",
-        name: "helper",
-        properties: Object.entries(inherited).map(([key, value]) => ({
-          key,
-          value: {
-            kind: "array" as const,
-            elements: (value as string[]).map((entry) => ({
-              kind: "string" as const,
-              value: entry,
+    const agentConfig = expectValidationSuccess(
+      validate([
+        {
+          type: "agent",
+          name: "helper",
+          properties: Object.entries(inherited).map(([key, value]) => ({
+            key,
+            value: {
+              kind: "array" as const,
+              elements: value.map((entry) => ({
+                kind: "string" as const,
+                value: entry,
+                pos: { line: 1, column: 1 },
+              })),
               pos: { line: 1, column: 1 },
-            })),
+            },
             pos: { line: 1, column: 1 },
-          },
+          })),
           pos: { line: 1, column: 1 },
-        })),
-        pos: { line: 1, column: 1 },
-      },
-    ]);
+        },
+      ]),
+    );
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().agents.helper).toEqual({ models: ["model"] });
+    expect(agentConfig.agents.helper).toEqual({ models: ["model"] });
 
-    const inheritedCategory = Object.create({
+    const inheritedCategory: DirectAstRecord = Object.create({
       description: "inherited",
       fast: true,
       triggers: ["inherited"],
-    }) as Record<string, unknown>;
-    const categoryResult = validate([
-      {
-        type: "category",
-        name: "helper",
-        properties: Object.entries(inheritedCategory).map(([key, value]) => ({
-          key,
-          value: {
-            kind: "string" as const,
-            value: String(value),
+    });
+    const categoryErrors = expectValidationFailure(
+      validate([
+        {
+          type: "category",
+          name: "helper",
+          properties: Object.entries(inheritedCategory).map(([key, value]) => ({
+            key,
+            value: {
+              kind: "string" as const,
+              value: String(value),
+              pos: { line: 1, column: 1 },
+            },
             pos: { line: 1, column: 1 },
-          },
+          })),
           pos: { line: 1, column: 1 },
-        })),
-        pos: { line: 1, column: 1 },
-      },
-    ]);
-    expect(categoryResult.isErr()).toBe(true);
-    expect(categoryResult._unsafeUnwrapErr()).toContainEqual(
+        },
+      ]),
+    );
+    expect(categoryErrors).toContainEqual(
       expect.objectContaining({ path: "categories.helper.description" }),
     );
   });
@@ -2206,7 +2251,9 @@ agent tapestry {
   delegation { max_concurrency 64 }
 }`);
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(64);
+    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(
+      64,
+    );
     expect(
       result._unsafeUnwrap().agents.tapestry?.delegation?.max_concurrency,
     ).toBe(64);

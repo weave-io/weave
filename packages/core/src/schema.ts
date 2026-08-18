@@ -621,15 +621,18 @@ export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
   ]),
 );
 
+const JsonObjectSchema = z.record(z.string(), JsonValueSchema);
+
 const ADAPTER_SETTINGS_MAX_DEPTH = 4;
 const ADAPTER_SETTINGS_MAX_BYTES = 64 * 1024;
 
 function canonicalJson(value: JsonValue): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.keys(value)
+  const object = JsonObjectSchema.safeParse(value);
+  if (object.success) {
+    return `{${Object.keys(object.data)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object.data[key])}`)
       .join(",")}}`;
   }
   return JSON.stringify(value);
@@ -655,8 +658,9 @@ function checkAdapterValue(
     });
     return;
   }
-  if (value !== null && typeof value === "object") {
-    Object.entries(value).forEach(([key, entry]) => {
+  const object = JsonObjectSchema.safeParse(value);
+  if (object.success) {
+    Object.entries(object.data).forEach(([key, entry]) => {
       checkAdapterValue(entry, [...path, key], depth + 1, ctx);
     });
   }

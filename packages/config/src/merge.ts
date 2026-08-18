@@ -1,6 +1,20 @@
 import {
   AdapterSettingsSchema,
+  type AgentConfig,
+  type AgentDelegationConfig,
+  type CategoryConfig,
   DEFAULT_DELEGATION_LIMITS,
+  type DelegationSettings,
+  type ExtendBeforePlan,
+  type ExtensionPoints,
+  type JsonValue,
+  type RoutingConfig,
+  type RuntimeJournalSettings,
+  type RuntimeLogSettings,
+  type RuntimeSettings,
+  type RuntimeUsageSettings,
+  type SettingsConfig,
+  type ToolPolicy,
   type WeaveConfig,
   WeaveConfigSchema,
   type WorkflowConfig,
@@ -66,71 +80,543 @@ export type MergeError =
     };
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Named merge contracts — schema-derived owner types
 // ---------------------------------------------------------------------------
 
-/**
- * Recursively merges two values following the Weave merge rules:
- *
- * - `undefined` override → keep base value
- * - Both are non-null plain objects (not arrays) → deep-merge each key
- * - Both are arrays → union-merge: override entries first, then base entries
- *   not already present (strings compared with `===`; objects compared with
- *   `JSON.stringify` equality)
- * - Anything else (scalar, `null`, mismatched types) → override wins
- *
- * Inputs are never mutated.
- *
- * NOTE: WorkflowConfig values inside the `workflows` record are handled
- * specially by `mergeWorkflowRecord` before this function is called for
- * the top-level config object. This function therefore treats workflow
- * objects as plain objects (deep-merge) for any residual path that does
- * not go through the special handler.
- */
-function mergeValues(base: unknown, override: unknown): unknown {
-  if (override === undefined) return base;
+type AgentMap = WeaveConfig["agents"];
+type CategoryMap = WeaveConfig["categories"];
+type WorkflowMap = WeaveConfig["workflows"];
+type DisabledConfig = WeaveConfig["disabled"];
+type AdapterSettings = NonNullable<SettingsConfig["adapters"]>;
+type JsonRecord = Exclude<Extract<JsonValue, object>, JsonValue[]>;
 
+// ---------------------------------------------------------------------------
+// Array union-merge (override entries first, then unseen base entries)
+// ---------------------------------------------------------------------------
+
+function unionMergeStrings(
+  base: readonly string[],
+  override: readonly string[],
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const item of override) {
+    const key = JSON.stringify(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+
+  for (const item of base) {
+    const key = JSON.stringify(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+
+  return result;
+}
+
+function unionMergeWorkflowSteps(
+  base: readonly WorkflowStep[],
+  override: readonly WorkflowStep[],
+): WorkflowStep[] {
+  const seen = new Set<string>();
+  const result: WorkflowStep[] = [];
+
+  for (const item of override) {
+    const key = JSON.stringify(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+
+  for (const item of base) {
+    const key = JSON.stringify(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+
+  return result;
+}
+
+function unionMergeJsonArrays(
+  base: readonly JsonValue[],
+  override: readonly JsonValue[],
+): JsonValue[] {
+  const seen = new Set<string>();
+  const result: JsonValue[] = [];
+
+  for (const item of override) {
+    const key = JSON.stringify(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+
+  for (const item of base) {
+    const key = JSON.stringify(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+
+  return result;
+}
+
+function mergeOptionalStringArray(
+  base: readonly string[] | undefined,
+  override: readonly string[] | undefined,
+): string[] | undefined {
+  if (override === undefined) return base === undefined ? undefined : [...base];
+  if (base === undefined) return [...override];
+  return unionMergeStrings(base, override);
+}
+
+// ---------------------------------------------------------------------------
+// Adapter JSON merge — parsed JsonValue contracts, no representation checks
+// ---------------------------------------------------------------------------
+
+function jsonRecord(value: JsonValue): JsonRecord | undefined {
+  if (value instanceof Object && !Array.isArray(value)) {
+    return value;
+  }
+  return undefined;
+}
+
+function mergeJsonRecords(base: JsonRecord, override: JsonRecord): JsonRecord {
+  const merged: JsonRecord = { ...base };
+  for (const key of Object.keys(override)) {
+    const overrideValue = override[key];
+    if (overrideValue === undefined) continue;
+    const baseValue = base[key];
+    merged[key] =
+      baseValue === undefined
+        ? overrideValue
+        : mergeJsonValue(baseValue, overrideValue);
+  }
+  return merged;
+}
+
+function mergeJsonValue(base: JsonValue, override: JsonValue): JsonValue {
   if (Array.isArray(base) && Array.isArray(override)) {
-    // Union-merge: override entries first, then base entries not already present.
-    const seen = new Set<string>();
-    const result: unknown[] = [];
-
-    for (const item of override) {
-      const key = JSON.stringify(item);
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push(item);
-      }
-    }
-
-    for (const item of base) {
-      const key = JSON.stringify(item);
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push(item);
-      }
-    }
-
-    return result;
+    return unionMergeJsonArrays(base, override);
   }
 
-  if (isPlainObject(base) && isPlainObject(override)) {
-    const merged: Record<string, unknown> = { ...base };
-    for (const key of Object.keys(override)) {
-      merged[key] = mergeValues(
-        (base as Record<string, unknown>)[key],
-        (override as Record<string, unknown>)[key],
-      );
-    }
-    return merged;
+  const baseRecord = jsonRecord(base);
+  const overrideRecord = jsonRecord(override);
+  if (baseRecord !== undefined && overrideRecord !== undefined) {
+    return mergeJsonRecords(baseRecord, overrideRecord);
   }
 
-  // Scalar or null: override wins.
   return override;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function mergeAdapterSettings(
+  base: AdapterSettings | undefined,
+  override: AdapterSettings | undefined,
+): AdapterSettings | undefined {
+  if (override === undefined) return base;
+  if (base === undefined) return override;
+  const merged: AdapterSettings = { ...base };
+  for (const key of Object.keys(override)) {
+    const overrideValue = override[key];
+    if (overrideValue === undefined) continue;
+    const baseValue = base[key];
+    merged[key] =
+      baseValue === undefined
+        ? overrideValue
+        : mergeJsonValue(baseValue, overrideValue);
+  }
+  return merged;
+}
+
+// ---------------------------------------------------------------------------
+// Object-field merge contracts
+// ---------------------------------------------------------------------------
+
+function mergeToolPolicy(
+  base: ToolPolicy | undefined,
+  override: ToolPolicy | undefined,
+): ToolPolicy | undefined {
+  if (override === undefined) return base;
+  if (base === undefined) return override;
+  const merged: ToolPolicy = {};
+  const read = override.read !== undefined ? override.read : base.read;
+  if (read !== undefined) merged.read = read;
+  const write = override.write !== undefined ? override.write : base.write;
+  if (write !== undefined) merged.write = write;
+  const execute =
+    override.execute !== undefined ? override.execute : base.execute;
+  if (execute !== undefined) merged.execute = execute;
+  const delegate =
+    override.delegate !== undefined ? override.delegate : base.delegate;
+  if (delegate !== undefined) merged.delegate = delegate;
+  const network =
+    override.network !== undefined ? override.network : base.network;
+  if (network !== undefined) merged.network = network;
+  return merged;
+}
+
+function mergeDelegationSettings(
+  base: DelegationSettings | undefined,
+  override: DelegationSettings | undefined,
+): DelegationSettings | undefined {
+  if (override === undefined) return base;
+  if (base === undefined) return override;
+  const merged: DelegationSettings = {};
+  const maxChildren =
+    override.max_children !== undefined
+      ? override.max_children
+      : base.max_children;
+  if (maxChildren !== undefined) merged.max_children = maxChildren;
+  const maxConcurrency =
+    override.max_concurrency !== undefined
+      ? override.max_concurrency
+      : base.max_concurrency;
+  if (maxConcurrency !== undefined) merged.max_concurrency = maxConcurrency;
+  const maxDepth =
+    override.max_depth !== undefined ? override.max_depth : base.max_depth;
+  if (maxDepth !== undefined) merged.max_depth = maxDepth;
+  const maxProcesses =
+    override.max_processes !== undefined
+      ? override.max_processes
+      : base.max_processes;
+  if (maxProcesses !== undefined) merged.max_processes = maxProcesses;
+  return merged;
+}
+
+function mergeAgentDelegation(
+  base: AgentDelegationConfig | undefined,
+  override: AgentDelegationConfig | undefined,
+): AgentDelegationConfig | undefined {
+  if (override === undefined) return base;
+  if (base === undefined) return override;
+  const merged: AgentDelegationConfig = {};
+  const maxChildren =
+    override.max_children !== undefined
+      ? override.max_children
+      : base.max_children;
+  if (maxChildren !== undefined) merged.max_children = maxChildren;
+  const maxConcurrency =
+    override.max_concurrency !== undefined
+      ? override.max_concurrency
+      : base.max_concurrency;
+  if (maxConcurrency !== undefined) merged.max_concurrency = maxConcurrency;
+  return merged;
+}
+
+function mergeRouting(
+  base: RoutingConfig | undefined,
+  override: RoutingConfig | undefined,
+): RoutingConfig | undefined {
+  if (override === undefined) return base;
+  if (base === undefined) return override;
+  const merged: RoutingConfig = {};
+  const exclude = mergeOptionalStringArray(
+    base.delegation_exclude,
+    override.delegation_exclude,
+  );
+  if (exclude !== undefined) merged.delegation_exclude = exclude;
+  return merged;
+}
+
+function mergeExtensionPoints(
+  base: ExtensionPoints | undefined,
+  override: ExtensionPoints | undefined,
+): ExtensionPoints | undefined {
+  if (override === undefined) return base;
+  if (base === undefined) return override;
+  const merged: ExtensionPoints = {};
+  const beforePlan =
+    override.before_plan !== undefined
+      ? override.before_plan
+      : base.before_plan;
+  if (beforePlan !== undefined) merged.before_plan = beforePlan;
+  return merged;
+}
+
+function mergeRuntimeJournal(
+  base: RuntimeJournalSettings,
+  override: RuntimeJournalSettings,
+): RuntimeJournalSettings {
+  return {
+    strict: override.strict !== undefined ? override.strict : base.strict,
+    retention_days:
+      override.retention_days !== undefined
+        ? override.retention_days
+        : base.retention_days,
+    max_entries:
+      override.max_entries !== undefined
+        ? override.max_entries
+        : base.max_entries,
+  };
+}
+
+function mergeRuntimeUsage(
+  base: RuntimeUsageSettings,
+  override: RuntimeUsageSettings,
+): RuntimeUsageSettings {
+  return {
+    detail_retention_days:
+      override.detail_retention_days !== undefined
+        ? override.detail_retention_days
+        : base.detail_retention_days,
+    max_observations:
+      override.max_observations !== undefined
+        ? override.max_observations
+        : base.max_observations,
+  };
+}
+
+function mergeRuntimeLog(
+  base: RuntimeLogSettings,
+  override: RuntimeLogSettings,
+): RuntimeLogSettings {
+  return {
+    max_segment_bytes:
+      override.max_segment_bytes !== undefined
+        ? override.max_segment_bytes
+        : base.max_segment_bytes,
+    max_segments:
+      override.max_segments !== undefined
+        ? override.max_segments
+        : base.max_segments,
+  };
+}
+
+function mergeRuntimeSettings(
+  base: RuntimeSettings,
+  override: RuntimeSettings,
+): RuntimeSettings {
+  return {
+    journal: mergeRuntimeJournal(base.journal, override.journal),
+    usage: mergeRuntimeUsage(base.usage, override.usage),
+    log: mergeRuntimeLog(base.log, override.log),
+  };
+}
+
+function mergeSettings(
+  base: SettingsConfig,
+  override: SettingsConfig,
+): SettingsConfig {
+  const merged: SettingsConfig = {
+    log_level:
+      override.log_level !== undefined ? override.log_level : base.log_level,
+    runtime: mergeRuntimeSettings(base.runtime, override.runtime),
+  };
+  const delegation = mergeDelegationSettings(
+    base.delegation,
+    override.delegation,
+  );
+  if (delegation !== undefined) merged.delegation = delegation;
+  const enforcePermissions =
+    override.enforce_permissions !== undefined
+      ? override.enforce_permissions
+      : base.enforce_permissions;
+  if (enforcePermissions !== undefined) {
+    merged.enforce_permissions = enforcePermissions;
+  }
+  const adapters = mergeAdapterSettings(base.adapters, override.adapters);
+  if (adapters !== undefined) merged.adapters = adapters;
+  return merged;
+}
+
+function mergeDisabled(
+  base: DisabledConfig,
+  override: DisabledConfig,
+): DisabledConfig {
+  return {
+    agents: unionMergeStrings(base.agents, override.agents),
+    hooks: unionMergeStrings(base.hooks, override.hooks),
+    skills: unionMergeStrings(base.skills, override.skills),
+  };
+}
+
+function mergeExtendBeforePlan(
+  base: ExtendBeforePlan,
+  override: ExtendBeforePlan,
+): ExtendBeforePlan {
+  return { steps: unionMergeStrings(base.steps, override.steps) };
+}
+
+function mergeAgentConfig(
+  base: AgentConfig,
+  override: AgentConfig,
+): AgentConfig {
+  const merged: AgentConfig = {};
+  const name = override.name !== undefined ? override.name : base.name;
+  if (name !== undefined) merged.name = name;
+  const description =
+    override.description !== undefined
+      ? override.description
+      : base.description;
+  if (description !== undefined) merged.description = description;
+  const displayName =
+    override.display_name !== undefined
+      ? override.display_name
+      : base.display_name;
+  if (displayName !== undefined) merged.display_name = displayName;
+  const prompt = override.prompt !== undefined ? override.prompt : base.prompt;
+  if (prompt !== undefined) merged.prompt = prompt;
+  const promptFile =
+    override.prompt_file !== undefined
+      ? override.prompt_file
+      : base.prompt_file;
+  if (promptFile !== undefined) merged.prompt_file = promptFile;
+  const promptAppend =
+    override.prompt_append !== undefined
+      ? override.prompt_append
+      : base.prompt_append;
+  if (promptAppend !== undefined) merged.prompt_append = promptAppend;
+  const promptAppendFile =
+    override.prompt_append_file !== undefined
+      ? override.prompt_append_file
+      : base.prompt_append_file;
+  if (promptAppendFile !== undefined) {
+    merged.prompt_append_file = promptAppendFile;
+  }
+  const models = mergeOptionalStringArray(base.models, override.models);
+  if (models !== undefined) merged.models = models;
+  const reviewModels = mergeOptionalStringArray(
+    base.review_models,
+    override.review_models,
+  );
+  if (reviewModels !== undefined) merged.review_models = reviewModels;
+  const temperature =
+    override.temperature !== undefined
+      ? override.temperature
+      : base.temperature;
+  if (temperature !== undefined) merged.temperature = temperature;
+  const mode = override.mode !== undefined ? override.mode : base.mode;
+  if (mode !== undefined) merged.mode = mode;
+  const toolPolicy = mergeToolPolicy(base.tool_policy, override.tool_policy);
+  if (toolPolicy !== undefined) merged.tool_policy = toolPolicy;
+  const delegation = mergeAgentDelegation(base.delegation, override.delegation);
+  if (delegation !== undefined) merged.delegation = delegation;
+  const routing = mergeRouting(base.routing, override.routing);
+  if (routing !== undefined) merged.routing = routing;
+  const skills = mergeOptionalStringArray(base.skills, override.skills);
+  if (skills !== undefined) merged.skills = skills;
+  const triggers = mergeOptionalStringArray(base.triggers, override.triggers);
+  if (triggers !== undefined) merged.triggers = triggers;
+  const fast = override.fast !== undefined ? override.fast : base.fast;
+  if (fast !== undefined) merged.fast = fast;
+  return merged;
+}
+
+function mergeCategoryConfig(
+  base: CategoryConfig,
+  override: CategoryConfig,
+): CategoryConfig {
+  const merged: CategoryConfig = {
+    description:
+      override.description !== undefined
+        ? override.description
+        : base.description,
+  };
+  const name = override.name !== undefined ? override.name : base.name;
+  if (name !== undefined) merged.name = name;
+  const models = mergeOptionalStringArray(base.models, override.models);
+  if (models !== undefined) merged.models = models;
+  const triggers = mergeOptionalStringArray(base.triggers, override.triggers);
+  if (triggers !== undefined) merged.triggers = triggers;
+  const fast = override.fast !== undefined ? override.fast : base.fast;
+  if (fast !== undefined) merged.fast = fast;
+  const temperature =
+    override.temperature !== undefined
+      ? override.temperature
+      : base.temperature;
+  if (temperature !== undefined) merged.temperature = temperature;
+  const toolPolicy = mergeToolPolicy(base.tool_policy, override.tool_policy);
+  if (toolPolicy !== undefined) merged.tool_policy = toolPolicy;
+  const promptAppend =
+    override.prompt_append !== undefined
+      ? override.prompt_append
+      : base.prompt_append;
+  if (promptAppend !== undefined) merged.prompt_append = promptAppend;
+  const promptAppendFile =
+    override.prompt_append_file !== undefined
+      ? override.prompt_append_file
+      : base.prompt_append_file;
+  if (promptAppendFile !== undefined) {
+    merged.prompt_append_file = promptAppendFile;
+  }
+  return merged;
+}
+
+function mergeAgentMap(base: AgentMap, override: AgentMap): AgentMap {
+  const merged = { ...base };
+  for (const [name, overrideAgent] of Object.entries(override)) {
+    const baseAgent = base[name];
+    merged[name] =
+      baseAgent === undefined
+        ? overrideAgent
+        : mergeAgentConfig(baseAgent, overrideAgent);
+  }
+  return merged;
+}
+
+function mergeCategoryMap(
+  base: CategoryMap,
+  override: CategoryMap,
+): CategoryMap {
+  const merged = { ...base };
+  for (const [name, overrideCategory] of Object.entries(override)) {
+    const baseCategory = base[name];
+    merged[name] =
+      baseCategory === undefined
+        ? overrideCategory
+        : mergeCategoryConfig(baseCategory, overrideCategory);
+  }
+  return merged;
+}
+
+function mergeWorkflowConfigFields(
+  base: WorkflowConfig,
+  override: WorkflowConfig,
+  steps: WorkflowStep[],
+): WorkflowConfig {
+  const merged: WorkflowConfig = {
+    version: override.version !== undefined ? override.version : base.version,
+    steps,
+  };
+  const name = override.name !== undefined ? override.name : base.name;
+  if (name !== undefined) merged.name = name;
+  const description =
+    override.description !== undefined
+      ? override.description
+      : base.description;
+  if (description !== undefined) merged.description = description;
+  const extendsTarget =
+    override.extends !== undefined ? override.extends : base.extends;
+  if (extendsTarget !== undefined) merged.extends = extendsTarget;
+  const extensionPoints = mergeExtensionPoints(
+    base.extension_points,
+    override.extension_points,
+  );
+  if (extensionPoints !== undefined) merged.extension_points = extensionPoints;
+  const promptAppend =
+    override.prompt_append !== undefined
+      ? override.prompt_append
+      : base.prompt_append;
+  if (promptAppend !== undefined) merged.prompt_append = promptAppend;
+  const promptAppendFile =
+    override.prompt_append_file !== undefined
+      ? override.prompt_append_file
+      : base.prompt_append_file;
+  if (promptAppendFile !== undefined) {
+    merged.prompt_append_file = promptAppendFile;
+  }
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +641,7 @@ function resolveBaseSteps(
   workflowName: string,
   extendsTarget: string,
   baseSteps: WorkflowStep[],
-  workflowMap: Record<string, WorkflowConfig>,
+  workflowMap: WorkflowMap,
 ): Result<WorkflowStep[], WorkflowExtensionError> {
   // Self-reference: use the base steps directly (normal "project extends builtin" pattern)
   if (extendsTarget === workflowName) {
@@ -219,13 +705,19 @@ export function mergeWorkflow(
   workflowName: string,
   base: WorkflowConfig,
   override: WorkflowConfig,
-  workflowMap: Record<string, WorkflowConfig>,
+  workflowMap: WorkflowMap,
 ): Result<WorkflowConfig, WorkflowExtensionError> {
   // If the override does not use `extends`, fall back to plain deep-merge
   // (backwards-compat: existing configs without `extends` keep union-merge
-  // semantics for the steps array via the generic mergeValues path).
+  // semantics for the steps array via the named workflow-field merge path).
   if (override.extends === undefined) {
-    return ok(mergeValues(base, override) as WorkflowConfig);
+    return ok(
+      mergeWorkflowConfigFields(
+        base,
+        override,
+        unionMergeWorkflowSteps(base.steps, override.steps),
+      ),
+    );
   }
 
   // Resolve base steps from the extends chain.
@@ -281,26 +773,38 @@ export function mergeWorkflow(
       });
     }
 
-    const anchor = step.insert_before ?? step.insert_after;
-    const anchorIndex = workingSteps.findIndex((s) => s.name === anchor);
-
-    if (anchorIndex === -1) {
-      return err({
-        type: "UnknownInsertionAnchor",
-        workflowName,
-        stepName: step.name,
-        anchor: anchor as string,
-      });
-    }
-
-    if (step.insert_before !== undefined) {
+    const insertBefore = step.insert_before;
+    if (insertBefore !== undefined) {
+      const anchorIndex = workingSteps.findIndex(
+        (s) => s.name === insertBefore,
+      );
+      if (anchorIndex === -1) {
+        return err({
+          type: "UnknownInsertionAnchor",
+          workflowName,
+          stepName: step.name,
+          anchor: insertBefore,
+        });
+      }
       workingSteps = [
         ...workingSteps.slice(0, anchorIndex),
         step,
         ...workingSteps.slice(anchorIndex),
       ];
-    } else {
-      // insert_after
+      continue;
+    }
+
+    const insertAfter = step.insert_after;
+    if (insertAfter !== undefined) {
+      const anchorIndex = workingSteps.findIndex((s) => s.name === insertAfter);
+      if (anchorIndex === -1) {
+        return err({
+          type: "UnknownInsertionAnchor",
+          workflowName,
+          stepName: step.name,
+          anchor: insertAfter,
+        });
+      }
       workingSteps = [
         ...workingSteps.slice(0, anchorIndex + 1),
         step,
@@ -312,16 +816,7 @@ export function mergeWorkflow(
   // Step 4: Append remaining steps
   workingSteps = [...workingSteps, ...appends];
 
-  // Build merged workflow: scalar fields from override win; steps from merge
-  const merged: WorkflowConfig = {
-    ...(mergeValues(base, {
-      ...override,
-      steps: workingSteps,
-    }) as WorkflowConfig),
-    steps: workingSteps,
-  };
-
-  return ok(merged);
+  return ok(mergeWorkflowConfigFields(base, override, workingSteps));
 }
 
 /**
@@ -333,11 +828,11 @@ export function mergeWorkflow(
  * @returns `ok(merged)` or `err(MergeError[])` if any workflow extension fails
  */
 function mergeWorkflowRecord(
-  baseWorkflows: Record<string, WorkflowConfig>,
-  overrideWorkflows: Record<string, WorkflowConfig>,
-): Result<Record<string, WorkflowConfig>, MergeError[]> {
+  baseWorkflows: WorkflowMap,
+  overrideWorkflows: WorkflowMap,
+): Result<WorkflowMap, MergeError[]> {
   // Build the combined map: start with base, then apply overrides
-  const combined: Record<string, WorkflowConfig> = { ...baseWorkflows };
+  const combined = { ...baseWorkflows };
 
   // First pass: add all override-only workflows (no base counterpart)
   for (const [name, overrideWf] of Object.entries(overrideWorkflows)) {
@@ -443,40 +938,43 @@ function validateMergedConfig(
   return ok(config);
 }
 
-function deepMerge2Result(
+function mergeConfigLayers(
   base: WeaveConfig,
   override: WeaveConfig,
 ): Result<WeaveConfig, MergeError[]> {
-  // Handle workflows specially; merge everything else with generic mergeValues.
+  // Handle workflows specially; merge everything else with named field contracts.
   //
   // before-plan ownership note:
   //   `extension_points` is a plain object field on WorkflowConfig — it passes
-  //   through mergeWorkflowRecord → mergeWorkflow → mergeValues as a deep-merge,
-  //   so `extension_points.before_plan` is preserved from whichever layer sets it.
+  //   through mergeWorkflowRecord → mergeWorkflow → mergeWorkflowConfigFields
+  //   as a deep-merge, so `extension_points.before_plan` is preserved from
+  //   whichever layer sets it.
   //
-  //   `extend_before_plan` is a top-level WeaveConfig field — it passes through
-  //   the generic mergeValues path below. Its `steps` arrays union-merge across
-  //   layers (override entries first, then base entries not already present).
+  //   `extend_before_plan` is a top-level WeaveConfig field — it is merged by
+  //   named union-merge of `steps` (override entries first, then base entries
+  //   not already present).
   //
   //   Both fields are engine-visible only after merge resolution completes.
   //   The engine is responsible for checking `extension_points.before_plan` on
   //   the target workflow before applying `extend_before_plan` entries — the
   //   merge layer does not enforce that cross-field constraint.
-  const baseWorkflows = base.workflows ?? {};
-  const overrideWorkflows = override.workflows ?? {};
-
-  const workflowResult = mergeWorkflowRecord(baseWorkflows, overrideWorkflows);
+  const workflowResult = mergeWorkflowRecord(
+    base.workflows,
+    override.workflows,
+  );
   if (workflowResult.isErr()) return err(workflowResult.error);
 
-  // Merge the rest of the config (excluding workflows which we handle above)
-  const { workflows: _baseWf, ...baseRest } = base;
-  const { workflows: _overrideWf, ...overrideRest } = override;
-  const mergedRest = mergeValues(baseRest, overrideRest) as Omit<
-    WeaveConfig,
-    "workflows"
-  >;
-
-  return ok({ ...mergedRest, workflows: workflowResult.value });
+  return ok({
+    agents: mergeAgentMap(base.agents, override.agents),
+    categories: mergeCategoryMap(base.categories, override.categories),
+    disabled: mergeDisabled(base.disabled, override.disabled),
+    settings: mergeSettings(base.settings, override.settings),
+    workflows: workflowResult.value,
+    extend_before_plan: mergeExtendBeforePlan(
+      base.extend_before_plan,
+      override.extend_before_plan,
+    ),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +1016,8 @@ function deepMerge2Result(
 export function mergeConfigsResult(
   ...configs: WeaveConfig[]
 ): Result<WeaveConfig, MergeError[]> {
-  if (configs.length === 0) {
+  const [first, ...rest] = configs;
+  if (first === undefined) {
     return ok(WeaveConfigSchema.parse({}));
   }
 
@@ -531,14 +1030,13 @@ export function mergeConfigsResult(
     return err([{ type: "ConfigValidationError", errors: sourceIssues }]);
   }
 
-  if (configs.length === 1) {
-    return validateMergedConfig(configs[0] as WeaveConfig);
+  if (rest.length === 0) {
+    return validateMergedConfig(first);
   }
 
-  let acc: WeaveConfig = configs[0] as WeaveConfig;
-  for (let i = 1; i < configs.length; i++) {
-    const next = configs[i] as WeaveConfig;
-    const result = deepMerge2Result(acc, next);
+  let acc = first;
+  for (const next of rest) {
+    const result = mergeConfigLayers(acc, next);
     if (result.isErr()) return err(result.error);
     acc = result.value;
   }
@@ -573,9 +1071,7 @@ export function mergeConfigsResult(
  */
 export function mergeConfigs(...configs: WeaveConfig[]): WeaveConfig {
   const result = mergeConfigsResult(...configs);
-  if (result.isErr()) {
-    const first = result.error[0];
-    throw first;
-  }
-  return result.value;
+  if (result.isOk()) return result.value;
+  const [firstError] = result.error;
+  throw firstError;
 }

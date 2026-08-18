@@ -45,7 +45,7 @@ async function removePlan(slug: string): Promise<void> {
   const path = join(TEST_PLAN_DIR, `${slug}.md`);
   await Bun.file(path)
     .unlink()
-    .catch(() => undefined);
+    .catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -59,8 +59,7 @@ describe("BunFilesystemPlanStateProvider: imports", () => {
 
   it("implements PlanStateProvider interface", () => {
     const provider: PlanStateProvider = new BunFilesystemPlanStateProvider();
-    expect(typeof provider.planExists).toBe("function");
-    expect(typeof provider.isPlanComplete).toBe("function");
+    expect(provider).toBeInstanceOf(BunFilesystemPlanStateProvider);
   });
 });
 
@@ -168,10 +167,7 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
 
   it("returns ok(true) when all checkboxes are checked", async () => {
     const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
-    await writePlan(
-      slug,
-      "# Plan\n\n- [x]\n- [x]\n- [x]\n",
-    );
+    await writePlan(slug, "# Plan\n\n- [x]\n- [x]\n- [x]\n");
     const result = await provider.isPlanComplete(slug);
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
@@ -189,10 +185,7 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
 
   it("returns ok(false) when there is one incomplete checkbox", async () => {
     const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
-    await writePlan(
-      slug,
-      "# Plan\n\n- [x]\n- [ ] (incomplete)\n- [x]\n",
-    );
+    await writePlan(slug, "# Plan\n\n- [x]\n- [ ] (incomplete)\n- [x]\n");
     const result = await provider.isPlanComplete(slug);
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
@@ -411,10 +404,10 @@ describe("BunFilesystemPlanStateProvider: revisioned plan state", () => {
 
     await Bun.file(link)
       .unlink()
-      .catch(() => undefined);
+      .catch(() => {});
     await Bun.file(target)
       .unlink()
-      .catch(() => undefined);
+      .catch(() => {});
   });
 });
 

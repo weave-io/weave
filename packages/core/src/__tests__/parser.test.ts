@@ -2,11 +2,15 @@ import { describe, expect, it } from "bun:test";
 import type {
   AgentBlock,
   ArrayValue,
+  AstNode,
+  AstValue,
   BlockValue,
   CategoryBlock,
   DisableDirective,
   ExtendBeforePlanDirective,
+  Property,
   SettingAssignment,
+  StepBlock,
   WorkflowBlock,
 } from "../ast.js";
 import {
@@ -18,21 +22,137 @@ import { tokenize } from "../lexer.js";
 import { parse } from "../parser.js";
 
 /** Helper: lex + parse a source string */
-function parseSource(src: string) {
+type ParseResult = ReturnType<typeof parse>;
+
+function parseSource(src: string): ParseResult {
   const lexResult = tokenize(src);
   if (lexResult.isErr())
     throw new Error(`Lex errors: ${JSON.stringify(lexResult.error)}`);
   return parse(lexResult.value);
 }
 
+function parseSuccess(result: ParseResult): AstNode[] {
+  expect(result.isOk()).toBe(true);
+  if (result.isErr()) {
+    throw new Error(`Expected parse success: ${JSON.stringify(result.error)}`);
+  }
+  return result.value;
+}
+
+function parseFailure(result: ParseResult) {
+  expect(result.isErr()).toBe(true);
+  if (result.isOk()) {
+    throw new Error(`Expected parse failure: ${JSON.stringify(result.value)}`);
+  }
+  return result.error;
+}
+
+function firstNode(result: ParseResult): AstNode | undefined {
+  return parseSuccess(result)[0];
+}
+
+function agentNode(node: AstNode | undefined): AgentBlock {
+  if (node?.type !== "agent") {
+    throw new Error("Expected an agent fixture");
+  }
+  return node;
+}
+
+function agentFixture(result: ParseResult): AgentBlock {
+  return agentNode(firstNode(result));
+}
+
+function namedBlockFixture(
+  node: AstNode | undefined,
+): AgentBlock | CategoryBlock {
+  if (node?.type !== "agent" && node?.type !== "category") {
+    throw new Error("Expected an agent or category fixture");
+  }
+  return node;
+}
+
+function categoryFixture(result: ParseResult): CategoryBlock {
+  const node = firstNode(result);
+  if (node?.type !== "category") {
+    throw new Error("Expected a category fixture");
+  }
+  return node;
+}
+
+function workflowNode(node: AstNode | undefined): WorkflowBlock {
+  if (node?.type !== "workflow") {
+    throw new Error("Expected a workflow fixture");
+  }
+  return node;
+}
+
+function workflowFixture(result: ParseResult): WorkflowBlock {
+  return workflowNode(firstNode(result));
+}
+
+function disableFixture(result: ParseResult): DisableDirective {
+  const node = firstNode(result);
+  if (node?.type !== "disable") {
+    throw new Error("Expected a disable fixture");
+  }
+  return node;
+}
+
+function settingNode(node: AstNode | undefined): SettingAssignment {
+  if (node?.type !== "setting") {
+    throw new Error("Expected a setting fixture");
+  }
+  return node;
+}
+
+function settingFixture(result: ParseResult): SettingAssignment {
+  return settingNode(firstNode(result));
+}
+
+function extendBeforePlanFixture(
+  result: ParseResult,
+): ExtendBeforePlanDirective {
+  const node = firstNode(result);
+  if (node?.type !== "extend_before_plan") {
+    throw new Error("Expected an extend before-plan fixture");
+  }
+  return node;
+}
+
+function propertyFixture(properties: Property[], key: string): Property {
+  const property = properties.find((candidate) => candidate.key === key);
+  if (property === undefined) {
+    throw new Error(`Expected property '${key}'`);
+  }
+  return property;
+}
+
+function blockValueFixture(value: AstValue, label: string): BlockValue {
+  if (value.kind !== "block") {
+    throw new Error(`Expected block value for '${label}'`);
+  }
+  return value;
+}
+
+function arrayValueFixture(value: AstValue, label: string): ArrayValue {
+  if (value.kind !== "array") {
+    throw new Error(`Expected array value for '${label}'`);
+  }
+  return value;
+}
+
+function stepFixture(workflow: WorkflowBlock, index: number): StepBlock {
+  const step = workflow.steps[index];
+  if (step === undefined) {
+    throw new Error(`Expected workflow step at index ${index}`);
+  }
+  return step;
+}
+
 describe("Parser — structural preservation", () => {
   it("marks bare flags without changing explicit true literals", () => {
-    const bare = parseSource(
-      `agent helper { fast }`,
-    )._unsafeUnwrap()[0] as AgentBlock;
-    const explicit = parseSource(
-      `agent helper { fast true }`,
-    )._unsafeUnwrap()[0] as AgentBlock;
+    const bare = agentFixture(parseSource(`agent helper { fast }`));
+    const explicit = agentFixture(parseSource(`agent helper { fast true }`));
 
     expect(bare.properties[0]).toMatchObject({ key: "fast", bare: true });
     expect(explicit.properties[0]).toMatchObject({ key: "fast" });
@@ -44,12 +164,11 @@ describe("Parser — structural preservation", () => {
       `agent helper { triggers [bareword] }`,
       `category helper { description "Helper" triggers [bareword] }`,
     ]) {
-      const node = parseSource(source)._unsafeUnwrap()[0] as
-        | AgentBlock
-        | CategoryBlock;
-      const triggers = node.properties.find(
-        (property) => property.key === "triggers",
-      )?.value as ArrayValue;
+      const node = namedBlockFixture(firstNode(parseSource(source)));
+      const triggers = arrayValueFixture(
+        propertyFixture(node.properties, "triggers").value,
+        "triggers",
+      );
       expect(triggers.elements[0]?.kind).toBe("identifier");
     }
   });
@@ -59,9 +178,8 @@ describe("Parser — structural preservation", () => {
       `workflow flow { extends "one" extends "two" }`,
       `workflow flow { step run { insert_before "one" insert_before "two" } }`,
     ]) {
-      const result = parseSource(source);
-      expect(result.isErr()).toBe(true);
-      expect(result._unsafeUnwrapErr()).toContainEqual(
+      const errors = parseFailure(parseSource(source));
+      expect(errors).toContainEqual(
         expect.objectContaining({
           type: "UnexpectedToken",
           expected: expect.stringContaining("unique"),
@@ -71,8 +189,9 @@ describe("Parser — structural preservation", () => {
   });
 
   it("bounds adversarial parser fields at the direct boundary", () => {
-    const result = parseSource(`agent helper x${"y".repeat(19_999)}`);
-    const errors = result._unsafeUnwrapErr();
+    const errors = parseFailure(
+      parseSource(`agent helper x${"y".repeat(19_999)}`),
+    );
     const size = errors.reduce((total, error) => {
       if (error.type === "UnexpectedToken") {
         return total + error.found.length + error.expected.length;
@@ -107,12 +226,9 @@ describe("Parser — model strings", () => {
     const result = parseSource(`agent shuttle {
   models ["plain-model", "provider/model#high", "weird\\#model"]
 }`);
-    expect(result.isOk()).toBe(true);
-    const agent = result._unsafeUnwrap()[0] as AgentBlock;
-    const models = agent.properties.find(
-      (property) => property.key === "models",
-    );
-    expect(models?.value).toMatchObject({
+    const agent = agentFixture(result);
+    const models = propertyFixture(agent.properties, "models");
+    expect(models.value).toMatchObject({
       kind: "array",
       elements: [
         { kind: "string", value: "plain-model" },
@@ -126,10 +242,9 @@ describe("Parser — model strings", () => {
 describe("Parser — agent block", () => {
   it("parses a minimal agent block", () => {
     const result = parseSource("agent loom {\n  temperature 0.1\n}");
-    expect(result.isOk()).toBe(true);
-    const nodes = result._unsafeUnwrap();
+    const nodes = parseSuccess(result);
     expect(nodes).toHaveLength(1);
-    const agent = nodes[0] as AgentBlock;
+    const agent = agentNode(nodes[0]);
     expect(agent.type).toBe("agent");
     expect(agent.name).toBe("loom");
     expect(agent.properties).toHaveLength(1);
@@ -148,12 +263,11 @@ describe("Parser — agent block", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const agent = agentFixture(result);
     expect(agent.name).toBe("shuttle");
-    const policy = agent.properties.find((p) => p.key === "tool_policy");
-    expect(policy?.value.kind).toBe("block");
-    const block = policy?.value as BlockValue;
+    const policy = propertyFixture(agent.properties, "tool_policy");
+    expect(policy.value.kind).toBe("block");
+    const block = blockValueFixture(policy.value, "tool_policy");
     expect(block.properties).toHaveLength(2);
     expect(block.properties[0]).toMatchObject({
       key: "execute",
@@ -171,17 +285,14 @@ describe("Parser — agent block", () => {
   triggers ["Complex tasks", "System design"]
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const agent = result._unsafeUnwrap()[0] as AgentBlock;
-    expect(agent.properties.find((p) => p.key === "fast")?.value).toMatchObject(
-      {
-        kind: "boolean",
-        value: true,
-      },
-    );
-    const triggers = agent.properties.find((p) => p.key === "triggers");
-    expect(triggers?.value.kind).toBe("array");
-    const arr = triggers?.value as ArrayValue;
+    const agent = agentFixture(result);
+    expect(propertyFixture(agent.properties, "fast").value).toMatchObject({
+      kind: "boolean",
+      value: true,
+    });
+    const triggers = propertyFixture(agent.properties, "triggers");
+    expect(triggers.value.kind).toBe("array");
+    const arr = arrayValueFixture(triggers.value, "triggers");
     expect(arr.elements).toMatchObject([
       { kind: "string", value: "Complex tasks" },
       { kind: "string", value: "System design" },
@@ -197,17 +308,18 @@ describe("Parser — category block", () => {
   triggers ["API changes", "Database changes"]
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const cat = result._unsafeUnwrap()[0] as CategoryBlock;
+    const cat = categoryFixture(result);
     expect(cat.type).toBe("category");
     expect(cat.name).toBe("backend");
-    expect(cat.properties.find((p) => p.key === "fast")?.value).toMatchObject({
+    expect(propertyFixture(cat.properties, "fast").value).toMatchObject({
       kind: "boolean",
       value: true,
     });
-    const triggers = cat.properties.find((p) => p.key === "triggers");
-    expect(triggers?.value.kind).toBe("array");
-    expect((triggers?.value as ArrayValue).elements).toMatchObject([
+    const triggers = propertyFixture(cat.properties, "triggers");
+    expect(triggers.value.kind).toBe("array");
+    expect(
+      arrayValueFixture(triggers.value, "triggers").elements,
+    ).toMatchObject([
       { kind: "string", value: "API changes" },
       { kind: "string", value: "Database changes" },
     ]);
@@ -217,8 +329,7 @@ describe("Parser — category block", () => {
 describe("Parser — disable directive", () => {
   it("parses disable agents", () => {
     const result = parseSource('disable agents ["warp", "spindle"]');
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as DisableDirective;
+    const node = disableFixture(result);
     expect(node.type).toBe("disable");
     expect(node.target).toBe("agents");
     expect(node.items).toEqual(["warp", "spindle"]);
@@ -226,16 +337,14 @@ describe("Parser — disable directive", () => {
 
   it("parses disable hooks", () => {
     const result = parseSource('disable hooks ["on-session-idle"]');
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as DisableDirective;
+    const node = disableFixture(result);
     expect(node.target).toBe("hooks");
     expect(node.items).toEqual(["on-session-idle"]);
   });
 
   it("parses disable skills", () => {
     const result = parseSource('disable skills ["tdd"]');
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as DisableDirective;
+    const node = disableFixture(result);
     expect(node.target).toBe("skills");
     expect(node.items).toEqual(["tdd"]);
   });
@@ -244,8 +353,7 @@ describe("Parser — disable directive", () => {
 describe("Parser — setting assignment", () => {
   it("parses a top-level bare-identifier setting", () => {
     const result = parseSource("log_level INFO");
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    const node = settingFixture(result);
     expect(node.type).toBe("setting");
     expect(node.key).toBe("log_level");
     expect(node.value).toMatchObject({ kind: "identifier", value: "INFO" });
@@ -253,8 +361,7 @@ describe("Parser — setting assignment", () => {
 
   it("parses a top-level boolean setting", () => {
     const result = parseSource("some_flag true");
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    const node = settingFixture(result);
     expect(node.value).toMatchObject({ kind: "boolean", value: true });
   });
 
@@ -265,15 +372,14 @@ describe("Parser — setting assignment", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    const node = settingFixture(result);
     expect(node.type).toBe("setting");
     expect(node.key).toBe("continuation");
     expect(node.value.kind).toBe("block");
-    const outer = node.value as BlockValue;
-    const recovery = outer.properties.find((p) => p.key === "recovery");
-    expect(recovery?.value.kind).toBe("block");
-    const inner = recovery?.value as BlockValue;
+    const outer = blockValueFixture(node.value, "continuation");
+    const recovery = propertyFixture(outer.properties, "recovery");
+    expect(recovery.value.kind).toBe("block");
+    const inner = blockValueFixture(recovery.value, "recovery");
     expect(inner.properties[0]).toMatchObject({
       key: "compaction",
       value: { kind: "boolean", value: true },
@@ -297,8 +403,7 @@ describe("Parser — workflow block", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    const wf = workflowFixture(result);
     expect(wf.type).toBe("workflow");
     expect(wf.name).toBe("quick-fix");
     expect(wf.steps).toHaveLength(2);
@@ -317,8 +422,7 @@ describe("Parser — workflow block", () => {
   version 1
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    const wf = workflowFixture(result);
     expect(wf.type).toBe("workflow");
     expect(wf.name).toBe("my-ext");
     // extends is extracted to the dedicated field, not left in properties
@@ -338,15 +442,14 @@ describe("Parser — workflow block", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
-    const step = wf.steps[0];
-    expect(step?.name).toBe("audit");
+    const wf = workflowFixture(result);
+    const step = stepFixture(wf, 0);
+    expect(step.name).toBe("audit");
     // insert_before is extracted to the dedicated field
-    expect(step?.insert_before).toBe("review");
-    expect(step?.insert_after).toBeUndefined();
+    expect(step.insert_before).toBe("review");
+    expect(step.insert_after).toBeUndefined();
     // insert_before must NOT appear in properties
-    const insertProp = step?.properties.find((p) => p.key === "insert_before");
+    const insertProp = step.properties.find((p) => p.key === "insert_before");
     expect(insertProp).toBeUndefined();
   });
 
@@ -361,12 +464,11 @@ describe("Parser — workflow block", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
-    const step = wf.steps[0];
-    expect(step?.insert_after).toBe("plan");
-    expect(step?.insert_before).toBeUndefined();
-    const insertProp = step?.properties.find((p) => p.key === "insert_after");
+    const wf = workflowFixture(result);
+    const step = stepFixture(wf, 0);
+    expect(step.insert_after).toBe("plan");
+    expect(step.insert_before).toBeUndefined();
+    const insertProp = step.properties.find((p) => p.key === "insert_after");
     expect(insertProp).toBeUndefined();
   });
 
@@ -384,12 +486,12 @@ describe("Parser — workflow block", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    const wf = workflowFixture(result);
     expect(wf.extends).toBe("base");
     expect(wf.steps).toHaveLength(1);
-    expect(wf.steps[0]?.insert_before).toBe("deploy");
-    expect(wf.steps[0]?.insert_after).toBeUndefined();
+    const step = stepFixture(wf, 0);
+    expect(step.insert_before).toBe("deploy");
+    expect(step.insert_after).toBeUndefined();
   });
 });
 
@@ -405,8 +507,7 @@ category backend {
 
 log_level INFO`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const nodes = result._unsafeUnwrap();
+    const nodes = parseSuccess(result);
     expect(nodes).toHaveLength(3);
     expect(nodes[0]?.type).toBe("agent");
     expect(nodes[1]?.type).toBe("category");
@@ -424,12 +525,11 @@ describe("Parser — named block value", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
-    const step = wf.steps[0];
-    const completionProp = step?.properties.find((p) => p.key === "completion");
-    expect(completionProp?.value.kind).toBe("block");
-    const block = completionProp?.value as BlockValue;
+    const wf = workflowFixture(result);
+    const step = stepFixture(wf, 0);
+    const completionProp = propertyFixture(step.properties, "completion");
+    expect(completionProp.value.kind).toBe("block");
+    const block = blockValueFixture(completionProp.value, "completion");
     // First property must be __name
     expect(block.properties[0]).toMatchObject({
       key: "__name",
@@ -449,12 +549,11 @@ describe("Parser — named block value", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
-    const step = wf.steps[0];
-    const completionProp = step?.properties.find((p) => p.key === "completion");
-    expect(completionProp?.value.kind).toBe("identifier");
-    expect(completionProp?.value).toMatchObject({
+    const wf = workflowFixture(result);
+    const step = stepFixture(wf, 0);
+    const completionProp = propertyFixture(step.properties, "completion");
+    expect(completionProp.value.kind).toBe("identifier");
+    expect(completionProp.value).toMatchObject({
       kind: "identifier",
       value: "user_confirm",
     });
@@ -468,11 +567,10 @@ describe("Parser — named block value", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const agent = result._unsafeUnwrap()[0] as AgentBlock;
-    const prop = agent.properties.find((p) => p.key === "some_key");
-    expect(prop?.value.kind).toBe("block");
-    const block = prop?.value as BlockValue;
+    const agent = agentFixture(result);
+    const prop = propertyFixture(agent.properties, "some_key");
+    expect(prop.value.kind).toBe("block");
+    const block = blockValueFixture(prop.value, "some_key");
     expect(block.properties[0]).toMatchObject({
       key: "__name",
       value: { kind: "identifier", value: "my_method" },
@@ -494,12 +592,11 @@ describe("Parser — settings block", () => {
   log_level INFO
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    const node = settingFixture(result);
     expect(node.type).toBe("setting");
     expect(node.key).toBe("settings");
     expect(node.value.kind).toBe("block");
-    const block = node.value as BlockValue;
+    const block = blockValueFixture(node.value, "settings");
     expect(block.properties).toHaveLength(1);
     expect(block.properties[0]).toMatchObject({
       key: "log_level",
@@ -511,9 +608,8 @@ describe("Parser — settings block", () => {
     const result = parseSource(`settings {
   enforce_permissions false
 }`);
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as SettingAssignment;
-    const block = node.value as BlockValue;
+    const node = settingFixture(result);
+    const block = blockValueFixture(node.value, "settings");
     expect(block.properties[0]).toMatchObject({
       key: "enforce_permissions",
       value: { kind: "boolean", value: false },
@@ -530,27 +626,24 @@ describe("Parser — settings block", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    const node = settingFixture(result);
     expect(node.type).toBe("setting");
     expect(node.key).toBe("settings");
     expect(node.value.kind).toBe("block");
-    const outer = node.value as BlockValue;
+    const outer = blockValueFixture(node.value, "settings");
     // log_level and runtime
     expect(outer.properties).toHaveLength(2);
-    const logLevelProp = outer.properties.find((p) => p.key === "log_level");
-    expect(logLevelProp?.value).toMatchObject({
+    const logLevelProp = propertyFixture(outer.properties, "log_level");
+    expect(logLevelProp.value).toMatchObject({
       kind: "identifier",
       value: "WARN",
     });
-    const runtimeProp = outer.properties.find((p) => p.key === "runtime");
-    expect(runtimeProp?.value.kind).toBe("block");
-    const runtimeBlock = runtimeProp?.value as BlockValue;
-    const journalProp = runtimeBlock.properties.find(
-      (p) => p.key === "journal",
-    );
-    expect(journalProp?.value.kind).toBe("block");
-    const journalBlock = journalProp?.value as BlockValue;
+    const runtimeProp = propertyFixture(outer.properties, "runtime");
+    expect(runtimeProp.value.kind).toBe("block");
+    const runtimeBlock = blockValueFixture(runtimeProp.value, "runtime");
+    const journalProp = propertyFixture(runtimeBlock.properties, "journal");
+    expect(journalProp.value.kind).toBe("block");
+    const journalBlock = blockValueFixture(journalProp.value, "journal");
     expect(journalBlock.properties[0]).toMatchObject({
       key: "strict",
       value: { kind: "boolean", value: true },
@@ -576,20 +669,22 @@ describe("Parser — settings block", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as SettingAssignment;
-    const outer = node.value as BlockValue;
-    const runtimeBlock = outer.properties.find((p) => p.key === "runtime")
-      ?.value as BlockValue;
+    const node = settingFixture(result);
+    const outer = blockValueFixture(node.value, "settings");
+    const runtimeBlock = blockValueFixture(
+      propertyFixture(outer.properties, "runtime").value,
+      "runtime",
+    );
     expect(runtimeBlock.properties.map((p) => p.key).sort()).toEqual([
       "journal",
       "log",
       "usage",
     ]);
 
-    const journalBlock = runtimeBlock.properties.find(
-      (p) => p.key === "journal",
-    )?.value as BlockValue;
+    const journalBlock = blockValueFixture(
+      propertyFixture(runtimeBlock.properties, "journal").value,
+      "journal",
+    );
     expect(
       journalBlock.properties.find((p) => p.key === "retention_days")?.value,
     ).toMatchObject({ kind: "number", value: 30 });
@@ -597,8 +692,10 @@ describe("Parser — settings block", () => {
       journalBlock.properties.find((p) => p.key === "max_entries")?.value,
     ).toMatchObject({ kind: "number", value: 10000 });
 
-    const usageBlock = runtimeBlock.properties.find((p) => p.key === "usage")
-      ?.value as BlockValue;
+    const usageBlock = blockValueFixture(
+      propertyFixture(runtimeBlock.properties, "usage").value,
+      "usage",
+    );
     expect(
       usageBlock.properties.find((p) => p.key === "detail_retention_days")
         ?.value,
@@ -607,8 +704,10 @@ describe("Parser — settings block", () => {
       usageBlock.properties.find((p) => p.key === "max_observations")?.value,
     ).toMatchObject({ kind: "number", value: 100000 });
 
-    const logBlock = runtimeBlock.properties.find((p) => p.key === "log")
-      ?.value as BlockValue;
+    const logBlock = blockValueFixture(
+      propertyFixture(runtimeBlock.properties, "log").value,
+      "log",
+    );
     expect(
       logBlock.properties.find((p) => p.key === "max_segment_bytes")?.value,
     ).toMatchObject({ kind: "number", value: 5242880 });
@@ -626,17 +725,20 @@ describe("Parser — routing block inside agent", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const agent = agentFixture(result);
     expect(agent.name).toBe("loom");
-    const routingProp = agent.properties.find((p) => p.key === "routing");
-    expect(routingProp?.value.kind).toBe("block");
-    const block = routingProp?.value as BlockValue;
+    const routingProp = propertyFixture(agent.properties, "routing");
+    expect(routingProp.value.kind).toBe("block");
+    const block = blockValueFixture(routingProp.value, "routing");
     expect(block.properties).toHaveLength(1);
-    expect(block.properties[0]).toMatchObject({
+    const excludeProp = propertyFixture(block.properties, "delegation_exclude");
+    expect(excludeProp).toMatchObject({
       key: "delegation_exclude",
     });
-    const excludeArr = block.properties[0]?.value as ArrayValue;
+    const excludeArr = arrayValueFixture(
+      excludeProp.value,
+      "delegation_exclude",
+    );
     expect(excludeArr.kind).toBe("array");
     expect(excludeArr.elements).toHaveLength(2);
     expect(excludeArr.elements[0]).toMatchObject({
@@ -659,14 +761,11 @@ describe("Parser — routing block inside agent", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const agent = result._unsafeUnwrap()[0] as AgentBlock;
-    const toolPolicyProp = agent.properties.find(
-      (p) => p.key === "tool_policy",
-    );
-    const routingProp = agent.properties.find((p) => p.key === "routing");
-    expect(toolPolicyProp?.value.kind).toBe("block");
-    expect(routingProp?.value.kind).toBe("block");
+    const agent = agentFixture(result);
+    const toolPolicyProp = propertyFixture(agent.properties, "tool_policy");
+    const routingProp = propertyFixture(agent.properties, "routing");
+    expect(toolPolicyProp.value.kind).toBe("block");
+    expect(routingProp.value.kind).toBe("block");
   });
 
   it("parses routing block with empty delegation_exclude array", () => {
@@ -676,11 +775,14 @@ describe("Parser — routing block inside agent", () => {
   }
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const agent = result._unsafeUnwrap()[0] as AgentBlock;
-    const routingProp = agent.properties.find((p) => p.key === "routing");
-    const block = routingProp?.value as BlockValue;
-    const excludeArr = block.properties[0]?.value as ArrayValue;
+    const agent = agentFixture(result);
+    const routingProp = propertyFixture(agent.properties, "routing");
+    const block = blockValueFixture(routingProp.value, "routing");
+    const excludeProp = propertyFixture(block.properties, "delegation_exclude");
+    const excludeArr = arrayValueFixture(
+      excludeProp.value,
+      "delegation_exclude",
+    );
     expect(excludeArr.elements).toHaveLength(0);
   });
 });
@@ -689,8 +791,7 @@ describe("Parser — extend before-plan directive", () => {
   it("parses extend before-plan with a step list into ExtendBeforePlanDirective", () => {
     const src = `extend before-plan ["spec-review", "requirements"]`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as ExtendBeforePlanDirective;
+    const node = extendBeforePlanFixture(result);
     expect(node.type).toBe("extend_before_plan");
     expect(node.steps).toEqual(["spec-review", "requirements"]);
     // v1: no workflow field — single global bucket
@@ -700,8 +801,7 @@ describe("Parser — extend before-plan directive", () => {
   it("parses a single-step extend before-plan", () => {
     const src = `extend before-plan ["write-spec"]`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const node = result._unsafeUnwrap()[0] as ExtendBeforePlanDirective;
+    const node = extendBeforePlanFixture(result);
     expect(node.type).toBe("extend_before_plan");
     expect(node.steps).toEqual(["write-spec"]);
   });
@@ -709,8 +809,7 @@ describe("Parser — extend before-plan directive", () => {
   it("rejects extend with unknown slot name (not before-plan)", () => {
     const src = `extend after-plan ["spec-review"]`;
     const result = parseSource(src);
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    const errors = parseFailure(result);
     expect(errors.some((e) => e.type === "UnexpectedToken")).toBe(true);
   });
 });
@@ -718,15 +817,13 @@ describe("Parser — extend before-plan directive", () => {
 describe("Parser — errors", () => {
   it("reports UnclosedBlock for missing closing brace", () => {
     const result = parseSource("agent loom {");
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    const errors = parseFailure(result);
     expect(errors.some((e) => e.type === "UnclosedBlock")).toBe(true);
   });
 
   it("reports MissingBlockName for agent without name", () => {
     const result = parseSource("agent {");
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    const errors = parseFailure(result);
     expect(errors.some((e) => e.type === "MissingBlockName")).toBe(true);
     const err = errors.find((e) => e.type === "MissingBlockName");
     if (err?.type === "MissingBlockName") {
@@ -746,8 +843,7 @@ agent good {
     // Should have errors but also recover some nodes
     // The parser may get confused — at minimum it should not crash and
     // should report at least one error
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    const errors = parseFailure(result);
     expect(errors.length).toBeGreaterThan(0);
   });
 });
@@ -758,14 +854,13 @@ describe("Parser — agent review_models field", () => {
   review_models ["claude-opus-4-5", "gpt-4o"]
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const agent = agentFixture(result);
     expect(agent.type).toBe("agent");
     expect(agent.name).toBe("weft");
-    const prop = agent.properties.find((p) => p.key === "review_models");
+    const prop = propertyFixture(agent.properties, "review_models");
     expect(prop).toBeDefined();
-    expect(prop?.value.kind).toBe("array");
-    const arr = prop?.value as ArrayValue;
+    expect(prop.value.kind).toBe("array");
+    const arr = arrayValueFixture(prop.value, "review_models");
     expect(arr.elements).toHaveLength(2);
     expect(arr.elements[0]).toMatchObject({
       kind: "string",
@@ -780,13 +875,12 @@ describe("Parser — agent review_models field", () => {
   review_models ["claude-opus-4-5"]
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const agent = result._unsafeUnwrap()[0] as AgentBlock;
-    const modelsProp = agent.properties.find((p) => p.key === "models");
-    const reviewProp = agent.properties.find((p) => p.key === "review_models");
-    expect(modelsProp?.value.kind).toBe("array");
-    expect(reviewProp?.value.kind).toBe("array");
-    const reviewArr = reviewProp?.value as ArrayValue;
+    const agent = agentFixture(result);
+    const modelsProp = propertyFixture(agent.properties, "models");
+    const reviewProp = propertyFixture(agent.properties, "review_models");
+    expect(modelsProp.value.kind).toBe("array");
+    expect(reviewProp.value.kind).toBe("array");
+    const reviewArr = arrayValueFixture(reviewProp.value, "review_models");
     expect(reviewArr.elements[0]).toMatchObject({
       kind: "string",
       value: "claude-opus-4-5",
@@ -798,8 +892,7 @@ describe("Parser — agent review_models field", () => {
   models ["claude-sonnet-4-5"]
 }`;
     const result = parseSource(src);
-    expect(result.isOk()).toBe(true);
-    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const agent = agentFixture(result);
     const prop = agent.properties.find((p) => p.key === "review_models");
     expect(prop).toBeUndefined();
   });
@@ -823,13 +916,13 @@ agent tapestry {
   }
 }`;
     const result = parseSource(source);
-    expect(result.isOk()).toBe(true);
-    const nodes = result._unsafeUnwrap();
-    const settings = nodes[0] as SettingAssignment;
-    const settingsBlock = settings.value as BlockValue;
-    const delegation = settingsBlock.properties.find(
-      (property) => property.key === "delegation",
-    )?.value as BlockValue;
+    const nodes = parseSuccess(result);
+    const settings = settingNode(nodes[0]);
+    const settingsBlock = blockValueFixture(settings.value, "settings");
+    const delegation = blockValueFixture(
+      propertyFixture(settingsBlock.properties, "delegation").value,
+      "delegation",
+    );
     expect(delegation.properties.map((property) => property.key)).toEqual([
       "max_children",
       "max_concurrency",
@@ -837,15 +930,14 @@ agent tapestry {
       "max_processes",
     ]);
     expect(
-      delegation.properties.find(
-        (property) => property.key === "max_concurrency",
-      )?.value,
+      propertyFixture(delegation.properties, "max_concurrency").value,
     ).toMatchObject({ kind: "number", value: 64 });
 
-    const agent = nodes[1] as AgentBlock;
-    const agentDelegation = agent.properties.find(
-      (property) => property.key === "delegation",
-    )?.value as BlockValue;
+    const agent = agentNode(nodes[1]);
+    const agentDelegation = blockValueFixture(
+      propertyFixture(agent.properties, "delegation").value,
+      "delegation",
+    );
     expect(agentDelegation.properties[0]?.value).toMatchObject({
       kind: "number",
       value: 64,
@@ -856,34 +948,39 @@ agent tapestry {
     const result = parseSource(
       `settings { adapters { test { negative -1 exponent 1.25e+2 } } }`,
     );
-    expect(result.isOk()).toBe(true);
-    if (result.isOk()) {
-      const test = ((result.value[0] as SettingAssignment).value as BlockValue)
-        .properties[0]?.value as BlockValue;
-      const adapter = test.properties[0]?.value as BlockValue;
-      expect(
-        adapter.properties.map((property) => property.value),
-      ).toMatchObject([
-        { kind: "number", value: -1 },
-        { kind: "number", value: 125 },
-      ]);
-    }
+    const nodes = parseSuccess(result);
+    const settings = settingNode(nodes[0]);
+    const settingsBlock = blockValueFixture(settings.value, "settings");
+    const adapters = blockValueFixture(
+      propertyFixture(settingsBlock.properties, "adapters").value,
+      "adapters",
+    );
+    const test = blockValueFixture(
+      propertyFixture(adapters.properties, "test").value,
+      "test",
+    );
+    expect(test.properties.map((property) => property.value)).toMatchObject([
+      { kind: "number", value: -1 },
+      { kind: "number", value: 125 },
+    ]);
   });
 
   it("parses null inside opaque adapter settings", () => {
-    const result = parse(
-      tokenize(`settings { adapters { test { value null } } }`)._unsafeUnwrap(),
+    const result = parseSource(`settings { adapters { test { value null } } }`);
+    const nodes = parseSuccess(result);
+    const settings = settingNode(nodes[0]);
+    const settingsBlock = blockValueFixture(settings.value, "settings");
+    const adapters = blockValueFixture(
+      propertyFixture(settingsBlock.properties, "adapters").value,
+      "adapters",
     );
-    expect(result.isOk()).toBe(true);
-    if (result.isOk()) {
-      const settings = result.value[0] as SettingAssignment;
-      const adapters = (settings.value as BlockValue).properties[0]
-        ?.value as BlockValue;
-      const test = adapters.properties[0]?.value as BlockValue;
-      expect(test.properties[0]?.value).toMatchObject({
-        kind: "null",
-        value: null,
-      });
-    }
+    const test = blockValueFixture(
+      propertyFixture(adapters.properties, "test").value,
+      "test",
+    );
+    expect(propertyFixture(test.properties, "value").value).toMatchObject({
+      kind: "null",
+      value: null,
+    });
   });
 });

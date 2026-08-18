@@ -362,10 +362,13 @@ class Parser {
 
     this.#skipNewlines();
     const targetTok = this.#current();
+    const targetValue = targetTok.value;
 
     if (
       targetTok.type !== TokenType.Identifier ||
-      !["agents", "hooks", "skills"].includes(targetTok.value)
+      (targetValue !== "agents" &&
+        targetValue !== "hooks" &&
+        targetValue !== "skills")
     ) {
       this.#errors.push({
         type: "UnexpectedToken",
@@ -378,7 +381,7 @@ class Parser {
       return null;
     }
 
-    const target = targetTok.value as "agents" | "hooks" | "skills";
+    const target = targetValue;
     this.#advance();
 
     this.#skipNewlines();

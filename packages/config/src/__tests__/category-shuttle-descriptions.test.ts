@@ -214,7 +214,7 @@ describe("category shuttle triggers end-to-end", () => {
 
     expect(shuttleTriggers.length).toBeGreaterThan(0);
     for (const trigger of shuttleTriggers) {
-      expect(typeof trigger).toBe("string");
+      expect(trigger).toBeString();
       expect(trigger.trim().length).toBeGreaterThan(0);
     }
   });

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import type { WeaveConfig } from "@weaveio/weave-core";
+import type {
+  WeaveConfig,
+  WorkflowConfig,
+  WorkflowStep,
+} from "@weaveio/weave-core";
 import { parseConfig } from "@weaveio/weave-core";
 import { mergeConfigs, mergeConfigsResult, mergeWorkflow } from "../merge.js";
 
@@ -375,8 +379,11 @@ describe("mergeWorkflow — step-aware merge", () => {
     if (result.isErr()) throw new Error(JSON.stringify(result.error));
     const workflows = result.value.workflows;
     const keys = Object.keys(workflows);
-    if (keys.length === 0) throw new Error("No workflow in source");
-    return { name: keys[0] as string, config: workflows[keys[0] as string]! };
+    const name = keys[0];
+    if (name === undefined) throw new Error("No workflow in source");
+    const config = workflows[name];
+    if (config === undefined) throw new Error("No workflow in source");
+    return { name, config };
   }
 
   it("insert_before: spec step inserted before plan in plan-and-execute", () => {
@@ -757,42 +764,44 @@ describe("mergeWorkflow — step-aware merge", () => {
     };
 
     // Merging workflow-a: override extends "workflow-b", which extends "workflow-a" → cycle
-    const result = mergeWorkflow(
+    const parsedCycle = mergeWorkflow(
       "workflow-a",
       workflowA.config,
       workflowA.config,
       workflowMap,
     );
+    expect(parsedCycle.isErr()).toBe(true);
+    if (parsedCycle.isErr()) {
+      expect(parsedCycle.error.type).toBe("ExtendsCycle");
+    }
 
-    // Self-reference is NOT a cycle (it uses base steps directly)
-    // So we need to test with a different extends target that loops
-    // Use a base that has no extends, and an override that extends a workflow
-    // that itself extends the current workflow
+    // Also cover explicitly constructed fixtures (base has no extends; override
+    // extends a workflow that itself extends the current workflow).
     const baseSteps = [
       {
         name: "fix",
         display_name: "Fix",
-        type: "autonomous" as const,
+        type: "autonomous",
         agent: "shuttle",
         prompt: "Fix it",
-        completion: { method: "agent_signal" as const },
+        completion: { method: "agent_signal" },
       },
-    ];
+    ] satisfies WorkflowStep[];
     const baseWfConfig = {
       version: 1,
       steps: baseSteps,
-    };
+    } satisfies WorkflowConfig;
     const overrideWfConfig = {
       version: 1,
       extends: "workflow-b",
       steps: [],
-    };
+    } satisfies WorkflowConfig;
     // workflow-b extends workflow-a (the current workflow) → cycle
     const wfBConfig = {
       version: 1,
       extends: "workflow-a",
       steps: [],
-    };
+    } satisfies WorkflowConfig;
 
     const cycleMap = {
       "workflow-a": baseWfConfig,
@@ -945,9 +954,9 @@ describe("mergeConfigsResult", () => {
 
     const merged = result._unsafeUnwrap();
     const wf = merged.workflows["plan-and-execute"];
-    expect(wf).toBeDefined();
+    if (wf === undefined) throw new Error("expected plan-and-execute workflow");
 
-    const stepNames = wf!.steps.map((s) => s.name);
+    const stepNames = wf.steps.map((s) => s.name);
     const specIdx = stepNames.indexOf("spec");
     const planIdx = stepNames.indexOf("plan");
 
@@ -1757,13 +1766,26 @@ describe("mergeConfigsResult — delegation limits", () => {
   });
 
   it("rejects an invalid source layer before a later override can hide it", () => {
-    const invalid = {
-      ...emptyConfig,
-      settings: {
-        ...emptyConfig.settings,
-        adapters: { generic: { payload: "x".repeat(65 * 1024) } },
-      },
-    } as WeaveConfig;
+    const invalidSettings: WeaveConfig["settings"] = {
+      log_level: emptyConfig.settings.log_level,
+      runtime: emptyConfig.settings.runtime,
+      adapters: { generic: { payload: "x".repeat(65 * 1024) } },
+    };
+    if (emptyConfig.settings.delegation !== undefined) {
+      invalidSettings.delegation = emptyConfig.settings.delegation;
+    }
+    if (emptyConfig.settings.enforce_permissions !== undefined) {
+      invalidSettings.enforce_permissions =
+        emptyConfig.settings.enforce_permissions;
+    }
+    const invalid: WeaveConfig = {
+      agents: emptyConfig.agents,
+      categories: emptyConfig.categories,
+      disabled: emptyConfig.disabled,
+      settings: invalidSettings,
+      workflows: emptyConfig.workflows,
+      extend_before_plan: emptyConfig.extend_before_plan,
+    };
     const valid = cfg(`settings { adapters { generic { payload "ok" } } }`);
     const result = mergeConfigsResult(invalid, valid);
     expect(result.isErr()).toBe(true);

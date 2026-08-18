@@ -50,5 +50,5 @@ export const logger = pino(
     name: "weave:config",
     level: process.env.LOG_LEVEL ?? "info",
   },
-  logDestination as unknown as pino.DestinationStream,
+  logDestination,
 );

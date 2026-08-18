@@ -81,10 +81,14 @@ function stringSize(error: ConfigError): number {
 export function boundConfigErrors<T extends ConfigError>(
   errors: readonly T[],
   truncationMarker: () => T,
-): T[] {
+): T[];
+export function boundConfigErrors(
+  errors: readonly ConfigError[],
+  truncationMarker: () => ConfigError,
+): ConfigError[] {
   let fieldWasTruncated = false;
   const sanitized = errors.map((error) => {
-    const bounded = boundStringFields(error) as T;
+    const bounded = boundStringFields(error);
     fieldWasTruncated ||= stringSize(bounded) !== stringSize(error);
     return bounded;
   });
@@ -100,7 +104,7 @@ export function boundConfigErrors<T extends ConfigError>(
     return sanitized;
   }
 
-  const bounded: T[] = [];
+  const bounded: ConfigError[] = [];
   let size = 0;
   for (const error of sanitized) {
     if (bounded.length >= MAX_CONFIG_ERROR_ISSUES - 1) break;

@@ -1,11 +1,18 @@
 import { describe, expect, it } from "bun:test";
 import {
+  type AgentConfig,
+  type CategoryConfig,
   DEFAULT_DELEGATION_LIMITS,
   MAX_DELEGATION_LIMITS,
+  type ModelIntentEntry,
+  type ModelIntentParseError,
   parseModelIntentEntry,
   THINKING_LEVEL_VALUES,
+  type ThinkingLevelDecl,
   ThinkingLevelSchema,
+  type ToolPermission,
   ToolPermissionSchema,
+  type ToolPolicy,
   ToolPolicySchema,
 } from "@weaveio/weave-core";
 import {
@@ -30,6 +37,30 @@ import {
   WorkflowStepSchema,
   WorkflowStepTypeSchema,
 } from "../schema.js";
+
+type SchemaFixtureValue = string | boolean | string[] | SchemaFixtureRecord;
+type SchemaFixtureRecord = {
+  [key: string]: SchemaFixtureValue;
+};
+type ObjectPrototype = typeof Object.prototype;
+type ObjectPrototypeDescriptionSlot = {
+  description?: string;
+};
+
+function emptySchemaFixtureRecord(): SchemaFixtureRecord {
+  return Object.setPrototypeOf({}, null);
+}
+
+function omittedZodInput(): undefined {
+  return;
+}
+
+function isConfigurableDescriptionSlot(
+  target: ObjectPrototype,
+): target is ObjectPrototype & ObjectPrototypeDescriptionSlot {
+  const descriptor = Object.getOwnPropertyDescriptor(target, "description");
+  return descriptor !== undefined && descriptor.configurable === true;
+}
 
 // ---------------------------------------------------------------------------
 // @weaveio/weave-core barrel — public API assertions
@@ -62,7 +93,7 @@ describe("@weaveio/weave-core barrel exports", () => {
     const r = ToolPolicySchema.safeParse({ read: "allow" });
     expect(r.success).toBe(true);
     if (r.success) {
-      const policy: import("@weaveio/weave-core").ToolPolicy = r.data;
+      const policy: ToolPolicy = r.data;
       expect(policy.read).toBe("allow");
     }
   });
@@ -72,7 +103,7 @@ describe("@weaveio/weave-core barrel exports", () => {
     const parsed = ToolPermissionSchema.safeParse("allow");
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      const perm: import("@weaveio/weave-core").ToolPermission = parsed.data;
+      const perm: ToolPermission = parsed.data;
       expect(perm).toBe("allow");
     }
   });
@@ -92,10 +123,8 @@ describe("@weaveio/weave-core barrel exports", () => {
     const parsed = parseModelIntentEntry("provider/model#high");
     expect(parsed.isOk()).toBe(true);
     if (parsed.isOk()) {
-      const entry: import("@weaveio/weave-core").ModelIntentEntry =
-        parsed.value;
-      const level: import("@weaveio/weave-core").ThinkingLevelDecl =
-        entry.thinkingLevel ?? "off";
+      const entry: ModelIntentEntry = parsed.value;
+      const level: ThinkingLevelDecl = entry.thinkingLevel ?? "off";
       expect(entry.baseModel).toBe("provider/model");
       expect(level).toBe("high");
     }
@@ -103,8 +132,7 @@ describe("@weaveio/weave-core barrel exports", () => {
     const invalid = parseModelIntentEntry("provider/model#unknown");
     expect(invalid.isErr()).toBe(true);
     if (invalid.isErr()) {
-      const parseError: import("@weaveio/weave-core").ModelIntentParseError =
-        invalid.error;
+      const parseError: ModelIntentParseError = invalid.error;
       expect(parseError.type).toBe("InvalidThinkingLevelSuffix");
     }
   });
@@ -752,7 +780,7 @@ describe("RuntimeSettingsSchema", () => {
   });
 
   it("defaults entire runtime settings when undefined", () => {
-    const r = RuntimeSettingsSchema.safeParse(undefined);
+    const r = RuntimeSettingsSchema.safeParse(omittedZodInput());
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.journal.strict).toBe(false);
@@ -925,7 +953,7 @@ describe("SettingsConfigSchema", () => {
   });
 
   it("defaults entire settings when undefined", () => {
-    const r = SettingsConfigSchema.safeParse(undefined);
+    const r = SettingsConfigSchema.safeParse(omittedZodInput());
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.log_level).toBe("INFO");
@@ -1055,7 +1083,9 @@ describe("exported schema input boundaries", () => {
       expect(CategoryConfigSchema.safeParse({}).success).toBe(false);
       expect(getterExecutions).toBe(0);
     } finally {
-      delete (Object.prototype as { description?: unknown }).description;
+      if (isConfigurableDescriptionSlot(Object.prototype)) {
+        delete Object.prototype.description;
+      }
     }
   });
 
@@ -1067,7 +1097,9 @@ describe("exported schema input boundaries", () => {
     ["category triggers", CategoryConfigSchema, "triggers", ["owned"]],
     ["category description", CategoryConfigSchema, "description", "inherited"],
   ])("rejects prototype-provided %s", (_case, schema, key, value) => {
-    const input = Object.create({ [key]: value }) as Record<string, unknown>;
+    const prototypeFields: SchemaFixtureRecord = {};
+    prototypeFields[key] = value;
+    const input: SchemaFixtureRecord = Object.create(prototypeFields);
     if (schema === CategoryConfigSchema && key !== "description") {
       input.description = "Owned description";
     }
@@ -1081,7 +1113,7 @@ describe("exported schema input boundaries", () => {
     [WeaveConfigSchema, "agents"],
   ])("rejects %s accessors without executing getters", (schema, key) => {
     let getterExecutions = 0;
-    const input: Record<string, unknown> = {};
+    const input: SchemaFixtureRecord = {};
     if (schema === CategoryConfigSchema && key !== "description") {
       input.description = "Owned description";
     }
@@ -1100,7 +1132,7 @@ describe("exported schema input boundaries", () => {
 
   it("rejects callable values without executing getters", () => {
     let getterExecutions = 0;
-    const callable = () => undefined;
+    function callable(): void {}
     Object.defineProperty(callable, "type", {
       enumerable: true,
       configurable: true,
@@ -1127,7 +1159,7 @@ describe("exported schema input boundaries", () => {
     });
     expect(AgentConfigSchema.safeParse(classInput).success).toBe(false);
 
-    const readonlyInput: Record<string, unknown> = {};
+    const readonlyInput: SchemaFixtureRecord = {};
     Object.defineProperty(readonlyInput, "fast", {
       value: true,
       enumerable: true,
@@ -1142,7 +1174,7 @@ describe("exported schema input boundaries", () => {
       AgentConfigSchema.safeParse({ fast: true, triggers: ["plain"] }).success,
     ).toBe(true);
 
-    const category = Object.create(null) as Record<string, unknown>;
+    const category = emptySchemaFixtureRecord();
     Object.defineProperty(category, "description", {
       value: "Safe category",
       enumerable: true,
@@ -1235,11 +1267,11 @@ describe("AgentConfigSchema and CategoryConfigSchema — fast intent and trigger
   }
 
   it("exports public agent and category types with the new shapes", () => {
-    const agent: import("@weaveio/weave-core").AgentConfig = {
+    const agent: AgentConfig = {
       fast: true,
       triggers: ["Plan work"],
     };
-    const category: import("@weaveio/weave-core").CategoryConfig = {
+    const category: CategoryConfig = {
       description: "Bounded work",
       fast: true,
       triggers: ["Small changes"],
@@ -2163,9 +2195,9 @@ describe("delegation limit schemas", () => {
     expect(
       DelegationSettingsSchema.safeParse({ max_concurrency: 65 }).success,
     ).toBe(false);
-    expect(
-      DelegationSettingsSchema.safeParse({ max_depth: 33 }).success,
-    ).toBe(false);
+    expect(DelegationSettingsSchema.safeParse({ max_depth: 33 }).success).toBe(
+      false,
+    );
     expect(
       DelegationSettingsSchema.safeParse({ max_processes: 129 }).success,
     ).toBe(false);
