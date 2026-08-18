@@ -12,9 +12,11 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  canonicalReasoningMessageUpdate,
   MAX_CHILD_EVENT_STRING,
   parsePiChildSessionEvent,
   redactRawReasoningFromEvent,
+  retainedChildSessionEvent,
 } from "../child-session-events.js";
 import {
   classifyPiMessageUpdate,
@@ -233,6 +235,24 @@ function expectRetainsNoProse(frame: unknown): void {
   expect(retained.includes(RAW_COT)).toBe(false);
 }
 
+/**
+ * What the RETENTION boundary keeps for a frame, which is the rule that holds
+ * for a member no carrier declared.
+ *
+ * Redaction blanks the fields a carrier declared, so it has nothing to say
+ * about a thought parked under an undeclared member. Retention does: a
+ * rejected frame is kept nowhere, and a reasoning frame is kept as the
+ * adapter's own content-free fact.
+ */
+function retainedFrom(frame: unknown): unknown {
+  const parsed = parsePiChildSessionEvent(frame);
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return undefined;
+  const retained = retainedChildSessionEvent(parsed.data);
+  expect(JSON.stringify(retained ?? null).includes(RAW_COT)).toBe(false);
+  return retained;
+}
+
 describe("classifyPiMessageUpdate · hidden reasoning carriers", () => {
   it("pins the prose keys the redaction boundary must blank", () => {
     expect([...RAW_REASONING_PROSE_KEYS]).toEqual(["thinking", "reasoning"]);
@@ -346,6 +366,88 @@ describe("classifyPiMessageUpdate · hidden reasoning carriers", () => {
       kind: "rejected",
       reason: "mixed-carriers",
     });
+  });
+
+  it("finds a thought under a top-level member no carrier declares", () => {
+    // The frame's own `metadata` is not a carrier this module knows, and
+    // scanning only the carriers plus a couple of frame keys published this
+    // exact frame as a clean answer with the thought still attached.
+    const frame = {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "hello",
+      },
+      metadata: { trace: { content: [{ type: "thinking", text: RAW_COT }] } },
+    };
+    expect(classifyPiMessageUpdate(frame)).toEqual({
+      kind: "rejected",
+      reason: "mixed-carriers",
+    });
+    expect(messageUpdateAnswerText(frame)).toBeUndefined();
+    expect(messageUpdateObservesRawReasoning(frame)).toBe(false);
+    // A rejected frame is retained nowhere, prose and answer alike.
+    expect(retainedFrom(frame)).toBeUndefined();
+  });
+
+  it("finds a prose key under a top-level member no carrier declares", () => {
+    const frame = {
+      type: "message_update",
+      delta: { text: "hello" },
+      provenance: { trace: { reasoning: RAW_COT } },
+    };
+    expect(classifyPiMessageUpdate(frame)).toEqual({
+      kind: "rejected",
+      reason: "mixed-carriers",
+    });
+    expect(retainedFrom(frame)).toBeUndefined();
+  });
+
+  it("reads a FRAMING frame with a hidden top-level thought as reasoning", () => {
+    // Framing declares no answer, so the frame states the reasoning fact
+    // alone - content-free, and never retained as the host's own object.
+    const frame = {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+      metadata: { trace: { content: [{ type: "reasoning", text: RAW_COT }] } },
+    };
+    expect(classifyPiMessageUpdate(frame)).toEqual({ kind: "reasoning" });
+    expect(messageUpdateAnswerText(frame)).toBeUndefined();
+    // Kept as the adapter's own fact, so the host's member is gone with it.
+    expect(retainedFrom(frame)).toEqual(canonicalReasoningMessageUpdate());
+  });
+
+  it("leaves a benign top-level metadata frame an answer", () => {
+    // Ordinary nested bookkeeping states no prose under a reasoning key and
+    // declares no thinking block, so the wider scan finds nothing.
+    expect(
+      classifyPiMessageUpdate({
+        type: "message_update",
+        metadata: {
+          trace: {
+            requestId: "req-7",
+            note: "retry after transport reset",
+            tokens: { reasoning: 7, cached: 0 },
+            content: [{ type: "text", text: "hello" }],
+          },
+        },
+        assistantMessageEvent: { type: "text_delta", delta: "hello" },
+      }),
+    ).toEqual({ kind: "answer", text: "hello" });
+  });
+
+  it("keeps a numeric reasoning counter nested anywhere out of it", () => {
+    // The count is the only `reasoning` member an ordinary answer carries, and
+    // it is a NUMBER wherever the host parks it.
+    expect(
+      classifyPiMessageUpdate({
+        type: "message_update",
+        usage: { input: 2, output: 22, reasoning: 11 },
+        metadata: { usage: { reasoning: 11, detail: { reasoning: 0 } } },
+        assistantMessageEvent: { type: "text_delta", delta: "hello" },
+      }),
+    ).toEqual({ kind: "answer", text: "hello" });
   });
 
   it("keeps an ordinary answer frame an answer, usage counts included", () => {

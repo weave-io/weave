@@ -669,6 +669,8 @@ describe("PiChildInspectionRegistry.checkpointEvent · one retained event", () =
  */
 const REFUSED = {
   undeclared: "SENTINEL-UNDECLARED-MEMBER-PROSE",
+  frameMember: "SENTINEL-FRAME-UNDECLARED-MEMBER-PROSE",
+  frameKey: "SENTINEL-FRAME-UNDECLARED-KEY-PROSE",
   depth: "SENTINEL-DEPTH-OVERFLOW-PROSE",
   budget: "SENTINEL-NODE-BUDGET-PROSE",
   conflicting: "SENTINEL-CONFLICTING-ANSWER-PROSE",
@@ -780,6 +782,35 @@ const REFUSED_FRAMES: readonly {
           content: [{ type: "thinking", text: REFUSED.undeclared }],
         },
       },
+    },
+  },
+  {
+    // The same disclosure one level OUT: the member belongs to the FRAME, so
+    // scanning the two carriers plus a couple of known frame keys found
+    // nothing and published the answer with the thought still beside it.
+    name: "a thinking block under an undeclared TOP-LEVEL frame member",
+    reason: "mixed-carriers",
+    sentinel: REFUSED.frameMember,
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+      },
+      metadata: {
+        trace: { content: [{ type: "thinking", text: REFUSED.frameMember }] },
+      },
+    },
+  },
+  {
+    name: "a prose key under an undeclared TOP-LEVEL frame member",
+    reason: "mixed-carriers",
+    sentinel: REFUSED.frameKey,
+    raw: {
+      type: "message_update",
+      delta: { text: ANSWER },
+      provenance: { trace: { reasoning: REFUSED.frameKey } },
     },
   },
   {
@@ -951,6 +982,43 @@ describe("the retention decision keeps every unambiguous frame", () => {
     expect(probe.serialized).toContain(ANSWER);
   });
 
+  it("retains an answer whose metadata is only bookkeeping", async () => {
+    // The wider scan must not turn ordinary nested bookkeeping - a numeric
+    // `reasoning` token count included - into a reasoning frame: this is the
+    // false positive that would empty real answers.
+    const raw = {
+      type: "message_update",
+      usage: { input: 2, output: 22, reasoning: 11 },
+      metadata: {
+        trace: {
+          requestId: "req-7",
+          tokens: { reasoning: 11, cached: 0 },
+          content: [{ type: "text", text: ANSWER }],
+        },
+      },
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+      },
+    };
+    expect(classifyPiMessageUpdate(parsed(raw))).toEqual({
+      kind: "answer",
+      text: ANSWER,
+    });
+
+    const probe = await driveEveryRetentionEntrance(raw);
+    expect(probe.after.historyEvents).toHaveLength(1);
+    expect(probe.after.historyEvents[0]?.event).toEqual(
+      raw as unknown as PiChildSessionEvent,
+    );
+    expect(probe.liveEntry?.text).toBe(ANSWER);
+    expect(probe.steps).toHaveLength(1);
+    expect(probe.captured).toEqual([raw]);
+    expect(probe.serialized).toContain(ANSWER);
+    expect(probe.serialized).toContain("req-7");
+  });
+
   it("retains pure framing exactly as the child framed it", async () => {
     for (const assistantMessageEvent of [
       { type: "text_start", contentIndex: 0 },
@@ -1062,6 +1130,7 @@ describe("the retention decision keeps every unambiguous frame", () => {
  */
 const CANON = {
   nested: "SENTINEL-NESTED-UNDECLARED-PROSE",
+  framingMetadata: "SENTINEL-FRAMING-FRAME-METADATA-PROSE",
   usage: "SENTINEL-USAGE-SUBOBJECT-PROSE",
   unknownField: "SENTINEL-UNKNOWN-FIELD-PROSE",
   legacyMeta: "SENTINEL-LEGACY-METADATA-PROSE",
@@ -1175,6 +1244,22 @@ const REASONING_FRAMES: readonly {
       type: "message_update",
       thinking: CANON.declared,
       extra: { note: CANON.frameExtra },
+    },
+  },
+  {
+    // A FRAMING carrier declares no answer, so a thought parked in a
+    // top-level member states the reasoning fact alone. The frame used to be
+    // retained verbatim as framing, metadata and all.
+    name: "a framing carrier hiding a block under top-level metadata",
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+      metadata: {
+        trace: {
+          content: [{ type: "reasoning", text: CANON.framingMetadata }],
+        },
+      },
+      usage: { reasoning: 12 },
     },
   },
 ];
