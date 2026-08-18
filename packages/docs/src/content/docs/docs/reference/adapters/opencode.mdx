@@ -5,21 +5,27 @@ description: Install and configure the published Weave adapter for OpenCode.
 
 ## Install
 
-Use the canonical package name:
-
-```text
-@weaveio/weave-adapter-opencode
-```
-
-The package root is the canonical OpenCode plugin entry. Add it to OpenCode's `opencode.json` or `opencode.jsonc` with an exact version:
+Add the canonical package name to OpenCode's `opencode.json` or `opencode.jsonc`:
 
 ```json
 {
-  "plugin": ["@weaveio/weave-adapter-opencode@<exact-version>"]
+  "plugin": [
+    "@weaveio/weave-adapter-opencode@<exact-version>"
+  ]
 }
 ```
 
-The optional `@weaveio/weave-adapter-opencode/plugin` export is available for integrations that require an explicit plugin subpath. Do not use an older package alias.
+OpenCode resolves the package's `server` export to the plugin entry point.
+Use an exact version for reproducible installs. Replace it with `latest`,
+`next`, or `nightly` when you explicitly want a channel tag. Do not point the
+plugin at `dist/index.js` or a source file.
+
+## Supported versions and channels
+
+The adapter is published on `latest` (stable), `next`, and `nightly`. Its
+package declares `@opencode-ai/plugin` and `@opencode-ai/sdk` `~1.15.9`; no
+independent OpenCode version floor is encoded. Use an OpenCode release
+compatible with those APIs.
 
 ## Configure Weave
 

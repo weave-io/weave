@@ -14,17 +14,36 @@ The engine owns normalized descriptors, prompt composition, model and skill inte
 
 ## Installation
 
-Pin the full package version in `opencode.json` or `opencode.jsonc`:
+Add the package name to the `plugin` array in `opencode.json` or
+`opencode.jsonc`:
 
 ```json
 {
-  "plugin": ["@weaveio/weave-adapter-opencode@0.0.1"]
+  "plugin": [
+    "@weaveio/weave-adapter-opencode@<exact-version>"
+  ]
 }
 ```
 
-OpenCode fetches the package. Do not add a separate workspace dependency.
+The package name is the canonical OpenCode plugin spec. OpenCode resolves the
+package's `server` export to `dist/plugin.js`; do not point the plugin at the
+library bundle (`dist/index.js`) or at a source file. Use an exact version for
+reproducible installs. The package also supports the `latest`, `next`, and
+`nightly` npm channel tags when you explicitly want a mutable channel.
 
-For local development, build the adapter and use an absolute file URL to `packages/adapters/opencode/dist/plugin.js`. See the [package README](../../packages/adapters/opencode/README.md) for an isolated validation environment.
+OpenCode fetches the package at startup. There is no separate `npm install`
+step. Restart OpenCode after changing the plugin version. For local
+development, build the adapter and use an absolute file URL to
+`packages/adapters/opencode/dist/plugin.js`. See the [package
+README](../../packages/adapters/opencode/README.md) for an isolated validation
+environment.
+
+## Release channels and host support
+
+The adapter is published on `latest` (stable), `next`, and `nightly`. Its
+package declares `@opencode-ai/plugin` and `@opencode-ai/sdk` `~1.15.9`; no
+separate OpenCode version floor is encoded. Use an OpenCode release compatible
+with those APIs.
 
 ## Materialization
 

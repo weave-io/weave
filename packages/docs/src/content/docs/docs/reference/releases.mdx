@@ -7,16 +7,16 @@ description: Public package channels and adapter distribution status.
 
 | Package | Release status | Use |
 | --- | --- | --- |
-| `@weaveio/weave-cli` | Stable and nightly | The `weave` CLI and Claude Code materialization. |
-| `@weaveio/weave-adapter-opencode` | Stable and nightly | OpenCode plugin adapter. |
-| `@weaveio/weave-adapter-claude-code` | Nightly only | Standalone Claude Code adapter. Stable users should use the CLI's `compose` command. |
-| `@weaveio/weave-adapter-pi` | Nightly only | Implemented Pi extension; check the package peer requirement before installing. |
+| `@weaveio/weave-cli` | `latest` (stable), `next`, and `nightly` | The `weave` CLI and Claude Code materialization. |
+| `@weaveio/weave-adapter-opencode` | `latest` (stable), `next`, and `nightly` | OpenCode plugin adapter. |
+| `@weaveio/weave-adapter-claude-code` | `latest` (stable), `next`, and `nightly` | Standalone Claude Code adapter. Most users should use the CLI's `compose` command. |
+| `@weaveio/weave-adapter-pi` | `latest` (stable), `next`, and `nightly` | Shipped Pi extension; check the package peer requirement before installing. |
 
 Core, config, and engine packages are implementation layers bundled into public artifacts. They are not supported direct installation targets.
 
 ## Install channels
 
-Use `latest` for stable CLI and OpenCode installs. Use `nightly` for the nightly-only Claude Code and Pi packages or to test unreleased changes.
+Use `latest` for stable installs. Use `next` or `nightly` to test those release channels. All four public packages are released on all three channels.
 
 ```sh
 bun add --global @weaveio/weave-cli@latest
@@ -29,7 +29,7 @@ Pin the OpenCode plugin to an exact published version in `opencode.json` or `ope
 @weaveio/weave-adapter-opencode@<exact-version>
 ```
 
-Pi installs through Pi's package command; see [Pi](../adapters/pi/).
+Pi installs through Pi's package command; see [Pi](../adapters/pi/). The standalone Claude Code adapter is a library; most users install the CLI and run `weave compose --adapter claude-code`.
 
 ## Verify a release
 

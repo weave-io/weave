@@ -5,13 +5,17 @@ description: Install and use the Weave extension in Pi.
 
 ## Install
 
-The Pi adapter is implemented, but its package is distributed through the nightly channel only. Pi loads the extension through its package installer:
+The Pi adapter is shipped on `latest` (stable), `next`, and `nightly`. Pi
+loads the extension through its package installer:
 
 ```text
-pi install npm:@weaveio/weave-adapter-pi@nightly
+pi install npm:@weaveio/weave-adapter-pi@latest
 ```
 
-The adapter requires Pi `>=0.81.1` and runs in the Bun-based Pi environment.
+Replace `@latest` with `@next` or `@nightly` to select another channel. Use an
+exact version when you need a reproducible install. The adapter requires Pi
+`>=0.81.1` with no maximum version and runs in Pi's Bun-based environment. The
+current release proof covers Pi 0.84.2.
 
 ## Activate Weave
 

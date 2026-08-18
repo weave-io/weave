@@ -28,7 +28,14 @@ weave validate --project
 weave compose --adapter claude-code
 ```
 
-The standalone `@weaveio/weave-adapter-claude-code` package is a nightly distribution. For the stable CLI path, use the bundled `weave compose` command.
+The standalone `@weaveio/weave-adapter-claude-code` package is published on
+`latest` (stable), `next`, and `nightly`. For the supported CLI path, use the
+adapter bundled in `@weaveio/weave-cli`.
+
+## Supported versions and channels
+
+This static adapter does not enforce a Claude Code version range. The host
+must support plugin directories, agent files, and generated command files.
 
 ## Provider acceleration is unsupported
 

@@ -2,7 +2,8 @@
 
 > **Status:** Claude Code support is file materialization. It is bundled in
 > `@weaveio/weave-cli`; the standalone `@weaveio/weave-adapter-claude-code`
-> package is published to `nightly` only.
+> package is also published on `latest` (stable), `next`, and `nightly` for
+> integrations that need the adapter library directly.
 
 ## Context
 
@@ -14,7 +15,8 @@ runtime-backed eval control.
 
 ## Decision
 
-Users normally install the stable or nightly CLI and run:
+Users normally install the CLI from `latest` (stable), `next`, or
+`nightly`, then run:
 
 ```bash
 weave compose --adapter claude-code --init
@@ -22,12 +24,15 @@ weave compose --adapter claude-code --init
 
 The CLI-bundled adapter generates agents, composed prompts, model aliases, and
 tool lists under `.weave/plugins/claude-code/`. A small optional bootstrap
-plugin reruns composition at session start. The standalone adapter is reserved
-for nightly evaluation and uses the same materialization boundary.
+plugin reruns composition at session start. The standalone adapter uses the
+same materialization boundary and is available on the same release channels
+for integrations that need the library directly.
 
 The adapter owns Claude-specific file locations, model aliases, tool names,
-and capability gaps. Internal core/config/engine workspace layers remain
-bundled and are never consumer npm dependencies.
+and capability gaps. It enforces no Claude Code version range: the host must
+support the plugin directory, agent files, and generated command files.
+Internal core/config/engine workspace layers remain bundled and are never
+consumer npm dependencies.
 
 ## Commands
 
@@ -47,8 +52,9 @@ This is an optional-capability gap. Agent and command materialization continues 
 - Explicit durable execution remains available only where an adapter has a real
   runtime integration; do not infer it from generated Claude command markdown.
 - The public release record uses immutable versioned packs and SHA-256 files.
-  `preview` is retired; install `latest`, `next` only for train verification,
-  or `nightly` as appropriate. Published versions are never unpublished.
+  `preview` is retired; install `latest` for stable use, or choose `next` or
+  `nightly` when you need those release channels. Published versions are never
+  unpublished.
 
 See [the practical Claude guide](claude-code.md),
 [Adapter Boundary](../architecture/adapter-boundary.md), and [Release Automation](../contributing/releases.md).

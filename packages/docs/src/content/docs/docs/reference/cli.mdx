@@ -6,22 +6,64 @@ tableOfContents:
   maxHeadingLevel: 3
 ---
 
-The CLI creates, validates, composes, and inspects configuration. It does not launch a harness runtime. Run `weave --help` for the installed version's command list. Adapter-specific limitations are listed in the [support matrix](../adapters/).
+`weave` creates and validates configuration, composes Claude Code files, and
+inspects local Weave state. It does not launch OpenCode, Claude Code, or Pi.
+Run `weave --help` to print the installed command list and options.
 
-## Common flags
+See the [adapter support matrix](../adapters/) for harness-specific behavior.
 
-| Flag | Meaning |
+## Usage
+
+```text
+weave <command> [options]
+```
+
+## Commands
+
+The current `weave --help` output lists these commands:
+
+| Command | Purpose |
+| --- | --- |
+| `weave init` | Create Weave configuration and install supported harness integrations. |
+| `weave prompt inspect <agent>` | Render one composed agent prompt. |
+| `weave prompt list` | List available agent names. |
+| `weave prompt self-modify` | Print the self-modification guide. |
+| `weave validate` | Validate `.weave` configuration files. |
+| `weave runtime status` | Show Runtime Store status. |
+| `weave runtime journal` | Show recent journal entries. |
+| `weave adapter pi …` | Run bounded Pi child and doctor commands. |
+| `weave eval run` | Run configured text-only evals. |
+
+`weave compose` is also implemented for Claude Code. It is documented in
+[Claude Code](../adapters/claude-code/).
+
+## Options
+
+| Option | Meaning |
 | --- | --- |
 | `--help`, `-h` | Show help. |
 | `--version`, `-V` | Show the CLI version. |
-| `--json` | Emit JSON for commands that support it, including `validate` and prompt list/inspect. |
-| `--yes`, `-y` | Accept init or migration prompts. |
-| `--force` | Allow supported overwrites. |
-| `--scope global\|local` | Select a scope for `init`, migration, or prompt self-modification. |
+| `--scope global\|local` | Select the scope for `init` or `prompt self-modify`. |
+| `--install-dir <dir>` | Choose the `init` configuration directory. |
+| `--path <file>` | Validate an explicit `.weave` file. |
+| `--project` | Validate `./.weave/config.weave`. |
+| `--global` | Validate `~/.weave/config.weave`. |
+| `--json` | Emit machine-readable output where supported. |
+| `--yes`, `-y` | Accept safe non-interactive defaults. |
+| `--agent <name>` | Filter evals to one agent. |
+| `--model <id>` | Filter evals to one model. |
+| `--case <id>` | Filter evals to one case. |
+| `--dry-run` | Preview an eval without a model call. |
+| `--raw-artifacts` | Write raw eval artifacts locally for debugging. |
+
+Command-specific options include `--harness`, `--all-harnesses`, `--force`,
+`--namespace`, `--limit`, `--adapter`, `--project-root`, `--out-dir`,
+`--init`, `--bootstrap-dir`, `--diagnostic`, `--content`,
+`--content-cursor`, `--cursor`, and `--parent-session`.
 
 ## `weave init`
 
-Create configuration and configure detected harnesses:
+Create a local or global configuration:
 
 ```sh
 weave init
@@ -32,24 +74,29 @@ weave init --scope local --harness opencode --yes
 weave init --scope local --all-harnesses --yes
 ```
 
-`--install-dir` changes the scaffold location. `--harness` selects one detected harness; `--all-harnesses` selects every detected harness. The current installer supports OpenCode. Claude Code uses [`weave compose`](#weave-compose), and Pi uses its extension installer.
+The current installer writes OpenCode integration files. Claude Code uses
+`weave compose --adapter claude-code`; Pi uses its package installer. Local
+writes keep project-trust and collision checks in both interactive and
+`--yes` modes.
 
 ## `weave init migrate`
 
-Convert a supported legacy OpenCode JSONC configuration into `.weave`:
+Convert a supported legacy OpenCode JSONC file into canonical `.weave` DSL:
 
 ```sh
 weave init migrate --scope local
 weave init migrate --scope global
-weave init migrate --scope local --yes
 weave init migrate --scope local --yes --force
 ```
 
-Review the generated configuration and validate it before use.
+Migration keeps the legacy source, warns for unsupported fields, writes the
+canonical scope destination, and validates the generated file. `--force`
+allows an existing destination and creates a backup. `--install-dir` is ignored
+in migrate mode.
 
 ## `weave validate`
 
-Validate one scope or an explicit file:
+Validate the effective configuration, one scope, or one file:
 
 ```sh
 weave validate
@@ -58,45 +105,72 @@ weave validate --global
 weave validate --path .weave/config.weave --json
 ```
 
-Without a selector, the CLI loads the effective configuration. Exit `0` means valid; exit `1` means a read, parse, validation, or merge failure.
+Exit `0` means valid. Exit `1` reports a read, parse, merge, or schema error.
+Validation does not write configuration or materialize an adapter.
 
 ## Prompt commands
 
 ```sh
+weave prompt inspect <agent>
+weave prompt inspect <agent> --json
 weave prompt list
 weave prompt list --json
-weave prompt inspect loom
-weave prompt inspect loom --json
 weave prompt self-modify --scope local
 ```
 
-`prompt inspect <agent>` renders a composed prompt and metadata. `prompt self-modify` prints a text-only guide and accepts only `--scope`; it does not edit files or support `--json`.
+`inspect` renders the composed prompt and bounded metadata. `list` prints
+normalized names. `self-modify` prints a read-only guide and does not edit
+files.
 
-## `weave runtime`
+## Runtime inspection
 
-Inspect runtime state for the current project root without starting or changing a harness. Runtime commands have no scope selector or JSON output:
+Run these commands from the project root:
 
 ```sh
 weave runtime status
 weave runtime journal --limit 20
+weave runtime preferences
+weave runtime preferences --namespace adapter-pi --limit 20
 ```
+
+Runtime inspection reads `.weave/runtime/weave.db` without creating or
+migrating it. It reports status, sanitized journal entries, or stored adapter
+preferences. It does not start a workflow or expose prompts, transcripts,
+credentials, tokens, or provider payloads.
+
+## Pi adapter commands
+
+```sh
+weave adapter pi children list [--json] [--diagnostic]
+weave adapter pi children show <id> [--json] [--content] [--cursor <c>] [--parent-session <id>]
+weave adapter pi children result <id> [--json] [--cursor <c>] [--parent-session <id>]
+weave adapter pi children delete <id> [--yes] [--json] [--parent-session <id>]
+weave adapter pi doctor [--json] [--diagnostic]
+```
+
+The commands provide local, bounded adapter inspection and maintenance.
+`children show --content` returns a sanitized projection. `children result`
+returns byte-exact result pages. `children delete` intentionally appends a
+tombstone and asks for confirmation unless `--yes` is present. `--diagnostic`
+adds bounded diagnostic fields but never exposes an absolute native session
+path. These commands do not start, resume, or execute workflow work.
 
 ## `weave eval run`
 
-Run text-based evaluation cases:
-
 ```sh
-weave eval run --case loom-route-backend-api
-weave eval run --case loom-route-backend-api --agent loom --model anthropic/claude-sonnet-4.5
-weave eval run --case loom-route-backend-api --dry-run
-weave eval run --case loom-route-backend-api --raw-artifacts
+weave eval run
+weave eval run --agent <name> --model <id> --case <id>
+weave eval run --dry-run
+weave eval run --raw-artifacts
 ```
 
-Use `--agent`, `--model`, and `--case` to filter. `--dry-run` validates filters without making model calls. Results cover text-observable behavior, not hidden tool activity or live harness events.
+Filters select agents, models, and cases. `--dry-run` validates selection and
+makes no model call. Live execution needs the configured model-service key.
+Raw artifacts are local-only debugging output.
 
 ## `weave compose`
 
-Compose adapter output. The CLI currently supports Claude Code:
+Compose the Claude Code plugin from the effective configuration:
 
 ```sh
 weave compose --adapter claude-code
@@ -105,10 +179,13 @@ weave compose --adapter claude-code --project-root ./project
 weave compose --adapter claude-code --out-dir .weave/plugins/claude-code
 ```
 
-`--init` also creates the separate bootstrap plugin at `./weave-bootstrap-plugin` by default. Use `--bootstrap-dir` to choose its location; `--out-dir` controls the composed Claude Code output only.
+`--init` creates the optional bootstrap plugin. `--out-dir` selects generated
+Claude Code files, and `--bootstrap-dir` selects the bootstrap directory.
+Generated files provide agents and prompts; they do not provide a durable
+workflow runtime.
 
-## `weave run`
+## Errors and exit status
 
-`weave run` does not start a harness. Launch the harness yourself and use its adapter-native start command, such as OpenCode's `/weave:start` or Pi's `/weave:start`.
-
-There is no current `weave build` command.
+The CLI returns zero for successful commands and one for expected command
+errors. `--help` and `--version` print their output without changing config or
+runtime state.

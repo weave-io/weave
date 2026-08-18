@@ -2,125 +2,142 @@
 
 > Harness-agnostic prompt and agent-configuration API
 
-Weave is a TypeScript framework for describing multi-agent systems and materializing them inside different coding-agent harnesses. You declare agents, prompts, delegation intent, categories, model preferences, skills, and tool policy in a `.weave` DSL. Adapters translate that normalized intent into harness-specific plugins, configs, and agent files.
+Weave lets you describe agents, prompts, categories, model preferences, skills,
+tool policy, and workflows in a `.weave` file. An adapter translates that
+intent into one supported coding-agent harness. The harness still owns its
+native UI, models, tools, and execution behavior.
 
-The engine is pure and harness-agnostic. Adapters own everything harness-specific: available models, tool vocabulary, skill discovery, lifecycle hooks, and file/plugin generation.
+Public user documentation: <https://tryweave.io/docs/quickstart/>.
 
-For the product story and conceptual docs, see the website: <https://tryweave.io>. This README is the developer and contributor reference. For a configuration → engine → adapter → harness flow diagram, see [System Architecture](./docs/architecture/system-overview.md).
+## Public packages and channels
 
-## Published packages
+Weave publishes four public packages. Each package uses the same three release
+channels: `latest` (stable), `next`, and `nightly`.
 
-| Package | Description |
+| Package | Purpose |
 | --- | --- |
-| [`@weaveio/weave-cli`](./packages/cli) | `weave` executable for scaffolding, validation, and adapter materialization |
-| [`@weaveio/weave-docs`](./packages/docs) | In-repo Astro + Starlight documentation site |
-| [`@weaveio/weave-adapter-opencode`](./packages/adapters/opencode) | OpenCode plugin adapter (runtime) |
-| [`@weaveio/weave-adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter (file materialization) |
+| [`@weaveio/weave-cli`](./packages/cli/README.md) | The `weave` command for setup, validation, inspection, evals, and Claude Code composition. |
+| [`@weaveio/weave-adapter-opencode`](./packages/adapters/opencode/README.md) | The OpenCode plugin and adapter library. |
+| [`@weaveio/weave-adapter-claude-code`](./packages/adapters/claude-code/README.md) | The standalone Claude Code file-materialization adapter. |
+| [`@weaveio/weave-adapter-pi`](./packages/adapters/pi/README.md) | The shipped Pi extension and adapter library. |
 
-`core`, `config`, and `engine` are internal workspace layers bundled into the public packages. They are not supported npm installation targets.
+`@weaveio/weave-core`, `@weaveio/weave-config`, and
+`@weaveio/weave-engine` are private workspace layers. Public builds bundle
+them; consumers do not install them directly.
 
 ## Requirements
 
-Weave requires [Bun](https://bun.sh) ≥ 1.1. Node.js is not supported for development.
+- Bun 1.1 or newer for the CLI and local development.
+- OpenCode, Claude Code, or Pi for the harness-specific integrations.
+- Pi `>=0.81.1` for the Pi adapter. The adapter has no maximum Pi version; the
+  current release proof covers Pi 0.84.2.
+
+Node.js is not supported for running the repository or the CLI.
+
+## Install and choose a harness
+
+### CLI and Claude Code
+
+Install the stable CLI globally:
 
 ```bash
-git clone https://github.com/weave-io/weave.git
-cd weave
-bun install
-bun run build   # core → config → engine → adapters → cli
+bun add --global @weaveio/weave-cli@latest
+weave --version
 ```
 
-For local development, link the CLI onto your `PATH`:
+For a one-off invocation, use:
 
 ```bash
-bun link ./packages/cli
-weave --help
+bunx @weaveio/weave-cli@latest --help
 ```
 
-If you would rather not link it, run the CLI from source: `bun packages/cli/src/main.ts <command>`.
-
-## CLI
-
-The `@weaveio/weave-cli` package exposes the `weave` executable.
-
-| Command | Purpose |
-| --- | --- |
-| `weave init` | Scaffold a `.weave/config.weave` (interactive; supports `--scope local\|global`, `--yes`) |
-| `weave init migrate` | Migrate a legacy `weave-opencode.jsonc` config to the `.weave` DSL |
-| `weave validate` | Validate a `.weave` config (`--project`, `--path <file>`, `--json`) |
-| `weave compose --adapter claude-code` | Materialize agents into a Claude Code plugin (see below) |
-| `weave prompt inspect <agent>` | Render an agent's fully composed prompt (`--json`, or `list`) |
-| `weave eval run` | Run the routing/planning eval suites |
-
-`weave` does not launch harness runtimes. Start each harness with its own command (`opencode`, `claude`, `pi`). See [docs/reference/cli.md](./docs/reference/cli.md) for the full command contract, init safety rules, and migration behavior.
-
-## Using with OpenCode
-
-`@weaveio/weave-adapter-opencode` is an OpenCode plugin, released on stable and nightly channels. Pin an exact version in the `plugin` array, or point at a local `dist/plugin.js` build for development.
-
-The adapter README is the authoritative install and validation guide, including the exact plugin entry point, isolated-config testing, and logging behavior:
-
-- [`@weaveio/weave-adapter-opencode` README](./packages/adapters/opencode/README.md)
-
-> Use the `dist/plugin.js` bundle (or the published package's `/plugin` entry). The bare package entry (`dist/index.js`) exports non-function values and will fail OpenCode's plugin loader.
-
-## Using with Claude Code
-
-Claude Code support is **file materialization**: `weave compose` reads your `.weave/config.weave` and writes a Claude Code plugin directory. There is no runtime integration and no changes to Weave are required to try it.
-
-From a project that has a `.weave/config.weave`:
+Create a project configuration and compose Claude Code files:
 
 ```bash
-# Generate the plugin, and (with --init) a small bootstrap plugin
-# that re-runs compose on session start.
+weave init --scope local --yes
 weave compose --adapter claude-code --init
-```
-
-This writes:
-
-```
-.weave/plugins/claude-code/     # the generated plugin
-  .claude-plugin/plugin.json
-  agents/*.md                   # one Claude Code subagent per Weave agent
-  settings.json                 # sets loom as the default agent
-weave-bootstrap-plugin/         # optional: SessionStart hook that re-runs compose
-```
-
-Launch Claude Code pointing at the generated plugin (add the bootstrap plugin for auto-regeneration):
-
-```bash
 claude --plugin-dir ./weave-bootstrap-plugin --plugin-dir ./.weave/plugins/claude-code
 ```
 
-Run `/reload-plugins` on the first session if the agents do not appear immediately. Add `.weave/plugins/` to your `.gitignore`.
+Claude Code support is file materialization. The generated files provide
+agents, prompts, model aliases, tool lists, category shuttles, and the
+`/weave:start` plan-entry command. They do not provide a durable workflow
+runtime. See [the Claude Code adapter guide](./docs/adapters/claude-code.md).
 
-**What you get:** agent prompts, model selection, tool lists, category shuttles, and delegation via Claude Code's `Task` tool. **What is out of scope:** durable workflows, plan execution, command entrypoints, idle continuation, and analytics. Those require a Claude Code runtime API that does not exist today. See [Claude Code Adapter](./docs/adapters/claude-code.md) for the full scope and rationale.
+### OpenCode
 
-> The bootstrap plugin's `SessionStart` hook runs `weave compose`, which assumes `weave` is resolvable in the project. If it is not linked, skip the bootstrap plugin and re-run `weave compose --adapter claude-code` manually after config changes.
+Add the published adapter package to `opencode.json` or `opencode.jsonc`:
 
-## Adapter status
-
-| Adapter | Status |
-| --- | --- |
-| OpenCode | Runtime plugin, first slice. Materializes builtin and custom agents, maps tool policy into OpenCode permissions, reconciles Weave-owned agents safely (`list → reconcile → create/update` with ownership/collision protection), resolves models with fail-fast validation, and exposes agents via the plugin `config` hook. Not yet at full legacy `opencode-weave` parity: the in-harness command lifecycle, broader workflow runtime, skill MCP mounting, and health/metrics surfaces are still separate work. |
-| Claude Code | File materialization. Generates a Claude Code plugin via `weave compose` (agents, model aliasing, tool classification, skill discovery, settings). No runtime workflow or lifecycle features. |
-| Pi and others | Planned. The engine/adapter boundary supports additional harnesses; no adapter package exists yet. |
-
-For normative status and non-goals, see [Adapter Readiness Status](./docs/reference/adapter-capabilities.md).
-
-## Development
-
-```bash
-bun run typecheck        # type-check all packages
-bun test                 # run all tests
-bun run validate-config  # validate this repo's own .weave config
-bun run docs:dev         # run the in-repo docs site locally
-bun run clean            # remove all dist/ folders
+```json
+{
+  "plugin": [
+    "@weaveio/weave-adapter-opencode@<exact-version>"
+  ]
+}
 ```
 
-## Publishing
+The package name is the canonical OpenCode plugin spec. OpenCode resolves the
+package's `server` export; do not point the plugin entry at `dist/index.js` or a
+local source file. Use an exact version for reproducible installs. Select `latest`, `next`, or `nightly` instead when you explicitly
+want a channel tag. Restart OpenCode after changing the plugin version.
 
-The supported public packages are the CLI and OpenCode adapter on `latest`/`next`/`nightly`, plus the nightly standalone Claude Code adapter. Claude Code also ships bundled in the CLI. `preview` is retired; published versions are never unpublished. See [RELEASING.md](./RELEASING.md) for provenance, checksums, and operator policy.
+Verify the plugin with:
+
+```bash
+opencode debug config
+opencode debug info
+```
+
+See [the OpenCode adapter guide](./docs/adapters/opencode.md) and the
+[standalone package README](./packages/adapters/opencode/README.md).
+
+### Pi
+
+Install the shipped extension from the channel you want:
+
+```bash
+pi install npm:@weaveio/weave-adapter-pi@latest
+```
+
+Use `@next` or `@nightly` in place of `@latest` to select another channel.
+Start Pi in a trusted project containing `.weave/config.weave`. The extension
+checks the host, configuration, and required capabilities before it activates.
+It exposes health and diagnostics in health-only mode when a required check
+fails; it does not guess or start work in that mode.
+
+See [the Pi adapter guide](./docs/adapters/pi.md) and the
+[standalone package README](./packages/adapters/pi/README.md).
+
+## CLI at a glance
+
+```text
+weave init
+weave prompt inspect <agent>
+weave prompt list
+weave prompt self-modify
+weave validate
+weave runtime status
+weave runtime journal
+weave adapter pi …
+weave eval run
+```
+
+Run `weave --help` for the installed command list. The full reference is
+[`docs/reference/cli.md`](./docs/reference/cli.md).
+
+## Repository development
+
+```bash
+bun install
+bun run typecheck
+bun test
+bun run docs:check-links
+bun run docs:dev
+```
+
+See [`packages/docs/README.md`](./packages/docs/README.md) for the public docs
+site and [`docs/contributing/documentation.md`](./docs/contributing/documentation.md)
+for documentation conventions.
 
 ## License
 

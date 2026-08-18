@@ -1,97 +1,73 @@
 # @weaveio/weave-adapter-pi
 
-Pi adapter for the Weave orchestration framework. Targets the Earendil Works
-Pi fork (`@earendil-works/pi-coding-agent`, `>=0.81.1`) in interactive
-TUI parent sessions only.
+The shipped Weave extension and adapter for interactive Pi sessions. It
+activates normalized Weave configuration, selects primary agents, renders
+Weave commands and UI surfaces, runs authenticated private children, and
+projects durable workflow operations into Pi.
 
-Install as a Pi package:
+## Install
 
-```bash
-pi install npm:@weaveio/weave-adapter-pi
-```
-
-The adapter has no maximum Pi version, but its runtime is Bun-only. The Pi
-launcher must expose Bun built-ins such as `bun:ffi` and `bun:sqlite` to
-extensions. If a compiled Pi launcher loads extensions through a Node-like
-runtime, run the same installed Pi CLI under Bun instead:
+Install the channel you want with Pi's package installer:
 
 ```bash
-bun /path/to/@earendil-works/pi-coding-agent/dist/cli.js
+pi install npm:@weaveio/weave-adapter-pi@latest
 ```
 
-A local `pi` wrapper may execute that command so normal `pi` invocations keep
-working. This is a launcher requirement, not a second wrapper extension.
+Use `@next` or `@nightly` instead of `@latest` to select another channel.
+Start Pi in a trusted project with a valid `.weave/config.weave`.
 
-See `docs/adapters/pi.md` in the Weave
-repository for the full normative contract this package implements.
+The adapter is a Pi extension, not a standalone print, JSON, RPC, or SDK
+runtime. It requires Pi's Bun-based launcher. If a compiled launcher loads
+extensions through a Node-like runtime, run the installed Pi CLI with Bun so
+Bun built-ins such as `bun:ffi` and `bun:sqlite` are available.
 
-## Status
+## Minimal use
 
-This package currently ships the activation, normalized-configuration,
-delegation-transport, workflow-lifecycle, diagnostics, and public-packaging
-slices:
-exact host checks,
-trust-aware safe initialization, effective capability health reporting, ordered
-agent materialization, Loom primary activation, exact composed-prompt append,
-Pi-owned skill/model context, and deterministic model intent. The adapter does
-not map or enforce Weave `tool_policy`. It does not intercept tool calls or open
-Weave approval prompts; Pi and each concrete tool owner keep control.
+Install the CLI if it is not already available:
 
-The adapter also ships a bounded `weave_delegate` tool and its private
-authenticated child transport: an engine-resolved per-agent budget authorizes,
-FIFO-queues, or denies each delegation request; an authorized request spawns
-an independent `pi --mode rpc --no-session` child over a signed,
-replay-resistant channel and bootstraps its exact composed prompt and resolved
-model. Nested delegation from a live child is
-restricted to that child's own declared delegation targets. The callable tool
-keeps the protocol name `weave_delegate`, while Pi's custom transcript renderer
-shows the called agent (`Pattern`, `Shuttle`, `Infra-Shuttle`, and so on).
-Running children push bounded partial results into the tool entry; expanding it
-with Pi's normal tool-expansion control reveals the latest streamed output. A
-completed child's settlement summary is its own bounded real assistant output,
-not a placeholder. See
-[`docs/adapters/pi.md`](../../../docs/adapters/pi.md#private-children) in the Weave
-repository for the full delegation contract, including a documented
-limitation of Pi's `agent_settled` event (no payload).
+```bash
+bun add --global @weaveio/weave-cli@latest
+```
 
-Private child inspection is adapter-owned and local-only. Its exact
-`child_inspection` settings, private path and permissions, controls and
-commands, quotas and trim markers, clear and recovery limits, resume behavior,
-export boundary, and privacy rules are canonical in
-[Spec 33](../../../docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md), with
-ownership recorded in [ADR 0013](../../../docs/adr/0013-pi-private-child-sessions.md).
-Private history may contain sensitive raw content. It is not an engine
-transcript, workflow recovery store, telemetry stream, or exported transcript;
-physical clear removes it from the local private store.
+Then create the project configuration and start Pi:
 
-The native `/weave` palette and nine direct commands project all ten engine
-lifecycle operations. Explicit starts and resumes require fresh confirmation.
-Workflow steps run in distinct authenticated direct-step children, and only the
-root step child receives the `weave_complete_step` tool. The adapter
-also projects revisioned plans, digest-bound artifacts and approvals, recovery,
-reconciliation, parent-chat pause handling, and trusted no-follow Runtime Store
-persistence.
+```bash
+weave init --scope local --yes
+pi install npm:@weaveio/weave-adapter-pi@latest
+pi
+```
 
-Diagnostics project bounded, redacted Runtime Journal events and exactly-once
-primary/child usage observations, run configured retention at safe boundaries,
-and write through a no-follow rotating pino sink. Before session activation,
-the adapter redirects the shared engine/config pino destination away from Pi's
-stdout to `.weave/weave.log` (or the explicit `WEAVE_LOG_FILE` destination), so
-internal JSON logs never appear in the harness transcript. Runtime telemetry
-continues to use `.weave/runtime/logs/pi-adapter.ndjson`. Telemetry failures
-degrade visibly without blocking activation or recursing through a failed sink.
+After activation, use `/weave:health` to inspect readiness and `/weave:start`
+to submit a plan. Other available surfaces include `/weave:run`,
+`/weave:resume`, `/weave:status`, `/weave:plan`, `/weave:inspect`, and the
+bounded `weave_delegate` tool. `Alt+A` cycles healthy primary agents.
 
-The public build emits both documented entry points, validates the staged npm
-manifest and tar inventory, and passes an offline clean-room consumer against a
-fake exact-version Pi host. The package is integrated into the nightly release
-plan. The complete acceptance manifest and digest-bound stable interactive TUI
-smoke evidence remain pending release gates.
+If a required host or configuration check fails, the extension remains in
+health-only mode. It exposes safe diagnostics but does not materialize agents,
+start workflows, or delegate work until the problem is fixed and Pi restarts.
 
-### Peer dependencies
+## Supported host versions
 
-`@earendil-works/pi-ai` and `@earendil-works/pi-tui` are required (not
-optional) peer dependencies. The delegation tool's parameter schema imports
-`StringEnum` from `@earendil-works/pi-ai` and `Type` from `typebox`
-(a direct dependency), and the child-tree keyboard controls import
-`matchesKey` from `@earendil-works/pi-tui` — both are genuine, unconditional,
-top-level imports in shipped production code, not optional integrations.
+| Host | Support |
+| --- | --- |
+| `@earendil-works/pi-coding-agent` | `>=0.81.1`; there is no maximum version. |
+| `@earendil-works/pi-ai` | Required peer dependency; use the version supplied by the Pi host. |
+| `@earendil-works/pi-tui` | Required peer dependency; use the version supplied by the Pi host. |
+| Bun | Required by the Pi host and this extension's runtime surface. |
+
+The current release proof covers Pi 0.84.2. A host version alone does not
+prove every optional capability; the extension probes the public host surfaces
+at activation.
+
+The extension does not enforce Weave `tool_policy` through a global
+interceptor. Pi and each concrete tool owner retain authorization.
+
+## Documentation
+
+See the [Pi adapter reference](https://tryweave.io/docs/reference/adapters/pi/)
+for commands, health-only behavior, child inspection, model handling, and
+provider acceleration limits.
+
+## License
+
+MIT

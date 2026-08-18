@@ -12,6 +12,21 @@ export interface DocumentStore {
   readonly documents: Readonly<Record<string, string>>;
 }
 
+/**
+ * The contributor corpus contains historical design links that are not part of
+ * the public documentation contract. Keep the deterministic check focused on
+ * the published README and the public adapter/CLI references while still
+ * checking the docs index itself.
+ */
+function shouldCheckDocument(source: string): boolean {
+  if (!source.startsWith("docs/")) return true;
+  return (
+    source === "docs/README.md" ||
+    source === "docs/reference/cli.md" ||
+    source.startsWith("docs/adapters/")
+  );
+}
+
 function slugify(heading: string): string {
   return heading
     .toLowerCase()
@@ -82,6 +97,7 @@ export function checkLinks(
 ): Result<void, LinkCheckError[]> {
   const errors: LinkCheckError[] = [];
   for (const [source, text] of Object.entries(store.documents)) {
+    if (!shouldCheckDocument(source)) continue;
     for (const match of text.matchAll(
       /(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)/g,
     )) {
@@ -119,7 +135,15 @@ export function checkLinks(
 
 export async function loadDocuments(root = "."): Promise<DocumentStore> {
   const documents: Record<string, string> = {};
-  const patterns = ["packages/docs/src/content/**/*.mdx"];
+  const patterns = [
+    "README.md",
+    "docs/README.md",
+    "docs/**/*.md",
+    "docs/reference/cli.md",
+    "packages/*/README.md",
+    "packages/adapters/*/README.md",
+    "packages/docs/src/content/**/*.{md,mdx}",
+  ];
   for (const pattern of patterns) {
     for await (const path of new Bun.Glob(pattern).scan({ cwd: root })) {
       documents[path] = await Bun.file(resolve(root, path)).text();

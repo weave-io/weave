@@ -7,10 +7,10 @@ description: Public Weave packages and their roles.
 
 | Package | Role |
 | --- | --- |
-| `@weaveio/weave-cli` | Stable and nightly CLI. Provides the `weave` command, configuration scaffolding, validation, inspection, evals, and adapter composition. |
-| `@weaveio/weave-adapter-opencode` | Stable and nightly OpenCode plugin surface. |
-| `@weaveio/weave-adapter-claude-code` | Standalone Claude Code adapter, distributed nightly only. Stable Claude Code setup uses the CLI. |
-| `@weaveio/weave-adapter-pi` | Implemented Pi extension, distributed nightly only. |
+| `@weaveio/weave-cli` | `latest` (stable), `next`, and `nightly`. Provides the `weave` command, configuration scaffolding, validation, inspection, evals, and adapter composition. |
+| `@weaveio/weave-adapter-opencode` | `latest` (stable), `next`, and `nightly` OpenCode plugin surface. |
+| `@weaveio/weave-adapter-claude-code` | `latest` (stable), `next`, and `nightly` standalone Claude Code adapter. Stable users can also use the adapter bundled in the CLI. |
+| `@weaveio/weave-adapter-pi` | `latest` (stable), `next`, and `nightly` shipped Pi extension. |
 
 The CLI bundles Weave's core, config, and engine layers. Those layers support the public packages but are not consumer-facing installation targets.
 
@@ -18,7 +18,7 @@ The CLI bundles Weave's core, config, and engine layers. Those layers support th
 
 - Install the CLI for `.weave` scaffolding, validation, prompt inspection, runtime inspection, evals, and Claude Code composition.
 - Install the OpenCode adapter when OpenCode should load Weave as a plugin.
-- Install the Pi adapter from the nightly channel when Pi should load Weave as an extension.
-- Use the standalone Claude Code package only when you intentionally use the nightly channel.
+- Install the Pi adapter from the channel you want when Pi should load Weave as an extension.
+- Use the standalone Claude Code package when an integration needs the adapter library; most users should use the CLI's `compose` command.
 
 See [Releases](../releases/) for channels and [Support matrix](../adapters/) for implementation versus distribution status.
