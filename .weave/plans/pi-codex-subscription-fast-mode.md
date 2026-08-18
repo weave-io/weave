@@ -260,6 +260,17 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
     - If live verification cannot run, report the missing proof as a blocker; do not claim completion.
   - **Acceptance**:
     - Evidence bundle (digests, health output, sanitized wire/headers proof, terminal states, lease check) recorded; completion claim only with all five stages.
+  - **Result (2026-08-18): blocked.** Stages 1–4 pass; stage 5 fails. Evidence:
+    [`.weave/evidence/pi-codex-subscription-fast-mode-task11.md`](../evidence/pi-codex-subscription-fast-mode-task11.md).
+    A fast-declared codex generation put `service_tier: "priority"` on the wire without the routing
+    header pair (a partial fast request, forbidden by rule 8) and reported
+    `unsupported (harness-seam-unavailable)` for that same attempt. Root cause: the bundle's
+    `@earendil-works/pi-ai/providers/openai-codex` subpath import resolves to the checkout's pi-ai
+    0.81.1, whose codex api ignores `options.fetch` (audit row A20), so header authority is lost
+    while `onPayload` and forced SSE still apply; the OD-4 gate probes the host version and the
+    host-module redirect covers bare specifiers only. Gateway control, delegation, direct step,
+    settlement, and lease checks all behaved correctly. Task 11 stays unchecked until the four
+    remediations listed in the evidence note land and all five stages are re-run.
 
 ## Open decisions (resolve before implementation)
 
