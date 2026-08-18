@@ -1383,6 +1383,16 @@ const redactMessageReasoning = (
  * outright by {@link retainedChildSessionEvent}, which every retention
  * boundary asks before it keeps anything.
  *
+ * This function is NOT the retention rule for a `message_update` the carrier
+ * classification called `reasoning` either. Blanking DECLARED fields keeps the
+ * host's own object, and a reasoning frame may state prose in members no field
+ * list names — `metadata`, `provenance`, a `usage` subobject, any unknown key
+ * a future Pi adds. Retention replaces such a frame with
+ * {@link canonicalReasoningMessageUpdate} instead, and this blanking remains
+ * the defence for the frames retention still routes through it: the standalone
+ * `thinking` event, a carried `message`, an answer frame, and any direct
+ * caller.
+ *
  * `reasoning_summary` is deliberately untouched: it is the host's own explicit
  * summary surface and the ONE trusted place reasoning prose may be read from.
  */
@@ -1455,6 +1465,55 @@ export function redactRawReasoningFromEvent(
 }
 
 /**
+ * The `assistantMessageEvent.type` the ADAPTER states for a retained reasoning
+ * frame.
+ *
+ * It names a kind, not the host's lifecycle phase: no consumer distinguishes
+ * `thinking_start` from `thinking_delta` from `thinking_end` — every one of
+ * them means "the child reasoned here" and renders the same content-free
+ * state — so the phase is a fact nobody needs and one more thing read off a
+ * hostile payload. The value is chosen from the closed vocabulary
+ * `isRawReasoningAssistantEventType` owns, so the canonical frame classifies
+ * as `reasoning` again on every rebuild, exactly as the observed frame did.
+ */
+const CANONICAL_REASONING_CARRIER_TYPE = "thinking_delta";
+
+/**
+ * The whole of what a reasoning `message_update` leaves behind.
+ *
+ * Built here, from two literals, out of nothing the host sent. That is the
+ * point: the previous rule kept the host's own object with its DECLARED prose
+ * fields blanked, and a declared-field list cannot describe a member it has no
+ * name for. A thought parked beside a real `thinking_delta` —
+ * `assistantMessageEvent.metadata.trace.content[{ type: "thinking", text }]`,
+ * a `provenance` object beside a legacy `delta.thinking`, a note on a `usage`
+ * subobject, an accessor, or any key a future Pi adds — survived blanking
+ * untouched and was written into the transcript's bounded history, the
+ * overlay's retained replay steps and the inspection registry's durable
+ * checkpoint in full, where a search, a rebuild, a snapshot or anything
+ * serialized from them could read it back.
+ *
+ * So nothing observed is carried across the boundary: not a nested member, not
+ * a string, not a block, not a metadata or partial or usage subobject, not an
+ * accessor, and not an unknown field. What consumers render is ONE fact — the
+ * child produced raw chain-of-thought — and this states exactly that fact and
+ * no other. The transcript's `reasoningObserved` flag, the overlay window and
+ * the delegation card all read it the same way they read the observed frame,
+ * because it classifies identically.
+ *
+ * A fresh object per call rather than a shared frozen constant: retained steps
+ * and history events are held, cloned and serialized independently, and two
+ * retained frames aliasing one object is a coupling nobody would expect from a
+ * value named "the event this frame left behind".
+ */
+export function canonicalReasoningMessageUpdate(): PiChildSessionEvent {
+  return {
+    type: "message_update",
+    assistantMessageEvent: { type: CANONICAL_REASONING_CARRIER_TYPE },
+  } as unknown as PiChildSessionEvent;
+}
+
+/**
  * The ONE value any retention boundary may keep for an observed child event,
  * or `undefined` when the frame states nothing that can be retained honestly.
  *
@@ -1478,18 +1537,23 @@ export function redactRawReasoningFromEvent(
  * builder and the inspection registry's durable history. Fixing only one of
  * them is what left the other three holding the prose.
  *
+ * A `message_update` the same classification called REASONING is refused in
+ * the same spirit, one step short of dropping it: the frame states one fact a
+ * reader renders, and blanking the fields it DECLARED kept the host's object —
+ * and every member no field list names — around that fact. It is replaced by
+ * {@link canonicalReasoningMessageUpdate}, which states the fact and carries
+ * nothing observed.
+ *
  * Everything else is retained exactly as `redactRawReasoningFromEvent`
- * describes: an unambiguous answer and pure framing unchanged, and a reasoning
- * lifecycle kept as its content-free shape.
+ * describes: an unambiguous answer and pure framing unchanged.
  */
 export function retainedChildSessionEvent(
   event: PiChildSessionEvent,
 ): PiChildSessionEvent | undefined {
-  if (
-    event.type === "message_update" &&
-    classifyPiMessageUpdate(event).kind === "rejected"
-  ) {
-    return undefined;
+  if (event.type === "message_update") {
+    const carrier = classifyPiMessageUpdate(event);
+    if (carrier.kind === "rejected") return undefined;
+    if (carrier.kind === "reasoning") return canonicalReasoningMessageUpdate();
   }
   return redactRawReasoningFromEvent(event);
 }

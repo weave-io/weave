@@ -306,10 +306,21 @@ Behavior:
   the history port no payload, because redaction can only blank the fields a
   carrier declared and a rejected frame is precisely one whose carriers could
   not be read — including a thought hidden under an undeclared member, past the
-  bounded scan's depth, or behind enough padding to exhaust it. A reasoning
-  frame is retained as its content-free shape; an unambiguous answer and pure
-  framing are retained unchanged. An event the parser refuses is likewise
-  retained nowhere — history records the checkpoint with no payload.
+  bounded scan's depth, or behind enough padding to exhaust it. A
+  `message_update` the classification called REASONING is retained as ONE
+  canonical event the adapter builds — `{ type: "message_update",
+  assistantMessageEvent: { type: "thinking_delta" } }` — and never as the
+  observed frame: blanking the fields a carrier declared still kept the host's
+  own object, and a reasoning frame may state prose in a member no field list
+  names (`metadata`, `provenance`, a `usage` subobject, an unknown key). No
+  nested member, string, block, partial, usage subobject, accessor, or unknown
+  field of such a frame survives into transcript history, replay steps, a
+  rebuild, a search, serialization, or the durable history checkpoint. The
+  canonical event classifies as reasoning again, so a rebuild is a fixed point
+  and the reader still learns exactly one fact: the child reasoned. An
+  unambiguous answer and pure framing are retained unchanged. An event the
+  parser refuses is likewise retained nowhere — history records the checkpoint
+  with no payload.
 - All child-sourced text is sanitized for terminal control sequences before
   render, and box-drawing glyphs are reachable only through the frame
   primitives, so child text structurally cannot forge a frame.

@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 306 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~33,300 tokens. Without it, AI exploration would cost ~98,600 tokens. **Saves ~65,300 tokens per conversation.**
-> **Last scanned:** 2026-08-18 01:49 — re-run after significant changes
+> **Last scanned:** 2026-08-18 02:08 — re-run after significant changes
 
 ---
 
@@ -506,9 +506,9 @@
   - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
   - function redactRawReasoningFromEvent: (event) => PiChildSessionEvent
+  - function canonicalReasoningMessageUpdate: () => PiChildSessionEvent
   - function retainedChildSessionEvent: (event) => PiChildSessionEvent | undefined
-  - function parsePiChildSessionEvent
-  - _...14 more_
+  - _...15 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority

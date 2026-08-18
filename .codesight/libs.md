@@ -495,9 +495,9 @@
   - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
   - function redactRawReasoningFromEvent: (event) => PiChildSessionEvent
+  - function canonicalReasoningMessageUpdate: () => PiChildSessionEvent
   - function retainedChildSessionEvent: (event) => PiChildSessionEvent | undefined
-  - function parsePiChildSessionEvent
-  - _...14 more_
+  - _...15 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority
