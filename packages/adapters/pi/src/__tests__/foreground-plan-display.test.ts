@@ -200,12 +200,42 @@ describe("Bug B · only a positive execution request moves the rail", () => {
       "you should execute .weave/plans/alpha.md",
       "now execute .weave/plans/alpha.md end to end",
       "first, execute .weave/plans/alpha.md",
+      "execute the existing plan at .weave/plans/alpha.md",
+      "run the weave plan .weave/plans/alpha.md",
     ]) {
       const parsed = parseForegroundPlanRequest(text);
       expect({
         text,
         name: parsed.isOk() ? parsed.value : parsed.error,
       }).toEqual({ text, name: "alpha" });
+    }
+  });
+
+  it("accepts the exact sentence a reader typed at the live inspector", () => {
+    // Verbatim, capitalisation included. The live request was refused because
+    // `existing` and `Weave` were not connectors, so the rail printed its
+    // agent row alone for a plan the user had named in full.
+    expect(
+      parseForegroundPlanRequest(
+        "Execute the existing Weave plan at .weave/plans/pi-weave-ui-redesign.md",
+      )._unsafeUnwrap(),
+    ).toBe("pi-weave-ui-redesign");
+  });
+
+  it("keeps the two new connectors from widening anything else", () => {
+    // A connector may only sit between the verb and the path. It is not a
+    // verb, not a lead-in, and no protection against a quotation, a question
+    // or a negation is spent on it.
+    for (const text of [
+      "the existing weave plan is .weave/plans/alpha.md",
+      "Example: execute the existing Weave plan at .weave/plans/alpha.md",
+      "do not execute the existing Weave plan at .weave/plans/alpha.md",
+      "should I execute the existing Weave plan at .weave/plans/alpha.md?",
+      "existing weave .weave/plans/alpha.md",
+      "execute the existing Weave plan at .weave/plans/alpha.md for example",
+    ]) {
+      const parsed = parseForegroundPlanRequest(text);
+      expect({ text, ok: parsed.isOk() }).toEqual({ text, ok: false });
     }
   });
 

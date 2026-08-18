@@ -146,7 +146,17 @@ const EXECUTION_VERBS: PhraseVocabulary = [
   ["complete"],
 ];
 
-/** Words that may sit between the verb and the path. */
+/**
+ * Words that may sit between the verb and the path.
+ *
+ * Every entry is a word that QUALIFIES the plan being named and reframes
+ * nothing: `existing` says the plan is already written, and `weave` names the
+ * product whose plan it is. Both appear in the sentence a user actually types
+ * (`execute the existing Weave plan at .weave/plans/<name>.md`), and neither
+ * can turn a refusal, a question or a quotation into a request — those are
+ * refused by the whole-message vetoes and by the closed head grammar, not by
+ * this set.
+ */
 const EXECUTION_CONNECTORS: ReadonlySet<string> = new Set([
   "the",
   "this",
@@ -155,6 +165,8 @@ const EXECUTION_CONNECTORS: ReadonlySet<string> = new Set([
   "my",
   "its",
   "it",
+  "existing",
+  "weave",
   "plan",
   "file",
   "at",
