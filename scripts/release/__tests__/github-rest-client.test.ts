@@ -1011,6 +1011,16 @@ test("rejects an off-origin next URL before sending the bearer token", async () 
   );
 });
 
+test("rejects userinfo and fragments before fetching the next page", async () => {
+  for (const link of [
+    '<https://user:password@api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&page=2>; rel="next"',
+    '<https://@api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&page=2>; rel="next"',
+    '<https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&page=2#fragment>; rel="next"',
+    '<https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=1&page=2#>; rel="next"',
+  ])
+    await expectRejectedPullContinuation(link);
+});
+
 test("rejects same-origin repository and collection-path changes", async () => {
   await expectRejectedPullContinuation(
     '<https://api.github.com/repos/other/repo/pulls?state=open&per_page=1&page=2>; rel="next"',
