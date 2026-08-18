@@ -8,6 +8,9 @@
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { SUBMIT_CHANGELOG_TOOL } from "./submission-schema.js";
 
+/** Typed docs-audit submission tool. Read-only repo tools may join it. */
+export const SUBMIT_DOCS_AUDIT_TOOL = "submit_docs_audit" as const;
+
 /** Exact changelog model. Thinking is configurable; this model is not. */
 export const CHANGELOG_AGENT_MODEL = "opencode-go/gpt-5.6-luna" as const;
 export const CHANGELOG_AGENT_PROVIDER = "opencode-go" as const;
@@ -40,6 +43,27 @@ export const FORBIDDEN_HEADLESS_TOOLS = [
   "ls",
 ] as const;
 
+/** Built-in tools the docs-audit session may expose, plus the submit tool. */
+export const DOCS_AUDIT_READONLY_TOOLS = [
+  "read",
+  "grep",
+  "find",
+  "ls",
+] as const;
+export type DocsAuditReadonlyTool = (typeof DOCS_AUDIT_READONLY_TOOLS)[number];
+
+/** Built-in tools the docs-audit session must never enable. */
+export const DOCS_AUDIT_FORBIDDEN_TOOLS = [
+  "bash",
+  "edit",
+  "write",
+] as const;
+
+export const DOCS_AUDIT_TOOL_ALLOWLIST = [
+  ...DOCS_AUDIT_READONLY_TOOLS,
+  SUBMIT_DOCS_AUDIT_TOOL,
+] as const;
+
 export interface IsolatedHeadlessDiscovery {
   readonly skills: false;
   readonly extensions: false;
@@ -49,9 +73,9 @@ export interface IsolatedHeadlessDiscovery {
 }
 
 export interface IsolatedHeadlessTools {
-  readonly allowlist: readonly [typeof SUBMIT_CHANGELOG_TOOL];
+  readonly allowlist: readonly string[];
   readonly noTools: "all";
-  readonly forbidden: typeof FORBIDDEN_HEADLESS_TOOLS;
+  readonly forbidden: readonly string[];
 }
 
 /**
@@ -72,6 +96,8 @@ export interface IsolatedHeadlessSessionConfig {
   readonly tools: IsolatedHeadlessTools;
   readonly apiKeyEnv: typeof CHANGELOG_AGENT_API_KEY_ENV;
   readonly apiKeyPresent: true;
+  /** Docs-audit sessions only: the caller-supplied read-only content root. */
+  readonly contentRoot?: string;
 }
 
 /** Pi SDK options derived from {@link IsolatedHeadlessSessionConfig}. */
@@ -79,8 +105,8 @@ export interface IsolatedPiSessionOptions {
   readonly model: typeof CHANGELOG_AGENT_MODEL;
   readonly thinkingLevel: HeadlessThinkingLevel;
   readonly noTools: "all";
-  readonly tools: readonly [typeof SUBMIT_CHANGELOG_TOOL];
-  readonly customTools: readonly [typeof SUBMIT_CHANGELOG_TOOL];
+  readonly tools: readonly string[];
+  readonly customTools: readonly string[];
   readonly sessionManager: "in-memory";
   readonly settingsManager: "in-memory";
   readonly persistSession: false;
@@ -120,10 +146,17 @@ export interface HeadlessSessionDriver {
 
 export type HeadlessSessionConfigError =
   | { type: "InvalidChangelogThinking"; thinking: string }
-  | { type: "ChangelogApiKeyMissing"; env: typeof CHANGELOG_AGENT_API_KEY_ENV };
+  | { type: "ChangelogApiKeyMissing"; env: typeof CHANGELOG_AGENT_API_KEY_ENV }
+  | { type: "InvalidDocsAuditThinking"; thinking: string }
+  | { type: "DocsAuditApiKeyMissing"; env: typeof CHANGELOG_AGENT_API_KEY_ENV };
 
 export interface CreateSessionConfigInput {
   thinking?: string;
+}
+
+export interface CreateDocsAuditSessionConfigInput {
+  thinking?: string;
+  contentRoot: string;
 }
 
 /**
@@ -166,6 +199,48 @@ export function createChangelogSessionConfig(
   });
 }
 
+/**
+ * Builds the isolated docs-audit session config. Read-only tools plus one
+ * typed submit tool; bash/edit/write stay forbidden. The key value is never
+ * copied onto the config.
+ */
+export function createDocsAuditSessionConfig(
+  input: CreateDocsAuditSessionConfigInput,
+): Result<IsolatedHeadlessSessionConfig, HeadlessSessionConfigError> {
+  const thinking = input.thinking ?? CHANGELOG_AGENT_DEFAULT_THINKING;
+  if (!isThinkingLevel(thinking))
+    return err({ type: "InvalidDocsAuditThinking", thinking });
+  if (!hasApiKey(CHANGELOG_AGENT_API_KEY_ENV))
+    return err({
+      type: "DocsAuditApiKeyMissing",
+      env: CHANGELOG_AGENT_API_KEY_ENV,
+    });
+  return ok({
+    model: CHANGELOG_AGENT_MODEL,
+    provider: CHANGELOG_AGENT_PROVIDER,
+    modelId: CHANGELOG_AGENT_MODEL_ID,
+    thinking,
+    sessionManager: "in-memory",
+    persistSession: false,
+    settingsManager: "in-memory",
+    discovery: {
+      skills: false,
+      extensions: false,
+      templates: false,
+      themes: false,
+      globalSettings: false,
+    },
+    tools: {
+      allowlist: [...DOCS_AUDIT_TOOL_ALLOWLIST],
+      noTools: "all",
+      forbidden: [...DOCS_AUDIT_FORBIDDEN_TOOLS],
+    },
+    apiKeyEnv: CHANGELOG_AGENT_API_KEY_ENV,
+    apiKeyPresent: true,
+    contentRoot: input.contentRoot,
+  });
+}
+
 /** Maps the isolated config onto the Pi SDK option shape tests assert. */
 export function toPiCreateAgentSessionOptions(
   config: IsolatedHeadlessSessionConfig,
@@ -174,8 +249,8 @@ export function toPiCreateAgentSessionOptions(
     model: config.model,
     thinkingLevel: config.thinking,
     noTools: "all",
-    tools: [SUBMIT_CHANGELOG_TOOL],
-    customTools: [SUBMIT_CHANGELOG_TOOL],
+    tools: [...config.tools.allowlist],
+    customTools: [...config.tools.allowlist],
     sessionManager: "in-memory",
     settingsManager: "in-memory",
     persistSession: false,
