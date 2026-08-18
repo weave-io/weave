@@ -32,6 +32,14 @@ import {
   type ResultAsync,
 } from "neverthrow";
 import { z } from "zod";
+import {
+  type AiAuditError,
+  type AiAuditMetadata,
+  AiAuditMetadataSchema,
+  type ChangelogSourceMapping,
+  type MergedAuditSource,
+  verifyAuditAgainstMergedSource,
+} from "./ai/audit-metadata.js";
 import type { ChangesetIdentity } from "./changeset-policy.js";
 import {
   NPM_DIGEST_PREFIX,
@@ -429,6 +437,8 @@ export const ReleasePlanSchema = z
     releasedSha: FullShaSchema.nullable(),
     docsAudit: ReleaseDocsAuditSchema,
     binding: ReleasePlanBindingSchema.nullable(),
+    /** Task 18 provenance; never an input to version math. */
+    aiAudit: AiAuditMetadataSchema.optional(),
   })
   .strict()
   .superRefine((plan, context) => {
@@ -542,7 +552,16 @@ export type ReleasePlanError =
   | { type: "MergedShaMismatch"; expected: string; actual: string }
   | { type: "MergedPullRequestPortMissing" }
   | { type: "RecomputePortFailed"; port: string; message: string }
-  | { type: "InvalidRecomputedPlan"; issues: readonly string[] };
+  | { type: "InvalidRecomputedPlan"; issues: readonly string[] }
+  | { type: "MissingAiAuditSource"; ref: string }
+  | {
+      type: "AiAuditVerificationFailed";
+      reason:
+        | "evidence-digest"
+        | "changelog-mapping"
+        | "submission-digest"
+        | "invalid";
+    };
 
 // ---------------------------------------------------------------------------
 // Validation, serialization, and identity
@@ -963,6 +982,13 @@ export interface RecomputedPlanFacts {
   changelogDigests: readonly ReleasePlanChangelogDigest[];
   /** Absent when the docs-release-audit gate produced no outcome at this ref. */
   docsAudit: ReleaseDocsAudit | null;
+  /** Task 18: merged-source facts used when the stored plan carries an audit. */
+  aiAuditSource?: {
+    evidenceDigest: string;
+    changelogMapping: ChangelogSourceMapping;
+    expectedChangelogMapping: ChangelogSourceMapping;
+    submission?: MergedAuditSource["submission"];
+  };
 }
 
 export interface RecomputeFactsRequest {
@@ -1088,6 +1114,7 @@ function comparePlan(
     // Bindings are cache, so they are carried, never recomputed — and they are
     // already proven to belong to this released SHA.
     binding: stored.binding,
+    ...(stored.aiAudit === undefined ? {} : { aiAudit: stored.aiAudit }),
   };
   const recomputed = ReleasePlanSchema.safeParse(candidate);
   if (!recomputed.success)
@@ -1098,7 +1125,52 @@ function comparePlan(
   const divergence = firstDivergentPath(recomputed.data, stored, "");
   if (divergence !== null)
     return err({ type: "PlanDivergence", ...divergence });
-  return ok(recomputed.data);
+  return verifyStoredAiAudit(request.ref, stored, facts).map(
+    () => recomputed.data,
+  );
+}
+
+/**
+ * Recomputes Task 18 audit provenance against merged source.
+ *
+ * Resume and publish call this through {@link recomputePlan} when the stored
+ * plan carries `aiAudit`. The audit is never an authority input to versions.
+ */
+export function verifyReleasePlanAiAudit(
+  plan: ReleasePlan,
+  source: MergedAuditSource,
+): Result<AiAuditMetadata, ReleasePlanError> {
+  if (plan.aiAudit === undefined)
+    return err({ type: "MissingAiAuditSource", ref: plan.baseSha });
+  return verifyAuditAgainstMergedSource(plan.aiAudit, source).mapErr(
+    toPlanAuditError,
+  );
+}
+
+function verifyStoredAiAudit(
+  ref: string,
+  stored: ReleasePlan,
+  facts: RecomputedPlanFacts,
+): Result<void, ReleasePlanError> {
+  if (stored.aiAudit === undefined) return ok(undefined);
+  if (facts.aiAuditSource === undefined)
+    return err({ type: "MissingAiAuditSource", ref });
+  return verifyAuditAgainstMergedSource(stored.aiAudit, facts.aiAuditSource)
+    .map(() => undefined)
+    .mapErr(toPlanAuditError);
+}
+
+function toPlanAuditError(error: AiAuditError): ReleasePlanError {
+  switch (error.type) {
+    case "AuditEvidenceDigestMismatch":
+      return { type: "AiAuditVerificationFailed", reason: "evidence-digest" };
+    case "AuditChangelogMappingDivergence":
+      return { type: "AiAuditVerificationFailed", reason: "changelog-mapping" };
+    case "AuditSubmissionDigestMismatch":
+      return { type: "AiAuditVerificationFailed", reason: "submission-digest" };
+    default:
+      return { type: "AiAuditVerificationFailed", reason: "invalid" };
+  }
 }
 
 // ---------------------------------------------------------------------------

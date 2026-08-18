@@ -5,6 +5,10 @@
  * labels only after each write is checked against the current marker.
  */
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
+import {
+  appendAiAuditMetadata,
+  describeAiAuditError,
+} from "./ai/audit-metadata.js";
 import type { GitHubPullRequestSummary } from "./github-client.js";
 import {
   describeError,
@@ -492,9 +496,20 @@ export class ReleasePrMetadataLifecycle implements ReleasePrMetadataPort {
       });
     const hidden = renderReleasePrEnvelope(input.envelope);
     if (hidden.isErr()) return err(hidden.error);
+    const body = appendAiAuditMetadata(
+      `${rendered.value.body}\n\n${hidden.value}\n`,
+      rendered.value.aiAudit,
+    );
+    if (body.isErr())
+      return err({
+        type: "ReleasePreparationFailed",
+        stage: "changelog-ai",
+        message: describeAiAuditError(body.error),
+        retryable: false,
+      });
     return ok({
       title: rendered.value.title,
-      body: `${rendered.value.body}\n\n${hidden.value}\n`,
+      body: body.value,
     });
   }
 
