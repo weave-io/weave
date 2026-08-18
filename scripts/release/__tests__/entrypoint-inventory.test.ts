@@ -21,7 +21,7 @@ import {
 const ROOT = resolve(import.meta.dir, "../../..");
 
 describe("entrypoint inventory", () => {
-  it("registers publish-main.ts as the Task 14 production root", () => {
+  it("registers the Task 14, 15, 22, and 23 production roots", () => {
     expect(PRODUCTION_ENTRYPOINTS).toEqual([
       {
         path: "scripts/release/publish-main.ts",
@@ -41,11 +41,18 @@ describe("entrypoint inventory", () => {
         rationale:
           "Task 22 CI API compatibility controller. It runs API Extractor and the checked-in surface-map gate; it performs no publication mutation.",
       },
+      {
+        path: "scripts/release/prepare-main.ts",
+        role: "legacy",
+        rationale:
+          "Task 23 stable release-PR preparation controller. It validates the maintainer request and delegates marker ownership/finalization to Task 9; it never publishes.",
+      },
     ]);
     expect(validateEntrypointInventory().isOk()).toBe(true);
     expect(inventoriedPaths()).toContain("scripts/release/publish-main.ts");
     expect(inventoriedPaths()).toContain("scripts/release/doctor.ts");
     expect(inventoriedPaths()).toContain("scripts/release/api-reports.ts");
+    expect(inventoriedPaths()).toContain("scripts/release/prepare-main.ts");
     expect(PRODUCTION_ROOT_CLASSES).toHaveLength(14);
   });
 
