@@ -190,6 +190,22 @@ export interface CommittedSearch {
    */
   invalidate(): void;
   /**
+   * The epoch a committed search must still belong to in order to write.
+   *
+   * This is the SAME monotonic counter the token carries, published read-only
+   * and as one plain number. It exists because the controller is not the only
+   * thing a late page can damage: the surface owns the viewport jump and the
+   * fallback, and it cannot see a child walk or an overlay close that happened
+   * on the controller alone. Carrying this epoch in the surface's own run
+   * token is what lets it apply exactly the same rule to exactly the same
+   * reading, instead of a weaker local approximation of it.
+   *
+   * Reading it can never make anything current: it is a getter with no
+   * argument and no effect, and only {@link CommittedSearch.invalidate} and a
+   * new reading move it.
+   */
+  epoch(): number;
+  /**
    * Runs the bounded historical paging for a query just committed against
    * `child`, seeded from the loaded window.
    */
@@ -320,6 +336,9 @@ export function createCommittedSearch(
   return {
     invalidate(): void {
       revision += 1;
+    },
+    epoch(): number {
+      return revision;
     },
     run(child, state, needle) {
       // Seed from the loaded window; older pages prepend ahead of it.

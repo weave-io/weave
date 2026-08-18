@@ -384,14 +384,26 @@ Required behavior:
   list is built from an ANSI-free twin render, so no byte of transcript colour
   can paint the search rail.
 - A committed search is bound to the child it was committed against and to a
-  monotonic search revision. Editing the query, committing again, closing or
-  re-opening search, opening a child, and closing the overlay all move that
-  revision on. Both facts are re-checked after every await, so a page that
-  arrives for a superseded search is a NO-OP: it may not merge into the window,
-  merge its ids into the counter, move the viewport, return its own child, or
-  turn a failed read into the custom-editor fallback. It resolves to the view
-  the reader is actually looking at, or to `OverlayNotOpen` when the overlay is
-  closed. Typed query preview stays synchronous and window-only.
+  monotonic search revision. Editing the query, committing again, closing
+  search, re-opening search on the query it already committed, opening a child,
+  re-opening the SAME child, and closing the overlay all move that revision on,
+  before anything repaints or returns. Both facts are re-checked after every
+  await, so a page that arrives for a superseded search is a NO-OP: it may not
+  merge into the window, merge its ids into the counter, move the viewport,
+  return its own child, or turn a failed read into the custom-editor fallback.
+  It resolves to the view the reader is actually looking at, or to
+  `OverlayNotOpen` when the overlay is closed. Typed query preview stays
+  synchronous and window-only.
+- The surface applies that rule to the jump and the fallback IT owns, using the
+  same reading rather than a local approximation of it: the controller
+  publishes its committed-search revision as one read-only epoch, and a
+  committed run carries that epoch alongside the child it started on. A run
+  whose epoch, child, or run identity is no longer current may not focus the
+  viewport, may not collapse the inspector into the fallback, and may not hold
+  the surface busy. Busy is the CURRENT run's own state, never a count of
+  pending reads: a committed page read has no timeout, so an abandoned one may
+  stay pending forever and must not block steering, follow-ups, or paging once
+  the run the reader is waiting on has answered.
 - Live-tail follows new output, disengages on manual scroll, and resumes at the
   bottom. Resize reflows. PageUp, PageDown, Shift+Up, Shift+Down, Home, and End
   must be matched semantically, never by raw byte comparison, so legacy CSI,

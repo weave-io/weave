@@ -96,6 +96,31 @@ const NEWEST_TWO: readonly unknown[] = [
   message("twonewest1", "root", "user", "A different child, different work."),
 ];
 
+/** Id of the ONLY entry the abandoned query matches in the tall transcript. */
+const TALL_MATCH_ID = "tallmatch";
+
+/**
+ * A newest page too tall for one viewport, whose only match is its OLDEST
+ * entry.
+ *
+ * A short transcript cannot prove anything about the viewport: it fits, so the
+ * scroll extent is zero and every jump clamps back to the tail whether the
+ * surface asked for one or not. Here the reader sits at the live tail while
+ * the one match sits at the far end of the window, so a jump the reader did
+ * not ask for is a visible move rather than a no-op.
+ */
+const TALL_NEWEST_ONE: readonly unknown[] = [
+  message(TALL_MATCH_ID, "root", "user", `Look for ${LOST_QUERY} up here.`),
+  ...Array.from({ length: 30 }, (_unused, index) =>
+    message(
+      `tallfill${index}`,
+      index === 0 ? TALL_MATCH_ID : `tallfill${index - 1}`,
+      index % 2 === 0 ? "assistant" : "user",
+      `Filler row ${index}: ordinary transcript text.`,
+    ),
+  ),
+];
+
 /** The page the ABANDONED query is still waiting for when it is replaced. */
 const OLDER_STALE: readonly unknown[] = [
   message(
@@ -160,11 +185,13 @@ interface StaleSearchHarness {
  * is answered at once, so the query the reader ends up on completes its own
  * bounded paging normally while the abandoned one is still in flight.
  */
-async function openedHarness(): Promise<StaleSearchHarness> {
+async function openedHarness(
+  options: { readonly tall?: boolean } = {},
+): Promise<StaleSearchHarness> {
   const pending: ((page: PiNativeSessionEntryPage) => void)[] = [];
   let olderReads = 0;
   const newestByChild = new Map<string, readonly unknown[]>([
-    [CHILD_ONE, NEWEST_ONE],
+    [CHILD_ONE, options.tall === true ? TALL_NEWEST_ONE : NEWEST_ONE],
     [CHILD_TWO, NEWEST_TWO],
   ]);
   const source = createReadSessionEntryPageOverlaySource({
@@ -387,6 +414,132 @@ describe("a superseded committed search is a no-op", () => {
     expect(after).not.toContain(STALE_ROW);
     expect(afterView.scrollOffset).toBe(beforeView.scrollOffset);
     expect(controller.currentChildId()).toBe(CHILD_ONE);
+    expect(harness.fallbacks).toHaveLength(0);
+  });
+
+  it("cannot rewrite the rail after Ctrl+F re-opened its own query", async () => {
+    const harness = await openedHarness();
+    const { component, controller } = harness;
+    component.render(WIDTH);
+
+    typeInto(component, `/${LOST_QUERY}\r`);
+    await settle();
+    expect(harness.olderReads()).toBe(1);
+
+    // `Ctrl+F` re-opens the SAME committed query for editing, and then the
+    // reader pauses. Nothing is typed, nothing is committed, no child is
+    // walked to and the overlay stays open: the re-open itself is the whole
+    // event, and the page lands in the pause after it.
+    component.handleInput(SEARCH_ALIAS);
+
+    const before = plainRows(component.render(WIDTH));
+    const beforeView = controller.view()._unsafeUnwrap();
+    expect(before).toContain(`query    ${LOST_QUERY}`);
+    expect(beforeView.searchMatches.length).toBeGreaterThan(0);
+
+    harness.releaseBlockedOlderPage();
+    await settle();
+
+    const after = plainRows(component.render(WIDTH));
+    const afterView = controller.view()._unsafeUnwrap();
+
+    // Nothing from the released page reached the window, the counter, the
+    // screen or the viewport.
+    expect(afterView.entries.map((entry) => entry.id)).toEqual(
+      beforeView.entries.map((entry) => entry.id),
+    );
+    expect(afterView.searchMatches).toEqual(beforeView.searchMatches);
+    expect(afterView.searchMatches).not.toContain(STALE_ENTRY_ID);
+    expect(counterOf(after)).toBe(counterOf(before));
+    expect(after).not.toContain(STALE_ROW);
+    expect(afterView.scrollOffset).toBe(beforeView.scrollOffset);
+    expect(controller.currentChildId()).toBe(CHILD_ONE);
+    expect(harness.fallbacks).toHaveLength(0);
+    // The re-open reads nothing: editing a committed query is window-only.
+    expect(harness.olderReads()).toBe(1);
+  });
+
+  it("cannot jump the viewport after the same child was re-opened", async () => {
+    const harness = await openedHarness({ tall: true });
+    const { component, controller } = harness;
+    component.render(WIDTH);
+
+    typeInto(component, `/${LOST_QUERY}\r`);
+    await settle();
+    expect(harness.olderReads()).toBe(1);
+
+    // The reader closes the inspector and re-opens THE SAME child. Every fact
+    // the surface owns is unchanged by that — same child id, same committed
+    // query, no key pressed — and yet it is a different reading, so the page
+    // still in flight is answering a question nobody is asking.
+    controller.close()._unsafeUnwrap();
+    (await controller.open(CHILD_ONE))._unsafeUnwrap();
+    component.render(WIDTH);
+
+    const beforeView = controller.view()._unsafeUnwrap();
+    // The jump this test forbids is a jump that COULD happen: the reader is at
+    // the live tail, the transcript is taller than the viewport, and the only
+    // match sits at its oldest end.
+    expect(beforeView.scrollOffset).toBe(0);
+    expect(beforeView.scrollExtent).toBeGreaterThan(0);
+    expect(beforeView.searchMatches).toEqual([TALL_MATCH_ID]);
+
+    harness.releaseBlockedOlderPage();
+    await settle();
+
+    component.render(WIDTH);
+    const afterView = controller.view()._unsafeUnwrap();
+    expect(afterView.scrollOffset).toBe(beforeView.scrollOffset);
+    expect(afterView.liveTail).toBe(beforeView.liveTail);
+    expect(afterView.entries.map((entry) => entry.id)).toEqual(
+      beforeView.entries.map((entry) => entry.id),
+    );
+    expect(afterView.searchMatches).toEqual(beforeView.searchMatches);
+    expect(afterView.searchMatches).not.toContain(STALE_ENTRY_ID);
+    expect(harness.fallbacks).toHaveLength(0);
+  });
+
+  it("frees the surface when the current run settles, pending read or not", async () => {
+    const harness = await openedHarness();
+    const { component, controller } = harness;
+    component.render(WIDTH);
+
+    // The abandoned query's page NEVER arrives: a committed page read has no
+    // timeout, so its promise simply stays pending.
+    typeInto(component, `/${LOST_QUERY}\r`);
+    await settle();
+    expect(harness.olderReads()).toBe(1);
+
+    // The query the reader is actually waiting on completes its own paging.
+    component.handleInput(SEARCH_ALIAS);
+    typeInto(component, "\x7f".repeat(LOST_QUERY.length));
+    typeInto(component, `${LIVE_QUERY}\r`);
+    await settle();
+    expect(harness.olderReads()).toBe(2);
+    expect(controller.view()._unsafeUnwrap().searchQuery).toBe(LIVE_QUERY);
+
+    // Escape leaves search; the overlay and the child stay exactly as they are.
+    component.handleInput("\x1b");
+    await settle();
+    expect(controller.isOpen()).toBe(true);
+
+    // The surface must be usable again. It is not waiting for anything the
+    // reader can see, so a key that mutates the child must be taken rather
+    // than dropped against a wait owned by a search nobody committed.
+    expect(controller.view()._unsafeUnwrap().globalExpanded).toBe(false);
+    component.handleInput("\x05");
+    await settle();
+    expect(controller.view()._unsafeUnwrap().globalExpanded).toBe(true);
+    expect(harness.fallbacks).toHaveLength(0);
+
+    // Releasing the abandoned read afterwards still changes nothing.
+    harness.releaseBlockedOlderPage();
+    await settle();
+    const afterView = controller.view()._unsafeUnwrap();
+    expect(afterView.entries.map((entry) => entry.id)).not.toContain(
+      STALE_ENTRY_ID,
+    );
+    expect(afterView.globalExpanded).toBe(true);
     expect(harness.fallbacks).toHaveLength(0);
   });
 });

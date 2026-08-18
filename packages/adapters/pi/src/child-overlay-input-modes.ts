@@ -75,8 +75,17 @@ const OPEN_OVERLAY_SEARCH: OverlaySearchState = Object.freeze({
 export type OverlaySearchEffect =
   /** Consumed, and nothing on screen changed. */
   | { readonly kind: "none" }
-  /** Consumed; the surface must repaint. */
-  | { readonly kind: "repaint" }
+  /**
+   * Search re-opened on the query it already committed, to edit it again.
+   *
+   * It is its own effect rather than a bare repaint because a re-open is a
+   * new reading: the reader has said they are done with the answer to the
+   * committed query, so the pages still fetching for it lose their licence
+   * BEFORE anything repaints — even if the reader types nothing afterwards.
+   * A bare repaint let a page that landed between the re-open and the first
+   * keystroke prepend itself, recount the rail and jump the viewport.
+   */
+  | { readonly kind: "reopen" }
   /**
    * The query being typed changed: match it against the loaded window, without
    * moving the viewport and without fetching history.
@@ -144,7 +153,7 @@ export function stepOverlaySearch(
   }
   if (aliasTrigger !== undefined && data === aliasTrigger) {
     // Re-opening from navigate mode edits the committed query again.
-    return claimed({ ...state, mode: "typing" }, { kind: "repaint" });
+    return claimed({ ...state, mode: "typing" }, { kind: "reopen" });
   }
   if (state.mode === "navigate") {
     if (
@@ -212,23 +221,38 @@ export function overlaySearchQuery(
 // Committed search runs
 // ---------------------------------------------------------------------------
 
-/** One committed run: which search it was, and whose transcript. */
+/**
+ * One committed run: which search it was, whose transcript, and which reading.
+ *
+ * All three are captured before the run is awaited and are never re-derived,
+ * so a settling run can only ever prove it is STILL the answer the reader is
+ * waiting for — never make itself into one.
+ *
+ * `epoch` is the controller's own committed-search epoch. It is what catches
+ * everything the surface cannot see: a walk to another child, a closed
+ * overlay, and above all a re-open of the SAME child, which leaves both the
+ * local revision and the child id identical while replacing the reading they
+ * described.
+ */
 export interface OverlaySearchRun {
   readonly revision: number;
   readonly childId: string | undefined;
+  readonly epoch: number;
 }
 
 /** What a settling run is told about the surface it is answering. */
 export interface OverlaySearchRunOutcome {
-  /** Still the newest committed run, on the child it was started for. */
+  /** Still the newest committed run, on the child and reading it started on. */
   readonly current: boolean;
-  /** Some committed run is still fetching. */
+  /** The run the surface is still waiting on has not settled yet. */
   readonly busy: boolean;
 }
 
-/** The one fact the tracker needs from the controller. */
+/** The facts the tracker reads from the controller, both read-only. */
 export interface OverlaySearchRunFocus {
   currentChildId(): string | undefined;
+  /** The controller's monotonic committed-search epoch. */
+  searchEpoch(): number;
 }
 
 /**
@@ -241,12 +265,17 @@ export interface OverlaySearchRunFocus {
  * rule, on the surface side — a run the reader has moved past may not jump the
  * viewport to a match and may not take the inspector down into the fallback.
  *
- * `busy` deliberately tracks RUNS rather than the newest one: a superseded run
- * that settles first must not report the surface idle while the current one is
- * still fetching.
+ * `busy` is the CURRENT run's own state, not a count of promises. A committed
+ * page read has no timeout and no cancellation: the reader who abandons a
+ * search leaves its promise pending, possibly forever. Counting those in
+ * flight meant one abandoned read held the whole surface busy — no steer, no
+ * follow-up, no paging — long after the search the reader was actually
+ * waiting on had answered. Only a run that can still act on this surface can
+ * still hold it, so an abandoned or superseded promise is simply not the
+ * surface's business any more.
  */
 export interface OverlaySearchRunTracker {
-  /** Claims the newest run for the child now on screen. */
+  /** Claims the newest run for the child and reading now on screen. */
   begin(): OverlaySearchRun;
   /** Retires the newest run without starting one. */
   abandon(): void;
@@ -258,24 +287,48 @@ export function createOverlaySearchRunTracker(
   focus: OverlaySearchRunFocus,
 ): OverlaySearchRunTracker {
   let revision = 0;
-  let inFlight = 0;
+  /** The one run this surface is still waiting on, if any. */
+  let pending: OverlaySearchRun | undefined;
+
+  /**
+   * Whether `run` still describes the search, the child AND the reading the
+   * reader is looking at. Every clause is compared against a fact owned
+   * elsewhere; none of them is re-derived from the run itself.
+   */
+  const isCurrent = (run: OverlaySearchRun): boolean =>
+    run.revision === revision &&
+    run.childId !== undefined &&
+    focus.currentChildId() === run.childId &&
+    focus.searchEpoch() === run.epoch;
+
   return {
     begin(): OverlaySearchRun {
       revision += 1;
-      inFlight += 1;
-      return Object.freeze({ revision, childId: focus.currentChildId() });
+      const run = Object.freeze({
+        revision,
+        childId: focus.currentChildId(),
+        epoch: focus.searchEpoch(),
+      });
+      // Beginning replaces whatever the surface was waiting on: the previous
+      // run is superseded by this one and can no longer hold the surface.
+      pending = run;
+      return run;
     },
     abandon(): void {
       revision += 1;
+      pending = undefined;
     },
     settle(run: OverlaySearchRun): OverlaySearchRunOutcome {
-      inFlight = Math.max(0, inFlight - 1);
+      const current = isCurrent(run);
+      // A run settles once, so it stops being awaited whether it won or lost.
+      if (pending !== undefined && pending.revision === run.revision) {
+        pending = undefined;
+      }
       return {
-        current:
-          run.revision === revision &&
-          run.childId !== undefined &&
-          focus.currentChildId() === run.childId,
-        busy: inFlight > 0,
+        current,
+        // A run the reader has moved past cannot make this surface busy, so
+        // the wait ends with the reading it belonged to.
+        busy: pending !== undefined && isCurrent(pending),
       };
     },
   };

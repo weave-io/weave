@@ -22,8 +22,12 @@
  * provider-error projection.
  */
 
+import type { OverlaySearchState } from "./child-overlay-input-modes.js";
+import { overlaySearchQuery } from "./child-overlay-input-modes.js";
 import {
   type OverlayHeaderFacts,
+  type OverlayNavFacts,
+  type OverlayNavMatch,
   type OverlayPromptFacts,
   type OverlayRailFacts,
   type OverlaySettlementFacts,
@@ -38,6 +42,8 @@ import {
   overlayToolTarget,
   overlayToolTone,
 } from "./child-overlay-pi-native.js";
+import { boundText } from "./child-overlay-replay.js";
+import type { OverlayLayoutSpan } from "./child-overlay-scroll.js";
 import type {
   ChildOverlayOutcome,
   ChildOverlayStatus,
@@ -644,5 +650,74 @@ export function childOverlayPromptFacts(
       view.child.status === "orphan"
         ? "read-only — this child was orphaned"
         : undefined,
+  };
+}
+
+/**
+ * The rail's search vocabulary: one view, one painted layout, one search mode.
+ *
+ * The counter counts matched ENTRIES, which is what the controller searched
+ * and what `n` / `N` walk, so the rail can never claim a match the keyboard
+ * cannot reach. Row indices come from the spans the transcript just reported,
+ * so the marker gutter marks rows that were actually painted.
+ *
+ * It takes the search state rather than reading one, so what the rail prints
+ * is decided by the same keyboard state the component routes keys with, and
+ * can be asserted without a TUI or a rendered frame.
+ */
+export function childOverlayNavFacts(
+  view: ChildOverlayView,
+  spans: readonly OverlayLayoutSpan[],
+  search: OverlaySearchState,
+): OverlayNavFacts {
+  const startRow = new Map<string, number>();
+  let row = 0;
+  for (const span of spans) {
+    startRow.set(span.entryId, row);
+    row += span.rows;
+  }
+  const total = view.searchMatches.length;
+  const current =
+    total === 0 ? 0 : (((search.matchIndex % total) + total) % total) + 1;
+  const matches: OverlayNavMatch[] = view.searchMatches.map(
+    (entryId, index) => {
+      const entry = view.entries.find((candidate) => candidate.id === entryId);
+      return {
+        ordinal: index + 1,
+        row: startRow.get(entryId) ?? 0,
+        label: entry?.kind ?? "entry",
+        at: entry?.runNumber === undefined ? "" : `run ${entry.runNumber}`,
+        snippet: boundText(entry?.text ?? ""),
+      };
+    },
+  );
+  const counts = new Map<string, number>();
+  for (const match of matches) {
+    counts.set(match.label, (counts.get(match.label) ?? 0) + 1);
+  }
+  return {
+    open: search.mode !== "off",
+    accepted: search.accepted,
+    query: overlaySearchQuery(search, view.searchQuery),
+    matches,
+    total,
+    current,
+    currentMatch: current === 0 ? undefined : matches[current - 1],
+    counter: `${current}/${total}`,
+    summary:
+      total === 0
+        ? "no match in this transcript"
+        : [...counts.entries()]
+            .map(([label, count]) => `${label} ${count}`)
+            .join(" · "),
+    empty: total === 0,
+    rows: new Set(
+      view.searchMatches
+        .map((entryId) => startRow.get(entryId))
+        .filter((value): value is number => value !== undefined),
+    ),
+    // The controller's scroll offset already positions the viewport on the
+    // current match, so the window is never anchored twice.
+    anchorRow: undefined,
   };
 }

@@ -33,6 +33,7 @@ import type { PiNativeTranscriptComponentDeps } from "./child-native-components.
 import type { ChildOverlayController } from "./child-overlay-controller.js";
 import {
   childOverlayHeaderFacts,
+  childOverlayNavFacts,
   childOverlayPromptFacts,
   childOverlayRailFacts,
   childOverlaySettlementFacts,
@@ -43,7 +44,6 @@ import {
   CLOSED_OVERLAY_SEARCH,
   createOverlaySearchRunTracker,
   type OverlaySearchState,
-  overlaySearchQuery,
   stepOverlaySearch,
 } from "./child-overlay-input-modes.js";
 import type { PiChildOverlayKeyInterceptor } from "./child-overlay-keys.js";
@@ -58,8 +58,6 @@ import {
   OVERLAY_FRAME_TITLE,
   OVERLAY_PROMPT_PANEL_INSET,
   type OverlayFrameChrome,
-  type OverlayNavFacts,
-  type OverlayNavMatch,
   overlayEditorBodyRows,
   overlayPaneGeometry,
   overlayRuleRow,
@@ -71,7 +69,6 @@ import {
   transcriptWindow,
 } from "./child-overlay-layout.js";
 import { renderOverlayTranscript } from "./child-overlay-pi-native.js";
-import { boundText } from "./child-overlay-replay.js";
 import type { OverlayLayoutSpan } from "./child-overlay-scroll.js";
 import { normalizeChildOverlayScrollFrame } from "./child-overlay-terminal-input.js";
 import {
@@ -395,7 +392,21 @@ export function createChildOverlayCustomComponent(
   let lastUsableRows = -1;
   let finished = false;
   let fallbackEmitted = false;
-  let inputBusy = false;
+  /** A controller mutation this surface issued has not answered yet. */
+  let controllerBusy = false;
+  /** The committed search run this surface is waiting on has not settled. */
+  let searchBusy = false;
+  /**
+   * Whether a key that mutates the child must be dropped rather than queued.
+   *
+   * The two waits are tracked apart because they are retired by different
+   * things: a committed search run that the reader moved past is retired by
+   * the tracker, while a pagination or a submission is retired only by its own
+   * answer. Sharing one flag let a settling search run clear a pagination's
+   * wait, and let an abandoned search hold a submission that had nothing to do
+   * with it.
+   */
+  const inputBusy = (): boolean => controllerBusy || searchBusy;
   let search: OverlaySearchState = CLOSED_OVERLAY_SEARCH;
   const searchRuns = createOverlaySearchRunTracker(controller);
   /** The child whose cancellation is awaiting a `y` / `n` answer, if any. */
@@ -420,7 +431,10 @@ export function createChildOverlayCustomComponent(
   const emitFallback = (
     reason: ChildOverlayFallbackReason | ChildOverlayFallbackRequired,
   ): void => {
-    if (fallbackEmitted) return;
+    // A finished overlay has already handed the screen back. Collapsing into
+    // the custom-editor inspection afterwards would re-open an inspector the
+    // reader closed, on the strength of an answer nobody is waiting for.
+    if (finished || fallbackEmitted) return;
     fallbackEmitted = true;
     const payload =
       typeof reason === "string" ? controller.requireFallback(reason) : reason;
@@ -508,72 +522,6 @@ export function createChildOverlayCustomComponent(
   };
 
   /**
-   * The rail's search vocabulary, built from the controller's own match set.
-   *
-   * The counter counts matched ENTRIES, which is what the controller searched
-   * and what `n` / `N` walk, so the rail can never claim a match the keyboard
-   * cannot reach. Row indices come from the spans the transcript just
-   * reported, so the marker gutter marks rows that were actually painted.
-   */
-  const navFacts = (
-    view: ChildOverlayView,
-    spans: readonly OverlayLayoutSpan[],
-  ): OverlayNavFacts => {
-    const startRow = new Map<string, number>();
-    let row = 0;
-    for (const span of spans) {
-      startRow.set(span.entryId, row);
-      row += span.rows;
-    }
-    const total = view.searchMatches.length;
-    const current =
-      total === 0 ? 0 : (((search.matchIndex % total) + total) % total) + 1;
-    const matches: OverlayNavMatch[] = view.searchMatches.map(
-      (entryId, index) => {
-        const entry = view.entries.find(
-          (candidate) => candidate.id === entryId,
-        );
-        return {
-          ordinal: index + 1,
-          row: startRow.get(entryId) ?? 0,
-          label: entry?.kind ?? "entry",
-          at: entry?.runNumber === undefined ? "" : `run ${entry.runNumber}`,
-          snippet: boundText(entry?.text ?? ""),
-        };
-      },
-    );
-    const counts = new Map<string, number>();
-    for (const match of matches) {
-      counts.set(match.label, (counts.get(match.label) ?? 0) + 1);
-    }
-    return {
-      open: search.mode !== "off",
-      accepted: search.accepted,
-      query: overlaySearchQuery(search, view.searchQuery),
-      matches,
-      total,
-      current,
-      currentMatch: current === 0 ? undefined : matches[current - 1],
-      counter: `${current}/${total}`,
-      summary:
-        total === 0
-          ? "no match in this transcript"
-          : [...counts.entries()]
-              .map(([label, count]) => `${label} ${count}`)
-              .join(" · "),
-      empty: total === 0,
-      rows: new Set(
-        view.searchMatches
-          .map((entryId) => startRow.get(entryId))
-          .filter((value): value is number => value !== undefined),
-      ),
-      // The controller's scroll offset already positions the viewport on the
-      // current match, so the window is never anchored twice.
-      anchorRow: undefined,
-    };
-  };
-
-  /**
    * Paint the transcript and report how many rendered rows each entry occupies.
    *
    * The spans are what let the controller keep a logical viewport across a
@@ -647,9 +595,26 @@ export function createChildOverlayCustomComponent(
     );
   };
 
+  /**
+   * Drops the reader's licence to every committed page still on its way, on
+   * BOTH sides of the boundary and before anything repaints or returns.
+   *
+   * The controller refuses the write — the merge, the recount, the returned
+   * child, the fallback — and the surface refuses the jump and the wait. Half
+   * of that is not a fix: invalidating only the surface leaves a late page
+   * prepending itself into the window and recounting the rail, and invalidating
+   * only the controller leaves the viewport jumping to a match under a reader
+   * who has moved on.
+   */
+  const abandonCommittedSearchRun = (): void => {
+    searchRuns.abandon();
+    controller.abandonCommittedSearch();
+    searchBusy = false;
+  };
+
   const exitSearch = (clearQuery: boolean): void => {
     // Leaving search abandons the commit it was still fetching for.
-    searchRuns.abandon();
+    abandonCommittedSearchRun();
     search = CLOSED_OVERLAY_SEARCH;
     if (!clearQuery) {
       requestPaint();
@@ -662,6 +627,20 @@ export function createChildOverlayCustomComponent(
   };
 
   /**
+   * Re-opens search on the committed query so the reader can edit it again.
+   *
+   * The query and its counter stay exactly as they are — nothing is re-matched
+   * and no source is read — but the pages still fetching for that query lose
+   * their licence here, before the repaint, rather than at the reader's next
+   * keystroke. A reader who re-opens search and then pauses is still a reader
+   * who stopped waiting for that answer.
+   */
+  const reopenSearchForEditing = (): void => {
+    abandonCommittedSearchRun();
+    requestPaint();
+  };
+
+  /**
    * Adopts the query being typed so the rail counts what it prints.
    *
    * Window-only and synchronous: no source read, no timer, no viewport move.
@@ -669,8 +648,10 @@ export function createChildOverlayCustomComponent(
    * commit key owns both the historical search and the jump.
    */
   const previewSearchQuery = (query: string): void => {
-    // A query edit abandons the commit still fetching for the previous one.
-    searchRuns.abandon();
+    // A query edit abandons the commit still fetching for the previous one, on
+    // both sides: `previewSearch` invalidates the controller's own epoch, and
+    // this drops the surface's wait and its licence to jump.
+    abandonCommittedSearchRun();
     controller.previewSearch(query).match(
       () => requestPaint(),
       (error) => {
@@ -686,20 +667,26 @@ export function createChildOverlayCustomComponent(
   };
 
   const runSearchQuery = (query: string): void => {
+    // ORDER IS THE CONTRACT. Committing adopts the query and moves the
+    // controller's search epoch on, so the run must be claimed AFTER it: a run
+    // claimed first would carry the epoch of the search it just replaced and
+    // could never prove it was current. Nothing awaits in between, so the run
+    // is claimed on exactly the reading this commit created.
+    const committed = controller.search(query);
     const run = searchRuns.begin();
-    inputBusy = true;
-    void controller.search(query).match(
+    searchBusy = true;
+    void committed.match(
       () => {
         const settled = searchRuns.settle(run);
-        inputBusy = settled.busy;
+        searchBusy = settled.busy;
         // A superseded run may not jump the viewport under the query, child,
-        // or closed overlay the reader moved on to.
+        // reading, or closed overlay the reader moved on to.
         if (settled.current) focusSearchMatch();
         requestPaint();
       },
       (error) => {
         const settled = searchRuns.settle(run);
-        inputBusy = settled.busy;
+        searchBusy = settled.busy;
         // Nor may its failure collapse a surface it no longer describes.
         if (settled.current) afterControllerOutcome(err(error));
         else requestPaint();
@@ -728,8 +715,8 @@ export function createChildOverlayCustomComponent(
     switch (step.effect.kind) {
       case "none":
         return true;
-      case "repaint":
-        requestPaint();
+      case "reopen":
+        reopenSearchForEditing();
         return true;
       case "preview":
         previewSearchQuery(step.effect.query);
@@ -827,24 +814,24 @@ export function createChildOverlayCustomComponent(
     matchesKey(data, "alt+down");
 
   const handleControllerInput = (data: string): void => {
-    if (inputBusy) return;
-    inputBusy = true;
+    if (inputBusy()) return;
+    controllerBusy = true;
     void handlePaginationEdge(data)
       .andThen(() => controller.handleInput(data))
       .match(
         (value) => {
-          inputBusy = false;
+          controllerBusy = false;
           afterControllerOutcome(ok(value));
         },
         (error) => {
-          inputBusy = false;
+          controllerBusy = false;
           afterControllerOutcome(err(error));
         },
       );
   };
 
   const submitDraft = (kind: "steer" | "follow-up"): void => {
-    if (inputBusy) return;
+    if (inputBusy()) return;
     const view = controller.view();
     if (view.isErr() || view.value.readOnly) return;
     const text = draftEditor.getExpandedText().trim();
@@ -854,14 +841,14 @@ export function createChildOverlayCustomComponent(
     // the submitted text so a focus switch during the pending mutation can
     // never clear or overwrite the newly focused child's draft.
     const submittedChildId = view.value.child.childId;
-    inputBusy = true;
+    controllerBusy = true;
     const submission =
       kind === "steer"
         ? controller.submitSteer(text)
         : controller.submitFollowUp(text);
     void submission.match(
       (outcome) => {
-        inputBusy = false;
+        controllerBusy = false;
         const settledView = controller.view();
         if (
           settledView.isErr() ||
@@ -886,7 +873,7 @@ export function createChildOverlayCustomComponent(
         );
       },
       (error) => {
-        inputBusy = false;
+        controllerBusy = false;
         afterControllerOutcome(err(error));
       },
     );
@@ -1002,7 +989,7 @@ export function createChildOverlayCustomComponent(
       () => undefined,
       () => undefined,
     );
-    const nav = navFacts(view, transcript.value.spans);
+    const nav = childOverlayNavFacts(view, transcript.value.spans, search);
     const painted = nav.open
       ? markSearchGutter(paint, nav, transcript.value.lines, geometry.pane)
       : transcript.value.lines;
@@ -1187,7 +1174,8 @@ export function createChildOverlayCustomComponent(
       )().match(
         () => undefined,
         () => {
-          inputBusy = false;
+          controllerBusy = false;
+          searchBusy = false;
           emitFallback("render-failed");
         },
       );

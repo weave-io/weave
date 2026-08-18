@@ -338,7 +338,7 @@
   - function formatOverlayCost: (cost) => string | undefined
   - function childOverlayTurn: (view) => number | undefined
   - function childOverlayTranscriptInput: (view) => OverlayTranscriptInput
-  - _...7 more_
+  - _...8 more_
 - `packages/adapters/pi/src/child-overlay-fallback-diagnostics.ts`
   - function isPiChildOverlayFallbackReasonCode: (value) => value is PiChildOverlayFallbackReasonCode
   - function formatPiChildOverlayFallbackDiagnostic: (code) => string
@@ -446,11 +446,11 @@
 - `packages/adapters/pi/src/child-overlay-window.ts`
   - function emptySaved: (threadId, touched) => SavedChildState
   - function isReadOnly: (child) => boolean
+  - function childOverlayFallbackRequired: (child, state, reason, failedRead?) => ChildOverlayFallbackRequired
   - function prependOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
   - function appendOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
   - function resolveLiveAssistantEntry: (state, phase) => string
-  - function appendLiveAssistantDelta: (state, entryId, delta, sequence) => ChildOverlayEntry
-  - _...5 more_
+  - _...7 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort

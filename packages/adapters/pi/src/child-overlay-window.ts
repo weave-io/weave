@@ -31,11 +31,15 @@ import {
   latestUsageInWindow,
   NO_TERMINAL_ERROR_EVIDENCE,
   pageEvidence,
+  terminalErrorView,
 } from "./child-overlay-telemetry.js";
 import type {
   ChildOverlayAnchor,
   ChildOverlayChild,
   ChildOverlayEntry,
+  ChildOverlayFallbackMetadata,
+  ChildOverlayFallbackReason,
+  ChildOverlayFallbackRequired,
   ChildOverlayPage,
 } from "./child-overlay-types.js";
 import type { PiChildUsageReport } from "./child-session-events.js";
@@ -196,6 +200,57 @@ export function emptySaved(threadId: string, touched: number): SavedChildState {
 /** A settled or orphaned child is history: the inspector may not mutate it. */
 export function isReadOnly(child: ChildOverlayChild): boolean {
   return child.status === "settled" || child.status === "orphan";
+}
+
+/** The read that failed, when the fallback is a source failure rather than a
+ * render failure. `sourceErrorType` is a discriminant and never free-form. */
+export interface ChildOverlayFailedRead {
+  readonly childId: string;
+  readonly sourceErrorType: ChildOverlayFallbackMetadata["sourceErrorType"];
+}
+
+/**
+ * What a child and its saved window become when the native surface must hand
+ * over to the custom-editor inspection.
+ *
+ * One builder, because there is one envelope. The controller raises this from
+ * two places — a render boundary the component reports, and a source read that
+ * failed — and they were two hand-written copies of the same object: same
+ * bounded metadata, same terminal-error fragment, same transcript model. A
+ * copy that drifts here is a fallback that leaks something the other one
+ * withholds, so the shape is stated once.
+ *
+ * Nothing free-form crosses: the metadata carries identity, a bounded entry
+ * count, a closed reason, the read-only verdict and the source error's
+ * DISCRIMINANT. Exception text, paths and cursors never reach it.
+ */
+export function childOverlayFallbackRequired(
+  child: ChildOverlayChild | undefined,
+  state: SavedChildState | undefined,
+  reason: ChildOverlayFallbackReason,
+  failedRead?: ChildOverlayFailedRead,
+): ChildOverlayFallbackRequired {
+  // A failed read names the child it was issued for, which is not necessarily
+  // the child now open; a render boundary has no child to name but the open
+  // one.
+  const childId = failedRead?.childId ?? child?.childId ?? "unknown";
+  return {
+    kind: "fallback-required",
+    metadata: {
+      childId,
+      threadId:
+        child?.threadId ?? (failedRead === undefined ? "unknown" : childId),
+      status: child?.status ?? "settled",
+      entryCount: state?.entries.length ?? 0,
+      reason,
+      readOnly: child === undefined ? true : isReadOnly(child),
+      ...(failedRead === undefined
+        ? {}
+        : { sourceErrorType: failedRead.sourceErrorType }),
+    },
+    ...(state === undefined ? {} : terminalErrorView(state.evidence)),
+    transcript: state?.transcript ?? createPiChildTranscriptState(),
+  };
 }
 
 export function prependOverlayPage(

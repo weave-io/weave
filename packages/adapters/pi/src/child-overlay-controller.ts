@@ -64,7 +64,6 @@ import {
   pageEvidence,
   readChildOverlayPlanContext,
   terminalErrorOf,
-  terminalErrorView,
 } from "./child-overlay-telemetry.js";
 import {
   boundOverlayText,
@@ -75,7 +74,6 @@ import {
   type ChildOverlayConfig,
   type ChildOverlayEntry,
   type ChildOverlayError,
-  type ChildOverlayFallbackMetadata,
   type ChildOverlayFallbackReason,
   type ChildOverlayFallbackRequired,
   type ChildOverlayInputOutcome,
@@ -91,6 +89,7 @@ import {
 import {
   appendLiveAssistantDelta,
   appendOverlayPage,
+  childOverlayFallbackRequired,
   dedupEntries,
   emptySaved,
   endLiveAssistantLifecycle,
@@ -106,11 +105,7 @@ import {
   parsePiChildSessionEvent,
   parsePiChildUsageReport,
 } from "./child-session-events.js";
-import {
-  createPiChildTranscriptState,
-  type PiChildTranscriptState,
-  reducePiChildTranscript,
-} from "./child-transcript.js";
+import { reducePiChildTranscript } from "./child-transcript.js";
 import { messageUpdateAnswerText } from "./message-update-carrier.js";
 
 // ---------------------------------------------------------------------------
@@ -186,6 +181,35 @@ export class ChildOverlayController {
 
   currentChildId(): string | undefined {
     return this.openChild?.childId;
+  }
+
+  /**
+   * The epoch of the reading and the search a late answer must still belong to.
+   *
+   * The smallest fact that can be published about the committed search: one
+   * monotonic number, read-only, moved by nothing but a new reading or an
+   * invalidation. The surface carries it inside its own run token so the jump
+   * and the fallback IT owns are bound to the same reading the controller
+   * binds its writes to — including the reopens the surface never sees, since
+   * walking to a child, closing the overlay and re-opening the SAME child all
+   * happen here and all move this on.
+   */
+  searchEpoch(): number {
+    return this.committedSearch.epoch();
+  }
+
+  /**
+   * Retires every committed search still in flight, and nothing else.
+   *
+   * The query the rail prints and the matches it counts are left exactly as
+   * they are: re-opening search to EDIT a committed query, and closing search
+   * to answer a cancel confirmation, both drop the reader's licence to the
+   * pages still on their way without pretending the reader retyped anything.
+   * Re-matching here would silently shrink the counter to the loaded window,
+   * dropping every match the committed search already paged in.
+   */
+  abandonCommittedSearch(): void {
+    this.committedSearch.invalidate();
   }
 
   view(): Result<ChildOverlayView, ChildOverlayError> {
@@ -925,19 +949,7 @@ export class ChildOverlayController {
     const child = this.openChild;
     const state =
       child !== undefined ? this.saved.get(child.childId) : undefined;
-    return {
-      kind: "fallback-required",
-      metadata: {
-        childId: child?.childId ?? "unknown",
-        threadId: child?.threadId ?? "unknown",
-        status: child?.status ?? "settled",
-        entryCount: state?.entries.length ?? 0,
-        reason,
-        readOnly: child === undefined ? true : isReadOnly(child),
-      },
-      ...(state === undefined ? {} : terminalErrorView(state.evidence)),
-      transcript: state?.transcript ?? createPiChildTranscriptState(),
-    };
+    return childOverlayFallbackRequired(child, state, reason);
   }
 
   private submitDraftMutation(
@@ -1162,24 +1174,14 @@ export class ChildOverlayController {
     reason: ChildOverlayFallbackReason,
     error: ChildOverlaySourceError,
   ): ChildOverlayFallbackRequired {
-    const child = this.openChild;
-    const state = this.saved.get(childId);
-    const metadata: ChildOverlayFallbackMetadata = {
-      childId,
-      threadId: child?.threadId ?? childId,
-      status: child?.status ?? "settled",
-      entryCount: state?.entries.length ?? 0,
+    return childOverlayFallbackRequired(
+      this.openChild,
+      this.saved.get(childId),
       reason,
-      readOnly: child === undefined ? true : isReadOnly(child),
-      sourceErrorType: error.type, // discriminant only, never free-form
-    };
-    // Ensure no path-like strings leak through error channels.
-    return {
-      kind: "fallback-required",
-      metadata,
-      ...(state === undefined ? {} : terminalErrorView(state.evidence)),
-      transcript: state?.transcript ?? createPiChildTranscriptState(),
-    };
+      // The discriminant only: no path-like string may leak through an error
+      // channel.
+      { childId, sourceErrorType: error.type },
+    );
   }
 }
 
