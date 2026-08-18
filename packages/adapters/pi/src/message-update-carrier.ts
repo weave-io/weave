@@ -19,6 +19,14 @@
  * snapshot built from them. That is a chain-of-thought disclosure produced by
  * an ambiguity, not by a bug in any one reader.
  *
+ * The same ambiguity has a HIDDEN form: a frame whose
+ * `assistantMessageEvent.type` says `text_delta` (or `answer`, or anything
+ * else) while the carrier buries the thought in a `thinking` / `reasoning`
+ * member, or in a nested `{ type: "thinking" }` content block. Deciding from
+ * the declared type alone published those frames as pure answers. The type is
+ * therefore only one of the things read: any carrier that still holds raw
+ * reasoning prose, however it labels itself, is a reasoning carrier here.
+ *
  * So the classification is made ONCE, here, and it is mutually exclusive by
  * construction: a frame is answer text, or a content-free reasoning fact, or
  * framing that states nothing, or it is REJECTED. There is no ordering between
@@ -58,7 +66,11 @@ export const MAX_MESSAGE_UPDATE_ANSWER_LENGTH = 16_384;
 export type PiMessageUpdateRejection =
   /** Reflection over the frame threw (proxy trap, revoked proxy). */
   | "unreadable"
-  /** Answer text and raw reasoning were both carried by one frame. */
+  /**
+   * Answer text and raw reasoning were both carried by one frame - whether
+   * the reasoning was declared by the carrier's type or hidden in a prose
+   * member or a nested thinking block beside the answer.
+   */
   | "mixed-carriers"
   /** A declared answer carrier held no string to publish. */
   | "malformed-answer"
@@ -111,6 +123,45 @@ export function isRawReasoningAssistantEventType(type: unknown): boolean {
   return typeof type === "string" && RAW_REASONING_EVENT_TYPES.has(type);
 }
 
+/**
+ * Keys that state raw chain-of-thought PROSE wherever a carrier declares them.
+ *
+ * The declared `type` is not the only thing that makes a frame reasoning. A
+ * carrier may say `text_delta` (or any other type, including one this module
+ * has no rule for) and still hold the thought in a `thinking` or `reasoning`
+ * member beside its answer, and nothing on the wire forbids that. Reading the
+ * type alone published such a frame as a pure answer and left the prose in
+ * everything retained from it.
+ *
+ * Exported so `child-session-events.ts` redacts the SAME keys this classifier
+ * refuses on; `message-update-carrier.test.ts` pins the two lists together.
+ */
+export const RAW_REASONING_PROSE_KEYS: readonly string[] = [
+  "thinking",
+  "reasoning",
+];
+
+const RAW_REASONING_PROSE_KEY_SET: ReadonlySet<string> = new Set(
+  RAW_REASONING_PROSE_KEYS,
+);
+
+/**
+ * Content-block `type` values that state raw chain-of-thought.
+ *
+ * A block is the second hidden carrier: `{ type: "thinking", text }` nested in
+ * a carrier's `content` is the whole thought, whatever the carrier's own type
+ * claims to be.
+ */
+const RAW_REASONING_BLOCK_TYPES: ReadonlySet<string> = new Set([
+  "thinking",
+  "reasoning",
+]);
+
+/** How deep one hidden-carrier scan walks before it describes nothing. */
+const MAX_HIDDEN_REASONING_DEPTH = 8;
+/** How many objects one frame's scans may read before they describe nothing. */
+const MAX_HIDDEN_REASONING_NODES = 512;
+
 /** The `assistantMessageEvent.type` that declares an answer-text carrier. */
 const ANSWER_EVENT_TYPE = "text_delta";
 
@@ -152,6 +203,96 @@ function ownDataValue(
   if (!("value" in found)) return ABSENT;
   if (found.enumerable !== true) return ABSENT;
   return found.value;
+}
+
+/** Own enumerable key names, or {@link UNREADABLE} when reflection threw. */
+const ownEnumerableKeys = Result.fromThrowable(
+  (target: object): string[] => Object.keys(target),
+  () => UNREADABLE,
+);
+
+/** How many objects one frame's hidden-reasoning scans may still read. */
+interface ScanBudget {
+  remaining: number;
+}
+
+/**
+ * True when some string this value can still reach holds prose.
+ *
+ * `type` is skipped: a block kind (`"thinking"`) is structure, not
+ * chain-of-thought, so a block whose prose is already blank states nothing and
+ * an emptied carrier reclassifies exactly as it did before it was emptied.
+ * Mirrors `carriesReasoningProse` in the redaction boundary.
+ */
+function reachesProse(
+  value: unknown,
+  budget: ScanBudget,
+  depth: number,
+): boolean | typeof UNREADABLE {
+  if (typeof value === "string") return value !== "";
+  if (typeof value !== "object" || value === null) return false;
+  if (depth >= MAX_HIDDEN_REASONING_DEPTH) return UNREADABLE;
+  if (budget.remaining <= 0) return UNREADABLE;
+  budget.remaining -= 1;
+  const keys = ownEnumerableKeys(value);
+  if (keys.isErr()) return UNREADABLE;
+  for (const key of keys.value) {
+    if (key === "type") continue;
+    const member = ownDataValue(value, key);
+    if (member === UNREADABLE) return UNREADABLE;
+    if (member === ABSENT) continue;
+    const nested = reachesProse(member, budget, depth + 1);
+    if (nested !== false) return nested;
+  }
+  return false;
+}
+
+/**
+ * True when this value DECLARES raw chain-of-thought, however it is buried.
+ *
+ * Two declarations count, and both are structural rather than typed:
+ *
+ * - a `thinking` or `reasoning` member that still holds prose, at any depth;
+ * - a `{ type: "thinking" | "reasoning", … }` content block that still holds
+ *   prose, at any depth.
+ *
+ * Everything else is left alone, which is what keeps ordinary answer frames
+ * (and the numeric `usage.reasoning` token count beside them) out of it: a
+ * key that names reasoning but carries no prose declares nothing.
+ */
+function declaresHiddenReasoning(
+  value: unknown,
+  budget: ScanBudget,
+  depth: number,
+): boolean | typeof UNREADABLE {
+  if (typeof value !== "object" || value === null) return false;
+  if (depth >= MAX_HIDDEN_REASONING_DEPTH) return UNREADABLE;
+  if (budget.remaining <= 0) return UNREADABLE;
+  budget.remaining -= 1;
+  const array = isArrayValue(value);
+  if (array.isErr()) return UNREADABLE;
+  const keys = ownEnumerableKeys(value);
+  if (keys.isErr()) return UNREADABLE;
+  if (!array.value) {
+    const type = ownDataValue(value, "type");
+    if (type === UNREADABLE) return UNREADABLE;
+    if (typeof type === "string" && RAW_REASONING_BLOCK_TYPES.has(type)) {
+      const prose = reachesProse(value, budget, depth);
+      if (prose !== false) return prose;
+    }
+  }
+  for (const key of keys.value) {
+    const member = ownDataValue(value, key);
+    if (member === UNREADABLE) return UNREADABLE;
+    if (member === ABSENT || member === undefined) continue;
+    if (!array.value && RAW_REASONING_PROSE_KEY_SET.has(key)) {
+      const prose = reachesProse(member, budget, depth + 1);
+      if (prose !== false) return prose;
+    }
+    const nested = declaresHiddenReasoning(member, budget, depth + 1);
+    if (nested !== false) return nested;
+  }
+  return false;
 }
 
 /** The value as a plain object, or a marker. Arrays are not carriers. */
@@ -201,8 +342,18 @@ export function classifyPiMessageUpdate(
     reasoning: false,
   };
 
-  if (!observeLegacyDelta(record, observed)) return REJECTED("unreadable");
-  if (!observeAssistantEvent(record, observed)) return REJECTED("unreadable");
+  // One budget for the whole frame: a hostile payload cannot pay for a deep
+  // scan once per carrier.
+  const budget: ScanBudget = { remaining: MAX_HIDDEN_REASONING_NODES };
+  if (!observeFrameProse(record, observed, budget)) {
+    return REJECTED("unreadable");
+  }
+  if (!observeLegacyDelta(record, observed, budget)) {
+    return REJECTED("unreadable");
+  }
+  if (!observeAssistantEvent(record, observed, budget)) {
+    return REJECTED("unreadable");
+  }
 
   const answerDeclared =
     observed.answers.length > 0 ||
@@ -231,10 +382,17 @@ export function classifyPiMessageUpdate(
 function observeLegacyDelta(
   record: object,
   observed: CarrierObservation,
+  budget: ScanBudget,
 ): boolean {
   const delta = ownRecord(record, "delta");
   if (delta === UNREADABLE) return false;
   if (delta === ABSENT) return true;
+
+  // Whatever else it declared, a legacy carrier that buries prose under a
+  // reasoning key or a reasoning block is a reasoning carrier.
+  const hidden = declaresHiddenReasoning(delta, budget, 0);
+  if (hidden === UNREADABLE) return false;
+  if (hidden) observed.reasoning = true;
 
   const thinking = ownDataValue(delta, "thinking");
   if (thinking === UNREADABLE) return false;
@@ -259,10 +417,19 @@ function observeLegacyDelta(
 function observeAssistantEvent(
   record: object,
   observed: CarrierObservation,
+  budget: ScanBudget,
 ): boolean {
   const event = ownRecord(record, "assistantMessageEvent");
   if (event === UNREADABLE) return false;
   if (event === ABSENT) return true;
+
+  // Read BEFORE the type, and independently of it. `text_delta` beside a
+  // `thinking` member, or an `answer` frame whose `content` holds a thinking
+  // block, is a raw-reasoning carrier however it labels itself; a frame that
+  // then also declares an answer is mixed, and moves nothing.
+  const hidden = declaresHiddenReasoning(event, budget, 0);
+  if (hidden === UNREADABLE) return false;
+  if (hidden) observed.reasoning = true;
 
   const type = ownDataValue(event, "type");
   if (type === UNREADABLE) return false;
@@ -276,6 +443,38 @@ function observeAssistantEvent(
   const delta = ownDataValue(event, "delta");
   if (delta === UNREADABLE) return false;
   recordAnswer(delta === ABSENT ? undefined : delta, observed);
+  return true;
+}
+
+/**
+ * Reads raw-reasoning prose the FRAME itself declares, beside its carriers.
+ *
+ * Deliberately narrow: only the two prose keys and a `content` block list. The
+ * frame's `text`, `partial` and `partialText` are answer snapshots in the
+ * legacy shapes, and `usage` carries a numeric `reasoning` token count, so a
+ * blanket walk of the frame would call ordinary answers reasoning.
+ *
+ * Returns `false` when the frame could not be read at all.
+ */
+function observeFrameProse(
+  record: object,
+  observed: CarrierObservation,
+  budget: ScanBudget,
+): boolean {
+  for (const key of RAW_REASONING_PROSE_KEYS) {
+    const value = ownDataValue(record, key);
+    if (value === UNREADABLE) return false;
+    if (value === ABSENT || value === undefined) continue;
+    const prose = reachesProse(value, budget, 0);
+    if (prose === UNREADABLE) return false;
+    if (prose) observed.reasoning = true;
+  }
+  const content = ownDataValue(record, "content");
+  if (content === UNREADABLE) return false;
+  if (content === ABSENT || content === undefined) return true;
+  const blocks = declaresHiddenReasoning(content, budget, 0);
+  if (blocks === UNREADABLE) return false;
+  if (blocks) observed.reasoning = true;
   return true;
 }
 

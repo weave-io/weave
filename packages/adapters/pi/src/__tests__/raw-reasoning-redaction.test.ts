@@ -54,6 +54,10 @@ const COT = {
   legacy: "SENTINEL-LEGACY-DELTA-PROSE",
   message: "SENTINEL-MESSAGE-REASONING-PROSE",
   frame: "SENTINEL-FRAME-PROSE",
+  hiddenKey: "SENTINEL-HIDDEN-KEY-PROSE",
+  hiddenBlock: "SENTINEL-HIDDEN-BLOCK-PROSE",
+  hiddenLegacy: "SENTINEL-HIDDEN-LEGACY-PROSE",
+  hiddenFrame: "SENTINEL-HIDDEN-FRAME-PROSE",
 } as const;
 
 const ALL_SENTINELS = Object.values(COT);
@@ -122,6 +126,64 @@ function hostileThinkingLifecycle(): readonly Record<string, unknown>[] {
         reasoning: COT.message,
         content: [
           { type: "thinking", text: COT.block },
+          { type: "text", text: ANSWER },
+        ],
+      },
+    },
+  ];
+}
+
+/**
+ * The same disclosure, hidden UNDER an answer-shaped carrier.
+ *
+ * Every frame here declares `text_delta` or `answer` - the two types a reader
+ * treats as "this is the child's visible reply" - while burying the thought in
+ * a `thinking` / `reasoning` member or in a nested thinking content block. A
+ * classifier that trusts the declared type published these as pure answers and
+ * retained the prose in full.
+ */
+function hiddenCarrierLifecycle(): readonly Record<string, unknown>[] {
+  return [
+    { type: "message_start", message: { role: "assistant", content: [] } },
+    {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+        thinking: COT.hiddenKey,
+      },
+    },
+    {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "answer",
+        contentIndex: 0,
+        content: [
+          { type: "thinking", text: COT.hiddenBlock },
+          { type: "reasoning", reasoning: COT.hiddenBlock },
+        ],
+      },
+    },
+    {
+      type: "message_update",
+      delta: { text: ANSWER, reasoning: COT.hiddenLegacy },
+    },
+    {
+      type: "message_update",
+      thinking: COT.hiddenFrame,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+      },
+    },
+    {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", text: COT.hiddenBlock },
           { type: "text", text: ANSWER },
         ],
       },
@@ -247,6 +309,57 @@ describe("redactRawReasoningFromEvent · every reasoning carrier", () => {
     expectNoSentinel(JSON.stringify(redacted));
   });
 
+  it("blanks a hidden reasoning carrier a text_delta declared as an answer", () => {
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: ANSWER,
+          thinking: COT.hiddenKey,
+        },
+      }),
+    );
+    const serialized = JSON.stringify(redacted);
+    expectNoSentinel(serialized);
+    // Mixed carriers: the answer beside the hidden thought is emptied too,
+    // because no reader can tell which carrier held the chain-of-thought.
+    expect(serialized).not.toContain(ANSWER);
+  });
+
+  it("blanks a nested thinking block an answer-typed carrier hid", () => {
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "answer",
+          contentIndex: 0,
+          content: [{ type: "thinking", text: COT.hiddenBlock }],
+        },
+      }),
+    );
+    expect(redacted).toEqual({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "answer",
+        contentIndex: 0,
+        content: [{ type: "thinking", text: "" }],
+      },
+    } as unknown as PiChildSessionEvent);
+  });
+
+  it("blanks reasoning prose the FRAME states beside an answer carrier", () => {
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        thinking: COT.hiddenFrame,
+        assistantMessageEvent: { type: "text_delta", delta: ANSWER },
+      }),
+    );
+    expectNoSentinel(JSON.stringify(redacted));
+  });
+
   it("leaves an unambiguous answer frame exactly as it was", () => {
     const answerFrame = parsed({
       type: "message_update",
@@ -365,6 +478,47 @@ describe("retained history carries no raw chain-of-thought", () => {
 
     // Everything a search, a page merge, or a snapshot would read back.
     const entries = hostileThinkingLifecycle()
+      .map((raw, index) => projectLiveEntry(parsed(raw), index, false))
+      .filter((entry) => entry !== undefined);
+    expectNoSentinel(JSON.stringify(transcriptFromOverlayEntries(entries)));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. The same three paths, for carriers that call themselves answers
+// ---------------------------------------------------------------------------
+
+describe("retained history carries no HIDDEN chain-of-thought", () => {
+  it("keeps the transcript reducer's bounded history clean", () => {
+    let state = createPiChildTranscriptState();
+    hiddenCarrierLifecycle().forEach((raw, index) => {
+      const next = reducePiChildTranscript(state, {
+        kind: "event",
+        event: parsed(raw),
+      });
+      expect({ index, ok: next.isOk() }).toEqual({ index, ok: true });
+      if (next.isOk()) state = next.value;
+    });
+    expectNoSentinel(JSON.stringify(state));
+  });
+
+  it("keeps the live overlay projection's replay steps clean", () => {
+    const serialized = hiddenCarrierLifecycle()
+      .map((raw, index) => projectLiveEntry(parsed(raw), index, false))
+      .filter((entry) => entry !== undefined)
+      .map((entry) => JSON.stringify(entry))
+      .join("\n");
+    expectNoSentinel(serialized);
+  });
+
+  it("keeps the rebuilt replay-step builder clean, and its rebuild too", () => {
+    const steps: ChildOverlayReplayStep[] = [];
+    for (const raw of hiddenCarrierLifecycle()) {
+      expect(pushReplayEvent(steps, raw).isOk()).toBe(true);
+    }
+    expectNoSentinel(JSON.stringify(steps));
+
+    const entries = hiddenCarrierLifecycle()
       .map((raw, index) => projectLiveEntry(parsed(raw), index, false))
       .filter((entry) => entry !== undefined);
     expectNoSentinel(JSON.stringify(transcriptFromOverlayEntries(entries)));

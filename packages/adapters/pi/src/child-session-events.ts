@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   classifyPiMessageUpdate,
   isRawReasoningAssistantEventType,
+  RAW_REASONING_PROSE_KEYS,
 } from "./message-update-carrier.js";
 
 /** Bounds applied to observed private Pi protocol data. */
@@ -1183,7 +1184,10 @@ export const parsePiChildSessionEvent = (value: unknown) => {
 /** Content-block types that carry raw chain-of-thought, never a summary. */
 const RAW_REASONING_BLOCK_TYPES = new Set(["thinking", "reasoning"]);
 /** Fields a raw reasoning block may carry its prose in. */
-const RAW_REASONING_BLOCK_FIELDS = ["text", "thinking", "reasoning"] as const;
+const RAW_REASONING_BLOCK_FIELDS: readonly string[] = [
+  "text",
+  ...RAW_REASONING_PROSE_KEYS,
+];
 
 /**
  * Every field a raw-reasoning CARRIER (`assistantMessageEvent`, or the legacy
@@ -1201,16 +1205,17 @@ const RAW_REASONING_BLOCK_FIELDS = ["text", "thinking", "reasoning"] as const;
  * nothing a reader may see, so blanking a field it did not use costs nothing,
  * while missing one is a disclosure.
  */
-const RAW_REASONING_CARRIER_FIELDS = [
+const RAW_REASONING_CARRIER_FIELDS: readonly string[] = [
   "delta",
   "text",
   "content",
   "partial",
   "partialText",
-  "thinking",
-  "reasoning",
   "summary",
-] as const;
+  // The keys the classifier itself refuses on, so a frame it called reasoning
+  // is never retained with the prose that made it refuse.
+  ...RAW_REASONING_PROSE_KEYS,
+];
 
 /**
  * The same treatment for the FRAME itself, minus its structural members.
@@ -1219,17 +1224,18 @@ const RAW_REASONING_CARRIER_FIELDS = [
  * rules above; everything else a reasoning frame declares is prose it has no
  * reader for.
  */
-const RAW_REASONING_FRAME_FIELDS = [
+const RAW_REASONING_FRAME_FIELDS: readonly string[] = [
   "text",
   "content",
   "partial",
   "partialText",
-  "thinking",
-  "reasoning",
-] as const;
+  ...RAW_REASONING_PROSE_KEYS,
+];
 
 /** Prose fields a carried MESSAGE may state reasoning in, beside its blocks. */
-const MESSAGE_REASONING_FIELDS = ["thinking", "reasoning"] as const;
+const MESSAGE_REASONING_FIELDS: readonly string[] = [
+  ...RAW_REASONING_PROSE_KEYS,
+];
 
 /** How deep redaction walks one carrier before it states nothing at all. */
 const MAX_REASONING_REDACTION_DEPTH = 32;
@@ -1409,15 +1415,20 @@ export function redactRawReasoningFromEvent(
   // which is exactly the rule `observeLegacyDelta` classifies on.
   const legacyReasoning =
     delta !== undefined &&
-    (ambiguous ||
+    (reasoningFrame ||
       (Object.hasOwn(delta, "thinking") && delta.thinking !== undefined));
   const redactedDelta =
     delta === undefined || !legacyReasoning
       ? undefined
       : blankDeclaredProseFields(delta, RAW_REASONING_CARRIER_FIELDS);
+  // Every carrier of a REASONING frame is emptied, not only one whose declared
+  // type names thinking. The classifier also calls a frame reasoning when the
+  // prose is hidden under a `thinking` / `reasoning` member or a nested
+  // thinking block while the type says `text_delta` or `answer`, and that
+  // prose is exactly what a type-only rule left in retained history.
   const redactedAssistant =
     assistantEvent !== undefined &&
-    (isRawReasoningAssistantEventType(assistantEvent.type) || ambiguous)
+    (isRawReasoningAssistantEventType(assistantEvent.type) || reasoningFrame)
       ? blankDeclaredProseFields(assistantEvent, RAW_REASONING_CARRIER_FIELDS)
       : undefined;
   const redactedFrame = reasoningFrame
