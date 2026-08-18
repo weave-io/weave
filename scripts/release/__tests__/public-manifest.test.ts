@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 import {
   PRIVATE_PACKAGE_NAMES,
+  PRIVATE_WORKSPACE_NAMES,
   PUBLIC_PACKAGES,
   RELEASE_CHANNELS,
 } from "../constants.js";
@@ -50,25 +51,25 @@ function sourceManifest(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("release policy", () => {
+describe("release catalog", () => {
   it("declares exactly the allowed public packages and channels", () => {
-    expect(RELEASE_CHANNELS).toEqual(["stable", "nightly"]);
+    expect(RELEASE_CHANNELS).toEqual(["stable", "next", "nightly"]);
     expect(PUBLIC_PACKAGES).toEqual({
       "@weaveio/weave-cli": {
         directory: "packages/cli",
-        channels: ["stable", "nightly"],
+        channels: ["stable", "next", "nightly"],
       },
       "@weaveio/weave-adapter-opencode": {
         directory: "packages/adapters/opencode",
-        channels: ["stable", "nightly"],
+        channels: ["stable", "next", "nightly"],
       },
       "@weaveio/weave-adapter-claude-code": {
         directory: "packages/adapters/claude-code",
-        channels: ["nightly"],
+        channels: ["stable", "next", "nightly"],
       },
       "@weaveio/weave-adapter-pi": {
         directory: "packages/adapters/pi",
-        channels: ["nightly"],
+        channels: ["stable", "next", "nightly"],
       },
     });
   });
@@ -185,6 +186,40 @@ describe("PublicManifestBuilder", () => {
     );
     expect(fileSystem.files.get(sourcePath)).toBe(source);
     expect(fileSystem.files.get(result.value.manifestPath)).toContain('"name"');
+  });
+
+  for (const privateWorkspaceName of PRIVATE_WORKSPACE_NAMES) {
+    it(`refuses to stage the private workspace ${privateWorkspaceName}`, () => {
+      const result = builder.build(
+        { name: privateWorkspaceName, version: "0.0.1" },
+        "fixture.json",
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) return;
+      expect(result.error).toEqual({
+        type: "UnknownPublicPackage",
+        path: "fixture.json.name",
+        packageName: privateWorkspaceName,
+        reason: "PrivateWorkspace",
+      } satisfies PublicManifestError);
+    });
+  }
+
+  it("refuses to stage a fifth package outside the catalog", () => {
+    const result = builder.build(
+      { name: "@weaveio/weave-adapter-fifth", version: "0.0.1" },
+      "fixture.json",
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error).toEqual({
+      type: "UnknownPublicPackage",
+      path: "fixture.json.name",
+      packageName: "@weaveio/weave-adapter-fifth",
+      reason: "UnknownPackage",
+    } satisfies PublicManifestError);
   });
 
   it("omits every known private package from staged manifests", () => {

@@ -3,10 +3,14 @@ import {
   ALL_DEPENDENCY_FIELDS,
   PRIVATE_PACKAGE_NAMES,
   PUBLIC_MANIFEST_FIELDS,
-  PUBLIC_PACKAGES,
   type PublicPackageName,
   RUNTIME_DEPENDENCY_FIELDS,
 } from "./constants.js";
+import {
+  isPublishablePackage,
+  type PublishabilityError,
+  resolvePublishablePackage,
+} from "./package-policy.js";
 
 type JsonObject = Record<string, unknown>;
 type DependencyField = (typeof ALL_DEPENDENCY_FIELDS)[number];
@@ -14,7 +18,12 @@ type RuntimeDependencyField = (typeof RUNTIME_DEPENDENCY_FIELDS)[number];
 
 export type PublicManifestError =
   | { type: "InvalidManifest"; path: string; message: string }
-  | { type: "UnknownPublicPackage"; path: string; packageName: string }
+  | {
+      type: "UnknownPublicPackage";
+      path: string;
+      packageName: string;
+      reason: PublishabilityError["type"];
+    }
   | {
       type: "ForbiddenDependency";
       path: string;
@@ -106,11 +115,13 @@ export class PublicManifestBuilder {
         message: "Expected string",
       });
     }
-    if (!isPublicPackageName(packageName)) {
+    const publishable = resolvePublishablePackage(packageName);
+    if (publishable.isErr()) {
       return err({
         type: "UnknownPublicPackage",
         path: `${sourcePath}.name`,
         packageName,
+        reason: publishable.error.type,
       });
     }
 
@@ -133,7 +144,12 @@ export class PublicManifestBuilder {
     return this.fileSystem
       .readText(sourceManifestPath)
       .andThen((contents) =>
-        this.stageContents(contents, sourceManifestPath, stagingDirectory, version),
+        this.stageContents(
+          contents,
+          sourceManifestPath,
+          stagingDirectory,
+          version,
+        ),
       );
   }
 
@@ -157,7 +173,7 @@ export class PublicManifestBuilder {
     if (manifest.isErr()) return errAsync(manifest.error);
     if (version !== undefined) manifest.value.version = version;
     const packageName = manifest.value.name;
-    if (typeof packageName !== "string" || !isPublicPackageName(packageName)) {
+    if (typeof packageName !== "string" || !isPublishablePackage(packageName)) {
       return errAsync({
         type: "InvalidManifest",
         path: `${sourceManifestPath}.name`,
@@ -247,12 +263,6 @@ function isRuntimeDependencyField(
   field: DependencyField,
 ): field is RuntimeDependencyField {
   return field !== "devDependencies";
-}
-
-function isPublicPackageName(
-  packageName: string,
-): packageName is PublicPackageName {
-  return packageName in PUBLIC_PACKAGES;
 }
 
 function isKnownWorkspaceBuildDependency(packageName: string): boolean {

@@ -3,12 +3,59 @@ import {
   ALL_DEPENDENCY_FIELDS,
   PACKAGE_ARCHIVE_LIMITS,
   PRIVATE_PACKAGE_NAMES,
+  PRIVATE_WORKSPACE_NAMES,
+  type PrivateWorkspaceName,
   PUBLIC_PACKAGE_BUILDS,
   PUBLIC_PACKAGES,
   type PublicPackageBuild,
   type PublicPackageName,
+  type ReleaseChannel,
 } from "./constants.js";
 import { type TarInspectionError, TarInspector } from "./tar-inspector.js";
+
+/** Why a package name is not publishable. */
+export type PublishabilityError =
+  | { type: "PrivateWorkspace"; packageName: PrivateWorkspaceName }
+  | { type: "UnknownPackage"; packageName: string };
+
+/** The exact publishable catalog, in declaration order. */
+export function publishablePackageNames(): readonly PublicPackageName[] {
+  return Object.keys(PUBLIC_PACKAGES) as PublicPackageName[];
+}
+
+/**
+ * Closes the publishable set. Only the four catalog packages may reach npm; a
+ * private workspace and an unknown name are rejected for distinct reasons so
+ * callers can report the right failure.
+ */
+export function resolvePublishablePackage(
+  packageName: string,
+): Result<PublicPackageName, PublishabilityError> {
+  if (packageName in PUBLIC_PACKAGES)
+    return ok(packageName as PublicPackageName);
+  if (isPrivateWorkspaceName(packageName))
+    return err({ type: "PrivateWorkspace", packageName });
+  return err({ type: "UnknownPackage", packageName });
+}
+
+export function isPublishablePackage(
+  packageName: string,
+): packageName is PublicPackageName {
+  return packageName in PUBLIC_PACKAGES;
+}
+
+function isPrivateWorkspaceName(
+  packageName: string,
+): packageName is PrivateWorkspaceName {
+  return PRIVATE_WORKSPACE_NAMES.includes(packageName as never);
+}
+
+/** The channels a publishable package may release on. */
+export function releaseChannelsFor(
+  packageName: PublicPackageName,
+): readonly ReleaseChannel[] {
+  return PUBLIC_PACKAGES[packageName].channels;
+}
 
 export interface CredentialScanInput {
   environment: Readonly<Record<string, string | undefined>>;
@@ -61,7 +108,11 @@ export type PackagePolicyError =
   | { type: "MissingManifest" }
   | { type: "InvalidManifest" }
   | { type: "ManifestTooLarge"; size: number }
-  | { type: "UnexpectedPackage"; packageName: string }
+  | {
+      type: "UnexpectedPackage";
+      packageName: string;
+      reason: PublishabilityError["type"];
+    }
   | { type: "ForbiddenDependency"; field: string; name: string }
   | { type: "LifecycleScript" }
   | { type: "UnexpectedFile"; path: string }
@@ -116,15 +167,20 @@ export class PackagePolicyValidator {
       Array.isArray(manifest.value)
     )
       return err({ type: "InvalidManifest" });
-    if (
-      typeof manifest.value.name !== "string" ||
-      !(manifest.value.name in PUBLIC_PACKAGES)
-    )
+    if (typeof manifest.value.name !== "string")
       return err({
         type: "UnexpectedPackage",
         packageName: String(manifest.value.name),
+        reason: "UnknownPackage",
       });
-    const packageName = manifest.value.name as PublicPackageName;
+    const publishable = resolvePublishablePackage(manifest.value.name);
+    if (publishable.isErr())
+      return err({
+        type: "UnexpectedPackage",
+        packageName: publishable.error.packageName,
+        reason: publishable.error.type,
+      });
+    const packageName = publishable.value;
     const declaredDependencies = this.validateManifest(manifest.value);
     if (declaredDependencies.isErr()) return err(declaredDependencies.error);
     const inventory = this.validateInventory(packageName, inspected.value);
