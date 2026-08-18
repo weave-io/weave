@@ -3177,10 +3177,23 @@ export function createPiExtension(
    *
    * Plan progress changes when a tool edits the plan file, so the refresh is
    * driven by tool completions and turn settlement rather than by polling. A
-   * refresh that arrives while one is in flight sets a dirty bit instead of
-   * starting a second lookup, so a burst of edits costs one extra resolution.
+   * refresh that arrives while one is in flight is QUEUED instead of starting a
+   * second lookup, so a burst of edits costs one extra resolution.
+   *
+   * The queue holds the latest request's own session context, not a dirty bit.
+   * A dirty bit is anonymous: the in-flight refresh drained it with the context
+   * IT was started for, so a refresh queued by a newer session was cleared by
+   * the older session's completion and then discarded as stale - the newer
+   * session's Plan Rail stayed blank until something else happened to repaint
+   * it. Draining now re-runs the queued request itself, under its own currency
+   * check, so an older refresh can never drop a newer one's work.
    */
-  const planRefreshCell = { running: false, dirty: false };
+  const planRefreshCell: {
+    running: boolean;
+    queued:
+      | { readonly ctx: PiSessionContext; readonly generation: number }
+      | undefined;
+  } = { running: false, queued: undefined };
 
   /**
    * The whole of this session's ambient parent context, in one place.
@@ -3577,7 +3590,8 @@ export function createPiExtension(
 
   function refreshPlanSurfaces(ctx: PiSessionContext): void {
     if (planRefreshCell.running) {
-      planRefreshCell.dirty = true;
+      // Latest queued request wins, and it keeps its OWN context and session.
+      planRefreshCell.queued = { ctx, generation: sessionStartSequence };
       return;
     }
     planRefreshCell.running = true;
@@ -3590,10 +3604,17 @@ export function createPiExtension(
       generation === sessionStartSequence && root === latestSessionCtx?.cwd;
     const settle = (): void => {
       planRefreshCell.running = false;
-      if (!planRefreshCell.dirty) return;
-      planRefreshCell.dirty = false;
-      if (!stillCurrent()) return;
-      refreshPlanSurfaces(ctx);
+      const queued = planRefreshCell.queued;
+      if (queued === undefined) return;
+      planRefreshCell.queued = undefined;
+      // The queued request is re-run as ITSELF, under its own session: this
+      // completion may belong to a session that has since been replaced, and
+      // that says nothing about whether the queued request is still worth
+      // painting. Only the queued request's own session may retire it, so a
+      // session replaced after it was queued paints nothing (its successor
+      // repaints from `session_start`), and a still-current one paints.
+      if (queued.generation !== sessionStartSequence) return;
+      refreshPlanSurfaces(queued.ctx);
     };
     // Both arms: a rejected lookup must not leave the coalescing cell latched,
     // and must not escape as an unhandled rejection either.

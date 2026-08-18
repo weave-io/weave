@@ -10215,6 +10215,136 @@ describe("createPiExtension: one monotonic foreground plan observation generatio
 });
 
 // ---------------------------------------------------------------------------
+// Plan Rail refresh coalescing keeps the LATEST queued request
+// ---------------------------------------------------------------------------
+
+/**
+ * A provider whose snapshot reads are released by the test, one at a time.
+ *
+ * Every plan refresh awaits this read, which is exactly where a replaced
+ * session's own refresh arrives and is queued behind it.
+ */
+class DeferredPlanStateProvider extends MutablePlanStateProvider {
+  readonly pending: (() => void)[] = [];
+
+  override readSnapshot(planName: string) {
+    const base = () => super.readSnapshot(planName);
+    return ResultAsync.fromSafePromise(
+      new Promise<PlanTaskSnapshot>((resolve) => {
+        this.pending.push(() => {
+          void base().map((snapshot) => {
+            resolve(snapshot);
+            return undefined;
+          });
+        });
+      }),
+    ) as ReturnType<MutablePlanStateProvider["readSnapshot"]>;
+  }
+}
+
+describe("createPiExtension: plan refreshes coalesce onto the newest request", () => {
+  it("paints the replacing session's plan after the replaced session's refresh returns", async () => {
+    // Both sessions reconstruct the same adapter-owned selection, so each one
+    // asks for a refresh of its OWN session's rail.
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: {
+        getSessionId: () => "fake-session-3",
+        getSessionFile: () => "/fake/sessions/fake-session-3.jsonl",
+        isPersisted: () => true,
+        getHeader: () => ({ id: "fake-session-3" }),
+        getEntries: () => [
+          {
+            type: "custom",
+            customType: FOREGROUND_PLAN_ENTRY_TYPE,
+            data: { v: 1, planName: "foreground-plan" },
+          },
+        ],
+      } as never,
+    });
+    const provider = new DeferredPlanStateProvider(foregroundPlanSnapshot());
+    const catalog = new DeferredPlanCatalogPort(["foreground-plan"]);
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      planStateProviderFactory: () => provider,
+      planCatalogPort: catalog as unknown as FakePiPlanCatalogPort,
+      telemetryJournal: { write: (_entry: unknown) => okAsync(undefined) },
+      telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+    });
+
+    let releasedReads = 0;
+    const releaseReads = async (): Promise<void> => {
+      while (releasedReads < provider.pending.length) {
+        provider.pending[releasedReads]?.();
+        releasedReads += 1;
+        await settlePlanSurfaces();
+      }
+    };
+
+    // Session A reconstructs its selection and paints its rail.
+    const sessionA = host.triggerSessionStart();
+    await settlePlanSurfaces();
+    catalog.pending[0]?.();
+    await settlePlanSurfaces();
+    await releaseReads();
+    await sessionA;
+    expect(planRailPlainLines(host)[0]).toContain("foreground-plan");
+
+    // A settled turn starts A's next refresh, and it is still in flight.
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await settlePlanSurfaces();
+    const readsWhileAIsRunning = provider.pending.length;
+    expect(readsWhileAIsRunning).toBe(releasedReads + 1);
+
+    // Session B replaces A. Its own selection is reconstructed while A's
+    // refresh is still running, so B's repaint can only come from the queued
+    // refresh: B's startup resolution already ran, with no plan to name.
+    await host.triggerSessionStart();
+    await settlePlanSurfaces();
+    catalog.pending[1]?.();
+    await settlePlanSurfaces();
+    expect(planRailPlainLines(host)[0]).not.toContain("foreground-plan");
+    expect(provider.pending).toHaveLength(readsWhileAIsRunning);
+
+    // A's refresh returns last. It belongs to a session that is gone, so it
+    // paints nothing - but it may not drop B's queued work either, which is
+    // exactly what a shared dirty bit did: A cleared the bit, found itself
+    // stale, and returned, leaving B's rail blank until some unrelated event
+    // happened to repaint it.
+    provider.pending[releasedReads]?.();
+    releasedReads += 1;
+    await settlePlanSurfaces();
+    expect(provider.pending.length).toBe(readsWhileAIsRunning + 1);
+
+    await releaseReads();
+
+    // No tool completion, no settled turn, no further input: B's own selection
+    // painted itself.
+    expect(planRailPlainLines(host)[0]).toContain("foreground-plan");
+    expect(planRailShowsTask(host)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Adoption waits for the host's own turn-start proof
 // ---------------------------------------------------------------------------
 
