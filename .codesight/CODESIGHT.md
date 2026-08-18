@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 315 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~34,600 tokens. Without it, AI exploration would cost ~100,900 tokens. **Saves ~66,300 tokens per conversation.**
-> **Last scanned:** 2026-08-18 04:21 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 316 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~34,700 tokens. Without it, AI exploration would cost ~101,200 tokens. **Saves ~66,500 tokens per conversation.**
+> **Last scanned:** 2026-08-18 06:54 — re-run after significant changes
 
 ---
 
@@ -624,6 +624,14 @@
   - type CodexFastAttemptSink
   - type CodexWrappableProvider
   - _...2 more_
+- `packages/adapters/pi/src/codex-fast/register.ts`
+  - function isCodexFastHostVersionSupported: (version) => boolean
+  - function registerCodexFastProvider: (input) => ResultAsync<CodexFastRegistrationOutcome, CodexFastRegistrationFailure>
+  - type CodexFastRegistrationDegradation
+  - type CodexFastRegistrationFailure
+  - type CodexFastRegistrationOutcome
+  - type CodexFastRegistrationInput
+  - _...4 more_
 - `packages/adapters/pi/src/codex-fast/routing.ts`
   - function isSafeCodexModelId: (modelId) => modelId is string
   - function findCodexFastAllowlistEntry: (modelId) => CodexFastAllowlistEntry | undefined
@@ -708,7 +716,7 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
-  - _...11 more_
+  - _...13 more_
 - `packages/adapters/pi/src/generation-resources.ts`
   - function createGenerationSessionCtxCell: () => PiGenerationSessionCtxCell
   - function readSessionManagerEntries: (ctx, report) => void

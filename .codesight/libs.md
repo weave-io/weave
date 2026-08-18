@@ -613,6 +613,14 @@
   - type CodexFastAttemptSink
   - type CodexWrappableProvider
   - _...2 more_
+- `packages/adapters/pi/src/codex-fast/register.ts`
+  - function isCodexFastHostVersionSupported: (version) => boolean
+  - function registerCodexFastProvider: (input) => ResultAsync<CodexFastRegistrationOutcome, CodexFastRegistrationFailure>
+  - type CodexFastRegistrationDegradation
+  - type CodexFastRegistrationFailure
+  - type CodexFastRegistrationOutcome
+  - type CodexFastRegistrationInput
+  - _...4 more_
 - `packages/adapters/pi/src/codex-fast/routing.ts`
   - function isSafeCodexModelId: (modelId) => modelId is string
   - function findCodexFastAllowlistEntry: (modelId) => CodexFastAllowlistEntry | undefined
@@ -697,7 +705,7 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
-  - _...11 more_
+  - _...13 more_
 - `packages/adapters/pi/src/generation-resources.ts`
   - function createGenerationSessionCtxCell: () => PiGenerationSessionCtxCell
   - function readSessionManagerEntries: (ctx, report) => void

@@ -611,6 +611,15 @@ export interface PiExtensionApi {
   /** Registers a tool the LLM can call (`ExtensionAPI.registerTool`). */
   registerTool(tool: PiToolRegistration): void;
   /**
+   * Registers a complete provider object (`ExtensionAPI.registerProvider`),
+   * overriding the host's own provider of the same id. Optional for the same
+   * reason every other host surface is: a host without it must degrade into a
+   * bounded typed outcome, never an exception. The provider is typed as
+   * `unknown` deliberately — its full shape belongs to `@earendil-works/pi-ai`,
+   * and this adapter only ever passes back a wrapped copy of the host's own.
+   */
+  registerProvider?: (provider: unknown) => void;
+  /**
    * Applies a model selection (`ExtensionAPI.setModel`). May reject/throw for
    * an invalid or unauthenticated model. May also *resolve* to `false`
    * without throwing (e.g. the host declined the selection) - callers MUST

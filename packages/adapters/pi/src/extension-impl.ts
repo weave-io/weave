@@ -209,6 +209,15 @@ import {
   classifyChildTreeKey,
 } from "./child-tree-keys.js";
 import { renderChildTreeLines } from "./child-tree-render.js";
+import type {
+  CodexFastAttemptSink,
+  CodexFastIntent,
+  CodexFastIntentPort,
+} from "./codex-fast/provider.js";
+import {
+  type CodexFastRegistrationDegradation,
+  registerCodexFastProvider,
+} from "./codex-fast/register.js";
 import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
 import {
   logMaterializationErrors,
@@ -319,6 +328,7 @@ import {
 import {
   classifyProviderFastIntent,
   type ProviderFastPublicSnapshot,
+  projectCodexFastSnapshot,
 } from "./provider-fast-activation.js";
 import {
   activeInstanceFromRecoveryPointer,
@@ -720,7 +730,39 @@ export interface PiExtensionDeps {
    * emit an authenticated `cancelled` ack.
    */
   readonly childCancelGraceMs?: number;
+  /**
+   * Host probes for the wrapped `openai-codex` provider registration
+   * (`docs/specs/fast-provider-acceleration-contract.md`, OD-4). Production
+   * reads Pi's own public `VERSION` export and dynamically imports pi-ai's
+   * codex provider subpath; a test MUST override both, because neither the
+   * installed host version nor the real provider module is a fact a unit test
+   * may depend on. `pi.registerProvider` itself is never injected — it is read
+   * from the host object the extension was handed, so the host-surface gate
+   * stays real.
+   */
+  readonly codexFastProviderSeam: PiCodexFastProviderSeam;
 }
+
+/** The two injectable probes the codex-fast registration gate depends on. */
+export interface PiCodexFastProviderSeam {
+  /** The host's public `VERSION` export. */
+  readonly readHostVersion: () => unknown;
+  /** Dynamic import of `@earendil-works/pi-ai/providers/openai-codex`. */
+  readonly importProviderModule: () => Promise<unknown>;
+}
+
+/**
+ * Production probes. The specifier stays a literal so the bundler keeps the
+ * peer dependency external instead of inlining a second copy of pi-ai, and the
+ * import stays lazy so a host below the version floor never loads it at all.
+ */
+export const productionCodexFastProviderSeam: PiCodexFastProviderSeam =
+  Object.freeze({
+    readHostVersion: () =>
+      (PiPublicExports as { readonly VERSION?: unknown }).VERSION,
+    importProviderModule: (): Promise<unknown> =>
+      import("@earendil-works/pi-ai/providers/openai-codex"),
+  });
 
 /** Production child-side stdout writer: writes directly to this process's own real stdout, interleaved with Pi's own event/response lines. */
 class StdoutChildOutputPort implements PiChildOutputPort {
@@ -794,6 +836,7 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     pathContainmentPort: new BunPathContainmentPort(),
     planCatalogPort: new BunPiPlanCatalogPort(),
     threadSourceFactory: createProductionPiThreadSourceFactory(),
+    codexFastProviderSeam: productionCodexFastProviderSeam,
   };
 }
 
@@ -1292,6 +1335,14 @@ interface PiChildModeState {
   /** Authenticated descriptor intent committed with the bootstrap state. */
   fast: true | undefined;
   /**
+   * The model id this child actually runs on, committed with the bootstrap
+   * state. It is the id of the model bootstrap really applied - the parent's
+   * resolved identity, or this child's own catalog match - and stays
+   * `undefined` when no override took effect, because an unproven model may
+   * not be claimed as a fast owner's model.
+   */
+  resolvedModelId: string | undefined;
+  /**
    * Incremented once per committed bootstrap. Provider hooks use it as this
    * child's intent generation, so an attempt cannot survive a re-bootstrap.
    */
@@ -1342,6 +1393,24 @@ interface PiChildModeState {
   directStep: PiDirectStepChildState | undefined;
 }
 
+/**
+ * The one committed owner of neutral fast intent for this process.
+ *
+ * Both fast seams read this single record, for different reasons: the hook
+ * fallback classifies `intent` (the exact object the adapter committed), while
+ * the wrapped provider needs the literal intent and the model it resolved to.
+ * Deriving them together is what keeps a status line and a provider request
+ * from ever describing two different owners.
+ */
+interface PiProviderFastOwner {
+  /** The committed record whose own `fast` property declares intent. */
+  readonly intent: unknown;
+  /** Committed literal intent, read from this adapter's own typed state. */
+  readonly fast: true | undefined;
+  /** The owner's resolved model id, absent when none was proven. */
+  readonly modelId: string | undefined;
+}
+
 /** Per-turn direct-step completion state (Pi adapter contract). */
 interface PiDirectStepChildState {
   readonly stepName: string;
@@ -1359,6 +1428,7 @@ function createChildModeState(): PiChildModeState {
     agentName: "",
     composedPrompt: "",
     fast: undefined,
+    resolvedModelId: undefined,
     bootstrapGeneration: 0,
     delegationTargets: [],
     promptAppended: false,
@@ -1586,6 +1656,10 @@ async function applyChildBootstrap(
   state.agentName = parsed.agentName;
   state.composedPrompt = parsed.composedPrompt;
   state.fast = parsed.fast === true ? true : undefined;
+  // The provider seam compares the request's model against the owner's own
+  // resolved model, so the child records the identity it really applied.
+  state.resolvedModelId =
+    typeof appliedModel?.id === "string" ? appliedModel.id : undefined;
   state.delegationTargets = copyDelegationTargets(parsed.delegationTargets);
   state.bootstrapApplied = true;
   state.bootstrapGeneration += 1;
@@ -2890,18 +2964,31 @@ export function createPiExtension(
   /**
    * The owner whose committed neutral intent applies to this session: an
    * authenticated child bootstrap in child mode, otherwise the committed
-   * primary of the current generation. Activation-time model state is never
-   * consulted, because the model cannot change this adapter's outcome.
+   * primary of the current generation.
+   *
+   * `intent` is the record the hook-seam fallback classifies, kept as the very
+   * object the adapter already committed so nothing is re-derived. `fast` and
+   * `modelId` are read from this adapter's own typed state for the provider
+   * seam, which needs both the literal intent and the model it resolved to.
+   * There is exactly one ownership rule and it lives here, so the two seams
+   * can never disagree about who is speaking.
    */
-  const activeProviderFastIntentOwner = (): unknown => {
+  const activeProviderFastIntentOwner = (): PiProviderFastOwner | undefined => {
     if (childModeState.active) {
+      // Pending, unauthenticated, or failed bootstrap owns nothing. Intent
+      // arrives only with the applied bootstrap state, so a child can never
+      // accelerate a request before the parent authenticated it.
       if (
         !childModeState.bootstrapApplied ||
         childModeState.agentName.length === 0
       ) {
         return undefined;
       }
-      return childModeState;
+      return {
+        intent: childModeState,
+        fast: childModeState.fast,
+        modelId: childModeState.resolvedModelId,
+      };
     }
     const session = activeSession;
     const generation = controller.getCurrentGeneration();
@@ -2913,22 +3000,92 @@ export function createPiExtension(
     ) {
       return undefined;
     }
-    return session.primarySession.captureRequestSnapshot();
+    const snapshot = session.primarySession.captureRequestSnapshot();
+    if (snapshot === undefined) {
+      return undefined;
+    }
+    return {
+      intent: snapshot,
+      fast: snapshot.fast === true ? true : undefined,
+      modelId: snapshot.selectedModel?.id,
+    };
   };
 
   /**
-   * The sanitized acceleration state for this session. Pi cannot carry fast
-   * intent, so a declaring owner reports the terminal unsupported outcome and
-   * an owner without intent reports no state at all. No provider request or
-   * header is inspected or changed to reach this answer.
+   * The latest state a correlated Codex attempt projected into the public
+   * vocabulary, or `undefined` while this session has produced no mapped
+   * attempt at all. It is session-scoped exactly like the telemetry dedupe
+   * window, so a replaced session or a new primary never inherits it.
+   */
+  const codexFastLatestCell: {
+    snapshot: ProviderFastPublicSnapshot | undefined;
+  } = { snapshot: undefined };
+
+  /**
+   * The per-call intent the wrapped provider reads. It is a port rather than a
+   * value because eligibility must reflect the owner at the moment of the
+   * call: a primary switch, a session replacement, or a re-bootstrap between
+   * two calls has to be visible to the second one.
+   */
+  const codexFastIntentPort: CodexFastIntentPort = {
+    readIntent: (): CodexFastIntent | undefined => {
+      const owner = activeProviderFastIntentOwner();
+      if (owner === undefined) {
+        return undefined;
+      }
+      return { fast: owner.fast, modelId: owner.modelId };
+    },
+  };
+
+  /**
+   * Where the wrapper's sanitized attempt states land. Three things happen and
+   * nothing else: the snapshot passes the projection boundary, it becomes the
+   * latest reportable state, and it is journaled once per distinct outcome.
+   *
+   * The journal write is deliberately not awaited and its failure is bounded
+   * into a degradation record: this runs inside a live provider call, so a
+   * slow or broken Runtime Store must never delay or fail a user's request.
+   */
+  const codexFastAttemptSink: CodexFastAttemptSink = {
+    record: (snapshot): void => {
+      const projected = projectCodexFastSnapshot(snapshot);
+      if (projected === undefined) {
+        return;
+      }
+      codexFastLatestCell.snapshot = projected;
+      const telemetry = telemetryCell.telemetry;
+      if (telemetry === undefined) {
+        return;
+      }
+      void telemetry
+        .recordProviderFastTransition(projected)
+        .orElse((failure) => {
+          telemetry.recordDegradation(failure);
+          return okAsync(undefined);
+        });
+    },
+  };
+
+  /**
+   * The sanitized acceleration state for this session.
+   *
+   * A correlated Codex attempt is the strongest evidence this adapter can
+   * hold - it describes a request that really went out - so its latest state
+   * wins. With no such attempt the hook-seam fallback answers instead: a
+   * declaring owner reports the terminal unsupported outcome and an owner
+   * without intent reports no state at all.
    */
   const resolveProviderFastState = ():
     | ProviderFastPublicSnapshot
     | undefined => {
     const resolve = Result.fromThrowable(
       (): ProviderFastPublicSnapshot | undefined => {
+        const mapped = codexFastLatestCell.snapshot;
+        if (mapped !== undefined) {
+          return mapped;
+        }
         const classified = classifyProviderFastIntent(
-          activeProviderFastIntentOwner(),
+          activeProviderFastIntentOwner()?.intent,
         );
         return classified.kind === "unsupported"
           ? classified.snapshot
@@ -2961,11 +3118,76 @@ export function createPiExtension(
 
   /**
    * Drop the in-memory reporting dedupe so a replaced session or a new
-   * primary records its own terminal outcome. Durable journal events stay as
+   * primary records its own terminal outcome, and drop the latest mapped
+   * state with it: a snapshot describes one session's request and must not
+   * outlive the session that produced it. Durable journal events stay as
    * bounded audit facts.
    */
   const resetProviderFastReporting = (): void => {
+    codexFastLatestCell.snapshot = undefined;
     telemetryCell.telemetry?.resetProviderFastReporting();
+  };
+
+  /**
+   * One process registers the wrapped provider at most once.
+   *
+   * The flag is claimed before the first await, so two startups racing (a
+   * child session starting while a parent generation activates cannot happen,
+   * but two `session_start` events can) still produce a single registration.
+   * A `/reload` re-evaluates this module and therefore starts a new lifecycle
+   * with a fresh cell; that is safe because the seam always wraps a newly
+   * created native provider and never reads back whatever is registered now,
+   * so no wrapper can ever wrap another wrapper.
+   */
+  const codexFastRegistrationCell: { attempted: boolean } = {
+    attempted: false,
+  };
+
+  /**
+   * Register the wrapped `openai-codex` provider for this process, once.
+   *
+   * Every failure is one bounded token: nothing is registered, the host keeps
+   * its native provider, declared intent keeps reporting the hook seam's
+   * `unsupported` / `harness-seam-unavailable`, and agent activation is
+   * untouched. This is an optional capability and never a startup gate.
+   */
+  const ensureCodexFastProviderRegistered = async (
+    pi: PiExtensionApi,
+  ): Promise<void> => {
+    if (codexFastRegistrationCell.attempted) {
+      return;
+    }
+    codexFastRegistrationCell.attempted = true;
+    const hostRegisterProvider = pi.registerProvider;
+    const outcome = await registerCodexFastProvider({
+      readHostVersion: deps.codexFastProviderSeam.readHostVersion,
+      importProviderModule: deps.codexFastProviderSeam.importProviderModule,
+      // Bound to the host object: a detached method would lose its receiver.
+      // A host without the surface passes the raw value through, and the seam
+      // reports `register-provider-unavailable` for it.
+      registerProvider:
+        typeof hostRegisterProvider === "function"
+          ? (provider: unknown): void => {
+              hostRegisterProvider.call(pi, provider);
+            }
+          : hostRegisterProvider,
+      intentPort: codexFastIntentPort,
+      attemptSink: codexFastAttemptSink,
+    });
+    outcome.match(
+      (registered) => {
+        deps.logger.info(
+          { providerId: registered.providerId },
+          "registered the Weave codex subscription fast provider",
+        );
+      },
+      (failure: { readonly reason: CodexFastRegistrationDegradation }) => {
+        deps.logger.warn(
+          { reason: failure.reason },
+          "codex subscription fast provider not registered; the host keeps its native provider",
+        );
+      },
+    );
   };
   /**
    * The most recent session context *per generation*. Pi replaces
@@ -4935,7 +5157,19 @@ export function createPiExtension(
         childModeState.runtime?.dispose();
         return;
       }
-      if (isChild) return;
+      if (isChild) {
+        // Both child shapes - an ordinary delegated child and a direct
+        // workflow step - run this same extension, and both receive their
+        // `fast` intent later, through the authenticated bootstrap. The
+        // provider is therefore registered as soon as the handshake proved
+        // this process is a real Weave child; until bootstrap applies, the
+        // intent port reports no owner and every request passes through
+        // untouched. A failed handshake registers nothing.
+        if (childModeState.childId.length > 0) {
+          await ensureCodexFastProviderRegistered(pi);
+        }
+        return;
+      }
       const commands = readValidatedCommands(pi);
       if (commands.isErr()) {
         ctx.ui.notify(commands.error.safeMessage, "error");
@@ -5254,6 +5488,14 @@ export function createPiExtension(
           }
           return;
         }
+      }
+
+      // A trusted, non-health-only generation that committed a primary is the
+      // only parent state where a fast owner can exist, so it is the only one
+      // that overrides a host provider. Health-only sessions and withheld
+      // trust leave Pi's native provider exactly as it was.
+      if (!sessionHealthOnly && generation.preflight.trust === "trusted") {
+        await ensureCodexFastProviderRegistered(pi);
       }
 
       if (!startupOwnsGeneration()) {

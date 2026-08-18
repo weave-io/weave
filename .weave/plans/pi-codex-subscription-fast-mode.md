@@ -196,7 +196,7 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
   - **Acceptance**:
     - Adapter tests pass; engine capability tests (`capability-contract.test.ts`, `capability-effective.test.ts`) pass unchanged, proving no engine edit was needed.
 
-- [ ] 7. Wire the wrapped provider into the extension (all three surfaces)
+- [x] 7. Wire the wrapped provider into the extension (all three surfaces)
   - **What**: Register the wrapped provider at extension init in parent, ordinary-child, and direct-step-child processes; connect the intent port to the existing owner resolution; report attempt terminals through telemetry and `/weave:status`.
   - **Files**: `packages/adapters/pi/src/extension-impl.ts`, `packages/adapters/pi/src/codex-fast/register.ts` (thin registration seam for testability), `packages/adapters/pi/src/__tests__/extension.test.ts`.
   - **Depends on**: Tasks 3–6.
