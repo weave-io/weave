@@ -131,11 +131,16 @@ export class StableReleasePrManager {
     if (marker.isErr()) return err(marker.error);
     const open = await this.readOpenReleasePullRequest();
     if (open.isErr()) return err(open.error);
+    const stabilized = await this.stabilizeDiscoverySnapshot(
+      marker.value,
+      open.value,
+    );
+    if (stabilized.isErr()) return err(stabilized.error);
     const merged = await this.readMergedRelease();
     if (merged.isErr()) return err(merged.error);
     const mergedRelease = merged.value;
-    const markerSha = marker.value;
-    const pullRequest = open.value;
+    const markerSha = stabilized.value.markerSha;
+    const pullRequest = stabilized.value.pullRequest;
 
     if (markerSha === null && pullRequest !== null)
       return err({
@@ -207,6 +212,35 @@ export class StableReleasePrManager {
       marker: observation,
       mergedRelease,
     });
+  }
+
+  /**
+   * Re-reads only the torn no-marker/open-PR observation. Creation publishes
+   * the marker before it creates the PR, so a marker that appears on this
+   * bounded read proves that the first observation crossed a creation
+   * boundary. This helper is read-only: callers must still perform their own
+   * authoritative read before any mutation.
+   */
+  private async stabilizeDiscoverySnapshot(
+    markerSha: string | null,
+    pullRequest: GitHubPullRequestSummary | null,
+  ): Promise<
+    Result<
+      {
+        markerSha: string | null;
+        pullRequest: GitHubPullRequestSummary | null;
+      },
+      ReleasePrError
+    >
+  > {
+    if (markerSha !== null || pullRequest === null)
+      return ok({ markerSha, pullRequest });
+
+    const marker = await this.readMarker();
+    if (marker.isErr()) return err(marker.error);
+    const open = await this.readOpenReleasePullRequest();
+    if (open.isErr()) return err(open.error);
+    return ok({ markerSha: marker.value, pullRequest: open.value });
   }
 
   // -------------------------------------------------------------------------
