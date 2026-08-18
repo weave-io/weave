@@ -198,7 +198,6 @@ import {
   EMPTY_USAGE_AGGREGATE,
   extractAssistantMessageId,
   extractAssistantStopReason,
-  extractAssistantTextDeltaPreview,
   PiChildInspectionRegistry,
   type PiChildTreeNode,
   ROOT_NODE_ID,
@@ -240,6 +239,13 @@ import {
   type PiAdapterFailure,
 } from "./errors.js";
 import {
+  createForegroundPlanDisplayState,
+  FOREGROUND_PLAN_ENTRY_TYPE,
+  foregroundPlanEntry,
+  parseForegroundPlanRequest,
+  readForegroundPlanEntry,
+} from "./foreground-plan-display.js";
+import {
   createGenerationSessionCtxCell,
   type PiChildRefEntryReadDegradation,
   PiGenerationResourceOwner,
@@ -259,6 +265,7 @@ import {
   safeReadHostSurfaceReport,
 } from "./host-inventory.js";
 import { getHostModuleOutcome } from "./host-module-loader.js";
+import { messageUpdateAnswerText } from "./message-update-carrier.js";
 import {
   PiModelActivator,
   type PiModelApplyPort,
@@ -1802,9 +1809,11 @@ async function activateChildModeIfApplicable(
   });
 
   pi.on("message_update", (event) => {
-    const record = asJsonRecord(event);
-    if (record === undefined) return undefined;
-    const preview = extractAssistantTextDeltaPreview(record);
+    // The single carrier classification. A frame that carries answer text
+    // beside raw reasoning is rejected there rather than accumulated here, so
+    // this child's own transient answer buffer cannot become a
+    // chain-of-thought buffer.
+    const preview = messageUpdateAnswerText(event);
     if (preview !== undefined) {
       state.latestAssistantOutput = truncateLatestOutput(
         state.latestAssistantOutput + preview,
@@ -2188,6 +2197,19 @@ const WEAVE_CHILD_TREE_WIDGET_KEY = "weave-children";
 const WEAVE_PLAN_WIDGET_KEY = "weave-plan";
 
 /**
+ * Host tools whose completion can have changed a plan file.
+ *
+ * Named rather than "any tool", so an ordinary read-only turn does not
+ * re-resolve the plan on every tool call. `bash` is included because a plan
+ * checkbox is as easily moved by a script as by the editor.
+ */
+const PLAN_MUTATING_TOOLS: ReadonlySet<string> = new Set([
+  "edit",
+  "write",
+  "bash",
+]);
+
+/**
  * The non-widget fallback for agent identity.
  *
  * The Plan Rail owns ambient parent context wherever it can mount. This
@@ -2268,6 +2290,46 @@ export function resolveDirectStepBadgeAgent(
   return committedPrimary?.getCurrent()?.descriptor.name;
 }
 
+/** What the adapter tells Pi to do with one interactive submission. */
+export interface PiInputDecision {
+  readonly action: "continue" | "handled";
+}
+
+/**
+ * The ONE rule that ties a foreground-plan observation to the submission it
+ * came from.
+ *
+ * Two orderings are load-bearing, and both are stated here rather than in the
+ * event handler, so neither can drift:
+ *
+ * 1. the observation generation is CLAIMED first, synchronously, before the
+ *    submission is routed and before its text is parsed. Every interactive
+ *    text therefore supersedes every older pending observation, whatever it
+ *    turns out to say;
+ * 2. the request is only RECORDED AS PENDING when this adapter let the message
+ *    through. A declined pause confirmation returns `handled`, which submits
+ *    nothing, so there is nothing left for a later turn to redeem.
+ *
+ * `continue` is where this rule stops. It states that the adapter did not stop
+ * the message, not that the host accepted it, so it records intent and never
+ * adopts: the adoption itself waits for a real turn-start proof (see
+ * `redeemPendingForegroundPlan`).
+ *
+ * Previously the observation was fired beside the decision, so a user who
+ * answered "no" to "pause the running workflow?" still moved the Plan Rail
+ * onto a plan whose kickoff turn never existed.
+ */
+export async function resolveWeaveInputDecision(input: {
+  /** Claims the generation; returns the intent to record iff routing succeeds. */
+  readonly claimObservation: () => (() => void) | undefined;
+  readonly routeInput: () => Promise<PiInputDecision>;
+}): Promise<PiInputDecision> {
+  const completeObservation = input.claimObservation();
+  const decision = await input.routeInput();
+  if (decision.action === "continue") completeObservation?.();
+  return decision;
+}
+
 /**
  * Builds the narrow read-only port the one active-plan resolver needs from a
  * workflow controller. `undefined` whenever this session has no controller at
@@ -2281,10 +2343,14 @@ export function resolveDirectStepBadgeAgent(
 function buildActivePlanReadPort(
   controller: PiWorkflowController | undefined,
   currentWorkflowInstanceId: string | undefined,
+  foregroundPlanName: string | undefined,
 ): ActivePlanReadPort | undefined {
   if (controller === undefined) return undefined;
   return {
     currentWorkflowInstanceId,
+    // Display-only, and resolved last: it can fill the gap a foreground
+    // `/weave:start` leaves, never outrank the tracker or a live pointer.
+    foregroundPlanName,
     inspect: (workflowInstanceId) =>
       controller.inspect(workflowInstanceId).map((snapshot) => ({
         slug: snapshot.slug,
@@ -2396,6 +2462,18 @@ function toChildOverlayDescriptor(
       ? {}
       : { assignment: descriptor.assignment }),
     ...(descriptor.turn === undefined ? {} : { turn: descriptor.turn }),
+    // The child's own answer-only preview of the message in flight, with that
+    // message's lifecycle id. It crosses only while the controller reports the
+    // child still running, so a settled child's authoritative transcript is
+    // never shadowed by a stale preview.
+    ...(descriptor.status !== "live" || descriptor.streamedAnswer === undefined
+      ? {}
+      : {
+          streamedAnswer: {
+            id: descriptor.streamedAnswer.id,
+            text: descriptor.streamedAnswer.text,
+          },
+        }),
     ...(descriptor.queueDepth === undefined
       ? {}
       : { queueDepth: descriptor.queueDepth }),
@@ -3169,6 +3247,42 @@ export function createPiExtension(
   const activePlanUiState = createActivePlanUiState();
 
   /**
+   * The DISPLAY-ONLY plan identity of a foreground execution.
+   *
+   * `/weave:start` and a direct "execute `.weave/plans/<name>.md`" request run
+   * Tapestry in this session's own turn, so there is no workflow instance for
+   * the resolver to find and the rail had nothing to say beyond the agent
+   * name. This cell names the plan those two user-authorized paths selected,
+   * and nothing else: it starts nothing, resumes nothing, authorizes nothing,
+   * and holds no lease. It is read last, behind the tracker and behind an
+   * eligible recovery pointer.
+   */
+  const foregroundPlanDisplay = createForegroundPlanDisplayState();
+
+  /**
+   * Serializes plan-state refreshes without a timer.
+   *
+   * Plan progress changes when a tool edits the plan file, so the refresh is
+   * driven by tool completions and turn settlement rather than by polling. A
+   * refresh that arrives while one is in flight is QUEUED instead of starting a
+   * second lookup, so a burst of edits costs one extra resolution.
+   *
+   * The queue holds the latest request's own session context, not a dirty bit.
+   * A dirty bit is anonymous: the in-flight refresh drained it with the context
+   * IT was started for, so a refresh queued by a newer session was cleared by
+   * the older session's completion and then discarded as stale - the newer
+   * session's Plan Rail stayed blank until something else happened to repaint
+   * it. Draining now re-runs the queued request itself, under its own currency
+   * check, so an older refresh can never drop a newer one's work.
+   */
+  const planRefreshCell: {
+    running: boolean;
+    queued:
+      | { readonly ctx: PiSessionContext; readonly generation: number }
+      | undefined;
+  } = { running: false, queued: undefined };
+
+  /**
    * The whole of this session's ambient parent context, in one place.
    *
    * The Plan Rail shows the selected agent *and* the active plan together, so
@@ -3259,6 +3373,7 @@ export function createPiExtension(
     const port = buildActivePlanReadPort(
       workflowControllerCell.controller,
       currentWorkflowInstanceId,
+      foregroundPlanDisplay.planName(),
     );
     if (port === undefined) {
       activePlanUiState.clear();
@@ -3307,6 +3422,13 @@ export function createPiExtension(
       currentWorkflowInstanceId !== undefined
     ) {
       tracker.setActiveInstance(undefined);
+    }
+    // The same rule for the display-only identity: a plan with no incomplete
+    // task left is finished work, so the identity is dropped rather than
+    // re-resolved on every later turn. An unreadable plan is NOT dropped - it
+    // may be a transient read - it simply shows nothing meanwhile.
+    if (view.kind === "empty" && view.reason === "foreground-plan-complete") {
+      foregroundPlanDisplay.clear();
     }
     // Recovery-sourced identity carries no tracker id, so the tracker recheck
     // above compares `undefined` with `undefined` and proves nothing: the
@@ -3370,6 +3492,376 @@ export function createPiExtension(
   function clearActivePlanSurfaces(ctx: PiSessionContext | undefined): void {
     activePlanUiState.clear();
     if (ctx !== undefined) setActivePlanView(ctx, undefined);
+  }
+
+  /**
+   * Adopts a user-authorized foreground plan as DISPLAY state and repaints.
+   *
+   * Two callers, both of which already proved the user asked for this exact
+   * plan: `/weave:start` after its own catalog check and confirmation, and one
+   * direct interactive request after strict parsing, catalog membership, and a
+   * successful snapshot read. The selection is recorded as one bounded
+   * adapter-owned session entry so a restart can reconstruct it without
+   * re-reading a word of conversation.
+   *
+   * It writes no runtime state and starts nothing: the only observable effects
+   * are the session entry and the repaint.
+   */
+  function adoptForegroundPlan(
+    pi: PiExtensionApi,
+    ctx: PiSessionContext,
+    planName: string,
+  ): void {
+    if (!foregroundPlanDisplay.select(planName)) return;
+    Result.fromThrowable(
+      () =>
+        pi.appendEntry(
+          FOREGROUND_PLAN_ENTRY_TYPE,
+          foregroundPlanEntry(planName),
+        ),
+      () => undefined,
+    )().match(
+      () => undefined,
+      () => {
+        // A host that cannot record the entry still shows the rail for this
+        // session; only the restart reconstruction is lost.
+        deps.logger.warn(
+          {},
+          "could not record the foreground plan display entry",
+        );
+      },
+    );
+    refreshPlanSurfaces(ctx);
+  }
+
+  // -------------------------------------------------------------------------
+  // Foreground plan observation: one bounded generation/root/latest guard
+  // -------------------------------------------------------------------------
+
+  /**
+   * What one foreground-plan observation was started for.
+   *
+   * Every observation awaits at least a directory listing, and some await a
+   * plan read as well. Three things can change underneath that await: the
+   * session can be replaced (`session_start` bumps the generation), the
+   * project root can change with it, and the user can send a newer message.
+   * A token records all three at the START, and nothing is adopted, recorded
+   * or painted unless all three still hold.
+   */
+  interface ForegroundPlanToken {
+    readonly generation: number;
+    readonly root: string;
+    readonly ctx: PiSessionContext;
+    readonly request: object;
+  }
+
+  /**
+   * The ONE generation of foreground-plan observation, as an identity rather
+   * than a number.
+   *
+   * A counter has to answer "could this token's number be the current one
+   * again?", and a wrapping counter's honest answer is "eventually yes". A
+   * fresh object cannot be minted twice, so a token issued before a session
+   * or root replacement can never compare equal to one issued after it - the
+   * generation and root checks beside it are then belt AND braces rather than
+   * the only thing standing between two sessions' observations.
+   */
+  const foregroundPlanObservations: { latest: object } = {
+    latest: Object.freeze({}),
+  };
+
+  /**
+   * One direct request that has been PARSED but not yet proven to have started
+   * a turn.
+   *
+   * The `input` event is the adapter's own decision point, not the host's: a
+   * later handler may still answer `handled`, a skill or template expansion may
+   * replace the text, and the host may drop the submission entirely. Adopting
+   * there named a plan for a turn that might never exist. The parsed request is
+   * therefore held here as INTENT, scoped to the observation token that already
+   * carries this session's generation, root and request identity, plus the
+   * exact text that was submitted - and it is redeemed only against a real
+   * host turn-start proof for that same text.
+   */
+  const pendingForegroundPlanCell: {
+    pending:
+      | {
+          readonly token: ForegroundPlanToken;
+          readonly planName: string;
+          readonly text: string;
+        }
+      | undefined;
+  } = { pending: undefined };
+
+  /**
+   * Supersedes every pending observation, and returns the marker that is now
+   * current.
+   *
+   * Called from exactly three places, all of them authoritative statements
+   * about what the user last asked for: a new interactive submission (before
+   * its text is parsed), a confirmed `/weave:start` selection, and session
+   * replacement.
+   */
+  function invalidatePendingForegroundPlanObservations(): object {
+    const marker = Object.freeze({});
+    foregroundPlanObservations.latest = marker;
+    // An unredeemed intent belongs to the request that has just been
+    // superseded. Dropping it here means a newer submission, an authoritative
+    // `/weave:start`, or a session replacement leaves nothing behind that a
+    // later turn could redeem.
+    pendingForegroundPlanCell.pending = undefined;
+    return marker;
+  }
+
+  function beginForegroundPlanObservation(
+    ctx: PiSessionContext,
+  ): ForegroundPlanToken {
+    return {
+      generation: sessionStartSequence,
+      root: ctx.cwd,
+      ctx,
+      request: invalidatePendingForegroundPlanObservations(),
+    };
+  }
+
+  /**
+   * True when the session, the project root and the request this observation
+   * was started for are all still the current ones.
+   *
+   * An older slow observation therefore cannot overwrite a newer one, and a
+   * prior session's observation cannot restore its plan into the session that
+   * replaced it.
+   */
+  function foregroundPlanObservationCurrent(
+    token: ForegroundPlanToken,
+  ): boolean {
+    return (
+      token.generation === sessionStartSequence &&
+      token.request === foregroundPlanObservations.latest &&
+      token.root === latestSessionCtx?.cwd
+    );
+  }
+
+  /**
+   * Runs one fire-and-forget observation without letting a rejection escape.
+   *
+   * These run beside the user's turn, never inside it, so a failure is a
+   * bounded log line and an unchanged rail - never an unhandled rejection.
+   */
+  function runForegroundPlanObservation(work: Promise<void>): void {
+    const settle = (): void => undefined;
+    void work.then(settle, () => {
+      deps.logger.warn({}, "foreground plan observation failed");
+    });
+  }
+
+  /**
+   * Re-resolves the plan surfaces after something may have changed the plan
+   * file, coalescing concurrent requests onto one lookup.
+   *
+   * No timer and no polling: the callers are tool completions and turn
+   * settlement, which is exactly when a checkbox, the active task, and the
+   * next task can have moved.
+   */
+  /**
+   * True when a plan is on screen (or claimed) and therefore worth re-reading.
+   * With no plan at all a refresh could only ever resolve to nothing, so the
+   * ordinary no-plan session does no work per turn.
+   */
+  function hasPlanSurfaceToRefresh(): boolean {
+    return (
+      foregroundPlanDisplay.planName() !== undefined ||
+      parentContextCell.view?.kind === "active"
+    );
+  }
+
+  function refreshPlanSurfaces(ctx: PiSessionContext): void {
+    if (planRefreshCell.running) {
+      // Latest queued request wins, and it keeps its OWN context and session.
+      planRefreshCell.queued = { ctx, generation: sessionStartSequence };
+      return;
+    }
+    planRefreshCell.running = true;
+    const generation = sessionStartSequence;
+    const root = ctx.cwd;
+    // The resolver's own last-request-wins guard, given this refresh's session
+    // and root: a lookup that outlives either paints nothing rather than
+    // repainting a session that has been replaced.
+    const stillCurrent = (): boolean =>
+      generation === sessionStartSequence && root === latestSessionCtx?.cwd;
+    const settle = (): void => {
+      planRefreshCell.running = false;
+      const queued = planRefreshCell.queued;
+      if (queued === undefined) return;
+      planRefreshCell.queued = undefined;
+      // The queued request is re-run as ITSELF, under its own session: this
+      // completion may belong to a session that has since been replaced, and
+      // that says nothing about whether the queued request is still worth
+      // painting. Only the queued request's own session may retire it, so a
+      // session replaced after it was queued paints nothing (its successor
+      // repaints from `session_start`), and a still-current one paints.
+      if (queued.generation !== sessionStartSequence) return;
+      refreshPlanSurfaces(queued.ctx);
+    };
+    // Both arms: a rejected lookup must not leave the coalescing cell latched,
+    // and must not escape as an unhandled rejection either.
+    void syncActivePlanSurfaces(ctx, stillCurrent).then(settle, settle);
+  }
+
+  /**
+   * Reconstructs the foreground plan identity from this session's own bounded
+   * adapter-owned entry, and adopts it only if it is still a plan of THIS
+   * project root.
+   *
+   * Only that entry is read. Model prose, assistant text, tool output and
+   * every other extension's entries are structurally excluded, so a restart
+   * cannot be steered into displaying a plan the user never selected. The
+   * recorded name is then revalidated against the current root's catalog
+   * before it reaches the rail: a session moved to another worktree, or one
+   * whose plan has since been deleted or renamed, shows nothing rather than a
+   * plan that is not there.
+   */
+  function restoreForegroundPlanFromSession(ctx: PiSessionContext): void {
+    const entries = readSessionManagerEntries(ctx, () => undefined);
+    const recorded = readForegroundPlanEntry(entries);
+    if (recorded === undefined) return;
+    const token = beginForegroundPlanObservation(ctx);
+    runForegroundPlanObservation(
+      adoptCataloguedForegroundPlan(token, recorded),
+    );
+  }
+
+  /**
+   * Adopts `planName` only if it is in the current root's plan catalog and the
+   * observation is still the current one.
+   *
+   * The catalog is listed for the token's OWN root, never for whatever root
+   * the session happens to have by the time the listing returns.
+   */
+  async function adoptCataloguedForegroundPlan(
+    token: ForegroundPlanToken,
+    planName: string,
+  ): Promise<void> {
+    if (!foregroundPlanObservationCurrent(token)) return;
+    const listed = await deps.planCatalogPort.listPlanNames(token.root);
+    if (!foregroundPlanObservationCurrent(token)) return;
+    if (listed.isErr() || !listed.value.includes(planName)) return;
+    if (!foregroundPlanDisplay.select(planName)) return;
+    refreshPlanSurfaces(token.ctx);
+  }
+
+  /**
+   * Claims the observation generation for ONE interactive submission, before
+   * a word of its text is parsed.
+   *
+   * This is the whole of "one monotonic generation": every interactive text
+   * the user sends supersedes every observation still in flight, whether the
+   * new text names a plan, names a different plan, names the SAME plan, is
+   * ordinary prose, is malformed, or is a refusal. The claim is taken first
+   * precisely so that a message this parser will not accept still invalidates
+   * the slower message before it - otherwise "execute alpha" followed by "no,
+   * do something else" could still land alpha on the rail a second later.
+   *
+   * It returns the parsed request only when the submission is one; the claim
+   * has already happened either way.
+   */
+  function claimForegroundPlanObservation(
+    event: unknown,
+    ctx: PiSessionContext,
+  ):
+    | {
+        readonly token: ForegroundPlanToken;
+        readonly planName: string;
+        readonly text: string;
+      }
+    | undefined {
+    const record = asJsonRecord(event);
+    if (record === undefined) return undefined;
+    if (record.source !== "interactive") return undefined;
+    if (typeof record.text !== "string") return undefined;
+    const token = beginForegroundPlanObservation(ctx);
+    const parsed = parseForegroundPlanRequest(record.text);
+    if (parsed.isErr()) return undefined;
+    return { token, planName: parsed.value, text: record.text };
+  }
+
+  /**
+   * Redeems the pending direct request against ONE host turn-start proof.
+   *
+   * `before_agent_start` is the earliest event Pi fires only for a submission
+   * it has actually accepted into the session: input interception is over,
+   * skill and template expansion have run, and the agent loop is about to
+   * begin. It also states the prompt that was accepted, which is what ties the
+   * proof to this exact request rather than to "some turn happened".
+   *
+   * The intent is consumed by the FIRST proof that arrives, whatever it proves.
+   * A turn whose prompt is not this request's text is evidence that the
+   * submission never reached the agent - something else is running - so the
+   * intent is dropped rather than left to be redeemed by a still later turn.
+   * A stale token (newer submission, replaced session, changed root) is dropped
+   * the same way.
+   *
+   * Nothing here reads assistant text, tool output, or model prose: the proof
+   * is a host lifecycle event and the user's own submitted string.
+   */
+  function redeemPendingForegroundPlan(
+    pi: PiExtensionApi,
+    event: unknown,
+    ctx: PiSessionContext,
+  ): void {
+    const pending = pendingForegroundPlanCell.pending;
+    if (pending === undefined) return;
+    pendingForegroundPlanCell.pending = undefined;
+    if (!foregroundPlanObservationCurrent(pending.token)) return;
+    if (ctx.cwd !== pending.token.root) return;
+    const record = asJsonRecord(event);
+    if (typeof record?.prompt !== "string") return;
+    if (record.prompt !== pending.text) return;
+    runForegroundPlanObservation(
+      completeForegroundPlanObservation(pi, pending.token, pending.planName),
+    );
+  }
+
+  /**
+   * Adopts a foreground plan named by one direct interactive message.
+   *
+   * Five independent proofs are required before a single column of the rail
+   * moves, and any one of them failing leaves the rail exactly as it was:
+   *
+   * 1. the message is the USER's own interactive submission;
+   * 2. it parses, strictly, to exactly one contained
+   *    `.weave/plans/<safe-name>.md` inside an explicit execution request;
+   * 3. the host ACTUALLY STARTED a turn for that submission, and said so
+   *    itself: `before_agent_start` names the accepted prompt, and only a
+   *    proof carrying this request's own text redeems it. A declined pause
+   *    confirmation, a later handler that answers `handled`, a submission the
+   *    host drops, and an unrelated turn all leave the rail exactly as it was;
+   * 4. that name is in THIS project root's plan catalog and its snapshot
+   *    reads, so a plan that exists only in another worktree is never read
+   *    across roots and never displayed;
+   * 5. the session, the root and the observation generation are still the
+   *    current ones when each await returns - so an older slow message cannot
+   *    overwrite a newer one, and a message observed just before a session
+   *    switch cannot paint into the session that replaced it.
+   *
+   * Read-only throughout: it lists a directory, reads a plan, and repaints.
+   */
+  async function completeForegroundPlanObservation(
+    pi: PiExtensionApi,
+    token: ForegroundPlanToken,
+    planName: string,
+  ): Promise<void> {
+    if (planName === foregroundPlanDisplay.planName()) return;
+    const workflowController = workflowControllerCell.controller;
+    if (workflowController === undefined) return;
+    if (!foregroundPlanObservationCurrent(token)) return;
+    const listed = await deps.planCatalogPort.listPlanNames(token.root);
+    if (!foregroundPlanObservationCurrent(token)) return;
+    if (listed.isErr() || !listed.value.includes(planName)) return;
+    const snapshot = await workflowController.readPlanSnapshot(planName);
+    if (!foregroundPlanObservationCurrent(token)) return;
+    if (snapshot.isErr()) return;
+    adoptForegroundPlan(pi, token.ctx, planName);
   }
 
   function buildWorkflowTracker(projectRoot: string): PiActiveWorkflowTracker {
@@ -4244,6 +4736,16 @@ export function createPiExtension(
       )
       .andThen(() => ensureForegroundStartReady(ctx, generationGuard))
       .andThen(() => {
+        // The user's confirmed selection is authoritative, so it supersedes
+        // every direct observation still in flight BEFORE the turn is sent. A
+        // slower "execute .weave/plans/other.md" observed a moment earlier can
+        // then never land on top of the plan the user just chose.
+        invalidatePendingForegroundPlanObservations();
+        // Pi's `sendUserMessage` reports a failed dispatch only by throwing,
+        // so the Result-wrapped call IS the dispatch proof, and the identity
+        // is adopted from inside its success arm. Adopting first (which is
+        // what this did) left the rail naming a plan, and the session holding
+        // a recorded selection, for a kickoff turn that never started.
         const sendStartPrompt = Result.fromThrowable(
           () => pi.sendUserMessage(renderPlanStartPrompt(planName)),
           (): PiForegroundPlanStartFailure => ({
@@ -4252,7 +4754,12 @@ export function createPiExtension(
               "Pi could not submit the Tapestry start prompt to this session.",
           }),
         );
-        return sendStartPrompt();
+        return sendStartPrompt().map(() => {
+          // Still the first frame of the run: the turn now exists, and nothing
+          // it produces has been rendered yet.
+          adoptForegroundPlan(pi, ctx, planName);
+          return undefined;
+        });
       });
   }
 
@@ -4829,8 +5336,26 @@ export function createPiExtension(
     // A settled turn is the point where the session's committed intent is
     // known and stable, so the bounded terminal unsupported outcome is
     // recorded here. Telemetry dedupes it to one durable record.
-    pi.on("agent_settled", () => {
+    pi.on("agent_settled", (_event, ctx: PiSessionContext) => {
       reportProviderFastIntent();
+      // Plan progress moves when a turn edits the plan file, so the rail is
+      // re-resolved at turn settlement (and, below, after the tool completions
+      // that can write one). Both are events the host already emits: nothing
+      // here polls, and concurrent requests coalesce onto one lookup.
+      if (childModeState.active) return;
+      if (!hasPlanSurfaceToRefresh()) return;
+      refreshPlanSurfaces(ctx);
+    });
+
+    pi.on("tool_execution_end", (event, ctx: PiSessionContext) => {
+      if (childModeState.active) return;
+      if (!hasPlanSurfaceToRefresh()) return;
+      const record = asJsonRecord(event);
+      const toolName = record?.toolName;
+      if (typeof toolName !== "string" || !PLAN_MUTATING_TOOLS.has(toolName)) {
+        return;
+      }
+      refreshPlanSurfaces(ctx);
     });
 
     // Parent-chat/workflow concurrency (Pi adapter contract): an ordinary prompt
@@ -4839,8 +5364,52 @@ export function createPiExtension(
     // confirmed pause cancels the direct-step subtree and lets the prompt
     // continue to Loom - a reject leaves the workflow running untouched and
     // never submits the prompt.
-    pi.on("input", async (_event, ctx: PiSessionContext) => {
+    pi.on("input", async (event, ctx: PiSessionContext) => {
       if (childModeState.active) return { action: "continue" };
+      // A direct, explicit request to execute one contained plan is the second
+      // (and last) way the Plan Rail may learn about a foreground plan. It is
+      // observed here, on the user's own interactive submission, and nowhere
+      // else: assistant text, tool output and system prompts never reach this
+      // handler, and the parse is strict enough that a message merely
+      // mentioning a plan file moves nothing. It never changes the input's
+      // routing: `resolveWeaveInputDecision` records the intent AFTER the
+      // routing decision, and only when this adapter let the message through.
+      //
+      // Nothing is adopted, recorded or painted here. This adapter's own
+      // `continue` is not proof that the host accepted the submission - a
+      // later handler may still answer `handled`, expansion may rewrite the
+      // text, and the host may drop it - so the parsed request is held as
+      // pending intent and redeemed in `before_agent_start`, the first event
+      // Pi fires only for a turn it has actually started.
+      return await resolveWeaveInputDecision({
+        claimObservation: () => {
+          const claimed = claimForegroundPlanObservation(event, ctx);
+          if (claimed === undefined) return undefined;
+          return () => {
+            pendingForegroundPlanCell.pending = {
+              token: claimed.token,
+              planName: claimed.planName,
+              text: claimed.text,
+            };
+          };
+        },
+        routeInput: () => routeParentInput(ctx),
+      });
+    });
+
+    /**
+     * The pause-before-prompt decision, on its own.
+     *
+     * Parent-chat/workflow concurrency (Pi adapter contract): an ordinary
+     * prompt arriving while a direct-step child is active must never be
+     * silently interleaved with the workflow's own mutation. Ask first; only a
+     * confirmed pause cancels the direct-step subtree and lets the prompt
+     * continue to Loom - a reject leaves the workflow running untouched and
+     * never submits the prompt.
+     */
+    async function routeParentInput(
+      ctx: PiSessionContext,
+    ): Promise<PiInputDecision> {
       if (!directStepChildRegistry.isActive()) return { action: "continue" };
       const confirmed = await ctx.ui.confirm(
         "Weave workflow active",
@@ -4879,7 +5448,7 @@ export function createPiExtension(
         );
       }
       return { action: "continue" };
-    });
+    }
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
       latestSessionCtx = ctx;
@@ -4905,6 +5474,19 @@ export function createPiExtension(
       // generation's identity and painted surfaces would otherwise survive
       // into a session that has no controller to back them.
       clearActivePlanSurfaces(ctx);
+      // The foreground plan identity is session state, not generation state:
+      // a new session starts with none, and this session's own bounded
+      // adapter-owned entry is the ONLY thing that may put one back. A newer
+      // explicit selection later in the session supersedes whatever is
+      // reconstructed here, because both paths write through the same cell.
+      foregroundPlanDisplay.clear();
+      // The replaced session's pending observations are superseded here, not
+      // merely outvoted by the generation counter: their tokens hold a marker
+      // object that can never be minted again, so none of them can adopt into
+      // the session that replaced them - including when this startup returns
+      // early below and reconstructs nothing.
+      invalidatePendingForegroundPlanObservations();
+      restoreForegroundPlanFromSession(ctx);
       // The active-agent badge is generation-scoped exactly like those
       // surfaces. A prior generation may have committed a primary and
       // painted its name; nothing in *this* generation is committed yet, so
@@ -6613,6 +7195,11 @@ export function createPiExtension(
       latestSessionCtx = ctx;
       noteGenerationSessionCtx(ctx);
       if (childModeState.active) return undefined;
+      // The turn-start proof a pending direct request waits for. It runs ahead
+      // of every early return below, because a session with no committed
+      // primary snapshot still started this turn, and the display-only plan
+      // identity does not depend on the primary that answers it.
+      redeemPendingForegroundPlan(pi, event, ctx);
       const session = activeSession;
       if (
         session === undefined ||

@@ -9,6 +9,7 @@ import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   parsePiChildSessionEvent,
   preserveUnknownChildEvent,
+  retainedChildSessionEvent,
 } from "./child-session-events.js";
 import {
   EMPTY_PI_CHILD_TRANSCRIPT_STATE,
@@ -187,21 +188,40 @@ export class PiChildInspectionRegistry {
     this.transcriptListener = listener;
   }
 
+  /**
+   * Records one child event in every retention path this registry owns.
+   *
+   * The transcript reducer and the durable history port receive the SAME
+   * value: one parser-approved, redacted event. Handing the reducer the parsed
+   * event while handing history the raw one meant the observed frame - raw
+   * chain-of-thought, unbounded strings, and whatever else the child put on
+   * the wire - was written to durable history unredacted, from where a
+   * rebuild, a search, or a snapshot could read it back.
+   *
+   * An event the parser refuses is not retained at all: history still learns
+   * that a checkpoint happened, with no payload, because a value this boundary
+   * could not validate is a value it cannot describe honestly. A parsed frame
+   * the carrier classification rejected is refused for the same reason and by
+   * the same shared decision every other retention boundary asks.
+   */
   checkpointEvent(
     id: string,
     event: unknown,
   ): ResultAsync<void, PiChildInspectionHistoryError> {
     if (!this.live.has(id)) return okAsync(undefined);
     const parsed = parsePiChildSessionEvent(event);
-    if (parsed.success) {
+    const retained = parsed.success
+      ? retainedChildSessionEvent(parsed.data)
+      : undefined;
+    if (retained !== undefined) {
       const reducer =
         this.transcriptStates.get(id) ?? new PiChildTranscriptReducer();
-      reducer.applyEvent(parsed.data);
+      reducer.applyEvent(retained);
       this.transcriptStates.set(id, reducer);
       this.transcriptListener?.(id);
     }
     return this.enqueue(() =>
-      (this.history?.checkpoint?.(id, event) ?? okAsync(undefined)).map(
+      (this.history?.checkpoint?.(id, retained) ?? okAsync(undefined)).map(
         () => undefined,
       ),
     );
@@ -423,6 +443,53 @@ export interface PiChildTreeNode {
    * produced answer text for this turn. Carries no chain-of-thought prose.
    */
   readonly reasoningObserved?: boolean;
+  /**
+   * The assistant message being written RIGHT NOW, with its own explicit
+   * lifecycle identity.
+   *
+   * PRESENCE is the stream-open state: the field exists only while a message
+   * is genuinely open and has produced answer text. It disappears at
+   * `message_end` and at `turn_start`, so a reader can never mistake a
+   * finished answer for one still in flight.
+   *
+   * `id` names the message, not its words. Two consecutive messages with
+   * identical text have different ids, and the same message keeps its id as it
+   * grows, which is what lets a catch-up decide whether it is looking at
+   * something new WITHOUT comparing prose.
+   *
+   * Answer text only, exactly like `latestOutput`: the accumulator is
+   * fed from the single answer classification, so raw chain-of-thought cannot
+   * reach it.
+   */
+  readonly liveAnswer?: PiChildLiveAnswer;
+}
+
+/** The bounded live-answer fact one child publishes about itself. */
+export interface PiChildLiveAnswer {
+  /** Bounded, non-reused-for-the-next-message lifecycle identity. */
+  readonly id: number;
+  /** Exact ordered concatenation of this message's answer deltas. */
+  readonly text: string;
+}
+
+/** Mutable form the child keeps, including the closed state. */
+export interface PiChildLiveAnswerState extends PiChildLiveAnswer {
+  readonly open: boolean;
+}
+
+/**
+ * Ceiling on the live-answer lifecycle counter.
+ *
+ * Ids exist to tell one message from its neighbours, not to be a global
+ * sequence, so the counter wraps rather than growing without bound. A wrap
+ * needs a million assistant messages in one child.
+ */
+export const MAX_LIVE_ANSWER_ID = 1_000_000;
+
+/** The next bounded lifecycle identity after `current`. */
+export function nextLiveAnswerId(current: number): number {
+  if (!Number.isSafeInteger(current) || current < 1) return 1;
+  return current >= MAX_LIVE_ANSWER_ID ? 1 : current + 1;
 }
 
 export const MAX_LATEST_OUTPUT_BYTES = 4 * 1024;
@@ -447,59 +514,12 @@ export function truncateLatestOutput(text: string): string {
 }
 
 /**
- * Reads a streamed assistant text delta from either supported Pi RPC shape:
- * the legacy `delta.text` object or 0.81.1's
- * `assistantMessageEvent: { type: "text_delta", delta: string }`. Shared by
- * the parent tree preview and child settlement summary.
+ * What one `message_update` states is decided in exactly one place — see
+ * `message-update-carrier.ts`. The readers that used to live here answered
+ * "is this answer text?" and "is this reasoning?" independently, so a frame
+ * carrying both was published as an answer by whichever reader looked at
+ * `delta.text` first.
  */
-export function extractAssistantTextDeltaPreview(
-  record: Record<string, JsonValue>,
-): string | undefined {
-  const delta = record.delta;
-  if (typeof delta === "object" && delta !== null && !Array.isArray(delta)) {
-    const text = (delta as Record<string, JsonValue>).text;
-    if (typeof text === "string") return text;
-  }
-
-  const assistantEvent = record.assistantMessageEvent;
-  if (
-    typeof assistantEvent !== "object" ||
-    assistantEvent === null ||
-    Array.isArray(assistantEvent)
-  ) {
-    return undefined;
-  }
-  const eventRecord = assistantEvent as Record<string, JsonValue>;
-  if (eventRecord.type !== "text_delta") return undefined;
-  return typeof eventRecord.delta === "string" ? eventRecord.delta : undefined;
-}
-
-/**
- * Reads a streamed assistant *thinking* delta from a Pi RPC `message_update`
- * record (`assistantMessageEvent: { type: "thinking_delta", delta: string }`).
- *
- * A reasoning model can think for a long time before it emits a single
- * visible text token. Without this, a delegated child looks frozen for that
- * entire stretch: `latestOutput` stays empty and the parent tool renders
- * nothing but a status. Thinking is treated exactly like text - transient,
- * bounded, and never persisted - but is tracked in its own buffer by the
- * caller so real answer text always wins once it starts.
- */
-export function extractAssistantThinkingDeltaPreview(
-  record: Record<string, JsonValue>,
-): string | undefined {
-  const assistantEvent = record.assistantMessageEvent;
-  if (
-    typeof assistantEvent !== "object" ||
-    assistantEvent === null ||
-    Array.isArray(assistantEvent)
-  ) {
-    return undefined;
-  }
-  const eventRecord = assistantEvent as Record<string, JsonValue>;
-  if (eventRecord.type !== "thinking_delta") return undefined;
-  return typeof eventRecord.delta === "string" ? eventRecord.delta : undefined;
-}
 
 /**
  * Reads the terminal `stopReason` of a just-completed assistant message from

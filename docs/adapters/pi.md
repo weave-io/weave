@@ -116,6 +116,118 @@ The rail names the running direct workflow step's own agent while one is active,
 
 The rail is removed, not frozen, when there is nothing to name: no Weave primary agent, no tracked workflow, no readable plan task, or a completed, failed, or cancelled workflow. Row 1 still shows the agent when no plan is active, because the plan half is a structural absence rather than a row of blanks. When the session tracks no workflow but an eligible recovered pointer exists, the rail may show that paused plan as read-only state. Showing a recovered plan authorizes nothing; only `/weave:resume`, with its own confirmation and lease recheck, continues that work.
 
+#### Which plan the rail names
+
+Three sources, in descending authority. Each is used only when the one above it
+has nothing to say.
+
+1. **The tracked durable workflow.** This session's own workflow instance.
+2. **An eligible recovery pointer.** A paused execution, shown as read-only
+   state; showing it authorizes nothing.
+3. **The foreground plan.** The plan this session is working through in its own
+   turn, with no workflow instance behind it — which is what `/weave:start`
+   produces.
+
+The third source is **display-only**. It starts, resumes, and authorizes
+nothing, acquires no lease, and writes no runtime state. Exactly two
+user-authorized paths may set it: `/weave:start`, from the plan the user
+selected and confirmed, and one direct interactive message that explicitly asks
+for exactly one contained `.weave/plans/<name>.md` to be executed.
+
+The direct path is parsed by a closed grammar over the **whole message**, not
+by searching for keywords and not by reading only the clause beside the path.
+The message must be within a bounded length, and every token outside the plan
+path itself must be in one of four closed vocabularies, in this order:
+
+```
+<lead-in>* <execution verb> <connector>* PATH <trailer>*
+```
+
+- lead-ins: `please`, `now`, `then`, `first`, `let's`, `go ahead and`,
+  `i want you to`, `you should`, …
+- execution verbs: `execute`, `run`, `start`, `implement`, `continue`,
+  `resume`, `finish`, `complete`, `work through`, `carry out`, `pick up`
+- connectors: `the`, `this`, `plan`, `file`, `at`, `in`, `through`, …
+- trailers: `end to end`, `now`, `please`, `thanks`, `for me`, …
+
+One token outside those vocabularies rejects the message, and so does one
+character the grammar has no rule for — a colon, a period, a digit, a bullet,
+an angle quote, or a code fence before the path. That is what makes a
+quotation, an example, or an instruction *about* a request fail: `For example:
+run .weave/plans/alpha.md`, `Ignore this quoted sample: run …`, `> execute …`,
+and ` ```\nrun …\n``` ` all name a plan inside a sample rather than asking for
+one. A question mark anywhere, a negation anywhere (`don't run …`, `run the
+tests, not …`), and any trailing qualification (`… for example`, `… but only
+if it exists`) also set nothing. The grammar is total: every message reaches
+either one plan name or one typed rejection, and anything it does not accept
+falls back to `/weave:start`, which asks the user explicitly.
+
+A parse is still not authority to display: the name must also be in this
+root's plan catalog with a readable snapshot.
+
+A plan-path-like mention the parser will not accept rejects the **whole**
+message, even when a valid path sits beside it: a traversal, an absolute path,
+a nested subdirectory, a different slash or case spelling, an unsafe basename,
+an ambiguous tail such as `alpha.md.bak`, or two different plans. Prose about
+"the plan", assistant text, system prompts, and tool output never reach this
+path at all.
+
+A selection is recorded as one bounded adapter-owned session entry, and a
+restart reconstructs the identity from that entry alone — never by re-reading
+conversation. The whole envelope is validated (a Pi `custom` entry with this
+adapter's `customType` and a strict payload), so an ordinary message that
+happens to carry those fields reconstructs nothing, and the reconstructed name
+is revalidated against this root's plan catalog before it reaches the rail. A
+newer explicit selection supersedes it, a new session clears it, and a plan
+with no incomplete task left clears it too. A plan that exists only in another
+worktree is not read across roots: the rail shows the agent row alone.
+
+Every one of these observations is guarded by the session generation, the
+project root, and one monotonic observation generation, rechecked after each
+read. The generation is claimed by **every** interactive submission, before
+the text is parsed — ordinary prose, a malformed request, a negation, and a
+resubmission of the same plan all supersede a slower predecessor — and an
+authoritative `/weave:start` selection claims it too. The marker is a fresh
+identity rather than a counter, so a token issued before a session or root
+replacement can never compare equal to one issued after it.
+
+Adoption follows a **host turn-start proof**, never intent. A parsed direct
+request is held as pending intent and adopted only when Pi's
+`before_agent_start` reports that a turn started for **that exact prompt**.
+That event is the earliest point where the host itself states it accepted the
+submission: input interception is over, skill and template expansion have run,
+and the agent loop is about to begin.
+
+The first proof spends the intent, whatever it proves. So the rail does not
+move when:
+
+- a running workflow step prompts "pause it and interrupt with this message?"
+  and the answer is no, so the message is never submitted;
+- another handler answers `handled`, or the host drops the submission;
+- no turn ever starts for it;
+- a turn starts for a different prompt — an unrelated turn is not a second
+  chance to adopt the earlier request, and a later turn quoting the original
+  text cannot redeem an intent that is already spent;
+- a newer submission superseded it, the session was replaced, or the project
+  root changed.
+
+Nothing here reads assistant text, tool output, or model prose: the proof is a
+host lifecycle event plus the user's own submitted string.
+
+`/weave:start` is the deliberate exception, because it is the path that submits
+the turn itself: it appends and records the identity inside the success arm of
+`sendUserMessage`, which is that path's own dispatch proof. A refused dispatch
+reports the failure and leaves no rail state and no session entry behind. The
+direct path cannot use the same rule, because it does not submit anything — it
+only declines to stop a message the host may still refuse.
+
+Progress is re-read when the work can have changed it — after a turn settles
+and after the tool completions that can write a plan file — so the task marks,
+`┃ now`, and `┗ next` move with the plan's checkboxes. There is no polling
+timer; concurrent refreshes coalesce onto one lookup, and the queue keeps the
+**latest** request with its own session context, so a refresh from a replaced
+session can never drop the work a newer session asked for.
+
 ### Alt+T plan-task list
 
 `Alt+T` opens a read-only, scrollable list of the active plan's parent tasks. It reads the same active-plan and recovery source as the Plan Rail, marks each task `[ ]`, `[~]`, or `[x]`, points a cursor at the active task, and opens on that task rather than at the top. The viewport is bounded on both ends, so a small terminal still scrolls and a tall terminal does not become a full-screen takeover; when tasks are hidden the last line says how many.
@@ -269,7 +381,11 @@ The finalized surface is one high-contrast titled outer frame — ` WEAVE · CHI
 
 - **Session header, row 1.** An inverse ` CHILD ` badge, the child agent name, its model, its role, and its bounded task title, all left-aligned. The model sits immediately after the name and appears **exactly once**. The header grows to two rows before it drops the title.
 - **Session header, row 2.** `delegated by <PARENT>` followed by the plan › task › subtask breadcrumb, shedding subtask first, then plan.
-- **Transcript.** A Pi-native pane on the left: role gutters, understated read / edit / bash calls and results, reasoning as a bounded summary only, and plain streaming and final assistant responses. Raw chain-of-thought is never rendered. Raw reasoning — a `thinking_delta`, a legacy `delta.thinking`, a standalone `thinking` event, or a persisted `thinking` content block — prints a content-free `✻ reasoning` marker and nothing else, and its text is dropped before it reaches transcript state. Only an explicit host `reasoning_summary` event or `delta.reasoningSummary` field prints prose, under `✻ reasoning · SUMMARY`; no summary is ever derived by truncating or relabelling raw reasoning. The originating prompt comes first, then user messages, assistant text, reasoning summaries, tool calls and results, errors, retry dividers, and images.
+- **Transcript.** A Pi-native pane on the left: role gutters, understated read / edit / bash calls and results, reasoning as a bounded summary only, and plain streaming and final assistant responses. Raw chain-of-thought is never rendered. Raw reasoning — a `thinking_delta`, a legacy `delta.thinking`, a standalone `thinking` event, or a persisted `thinking` content block — prints a content-free `✻ reasoning` marker and nothing else, and its text is dropped before it reaches transcript state.
+
+A carrier is judged by what it holds, not by what it calls itself. A frame whose `assistantMessageEvent.type` says `text_delta` or `answer` while it buries prose in a `thinking` or `reasoning` member, or in a nested `{ type: "thinking" }` content block, is a raw-reasoning carrier: beside an answer it is rejected outright and moves nothing, and on its own it yields the content-free marker. A reasoning key with no prose under it — for example the numeric `usage.reasoning` token count — declares nothing, and a hostile carrier (a throwing proxy, or one nested deeper or wider than the bounded scan reads) is rejected rather than published.
+
+The **retention boundary** is the same for every path that keeps an event, and it asks one shared question before anything is kept. A frame the carrier classification **rejected** — mixed carriers, conflicting answers, or a payload the bounded descriptor-safe scan could not read — moves nothing and is retained nowhere: not in transcript history, not in an overlay entry or a replay step, not in a rebuild or a search, and not in the durable child-history port. Redaction blanks the prose fields a carrier *declared*, which cannot describe a frame nobody could classify, so a thought parked under an undeclared member such as `assistantMessageEvent.metadata` is refused outright rather than blanked. A frame the classification called **reasoning** is refused in the same spirit, one step short of dropping it: it states one fact a reader renders, so retention keeps a canonical event the adapter builds — `{ type: "message_update", assistantMessageEvent: { type: "thinking_delta" } }` — and nothing observed. Blanking declared fields kept the host's own object, and a reasoning frame may state prose in a member no field list names, so no nested member, string, block, `metadata` / `partial` / `usage` subobject, accessor, or unknown field of it survives anywhere. The canonical event classifies as reasoning again, so a rebuild is a fixed point and the reader still learns that the child reasoned. An ordinary answer and pure framing are retained unchanged. The inspection registry hands the transcript reducer and the history port the **same** parser-approved, retained event, and an event the parser refuses is retained nowhere either: history records that a checkpoint happened and carries no payload. Only an explicit host `reasoning_summary` event or `delta.reasoningSummary` field prints prose, under `✻ reasoning · SUMMARY`; no summary is ever derived by truncating or relabelling raw reasoning. The originating prompt comes first, then user messages, assistant text, reasoning summaries, tool calls and results, errors, retry dividers, and images.
 - **Status Matrix rail.** An aligned key/value matrix on the right, grouped lifecycle · work · spend, with an inverse alert pair above the matrix when a tool fails. Below the width at which the rail and the transcript minimum both fit, it folds to its compact matrix form rather than disappearing.
 - **Prompt panel.** A primary-like bordered editor over one muted key row. A disabled key prints an explicit `✕` rather than only dim colour, so a settled child reads as unactionable on a monochrome terminal. The key row sheds ordinary notes, then the danger note, then whole chips in ladder order — `/ search`, then `Alt+Enter queue`, then `q cancel` — with `Enter` and `Esc` as the floor.
 

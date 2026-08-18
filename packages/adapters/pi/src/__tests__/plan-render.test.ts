@@ -86,24 +86,26 @@ describe("renderPlanRailWidgetLines width tiers", () => {
     ]);
   });
 
-  it("drops the plan name first, at the mid tier", () => {
+  it("keeps the plan identity at the mid tier", () => {
+    // The prototype hides the plan name only at `micro`. At `mid` it is still
+    // offered to `joinFit`, and 80 columns hold it, so it is on the rail.
     expect(renderPlanRailWidgetLines(facts(), MID)).toEqual([
-      "◆ WEAVE · LOOM · Alt+A cycle",
+      "◆ WEAVE · LOOM · Alt+A cycle · pi-child-overlay-ux-feedback",
       "● ● ◐ ○   3/4",
       "┃ now   Child overlay rendering",
       "┗ next  Native child stream rendering",
     ]);
   });
 
-  it("drops the next row second, at the tight tier", () => {
+  it("drops the next row and the word 'cycle' at the tight tier", () => {
     expect(renderPlanRailWidgetLines(facts(), TIGHT)).toEqual([
-      "◆ WEAVE · LOOM · Alt+A cycle",
+      "◆ WEAVE · LOOM · Alt+A",
       "● ● ◐ ○   3/4",
       "┃ now   Child overlay rendering",
     ]);
   });
 
-  it("drops the word 'cycle' last, at the micro tier", () => {
+  it("drops the plan identity and the marks at the micro tier", () => {
     expect(renderPlanRailWidgetLines(facts(), MICRO)).toEqual([
       "◆ · LOOM · Alt+A",
       "3/4",
@@ -111,19 +113,144 @@ describe("renderPlanRailWidgetLines width tiers", () => {
     ]);
   });
 
-  it("keeps the drop order plan -> next -> the word 'cycle'", () => {
-    const rendered = [WIDE, MID, TIGHT, MICRO].map((width) =>
-      renderPlanRailWidgetLines(facts(), width).join("\n"),
+  /**
+   * The prototype's tier table, row by row, as the single normative reference
+   * for every band — not only the two examples a review happened to name.
+   *
+   * `renderPlanRailWidget` in `prototypes/weave-pi-tui-grilling.ts`:
+   *   badge  `tier === "micro" ? "◆" : CONTEXT.badge`
+   *   cycle  `tier === "wide" || tier === "mid" ? \`${key} cycle\` : key`
+   *   plan   `tier === "micro" ? "" : p.muted(f.plan)`
+   *   marks  `tier === "micro" ? progress : dots + "   " + progress`
+   *   next   `if (tier === "micro" || tier === "tight") return rows;`
+   */
+  it("matches the prototype tier table on every band", () => {
+    // A short plan name and a short agent name, so every drop below is the
+    // BAND's decision and never a measurement.
+    const compact = facts({
+      agent: "loom",
+      plan: {
+        plan: "alpha",
+        marks: ["done", "active", "pending"],
+        ordinal: "2/3",
+        task: "Now",
+        nextTask: "Next",
+      },
+    });
+    const observed = (["wide", "mid", "tight", "micro"] as const).map(
+      (tier, index) => {
+        const width = [WIDE, MID, TIGHT, MICRO][index] ?? WIDE;
+        const lines = renderPlanRailWidgetLines(compact, width);
+        const text = lines.join("\n");
+        return {
+          tier,
+          badge: text.includes("◆ WEAVE") ? "◆ WEAVE" : "◆",
+          cycleWord: text.includes("cycle"),
+          plan: text.includes("alpha"),
+          marks: text.includes("● ◐ ○"),
+          next: text.includes("┗ next"),
+          rows: lines.length,
+        };
+      },
     );
-    const hasPlan = rendered.map((text) =>
-      text.includes("pi-child-overlay-ux-feedback"),
-    );
-    const hasNext = rendered.map((text) => text.includes("next"));
-    const hasCycleWord = rendered.map((text) => text.includes("cycle"));
 
-    expect(hasPlan).toEqual([true, false, false, false]);
-    expect(hasNext).toEqual([true, true, false, false]);
-    expect(hasCycleWord).toEqual([true, true, true, false]);
+    expect(observed).toEqual([
+      {
+        tier: "wide",
+        badge: "◆ WEAVE",
+        cycleWord: true,
+        plan: true,
+        marks: true,
+        next: true,
+        rows: 4,
+      },
+      {
+        tier: "mid",
+        badge: "◆ WEAVE",
+        cycleWord: true,
+        plan: true,
+        marks: true,
+        next: true,
+        rows: 4,
+      },
+      {
+        tier: "tight",
+        badge: "◆ WEAVE",
+        cycleWord: false,
+        plan: true,
+        marks: true,
+        next: false,
+        rows: 3,
+      },
+      {
+        tier: "micro",
+        badge: "◆",
+        cycleWord: false,
+        plan: false,
+        marks: false,
+        next: false,
+        rows: 3,
+      },
+    ]);
+  });
+
+  it("pins the exact rows the prototype renders at each band", () => {
+    const compact = facts({
+      agent: "loom",
+      plan: {
+        plan: "alpha",
+        marks: ["done", "active", "pending"],
+        ordinal: "2/3",
+        task: "Now",
+        nextTask: "Next",
+      },
+    });
+    expect(renderPlanRailWidgetLines(compact, WIDE)).toEqual([
+      "◆ WEAVE · LOOM · Alt+A cycle · alpha",
+      "● ◐ ○   2/3",
+      "┃ now   Now",
+      "┗ next  Next",
+    ]);
+    expect(renderPlanRailWidgetLines(compact, MID)).toEqual([
+      "◆ WEAVE · LOOM · Alt+A cycle · alpha",
+      "● ◐ ○   2/3",
+      "┃ now   Now",
+      "┗ next  Next",
+    ]);
+    expect(renderPlanRailWidgetLines(compact, TIGHT)).toEqual([
+      "◆ WEAVE · LOOM · Alt+A · alpha",
+      "● ◐ ○   2/3",
+      "┃ now   Now",
+    ]);
+    expect(renderPlanRailWidgetLines(compact, MICRO)).toEqual([
+      "◆ · LOOM · Alt+A",
+      "2/3",
+      "┃ now   Now",
+    ]);
+  });
+
+  it("surrenders the plan before the Alt+A key as the row narrows", () => {
+    // §4.5: the hint is placed AHEAD of the plan name, so `joinFit` drops the
+    // plan first at the exact width where both stop fitting. Both widths are
+    // inside the SAME band, so this is a measurement and not a tier rule.
+    const long = facts({
+      agent: "loom",
+      plan: {
+        plan: "a".repeat(60),
+        marks: ["active"],
+        ordinal: "1/1",
+        task: "Now",
+        nextTask: undefined,
+      },
+    });
+    expect(planRailTier(91)).toBe("mid");
+    expect(planRailTier(90)).toBe("mid");
+    expect(renderPlanRailWidgetLines(long, 91)[0]).toBe(
+      `◆ WEAVE · LOOM · Alt+A cycle · ${"a".repeat(60)}`,
+    );
+    expect(renderPlanRailWidgetLines(long, 90)[0]).toBe(
+      "◆ WEAVE · LOOM · Alt+A cycle",
+    );
   });
 
   it("never emits a line wider than the width it was given", () => {

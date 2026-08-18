@@ -26,7 +26,6 @@ import {
   reduceChildCompactSafe,
 } from "./child-compact-render.js";
 import {
-  allocateLiveAssistantEntryId,
   boundText,
   degradedCapacityEntry,
   liveAssistantLifecyclePhase,
@@ -88,11 +87,15 @@ import {
   OverlayTextSchema,
 } from "./child-overlay-types.js";
 import {
+  appendLiveAssistantDelta,
   appendOverlayPage,
   dedupEntries,
   emptySaved,
+  endLiveAssistantLifecycle,
   isReadOnly,
   prependOverlayPage,
+  reconcileLiveAssistantAnswer,
+  resolveLiveAssistantEntry,
   type SavedChildState,
   syncTranscriptFromEntries,
 } from "./child-overlay-window.js";
@@ -106,6 +109,7 @@ import {
   type PiChildTranscriptState,
   reducePiChildTranscript,
 } from "./child-transcript.js";
+import { messageUpdateAnswerText } from "./message-update-carrier.js";
 
 // ---------------------------------------------------------------------------
 // Controller
@@ -253,6 +257,7 @@ export class ChildOverlayController {
                 ? child.runs[child.runs.length - 1]?.run
                 : undefined;
             state.activeBranchId = child.branchIds[0];
+            this.catchUpLiveAnswer(child, state);
             return this.toView(child, state);
           });
       });
@@ -313,8 +318,40 @@ export class ChildOverlayController {
           });
         }
         this.openChild = parsed.data;
+        this.catchUpLiveAnswer(parsed.data, state);
         return okAsync(this.toView(parsed.data, state));
       });
+  }
+
+  /**
+   * Reconciles the window with the child's own live-answer lifecycle.
+   *
+   * A reader who opens the inspector while a child is answering missed every
+   * delta that already happened: this controller was not listening for them,
+   * and no bounded source can replay them. The child's own answer-only
+   * snapshot is the authoritative live state for exactly that gap, so the
+   * unfinished answer is adopted as a PROVISIONAL, unframed assistant row that
+   * a later genuine `message_start` takes over — and is dropped again when the
+   * child stops writing that message.
+   *
+   * The decision is made on the message's lifecycle identity, never on its
+   * prose.
+   */
+  private catchUpLiveAnswer(
+    child: ChildOverlayChild,
+    state: SavedChildState,
+  ): void {
+    const seeded = reconcileLiveAssistantAnswer(state, child);
+    if (seeded === undefined) {
+      // A dropped stale row still changes the window.
+      syncTranscriptFromEntries(state);
+      return;
+    }
+    this.mergeEntry(state, seeded);
+    // The row is replayed into the transcript through the same rebuild every
+    // page merge uses, so the pane reads it exactly like a live one.
+    syncTranscriptFromEntries(state);
+    if (state.liveTail) state.scrollOffset = 0;
   }
 
   /**
@@ -553,24 +590,29 @@ export class ChildOverlayController {
     // (historical, truncated, or unusual host sequence) allocates on first
     // sight, so update/end still share one entry instead of fanning out.
     const phase = liveAssistantLifecyclePhase(sessionEvent);
-    let assistantEntryId: string | undefined;
-    if (phase !== undefined) {
-      if (phase === "start" || state.liveAssistantEntryId === undefined) {
-        const allocated = allocateLiveAssistantEntryId(
-          state.liveAssistantCounter,
-        );
-        state.liveAssistantEntryId = allocated.entryId;
-        state.liveAssistantCounter = allocated.nextCounter;
-      }
-      assistantEntryId = state.liveAssistantEntryId;
-    }
+    const assistantEntryId =
+      phase === undefined ? undefined : resolveLiveAssistantEntry(state, phase);
 
-    const projected = projectLiveEntry(
+    let projected = projectLiveEntry(
       sessionEvent,
       state.entries.length,
       state.globalExpanded,
       assistantEntryId,
     );
+    // A streamed delta states one fragment; the window keeps the whole answer.
+    // Writing the accumulated text (and one canonical replay step) here is what
+    // lets a rebuilt window still hold an unfinished answer.
+    if (phase === "continue" && assistantEntryId !== undefined) {
+      const delta = messageUpdateAnswerText(sessionEvent);
+      if (delta !== undefined) {
+        projected = appendLiveAssistantDelta(
+          state,
+          assistantEntryId,
+          delta,
+          projected?.sequence ?? state.entries.length,
+        );
+      }
+    }
     // Identity is owned by the lifecycle, not by the projection. A real Pi
     // 0.84 update can legitimately project nothing (a `thinking_delta`, or a
     // text delta that is empty once bounded), and an earlier version read the
@@ -598,9 +640,9 @@ export class ChildOverlayController {
       markTailGrowth(state);
     }
     if (state.liveTail) state.scrollOffset = 0;
-    // Cleared only now: both the transcript reduce and the overlay projection
+    // Released only now: both the transcript reduce and the overlay projection
     // above needed the lifecycle identity.
-    if (phase === "end") state.liveAssistantEntryId = undefined;
+    if (phase === "end") endLiveAssistantLifecycle(state);
     return ok(this.toView(child, state));
   }
 

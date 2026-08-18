@@ -1714,8 +1714,14 @@ describe("PiDelegationController", () => {
         events.push(`register:${r.id}`);
         return okAsync(undefined);
       },
+      // History receives the parser-approved, redacted event - the same one
+      // the transcript reducer gets - so the label is read off that event.
       checkpoint: (id, event) => {
-        events.push(`checkpoint:${id}:${String(event)}`);
+        const text =
+          typeof event === "object" && event !== null && "text" in event
+            ? String((event as { readonly text?: unknown }).text)
+            : "none";
+        events.push(`checkpoint:${id}:${text}`);
         return okAsync(undefined);
       },
       interrupted: (id) => {
@@ -1732,8 +1738,8 @@ describe("PiDelegationController", () => {
     const child = spawnedAt(port, 0);
     const id = childIdOf(child, port);
     await sendChildToRunning(child, port, "gen-1");
-    await registry.checkpointEvent(id, "one");
-    await registry.checkpointEvent(id, "two");
+    await registry.checkpointEvent(id, { type: "text", text: "one" });
+    await registry.checkpointEvent(id, { type: "text", text: "two" });
     await controller.cancelSubtree("root");
     const one = events.indexOf(`checkpoint:${id}:one`);
     const two = events.indexOf(`checkpoint:${id}:two`);

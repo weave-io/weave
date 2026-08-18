@@ -32,7 +32,7 @@ function fragment(
   return {
     kind: "assistant_fragment",
     itemId,
-    dedupKey: dedupKey ?? `${itemId}:${text}`,
+    ...(dedupKey === undefined ? {} : { dedupKey }),
     text,
     mode,
   };
@@ -82,9 +82,11 @@ describe("child-compact-render", () => {
 
   it("adds, replaces, and dedups meaningful assistant fragments", () => {
     let state = mustReduce(createChildCompactState("t1"), start());
-    state = mustReduce(state, fragment("hello", "assistant", "d1", "append"));
+    state = mustReduce(state, fragment("hello ", "assistant", "d1", "append"));
     expect(state.runs[0]?.latestMeaningfulFragment).toBe("hello");
 
+    // Fragments are concatenated EXACTLY, in order. The separator is whatever
+    // the child streamed - inventing one turns ["hel", "lo"] into "hel lo".
     state = mustReduce(state, fragment("world", "assistant", "d2", "append"));
     expect(state.runs[0]?.latestMeaningfulFragment).toBe("hello world");
 
@@ -423,6 +425,53 @@ describe("child-compact-render", () => {
     expect(JSON.stringify(state.runs[0])).not.toContain(
       "secret chain of thought",
     );
+  });
+
+  it("keeps every repeated streamed delta instead of matching on text", () => {
+    // The wire gives a `text_delta` no identity: `toJsonEvent` strips the
+    // cumulative `partial`, and `contentIndex` names the content block every
+    // delta of one answer shares. Keying on the delta's own words deleted the
+    // second `the ` of a sentence and printed an answer the child never gave.
+    let state = mustReduce(createChildCompactState("t1"), start());
+    const deltas = ["the ", "cat ", "and ", "the ", "hat ", "and ", "the "];
+    for (const delta of deltas) {
+      const mapped = mapPiChildSessionEventToCompactInput({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta },
+      } as unknown as PiChildSessionEvent);
+      const input = mapped._unsafeUnwrap();
+      expect(input?.kind).toBe("assistant_fragment");
+      if (input?.kind === "assistant_fragment") {
+        // No key at all, so nothing downstream can suppress it.
+        expect(input.dedupKey).toBeUndefined();
+        state = mustReduce(state, input);
+      }
+    }
+    expect(activityOf(state)).toBe("the cat and the hat and the");
+
+    // An unkeyed fragment consumes no dedup budget either.
+    expect(state.runs[0]?.dedupKeys.size).toBe(0);
+  });
+
+  it("still suppresses a repeat of an authoritatively identified fragment", () => {
+    // `message_start` is the one fragment the protocol identifies: it happens
+    // once per message, and its `replace` of the item text would erase an
+    // answer already streamed into it.
+    let state = mustReduce(createChildCompactState("t1"), start());
+    const startMessage = mapPiChildSessionEventToCompactInput({
+      type: "message_start",
+      message: { id: "asst-9", role: "assistant", content: [] },
+    } as unknown as PiChildSessionEvent)._unsafeUnwrap();
+    expect(startMessage?.kind).toBe("assistant_fragment");
+    if (startMessage?.kind === "assistant_fragment") {
+      expect(startMessage.dedupKey).toBe("assistant:start");
+      state = mustReduce(state, startMessage);
+      state = mustReduce(state, fragment("answered"));
+      expect(activityOf(state)).toBe("answered");
+      // The duplicate start changes nothing.
+      state = mustReduce(state, startMessage);
+    }
+    expect(activityOf(state)).toBe("answered");
   });
 
   it("skips whitespace-only and control-only fragments as activity", () => {

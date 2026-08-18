@@ -31,6 +31,7 @@
  * {@link PiDelegationCardError} and leaves the prior facts untouched.
  */
 import { err, ok, type Result } from "neverthrow";
+import { appendAssistantStreamDelta } from "./assistant-stream-text.js";
 import {
   boundChildCompactId,
   CHILD_COMPACT_MAX_DEDUP_KEYS,
@@ -258,6 +259,23 @@ export interface PiDelegationCardState {
   readonly elapsedMs: number | undefined;
   readonly activity: PiCardActivityState | undefined;
   readonly openMessageId: string | undefined;
+  /**
+   * The exact ordered concatenation of the deltas streamed into the message
+   * still being written, bounded.
+   *
+   * A delta is a fragment of a word as often as it is a word, so the card
+   * accumulates RAW and sanitizes the projection once. Sanitizing each
+   * fragment on arrival and joining the results with a space turned
+   * `["hel", "lo"]` into `hel lo` — an answer the child never gave, and one
+   * the inspector, which concatenated, disagreed with.
+   *
+   * It is held here rather than derived from the row because the row ring is
+   * bounded: a long tool-heavy run can evict a message row that is still
+   * being written, and the answer must not restart when it does.
+   */
+  readonly openMessageStream:
+    | { readonly itemId: string; readonly raw: string }
+    | undefined;
   readonly usage: ChildCompactUsageFacts | undefined;
   readonly toolCalls: ReadonlyMap<string, string>;
   readonly lastToolEvidence:
@@ -296,6 +314,7 @@ export function createDelegationCardState(
     elapsedMs: undefined,
     activity: undefined,
     openMessageId: undefined,
+    openMessageStream: undefined,
     usage: undefined,
     toolCalls: new Map<string, string>(),
     lastToolEvidence: undefined,
@@ -418,6 +437,10 @@ function applyStartRun(
     phase: "bootstrap",
     startedAtMs: atMs,
     elapsedMs: 0,
+    // A new run writes no message yet: the previous run's partial answer is
+    // not the start of this one.
+    openMessageId: undefined,
+    openMessageStream: undefined,
   };
 }
 
@@ -426,14 +449,16 @@ function applyAssistantFragment(
   input: Extract<ChildCompactReducerInput, { kind: "assistant_fragment" }>,
 ): PiDelegationCardState {
   const rowId = `msg:${input.itemId}`;
-  const existing = state.rows.find((row) => row.id === rowId);
-  const incoming = sanitizeChildCompactText(input.text);
   const mode = input.mode ?? "append";
-  const merged =
-    existing === undefined || mode === "replace"
-      ? incoming
-      : sanitizeChildCompactText(`${existing.text} ${incoming}`.trim());
-  const text = boundText(merged, CARD_ROW_TEXT_MAX);
+  // The raw accumulation is keyed by the MESSAGE, not by the row: a `replace`
+  // frame and a different message both start a new answer, everything else
+  // extends the one in flight.
+  const carried =
+    mode === "replace" || state.openMessageStream?.itemId !== input.itemId
+      ? ""
+      : state.openMessageStream.raw;
+  const raw = appendAssistantStreamDelta(carried, input.text);
+  const text = boundText(sanitizeChildCompactText(raw), CARD_ROW_TEXT_MAX);
 
   // A message head with no body yet is not an answer: it reports that the child
   // is writing, and the live marker says the row may still grow.
@@ -451,6 +476,7 @@ function applyAssistantFragment(
     }),
     phase: "responding",
     openMessageId: input.itemId,
+    openMessageStream: { itemId: input.itemId, raw },
     activity,
   };
 }
@@ -461,10 +487,19 @@ function applyAssistantEnd(
 ): PiDelegationCardState {
   const rowId = `msg:${input.itemId}`;
   const existing = state.rows.find((row) => row.id === rowId);
+  // The terminal message carries the whole answer, so it replaces the
+  // accumulation. Without one, the streamed answer this card already holds is
+  // the honest text — including when the row itself was evicted from the ring.
+  const streamed =
+    state.openMessageStream?.itemId === input.itemId
+      ? sanitizeChildCompactText(state.openMessageStream.raw)
+      : (existing?.text ?? "");
   const ended =
-    input.text !== undefined ? sanitizeChildCompactText(input.text) : "";
+    input.text !== undefined
+      ? sanitizeChildCompactText(appendAssistantStreamDelta("", input.text))
+      : "";
   const text = boundText(
-    ended.length > 0 ? ended : (existing?.text ?? ""),
+    ended.length > 0 ? ended : streamed,
     CARD_ROW_TEXT_MAX,
   );
 
@@ -483,6 +518,7 @@ function applyAssistantEnd(
       text,
     }),
     openMessageId: undefined,
+    openMessageStream: undefined,
     usage: mergeUsage(state.usage, input.usage),
     activity,
   };
@@ -1135,9 +1171,10 @@ export interface PiChildCardStartRunInput {
  * The single authoritative reducer behind one delegation card.
  *
  * It correlates stable message ids across `message_start`/`update`/`end`, uses
- * `toolCallId` for tools, dedups repeated fragments by the mapper's own dedup
- * key, routes sanitized provider failures through the overlay's formatter, and
- * settles only from an authoritative settlement.
+ * `toolCallId` for tools, suppresses a repeated frame only where the mapper
+ * gave it an authoritative dedup key (never by matching text), routes sanitized
+ * provider failures through the overlay's formatter, and settles only from an
+ * authoritative settlement.
  *
  * Two freezes make the honesty structural rather than remembered:
  *
@@ -1247,7 +1284,12 @@ export class PiChildCardProjection {
     }
     const input = mapped.value;
     if (input.kind === "settle") return this.facts();
-    if (input.kind === "assistant_fragment") {
+    // Only a fragment the mapper could identify authoritatively is eligible for
+    // duplicate suppression. Streamed deltas carry no identity on the wire, so
+    // they arrive unkeyed and are always applied: repeating a word is not
+    // repeating a frame, and dropping the repeat printed an answer the child
+    // never gave.
+    if (input.kind === "assistant_fragment" && input.dedupKey !== undefined) {
       const dedupKey = boundChildCompactId(input.dedupKey);
       if (this.dedupKeys.has(dedupKey)) return this.facts();
       this.retainDedupKey(dedupKey);

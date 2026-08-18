@@ -57,7 +57,9 @@ import {
   parsePiSkillsFromSystemPrompt,
   readOverlaySessionEntryPage,
   resolveDirectStepBadgeAgent,
+  resolveWeaveInputDecision,
 } from "../extension-impl.js";
+import { FOREGROUND_PLAN_ENTRY_TYPE } from "../foreground-plan-display.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
 import {
@@ -770,7 +772,7 @@ function installExtension(
 }
 
 describe("createPiExtension factory (layer C: compiled extension against a fake host)", () => {
-  it("registers commands, the palette shortcut, and six lifecycle delegates without a tool-call interceptor", () => {
+  it("registers commands, the palette shortcut, and seven lifecycle delegates without a tool-call interceptor", () => {
     const host = new RecordingFakePiHost();
     installExtension(host);
     expect(host.registerCommandCalls.map((call) => call.name).sort()).toEqual(
@@ -805,6 +807,10 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       "session_before_tree",
       "session_shutdown",
       "session_start",
+      // Plan progress is re-read after the tool completions that can write a
+      // plan file, so the rail's checkbox marks, `now` and `next` move with
+      // the work instead of freezing at the value they were resolved with.
+      "tool_execution_end",
     ]);
   });
 
@@ -9506,5 +9512,1144 @@ describe("createPiExtension: provider fast intent", () => {
       extension.providerFastLatestForTest(),
       UNSUPPORTED_FAST_SNAPSHOT,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug B — the Plan Rail must name the plan a FOREGROUND execution is running
+// ---------------------------------------------------------------------------
+
+/**
+ * A session with a real workflow controller, a readable plan, and a plan
+ * catalog — i.e. everything a foreground `/weave:start` has in production,
+ * except a workflow instance, which a foreground run never creates.
+ */
+function installForegroundPlanRailExtension(
+  host: RecordingFakePiHost,
+  provider: MutablePlanStateProvider,
+  planNames: readonly string[] = ["foreground-plan"],
+): void {
+  installExtension(host, "0.81.1", {
+    capabilityProber: allOkCapabilityProber(),
+    configActivator: fakeConfigActivator({
+      agents: [
+        { agentName: "loom", source: "explicit", descriptor: loomDescriptor() },
+        {
+          agentName: "tapestry",
+          source: "explicit",
+          descriptor: tapestryDescriptor(),
+        },
+      ],
+      errors: [],
+    }),
+    runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+    planStateProviderFactory: () => provider,
+    planCatalogPort: new FakePiPlanCatalogPort([...planNames]),
+    telemetryJournal: { write: (_entry: unknown) => okAsync(undefined) },
+    telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+  });
+}
+
+/** A plan with three parent tasks, the second of which is in progress. */
+function foregroundPlanSnapshot(
+  planName = "foreground-plan",
+  states: readonly ("completed" | "in_progress" | "pending")[] = [
+    "completed",
+    "in_progress",
+    "pending",
+  ],
+): PlanTaskSnapshot {
+  return {
+    planName,
+    contentRevision: "rev-1",
+    format: "canonical",
+    totalParentCount: states.length,
+    complete: states.every((state) => state === "completed"),
+    parents: states.map((state, index) => ({
+      id: `${index + 1}`,
+      title: `Task ${index + 1}`,
+      state,
+      children: [],
+    })),
+  } as PlanTaskSnapshot;
+}
+
+/** The ANSI-free lines the Plan Rail last painted. */
+function planRailPlainLines(host: RecordingFakePiHost): string[] {
+  return planRailLines(host).map((line) =>
+    line.replace(ANSI, "").replace(/\s+$/u, ""),
+  );
+}
+
+/**
+ * Lets every fire-and-forget plan resolution finish.
+ *
+ * Plan resolution is deliberately asynchronous and last-request-wins, so the
+ * rail repaints after the turn/tool event that triggered it returns. Yielding
+ * both the microtask and the macrotask queue is what makes the assertion see
+ * the frame a reader would.
+ */
+async function settlePlanSurfaces(): Promise<void> {
+  for (let round = 0; round < 4; round += 1) {
+    await flushBackgroundWork();
+    await Bun.sleep(1);
+  }
+}
+
+/**
+ * One interactive submission, exactly as the host delivers it.
+ *
+ * The `input` event is only the adapter's own decision point. Pi accepts the
+ * submission afterwards, and `before_agent_start` - which names the accepted
+ * prompt - is the first event it fires only for a turn it actually started.
+ * A direct foreground-plan request is adopted at that proof and nowhere else,
+ * so every test that expects an adoption has to deliver both halves.
+ */
+async function submitInteractive(
+  host: RecordingFakePiHost,
+  text: string,
+): Promise<void> {
+  await host.triggerEvent("input", {
+    type: "input",
+    source: "interactive",
+    text,
+  });
+  await host.triggerBeforeAgentStart({ prompt: text });
+}
+
+describe("createPiExtension: the Plan Rail follows a foreground plan execution", () => {
+  it("names the plan, its marks, now and next after /weave:start", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    await host.invokeCommand("weave:start", "foreground-plan");
+    await settlePlanSurfaces();
+
+    const rows = planRailPlainLines(host);
+    expect(rows[0]).toContain("◆ WEAVE · TAPESTRY");
+    expect(rows[0]).toContain("foreground-plan");
+    expect(rows[1]).toContain("2/3");
+    expect(rows[2]).toBe("┃ now   Task 2");
+    expect(rows[3]).toBe("┗ next  Task 3");
+    // Display-only: the kickoff turn is the only thing that was started.
+    expect(host.sentUserMessages).toHaveLength(1);
+  });
+
+  it("records the selection as one bounded adapter-owned session entry", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    await host.invokeCommand("weave:start", "foreground-plan");
+    await settlePlanSurfaces();
+
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "foreground-plan" },
+      },
+    ]);
+  });
+
+  it("adopts one explicit direct request naming a contained plan path", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+
+    await submitInteractive(
+      host,
+      "execute .weave/plans/foreground-plan.md end to end",
+    );
+    await settlePlanSurfaces();
+
+    const rows = planRailPlainLines(host);
+    expect(rows[0]).toContain("foreground-plan");
+    expect(rows[2]).toBe("┃ now   Task 2");
+  });
+
+  it("ignores prose, traversal, several plans, and non-interactive input", async () => {
+    for (const event of [
+      {
+        source: "interactive",
+        text: "execute the foreground plan we discussed",
+      },
+      {
+        source: "interactive",
+        text: "what does .weave/plans/foreground-plan.md say?",
+      },
+      {
+        source: "interactive",
+        text: "execute .weave/plans/../../etc/passwd.md",
+      },
+      {
+        source: "interactive",
+        text: "execute ../other/.weave/plans/foreground-plan.md",
+      },
+      {
+        source: "interactive",
+        text: "execute .weave/plans/foreground-plan.md and .weave/plans/other-plan.md",
+      },
+      {
+        source: "extension",
+        text: "execute .weave/plans/foreground-plan.md",
+      },
+    ]) {
+      const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+      const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+      installForegroundPlanRailExtension(host, provider, [
+        "foreground-plan",
+        "other-plan",
+      ]);
+      await host.triggerSessionStart();
+
+      await host.triggerEvent("input", { type: "input", ...event });
+      // A real turn follows every submission; none of these may redeem one.
+      await host.triggerBeforeAgentStart({ prompt: event.text });
+      await settlePlanSurfaces();
+
+      expect({ text: event.text, task: planRailShowsTask(host) }).toEqual({
+        text: event.text,
+        task: false,
+      });
+      expect(
+        host.appendedEntries.some(
+          (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("refuses a plan that is not in this project root's catalog", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const provider = new MutablePlanStateProvider(
+      foregroundPlanSnapshot("other-worktree-plan"),
+    );
+    installForegroundPlanRailExtension(host, provider, ["foreground-plan"]);
+    await host.triggerSessionStart();
+
+    await submitInteractive(
+      host,
+      "execute .weave/plans/other-worktree-plan.md",
+    );
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+  });
+
+  it("reconstructs the plan on restart from the adapter-owned entry alone", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: {
+        getSessionId: () => "fake-session-1",
+        getSessionFile: () => "/fake/sessions/fake-session-1.jsonl",
+        isPersisted: () => true,
+        getHeader: () => ({ id: "fake-session-1" }),
+        getEntries: () => [
+          {
+            type: "message",
+            role: "user",
+            content: "execute .weave/plans/prose-only-plan.md",
+          },
+          {
+            type: "custom",
+            customType: FOREGROUND_PLAN_ENTRY_TYPE,
+            data: { v: 1, planName: "foreground-plan" },
+          },
+        ],
+      } as never,
+    });
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+
+    await host.triggerSessionStart();
+    await settlePlanSurfaces();
+
+    const rows = planRailPlainLines(host);
+    expect(rows[0]).toContain("foreground-plan");
+    expect(rows[2]).toBe("┃ now   Task 2");
+  });
+
+  it("moves now, next and the marks when a tool edits the plan", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    await host.invokeCommand("weave:start", "foreground-plan");
+    await settlePlanSurfaces();
+    expect(planRailPlainLines(host)[2]).toBe("┃ now   Task 2");
+
+    provider.setSnapshot(
+      foregroundPlanSnapshot("foreground-plan", [
+        "completed",
+        "completed",
+        "in_progress",
+      ]),
+    );
+    await host.triggerEvent("tool_execution_end", {
+      type: "tool_execution_end",
+      toolName: "edit",
+      toolCallId: "call-1",
+      isError: false,
+    });
+    await settlePlanSurfaces();
+
+    const rows = planRailPlainLines(host);
+    expect(rows[1]).toContain("3/3");
+    expect(rows[2]).toBe("┃ now   Task 3");
+    expect(rows[3]).toBeUndefined();
+  });
+
+  it("clears the rail's plan tiers once the plan has nothing left to do", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    await host.invokeCommand("weave:start", "foreground-plan");
+    await settlePlanSurfaces();
+    expect(planRailShowsTask(host)).toBe(true);
+
+    provider.setSnapshot(
+      foregroundPlanSnapshot("foreground-plan", [
+        "completed",
+        "completed",
+        "completed",
+      ]),
+    );
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(planRailPlainLines(host)[0]).toContain("◆ WEAVE · TAPESTRY");
+
+    // The identity itself is dropped, so a later turn does not resurrect the
+    // finished plan when its file is read again.
+    provider.setSnapshot(foregroundPlanSnapshot());
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await settlePlanSurfaces();
+    expect(planRailShowsTask(host)).toBe(false);
+  });
+
+  it("does not start, resume, or lease anything for a display-only plan", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const store = createInMemoryRuntimeStore();
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: { open: () => okAsync(store) },
+      planStateProviderFactory: () => provider,
+      planCatalogPort: new FakePiPlanCatalogPort(["foreground-plan"]),
+      telemetryJournal: { write: (_entry: unknown) => okAsync(undefined) },
+      telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+    });
+    await host.triggerSessionStart();
+
+    await submitInteractive(host, "execute .weave/plans/foreground-plan.md");
+    await settlePlanSurfaces();
+    expect(planRailShowsTask(host)).toBe(true);
+
+    // Nothing executes for a display identity: the store holds no workflow
+    // instance and no lease, and the status line says nothing about the plan.
+    await host.invokeCommand("weave:status");
+    const status = host.notifyCalls.at(-1)?.message ?? "";
+    expect(status).toContain("health-only: false");
+    expect(status).not.toContain("foreground-plan");
+    const instances = await store.instances.list();
+    expect(instances.isOk() ? instances.value : ["unreadable"]).toEqual([]);
+    const lease = await store.leases.findActive();
+    expect(lease.isOk() ? lease.value : "unreadable").toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug B — every foreground plan observation is guarded by session, root and
+// request
+// ---------------------------------------------------------------------------
+
+/**
+ * A catalog port whose listing is released by the test, one call at a time.
+ *
+ * Every foreground observation awaits this listing, which is exactly where a
+ * newer message, a session switch, or a root replacement can overtake it.
+ */
+class DeferredPlanCatalogPort {
+  readonly pending: (() => void)[] = [];
+
+  constructor(private readonly names: readonly string[]) {}
+
+  listPlanNames(
+    _projectRoot: string,
+  ): ResultAsync<readonly string[], PiAdapterFailure> {
+    return ResultAsync.fromSafePromise(
+      new Promise<readonly string[]>((resolve) => {
+        this.pending.push(() => resolve([...this.names]));
+      }),
+    );
+  }
+}
+
+/** A plan state provider that can answer for more than one plan. */
+function multiPlanProvider(
+  snapshots: readonly PlanTaskSnapshot[],
+): MutablePlanStateProvider {
+  const byName = new Map(snapshots.map((snap) => [snap.planName, snap]));
+  const provider = new MutablePlanStateProvider(snapshots[0]);
+  provider.readSnapshot = (planName: string) => {
+    const found = byName.get(planName);
+    return found === undefined
+      ? (errAsync({ type: "PlanMissing" as const, planName }) as ReturnType<
+          MutablePlanStateProvider["readSnapshot"]
+        >)
+      : (okAsync(found) as ReturnType<
+          MutablePlanStateProvider["readSnapshot"]
+        >);
+  };
+  return provider;
+}
+
+function installDeferredForegroundExtension(
+  host: RecordingFakePiHost,
+  provider: MutablePlanStateProvider,
+  catalog: DeferredPlanCatalogPort,
+): void {
+  installExtension(host, "0.81.1", {
+    capabilityProber: allOkCapabilityProber(),
+    configActivator: fakeConfigActivator({
+      agents: [
+        { agentName: "loom", source: "explicit", descriptor: loomDescriptor() },
+        {
+          agentName: "tapestry",
+          source: "explicit",
+          descriptor: tapestryDescriptor(),
+        },
+      ],
+      errors: [],
+    }),
+    runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+    planStateProviderFactory: () => provider,
+    planCatalogPort: catalog as unknown as FakePiPlanCatalogPort,
+    telemetryJournal: { write: (_entry: unknown) => okAsync(undefined) },
+    telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+  });
+}
+
+describe("createPiExtension: foreground plan observations are race-safe", () => {
+  it("lets the newest request win when an older one finishes last", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const catalog = new DeferredPlanCatalogPort(["alpha-plan", "beta-plan"]);
+    installDeferredForegroundExtension(
+      host,
+      multiPlanProvider([
+        foregroundPlanSnapshot("alpha-plan"),
+        foregroundPlanSnapshot("beta-plan"),
+      ]),
+      catalog,
+    );
+    await host.triggerSessionStart();
+
+    await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
+    await submitInteractive(host, "execute .weave/plans/beta-plan.md");
+    expect(catalog.pending).toHaveLength(2);
+
+    // The NEWER observation completes first, then the older one returns. The
+    // older result describes a request the user has already superseded.
+    catalog.pending[1]?.();
+    await settlePlanSurfaces();
+    catalog.pending[0]?.();
+    await settlePlanSurfaces();
+
+    const rows = planRailPlainLines(host);
+    expect(rows[0]).toContain("beta-plan");
+    expect(rows[0]).not.toContain("alpha-plan");
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "beta-plan" },
+      },
+    ]);
+  });
+
+  it("drops an observation whose session was replaced while it awaited", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const catalog = new DeferredPlanCatalogPort(["alpha-plan"]);
+    installDeferredForegroundExtension(
+      host,
+      multiPlanProvider([foregroundPlanSnapshot("alpha-plan")]),
+      catalog,
+    );
+    await host.triggerSessionStart();
+
+    await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
+    expect(catalog.pending).toHaveLength(1);
+
+    // A new session starts before the listing returns. The observation belongs
+    // to the session that is gone, so it may not paint into its successor.
+    await host.triggerSessionStart();
+    catalog.pending[0]?.();
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(
+      host.appendedEntries.some(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toBe(false);
+  });
+
+  it("revalidates a reconstructed plan against this root's catalog", async () => {
+    // The session entry records a plan this project root does not have: the
+    // worktree moved, or the plan was deleted or renamed. A restart shows the
+    // agent identity alone rather than a plan that is not there.
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: {
+        getSessionId: () => "fake-session-2",
+        getSessionFile: () => "/fake/sessions/fake-session-2.jsonl",
+        isPersisted: () => true,
+        getHeader: () => ({ id: "fake-session-2" }),
+        getEntries: () => [
+          {
+            type: "custom",
+            customType: FOREGROUND_PLAN_ENTRY_TYPE,
+            data: { v: 1, planName: "other-worktree-plan" },
+          },
+        ],
+      } as never,
+    });
+    const provider = new MutablePlanStateProvider(
+      foregroundPlanSnapshot("other-worktree-plan"),
+    );
+    installForegroundPlanRailExtension(host, provider, ["foreground-plan"]);
+
+    await host.triggerSessionStart();
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(planRailPlainLines(host)[0]).not.toContain("other-worktree-plan");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One monotonic observation generation, and adoption only after real routing
+// ---------------------------------------------------------------------------
+
+describe("createPiExtension: one monotonic foreground plan observation generation", () => {
+  /**
+   * Every interactive submission supersedes the pending observation before it,
+   * whatever the new text turns out to say. Each case here defers the first
+   * (valid) request's catalog listing, sends a second submission, and then
+   * lets the first listing return: the older result describes a request the
+   * user has already moved past, so it may not reach the rail.
+   */
+  const supersedingTexts: readonly (readonly [string, string])[] = [
+    ["ordinary prose", "actually, let's look at the test failures first"],
+    ["an invalid request", "what does .weave/plans/beta-plan.md say?"],
+    ["a negated request", "don't run .weave/plans/alpha-plan.md"],
+    ["the same plan again", "execute .weave/plans/alpha-plan.md"],
+  ];
+
+  for (const [label, superseding] of supersedingTexts) {
+    it(`drops a deferred request superseded by ${label}`, async () => {
+      const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+      const catalog = new DeferredPlanCatalogPort(["alpha-plan", "beta-plan"]);
+      installDeferredForegroundExtension(
+        host,
+        multiPlanProvider([
+          foregroundPlanSnapshot("alpha-plan"),
+          foregroundPlanSnapshot("beta-plan"),
+        ]),
+        catalog,
+      );
+      await host.triggerSessionStart();
+
+      await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
+      expect(catalog.pending).toHaveLength(1);
+
+      await submitInteractive(host, superseding);
+
+      // The first observation's listing returns LAST, after the user has
+      // already sent something else.
+      catalog.pending[0]?.();
+      await settlePlanSurfaces();
+      // A same-plan resubmission starts its own observation; release it too so
+      // the only difference between the cases is which request wins.
+      catalog.pending[1]?.();
+      await settlePlanSurfaces();
+
+      const adopted = host.appendedEntries.filter(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      );
+      if (superseding === "execute .weave/plans/alpha-plan.md") {
+        // The newest submission is the one that adopted, exactly once.
+        expect(adopted).toEqual([
+          {
+            type: FOREGROUND_PLAN_ENTRY_TYPE,
+            data: { v: 1, planName: "alpha-plan" },
+          },
+        ]);
+        return;
+      }
+      expect(adopted).toEqual([]);
+      expect(planRailShowsTask(host)).toBe(false);
+    });
+  }
+
+  it("lets an authoritative /weave:start supersede an older direct request", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const catalog = new DeferredPlanCatalogPort(["alpha-plan", "beta-plan"]);
+    installDeferredForegroundExtension(
+      host,
+      multiPlanProvider([
+        foregroundPlanSnapshot("alpha-plan"),
+        foregroundPlanSnapshot("beta-plan"),
+      ]),
+      catalog,
+    );
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
+    expect(catalog.pending).toHaveLength(1);
+
+    // The user confirms a DIFFERENT plan through the command instead.
+    const started = host.invokeCommand("weave:start", "beta-plan");
+    await Bun.sleep(1);
+    catalog.pending[1]?.();
+    await started;
+    await settlePlanSurfaces();
+    expect(planRailPlainLines(host)[0]).toContain("beta-plan");
+
+    // Only now does the older direct observation's listing return.
+    catalog.pending[0]?.();
+    await settlePlanSurfaces();
+
+    expect(planRailPlainLines(host)[0]).toContain("beta-plan");
+    expect(planRailPlainLines(host)[0]).not.toContain("alpha-plan");
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "beta-plan" },
+      },
+    ]);
+  });
+
+  it("never reuses an observation token across a session replacement", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const catalog = new DeferredPlanCatalogPort(["alpha-plan"]);
+    installDeferredForegroundExtension(
+      host,
+      multiPlanProvider([foregroundPlanSnapshot("alpha-plan")]),
+      catalog,
+    );
+    await host.triggerSessionStart();
+
+    // Two sessions, each with one pending observation. Neither may adopt into
+    // the other, and the second session's own token is a fresh identity even
+    // though it is the "first" request of that session.
+    await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
+    await host.triggerSessionStart();
+    await submitInteractive(host, "execute .weave/plans/alpha-plan.md");
+    catalog.pending[0]?.();
+    await settlePlanSurfaces();
+
+    // The replaced session's observation adopted nothing.
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toEqual([]);
+
+    catalog.pending[1]?.();
+    await settlePlanSurfaces();
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "alpha-plan" },
+      },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan Rail refresh coalescing keeps the LATEST queued request
+// ---------------------------------------------------------------------------
+
+/**
+ * A provider whose snapshot reads are released by the test, one at a time.
+ *
+ * Every plan refresh awaits this read, which is exactly where a replaced
+ * session's own refresh arrives and is queued behind it.
+ */
+class DeferredPlanStateProvider extends MutablePlanStateProvider {
+  readonly pending: (() => void)[] = [];
+
+  override readSnapshot(planName: string) {
+    const base = () => super.readSnapshot(planName);
+    return ResultAsync.fromSafePromise(
+      new Promise<PlanTaskSnapshot>((resolve) => {
+        this.pending.push(() => {
+          void base().map((snapshot) => {
+            resolve(snapshot);
+            return undefined;
+          });
+        });
+      }),
+    ) as ReturnType<MutablePlanStateProvider["readSnapshot"]>;
+  }
+}
+
+describe("createPiExtension: plan refreshes coalesce onto the newest request", () => {
+  it("paints the replacing session's plan after the replaced session's refresh returns", async () => {
+    // Both sessions reconstruct the same adapter-owned selection, so each one
+    // asks for a refresh of its OWN session's rail.
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      sessionManager: {
+        getSessionId: () => "fake-session-3",
+        getSessionFile: () => "/fake/sessions/fake-session-3.jsonl",
+        isPersisted: () => true,
+        getHeader: () => ({ id: "fake-session-3" }),
+        getEntries: () => [
+          {
+            type: "custom",
+            customType: FOREGROUND_PLAN_ENTRY_TYPE,
+            data: { v: 1, planName: "foreground-plan" },
+          },
+        ],
+      } as never,
+    });
+    const provider = new DeferredPlanStateProvider(foregroundPlanSnapshot());
+    const catalog = new DeferredPlanCatalogPort(["foreground-plan"]);
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      planStateProviderFactory: () => provider,
+      planCatalogPort: catalog as unknown as FakePiPlanCatalogPort,
+      telemetryJournal: { write: (_entry: unknown) => okAsync(undefined) },
+      telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+    });
+
+    let releasedReads = 0;
+    const releaseReads = async (): Promise<void> => {
+      while (releasedReads < provider.pending.length) {
+        provider.pending[releasedReads]?.();
+        releasedReads += 1;
+        await settlePlanSurfaces();
+      }
+    };
+
+    // Session A reconstructs its selection and paints its rail.
+    const sessionA = host.triggerSessionStart();
+    await settlePlanSurfaces();
+    catalog.pending[0]?.();
+    await settlePlanSurfaces();
+    await releaseReads();
+    await sessionA;
+    expect(planRailPlainLines(host)[0]).toContain("foreground-plan");
+
+    // A settled turn starts A's next refresh, and it is still in flight.
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await settlePlanSurfaces();
+    const readsWhileAIsRunning = provider.pending.length;
+    expect(readsWhileAIsRunning).toBe(releasedReads + 1);
+
+    // Session B replaces A. Its own selection is reconstructed while A's
+    // refresh is still running, so B's repaint can only come from the queued
+    // refresh: B's startup resolution already ran, with no plan to name.
+    await host.triggerSessionStart();
+    await settlePlanSurfaces();
+    catalog.pending[1]?.();
+    await settlePlanSurfaces();
+    expect(planRailPlainLines(host)[0]).not.toContain("foreground-plan");
+    expect(provider.pending).toHaveLength(readsWhileAIsRunning);
+
+    // A's refresh returns last. It belongs to a session that is gone, so it
+    // paints nothing - but it may not drop B's queued work either, which is
+    // exactly what a shared dirty bit did: A cleared the bit, found itself
+    // stale, and returned, leaving B's rail blank until some unrelated event
+    // happened to repaint it.
+    provider.pending[releasedReads]?.();
+    releasedReads += 1;
+    await settlePlanSurfaces();
+    expect(provider.pending.length).toBe(readsWhileAIsRunning + 1);
+
+    await releaseReads();
+
+    // No tool completion, no settled turn, no further input: B's own selection
+    // painted itself.
+    expect(planRailPlainLines(host)[0]).toContain("foreground-plan");
+    expect(planRailShowsTask(host)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adoption waits for the host's own turn-start proof
+// ---------------------------------------------------------------------------
+
+describe("createPiExtension: a direct request adopts only at a turn-start proof", () => {
+  const REQUEST = "execute .weave/plans/foreground-plan.md";
+
+  /** Every adapter-owned foreground-plan entry recorded so far. */
+  function adoptedEntries(host: RecordingFakePiHost): unknown[] {
+    return host.appendedEntries.filter(
+      (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+    );
+  }
+
+  async function startedSession(): Promise<{
+    host: RecordingFakePiHost;
+    provider: MutablePlanStateProvider;
+  }> {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    return { host, provider };
+  }
+
+  it("holds the parsed request as intent while no turn has started", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    await settlePlanSurfaces();
+
+    // The adapter let the message through; the host has not said it accepted
+    // it. Nothing is adopted, recorded, or painted for a turn that may never
+    // exist.
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(planRailPlainLines(host).join("\n")).not.toContain(
+      "foreground-plan",
+    );
+    expect(adoptedEntries(host)).toEqual([]);
+  });
+
+  it("adopts once the host proves the turn started for that prompt", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    await settlePlanSurfaces();
+    expect(adoptedEntries(host)).toEqual([]);
+
+    await host.triggerBeforeAgentStart({ prompt: REQUEST });
+    await settlePlanSurfaces();
+
+    expect(planRailPlainLines(host)[0]).toContain("foreground-plan");
+    expect(planRailShowsTask(host)).toBe(true);
+    expect(adoptedEntries(host)).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "foreground-plan" },
+      },
+    ]);
+  });
+
+  it("adopts nothing when the turn never starts", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    // The session goes on living - tools finish, turns settle - without the
+    // host ever starting a turn for this submission.
+    await host.triggerEvent("tool_execution_end", {
+      type: "tool_execution_end",
+      toolName: "edit",
+      toolCallId: "call-1",
+      isError: false,
+    });
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(adoptedEntries(host)).toEqual([]);
+  });
+
+  it("adopts nothing for a turn-start proof naming another prompt", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    // An unrelated turn starts instead: the submission was handled, expanded,
+    // or dropped, and something else is running.
+    await host.triggerBeforeAgentStart({ prompt: "what changed in the diff?" });
+    await settlePlanSurfaces();
+    expect(adoptedEntries(host)).toEqual([]);
+
+    // The intent is spent, not parked: a later turn quoting the original text
+    // is not a second chance to adopt it.
+    await host.triggerBeforeAgentStart({ prompt: REQUEST });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(adoptedEntries(host)).toEqual([]);
+  });
+
+  it("adopts nothing for a proof with no prompt at all", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(adoptedEntries(host)).toEqual([]);
+  });
+
+  it("lets the superseding message win, and only at its own proof", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const provider = multiPlanProvider([
+      foregroundPlanSnapshot("alpha-plan"),
+      foregroundPlanSnapshot("beta-plan"),
+    ]);
+    installForegroundPlanRailExtension(host, provider, [
+      "alpha-plan",
+      "beta-plan",
+    ]);
+    await host.triggerSessionStart();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/alpha-plan.md",
+    });
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/beta-plan.md",
+    });
+
+    // The superseded request's own text no longer redeems anything.
+    await host.triggerBeforeAgentStart({
+      prompt: "execute .weave/plans/alpha-plan.md",
+    });
+    await settlePlanSurfaces();
+    expect(adoptedEntries(host)).toEqual([]);
+    expect(planRailPlainLines(host).join("\n")).not.toContain("alpha-plan");
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: "execute .weave/plans/beta-plan.md",
+    });
+    await host.triggerBeforeAgentStart({
+      prompt: "execute .weave/plans/beta-plan.md",
+    });
+    await settlePlanSurfaces();
+
+    expect(planRailPlainLines(host)[0]).toContain("beta-plan");
+    expect(adoptedEntries(host)).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "beta-plan" },
+      },
+    ]);
+  });
+
+  it("adopts nothing when the session was replaced before the proof", async () => {
+    const { host } = await startedSession();
+
+    await host.triggerEvent("input", {
+      type: "input",
+      source: "interactive",
+      text: REQUEST,
+    });
+    // The pending intent belongs to the session that is gone.
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ prompt: REQUEST });
+    await settlePlanSurfaces();
+
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(adoptedEntries(host)).toEqual([]);
+  });
+});
+
+describe("resolveWeaveInputDecision: adoption follows real routing", () => {
+  it("claims the observation generation before the input is routed", async () => {
+    const order: string[] = [];
+    await resolveWeaveInputDecision({
+      claimObservation: () => {
+        order.push("claim");
+        return () => order.push("complete");
+      },
+      routeInput: async () => {
+        order.push("route");
+        return { action: "continue" };
+      },
+    });
+    expect(order).toEqual(["claim", "route", "complete"]);
+  });
+
+  it("runs no observation when the host reports the message handled", async () => {
+    const order: string[] = [];
+    const decision = await resolveWeaveInputDecision({
+      claimObservation: () => {
+        order.push("claim");
+        return () => order.push("complete");
+      },
+      routeInput: async () => {
+        order.push("route");
+        return { action: "handled" };
+      },
+    });
+    // A declined pause confirmation submits nothing, so the rail may not name
+    // a plan for a turn that never happened - but the generation still moved.
+    expect(order).toEqual(["claim", "route"]);
+    expect(decision).toEqual({ action: "handled" });
+  });
+
+  it("runs no observation when routing itself fails", async () => {
+    const order: string[] = [];
+    await expect(
+      resolveWeaveInputDecision({
+        claimObservation: () => {
+          order.push("claim");
+          return () => order.push("complete");
+        },
+        routeInput: () => Promise.reject(new Error("host routing failed")),
+      }),
+    ).rejects.toThrow("host routing failed");
+    expect(order).toEqual(["claim"]);
+  });
+
+  it("still routes an input that claimed no observation", async () => {
+    const decision = await resolveWeaveInputDecision({
+      claimObservation: () => undefined,
+      routeInput: async () => ({ action: "continue" }),
+    });
+    expect(decision).toEqual({ action: "continue" });
+  });
+});
+
+describe("createPiExtension: /weave:start adopts only a dispatched turn", () => {
+  it("records no identity and paints no plan when the dispatch throws", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    host.poisonSendUserMessage();
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    await host.invokeCommand("weave:start", "foreground-plan");
+    await settlePlanSurfaces();
+
+    // No turn exists, so nothing about a running plan may be stated.
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(
+      host.appendedEntries.some(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toBe(false);
+    expect(planRailShowsTask(host)).toBe(false);
+    expect(planRailPlainLines(host).join("\n")).not.toContain(
+      "foreground-plan",
+    );
+    // The failure is reported, safely.
+    expect(host.notifyCalls.at(-1)?.message).toContain("Could not start plan");
+  });
+
+  it("adopts the identity once the dispatch succeeds", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    const provider = new MutablePlanStateProvider(foregroundPlanSnapshot());
+    installForegroundPlanRailExtension(host, provider);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    await host.invokeCommand("weave:start", "foreground-plan");
+    await settlePlanSurfaces();
+
+    expect(host.sentUserMessages).toHaveLength(1);
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === FOREGROUND_PLAN_ENTRY_TYPE,
+      ),
+    ).toEqual([
+      {
+        type: FOREGROUND_PLAN_ENTRY_TYPE,
+        data: { v: 1, planName: "foreground-plan" },
+      },
+    ]);
+    expect(planRailShowsTask(host)).toBe(true);
   });
 });

@@ -6,8 +6,9 @@ import {
 import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import {
   type PiChildSessionEvent,
-  redactRawReasoningFromEvent,
+  retainedChildSessionEvent,
 } from "./child-session-events.js";
+import { classifyPiMessageUpdate } from "./message-update-carrier.js";
 /** Maximum size of one private transcript event, measured as UTF-8 JSON bytes. */
 export const MAX_TRANSCRIPT_HISTORY_EVENT_BYTES = 2 * 1024 * 1024;
 /** Maximum total bytes retained by the in-memory event history. */
@@ -701,6 +702,12 @@ function messageText(value: unknown): string | undefined {
  * `reasoningObserved` flag, while `reasoningSummary` is read exclusively from
  * the host's explicit reasoning-summary surface. No code path converts one
  * into the other.
+ *
+ * Answer text and the reasoning fact both come from the SINGLE carrier
+ * classification, not from a local reading of the frame. Reading `delta.text`
+ * here independently is what let a frame carrying answer text beside a
+ * `thinking_delta` write chain-of-thought into transcript state - and from
+ * there into the pane, search, and every snapshot built from it.
  */
 function messageUpdateParts(event: PiChildSessionEvent): {
   readonly messageId?: string;
@@ -714,16 +721,11 @@ function messageUpdateParts(event: PiChildSessionEvent): {
   const assistantEvent = recordValue(eventRecord.assistantMessageEvent);
   const messageId = messageIdFrom(delta) ?? messageIdFrom(assistantEvent);
   const assistantType = stringValue(assistantEvent?.type);
-  const text =
-    stringValue(delta?.text) ??
-    (assistantType === "text_delta"
-      ? stringValue(assistantEvent?.delta)
-      : undefined);
-  // RAW CHAIN-OF-THOUGHT IS DROPPED HERE. Only the fact that it existed is
-  // carried forward; its text is never read into transcript state.
-  const reasoningObserved =
-    stringValue(delta?.thinking) !== undefined ||
-    assistantType === "thinking_delta";
+  const carrier = classifyPiMessageUpdate(event);
+  const text = carrier.kind === "answer" ? carrier.text : undefined;
+  // RAW CHAIN-OF-THOUGHT IS DROPPED IN THE CLASSIFIER, and never read here.
+  // Only the fact that it existed is carried forward.
+  const reasoningObserved = carrier.kind === "reasoning";
   const reasoningSummary =
     stringValue(delta?.reasoningSummary) ??
     (assistantType === "reasoning_summary"
@@ -966,13 +968,12 @@ function addEntry(
 
 function applyEventBody(
   state: PiChildTranscriptState,
-  rawEvent: PiChildSessionEvent,
+  event: PiChildSessionEvent,
   sequence: number,
 ): Result<PiChildTranscriptState, PiChildTranscriptError> {
-  // Redaction runs before the bounded history append as well as before the
-  // entry reduce: raw reasoning is never rendered, so retaining it anywhere in
-  // transcript state would only create a surface for it to escape from.
-  const event = redactRawReasoningFromEvent(rawEvent);
+  // The event arrives already retention-approved: raw reasoning is never
+  // rendered, so retaining it anywhere in transcript state - the bounded
+  // history included - would only create a surface for it to escape from.
   const history = appendHistory(state, event, sequence);
   if (history.isErr()) return err(history.error);
   let next: PiChildTranscriptState = { ...state, ...history.value };
@@ -1397,7 +1398,14 @@ function applyEvent(
   event: PiChildSessionEvent,
   sequence: number,
 ): Result<PiChildTranscriptState, PiChildTranscriptError> {
-  return applyEventBody(state, event, sequence).map((next) => ({
+  // The shared retention decision, asked once, before anything is kept. A
+  // frame the carrier classification rejected moves NOTHING here: no history
+  // event, no entry, not even a sequence number. Redacting it instead left
+  // whatever the frame hid under an undeclared member in the bounded history,
+  // where search, serialization and every rebuild could read it back.
+  const retained = retainedChildSessionEvent(event);
+  if (retained === undefined) return ok(state);
+  return applyEventBody(state, retained, sequence).map((next) => ({
     ...next,
     nextSequence: sequence + 1,
   }));

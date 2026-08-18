@@ -77,13 +77,13 @@
   - type TranslateAgentError
   - type OpenCodeFastActivationReport
 - `packages/adapters/pi/src/active-plan-ui-state.ts`
+  - function activePlanWorkflowInstanceId: (identity) => string | undefined
   - function isTerminalWorkflowStatus: (status) => boolean
   - function resolveActivePlanIdentity: (port) => ResultAsync<ActivePlanIdentity | ActivePlanEmptyReason, ActivePlanUiError>
   - function resolveActivePlanView: (port) => ResultAsync<ActivePlanView, ActivePlanUiError>
   - function createActivePlanUiState: () => ActivePlanUiState
-  - interface ActivePlanIdentity
   - interface ActivePlanUiError
-  - _...7 more_
+  - _...8 more_
 - `packages/adapters/pi/src/adapter-cli-commands.ts`
   - function encodeResultPageBase64: (bytes) => string
   - function decodeResultPageBase64: (value) => Uint8Array
@@ -117,6 +117,7 @@
   - interface PiArtifactReadInput
   - interface PiArtifactDigest
   - _...9 more_
+- `packages/adapters/pi/src/assistant-stream-text.ts` — function appendAssistantStreamDelta: (accumulated, delta) => string
 - `packages/adapters/pi/src/capability-prober.ts`
   - function describeDelegationReadinessGap: (requiredGaps) => PiDelegationReadinessReason
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
@@ -385,7 +386,7 @@
   - function transcriptFromOverlayEntries: (entries) => PiChildTranscriptState
   - function degradedCapacityEntry: (id, sequence, error) => ChildOverlayEntry
   - function projectLiveEntry: (event, sequence, expanded, assistantEntryId?) => ChildOverlayEntry | undefined
-  - _...4 more_
+  - _...5 more_
 - `packages/adapters/pi/src/child-overlay-scroll.ts`
   - function setLayoutSpans: (state, spans) => void
   - function captureViewportAnchor: (state) => ChildOverlayAnchor | undefined
@@ -436,9 +437,9 @@
   - function isReadOnly: (child) => boolean
   - function prependOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
   - function appendOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
-  - function dedupEntries: (entries) => ChildOverlayEntry[]
-  - function syncTranscriptFromEntries: (state) => void
-  - _...1 more_
+  - function resolveLiveAssistantEntry: (state, phase) => string
+  - function appendLiveAssistantDelta: (state, entryId, delta, sequence) => ChildOverlayEntry
+  - _...5 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
@@ -502,9 +503,9 @@
   - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
   - function redactRawReasoningFromEvent: (event) => PiChildSessionEvent
-  - function parsePiChildSessionEvent
-  - interface PiChildUsageReport
-  - _...13 more_
+  - function canonicalReasoningMessageUpdate: () => PiChildSessionEvent
+  - function retainedChildSessionEvent: (event) => PiChildSessionEvent | undefined
+  - _...15 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority
@@ -583,12 +584,12 @@
   - interface ChildTreeRenderOptions
 - `packages/adapters/pi/src/child-tree.ts`
   - function addUsage: (a, b) => PiChildUsageAggregate
+  - function nextLiveAnswerId: (current) => number
   - function truncateUtf8: (text, maxBytes) => string
   - function truncateFinalOutput: (text) => string
   - function truncateLatestOutput: (text) => string
-  - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
-  - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
-  - _...18 more_
+  - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
+  - _...20 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -597,7 +598,6 @@
   - type WeaveCommandClassification
   - const WEAVE_INSPECT_COMMAND_NAME
   - _...8 more_
-- `packages/adapters/pi/src/config-activation-diagnostics.ts` — function projectConfigLoadIssues: (errors, projectRoot) => readonly string[]
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -605,7 +605,7 @@
   - class PiConfigActivator
   - interface PiConfigLoaderPort
   - interface PiMaterializerPort
-  - _...8 more_
+  - _...7 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -666,7 +666,15 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
-  - _...11 more_
+  - _...13 more_
+- `packages/adapters/pi/src/foreground-plan-display.ts`
+  - function parseForegroundPlanRequest: (text) => Result<string, ForegroundPlanRequestRejection>
+  - function isSafeForegroundPlanName: (value) => value is string
+  - function foregroundPlanEntry: (planName) => ForegroundPlanEntry
+  - function readForegroundPlanEntry: (entries) => string | undefined
+  - function createForegroundPlanDisplayState: () => ForegroundPlanDisplayState
+  - interface ForegroundPlanDisplayState
+  - _...7 more_
 - `packages/adapters/pi/src/generation-resources.ts`
   - function createGenerationSessionCtxCell: () => PiGenerationSessionCtxCell
   - function readSessionManagerEntries: (ctx, report) => void
@@ -713,6 +721,14 @@
   - function summarizeHostRedirect: (plan) => string
   - interface PiHostSpecifierFacts
   - _...13 more_
+- `packages/adapters/pi/src/message-update-carrier.ts`
+  - function isRawReasoningAssistantEventType: (type) => boolean
+  - function classifyPiMessageUpdate: (record) => PiMessageUpdateCarrier
+  - function messageUpdateAnswerText: (record) => string | undefined
+  - function messageUpdateObservesRawReasoning: (record) => boolean
+  - type PiMessageUpdateRejection
+  - type PiMessageUpdateCarrier
+  - _...2 more_
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator

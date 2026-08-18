@@ -442,15 +442,24 @@ describe("PiDelegationCardStream", () => {
 // ---------------------------------------------------------------------------
 
 describe("PiChildCardProjection", () => {
-  it("correlates message ids, dedups fragments, and hides raw reasoning", () => {
+  it("correlates message ids, keeps repeated deltas, and hides raw reasoning", () => {
     const projection = new PiChildCardProjection(streamConfig());
-    projection.applySessionEvent({
+    const start = {
       type: "message_start",
       message: { id: "asst-42", role: "assistant", content: [] },
-    } as unknown as PiChildSessionEvent);
+    } as unknown as PiChildSessionEvent;
+    projection.applySessionEvent(start);
+    // Deltas are concatenated EXACTLY, in order, with no separator invented:
+    // the wire decides where the spaces go, and the first delta carries one.
+    projection.applySessionEvent(textDelta("hello ", "asst-42"));
+    // The same delta again is the child saying the word twice. The wire gives
+    // a delta no identity, so matching on its text would delete a real word.
     projection.applySessionEvent(textDelta("hello", "asst-42"));
-    // The exact same delta again is one duplicate frame, not two words.
-    projection.applySessionEvent(textDelta("hello", "asst-42"));
+    expect(projection.facts().activity.text).toBe("hello hello");
+    // The message's own start IS identified, and its repeat is suppressed:
+    // applying it again would replace the streamed answer with nothing.
+    projection.applySessionEvent(start);
+    expect(projection.facts().activity.text).toBe("hello hello");
     projection.applySessionEvent({
       type: "message_update",
       assistantMessageEvent: {

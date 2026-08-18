@@ -30,16 +30,37 @@ import {
 } from "./recovery-pointer.js";
 
 /**
- * Where the resolved workflow identity came from.
+ * Where the resolved plan identity came from, in descending authority.
  *
  * `current` is the session's own trusted controller state. `recovery` is an
  * eligible recoverable pointer observed at startup - shown, never resumed.
+ * `foreground` is the DISPLAY-ONLY identity of a plan the user authorized this
+ * session to work through in its own turn (`/weave:start`, or one explicit
+ * request naming a contained plan path). It carries no workflow instance
+ * because there is none, and it is resolved last so it can only fill a gap.
  */
-export type ActivePlanIdentitySource = "current" | "recovery";
+export type ActivePlanIdentitySource = "current" | "recovery" | "foreground";
 
-export interface ActivePlanIdentity {
-  readonly workflowInstanceId: string;
-  readonly source: ActivePlanIdentitySource;
+export type ActivePlanIdentity =
+  | {
+      readonly source: "current" | "recovery";
+      readonly workflowInstanceId: string;
+    }
+  | { readonly source: "foreground"; readonly planName: string };
+
+/**
+ * The workflow instance an identity names, or `undefined` when it names none.
+ *
+ * A foreground identity is display-only and structurally has no instance, so
+ * callers ask through this accessor rather than reading a field that may not
+ * be there.
+ */
+export function activePlanWorkflowInstanceId(
+  identity: ActivePlanIdentity | undefined,
+): string | undefined {
+  return identity !== undefined && identity.source !== "foreground"
+    ? identity.workflowInstanceId
+    : undefined;
 }
 
 /** Why there is nothing to show. Not a failure - the UI simply clears. */
@@ -47,7 +68,9 @@ export type ActivePlanEmptyReason =
   | "no-controller"
   | "no-active-workflow"
   | "no-eligible-recovery-pointer"
-  | "workflow-terminal";
+  | "workflow-terminal"
+  | "foreground-plan-complete"
+  | "foreground-plan-unavailable";
 
 /**
  * Statuses that end an execution. A settled workflow is not "the active plan"
@@ -97,6 +120,15 @@ export type ActivePlanView =
 export interface ActivePlanReadPort {
   /** The workflow instance this session currently tracks, if any. */
   readonly currentWorkflowInstanceId: string | undefined;
+  /**
+   * The DISPLAY-ONLY plan this session was authorized to work through in the
+   * foreground, if any.
+   *
+   * Read last and never turned into execution: it names a plan to paint, and
+   * the resolver's only use for it is one `readPlanSnapshot` call in this
+   * project root.
+   */
+  readonly foregroundPlanName?: string | undefined;
   readonly inspect: (
     workflowInstanceId: string,
   ) => ResultAsync<{ readonly slug: string; readonly status: string }, unknown>;
@@ -142,18 +174,26 @@ export function resolveActivePlanIdentity(
   if (current !== undefined && current.length > 0) {
     return okAsync({ workflowInstanceId: current, source: "current" as const });
   }
+  const foreground = (
+    reason: ActivePlanEmptyReason,
+  ): ActivePlanIdentity | ActivePlanEmptyReason => {
+    const planName = port.foregroundPlanName;
+    return planName !== undefined && planName.length > 0
+      ? { source: "foreground" as const, planName }
+      : reason;
+  };
   return port
     .readRecoveryPointer()
     .mapErr(() => fail("recovery-unreadable"))
     .andThen((pointer) => {
       if (pointer === undefined) {
-        return okAsync("no-active-workflow" as const);
+        return okAsync(foreground("no-active-workflow"));
       }
       if (
         !isPointerEligibleForExplicitResume(pointer) ||
         pointer.workflowId === undefined
       ) {
-        return okAsync("no-eligible-recovery-pointer" as const);
+        return okAsync(foreground("no-eligible-recovery-pointer"));
       }
       return okAsync({
         workflowInstanceId: pointer.workflowId,
@@ -172,6 +212,39 @@ export function resolveActivePlanView(
 ): ResultAsync<ActivePlanView, ActivePlanUiError> {
   return resolveActivePlanIdentity(port).andThen((resolved) => {
     if (typeof resolved === "string") return okAsync(EMPTY(resolved));
+    // A foreground plan has no workflow instance to inspect, by construction.
+    // The plan file in THIS project root is the whole of its state, and a plan
+    // with nothing left to do clears the rail exactly as a settled workflow
+    // does - display-only state may not outlive the work it describes.
+    if (resolved.source === "foreground") {
+      return (
+        port
+          .readPlanSnapshot(resolved.planName)
+          // A plan this project root cannot read is NOT an error here, and the
+          // resolver never looks for it anywhere else: display-only state that
+          // has nothing to display simply shows the agent identity alone. A plan
+          // living in another worktree therefore stays invisible rather than
+          // being read across roots or reported as a failure on every repaint.
+          .orElse(() => okAsync(EMPTY("foreground-plan-unavailable")))
+          .map((snapshot): ActivePlanView => {
+            if ("kind" in snapshot) return snapshot;
+            const activeTask = selectActivePlanTask(snapshot).match(
+              (task) => task,
+              () => undefined,
+            );
+            if (activeTask === undefined || snapshot.complete) {
+              return EMPTY("foreground-plan-complete");
+            }
+            return {
+              kind: "active",
+              identity: resolved,
+              planName: resolved.planName,
+              snapshot,
+              activeTask,
+            };
+          })
+      );
+    }
     return port
       .inspect(resolved.workflowInstanceId)
       .mapErr(() => fail("workflow-unreadable"))

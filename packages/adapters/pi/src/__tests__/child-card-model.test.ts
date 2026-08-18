@@ -169,8 +169,10 @@ describe("child-card-model event coverage", () => {
     });
     state = applyEvent(state, {
       type: "message_update",
-      assistantMessageEvent: { type: "text_delta", delta: "reserving the" },
+      assistantMessageEvent: { type: "text_delta", delta: "reserving the " },
     });
+    // Deltas are concatenated exactly: the wire owns the spacing, and a delta
+    // is as often half a word as a whole one.
     state = applyEvent(state, {
       type: "message_update",
       assistantMessageEvent: { type: "text_delta", delta: "suffix" },

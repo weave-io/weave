@@ -279,11 +279,48 @@ Behavior:
 - The model-visible `content[0].text` stays a bounded activity line and never
   carries card chrome.
 - Rendering uses Pi's normal render scheduling and the parser-approved child
-  event flow, with stable per-item IDs, deduplication, and placeholder slots for
-  out-of-order arrival. Updates are coalesced through the injected timer port,
-  and run start, tool error, provider error, queue change, and settlement always
-  publish immediately. Settlement drains final events before classification and
-  always flushes.
+  event flow, with stable per-item IDs, placeholder slots for out-of-order
+  arrival, and duplicate suppression only where the host states an event's
+  identity. Matching text is never treated as identity, so a repeated answer
+  delta is kept. Streamed deltas are accumulated as the exact ordered
+  concatenation of what the child sent, bounded to the shared 4 KiB preview
+  budget, and sanitized once for display, so the card and the inspector cannot
+  disagree about the answer. Updates are coalesced through the injected timer
+  port, and run start, tool error, provider error, queue change, and settlement
+  always publish immediately. Settlement drains final events before
+  classification and always flushes.
+- What one `message_update` states is decided by a single mutually exclusive
+  classification shared by every consumer: answer text, the content-free
+  reasoning fact, framing that states nothing, or a typed rejection. A frame
+  that declares an answer carrier and a raw-reasoning carrier at once is
+  rejected fail-closed — it produces no text and no reasoning claim on any
+  surface. A carrier is judged by what it HOLDS, not by the type it declares:
+  prose under a `thinking` / `reasoning` member, or in a nested thinking
+  content block, makes a `text_delta` or `answer` frame a raw-reasoning carrier
+  too, and a carrier the bounded descriptor-safe scan cannot read is rejected.
+- Every path that retains a child event asks ONE shared retention decision and
+  retains the SAME parser-approved event: the transcript reducer, the live
+  overlay projection, the replay-step builder, and the durable child-history
+  port. A `message_update` the classification REJECTED is retained nowhere: it
+  appends no history event, projects no entry, pushes no replay step, and hands
+  the history port no payload, because redaction can only blank the fields a
+  carrier declared and a rejected frame is precisely one whose carriers could
+  not be read — including a thought hidden under an undeclared member, past the
+  bounded scan's depth, or behind enough padding to exhaust it. A
+  `message_update` the classification called REASONING is retained as ONE
+  canonical event the adapter builds — `{ type: "message_update",
+  assistantMessageEvent: { type: "thinking_delta" } }` — and never as the
+  observed frame: blanking the fields a carrier declared still kept the host's
+  own object, and a reasoning frame may state prose in a member no field list
+  names (`metadata`, `provenance`, a `usage` subobject, an unknown key). No
+  nested member, string, block, partial, usage subobject, accessor, or unknown
+  field of such a frame survives into transcript history, replay steps, a
+  rebuild, a search, serialization, or the durable history checkpoint. The
+  canonical event classifies as reasoning again, so a rebuild is a fixed point
+  and the reader still learns exactly one fact: the child reasoned. An
+  unambiguous answer and pure framing are retained unchanged. An event the
+  parser refuses is likewise retained nowhere — history records the checkpoint
+  with no payload.
 - All child-sourced text is sanitized for terminal control sequences before
   render, and box-drawing glyphs are reachable only through the frame
   primitives, so child text structurally cannot forge a frame.
@@ -402,6 +439,17 @@ Required behavior:
   structurally cannot print a child ID, token count, cost, elapsed time, or
   queue depth, and it is byte-identical in every child state. No duplicate task
   footer is published beside it.
+- The rail's display-only foreground plan identity is adopted from a direct
+  interactive request only after the HOST proves the turn started: Pi's
+  `before_agent_start` must report that same submission's prompt. The adapter's
+  own `input` decision records pending intent and adopts nothing, the first
+  proof spends that intent whatever it proves, and an unsubmitted, superseded,
+  session-replaced, or unrelated turn adopts nothing. `/weave:start`, which
+  submits its own kickoff turn, adopts inside the success arm of
+  `sendUserMessage` instead, because that call is its dispatch proof.
+- Plan refreshes coalesce onto one lookup, and the queue keeps the latest
+  request with its own session context, so a refresh belonging to a replaced
+  session can never clear or drop a newer session's queued repaint.
 - A renderer failure falls back to the existing custom-editor inspection path
   with the same transcript.
 - Pi does not enable terminal mouse reporting, so wheel events cannot reach the

@@ -43,7 +43,7 @@ import {
 import {
   type PiChildSessionEvent,
   parsePiChildSessionEvent,
-  redactRawReasoningFromEvent,
+  retainedChildSessionEvent,
 } from "./child-session-events.js";
 import {
   createPiChildTranscriptState,
@@ -52,8 +52,7 @@ import {
   type PiChildTranscriptState,
   reducePiChildTranscript,
 } from "./child-transcript.js";
-import { extractAssistantTextDeltaPreview } from "./child-tree.js";
-import type { JsonValue } from "./strict-json.js";
+import { messageUpdateAnswerText } from "./message-update-carrier.js";
 
 // ---------------------------------------------------------------------------
 // Native entry mapping (Task 4 adapt / child-transcript projection)
@@ -96,14 +95,18 @@ function replayEvent(candidate: unknown): ChildOverlayReplayStep | undefined {
   const parsed = parsePiChildSessionEvent(candidate);
   if (!parsed.success) return undefined;
   // Replay steps are retained state: they are serialized with the overlay
-  // window and re-reduced on every rebuild, so raw reasoning is stripped
-  // before the step exists rather than at the point it would be rendered.
-  return {
-    kind: "event",
-    event: redactRawReasoningFromEvent(
-      redactProviderErrorFromEvent(parsed.data),
-    ),
-  };
+  // window and re-reduced on every rebuild, so the shared retention decision
+  // is asked here, on the OBSERVED frame, before the step exists.
+  //
+  // Order matters. `redactProviderErrorFromEvent` REBUILDS a `message_update`
+  // from its known carriers, which silently drops whatever a rejected frame
+  // hid under an undeclared member - and turns the refused frame into an
+  // ordinary answer step that publishes the text beside the hidden thought.
+  // Asking first is what keeps this entrance's verdict the same as the
+  // transcript reducer's and the registry's.
+  const retained = retainedChildSessionEvent(parsed.data);
+  if (retained === undefined) return undefined;
+  return { kind: "event", event: redactProviderErrorFromEvent(retained) };
 }
 
 export function pushReplayEvent(
@@ -814,10 +817,14 @@ export function projectLiveEntry(
   expanded: boolean,
   assistantEntryId?: string,
 ): ChildOverlayEntry | undefined {
-  // Same contract as the historical mapper's `replayEvent`: a retained step
-  // never carries chain-of-thought prose, only the fact that it happened.
+  // Same contract as the historical mapper's `replayEvent`, through the same
+  // shared decision: a retained step never carries chain-of-thought prose,
+  // only the fact that it happened, and a frame the carrier classification
+  // rejected projects no entry and no step at all.
+  const retained = retainedChildSessionEvent(event);
+  if (retained === undefined) return undefined;
   const replay: readonly ChildOverlayReplayStep[] = [
-    { kind: "event", event: redactRawReasoningFromEvent(event) },
+    { kind: "event", event: retained },
   ];
   switch (event.type) {
     case "message_start":
@@ -827,12 +834,10 @@ export function projectLiveEntry(
       if (event.type === "message_end") {
         text = messageText(event.message).text;
       } else if (event.type === "message_update") {
-        // Legacy `delta: { text }` and real 0.84 `assistantMessageEvent:
-        // { type: "text_delta", delta }`, via the parent tree's reader.
-        // A `thinking_delta` is not body text and projects nothing.
-        const delta = extractAssistantTextDeltaPreview(
-          event as unknown as Record<string, JsonValue>,
-        );
+        // The single carrier classification: only an unambiguous answer frame
+        // has body text. A `thinking_delta`, a framing frame, and any frame
+        // that mixed carriers all project nothing.
+        const delta = messageUpdateAnswerText(event);
         if (delta !== undefined) text = boundText(delta);
       }
       // Real Pi 0.84 `AssistantMessage` carries no id, and `state.entries`
@@ -990,6 +995,58 @@ export function liveAssistantLifecyclePhase(
   if (event.type === "message_update") return "continue";
   if (event.type === "message_end") return "end";
   return undefined;
+}
+
+/**
+ * The canonical window entry of an assistant message that is still being
+ * written.
+ *
+ * A streamed `message_update` states one delta, and an entry that keeps only
+ * that delta is a fact nothing can rebuild an answer from. Every window
+ * reconstruction the overlay performs — a trim, an older/newer page merge, a
+ * search that fetches pages — replays entries through
+ * {@link transcriptFromOverlayEntries}, and a lifecycle whose only retained
+ * step was `message_start` came back empty while the child was still
+ * answering.
+ *
+ * So the entry carries the ACCUMULATED answer instead, with one canonical
+ * `message_update` step that reproduces it. It is exactly one step: replay
+ * compaction collapses same-message updates onto their own stage, so a
+ * thousand deltas cost one slot, and the terminal `message_end` occupies a
+ * different stage and REPLACES the accumulated text on rebuild rather than
+ * appending to it. Raw chain-of-thought never reaches here: the caller
+ * accumulates answer deltas only.
+ */
+export function liveAssistantStreamEntry(input: {
+  readonly id: string;
+  readonly sequence: number;
+  readonly expanded: boolean;
+  readonly text: string;
+  /** Framed as its own message when no `message_start` was observed. */
+  readonly framed: boolean;
+}): ChildOverlayEntry {
+  const text = boundText(input.text);
+  const steps: ChildOverlayReplayStep[] = [];
+  if (input.framed) {
+    const start = replayEvent({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    if (start !== undefined) steps.push(start);
+  }
+  const update = replayEvent({
+    type: "message_update",
+    delta: { text },
+  });
+  if (update !== undefined) steps.push(update);
+  return {
+    id: input.id,
+    sequence: input.sequence,
+    kind: "assistant",
+    text,
+    expanded: input.expanded,
+    replay: steps,
+  };
 }
 
 /**
