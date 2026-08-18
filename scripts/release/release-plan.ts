@@ -266,6 +266,37 @@ const ReleasePlanEntryPointDigestSchema = z
   })
   .strict();
 
+/** Digest of one exact file in a packed public package. */
+const ReleasePlanFileDigestSchema = z
+  .object({
+    packageName: PublicPackageNameSchema,
+    path: RelativePathSchema,
+    size: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(25 * 1024 * 1024),
+    digest: DigestSchema,
+  })
+  .strict();
+
+/** Provenance for a scratch-only staging mutation. */
+const ReleasePlanOverrideDigestSchema = z
+  .object({
+    packageName: PublicPackageNameSchema,
+    kind: z.enum([
+      "version",
+      "dependency-range",
+      "changelog",
+      "carrier",
+      "none",
+    ]),
+    sourceDigest: DigestSchema,
+    stagedDigest: DigestSchema,
+    digest: DigestSchema,
+  })
+  .strict();
+
 /**
  * What a build proved about one exact SHA.
  *
@@ -293,6 +324,17 @@ export const ReleasePlanBindingSchema = z
       .array(ReleasePlanEntryPointDigestSchema)
       .min(1)
       .max(RELEASE_PLAN_LIMITS.entryPoints),
+    /** Optional Task 10 detail: every packed file's digest and byte length. */
+    fileDigests: z
+      .array(ReleasePlanFileDigestSchema)
+      .min(1)
+      .max(RELEASE_PLAN_LIMITS.packages * 128)
+      .optional(),
+    /** Optional Task 10 detail: scratch override provenance. */
+    overrideDigests: z
+      .array(ReleasePlanOverrideDigestSchema)
+      .max(RELEASE_PLAN_LIMITS.packages * 4)
+      .optional(),
     proofMarkers: ReleaseProofMarkersSchema,
   })
   .strict()
@@ -332,6 +374,31 @@ export const ReleasePlanBindingSchema = z
           path: ["entryPointDigests"],
           message: `entry point digest for unbuilt package ${entry.packageName}`,
         });
+    if (binding.fileDigests !== undefined) {
+      requireUnique(
+        binding.fileDigests.map(
+          (entry) => `${entry.packageName}\u0000${entry.path}`,
+        ),
+        context,
+        ["fileDigests"],
+        "file",
+      );
+      for (const entry of binding.fileDigests)
+        if (!packages.includes(entry.packageName))
+          context.addIssue({
+            code: "custom",
+            path: ["fileDigests"],
+            message: `file digest for unbuilt package ${entry.packageName}`,
+          });
+    }
+    if (binding.overrideDigests !== undefined)
+      for (const entry of binding.overrideDigests)
+        if (!packages.includes(entry.packageName))
+          context.addIssue({
+            code: "custom",
+            path: ["overrideDigests"],
+            message: `override digest for unbuilt package ${entry.packageName}`,
+          });
   });
 
 /** The one record that binds a release. */

@@ -184,7 +184,7 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
     })) {
       files.push(join(directory, path));
     }
-    return files;
+    return files.sort();
   }
 }
 

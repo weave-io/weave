@@ -31,7 +31,7 @@ export function publishablePackageNames(): readonly PublicPackageName[] {
 export function resolvePublishablePackage(
   packageName: string,
 ): Result<PublicPackageName, PublishabilityError> {
-  if (packageName in PUBLIC_PACKAGES)
+  if (Object.hasOwn(PUBLIC_PACKAGES, packageName))
     return ok(packageName as PublicPackageName);
   if (isPrivateWorkspaceName(packageName))
     return err({ type: "PrivateWorkspace", packageName });
@@ -41,7 +41,7 @@ export function resolvePublishablePackage(
 export function isPublishablePackage(
   packageName: string,
 ): packageName is PublicPackageName {
-  return packageName in PUBLIC_PACKAGES;
+  return Object.hasOwn(PUBLIC_PACKAGES, packageName);
 }
 
 function isPrivateWorkspaceName(
@@ -227,10 +227,15 @@ export class PackagePolicyValidator {
     entries: readonly { path: string; mode: number }[],
   ): Result<void, PackagePolicyError> {
     const expected = expectedFiles(packageName);
+    const allowedPackageDocuments = new Set([
+      "package/README.md",
+      "package/CHANGELOG.md",
+      "package/LICENSE",
+    ]);
     const actual = new Set(entries.map((entry) => entry.path));
     for (const path of actual)
       if (
-        !expected.has(path) ||
+        (!expected.has(path) && !allowedPackageDocuments.has(path)) ||
         /(?:\.map$|(?:^|\/)(?:test|tests|src|config)(?:\/|$))/.test(path)
       )
         return err({ type: "UnexpectedFile", path });
