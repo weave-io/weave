@@ -121,7 +121,7 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
     - Appendix records pass/fail per assumption with harness versions and dates.
     - OD-2, OD-3, and OD-4 each have a written resolution.
 
-- [ ] 2. Amend the fast provider acceleration spec for the Codex subscription contract
+- [x] 2. Amend the fast provider acceleration spec for the Codex subscription contract
   - **What**: Add an "OpenAI Codex subscription (ChatGPT backend)" provider contract distinct from public OpenAI Priority, and update the Decision/harness-audit sections so the spec permits exactly the seam this plan builds.
   - **Files**: `docs/specs/fast-provider-acceleration-contract.md`.
   - **Depends on**: Task 1; OD-1 accepted.

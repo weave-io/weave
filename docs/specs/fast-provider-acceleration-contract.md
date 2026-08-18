@@ -2,7 +2,9 @@
 
 Date: 2026-08-12
 
-Status: Approved and shipped; every adapter declares `provider-fast-activation` as `unsupported` and mutates no provider request
+Last amended: 2026-08-17
+
+Status: Approved. OpenCode and Claude Code stay `unsupported`. The public OpenAI API and Anthropic mappings stay unimplemented on every adapter. The shipped Pi adapter still declares `provider-fast-activation` as `unsupported` and mutates no provider request; this note now authorizes exactly one Pi mapping, the OpenAI Codex subscription transport through a Weave-registered wrapped provider, under the rules below.
 
 Retrieval date for web sources: 2026-08-12
 
@@ -10,7 +12,14 @@ Retrieval date for web sources: 2026-08-12
 
 This note fixes the evidence threshold for provider acceleration before Weave maps the neutral `fast` intent. It records current provider contracts and harness seams. Provider and harness behavior is volatile. Recheck every linked contract before an allowlist change.
 
-Normative provider facts below come from first-party API documentation. Harness facts come from public documentation, tagged public source, and installed public types. Examples confirm shape but do not extend an allowlist.
+Normative provider facts below come from first-party API documentation, with one recorded exception: the [OpenAI Codex subscription transport](#openai-codex-subscription-fast-mode-chatgpt-backend), whose provenance relaxation is approved and scoped in decision OD-1. Harness facts come from public documentation, tagged public source, and installed public types. Examples confirm shape but do not extend an allowlist.
+
+### Amendment history
+
+| Date | Change |
+| --- | --- |
+| 2026-08-12 | Original note. Every adapter `unsupported`; no adapter mutates a provider request. |
+| 2026-08-17 | Added the OpenAI Codex subscription contract, the Pi wrapped-provider seam verdict, the normative Pi Codex mapping rules, and the pinned-host probe appendix. Owner approved OD-1, OD-5, and OD-6; Task 1 resolved OD-2, OD-3, and OD-4. Public OpenAI and Anthropic thresholds unchanged. |
 
 ## Neutral Weave boundary
 
@@ -23,6 +32,8 @@ For a category-generated agent, an explicit category `fast true` takes precedenc
 ## Official provider contracts
 
 ### OpenAI
+
+This section covers the public first-party OpenAI API only: `https://api.openai.com`, authenticated with an API key. The ChatGPT-backed Codex subscription transport is a separate contract with a different request control, a different credential, and a different evidence basis; see [OpenAI Codex subscription fast mode](#openai-codex-subscription-fast-mode-chatgpt-backend). No fact, allowlist entry, request field, header, or positive response value crosses between the two.
 
 [OpenAI Fast mode](https://platform.openai.com/docs/guides/fast-mode) is the request and response contract. [OpenAI pricing](https://platform.openai.com/docs/pricing) identifies currently priced models, and [GPT-5.6 model guidance](https://platform.openai.com/docs/guides/latest-model) defines the family names.
 
@@ -75,11 +86,85 @@ The `gpt-5.6` alias, older model families, future model names, snapshots, fine-t
 
 Versioned snapshots are not covered unless Anthropic lists them or guarantees alias coverage in the current contract. Claude Opus 4.7 rejects fast requests. Claude Opus 4.6 accepts the field but runs and bills at standard speed. Neither is eligible. No partner-hosted model or API-compatible proxy inherits eligibility.
 
+## OpenAI Codex subscription fast mode (ChatGPT backend)
+
+This is a second, distinct OpenAI mapping. It is not the [public OpenAI API contract](#openai), and it never inherits from it.
+
+| Concern | Public OpenAI API Fast/Priority | OpenAI Codex subscription fast mode |
+| --- | --- | --- |
+| Transport | `https://api.openai.com`, Responses or Chat Completions | `https://chatgpt.com/backend-api`, the Codex responses transport |
+| Credential | API key | ChatGPT OAuth subscription token carrying an account claim |
+| Source of truth | First-party OpenAI documentation | Codex CLI behavior, reproduced by a reference implementation and confirmed by a live probe |
+| Request control | `service_tier: "fast"`, or `"priority"` on supported models | `service_tier: "priority"` **and** two routing headers |
+| Response proof | `service_tier` on the response object | `service_tier` on the SSE `response.*` objects |
+| Positive value | `"fast"`, or `"priority"` for GPT-5.6 and earlier models | `"priority"` only |
+| Allowlist source | Official pricing and Fast mode eligibility | The pinned host's `openai-codex` model catalog |
+| Weave adapter status | Unmapped on every adapter | Authorized on Pi only, through the wrapped-provider seam; the shipped build still reports `unsupported` |
+
+### Two-part request contract
+
+One attempt carries both parts or neither part:
+
+1. **Body.** The final serialized request body carries `service_tier: "priority"`.
+2. **Headers.** The outgoing request carries `originator: codex_cli_rs` and `x-codex-routing-hint: model=<model id>;tier=priority`, where `<model id>` is exactly the model id the same final body carries.
+
+The header part is conditional on the body part. Fast intent without a resolved `"priority"` tier for that attempt carries neither header. Both parts are request-scoped and are never cached between attempts, so no stale routing hint can survive into a fast-off request. The model id is embedded in a header value, so it must first match `^[A-Za-z0-9._-]{1,64}$`; any other id is ineligible.
+
+### Provenance and evidence basis
+
+Three sources support this contract. None of them is first-party API documentation.
+
+- **Codex CLI derivation.** The header pair reproduces what the OpenAI Codex CLI sends on this transport. OpenAI does not publish it in the API reference.
+- **Reference implementation.** [`IgorWarzocha/howaboua-pi-stuff`](https://github.com/IgorWarzocha/howaboua-pi-stuff), commit `bde69c3dfd83bb6dab01961dd9c75b1e814105df` ("fix(pi-codex-conversion): activate Codex Fast Mode"), read at reference HEAD `4b4e42f7659e42854ec81cb502bf69a48422d9eb`. Its `resolveCodexRequestRouting` emits the header pair only when `fast === true && serviceTier === "priority"`, resolves routing from the final body, and its tests pin the both-or-nothing rule across transports.
+- **Live probe.** The [Pi 0.84.2 provider-seam audit](#appendix-pi-0842-provider-seam-audit) in this note (probe date 2026-08-17). On the pinned host the backend answered the two-part request with HTTP 200 and a normal completed stream (A15), the outgoing body decoded to `service_tier: "priority"` (A13), and an unknown tier value was rejected with HTTP 400 (A14), which shows the backend validates the field rather than ignoring it.
+
+**Caveat: this is not first-party API documentation.** OpenAI publishes no contract, eligibility table, pricing row, response-value definition, or stability guarantee for this transport. The header names, the header value format, the accepted tier values, and the response `service_tier` semantics can change or disappear without notice, and an account can be ineligible for priority admission for reasons this note cannot observe. Nothing here may be cited as an official OpenAI contract.
+
+**Decision OD-1, approved by the owner on 2026-08-17.** Reverse-engineered provenance is accepted as the evidence basis for this one mapping, because the adapter owns the whole transport: it registers the provider, and it holds the effective post-auth base URL, the resolved credential shape, the final body, the outgoing request headers, and the same attempt's response. The relaxation is scoped to this transport only. It does not lower the threshold for the [public OpenAI API](#openai) or [Anthropic](#anthropic) mappings, which still require first-party documentation for every allowlist entry and every positive response value, and it does not permit a guessed field or header anywhere else.
+
+### Frozen allowlist baseline (pinned host catalog)
+
+**Decision OD-5, approved by the owner on 2026-08-17.** The allowlist is the complete model catalog that the pinned host's `openai-codex` provider ships, and nothing beyond it. Catalog source: `@earendil-works/pi-ai` 0.84.2, `providers/data/openai-codex.json`, api `openai-codex-responses`. Allowlist revision `codex-sub-r1`.
+
+| Provider model | Allowlist rule ID | Transport | Request contract | Response contract | Decision |
+| --- | --- | --- | --- | --- | --- |
+| `gpt-5.3-codex-spark` | `codex-sub-01` | ChatGPT backend, Codex responses | Two-part contract above | `service_tier` on the SSE `response.*` objects | Eligible |
+| `gpt-5.4` | `codex-sub-02` | ChatGPT backend, Codex responses | Two-part contract above | `service_tier` on the SSE `response.*` objects | Eligible |
+| `gpt-5.4-mini` | `codex-sub-03` | ChatGPT backend, Codex responses | Two-part contract above | `service_tier` on the SSE `response.*` objects | Eligible |
+| `gpt-5.5` | `codex-sub-04` | ChatGPT backend, Codex responses | Two-part contract above | `service_tier` on the SSE `response.*` objects | Eligible |
+| `gpt-5.6-luna` | `codex-sub-05` | ChatGPT backend, Codex responses | Two-part contract above, probed live (A15) | `service_tier` on the SSE `response.*` objects, probed live (A16) | Eligible |
+| `gpt-5.6-sol` | `codex-sub-06` | ChatGPT backend, Codex responses | Two-part contract above, probed live (A15) | `service_tier` on the SSE `response.*` objects, probed live (A16) | Eligible |
+| `gpt-5.6-terra` | `codex-sub-07` | ChatGPT backend, Codex responses | Two-part contract above | `service_tier` on the SSE `response.*` objects | Eligible |
+
+The catalog choice is deliberate and narrow in a different way from the public-API allowlist: every entry reaches the same adapter-owned transport with the same request and response shape, so per-model first-party eligibility rows do not exist and cannot be required. Eligibility still needs an exact id match. A newer host catalog does not widen this list on its own; adding an entry requires re-freezing this table against the pinned catalog, bumping the allowlist revision, and repeating the recheck below. Aliases, snapshots, fine-tuned ids, public-API `openai` models, models reached through a gateway or proxy, and any id that fails the character rule are not eligible.
+
+Evidence may name the allowlist rule ID or the revision. It may not name arbitrary model text.
+
+### Response evidence and ceiling
+
+- Evidence kind: `openai-service-tier`.
+- Positive evidence: exactly `"priority"` in a `response.created`, `response.in_progress`, or `response.completed` object read from the same attempt, by a bounded sniffer that never buffers the whole stream and never blocks it.
+- Negative evidence: `"default"`, which is the documented standard-speed value. Outcome `standard`, state `not-confirmed`.
+- **Observed ceiling on the pinned host.** Audit row A17 failed: `response.completed` reported `"default"` for the full two-part fast request, for a tier-only request, and for the untouched control. Fast and control were indistinguishable in the response evidence. The shipped ceiling for a successful eligible fast request on Pi 0.84.2 is therefore `not-confirmed` with evidence outcome `standard`. `applied` stays reachable in code only through a genuine same-attempt `"priority"` value, which was never observed.
+- Three explanations of A17 remain indistinguishable from outside (OD-2): the backend may ignore this control on this transport; the probed subscription may lack priority entitlement, since its credit-balance headers reported no available credits at probe time; or the backend may report `"default"` while still routing differently. Because they cannot be separated, the adapter must never infer acceleration from HTTP status, latency, absence of error, or the mutation itself.
+
+### Recheck obligation for this transport
+
+Every finding for this transport is host-specific and account-specific, and none of it carries a stability guarantee.
+
+- Recheck audit rows A11, A12, A16, A17, and A20 on each Pi or pi-ai upgrade, and before any release that changes the pinned host version.
+- Recheck A17 before any claim, in code, docs, telemetry, or release notes, that this mapping accelerates anything.
+- Re-read the reference implementation and the Codex CLI behavior before adding an allowlist entry or changing a header name or value format.
+- If a recheck shows the backend rejects the contract, the header names changed, the response field disappeared, or `options.fetch` is no longer honored on the SSE path, the mapping reverts to `unsupported`, the adapter sends no control, and the request stays byte-identical.
+- A failed recheck is a blocker for the affected release, not a warning.
+
 ## Harness seam audit
 
-Versions inspected on 2026-08-12: Pi 0.84.1, OpenCode 1.18.9, and Claude Code 2.1.220. A public seam can support Weave only if the adapter can set the request without replacing unrelated values and can observe the provider's documented response proof for the same attempt.
+Versions inspected on 2026-08-12: Pi 0.84.1, OpenCode 1.18.9, and Claude Code 2.1.220. Pi 0.84.2 was inspected again on 2026-08-17 for the wrapped-provider seam. A public seam can support Weave only if the adapter can set the request without replacing unrelated values and can observe the provider's documented response proof for the same attempt.
 
-### Pi 0.84.1 — unsupported for this adapter
+Pi has two independent seams, and they get separate verdicts. The hook seam stays unsupported. The wrapped-provider seam supports the Codex subscription mapping only.
+
+### Pi 0.84.1 hook seam — unsupported for this adapter
 
 Pi's [extension documentation at tag v0.84.1](https://github.com/earendil-works/pi/blob/v0.84.1/packages/coding-agent/docs/extensions.md) and [public extension types](https://github.com/earendil-works/pi/blob/v0.84.1/packages/coding-agent/src/core/extensions/types.ts) define these seams:
 
@@ -94,6 +179,29 @@ The hook context's `ctx.model.baseUrl` is declared configuration, not the reques
 The hooks also do not expose the response body or streamed usage event. Pi's public finalized-message type does not expose OpenAI `service_tier` or Anthropic `usage.speed`. Response status and Anthropic limit headers are not positive application proof. Custom provider transports can also omit these callbacks.
 
 **Outcome:** unsupported for this adapter. With neither an effective-transport proof nor a response proof bound to the same prepared request, any acceleration control the adapter sent would be a guess. The adapter therefore registers no provider request or header hook, leaves every provider payload and header exactly unchanged, and reports declared intent as terminal `unsupported` with the reason `harness-seam-unavailable`. Agent activation, prompts, models, tools, and delegation are unaffected. Supporting `requested` requires a documented seam that reports the effective transport of one prepared request; `applied` additionally requires correlated official response-body evidence for that same request.
+
+This verdict is unchanged. The adapter registers no `before_provider_request`, `before_provider_headers`, or `after_provider_response` handler for acceleration on any Pi version. The seam below is a different mechanism, not a relaxation of this one.
+
+### Pi 0.84.2 wrapped provider — supported for the Codex subscription mapping
+
+Pi's public `ExtensionAPI.registerProvider(provider: Provider)` accepts a complete provider object. A Weave-owned override registered under the existing id `openai-codex` wraps the native provider from `@earendil-works/pi-ai`: same id, name, `auth` object by reference, and model list, with only `stream` and `streamSimple` wrapped. This supplies both proofs the hook seam lacks. The [appendix](#appendix-pi-0842-provider-seam-audit) records each assumption and its result.
+
+| Proof the contract requires | Hook seam | Wrapped-provider seam |
+| --- | --- | --- |
+| Effective post-auth transport of the held request | Absent; `ctx.model.baseUrl` is declared configuration and a fresh auth resolution describes a different request | Present; `requestModel.baseUrl` is the post-auth value (A7), and a `models.json` override is visible and classifies as `transport-not-first-party` (A5) |
+| Resolved credential shape for the held request | Absent | Present; `options.apiKey` (A8). The raw token and account id are never read into state, logs, or evidence |
+| Final body after other extensions | Absent; `before_provider_headers` runs before the body exists | Present; the caller's `onPayload` runs first and the wrapper sees its output (A9) |
+| Authority over `originator` | Absent; the api hardcodes `originator: "pi"` after extension headers | Present at the `fetch` seam (A12), on the SSE path only (A11) |
+| Same-attempt response evidence | Absent | Present; a bounded SSE sniffer reads `service_tier` (A16) |
+
+Four constraints follow from the audit and bound what the adapter may ship.
+
+1. **SSE only (OD-3, resolved).** `options.fetch` exists only on the codex SSE path; the WebSocket path builds its own connection and exposes no request seam. The adapter forces `transport: "sse"` for eligible fast requests only. The host default `transport: "auto"` prefers WebSocket, so this is a real change and must never touch a fast-off or ineligible request. Forced SSE completed normally and was not slower in a bounded three-run sample (A19). Weave does not vendor the WebSocket transport.
+2. **Version gate, not a raised floor (OD-4, resolved).** `registerProvider` exists at the declared peer floor, but `options.fetch` on the codex SSE path first appears in pi-ai 0.83.0 (A20). Keep the `@earendil-works/pi-coding-agent` peer floor at `>=0.81.1`, and register the wrapper only when the host's public `VERSION` export is at least `0.83.0`, the dynamic import of `@earendil-works/pi-ai/providers/openai-codex` resolves and exposes `openaiCodexProvider`, and `pi.registerProvider` is a function. Any probe failure means register nothing and report `unsupported` with `harness-seam-unavailable`.
+3. **Process-level activation window (OD-6, approved by the owner on 2026-08-17).** No per-request agent identity exists at the provider seam, so eligibility is evaluated against the process-local active fast owner. While a fast owner is active, an ambient host request on the same allowlisted model, such as a branch summary or a title generation, is also accelerated. The owner accepts this coarse window. The alternative needs a harness change that does not exist, and narrowing it by heuristic would be a guess. The user-facing adapter documentation must state the window plainly.
+4. **Evidence ceiling.** `applied` requires same-attempt positive evidence, and none was observed on the pinned host. A successful eligible fast request terminates at `not-confirmed` with evidence outcome `standard`.
+
+**Outcome:** supported for the OpenAI Codex subscription mapping only, and only through the wrapped provider. Every other provider, including the public-API `openai` provider, stays unmapped and reports `unsupported`. A request that fails any eligibility rule is delegated to the native implementation with the caller's options object unchanged, so it stays byte-identical to the same config without `fast true`. If registration fails, the adapter logs a bounded degradation, leaves the native provider in place, reports `unsupported`, and does not affect agent activation.
 
 ### OpenCode 1.18.9 — unsupported for this adapter
 
@@ -134,6 +242,31 @@ This policy makes extension order safe: Weave preserves earlier compatible edits
 - OpenAI `default` and Anthropic non-`fast` response evidence are completed but not confirmed attempts. Do not automatically retry solely to force a premium tier.
 - Persist only the terminal sanitized outcome for the logical operation and bounded counters. Do not persist raw attempt payloads or responses.
 
+### Pi Codex subscription mapping rules
+
+These rules are normative for the Pi adapter's [wrapped-provider seam](#pi-0842-wrapped-provider-supported-for-the-codex-subscription-mapping). They sit under the general [collision policy](#collision-policy) and [retry semantics](#retry-semantics) above and never relax them. The wrapper computes one eligibility verdict per stream call, before any mutation. Every failure produces a bounded reason and forces native passthrough.
+
+**Eligibility**
+
+1. **Provider identity.** The request reached the Weave-wrapped provider registered under id `openai-codex`. No other provider, including the public-API `openai` provider, ever receives this mapping.
+2. **Intent.** The process-local active owner declares `fast: true`: the committed primary descriptor in parent mode, or the authenticated applied bootstrap in child and direct-step mode. Intent must never apply before bootstrap authentication completes. No owner or no intent means passthrough and no acceleration state.
+3. **Model.** `requestModel.id` is an exact member of the frozen allowlist above **and** equals the active owner's resolved model id. It must also match `^[A-Za-z0-9._-]{1,64}$` before it may enter the routing hint. Ambient calls for other models pass through.
+4. **Transport.** The effective `requestModel.baseUrl` is absent or exactly the first-party ChatGPT backend, compared as a whole string. Any gateway, proxy, localhost, or lookalike base URL yields `transport-not-first-party` and passthrough.
+5. **Auth.** The resolved credential parses as a ChatGPT OAuth token whose claim yields an account id. A parse failure yields `auth-not-subscription` and passthrough. The raw token and the account id never enter state, logs, evidence, or errors.
+
+**Collisions**
+
+6. **Body.** After the caller's `onPayload` chain has run, if `service_tier` is absent, set `"priority"`. If it is already exactly `"priority"`, keep it. If it is present with any other value, is not a string, or the payload is not a plain object, record `request-collision`, leave the payload untouched, and activate no header.
+7. **Headers.** At fetch time, a preexisting `x-codex-routing-hint` in any casing that this attempt did not write yields `request-collision` and an unmodified request. A preexisting `originator` is Pi's hardcoded `"pi"`; the wrapper replaces it only under full activation. `Authorization`, `chatgpt-account-id`, `session-id`, and every other credential or routing header stay untouched.
+
+**Transport, retry, and state**
+
+8. **Both parts or neither.** Headers activate only when fast intent held and the recorded final body for the same attempt carries `service_tier === "priority"`. Fast-off and ineligible requests gain neither part, and nothing is cached between attempts.
+9. **Forced SSE.** Eligible fast requests use `transport: "sse"`, because that is the only path with header authority. Fast-off and ineligible requests keep the native transport.
+10. **Retry.** Pi's SSE retry loop reuses the same body and headers for one logical call. The wrapper observes each attempt, records evidence per attempt, caps counters, and takes the terminal snapshot from the final attempt. The wrapper adds no retries of its own. An abort or timeout terminates as `canceled` or `timed-out`. An attempt aborted before any fetch is `canceled`, not `not-confirmed`.
+11. **State.** `requested` requires an exact allowlist match plus the wrapper's own fetch actually running for that attempt and writing both parts. `applied` requires same-attempt positive `openai-service-tier` evidence with the exact value `"priority"`. Mutation, HTTP success, or a completed stream alone terminates at `not-confirmed`. Intent with no eligible mapping terminates at `unsupported`.
+12. **Fail closed.** Any wrapper-internal failure, ambiguity, or doubt reverts that call to native behavior and records a bounded degradation. The adapter never sends a guessed field or header, and this optional capability never fails agent activation, materialization, or a valid standard request.
+
 ## Truthful states and transitions
 
 The neutral runtime states are:
@@ -161,7 +294,7 @@ declared -> unsupported
 ### Adapter fallback
 
 - With no effective `fast` declaration, an adapter leaves provider controls unchanged and emits no acceleration state.
-- An adapter may enter `requested` only for an exact mapping in this contract, proven against the transport of the same prepared request. Pi and OpenCode cannot prove that today, so both enter `unsupported` and send no control.
+- An adapter may enter `requested` only for an exact mapping in this contract, proven against the transport of the same prepared request. Pi proves this only inside the wrapped-provider seam for the Codex subscription mapping; Pi's hook seam and every other Pi provider, and all of OpenCode, cannot prove it and therefore enter `unsupported` and send no control.
 - Claude Code static materialization enters `unsupported`. It must not encode a guessed frontmatter field, environment value, prompt instruction, or provider control. Agent materialization still continues.
 - An unknown provider, endpoint, model, proxy, malformed input, or conflicting existing control enters `unsupported`. The adapter does not guess or overwrite the conflict. It preserves unrelated request data and allows normal harness behavior to continue when safe.
 - Failure of this optional capability does not fail agent activation, materialization, or an otherwise valid standard request. Existing adapter safety rules may still reject an independently invalid request.
@@ -242,24 +375,26 @@ Adapters may emit only these bounded fields:
 - collision boolean;
 - evidence kind enum: `openai-service-tier`, `anthropic-usage-speed`, or `none`;
 - evidence outcome enum: `confirmed`, `standard`, `absent`, `ambiguous`, or `inaccessible`;
-- bounded reason code, such as `harness-seam-unavailable`, `model-not-allowed`, `endpoint-not-allowed`, `transport-not-first-party`, `request-collision`, `response-proof-unavailable`, `attempt-uncorrelated`, `rate-limited`, `capacity-limited`, `canceled`, or `timed-out`;
+- bounded reason code, such as `harness-seam-unavailable`, `model-not-allowed`, `endpoint-not-allowed`, `transport-not-first-party`, `auth-not-subscription`, `request-collision`, `response-proof-unavailable`, `attempt-uncorrelated`, `rate-limited`, `capacity-limited`, `canceled`, or `timed-out`;
 - event time and bounded duration, if already part of the neutral runtime contract.
 
 Do not emit model prompts, completions, payload fragments, raw field values, full headers, header values, credentials, provider request/response objects, URLs, stack traces, harness objects, session transcripts, or private paths. Logs and errors follow the same rule.
 
 ## Decision
 
-No current Weave harness adapter has a complete request-plus-response seam that can prove `applied` under the official provider contracts:
+No Weave harness adapter has a complete request-plus-response seam that can prove `applied` under the official first-party provider contracts. One adapter-owned transport is now the single exception, and it is capped below `applied`:
 
-- Pi: unsupported (`harness-seam-unavailable`); request hooks exist, but no seam binds an effective transport or a response proof to one prepared request.
+- Pi hook seam: unsupported (`harness-seam-unavailable`); request hooks exist, but no hook binds an effective transport or a response proof to one prepared request. The adapter registers no acceleration hook.
+- Pi wrapped-provider seam, OpenAI Codex subscription mapping only: supported for `requested`, capped at `not-confirmed`. The adapter's registered `openai-codex` override holds the effective transport, the resolved credential shape, the final body, the outgoing headers, and the same attempt's response. `applied` stays reachable in code only from same-attempt `service_tier: "priority"`; the pinned host returned `"default"` for fast and control alike, so the observed terminal state is `not-confirmed` with evidence outcome `standard`.
+- Pi public OpenAI API (`openai` provider) and every other Pi provider: unsupported (`harness-seam-unavailable`).
 - OpenCode: unsupported (`response-proof-unavailable`); request option/header hooks exist, but no success evidence does.
 - Claude Code materialization: unsupported (`harness-seam-unavailable`); native fast controls exist outside the adapter's owned surface.
 
-All three adapters therefore ship with `provider-fast-activation` declared `unsupported`, send no acceleration control, and leave provider requests untouched. `fast true` remains inert neutral intent end to end.
+Outside the Pi Codex subscription mapping, every adapter still declares `provider-fast-activation` as `unsupported`, sends no acceleration control, and leaves provider requests untouched, so `fast true` stays inert neutral intent end to end and leaves those requests byte-identical to the same config without it. The Pi adapter's shipped build reports `unsupported` until the mapping is implemented; this note authorizes that implementation and fixes its rules and ceiling in advance.
 
-This is the shipped result, not a staging point: Pi reports `harness-seam-unavailable`, OpenCode reports `response-proof-unavailable`, and Claude Code materialization reports `harness-seam-unavailable`. No adapter adds a provider field, header, or service-tier control, so `fast true` leaves every request byte-identical to the same config without it.
+Within the Pi Codex subscription mapping, a request that fails any rule in [Pi Codex subscription mapping rules](#pi-codex-subscription-mapping-rules) is also byte-identical passthrough. `requested` is not a success alias, and the adapter must not describe this mapping as making anything faster.
 
-Any change to these ceilings requires new evidence. Raising an adapter to `requested` requires a proven safe request seam under this note's contract; raising one to `applied` requires an official harness response seam and tests against the exact provider evidence contract.
+Any change to these ceilings requires new evidence. Raising an adapter to `requested` requires a proven safe request seam under this note's contract; raising one to `applied` requires correlated response evidence carrying the exact positive value for that contract. Lowering is automatic: a failed [recheck](#recheck-obligation-for-this-transport) returns the Codex subscription mapping to `unsupported`.
 
 ## Appendix: Pi 0.84.2 provider-seam audit
 
@@ -267,7 +402,7 @@ Probe date: 2026-08-17.
 
 Harness under test: `@earendil-works/pi-coding-agent` 0.84.2 and `@earendil-works/pi-ai` 0.84.2, installed globally and executed under Bun. Comparison versions read from the public npm registry: pi-ai 0.81.1, 0.82.0, 0.83.0, 0.84.0.
 
-This appendix is evidence only. It records what the pinned host does. It does not change the Decision section above. The hook-seam verdict in "Pi 0.84.1 — unsupported for this adapter" still stands: the audit below tests a different seam, a Weave-registered provider override.
+This appendix is the raw evidence for the [Codex subscription contract](#openai-codex-subscription-fast-mode-chatgpt-backend) and the [wrapped-provider verdict](#pi-0842-wrapped-provider-supported-for-the-codex-subscription-mapping). It records what the pinned host does. The [hook-seam verdict](#pi-0841-hook-seam-unsupported-for-this-adapter) still stands: the audit below tests a different seam, a Weave-registered provider override.
 
 ### Method
 
@@ -311,6 +446,8 @@ Evidence files, sanitized, machine-readable: `/tmp/weave-task1-probe/evidence-su
 | A20 | The seam exists at the declared peer floor. | **Fail** | `registerProvider(provider: Provider)` exists in pi-coding-agent 0.81.1. But `options.fetch` on the codex SSE path, and `fetch` in `buildBaseOptions`, first appear in pi-ai 0.83.0; 0.81.1 and 0.82.0 call `fetch` directly. Below 0.83.0 the wrapper could set the body tier but never the headers. |
 
 ### Open decision resolutions
+
+The probe resolved OD-2, OD-3, and OD-4. OD-1, OD-5, and OD-6 are owner decisions, approved on 2026-08-17 and recorded in the body of this note: [provenance basis](#provenance-and-evidence-basis), [frozen allowlist](#frozen-allowlist-baseline-pinned-host-catalog), and the process-level activation window in the [wrapped-provider verdict](#pi-0842-wrapped-provider-supported-for-the-codex-subscription-mapping).
 
 **OD-2 — does the ChatGPT backend expose `service_tier` in the SSE response objects?**
 
