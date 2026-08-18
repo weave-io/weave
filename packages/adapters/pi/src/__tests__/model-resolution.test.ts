@@ -17,7 +17,6 @@ const catalog: PiModelInfo[] = [
 ];
 
 describe("PiModelResolver", () => {
-
   it("resolves an exact canonical provider/id match (tier 1)", () => {
     const resolver = new PiModelResolver();
     const result = resolver.resolve(["anthropic/claude-sonnet-4-5"], catalog);
@@ -183,6 +182,116 @@ describe("PiModelResolver", () => {
     expect(result).toEqual({ resolved: false });
   });
 
+  it("resolves an ordered distinct list through the exact cascade", () => {
+    const resolver = new PiModelResolver();
+    const orderedCatalog: PiModelInfo[] = [
+      {
+        provider: "openai",
+        id: "shared",
+        name: "OpenAI Shared",
+        contextWindow: 128_000,
+      },
+      {
+        provider: "anthropic",
+        id: "shared",
+        name: "Anthropic Shared",
+        contextWindow: 200_000,
+      },
+      {
+        provider: "custom",
+        id: "named",
+        name: "Friendly Name",
+        contextWindow: 64_000,
+      },
+    ];
+
+    const result = resolver.resolveOrderedDistinct(
+      [
+        "openai/shared#high",
+        "shared#low", // ambiguous bare id; it must be skipped.
+        "Friendly Name#medium",
+        "custom/named#max", // same canonical identity; first winner remains.
+        "OpenAI Shared#xhigh", // same identity through the name tier.
+      ],
+      orderedCatalog,
+    );
+
+    expect(result).toEqual([
+      {
+        resolved: true,
+        model: orderedCatalog[0],
+        intentEntry: "openai/shared#high",
+        source: "canonical",
+        thinkingLevel: "high",
+      },
+      {
+        resolved: true,
+        model: orderedCatalog[2],
+        intentEntry: "Friendly Name#medium",
+        source: "human-name",
+        thinkingLevel: "medium",
+      },
+    ]);
+  });
+
+  it("preserves order when aliases resolve to different canonical identities", () => {
+    const resolver = new PiModelResolver();
+    const result = resolver.resolveOrderedDistinct(
+      ["Friendly Name#low", "openai/shared#high"],
+      [
+        {
+          provider: "openai",
+          id: "shared",
+          name: "OpenAI Shared",
+        },
+        {
+          provider: "custom",
+          id: "named",
+          name: "Friendly Name",
+        },
+      ],
+    );
+
+    expect(result.map((candidate) => candidate.model.provider)).toEqual([
+      "custom",
+      "openai",
+    ]);
+    expect(result.map((candidate) => candidate.thinkingLevel)).toEqual([
+      "low",
+      "high",
+    ]);
+  });
+
+  it("returns no duplicate canonical identities even when the catalog repeats one", () => {
+    const resolver = new PiModelResolver();
+    const duplicate = {
+      provider: "openai",
+      id: "gpt-5",
+      name: "GPT-5",
+    };
+    const result = resolver.resolveOrderedDistinct(
+      ["openai/gpt-5", "GPT-5", "gpt-5"],
+      [duplicate, { ...duplicate, name: "GPT-5 duplicate" }],
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.model).toBe(duplicate);
+  });
+
+  it("does not change resolve semantics while resolving ordered candidates", () => {
+    const resolver = new PiModelResolver();
+    const catalogWithAliases: PiModelInfo[] = [
+      { provider: "one", id: "same", name: "First" },
+      { provider: "two", id: "same", name: "Second" },
+    ];
+    expect(resolver.resolve(["same"], catalogWithAliases)).toEqual({
+      resolved: false,
+    });
+    expect(
+      resolver.resolveOrderedDistinct(["same"], catalogWithAliases),
+    ).toEqual([]);
+  });
+
   it("does not fuzzy match partial or case-differing strings", () => {
     const resolver = new PiModelResolver();
     const result = resolver.resolve(["Gpt-5", "gpt"], catalog);
@@ -260,10 +369,7 @@ describe("PiModelActivator thinking-level activation", () => {
       thinkingLevel: "high",
       thinkingApplied: true,
     });
-    expect(calls).toEqual([
-      "model:claude-sonnet-4-5",
-      "thinking:high",
-    ]);
+    expect(calls).toEqual(["model:claude-sonnet-4-5", "thinking:high"]);
   });
 
   it("reports model success without invoking thinking when no level was requested", async () => {

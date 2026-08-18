@@ -2,10 +2,20 @@ import {
   parseModelIntentEntry,
   type ThinkingLevelDecl,
 } from "@weaveio/weave-engine";
-import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
-import type { PiModelInfo } from "./types.js";
+import { err, ok, okAsync, type Result, ResultAsync } from "neverthrow";
+import type { PiModelInfo as PiCatalogModelInfo } from "./types.js";
 
-export type { PiModelInfo } from "./types.js";
+/**
+ * Authenticated Pi catalog model plus the optional host context-window fact
+ * consumed by runtime failover. The field is optional because older Pi model
+ * catalogs do not expose it.
+ */
+export type PiModelInfo = PiCatalogModelInfo & {
+  readonly contextWindow?: number;
+};
+
+/** Explicit name for model objects passed to failover contracts. */
+export type PiModelInfoWithContextWindow = PiModelInfo;
 
 /**
  * Pi-owned deterministic model matching (Pi adapter contract).
@@ -55,9 +65,15 @@ export type PiModelResolution =
       readonly resolved: false;
     };
 
-function thinkingFields(
-  level: ThinkingLevelDecl | undefined,
-): { readonly thinkingLevel?: ThinkingLevelDecl } {
+/** A successful resolution suitable for the runtime failover candidate list. */
+export type PiOrderedModelResolution = Extract<
+  PiModelResolution,
+  { readonly resolved: true }
+>;
+
+function thinkingFields(level: ThinkingLevelDecl | undefined): {
+  readonly thinkingLevel?: ThinkingLevelDecl;
+} {
   if (level === undefined) return {};
   return { thinkingLevel: level };
 }
@@ -128,6 +144,34 @@ export class PiModelResolver {
   }
 
   /**
+   * Resolve every ordered model preference into a distinct failover list.
+   *
+   * Each entry is resolved independently through the unchanged canonical →
+   * unique bare-id → unique human-name cascade. The first entry that resolves
+   * to a canonical provider/id wins that identity; later aliases for the same
+   * identity are skipped. This preserves both preference order and the
+   * thinking suffix attached to the winning entry.
+   */
+  resolveOrderedDistinct(
+    modelIntent: readonly string[],
+    availableModels: readonly PiModelInfo[],
+  ): readonly PiOrderedModelResolution[] {
+    const seenCanonicalIdentities = new Set<string>();
+    const resolved: PiOrderedModelResolution[] = [];
+
+    for (const entry of modelIntent) {
+      const candidate = this.resolve([entry], availableModels);
+      if (!candidate.resolved) continue;
+      const identity = `${candidate.model.provider}/${candidate.model.id}`;
+      if (seenCanonicalIdentities.has(identity)) continue;
+      seenCanonicalIdentities.add(identity);
+      resolved.push(candidate);
+    }
+
+    return resolved;
+  }
+
+  /**
    * Rehydrates a compact authenticated model identity from a child control
    * body into the one full model object owned by this Pi process. The host's
    * `setModel()` requires that catalog object, not the compact transport
@@ -176,13 +220,10 @@ function safelyApplyThinkingLevel(
   applier: PiThinkingApplyPort,
   level: ThinkingLevelDecl,
 ): ResultAsync<void, Error> {
-  return ResultAsync.fromThrowable(
-    async () => {
-      const applied = await applier.applyThinkingLevel(level);
-      if (applied.isErr()) throw applied.error;
-    },
-    toError,
-  )();
+  return ResultAsync.fromThrowable(async () => {
+    const applied = await applier.applyThinkingLevel(level);
+    if (applied.isErr()) throw applied.error;
+  }, toError)();
 }
 
 /**
