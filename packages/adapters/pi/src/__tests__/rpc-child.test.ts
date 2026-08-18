@@ -1358,7 +1358,13 @@ describe("PiRpcChild", () => {
     expect(queuedPort.spawnedProcesses).toHaveLength(0);
 
     const running = await startRunningChild();
-    const before = running.spawned.writtenLines().length;
+    const interventionLines = (): readonly Record<string, unknown>[] =>
+      running.spawned
+        .writtenLines()
+        .map((written) => written as Record<string, unknown>)
+        .filter(
+          (written) => written.type === "steer" || written.type === "follow_up",
+        );
     expect(
       (await running.child.steer("wrong-child", "gen-1", "not sent")).isErr(),
     ).toBe(true);
@@ -1367,11 +1373,27 @@ describe("PiRpcChild", () => {
         await running.child.followUp("child-1", "stale-generation", "not sent")
       ).isErr(),
     ).toBe(true);
-    expect(running.spawned.writtenLines()).toHaveLength(before);
+    expect(interventionLines()).toHaveLength(0);
 
     const entries = running.child.getEntries("child-1", "gen-1", "leaf-1");
-    await flush();
-    const line = running.spawned.writtenLines().at(-1) as Record<
+    // The task prompt is written on its own asynchronous path, so it can land
+    // before or after this request; select the request by type instead of
+    // assuming it is the most recent written line.
+    await waitFor(
+      () =>
+        running.spawned
+          .writtenLines()
+          .some(
+            (written) =>
+              (written as Record<string, unknown>).type === "get_entries",
+          ),
+      5_000,
+      "the get_entries request to be written",
+    );
+    const line = running.spawned
+      .writtenLines()
+      .map((written) => written as Record<string, unknown>)
+      .find((written) => written.type === "get_entries") as Record<
       string,
       unknown
     >;
