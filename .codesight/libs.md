@@ -1818,6 +1818,14 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts/pi/child-stream-capture.ts`
+  - function sha256HexOfText: (text) => string
+  - function containsForbiddenContent: (value) => boolean
+  - function omitReasoningProse: (rawEvent) => Result<unknown, CaptureFailure>
+  - function sanitizeRawEvent: (rawEvent, ordinalId, toolCallIds, string>) => void
+  - function sanitizeRawEvents: (rawEvents) => Result<readonly SanitizedEvent[], CaptureFailure>
+  - function serializeFixture: (events) => string
+  - _...36 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void

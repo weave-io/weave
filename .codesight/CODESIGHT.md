@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 339 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~37,800 tokens. Without it, AI exploration would cost ~107,200 tokens. **Saves ~69,400 tokens per conversation.**
-> **Last scanned:** 2026-08-18 19:07 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 340 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~38,000 tokens. Without it, AI exploration would cost ~107,700 tokens. **Saves ~69,700 tokens per conversation.**
+> **Last scanned:** 2026-08-18 22:03 — re-run after significant changes
 
 ---
 
@@ -1829,6 +1829,14 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts/pi/child-stream-capture.ts`
+  - function sha256HexOfText: (text) => string
+  - function containsForbiddenContent: (value) => boolean
+  - function omitReasoningProse: (rawEvent) => Result<unknown, CaptureFailure>
+  - function sanitizeRawEvent: (rawEvent, ordinalId, toolCallIds, string>) => void
+  - function sanitizeRawEvents: (rawEvents) => Result<readonly SanitizedEvent[], CaptureFailure>
+  - function serializeFixture: (events) => string
+  - _...36 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void
@@ -2088,6 +2096,7 @@
 ## Environment Variables
 
 - `BASE_PATH` (has default) — packages/docs/astro.config.mjs
+- `BUN_INSTALL` (has default) — scripts/pi/child-stream-capture.ts
 - `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` (has default) — packages/adapters/pi/src/__tests__/config-activator.test.ts
@@ -2119,6 +2128,7 @@
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
+- `SECRET_VALUE` **required** — scripts/pi/__tests__/child-stream-capture.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` (has default) — packages/adapters/pi/src/config-source-digests.ts
 - `VOLTA_HOME` (has default) — scripts/release/pi-child-inspection-smoke.ts
@@ -2163,7 +2173,7 @@
 - `packages/adapters/pi/src/strict-json.ts` — imported by **29** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
 - `packages/adapters/pi/src/native-session-fs.ts` — imported by **25** files
-- `packages/adapters/pi/src/ui-paint.ts` — imported by **24** files
+- `packages/adapters/pi/src/ui-paint.ts` — imported by **25** files
 - `packages/adapters/pi/src/errors.ts` — imported by **22** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
 - `packages/adapters/pi/src/child-timer.ts` — imported by **21** files
@@ -2186,7 +2196,7 @@
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +24 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
 - `packages/adapters/pi/src/native-session-fs.ts` ← `packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts`, `packages/adapters/pi/src/__tests__/adapter-cli-production-delete.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-bounded-reads.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-create.integration.test.ts` +20 more
-- `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +19 more
+- `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +20 more
 - `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/delegation-invocation-context.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts` +17 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
 - `packages/adapters/pi/src/child-timer.ts` ← `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-render-parity.test.ts` +16 more
@@ -2213,7 +2223,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 372 test files found
+> 373 test files found
 
 ---
 

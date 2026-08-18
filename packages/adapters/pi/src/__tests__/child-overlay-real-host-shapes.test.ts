@@ -29,7 +29,14 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { join } from "node:path";
 import { okAsync } from "neverthrow";
+import {
+  readFixtureAndManifest,
+  replayFixtureThroughAdapter,
+  validateFixtureStructure,
+  verifyCaptureManifest,
+} from "../../../../../scripts/pi/child-stream-capture.js";
 import { createChildCompactState } from "../child-compact-render.js";
 import { createChildOverlayController } from "../child-overlay-controller.js";
 import {
@@ -742,5 +749,39 @@ describe("settlement refreshes the mounted overlay from the tree", () => {
     ).toBe("dropped");
     expect(controller.view()._unsafeUnwrap().child.status).toBe("settled");
     stream.dispose();
+  });
+});
+
+describe("authoritative Pi 0.84.2 capture shape", () => {
+  it("keeps thinking, incremental answer, read, and bash ordering replayable", async () => {
+    const fixturePath = join(
+      import.meta.dir,
+      "../__fixtures__/pi-0.84.2-child-ui-events.v1.json",
+    );
+    const loaded = await readFixtureAndManifest(fixturePath);
+    expect(loaded.isOk()).toBe(true);
+    if (loaded.isErr()) return;
+    const verified = verifyCaptureManifest(
+      loaded.value.fixtureText,
+      loaded.value.manifestText,
+    );
+    expect(verified.isOk()).toBe(true);
+    if (verified.isErr()) return;
+    const structure = validateFixtureStructure(verified.value.fixture);
+    expect(structure.isOk()).toBe(true);
+    if (structure.isErr()) return;
+    expect(structure.value.hasThinkingLifecycle).toBe(true);
+    expect(structure.value.textDeltaCount).toBeGreaterThanOrEqual(2);
+    expect(structure.value.hasReadTool).toBe(true);
+    expect(structure.value.hasBashTool).toBe(true);
+
+    const replay = replayFixtureThroughAdapter(verified.value.fixture, {
+      injectControlledReasoningInMemory: true,
+    });
+    expect(replay.isOk()).toBe(true);
+    if (replay.isErr()) return;
+    expect(replay.value.syntheticReasoningLeaked).toBe(false);
+    expect(replay.value.inspectorToolDetailsLaneAvailable).toBe(true);
+    expect(replay.value.inspectorAssistantReplyLaneAvailable).toBe(true);
   });
 });

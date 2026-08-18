@@ -703,3 +703,70 @@ describe("classifyPiMessageUpdate · hostile shapes", () => {
     expect(classifyPiMessageUpdate(frame)).toEqual({ kind: "framing" });
   });
 });
+
+describe("Pi 0.84.2 public assistant event ordering", () => {
+  it("classifies thinking lifecycle and incremental answer carriers separately", () => {
+    const lifecycle = [
+      { type: "thinking_start", contentIndex: 0 },
+      { type: "thinking_delta", contentIndex: 0, delta: "controlled" },
+      { type: "thinking_end", contentIndex: 0, content: "controlled" },
+      { type: "text_start", contentIndex: 1 },
+      { type: "text_delta", contentIndex: 1, delta: "one" },
+      { type: "text_delta", contentIndex: 1, delta: "two" },
+      { type: "text_end", contentIndex: 1, content: "onetwo" },
+    ];
+    expect(
+      classifyPiMessageUpdate({
+        type: "message_update",
+        assistantMessageEvent: lifecycle[0],
+      }),
+    ).toEqual({ kind: "reasoning" });
+    expect(
+      classifyPiMessageUpdate({
+        type: "message_update",
+        assistantMessageEvent: lifecycle[1],
+      }),
+    ).toEqual({ kind: "reasoning" });
+    expect(
+      classifyPiMessageUpdate({
+        type: "message_update",
+        assistantMessageEvent: lifecycle[2],
+      }),
+    ).toEqual({ kind: "reasoning" });
+    expect(
+      classifyPiMessageUpdate({
+        type: "message_update",
+        assistantMessageEvent: lifecycle[3],
+      }),
+    ).toEqual({ kind: "framing" });
+    expect(
+      classifyPiMessageUpdate({
+        type: "message_update",
+        assistantMessageEvent: lifecycle[4],
+      }),
+    ).toEqual({ kind: "answer", text: "one" });
+    expect(
+      classifyPiMessageUpdate({
+        type: "message_update",
+        assistantMessageEvent: lifecycle[5],
+      }),
+    ).toEqual({ kind: "answer", text: "two" });
+    expect(
+      classifyPiMessageUpdate({
+        type: "message_update",
+        assistantMessageEvent: lifecycle[6],
+      }),
+    ).toEqual({ kind: "framing" });
+  });
+
+  it("does not mistake real tool-call lifecycle framing for reasoning", () => {
+    for (const type of ["toolcall_start", "toolcall_delta", "toolcall_end"]) {
+      expect(
+        classifyPiMessageUpdate({
+          type: "message_update",
+          assistantMessageEvent: { type, contentIndex: 1 },
+        }),
+      ).toEqual({ kind: "framing" });
+    }
+  });
+});

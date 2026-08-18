@@ -12,6 +12,14 @@ import {
   readArtifactSha256,
 } from "../../packages/adapters/pi/src/extension-build-identity.js";
 import { piIdentityOutputFiles } from "../build-public-packages.js";
+import {
+  captureChildEvents,
+  type FixtureValidationFailure,
+  readFixtureAndManifest,
+  replayFixtureThroughAdapter,
+  runFixtureRedControls,
+  verifyCaptureManifest,
+} from "./child-stream-capture.js";
 
 const EXTENSION_RELATIVE_PATH =
   "packages/adapters/pi/dist/extension.js" as const;
@@ -24,11 +32,28 @@ const PROBE_TIMEOUT_MS = 20_000;
 const PROBE_KILL_WAIT_MS = 1_000;
 const MAX_PROBE_OUTPUT_CHARS = 32 * 1024;
 
-export type VerifyChildStreamingArgs = {
-  readonly command: "identity";
-  readonly pi: string;
-  readonly requireCurrentBuild: boolean;
-};
+export type VerifyChildStreamingArgs =
+  | {
+      readonly command: "identity";
+      readonly pi: string;
+      readonly requireCurrentBuild: boolean;
+    }
+  | {
+      readonly command: "capture";
+      readonly pi: string;
+      readonly requireHostVersion: string;
+      readonly omitReasoningContent: true;
+      readonly sanitize: true;
+      readonly verifyBounds: true;
+      readonly fixtureDir?: string;
+    }
+  | {
+      readonly command: "replay";
+      readonly fixture: string;
+      readonly injectControlledReasoningInMemory: true;
+      readonly verifyManifest: true;
+      readonly runRedControls: true;
+    };
 
 export type VerifyChildStreamingFailureType =
   | "invalid-args"
@@ -38,7 +63,22 @@ export type VerifyChildStreamingFailureType =
   | "stale-on-disk"
   | "manifest-mismatch"
   | "unverifiable"
-  | "probe-failed";
+  | "probe-failed"
+  | "pi-version-mismatch"
+  | "pi-ai-unavailable"
+  | "workspace-failed"
+  | "spawn-failed"
+  | "capture-timeout"
+  | "bounds-exceeded"
+  | "forbidden-content"
+  | "sanitization-failed"
+  | "fixture-exists"
+  | "write-failed"
+  | "manifest-corrupt"
+  | "fixture-corrupt"
+  | "missing-text-delta"
+  | "broken-tool-correlation"
+  | "malformed-thinking-lifecycle";
 
 export type VerifyChildStreamingFailure = {
   readonly type: VerifyChildStreamingFailureType;
@@ -513,10 +553,17 @@ export function verifyCurrentBuildIdentity(
     });
 }
 
-export function parseVerifyChildStreamingArgs(
+function requiredValue(
+  argv: readonly string[],
+  index: number,
+): string | undefined {
+  const value = argv[index + 1];
+  return value === undefined || value.length === 0 ? undefined : value;
+}
+
+function parseIdentityArgs(
   argv: readonly string[],
 ): Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure> {
-  if (argv[0] !== "identity") return err(blocked("invalid-args"));
   let pi: string | undefined;
   let requireCurrentBuild = false;
   for (let index = 1; index < argv.length; index += 1) {
@@ -526,20 +573,145 @@ export function parseVerifyChildStreamingArgs(
       continue;
     }
     if (arg === "--pi") {
-      const value = argv[index + 1];
-      if (value === undefined || value.length === 0) {
-        return err(blocked("invalid-args"));
-      }
+      const value = requiredValue(argv, index);
+      if (value === undefined) return err(blocked("invalid-args"));
       pi = value;
       index += 1;
       continue;
     }
     return err(blocked("invalid-args"));
   }
-  if (pi === undefined || !requireCurrentBuild) {
+  if (pi === undefined || !requireCurrentBuild)
+    return err(blocked("invalid-args"));
+  return ok({ command: "identity", pi, requireCurrentBuild });
+}
+
+function parseCaptureArgs(
+  argv: readonly string[],
+): Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure> {
+  let pi: string | undefined;
+  let requireHostVersion: string | undefined;
+  let omitReasoningContent = false;
+  let sanitize = false;
+  let verifyBounds = false;
+  let fixtureDir: string | undefined;
+  for (let index = 1; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--pi") {
+      const value = requiredValue(argv, index);
+      if (value === undefined) return err(blocked("invalid-args"));
+      pi = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--require-host-version") {
+      const value = requiredValue(argv, index);
+      if (value === undefined) return err(blocked("invalid-args"));
+      requireHostVersion = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--omit-reasoning-content") {
+      omitReasoningContent = true;
+      continue;
+    }
+    if (arg === "--sanitize") {
+      sanitize = true;
+      continue;
+    }
+    if (arg === "--verify-bounds") {
+      verifyBounds = true;
+      continue;
+    }
+    if (arg === "--fixture-dir") {
+      const value = requiredValue(argv, index);
+      if (value === undefined) return err(blocked("invalid-args"));
+      fixtureDir = value;
+      index += 1;
+      continue;
+    }
     return err(blocked("invalid-args"));
   }
-  return ok({ command: "identity", pi, requireCurrentBuild });
+  if (
+    pi === undefined ||
+    requireHostVersion === undefined ||
+    !omitReasoningContent ||
+    !sanitize ||
+    !verifyBounds
+  ) {
+    return err(blocked("invalid-args"));
+  }
+  return ok({
+    command: "capture",
+    pi,
+    requireHostVersion,
+    omitReasoningContent: true,
+    sanitize: true,
+    verifyBounds: true,
+    ...(fixtureDir === undefined ? {} : { fixtureDir }),
+  });
+}
+
+function parseReplayArgs(
+  argv: readonly string[],
+): Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure> {
+  let fixture: string | undefined;
+  let injectControlledReasoningInMemory = false;
+  let verifyManifest = false;
+  let runRedControls = false;
+  for (let index = 1; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--fixture") {
+      const value = requiredValue(argv, index);
+      if (value === undefined) return err(blocked("invalid-args"));
+      fixture = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--inject-controlled-reasoning-in-memory") {
+      injectControlledReasoningInMemory = true;
+      continue;
+    }
+    if (arg === "--verify-manifest") {
+      verifyManifest = true;
+      continue;
+    }
+    if (arg === "--run-red-controls") {
+      runRedControls = true;
+      continue;
+    }
+    return err(blocked("invalid-args"));
+  }
+  if (
+    !fixture ||
+    !injectControlledReasoningInMemory ||
+    !verifyManifest ||
+    !runRedControls
+  ) {
+    return err(blocked("invalid-args"));
+  }
+  return ok({
+    command: "replay",
+    fixture,
+    injectControlledReasoningInMemory: true,
+    verifyManifest: true,
+    runRedControls: true,
+  });
+}
+
+export function parseVerifyChildStreamingArgs(
+  argv: readonly string[],
+): Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure> {
+  if (argv[0] === "identity") return parseIdentityArgs(argv);
+  if (argv[0] === "capture") return parseCaptureArgs(argv);
+  if (argv[0] === "replay") return parseReplayArgs(argv);
+  return err(blocked("invalid-args"));
+}
+
+function fixtureFailure(
+  failure: FixtureValidationFailure,
+): VerifyChildStreamingFailure {
+  return blocked(failure.type);
 }
 
 function writeLine(line: string): Result<void, undefined> {
@@ -556,10 +728,10 @@ if (import.meta.main) {
   const parsed = parseVerifyChildStreamingArgs(Bun.argv.slice(2));
   if (parsed.isErr()) {
     writeLine(
-      "identity: blocked; evidence=blocked; child-streaming=refused; reason=invalid-args",
+      "child-streaming: blocked; evidence=blocked; reason=invalid-args",
     );
     process.exitCode = 1;
-  } else {
+  } else if (parsed.value.command === "identity") {
     const repoRoot = resolve(import.meta.dir, "../..");
     const result = await verifyCurrentBuildIdentity({
       repoRoot,
@@ -575,6 +747,62 @@ if (import.meta.main) {
         `identity: blocked; state=${result.error.state ?? "unverifiable"}; evidence=${result.error.evidence}; child-streaming=refused; reason=${result.error.type}`,
       );
       process.exitCode = 1;
+    }
+  } else if (parsed.value.command === "capture") {
+    const repoRoot = resolve(import.meta.dir, "../..");
+    const result = await captureChildEvents({
+      pi: parsed.value.pi,
+      requireHostVersion: parsed.value.requireHostVersion,
+      fixtureDir:
+        parsed.value.fixtureDir ??
+        join(repoRoot, "packages/adapters/pi/src/__fixtures__"),
+    });
+    if (result.isErr()) {
+      writeLine(
+        `capture: blocked; evidence=${result.error.evidence}; reason=${result.error.type}`,
+      );
+      process.exitCode = 1;
+    } else {
+      writeLine(
+        `capture: verified; evidence=content-free; event-count=${result.value.eventCount}; manifest=independent`,
+      );
+    }
+  } else {
+    const replayArgs = parsed.value as Extract<
+      VerifyChildStreamingArgs,
+      { readonly command: "replay" }
+    >;
+    const loaded = await readFixtureAndManifest(replayArgs.fixture);
+    const verified = loaded.andThen(({ fixtureText, manifestText }) => {
+      const result = verifyCaptureManifest(fixtureText, manifestText);
+      return result.isOk()
+        ? ok({ fixtureText, manifestText, fixture: result.value.fixture })
+        : err(fixtureFailure(result.error));
+    });
+    const result = await verified.andThen(
+      ({ fixtureText, manifestText, fixture }) => {
+        const red = runFixtureRedControls(fixtureText, manifestText);
+        if (red.isErr()) return err(blocked(red.error.mutation));
+        const replay = replayFixtureThroughAdapter(fixture, {
+          injectControlledReasoningInMemory:
+            replayArgs.injectControlledReasoningInMemory,
+        });
+        if (replay.isErr()) return err(fixtureFailure(replay.error));
+        return ok({
+          redControls: Object.keys(red.value).length,
+          replay,
+        });
+      },
+    );
+    if (result.isErr()) {
+      writeLine(
+        `replay: blocked; evidence=content-free; reason=${result.error.type}`,
+      );
+      process.exitCode = 1;
+    } else {
+      writeLine(
+        `replay: verified; evidence=content-free; red-controls=${result.value.redControls}; lanes=4`,
+      );
     }
   }
 }

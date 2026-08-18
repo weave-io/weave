@@ -3,6 +3,7 @@
 ## Environment Variables
 
 - `BASE_PATH` (has default) — packages/docs/astro.config.mjs
+- `BUN_INSTALL` (has default) — scripts/pi/child-stream-capture.ts
 - `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` (has default) — packages/adapters/pi/src/__tests__/config-activator.test.ts
@@ -34,6 +35,7 @@
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
+- `SECRET_VALUE` **required** — scripts/pi/__tests__/child-stream-capture.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` (has default) — packages/adapters/pi/src/config-source-digests.ts
 - `VOLTA_HOME` (has default) — scripts/release/pi-child-inspection-smoke.ts
