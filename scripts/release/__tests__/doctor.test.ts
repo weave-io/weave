@@ -1,0 +1,653 @@
+import { describe, expect, it } from "bun:test";
+import {
+  PUBLIC_PACKAGES,
+  type PublicPackageName,
+  RELEASE_ATTEST_WORKFLOW_PATH,
+  RELEASE_PR_MARKER_REF,
+  RELEASE_PUBLISH_WORKFLOW_PATH,
+  RELEASE_REPOSITORY,
+  RELEASE_WORKFLOW_PATH,
+} from "../constants.js";
+import {
+  type DoctorMode,
+  type DoctorSnapshot,
+  type NpmPackageObservation,
+  parseDoctorMode,
+  parseTrustedPublisherResponse,
+  verifyDoctorSnapshot,
+} from "../doctor.js";
+import { PRODUCTION_ENTRYPOINTS } from "../entrypoint-inventory.js";
+import type { ReleasePrOwnership } from "../release-pr-contract.js";
+import type { DiscoveredRelease } from "../release-state.js";
+import {
+  createRolloutActivationRecord,
+  createRolloutFreezeRecord,
+  type RolloutStage,
+  validateRolloutTuple,
+  type WorkflowTopology,
+} from "../rollout-stage.js";
+
+const SHA = "a".repeat(40);
+const OTHER_SHA = "b".repeat(40);
+const OWNER = "c".repeat(64);
+
+const freezeRecord = createRolloutFreezeRecord({
+  commitSha: SHA,
+  committedAt: "2026-08-18T00:00:00.000Z",
+  quiescenceEvidence: "no active release or publisher run",
+})._unsafeUnwrap();
+const activationRecord = createRolloutActivationRecord({
+  commitSha: OTHER_SHA,
+  committedAt: "2026-08-18T01:00:00.000Z",
+  greenReport: "ReadyForActivation report",
+})._unsafeUnwrap();
+
+function declaration(stage: RolloutStage) {
+  return {
+    schemaVersion: 1 as const,
+    stage,
+    freezeRecord: stage === "pre-cutover" ? null : freezeRecord,
+    activationRecord: stage === "ready" ? activationRecord : null,
+  };
+}
+
+function topology(stage: RolloutStage): WorkflowTopology {
+  if (stage === "pre-cutover")
+    return {
+      oldWorkflowPresent: true,
+      oldWorkflowScheduled: true,
+      newWorkflowPresent: false,
+      newWorkflowScheduled: false,
+    };
+  return {
+    oldWorkflowPresent: false,
+    oldWorkflowScheduled: false,
+    newWorkflowPresent: true,
+    newWorkflowScheduled: true,
+  };
+}
+
+function trust(workflow: string): readonly Record<string, unknown>[] {
+  return [
+    {
+      provider: "github-actions",
+      workflow,
+      action: "npm publish",
+      repository: RELEASE_REPOSITORY,
+      environment: null,
+    },
+  ];
+}
+
+function packageObservation(
+  packageName: PublicPackageName,
+  published: boolean,
+): NpmPackageObservation {
+  return {
+    packageName,
+    exists: true,
+    published,
+    ownershipVerified: true,
+    owners: ["weave-io"],
+    distTags: published ? { latest: "0.1.0" } : {},
+  };
+}
+
+function stageForMode(mode: DoctorMode): RolloutStage {
+  if (mode === "pre-cutover") return "pre-cutover";
+  if (mode === "cutover" || mode === "post-bootstrap-frozen") return "frozen";
+  return "ready";
+}
+
+function modeValue(mode: DoctorMode): "disabled" | "dry-run" | "enabled" {
+  if (mode === "pre-cutover") return "disabled";
+  if (mode === "final") return "enabled";
+  return "disabled";
+}
+
+function snapshotFor(mode: DoctorMode = "final"): DoctorSnapshot {
+  const stage = stageForMode(mode);
+  const published = mode !== "pre-cutover" && mode !== "cutover";
+  const trustWorkflow =
+    mode === "pre-cutover"
+      ? RELEASE_WORKFLOW_PATH
+      : RELEASE_PUBLISH_WORKFLOW_PATH;
+  const trustedPublishers: Record<string, unknown> = {};
+  for (const packageName of Object.keys(PUBLIC_PACKAGES) as PublicPackageName[])
+    trustedPublishers[packageName] =
+      (mode === "pre-cutover" || mode === "cutover") &&
+      packageName !== "@weaveio/weave-cli" &&
+      packageName !== "@weaveio/weave-adapter-opencode"
+        ? []
+        : trust(trustWorkflow);
+
+  return {
+    declaration: declaration(stage),
+    rolloutMode: modeValue(mode),
+    topology: topology(stage),
+    packages: (Object.keys(PUBLIC_PACKAGES) as PublicPackageName[]).map(
+      (packageName) =>
+        packageObservation(
+          packageName,
+          published ||
+            packageName === "@weaveio/weave-cli" ||
+            packageName === "@weaveio/weave-adapter-opencode",
+        ),
+    ),
+    trustedPublishers,
+    github: {
+      environments: {
+        release: {
+          name: "release",
+          exists: true,
+          readable: true,
+          protectionConfigured: true,
+        },
+        prerelease: {
+          name: "prerelease",
+          exists: true,
+          readable: true,
+          protectionConfigured: true,
+        },
+      },
+      ruleset: {
+        exists: true,
+        readable: true,
+        targetBranch: "main",
+        requiredChecks: ["ci", "release-policy", "api-reports", "docs-audit"],
+        dismissStalePullRequestApprovals: true,
+      },
+      team: {
+        organization: "weave-io",
+        slug: "release-maintainers",
+        exists: true,
+        readable: true,
+      },
+      app: {
+        installationReadable: true,
+        permissions: { contents: "write", pullRequests: "write" },
+      },
+      secrets: {
+        readable: true,
+        repositoryNames: ["RELEASE_APP_TOKEN", "WEAVE_RELEASE_AI_API_KEY"],
+        environmentNames: { release: [], prerelease: [] },
+      },
+    },
+    attestationWorkflow: {
+      readable: true,
+      present: mode !== "pre-cutover",
+      declaresWorkflowCall: false,
+    },
+    oldSystem: {
+      authoritative: true,
+      publicationPathEnabled: true,
+      recentSuccessfulRun: true,
+      readOnlyPreflight: false,
+      runId: 42,
+      evidence: "successful scheduled run on main",
+    },
+    harness: {
+      binaries: { opencode: true, claude: true, pi: true },
+      proofJobsAvailable: true,
+    },
+    model: {
+      provider: "opencode-go",
+      model: "gpt-5.6-luna",
+      reachable: true,
+      minimalPingPerformed: true,
+    },
+    policy: {
+      packagePolicyPassed: true,
+      docsPolicyPassed: true,
+    },
+    lifecycle: {
+      authoritative: true,
+      marker: { present: false, openReleasePr: false },
+    },
+  };
+}
+
+function doctorFailure(result: ReturnType<typeof verifyDoctorSnapshot>) {
+  expect(result.isErr()).toBe(true);
+  if (result.isOk()) throw new Error("expected doctor failure");
+  expect(result.error.type).toBe("DoctorFailed");
+  if (result.error.type !== "DoctorFailed") throw new Error("wrong error");
+  return result.error;
+}
+
+function ownership(
+  overrides: Partial<ReleasePrOwnership> = {},
+): ReleasePrOwnership {
+  return {
+    ref: RELEASE_PR_MARKER_REF,
+    ownerGeneration: OWNER,
+    expectedMarkerSha: SHA,
+    plannedBaseSha: OTHER_SHA,
+    ...overrides,
+  };
+}
+
+function mergedDiscovery(
+  primary: string,
+  markerCleanupPending = false,
+): DiscoveredRelease {
+  return {
+    kind: "merged-release",
+    case:
+      primary === "IntegrityIncident" ? "integrity-incident" : "partial-npm",
+    state: {
+      primary: primary as never,
+      markerCleanupPending,
+      releasedSha: SHA,
+      pullRequestUrl: "https://github.com/weave-io/weave/pull/42",
+      pullRequestNumber: 42,
+      unreproducible: [],
+    },
+  };
+}
+
+describe("release doctor", () => {
+  it("parses exactly one explicit mode and defaults to final", () => {
+    expect(parseDoctorMode([])._unsafeUnwrap()).toBe("final");
+    expect(parseDoctorMode(["--pre-cutover"])._unsafeUnwrap()).toBe(
+      "pre-cutover",
+    );
+    expect(parseDoctorMode(["--pre-cutover", "--cutover"]).isErr()).toBe(true);
+    expect(parseDoctorMode(["--final"]).isErr()).toBe(true);
+  });
+
+  it("validates the allowed rollout tuple table and rejects dual or absent publishers", () => {
+    expect(
+      validateRolloutTuple(
+        declaration("pre-cutover"),
+        "dry-run",
+        topology("pre-cutover"),
+      ).isOk(),
+    ).toBe(true);
+    expect(
+      validateRolloutTuple(
+        declaration("frozen"),
+        "disabled",
+        topology("frozen"),
+      ).isOk(),
+    ).toBe(true);
+    expect(
+      validateRolloutTuple(
+        declaration("ready"),
+        "enabled",
+        topology("ready"),
+      )._unsafeUnwrap().publicationCapable,
+    ).toBe(true);
+
+    const invalid = [
+      ["pre-cutover", "enabled"],
+      ["frozen", "dry-run"],
+      ["ready", "dry-run"],
+    ] as const;
+    for (const [stage, mode] of invalid)
+      expect(
+        validateRolloutTuple(declaration(stage), mode, topology(stage)).isErr(),
+      ).toBe(true);
+
+    expect(
+      validateRolloutTuple(declaration("frozen"), "disabled", {
+        ...topology("frozen"),
+        oldWorkflowPresent: true,
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      validateRolloutTuple(declaration("ready"), "enabled", {
+        oldWorkflowPresent: false,
+        oldWorkflowScheduled: false,
+        newWorkflowPresent: false,
+        newWorkflowScheduled: false,
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      validateRolloutTuple(declaration("frozen"), "disabled", {
+        ...topology("frozen"),
+        newWorkflowScheduled: false,
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      validateRolloutTuple(declaration("frozen"), "disabled", {
+        ...topology("frozen"),
+        newWorkflowGateDisabled: false,
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      validateRolloutTuple(
+        { ...declaration("frozen"), freezeRecord: null },
+        "disabled",
+        topology("frozen"),
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      validateRolloutTuple(
+        { ...declaration("ready"), activationRecord: null },
+        "disabled",
+        topology("ready"),
+      ).isErr(),
+    ).toBe(true);
+  });
+
+  it("returns the typed success for every doctor rung", () => {
+    const expected = [
+      ["pre-cutover", "ReadyForCutover"],
+      ["cutover", "CutoverVerified"],
+      ["post-bootstrap-frozen", "ReadyForActivation"],
+      ["activation-ready", "ActivationReadyVerified"],
+      ["final", "FinalVerified"],
+    ] as const;
+    for (const [mode, status] of expected) {
+      const result = verifyDoctorSnapshot(snapshotFor(mode), mode);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) expect(result.value.status).toBe(status);
+    }
+  });
+
+  it("rejects neighboring tuples for each exact mode", () => {
+    const wrong = [
+      ["pre-cutover", snapshotFor("final")],
+      ["cutover", snapshotFor("pre-cutover")],
+      ["post-bootstrap-frozen", snapshotFor("activation-ready")],
+      ["activation-ready", snapshotFor("post-bootstrap-frozen")],
+      ["final", { ...snapshotFor("final"), rolloutMode: "disabled" }],
+    ] as const;
+    for (const [mode, snapshot] of wrong)
+      doctorFailure(verifyDoctorSnapshot(snapshot, mode));
+  });
+
+  it("detects a premature trust switch during the pre-cutover proof", () => {
+    const snapshot = snapshotFor("pre-cutover");
+    const trustedPublishers = { ...snapshot.trustedPublishers };
+    trustedPublishers["@weaveio/weave-cli"] = trust(
+      RELEASE_PUBLISH_WORKFLOW_PATH,
+    );
+    const failure = doctorFailure(
+      verifyDoctorSnapshot({ ...snapshot, trustedPublishers }, "pre-cutover"),
+    );
+    expect(
+      failure.failures.some((item) => item.id.includes("trusted-publisher")),
+    ).toBe(true);
+  });
+
+  it("parses npm's GitHub claims response without weakening exact identity checks", () => {
+    const parsed = parseTrustedPublisherResponse({
+      id: "trust-1",
+      type: "github",
+      claims: {
+        repository: RELEASE_REPOSITORY,
+        workflow_ref: { file: "release-publish.yml" },
+      },
+    });
+    expect(parsed.isOk()).toBe(true);
+    if (parsed.isOk())
+      expect(parsed.value[0]).toEqual({
+        provider: "github-actions",
+        workflow: RELEASE_PUBLISH_WORKFLOW_PATH,
+        action: "npm publish",
+        repository: RELEASE_REPOSITORY,
+        environment: null,
+      });
+  });
+
+  it("fails every named unverifiable or wrong trusted-publisher record", () => {
+    const cases: readonly [string, unknown][] = [
+      ["wrong filename", trust(RELEASE_WORKFLOW_PATH)],
+      [
+        "wrong repository",
+        [
+          {
+            ...trust(RELEASE_PUBLISH_WORKFLOW_PATH)[0],
+            repository: "other/repo",
+          },
+        ],
+      ],
+      [
+        "environment restriction",
+        [
+          {
+            ...trust(RELEASE_PUBLISH_WORKFLOW_PATH)[0],
+            environment: "release",
+          },
+        ],
+      ],
+      [
+        "multiple configurations",
+        [
+          ...trust(RELEASE_PUBLISH_WORKFLOW_PATH),
+          ...trust(RELEASE_PUBLISH_WORKFLOW_PATH),
+        ],
+      ],
+      ["unparseable response", "not-json"],
+      ["attestation trust", trust(RELEASE_ATTEST_WORKFLOW_PATH)],
+    ];
+    for (const [name, value] of cases) {
+      const snapshot = snapshotFor("final");
+      const trustedPublishers = { ...snapshot.trustedPublishers };
+      trustedPublishers["@weaveio/weave-cli"] = value;
+      const failure = doctorFailure(
+        verifyDoctorSnapshot({ ...snapshot, trustedPublishers }, "final"),
+      );
+      expect(failure.failures.length, name).toBeGreaterThan(0);
+    }
+    expect(parseTrustedPublisherResponse("not-json").isErr()).toBe(true);
+    expect(parseTrustedPublisherResponse(undefined).isErr()).toBe(true);
+  });
+
+  it("blocks an attestation workflow that declares workflow_call", () => {
+    const failure = doctorFailure(
+      verifyDoctorSnapshot(
+        {
+          ...snapshotFor("final"),
+          attestationWorkflow: {
+            readable: true,
+            present: true,
+            declaresWorkflowCall: true,
+          },
+        },
+        "final",
+      ),
+    );
+    expect(
+      failure.failures.some(
+        (item) => item.id === "github.attestation-workflow",
+      ),
+    ).toBe(true);
+  });
+
+  it("checks stale approvals, team, App, secrets, and setup gates", () => {
+    const base = snapshotFor("final");
+    const failures = [
+      {
+        ...base,
+        github: {
+          ...base.github,
+          ruleset: {
+            ...base.github.ruleset,
+            dismissStalePullRequestApprovals: false,
+          },
+        },
+      },
+      {
+        ...base,
+        github: {
+          ...base.github,
+          team: { ...base.github.team, slug: "wrong-team" },
+        },
+      },
+      {
+        ...base,
+        github: {
+          ...base.github,
+          app: {
+            ...base.github.app,
+            permissions: { contents: "read", pullRequests: "write" },
+          },
+        },
+      },
+      {
+        ...base,
+        github: {
+          ...base.github,
+          secrets: { ...base.github.secrets, repositoryNames: [] },
+        },
+      },
+      { ...base, harness: { ...base.harness, proofJobsAvailable: false } },
+      { ...base, model: { ...base.model, reachable: false } },
+      { ...base, policy: { ...base.policy, docsPolicyPassed: false } },
+    ];
+    for (const snapshot of failures)
+      doctorFailure(verifyDoctorSnapshot(snapshot, "final"));
+  });
+
+  it("requires old-system operational proof and the old schedule before cutover", () => {
+    const noProof = doctorFailure(
+      verifyDoctorSnapshot(
+        {
+          ...snapshotFor("pre-cutover"),
+          oldSystem: {
+            authoritative: true,
+            publicationPathEnabled: true,
+            recentSuccessfulRun: false,
+            readOnlyPreflight: false,
+          },
+        },
+        "pre-cutover",
+      ),
+    );
+    expect(
+      noProof.failures.some(
+        (item) => item.id === "release.old-system-operational",
+      ),
+    ).toBe(true);
+    const noSchedule = doctorFailure(
+      verifyDoctorSnapshot(
+        {
+          ...snapshotFor("pre-cutover"),
+          topology: { ...topology("pre-cutover"), oldWorkflowScheduled: false },
+        },
+        "pre-cutover",
+      ),
+    );
+    expect(
+      noSchedule.failures.some((item) => item.id === "rollout.tuple"),
+    ).toBe(true);
+  });
+
+  it("reports orphan, creation-cleanup, marker-cleanup, incomplete, and incident states", () => {
+    const base = snapshotFor("final");
+    const orphan = doctorFailure(
+      verifyDoctorSnapshot(
+        {
+          ...base,
+          lifecycle: {
+            ...base.lifecycle,
+            marker: {
+              present: true,
+              ownerGeneration: OWNER,
+              plannedBaseSha: OTHER_SHA,
+              markerSha: SHA,
+              openReleasePr: false,
+              creationPollExhausted: true,
+            },
+          },
+        },
+        "final",
+      ),
+    );
+    expect(orphan.failures[0]?.fix).toContain("stable-resume");
+
+    const cleanup = doctorFailure(
+      verifyDoctorSnapshot(
+        {
+          ...base,
+          lifecycle: {
+            ...base.lifecycle,
+            marker: {
+              present: true,
+              ownerGeneration: OWNER,
+              plannedBaseSha: OTHER_SHA,
+              markerSha: SHA,
+              openReleasePr: false,
+              recordedCleanup: ownership({ ownerGeneration: "d".repeat(64) }),
+            },
+          },
+        },
+        "final",
+      ),
+    );
+    expect(cleanup.failures[0]?.detail).toContain("stale cleanup generation");
+
+    const markerCleanup = doctorFailure(
+      verifyDoctorSnapshot(
+        {
+          ...base,
+          lifecycle: {
+            ...base.lifecycle,
+            marker: {
+              present: true,
+              ownerGeneration: OWNER,
+              plannedBaseSha: OTHER_SHA,
+              markerSha: SHA,
+              openReleasePr: false,
+              associatedPullRequestSettled: true,
+            },
+          },
+        },
+        "final",
+      ),
+    );
+    expect(markerCleanup.failures[0]?.detail).toContain("MarkerCleanupPending");
+
+    const incomplete = doctorFailure(
+      verifyDoctorSnapshot(
+        {
+          ...base,
+          lifecycle: {
+            ...base.lifecycle,
+            discovered: [mergedDiscovery("PendingNpm")],
+          },
+        },
+        "final",
+      ),
+    );
+    expect(incomplete.failures[0]?.fix).toContain("stable-resume");
+
+    const incident = doctorFailure(
+      verifyDoctorSnapshot(
+        {
+          ...base,
+          lifecycle: {
+            ...base.lifecycle,
+            discovered: [mergedDiscovery("IntegrityIncident")],
+            mergedRelease: {
+              state: "IntegrityIncident",
+              markerCleanupPending: false,
+              incidentAuthorizationRecordPresent: true,
+              incidentDeprecatedVerified: false,
+            },
+          },
+        },
+        "final",
+      ),
+    );
+    expect(incident.failures[0]?.fix).toContain("incident-resolution");
+    expect(incident.failures[0]?.fix).toContain("interactive");
+  });
+
+  it("fails closed on malformed snapshot input", () => {
+    const result = verifyDoctorSnapshot({ declaration: {} }, "final");
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.type).toBe("InvalidDoctorSnapshot");
+  });
+
+  it("keeps the release doctor root in the production inventory", () => {
+    expect(
+      PRODUCTION_ENTRYPOINTS.some(
+        (entry) => entry.path === "scripts/release/doctor.ts",
+      ),
+    ).toBe(true);
+  });
+});
