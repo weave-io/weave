@@ -29,9 +29,16 @@ describe("entrypoint inventory", () => {
         rationale:
           "Task 11 standalone OIDC publication entry. The only new-pipeline executable root that exists when Task 14 creates the inventory.",
       },
+      {
+        path: "scripts/release/doctor.ts",
+        role: "legacy",
+        rationale:
+          "Task 15 read-only release setup verifier. It performs no publication mutation and is classified so production reachability cannot hide it.",
+      },
     ]);
     expect(validateEntrypointInventory().isOk()).toBe(true);
     expect(inventoriedPaths()).toContain("scripts/release/publish-main.ts");
+    expect(inventoriedPaths()).toContain("scripts/release/doctor.ts");
     expect(PRODUCTION_ROOT_CLASSES).toHaveLength(14);
   });
 

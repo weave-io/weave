@@ -9,8 +9,9 @@
  * `UnknownProductionEntrypoint`.
  *
  * Task 14 registers the one pre-existing new-pipeline root,
- * `publish-main.ts`. Later tasks add, rename, or remove entries in the
- * same change. Test-only roots are never inventoried as production.
+ * `publish-main.ts`; Task 15 adds the read-only `doctor.ts` root. Later tasks
+ * add, rename, or remove entries in the same change. Test-only roots are never
+ * inventoried as production.
  */
 
 import { dirname, join, relative, resolve } from "node:path";
@@ -73,6 +74,12 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "oidc-publish",
     rationale:
       "Task 11 standalone OIDC publication entry. The only new-pipeline executable root that exists when Task 14 creates the inventory.",
+  },
+  {
+    path: "scripts/release/doctor.ts",
+    role: "legacy",
+    rationale:
+      "Task 15 read-only release setup verifier. It performs no publication mutation and is classified so production reachability cannot hide it.",
   },
 ] as const satisfies readonly ProductionEntrypoint[];
 
