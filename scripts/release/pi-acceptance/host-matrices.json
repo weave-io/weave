@@ -1,0 +1,23 @@
+{
+  "@weaveio/weave-adapter-opencode": {
+    "adapter": "@weaveio/weave-adapter-opencode",
+    "harness": "opencode",
+    "hostPackage": "opencode",
+    "minimum": "1.15.9",
+    "latest": "1.15.9"
+  },
+  "@weaveio/weave-adapter-claude-code": {
+    "adapter": "@weaveio/weave-adapter-claude-code",
+    "harness": "claude-code",
+    "hostPackage": "claude",
+    "minimum": "2.1.220",
+    "latest": "2.1.220"
+  },
+  "@weaveio/weave-adapter-pi": {
+    "adapter": "@weaveio/weave-adapter-pi",
+    "harness": "pi",
+    "hostPackage": "@earendil-works/pi-coding-agent",
+    "minimum": "0.81.1",
+    "latest": "0.84.2"
+  }
+}

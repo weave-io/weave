@@ -20,6 +20,10 @@ import {
   HOST_VERSION_FLOOR,
 } from "../../packages/adapters/pi/src/host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../../packages/adapters/pi/src/host-compatibility-matrix.js";
+import {
+  ADAPTER_PACKAGE_NAMES,
+  type AdapterPackageName,
+} from "./changed-adapters.js";
 import type { SmokeChecklistResult } from "./smoke-checklist.js";
 
 /**
@@ -69,7 +73,8 @@ export type RequirementId = (typeof REQUIREMENT_IDS)[number];
 
 export const RequirementIdSchema = z.enum(REQUIREMENT_IDS);
 
-const CONTRACT_REFERENCE_PATTERN = /^(?:docs\/(?!specs(?:\/|$))|packages\/|scripts\/)[A-Za-z0-9._/-]+(?:#[a-z0-9]+(?:-[a-z0-9]+)*)?$/;
+const CONTRACT_REFERENCE_PATTERN =
+  /^(?:docs\/(?!specs(?:\/|$))|packages\/|scripts\/)[A-Za-z0-9._/-]+(?:#[a-z0-9]+(?:-[a-z0-9]+)*)?$/;
 const TEST_KEY_PATTERN = /^T[0-9]{3}$/;
 const PROOF_ID_PATTERN = /^P[0-9]{3}$/;
 const SMOKE_ID_PATTERN = /^S[0-9]{3}$/;
@@ -278,7 +283,8 @@ export const CLOSED_SET_REQUIREMENTS: Partial<
     ],
   },
   "PI-PKG": {
-    description: "host package/minimum-version boundary tokens (Pi adapter contract)",
+    description:
+      "host package/minimum-version boundary tokens (Pi adapter contract)",
     members: HOST_BOUNDARY_TOKENS,
   },
   "PI-ERR": {
@@ -497,4 +503,165 @@ export function buildAcceptanceManifest(input: {
     artifactBinding: input.artifactBinding,
     requirements: [...input.requirements],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Per-adapter host version matrices (minimum + latest) for packaged proof
+// ---------------------------------------------------------------------------
+
+export const ADAPTER_HARNESSES = ["opencode", "claude-code", "pi"] as const;
+export type AdapterHarness = (typeof ADAPTER_HARNESSES)[number];
+export const HOST_MATRIX_ROLES = ["minimum", "latest"] as const;
+export type HostMatrixRole = (typeof HOST_MATRIX_ROLES)[number];
+
+const HOST_VERSION = /^\d+\.\d+\.\d+$/;
+
+export const AdapterHostMatrixEntrySchema = z
+  .object({
+    adapter: z.enum(ADAPTER_PACKAGE_NAMES),
+    harness: z.enum(ADAPTER_HARNESSES),
+    hostPackage: z.string().min(1).max(128),
+    minimum: z.string().regex(HOST_VERSION),
+    latest: z.string().regex(HOST_VERSION),
+  })
+  .strict();
+export type AdapterHostMatrixEntry = z.infer<
+  typeof AdapterHostMatrixEntrySchema
+>;
+
+export const AdapterHostMatricesSchema = z
+  .object({
+    "@weaveio/weave-adapter-opencode": AdapterHostMatrixEntrySchema,
+    "@weaveio/weave-adapter-claude-code": AdapterHostMatrixEntrySchema,
+    "@weaveio/weave-adapter-pi": AdapterHostMatrixEntrySchema,
+  })
+  .strict();
+export type AdapterHostMatrices = z.infer<typeof AdapterHostMatricesSchema>;
+
+export type AdapterHostMatrixError =
+  | { type: "SchemaInvalid"; issues: readonly string[] }
+  | { type: "AdapterMismatch"; adapter: AdapterPackageName; actual: string }
+  | {
+      type: "IncompleteHostMatrix";
+      adapter: AdapterPackageName;
+      missing: HostMatrixRole;
+    }
+  | {
+      type: "PiHostDrift";
+      field: "minimum" | "latest" | "hostPackage";
+      expected: string;
+      actual: string;
+    };
+
+/**
+ * Declared minimum and latest supported hosts for every publishing adapter.
+ * Pi values come from the single compatibility matrix so they cannot drift.
+ */
+export const ADAPTER_HOST_MATRICES: AdapterHostMatrices = {
+  "@weaveio/weave-adapter-opencode": {
+    adapter: "@weaveio/weave-adapter-opencode",
+    harness: "opencode",
+    hostPackage: "opencode",
+    minimum: "1.15.9",
+    latest: "1.15.9",
+  },
+  "@weaveio/weave-adapter-claude-code": {
+    adapter: "@weaveio/weave-adapter-claude-code",
+    harness: "claude-code",
+    hostPackage: "claude",
+    minimum: "2.1.220",
+    latest: "2.1.220",
+  },
+  "@weaveio/weave-adapter-pi": {
+    adapter: "@weaveio/weave-adapter-pi",
+    harness: "pi",
+    hostPackage: PI_HOST_COMPATIBILITY_MATRIX.package,
+    minimum: PI_HOST_COMPATIBILITY_MATRIX.floorVersion,
+    latest: PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion,
+  },
+};
+
+export function parseAdapterHostMatrices(
+  candidate: unknown,
+): Result<AdapterHostMatrices, AdapterHostMatrixError[]> {
+  const parsed = AdapterHostMatricesSchema.safeParse(candidate);
+  if (!parsed.success)
+    return err([
+      {
+        type: "SchemaInvalid",
+        issues: parsed.error.issues.map(
+          (issue) => `${issue.path.join(".")}: ${issue.message}`,
+        ),
+      },
+    ]);
+  return validateAdapterHostMatrices(parsed.data);
+}
+
+export function validateAdapterHostMatrices(
+  matrices: AdapterHostMatrices,
+): Result<AdapterHostMatrices, AdapterHostMatrixError[]> {
+  const errors: AdapterHostMatrixError[] = [];
+  for (const adapter of ADAPTER_PACKAGE_NAMES) {
+    const entry = matrices[adapter];
+    if (entry.adapter !== adapter)
+      errors.push({
+        type: "AdapterMismatch",
+        adapter,
+        actual: entry.adapter,
+      });
+    if (entry.minimum.length === 0)
+      errors.push({
+        type: "IncompleteHostMatrix",
+        adapter,
+        missing: "minimum",
+      });
+    if (entry.latest.length === 0)
+      errors.push({
+        type: "IncompleteHostMatrix",
+        adapter,
+        missing: "latest",
+      });
+  }
+  const pi = matrices["@weaveio/weave-adapter-pi"];
+  if (pi.hostPackage !== PI_HOST_COMPATIBILITY_MATRIX.package)
+    errors.push({
+      type: "PiHostDrift",
+      field: "hostPackage",
+      expected: PI_HOST_COMPATIBILITY_MATRIX.package,
+      actual: pi.hostPackage,
+    });
+  if (pi.minimum !== PI_HOST_COMPATIBILITY_MATRIX.floorVersion)
+    errors.push({
+      type: "PiHostDrift",
+      field: "minimum",
+      expected: PI_HOST_COMPATIBILITY_MATRIX.floorVersion,
+      actual: pi.minimum,
+    });
+  if (pi.latest !== PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion)
+    errors.push({
+      type: "PiHostDrift",
+      field: "latest",
+      expected: PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion,
+      actual: pi.latest,
+    });
+  if (errors.length > 0) return err(errors);
+  return ok(matrices);
+}
+
+export function requiredHostSlots(
+  adapter: AdapterPackageName,
+  matrices: AdapterHostMatrices = ADAPTER_HOST_MATRICES,
+): Result<
+  readonly { role: HostMatrixRole; version: string }[],
+  AdapterHostMatrixError
+> {
+  const entry = matrices[adapter];
+  if (entry === undefined || entry.minimum.length === 0)
+    return err({ type: "IncompleteHostMatrix", adapter, missing: "minimum" });
+  if (entry.latest.length === 0)
+    return err({ type: "IncompleteHostMatrix", adapter, missing: "latest" });
+  return ok([
+    { role: "minimum", version: entry.minimum },
+    { role: "latest", version: entry.latest },
+  ]);
 }
