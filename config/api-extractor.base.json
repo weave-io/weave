@@ -1,5 +1,6 @@
 {
   "$schema": "../node_modules/@microsoft/api-extractor/lib/schemas/api-extractor.schema.json",
+  "newlineKind": "lf",
   "compiler": {
     "skipLibCheck": true
   },

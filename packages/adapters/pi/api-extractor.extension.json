@@ -4,6 +4,12 @@
   "compiler": {
     "tsconfigFilePath": "<projectFolder>/tsconfig.build.json"
   },
+  "apiReport": {
+    "enabled": true,
+    "reportFolder": "<projectFolder>/etc/",
+    "reportTempFolder": "<projectFolder>/temp/",
+    "reportFileName": "weave-adapter-pi-extension"
+  },
   "dtsRollup": {
     "publicTrimmedFilePath": "<projectFolder>/dist/extension.d.ts",
     "untrimmedFilePath": "<projectFolder>/dist-types/untrimmed-extension.d.ts"

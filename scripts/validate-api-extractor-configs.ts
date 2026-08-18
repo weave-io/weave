@@ -2,12 +2,13 @@ import { resolve } from "node:path";
 import { ExtractorConfig } from "@microsoft/api-extractor";
 import { err, ok, Result } from "neverthrow";
 
-const CONFIG_PATHS = [
+export const CONFIG_PATHS = [
   "packages/cli/api-extractor.json",
   "packages/adapters/opencode/api-extractor.index.json",
   "packages/adapters/opencode/api-extractor.plugin.json",
   "packages/adapters/claude-code/api-extractor.json",
   "packages/adapters/pi/api-extractor.index.json",
+  "packages/adapters/pi/api-extractor.cli.json",
   "packages/adapters/pi/api-extractor.extension.json",
   "packages/adapters/pi/api-extractor.extension-impl.json",
 ] as const;

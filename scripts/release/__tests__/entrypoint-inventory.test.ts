@@ -35,10 +35,17 @@ describe("entrypoint inventory", () => {
         rationale:
           "Task 15 read-only release setup verifier. It performs no publication mutation and is classified so production reachability cannot hide it.",
       },
+      {
+        path: "scripts/release/api-reports.ts",
+        role: "legacy",
+        rationale:
+          "Task 22 CI API compatibility controller. It runs API Extractor and the checked-in surface-map gate; it performs no publication mutation.",
+      },
     ]);
     expect(validateEntrypointInventory().isOk()).toBe(true);
     expect(inventoriedPaths()).toContain("scripts/release/publish-main.ts");
     expect(inventoriedPaths()).toContain("scripts/release/doctor.ts");
+    expect(inventoriedPaths()).toContain("scripts/release/api-reports.ts");
     expect(PRODUCTION_ROOT_CLASSES).toHaveLength(14);
   });
 

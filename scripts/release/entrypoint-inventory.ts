@@ -9,9 +9,9 @@
  * `UnknownProductionEntrypoint`.
  *
  * Task 14 registers the one pre-existing new-pipeline root,
- * `publish-main.ts`; Task 15 adds the read-only `doctor.ts` root. Later tasks
- * add, rename, or remove entries in the same change. Test-only roots are never
- * inventoried as production.
+ * `publish-main.ts`; Task 15 adds the read-only `doctor.ts` root; Task 22 adds
+ * the CI API report controller. Later tasks add, rename, or remove entries in
+ * the same change. Test-only roots are never inventoried as production.
  */
 
 import { dirname, join, relative, resolve } from "node:path";
@@ -80,6 +80,12 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "legacy",
     rationale:
       "Task 15 read-only release setup verifier. It performs no publication mutation and is classified so production reachability cannot hide it.",
+  },
+  {
+    path: "scripts/release/api-reports.ts",
+    role: "legacy",
+    rationale:
+      "Task 22 CI API compatibility controller. It runs API Extractor and the checked-in surface-map gate; it performs no publication mutation.",
   },
 ] as const satisfies readonly ProductionEntrypoint[];
 
