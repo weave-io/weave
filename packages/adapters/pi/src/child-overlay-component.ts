@@ -949,14 +949,21 @@ export function createChildOverlayCustomComponent(
 
     // Search matches what the reader can read, so the painted rows' ANSI-free
     // twin is reported to the controller exactly like the measured extent
-    // below. It is reported only while search is open: a closed search matches
-    // nothing, and an inspector repaints on every streamed event.
-    if (search.mode !== "off") {
-      controller.setRenderedSearchText(transcript.value.searchIndex).match(
-        () => undefined,
-        () => undefined,
-      );
-    }
+    // below.
+    //
+    // It is reported on EVERY render, not only while search is open. Pi may
+    // coalesce repaints, so the render that opens the search field and the
+    // render that would have published the index can be the same frame the
+    // query is submitted in: a reader who typed `/query` and pressed Enter
+    // without pausing was matched against an index that had never been
+    // published, and read `no match in this transcript` for text plainly on
+    // screen. The index is the latest rendered transcript, keyed by current
+    // window entry ids and bounded by the window, so publishing it is a
+    // constant-cost assignment and an empty query still matches nothing.
+    controller.setRenderedSearchText(transcript.value.searchIndex).match(
+      () => undefined,
+      () => undefined,
+    );
     const nav = navFacts(view, transcript.value.spans);
     const painted = nav.open
       ? markSearchGutter(paint, nav, transcript.value.lines, geometry.pane)

@@ -32,6 +32,7 @@ import {
   createChildOverlayCustomComponent,
   createMemoryChildOverlaySource,
 } from "../child-overlay.js";
+import { childOverlayTranscriptInput } from "../child-overlay-facts.js";
 import {
   CLOSED_OVERLAY_SEARCH,
   stepOverlaySearch,
@@ -114,6 +115,80 @@ describe("in-overlay search keyboard", () => {
     expect(committed.effect).toEqual({ kind: "run", query: "ab" });
   });
 });
+
+const SETTLED_CHILD_ID = "settled-search-1";
+
+/** A settled child whose session holds one tool call and its result. */
+function settledChildSource() {
+  return createMemoryChildOverlaySource([
+    {
+      childId: SETTLED_CHILD_ID,
+      threadId: SETTLED_CHILD_ID,
+      status: "settled",
+      outcome: "completed",
+      generationId: "gen-1",
+      runs: [{ run: 1, action: "start" }],
+      branchIds: ["main"],
+      descendantChildIds: [],
+      agentName: "shuttle",
+      entries: [
+        {
+          id: "e0",
+          payload: {
+            type: "message",
+            id: "e0",
+            parentId: null,
+            timestamp: "2026-01-01T00:00:00.000Z",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "text", text: "running the suite" },
+                {
+                  type: "toolCall",
+                  id: "toolu01",
+                  name: "bash",
+                  arguments: { timeout: 180 },
+                },
+              ],
+            },
+          },
+        },
+        {
+          id: "e1",
+          payload: {
+            type: "message",
+            id: "e1",
+            parentId: "e0",
+            timestamp: "2026-01-01T00:00:01.000Z",
+            message: {
+              role: "toolResult",
+              toolCallId: "toolu01",
+              toolName: "bash",
+              content: [{ type: "text", text: "3 files pass" }],
+              isError: false,
+              timestamp: 1_700_000_000_000,
+            },
+          },
+        },
+      ],
+    },
+  ]);
+}
+
+/** The overlay as Pi mounts it, with a render host that never paints back. */
+function mountedOverlay(
+  controller: ReturnType<typeof createChildOverlayController>,
+) {
+  return createChildOverlayCustomComponent(
+    { requestRender: () => undefined } as never,
+    {} as never,
+    getKeybindings() as never,
+    controller,
+    () => undefined,
+    () => undefined,
+    { cwd: "/workspace" },
+  );
+}
 
 describe("overlay search indexes the rendered transcript", () => {
   const liveChildWithToolCall = async () => {
@@ -202,6 +277,78 @@ describe("overlay search indexes the rendered transcript", () => {
       (await controller.search("no-such-token-zz"))._unsafeUnwrap()
         .searchMatches,
     ).toEqual([]);
+  });
+
+  it("matches a live child when the whole query arrives in one frame", async () => {
+    const controller = await liveChildWithToolCall();
+    const component = mountedOverlay(controller);
+    // The ONLY paint: exactly what a mounted overlay has drawn before the
+    // reader touches the keyboard. Pi coalesces repaints, so `/timeout` and
+    // Enter can all land inside one frame, and the index the query is matched
+    // against is the one this render published.
+    component.render(160);
+    for (const character of "/timeout\r") component.handleInput(character);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const view = controller.view()._unsafeUnwrap();
+    expect(view.searchQuery).toBe("timeout");
+    expect(view.searchMatches.length).toBe(1);
+  });
+
+  it("matches a settled child when the whole query arrives in one frame", async () => {
+    const controller = createChildOverlayController(settledChildSource());
+    (await controller.open(SETTLED_CHILD_ID))._unsafeUnwrap();
+    const component = mountedOverlay(controller);
+    component.render(160);
+    for (const character of "/timeout\r") component.handleInput(character);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const view = controller.view()._unsafeUnwrap();
+    expect(view.searchQuery).toBe("timeout");
+    expect(view.searchMatches.length).toBe(1);
+    // The word is on screen and nowhere in the window entry's own short text,
+    // so only the published render index can have matched it.
+    expect(view.entries.some((entry) => entry.text.includes("timeout"))).toBe(
+      false,
+    );
+  });
+
+  it("publishes an empty query as no match, not as every entry", async () => {
+    const controller = await liveChildWithToolCall();
+    const component = mountedOverlay(controller);
+    component.render(160);
+    for (const character of "/\r") component.handleInput(character);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(controller.view()._unsafeUnwrap().searchMatches).toEqual([]);
+  });
+
+  it("keys the published index by CURRENT window entry ids only", async () => {
+    const controller = createChildOverlayController(settledChildSource());
+    (await controller.open(SETTLED_CHILD_ID))._unsafeUnwrap();
+    const view = controller.view()._unsafeUnwrap();
+    const windowIds = new Set(view.entries.map((entry) => entry.id));
+    expect(windowIds.size).toBeGreaterThan(0);
+
+    const rendered = renderOverlayTranscript(
+      plainPaint(),
+      childOverlayTranscriptInput(view),
+      120,
+    );
+    expect(rendered.searchIndex.size).toBeGreaterThan(0);
+    for (const key of rendered.searchIndex.keys()) {
+      expect(windowIds.has(key)).toBe(true);
+    }
+
+    // A rendered identity the window no longer holds is not an identity search
+    // can look up, so it is never published — the retained index is bounded by
+    // the window, not by the run.
+    const orphaned = renderOverlayTranscript(
+      plainPaint(),
+      { ...childOverlayTranscriptInput(view), windowEntries: [] },
+      120,
+    );
+    expect(orphaned.searchIndex.size).toBe(0);
   });
 });
 

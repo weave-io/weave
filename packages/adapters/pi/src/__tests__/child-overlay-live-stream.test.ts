@@ -1000,7 +1000,19 @@ describe("settlement refreshes the descriptor before the final repaint", () => {
       before.transcript.entries.length,
     );
     expect(after.searchQuery).toBe("reasoning");
-    expect(after.searchMatches.length).toBe(before.searchMatches.length);
+    // The query survives the settlement, and the settled frame's own published
+    // index can only ADD the rows the reader is looking at: the component
+    // reports the rendered transcript on every paint, not only while the
+    // search field is open, so a match never depends on which frame the reader
+    // happened to type in. Every match is still a current window entry.
+    expect(after.searchMatches.length).toBeGreaterThanOrEqual(
+      before.searchMatches.length,
+    );
+    expect(
+      after.searchMatches.every((id) =>
+        after.entries.some((entry) => entry.id === id),
+      ),
+    ).toBe(true);
     expect(h.controller.currentChildId()).toBe(CHILD_ID);
 
     // And the settled child is inert: mutating keys change nothing.

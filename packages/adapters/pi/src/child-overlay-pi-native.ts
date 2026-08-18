@@ -906,6 +906,29 @@ export function overlayTranscriptSearchIndex(
 }
 
 /**
+ * The index, narrowed to the identities a query can actually look up.
+ *
+ * `matchingEntryIds` walks the overlay WINDOW and reads this map by window
+ * entry id, so a key outside the window matches nothing: it is dead weight
+ * that would grow with the run rather than with the window. Narrowing here
+ * makes the key space an invariant of the published index — every key names a
+ * current {@link ChildOverlayEntry} — and bounds the controller's retained
+ * state by the window cap instead of by the transcript reducer.
+ */
+function searchIndexForWindow(
+  index: ReadonlyMap<string, string>,
+  windowEntries: readonly ChildOverlayEntry[],
+): Map<string, string> {
+  const narrowed = new Map<string, string>();
+  for (const entry of windowEntries) {
+    const text = index.get(entry.id);
+    if (text === undefined) continue;
+    narrowed.set(entry.id, text);
+  }
+  return narrowed;
+}
+
+/**
  * The transcript block the inspector actually mounts.
  *
  * `renderOverlayPiNative` owns the design; this adds the two whole-view facts
@@ -940,7 +963,10 @@ export function renderOverlayTranscript(
     return {
       lines,
       spans: rendered.spans,
-      searchIndex: overlayTranscriptSearchIndex(rendered),
+      searchIndex: searchIndexForWindow(
+        overlayTranscriptSearchIndex(rendered),
+        input.windowEntries,
+      ),
     };
   }
   // Nothing the pane can draw yet (a window of bookkeeping-only entries, or
