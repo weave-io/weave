@@ -3,13 +3,14 @@ import type {
   CapabilityProbeResult,
 } from "@weaveio/weave-engine";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
+import { Result } from "neverthrow";
 import type { PiChildSessionReadinessReason } from "./child-session-storage-authority.js";
 import { isOwnSourceInfo, WEAVE_COMMAND_NAMES } from "./commands.js";
 import {
   PI_HOST_SURFACE_IDS,
   type PiHostSurfaceId,
-  type PiHostSurfaceReport,
-} from "./host-inventory.js";
+} from "./host-compatibility-matrix.js";
+import type { PiHostSurfaceReport } from "./host-inventory.js";
 import type { PiCommandInfo, PiMode, PiTrustState } from "./types.js";
 
 /**
@@ -94,6 +95,50 @@ const SESSION_HOST_SURFACES: ReadonlySet<PiHostSurfaceId> = new Set([
   "rpc-session-tree-read",
   "custom-session-directory",
 ]);
+
+/** Bounded probe detail when the host advertises the post-recovery hook. */
+export const AGENT_RECOVERY_EXHAUSTED_PRESENT =
+  "agent-recovery-exhausted-present" as const;
+/** Bounded probe detail when the host does not advertise the hook. */
+export const AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED =
+  "agent-recovery-exhausted-unsupported" as const;
+
+const AGENT_RECOVERY_EXHAUSTED_KEY = "agent_recovery_exhausted";
+
+export type AgentRecoveryExhaustedProbeError = {
+  readonly type: "FeatureProbeThrew";
+};
+
+/**
+ * True only when `pi.features.agent_recovery_exhausted` is an own enumerable
+ * data property equal to `true`. Never compares VERSION or any other string.
+ * Throwing accessors, proxies, absence, and non-true values are unsupported.
+ */
+export function probeAgentRecoveryExhaustedFeature(
+  host: unknown,
+): Result<boolean, AgentRecoveryExhaustedProbeError> {
+  return Result.fromThrowable(
+    (): boolean => readAgentRecoveryExhaustedFlag(host),
+    (): AgentRecoveryExhaustedProbeError => ({ type: "FeatureProbeThrew" }),
+  )();
+}
+
+function readAgentRecoveryExhaustedFlag(host: unknown): boolean {
+  if (typeof host !== "object" || host === null) return false;
+  const featuresDescriptor = Object.getOwnPropertyDescriptor(host, "features");
+  if (featuresDescriptor === undefined || !("value" in featuresDescriptor))
+    return false;
+  const features = featuresDescriptor.value;
+  if (typeof features !== "object" || features === null) return false;
+  const flagDescriptor = Object.getOwnPropertyDescriptor(
+    features,
+    AGENT_RECOVERY_EXHAUSTED_KEY,
+  );
+  if (flagDescriptor === undefined || !("value" in flagDescriptor))
+    return false;
+  if (flagDescriptor.enumerable !== true) return false;
+  return flagDescriptor.value === true;
+}
 
 const CANDIDATE_PLAN_CAPABILITIES: ReadonlySet<CapabilityId> = new Set([
   "config-materialization",
@@ -477,6 +522,23 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
         probeStatus: "unavailable",
         details:
           context.delegationAuthority?.reason ?? "pi-session-api-unavailable",
+      };
+    }
+    if (id === "runtime-model-fallback") {
+      const surface = context.hostSurface?.probes.find(
+        (probe) => probe.surfaceId === "post-recovery-model-switch",
+      );
+      if (surface?.status === "native") {
+        return {
+          capabilityId: id,
+          probeStatus: "ok",
+          details: AGENT_RECOVERY_EXHAUSTED_PRESENT,
+        };
+      }
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
       };
     }
     if (id === "command-entrypoints") {

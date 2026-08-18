@@ -805,6 +805,7 @@ Beyond the engine's closed capability IDs, the adapter declares the concrete Pi 
 - `required-for-delegation` — a gap puts the generation into health-only mode. Native child sessions add `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` to this set, alongside the existing editor, RPC, and session-restore surfaces.
 - `overlay-only` — a gap selects the custom-editor fallback and never triggers health-only mode. `child-overlay-lifecycle` is the only such surface. Session reads are deliberately not overlay-only.
 - `rendering-fallback` — a gap uses Pi's default rendering.
+- `feature-only` — a gap leaves current behavior in place and never enters health-only mode or the overlay fallback. `post-recovery-model-switch` is the only such surface; the adapter probes `pi.features.agent_recovery_exhausted` as an own enumerable data property equal to `true` and reports the optional `runtime-model-fallback` capability from that result.
 
 A gap reports the stable surface id plus a remediation string, for example upgrading to a host that exposes `pi.appendEntry`. Pi 0.83 exposes no named extension action ids, so overlay actions are reported through the `named-configurable-shortcut-actions` diagnostic rather than as a native capability. See [Adapter Capabilities](../reference/adapter-capabilities.md#adapter-owned-host-surface-probes).
 

@@ -48,8 +48,8 @@ export const CapabilityReadinessSchema = z.enum([
 // ---------------------------------------------------------------------------
 
 /**
- * Stable identifiers for all 21 capabilities defined in the Core Readiness
- * Profile (12 required + 9 optional).
+ * Stable identifiers for all 22 capabilities defined in the Core Readiness
+ * Profile (12 required + 10 optional).
  *
  * Required capabilities (12):
  *   config-materialization, agent-materialization, primary-agent-selection,
@@ -57,11 +57,11 @@ export const CapabilityReadinessSchema = z.enum([
  *   workflow-persistence, workflow-step-dispatch, plan-file-compatibility,
  *   command-entrypoints, event-logging, token-usage-reporting
  *
- * Optional capabilities (9):
+ * Optional capabilities (10):
  *   idle-continuation, compaction-recovery, context-window-monitor,
  *   analytics-dashboard, eval-integration, static-artifact-generation,
  *   multiple-active-workflows, model-thinking-activation,
- *   provider-fast-activation
+ *   provider-fast-activation, runtime-model-fallback
  *
  * ## Execution-entry capability model (execution lifecycle contract)
  *
@@ -111,7 +111,8 @@ export type CapabilityId =
   | "static-artifact-generation"
   | "multiple-active-workflows"
   | "model-thinking-activation"
-  | "provider-fast-activation";
+  | "provider-fast-activation"
+  | "runtime-model-fallback";
 
 export const CapabilityIdSchema = z.enum([
   // Required
@@ -137,10 +138,14 @@ export const CapabilityIdSchema = z.enum([
   "multiple-active-workflows",
   "model-thinking-activation",
   "provider-fast-activation",
+  "runtime-model-fallback",
 ]);
 
 /** Optional capability for provider acceleration request and evidence. */
 export const PROVIDER_FAST_ACTIVATION_ID = "provider-fast-activation" as const;
+
+/** Optional capability for in-session model fallback after native recovery. */
+export const RUNTIME_MODEL_FALLBACK_ID = "runtime-model-fallback" as const;
 
 /**
  * Bounded runtime states for `provider-fast-activation`.
@@ -295,7 +300,7 @@ export const REQUIRED_CAPABILITIES: readonly CapabilityId[] = [
 ] as const;
 
 /**
- * The 9 optional capability IDs for the Core Readiness Profile.
+ * The 10 optional capability IDs for the Core Readiness Profile.
  * Gaps in optional capabilities produce warnings, not failures.
  *
  * `provider-fast-activation` is the optional provider-acceleration capability.
@@ -314,9 +319,10 @@ export const OPTIONAL_CAPABILITIES: readonly CapabilityId[] = [
   "multiple-active-workflows",
   "model-thinking-activation",
   "provider-fast-activation",
+  "runtime-model-fallback",
 ] as const;
 
-/** All 21 capability IDs in profile order (required then optional). */
+/** All 22 capability IDs in profile order (required then optional). */
 export const ALL_CAPABILITY_IDS: readonly CapabilityId[] = [
   ...REQUIRED_CAPABILITIES,
   ...OPTIONAL_CAPABILITIES,

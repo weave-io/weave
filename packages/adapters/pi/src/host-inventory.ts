@@ -1,6 +1,11 @@
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
+  AGENT_RECOVERY_EXHAUSTED_PRESENT,
+  AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
+  probeAgentRecoveryExhaustedFeature,
+} from "./capability-prober.js";
+import {
   makeInvariantViolationFailure,
   type PiAdapterFailure,
 } from "./errors.js";
@@ -93,6 +98,9 @@ const required = (id: PiHostSurfaceId): boolean =>
 const overlayOnly = (id: PiHostSurfaceId): boolean =>
   PI_HOST_COMPATIBILITY_MATRIX.surfaces.find((surface) => surface.id === id)
     ?.severity === "overlay-only";
+const featureOnly = (id: PiHostSurfaceId): boolean =>
+  PI_HOST_COMPATIBILITY_MATRIX.surfaces.find((surface) => surface.id === id)
+    ?.severity === "feature-only";
 const fallbackDetails = (id: PiHostSurfaceId): string =>
   overlayOnly(id) ? "custom-editor-fallback" : "pi-default-fallback";
 const fallback = (id: PiHostSurfaceId): boolean =>
@@ -132,28 +140,45 @@ export function readHostSurfaceReport(
     status: PiHostSurfaceStatus,
     details: string,
   ): PiHostSurfaceProbe => Object.freeze({ surfaceId, status, details });
+  const closedUnavailable = (surfaceId: PiHostSurfaceId): boolean =>
+    required(surfaceId) || featureOnly(surfaceId);
+  const missingDetails = (surfaceId: PiHostSurfaceId): string => {
+    if (required(surfaceId)) return "surface-missing";
+    if (featureOnly(surfaceId)) return AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED;
+    return fallbackDetails(surfaceId);
+  };
   const probes = PI_HOST_SURFACE_IDS.map((surfaceId): PiHostSurfaceProbe => {
     const rows = byId.get(surfaceId);
     if (rows === undefined)
       return makeProbe(
         surfaceId,
-        required(surfaceId) ? "unavailable" : "fallback",
-        required(surfaceId) ? "surface-missing" : fallbackDetails(surfaceId),
+        closedUnavailable(surfaceId) ? "unavailable" : "fallback",
+        missingDetails(surfaceId),
       );
     if (rows.length !== 1)
       return makeProbe(
         surfaceId,
-        required(surfaceId) ? "unavailable" : "fallback",
+        closedUnavailable(surfaceId) ? "unavailable" : "fallback",
         "surface-duplicate",
       );
     const row = rows[0];
     if (row === undefined)
       return makeProbe(
         surfaceId,
-        required(surfaceId) ? "unavailable" : "fallback",
-        "surface-missing",
+        closedUnavailable(surfaceId) ? "unavailable" : "fallback",
+        missingDetails(surfaceId),
       );
-    if (!required(surfaceId) && row.status !== "native")
+    if (featureOnly(surfaceId) && row.status !== "native")
+      return makeProbe(
+        surfaceId,
+        "unavailable",
+        row.details === "surface-invalid" ? "surface-invalid" : row.details,
+      );
+    if (
+      !required(surfaceId) &&
+      !featureOnly(surfaceId) &&
+      row.status !== "native"
+    )
       return makeProbe(surfaceId, "fallback", fallbackDetails(surfaceId));
     if (required(surfaceId) && row.status !== "native")
       return makeProbe(
@@ -284,17 +309,35 @@ export function selectsCustomEditorFallback(
   return report.overlayFallbackGaps.length > 0;
 }
 
+function defaultSurfaceProbe(surfaceId: PiHostSurfaceId): {
+  readonly surfaceId: PiHostSurfaceId;
+  readonly status: PiHostSurfaceStatus;
+  readonly details: string;
+} {
+  if (fallback(surfaceId)) {
+    return {
+      surfaceId,
+      status: "fallback",
+      details: "pi-default-fallback",
+    };
+  }
+  if (featureOnly(surfaceId)) {
+    return {
+      surfaceId,
+      status: "unavailable",
+      details: AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
+    };
+  }
+  return {
+    surfaceId,
+    status: "native",
+    details: "validated-native-host-surface",
+  };
+}
+
 /** Conservative built-in contract used only when no reader was injected. */
 export const defaultHostSurfaceReport = (): PiHostSurfaceReport =>
-  readHostSurfaceReport(
-    PI_HOST_SURFACE_IDS.map((surfaceId) => ({
-      surfaceId,
-      status: fallback(surfaceId) ? "fallback" : "native",
-      details: fallback(surfaceId)
-        ? "pi-default-fallback"
-        : "validated-native-host-surface",
-    })),
-  );
+  readHostSurfaceReport(PI_HOST_SURFACE_IDS.map(defaultSurfaceProbe));
 
 function hostVersionIsValid(
   rootExports: Readonly<Record<string, unknown>>,
@@ -435,7 +478,7 @@ export class DefaultPiHostSurfaceReader implements PiHostSurfaceReader {
               status: "native",
               details: presentDetails,
             };
-          if (required(id))
+          if (required(id) || featureOnly(id))
             return {
               surfaceId: id,
               status: "unavailable",
@@ -520,6 +563,15 @@ export class DefaultPiHostSurfaceReader implements PiHostSurfaceReader {
               port.hasOverlayLifecycle(),
             "overlay-and-editor-restore-present",
             "overlay-or-editor-restore-missing",
+          ),
+          native(
+            "post-recovery-model-switch",
+            probeAgentRecoveryExhaustedFeature(input.api).match(
+              (supported) => supported,
+              () => false,
+            ),
+            AGENT_RECOVERY_EXHAUSTED_PRESENT,
+            AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
           ),
         ];
       },

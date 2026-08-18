@@ -41,6 +41,14 @@ export const PI_OVERLAY_ONLY_SURFACE_IDS: readonly PiHostSurfaceId[] =
     ).map((surface) => surface.id),
   );
 
+/** Optional host features. A gap never forces health-only or overlay fallback. */
+export const PI_FEATURE_ONLY_SURFACE_IDS: readonly PiHostSurfaceId[] =
+  Object.freeze(
+    PI_HOST_SURFACE_DECLARATIONS.filter(
+      (surface) => surface.severity === "feature-only",
+    ).map((surface) => surface.id),
+  );
+
 export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
   capabilities: [
     {
@@ -154,6 +162,16 @@ export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       id: "static-artifact-generation",
       description: "Static artifact generation helpers",
       readiness: "degraded",
+    },
+    {
+      id: "runtime-model-fallback",
+      description:
+        "Advance through an agent's ordered models after Pi exhausts native recovery",
+      readiness: "native",
+      notes:
+        "Optional. The adapter uses Pi's public post-recovery hook when the host advertises pi.features.agent_recovery_exhausted as an own enumerable true data property. Absence leaves settlement and every other capability unchanged and never enters health-only mode.",
+      remediationHint:
+        "Upgrade to a Pi host that advertises pi.features.agent_recovery_exhausted === true. Until then, exhausted recovery settles as it does today.",
     },
     {
       id: "eval-integration",

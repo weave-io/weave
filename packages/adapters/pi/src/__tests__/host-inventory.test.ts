@@ -127,11 +127,13 @@ describe("host surface inventory", () => {
     expect(report.probes).toHaveLength(PI_HOST_SURFACE_IDS.length);
     // A complete public namespace on a supported version proves every
     // required surface, including Pi's real path-addressed session API.
+    // The post-recovery hook is feature-only and stays unsupported until the
+    // host advertises the flag.
     expect(
       report.probes
         .filter((probe) => probe.status !== "native")
         .map((probe) => probe.surfaceId),
-    ).toEqual([]);
+    ).toEqual(["post-recovery-model-switch"]);
     expect(report.probes.map((probe) => probe.surfaceId)).toEqual([
       ...PI_HOST_SURFACE_IDS,
     ]);
@@ -204,6 +206,66 @@ describe("host surface inventory", () => {
       );
       expect(Object.isFrozen(report.probes)).toBe(true);
     }
+  });
+
+  it("proves post-recovery-model-switch only from the own enumerable feature flag", async () => {
+    const reader = new DefaultPiHostSurfaceReader();
+    const hookLess = await reader.read({
+      api: { appendEntry: () => undefined } as never,
+      ui: overlayCapableUi(),
+      rootExports: {
+        VERSION: "0.81.1",
+        CustomEditor: () => undefined,
+        SessionManager: sessionManagerStub(),
+      },
+    });
+    const hookLessReport = readHostSurfaceReport(hookLess._unsafeUnwrap());
+    expect(
+      hookLessReport.probes.find(
+        (probe) => probe.surfaceId === "post-recovery-model-switch",
+      ),
+    ).toEqual({
+      surfaceId: "post-recovery-model-switch",
+      status: "unavailable",
+      details: "agent-recovery-exhausted-unsupported",
+    });
+    expect(hookLessReport.requiredGaps).toEqual([]);
+    expect(hookLessReport.overlayFallbackGaps).toEqual([]);
+
+    const hookApi = Object.defineProperty(
+      { appendEntry: () => undefined } as object,
+      "features",
+      {
+        value: Object.defineProperty({} as object, "agent_recovery_exhausted", {
+          value: true,
+          enumerable: true,
+        }),
+        enumerable: true,
+      },
+    );
+    const hookBearing = await reader.read({
+      api: hookApi as never,
+      ui: overlayCapableUi(),
+      rootExports: {
+        VERSION: "0.81.1",
+        CustomEditor: () => undefined,
+        SessionManager: sessionManagerStub(),
+      },
+    });
+    const hookBearingReport = readHostSurfaceReport(
+      hookBearing._unsafeUnwrap(),
+    );
+    expect(
+      hookBearingReport.probes.find(
+        (probe) => probe.surfaceId === "post-recovery-model-switch",
+      ),
+    ).toEqual({
+      surfaceId: "post-recovery-model-switch",
+      status: "native",
+      details: "agent-recovery-exhausted-present",
+    });
+    expect(hookBearingReport.requiredGaps).toEqual([]);
+    expect(hookBearingReport.overlayFallbackGaps).toEqual([]);
   });
 
   it("uses only public VERSION and matrix facts for required protocol surfaces", async () => {

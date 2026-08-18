@@ -2,15 +2,19 @@ import { describe, expect, it } from "bun:test";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
 import {
   PI_ADAPTER_CAPABILITY_CONTRACT,
+  PI_FEATURE_ONLY_SURFACE_IDS,
   PI_OVERLAY_ONLY_SURFACE_IDS,
   PI_REQUIRED_FOR_DELEGATION_SURFACE_IDS,
   PI_SESSION_CAPABILITY_SURFACE_IDS,
 } from "../capability-declarations.js";
 import {
+  AGENT_RECOVERY_EXHAUSTED_PRESENT,
+  AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
   buildBlockedProbeSet,
   DefaultPiCapabilityProber,
   describeDelegationReadinessGap,
   PROJECT_PATH_DEPENDENT_CAPABILITIES,
+  probeAgentRecoveryExhaustedFeature,
   sanitizeCapabilityProbeResults,
 } from "../capability-prober.js";
 import { ADAPTER_PACKAGE_IDENTITY, WEAVE_COMMAND_NAMES } from "../commands.js";
@@ -563,6 +567,7 @@ describe("native session capability probes", () => {
       expect(PI_REQUIRED_FOR_DELEGATION_SURFACE_IDS).toContain(id);
     }
     expect(PI_OVERLAY_ONLY_SURFACE_IDS).toEqual(["child-overlay-lifecycle"]);
+    expect(PI_FEATURE_ONLY_SURFACE_IDS).toEqual(["post-recovery-model-switch"]);
   });
 
   it("probes without creating a session or any other side effect", async () => {
@@ -687,6 +692,180 @@ describe("native session capability probes", () => {
       reportWithout("rpc-append-entry"),
     );
     expect(diagnostic?.hostVersion).toBe("unknown");
+  });
+});
+
+describe("post-recovery hook feature detection", () => {
+  const prober = new DefaultPiCapabilityProber();
+  const trustedBase = {
+    mode: "tui" as const,
+    trust: "trusted" as const,
+    commands: ALL_OWNED_COMMANDS,
+    candidatePlan: {
+      configLoaded: true,
+      materializationErrorCount: 0,
+      primaryDescriptorFound: true,
+      primaryModelDryResolved: true,
+      delegationToolPlanned: true,
+      eventLoggingPlanned: true,
+      runtimeDirectoryContained: true,
+      plansDirectoryContained: true,
+    },
+    delegationAuthority: READY_AUTHORITY,
+  };
+
+  function hookHost(features: unknown) {
+    return Object.defineProperty({} as object, "features", {
+      value: features,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+
+  it("accepts only an own enumerable data property equal to true", () => {
+    const supported = probeAgentRecoveryExhaustedFeature(
+      hookHost(
+        Object.defineProperty({} as object, "agent_recovery_exhausted", {
+          value: true,
+          enumerable: true,
+          writable: false,
+          configurable: false,
+        }),
+      ),
+    );
+    expect(supported.isOk()).toBe(true);
+    if (supported.isOk()) expect(supported.value).toBe(true);
+  });
+
+  it("rejects absence, non-true values, inherited keys, accessors, and throws", () => {
+    const inherited = Object.create({
+      agent_recovery_exhausted: true,
+    }) as object;
+    const nonEnumerable = Object.defineProperty(
+      {} as object,
+      "agent_recovery_exhausted",
+      { value: true, enumerable: false },
+    );
+    const accessor = Object.defineProperty(
+      {} as object,
+      "agent_recovery_exhausted",
+      {
+        get: () => true,
+        enumerable: true,
+      },
+    );
+    const throwingFeatures = new Proxy(
+      {},
+      {
+        getOwnPropertyDescriptor() {
+          throw new Error("trap");
+        },
+      },
+    );
+
+    const cases: unknown[] = [
+      {},
+      { features: undefined },
+      hookHost(null),
+      hookHost("true"),
+      hookHost({ agent_recovery_exhausted: false }),
+      hookHost({ agent_recovery_exhausted: "true" }),
+      hookHost({ agent_recovery_exhausted: 1 }),
+      hookHost(inherited),
+      hookHost(nonEnumerable),
+      hookHost(accessor),
+      hookHost(throwingFeatures),
+    ];
+    for (const host of cases) {
+      const result = probeAgentRecoveryExhaustedFeature(host);
+      const supported = result.match(
+        (value) => value,
+        () => false,
+      );
+      expect(supported).toBe(false);
+    }
+  });
+
+  it("treats a hook-less host as an unsupported optional capability without changing gates", () => {
+    const report = readHostSurfaceReport(
+      PI_HOST_SURFACE_IDS.filter(
+        (surfaceId) => surfaceId !== "post-recovery-model-switch",
+      ).map((surfaceId) => ({
+        surfaceId,
+        status: "native" as const,
+        details: "validated-native-host-surface",
+      })),
+    );
+    expect(report.requiredGaps).toEqual([]);
+    expect(report.overlayFallbackGaps).toEqual([]);
+    expect(selectsCustomEditorFallback(report)).toBe(false);
+    expect(buildHostSurfaceGapDiagnostics(report, "0.83.0")).toEqual([]);
+    expect(
+      report.probes.find(
+        (probe) => probe.surfaceId === "post-recovery-model-switch",
+      ),
+    ).toEqual({
+      surfaceId: "post-recovery-model-switch",
+      status: "unavailable",
+      details: AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
+    });
+
+    const probes = prober.probe({ ...trustedBase, hostSurface: report });
+    expect(
+      probes.find((probe) => probe.capabilityId === "runtime-model-fallback"),
+    ).toEqual({
+      capabilityId: "runtime-model-fallback",
+      probeStatus: "unavailable",
+      details: AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
+    });
+    expect(
+      probes.find(
+        (probe) => probe.capabilityId === "delegated-specialist-execution",
+      )?.probeStatus,
+    ).toBe("ok");
+    expect(
+      probes.find((probe) => probe.capabilityId === "command-entrypoints")
+        ?.probeStatus,
+    ).toBe("ok");
+  });
+
+  it("treats a hook-bearing host as a supported optional capability", () => {
+    const report = readHostSurfaceReport(
+      PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+        surfaceId,
+        status: "native" as const,
+        details:
+          surfaceId === "post-recovery-model-switch"
+            ? AGENT_RECOVERY_EXHAUSTED_PRESENT
+            : "validated-native-host-surface",
+      })),
+    );
+    expect(report.requiredGaps).toEqual([]);
+    expect(report.overlayFallbackGaps).toEqual([]);
+    expect(
+      report.probes.find(
+        (probe) => probe.surfaceId === "post-recovery-model-switch",
+      ),
+    ).toEqual({
+      surfaceId: "post-recovery-model-switch",
+      status: "native",
+      details: AGENT_RECOVERY_EXHAUSTED_PRESENT,
+    });
+
+    const probes = prober.probe({ ...trustedBase, hostSurface: report });
+    expect(
+      probes.find((probe) => probe.capabilityId === "runtime-model-fallback"),
+    ).toEqual({
+      capabilityId: "runtime-model-fallback",
+      probeStatus: "ok",
+      details: AGENT_RECOVERY_EXHAUSTED_PRESENT,
+    });
+    expect(
+      probes.find(
+        (probe) => probe.capabilityId === "delegated-specialist-execution",
+      )?.probeStatus,
+    ).toBe("ok");
   });
 });
 

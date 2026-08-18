@@ -49,7 +49,7 @@ function allRequiredAt(
   };
 }
 
-/** Build a contract with all 21 capabilities at the given readiness. */
+/** Build a contract with all 22 capabilities at the given readiness. */
 function allCapabilitiesAt(
   readiness: CapabilityReadiness,
 ): AdapterCapabilityContract {
@@ -388,7 +388,7 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
     expect(REQUIRED_CAPABILITIES).toHaveLength(12);
   });
 
-  it("OPTIONAL_CAPABILITIES contains exactly the 9 capabilities from the spec", () => {
+  it("OPTIONAL_CAPABILITIES contains exactly the 10 capabilities from the spec", () => {
     const specOptional: CapabilityId[] = [
       "idle-continuation",
       "compaction-recovery",
@@ -399,9 +399,10 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
       "multiple-active-workflows",
       "model-thinking-activation",
       "provider-fast-activation",
+      "runtime-model-fallback",
     ];
     expect(new Set(OPTIONAL_CAPABILITIES)).toEqual(new Set(specOptional));
-    expect(OPTIONAL_CAPABILITIES).toHaveLength(9);
+    expect(OPTIONAL_CAPABILITIES).toHaveLength(10);
   });
 
   it("every capability ID appears in exactly one group (required XOR optional)", () => {
@@ -414,12 +415,12 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
     }
   });
 
-  it("evaluation result accounts for all 21 capabilities when all are declared", () => {
+  it("evaluation result accounts for all 22 capabilities when all are declared", () => {
     const contract = fullPassingContract();
     const result = evaluateCoreReadinessProfile(contract);
     const total =
       result.passes.length + result.failures.length + result.warnings.length;
-    expect(total).toBe(21);
+    expect(total).toBe(22);
   });
 });
 

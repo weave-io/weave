@@ -24,6 +24,7 @@ export const PI_HOST_SURFACE_IDS = [
   "rpc-session-tree-read",
   "custom-session-directory",
   "child-overlay-lifecycle",
+  "post-recovery-model-switch",
 ] as const;
 export type PiHostSurfaceId = (typeof PI_HOST_SURFACE_IDS)[number];
 
@@ -37,11 +38,15 @@ export type PiHostSurfaceId = (typeof PI_HOST_SURFACE_IDS)[number];
  *   custom-editor fallback (§7) and never forces health-only mode. Session
  *   *reads* are never overlay-only: delegation itself depends on them.
  * - `rendering-fallback`: Pi's own default rendering covers the gap.
+ * - `feature-only`: an optional host feature. A gap must not enter
+ *   health-only mode and must not select the overlay fallback; behavior
+ *   stays the current hook-less path.
  */
 export type PiHostSurfaceSeverity =
   | "required-for-delegation"
   | "overlay-only"
-  | "rendering-fallback";
+  | "rendering-fallback"
+  | "feature-only";
 
 export type PiHostSurfaceFallback = "pi-default" | "custom-editor";
 
@@ -95,12 +100,29 @@ const overlayOnly = (
   remediation,
   fallback: "custom-editor",
 });
+const featureOnly = (
+  id: PiHostSurfaceId,
+  contract: string,
+  remediation: string,
+): PiHostSurfaceDeclaration => ({
+  id,
+  required: false,
+  nativeSupport: true,
+  minimumHostVersion: HOST_VERSION_FLOOR,
+  severity: "feature-only",
+  contract,
+  remediation,
+});
 
 /**
  * The one host version the release was actually tested against. It must be a
  * stable version inside the supported range, but it is deliberately not tied
  * to the floor's minor line: the floor states what the adapter supports, while
  * this states what was proved (Spec 33 §16).
+ *
+ * Task 14 may move this only after an official Pi release ships the
+ * post-recovery hook and Weave re-proves the affected rows. Hook support is a
+ * feature-only surface; it does not raise the floor or this pin.
  */
 export const EXACT_TESTED_HOST_VERSION = "0.84.1";
 
@@ -155,6 +177,11 @@ export const PI_HOST_COMPATIBILITY_MATRIX: PiHostCompatibilityMatrix = {
       "child-overlay-lifecycle",
       "Spec 33 §7 native full-screen child overlay mount and editor restore",
       "Upgrade the Pi host to one that exposes the overlay UI and editor-restore lifecycle; until then the custom-editor child inspection fallback is used.",
+    ),
+    featureOnly(
+      "post-recovery-model-switch",
+      "Spec 33 post-recovery hook: pi.features.agent_recovery_exhausted",
+      "Upgrade the Pi host to one that advertises pi.features.agent_recovery_exhausted === true; until then exhausted recovery settles as it does today.",
     ),
   ]),
 } as const;
@@ -220,16 +247,24 @@ export function validateHostCompatibilityMatrix(
       });
     const renderingSurface = surface.severity === "rendering-fallback";
     const overlaySurface = surface.severity === "overlay-only";
+    const featureSurface = surface.severity === "feature-only";
+    const knownSeverity =
+      surface.severity === "required-for-delegation" ||
+      overlaySurface ||
+      renderingSurface ||
+      featureSurface;
     const expectedFallback = ((): PiHostSurfaceFallback | undefined => {
       if (renderingSurface) return "pi-default";
       if (overlaySurface) return "custom-editor";
       return undefined;
     })();
     if (
+      !knownSeverity ||
       renderingSurface !== surface.id.endsWith("-rendering") ||
       surface.required !== (surface.severity === "required-for-delegation") ||
       surface.fallback !== expectedFallback ||
       surface.nativeSupport !== !renderingSurface ||
+      (featureSurface && surface.fallback !== undefined) ||
       surface.contract.trim().length === 0 ||
       surface.remediation.trim().length === 0
     )

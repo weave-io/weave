@@ -14,9 +14,13 @@ import {
   type ProviderFastActivationStatus,
   providerFastActivationState,
   REQUIRED_CAPABILITIES,
+  RUNTIME_MODEL_FALLBACK_ID,
   readinessForProviderFastStatus,
 } from "@weaveio/weave-engine";
-import { PI_ADAPTER_CAPABILITY_CONTRACT } from "../capability-declarations.js";
+import {
+  PI_ADAPTER_CAPABILITY_CONTRACT,
+  PI_FEATURE_ONLY_SURFACE_IDS,
+} from "../capability-declarations.js";
 import { createCodexFastAttempt } from "../codex-fast/attempt.js";
 import { classifyCodexFastEligibility } from "../codex-fast/routing.js";
 import { projectCodexFastSnapshot } from "../provider-fast-activation.js";
@@ -29,6 +33,12 @@ const ELIGIBLE_MODEL_ID = "gpt-5.6-luna";
 function fastCapability(): CapabilityEntry | undefined {
   return PI_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
     (entry) => entry.id === PROVIDER_FAST_ACTIVATION_ID,
+  );
+}
+
+function runtimeModelFallbackCapability(): CapabilityEntry | undefined {
+  return PI_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+    (entry) => entry.id === RUNTIME_MODEL_FALLBACK_ID,
   );
 }
 
@@ -257,6 +267,62 @@ describe("Pi adapter capability contract", () => {
       expect(evaluation.healthOnlyMode).toBe(false);
       expect(evaluation.profileResult.failures).toEqual([]);
       expect(entry?.declaredReadiness).toBe("degraded");
+      expect(entry?.effectiveReadiness).toBe(expected);
+    }
+  });
+
+  it("declares runtime-model-fallback as an optional native ceiling that never forces health-only", () => {
+    const capability = runtimeModelFallbackCapability();
+    expect(capability?.readiness).toBe("native");
+    expect(capability?.description).toContain("ordered models");
+    expect(capability?.notes).toContain("agent_recovery_exhausted");
+    expect(capability?.notes).toContain("never enters health-only");
+    expect(capability?.remediationHint).toContain(
+      "agent_recovery_exhausted === true",
+    );
+    expect(PI_FEATURE_ONLY_SURFACE_IDS).toEqual(["post-recovery-model-switch"]);
+    expect(OPTIONAL_CAPABILITIES).toContain(RUNTIME_MODEL_FALLBACK_ID);
+    expect(REQUIRED_CAPABILITIES).not.toContain(RUNTIME_MODEL_FALLBACK_ID);
+
+    for (const readiness of [
+      "native",
+      "emulated",
+      "degraded",
+      "unsupported",
+    ] as const) {
+      const result = evaluateCoreReadinessProfile({
+        capabilities: PI_ADAPTER_CAPABILITY_CONTRACT.capabilities.map(
+          (entry) =>
+            entry.id === RUNTIME_MODEL_FALLBACK_ID
+              ? { ...entry, readiness }
+              : entry,
+        ),
+      });
+      expect(result.ready).toBe(true);
+      expect(
+        result.failures.map((failure) => failure.capabilityId),
+      ).not.toContain(RUNTIME_MODEL_FALLBACK_ID);
+    }
+
+    for (const [probeStatus, expected] of [
+      ["ok", "native"],
+      ["degraded", "degraded"],
+      ["unavailable", "unsupported"],
+    ] as const) {
+      const evaluation = evaluateEffectiveCapabilities(
+        PI_ADAPTER_CAPABILITY_CONTRACT,
+        ALL_CAPABILITY_IDS.map((capabilityId) => ({
+          capabilityId,
+          probeStatus:
+            capabilityId === RUNTIME_MODEL_FALLBACK_ID ? probeStatus : "ok",
+        })),
+      );
+      const entry = evaluation.effectiveCapabilities.find(
+        (candidate) => candidate.id === RUNTIME_MODEL_FALLBACK_ID,
+      );
+      expect(evaluation.healthOnlyMode).toBe(false);
+      expect(evaluation.profileResult.failures).toEqual([]);
+      expect(entry?.declaredReadiness).toBe("native");
       expect(entry?.effectiveReadiness).toBe(expected);
     }
   });

@@ -59,6 +59,7 @@ export {
   ProviderFastActivationStatusSchema,
   providerFastActivationState,
   REQUIRED_CAPABILITIES,
+  RUNTIME_MODEL_FALLBACK_ID,
   readinessForProviderFastStatus,
   toJson,
 } from "./capability-contract.js";

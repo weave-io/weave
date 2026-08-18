@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 324 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~35,800 tokens. Without it, AI exploration would cost ~103,300 tokens. **Saves ~67,500 tokens per conversation.**
-> **Last scanned:** 2026-08-18 11:06 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 330 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~36,700 tokens. Without it, AI exploration would cost ~104,800 tokens. **Saves ~68,100 tokens per conversation.**
+> **Last scanned:** 2026-08-18 16:27 — re-run after significant changes
 
 ---
 
@@ -130,13 +130,13 @@
   - _...9 more_
 - `packages/adapters/pi/src/assistant-stream-text.ts` — function appendAssistantStreamDelta: (accumulated, delta) => string
 - `packages/adapters/pi/src/capability-prober.ts`
+  - function probeAgentRecoveryExhaustedFeature: (host) => Result<boolean, AgentRecoveryExhaustedProbeError>
   - function describeDelegationReadinessGap: (requiredGaps) => PiDelegationReadinessReason
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
   - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
   - class DefaultPiCapabilityProber
   - interface PiCandidatePlanContext
-  - interface PiPreflightContext
-  - _...6 more_
+  - _...10 more_
 - `packages/adapters/pi/src/catalog-cell.ts`
   - function createPiCatalogCell: (seed) => PiCatalogCell
   - function derivePiCatalogSeedManifest: (input) => PiConfigSourceManifest | undefined
@@ -1500,7 +1500,7 @@
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
   - function lowerReadinessByProbe: (declared, resolution) => CapabilityReadiness
   - function evaluateEffectiveCapabilities: (contract, probeResults) => EffectiveCapabilityEvaluation
-  - _...30 more_
+  - _...31 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext, promptFileReader?) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
@@ -1823,34 +1823,62 @@
   - interface EvidenceFileReader
   - _...18 more_
 - `scripts/release/artifact-binding.ts`
+  - function bindArtifactsToPlan: (input) => Result<PlanBoundArtifact, PlanBindingError>
+  - function verifyPlanBoundArtifact: (bound, plan) => Result<ReleasePlanBinding, PlanBindingError>
   - function createBindingRecord: (input) => Result<ArtifactBindingRecord, BindingError>
   - function verifyBindingRecord: (record, context, github) => ResultAsync<ArtifactBindingRecord, BindingError>
   - interface UploadedArtifact
   - interface BindingRecordInput
-  - interface BindingVerificationContext
-  - type BindingError
+  - _...4 more_
 - `scripts/release/artifact-manifest.ts`
   - function validateArtifactManifest: (input) => Result<ArtifactManifest, ArtifactManifestError>
   - function validateArtifactBindingRecord: (input) => Result<ArtifactBindingRecord, ArtifactManifestError>
+  - function validatePlanArtifact: (input) => Result<ReleasePlanArtifact, PlanArtifactError>
+  - function verifyManifestAgainstPlan: (manifest, plan) => Result<ArtifactManifest, PlanArtifactError>
   - type ArtifactManifestError
+  - type PlanArtifactError
 - `scripts/release/bind-artifacts.ts`
   - function parseBindingCliInput: (env, string | undefined>) => Result<ArtifactBindingCliInput, BindingCliError>
   - function bindArtifacts: (input, dependencies) => ResultAsync<void, BindingCliError>
   - interface BindingCliDependencies
   - type BindingCliError
+- `scripts/release/changelog-format.ts`
+  - function renderChangelog: (document, evidence) => Result<string, ChangelogFormatError>
+  - function parseChangelog: (source, evidence) => Result<ParsedChangelog, ChangelogFormatError>
+  - interface ChangelogEntry
+  - interface ChangelogSection
+  - interface ChangelogVersion
+  - interface ChangelogDocument
+  - _...11 more_
+- `scripts/release/changeset-consumption.ts`
+  - function subtractConsumedLedger: (input) => PendingChangesetSet
+  - function assertNoModifiedConsumption: (set) => Result<void, ChangesetConsumptionError>
+  - function partitionPendingBySelection: (input) => Result<PendingPartition, ChangesetConsumptionError>
+  - class BunScratchTreeFileSystem
+  - class BunChangesetCommandRunner
+  - class ChangesetConsumptionController
+  - _...13 more_
 - `scripts/release/changeset-policy.ts`
-  - function isKnownPackage: (packageName) => boolean
-  - function isNightlyOnly: (packageName) => boolean
-  - function partitionChangesets: (changesets) => ChangesetPartition
+  - function bumpForChangeKind: (kind) => PreReleaseBump
+  - function deriveChangesetIdentity: (path, source) => ChangesetIdentity
+  - function classifyChangedPath: (path) => ChangedPathImpact
+  - function collectPublicImpact: (changedPaths) => PublicImpact
+  - function requireChangesetCoverage: (input) => Result<PublicImpact, readonly ChangesetPolicyError[]>
   - class BunChangesetFileSystem
-  - class ChangesetPolicyValidator
-  - interface ChangesetFileSystem
-  - _...6 more_
+  - _...21 more_
 - `scripts/release/clock.ts` — class SystemClock, interface Clock
 - `scripts/release/command-runner.ts`
   - class BunCommandRunner
   - interface CommandResult
   - interface CommandRunner
+- `scripts/release/consumption-ledger.ts`
+  - function renderLedgerBlock: (block) => Result<string, LedgerBlockError>
+  - function parseConsumptionLedger: (sources) => Result<ConsumptionLedger, ConsumptionLedgerError>
+  - function loadConsumptionLedger: (reader, root) => ResultAsync<ConsumptionLedger, ConsumptionLedgerError>
+  - interface ChangelogSource
+  - interface ConsumedChangeset
+  - interface ConsumptionLedger
+  - _...8 more_
 - `scripts/release/filesystem.ts` — class BunFileSystem, interface FileSystem
 - `scripts/release/generate-acceptance-manifest.ts`
   - function generateAcceptanceManifest: (root) => ResultAsync<
@@ -1863,7 +1891,7 @@
   - interface ActionsArtifactMetadata
   - interface GitHubClient
   - interface GitHubRefClient
-  - _...4 more_
+  - _...16 more_
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - function validateReleaseControlEnvironment: (input) => Result<ReleaseControlEnvironment, InputValidationError>
@@ -1896,10 +1924,13 @@
   - type NightlyPlanError
 - `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
 - `scripts/release/package-policy.ts`
+  - function publishablePackageNames: () => readonly PublicPackageName[]
+  - function resolvePublishablePackage: (packageName) => Result<PublicPackageName, PublishabilityError>
+  - function isPublishablePackage: (packageName) => packageName is PublicPackageName
+  - function releaseChannelsFor: (packageName) => readonly ReleaseChannel[]
   - function scanCredentialSources: (input) => Result<void, string>
   - class PackagePolicyValidator
-  - interface CredentialScanInput
-  - type PackagePolicyError
+  - _...3 more_
 - `scripts/release/packager.ts`
   - function stablePackageVersions: (versions, string>> | undefined) => Readonly<Record<string, string>> | undefined
   - class BunReleaseCheckout
@@ -1943,6 +1974,30 @@
   - interface PromotionCommands
   - interface StableFinalizeResult
   - _...4 more_
+- `scripts/release/release-plan.ts`
+  - function validateReleasePlan: (input) => Result<ReleasePlan, ReleasePlanError>
+  - function validateReleasePlanArtifact: (input) => Result<ReleasePlanArtifact, ReleasePlanError>
+  - function serializeReleasePlan: (plan) => Result<string, ReleasePlanError>
+  - function parseReleasePlan: (text) => Result<ReleasePlan, ReleasePlanError>
+  - function serializeReleasePlanArtifact: (plan) => Result<string, ReleasePlanError>
+  - function parseReleasePlanArtifact: (text) => Result<ReleasePlanArtifact, ReleasePlanError>
+  - _...50 more_
+- `scripts/release/release-pr.ts`
+  - function markerRefPath: () => string
+  - function classifyReleaseCompletionState: (state) => Result<"terminal" | "blocking", ReleasePrError>
+  - function validateReleasePrDiff: (changes) => Result<void, ReleasePrError>
+  - function validateCleanupPrDiff: (input) => Result<void, ReleasePrError>
+  - function entryIdentityKey: (sources) => string
+  - function evidenceDigest: (evidence) => string
+  - _...51 more_
+- `scripts/release/selection-closure.ts`
+  - function computeSelectionClosure: (input) => Result<SelectionClosure, SelectionClosureError>
+  - interface WorkspaceManifest
+  - interface SelectionClosureInput
+  - interface SharedChangesetEvidence
+  - interface ArtifactDependencyEvidence
+  - interface SelectionAddition
+  - _...7 more_
 - `scripts/release/smoke-checklist.ts`
   - function parseSmokeChecklist: (markdown) => Result<ParsedSmokeChecklist, SmokeChecklistParseError>
   - class BunSmokeChecklistReader
@@ -2064,12 +2119,12 @@
 - `packages/adapters/pi/src/rpc-child.ts` — imported by **18** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
+- `scripts/release/constants.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
+- `scripts/release/errors.ts` — imported by **17** files
 - `packages/adapters/pi/src/child-envelope.ts` — imported by **16** files
 - `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
-- `packages/cli/src/args.ts` — imported by **15** files
-- `packages/engine/src/runtime/store.ts` — imported by **15** files
 
 ## Import Map (who imports what)
 
@@ -2105,7 +2160,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 362 test files found
+> 368 test files found
 
 ---
 

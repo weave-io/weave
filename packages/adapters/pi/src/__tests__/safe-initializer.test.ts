@@ -179,10 +179,16 @@ describe("PiSafeInitializer.preflight", () => {
           (probe) =>
             PI_HOST_COMPATIBILITY_MATRIX.surfaces.find(
               (surface) => surface.id === probe.surfaceId,
-            )?.required !== true,
+            )?.required !== true &&
+            probe.surfaceId !== "post-recovery-model-switch",
         )
         .every((probe) => probe.status === "fallback"),
     ).toBe(true);
+    expect(
+      hostSurface.probes.find(
+        (probe) => probe.surfaceId === "post-recovery-model-switch",
+      )?.status,
+    ).toBe("unavailable");
     expect(Object.isFrozen(hostSurface)).toBe(true);
     expect(Object.isFrozen(hostSurface.probes)).toBe(true);
     expect(hostSurface.probes.every((probe) => Object.isFrozen(probe))).toBe(

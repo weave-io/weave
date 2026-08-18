@@ -74,6 +74,22 @@ describe("PI_HOST_COMPATIBILITY_MATRIX", () => {
     expect(overlay?.remediation.length).toBeGreaterThan(0);
   });
 
+  it("declares post-recovery-model-switch as a feature-only surface that cannot force health-only or overlay fallback", () => {
+    const featureOnly = PI_HOST_COMPATIBILITY_MATRIX.surfaces.filter(
+      (surface) => surface.severity === "feature-only",
+    );
+    expect(featureOnly.map((surface) => surface.id)).toEqual([
+      "post-recovery-model-switch",
+    ]);
+    const surface = featureOnly[0];
+    expect(surface?.required).toBe(false);
+    expect(surface?.fallback).toBeUndefined();
+    expect(surface?.nativeSupport).toBe(true);
+    expect(surface?.minimumHostVersion).toBe(HOST_VERSION_FLOOR);
+    expect(surface?.contract).toContain("agent_recovery_exhausted");
+    expect(surface?.remediation.length).toBeGreaterThan(0);
+  });
+
   it("keeps every surface at the 0.81.1 floor with no maximum", () => {
     for (const surface of PI_HOST_COMPATIBILITY_MATRIX.surfaces) {
       expect(surface.minimumHostVersion).toBe(HOST_VERSION_FLOOR);
@@ -208,6 +224,37 @@ describe("validateHostCompatibilityMatrix", () => {
         ),
       }).isErr(),
     ).toBe(true);
+  });
+
+  it("rejects a feature-only surface that claims required-for-delegation or an overlay fallback", () => {
+    const requiredClaim = validateHostCompatibilityMatrix({
+      ...PI_HOST_COMPATIBILITY_MATRIX,
+      surfaces: PI_HOST_COMPATIBILITY_MATRIX.surfaces.map((surface) =>
+        surface.id === "post-recovery-model-switch"
+          ? { ...surface, severity: "required-for-delegation" as const }
+          : surface,
+      ),
+    });
+    expect(requiredClaim.isErr()).toBe(true);
+    if (requiredClaim.isErr()) {
+      expect(requiredClaim.error.type).toBe("SurfaceDrift");
+      if (requiredClaim.error.type === "SurfaceDrift")
+        expect(requiredClaim.error.reason).toBe(
+          "surface-policy:post-recovery-model-switch",
+        );
+    }
+
+    const overlayFallback = validateHostCompatibilityMatrix({
+      ...PI_HOST_COMPATIBILITY_MATRIX,
+      surfaces: PI_HOST_COMPATIBILITY_MATRIX.surfaces.map((surface) =>
+        surface.id === "post-recovery-model-switch"
+          ? { ...surface, fallback: "custom-editor" as const }
+          : surface,
+      ),
+    });
+    expect(overlayFallback.isErr()).toBe(true);
+    if (overlayFallback.isErr())
+      expect(overlayFallback.error.type).toBe("SurfaceDrift");
   });
 
   it("rejects an overlay-only surface that claims required-for-delegation severity", () => {
