@@ -1,0 +1,33 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`composeReleaseNotes snapshots the deterministic wrapper plus the verbatim section 1`] = `
+"# weave-cli@0.1.0
+
+- Package: \`@weaveio/weave-cli\`
+- Version: \`0.1.0\`
+- Install: \`bun add @weaveio/weave-cli@0.1.0\`
+- Source: https://github.com/weave-io/weave/compare/weave-cli@0.0.1...weave-cli@0.1.0
+- Tarball digest: \`sha256:a4f4a8e895824ef4b986c4bd30c9e311701b34a7f7119f476bdd301fbd8d5bb8\`
+- Provenance: https://www.npmjs.com/package/@weaveio/weave-cli/v/0.1.0
+
+## 0.1.0
+
+<!-- weave-release-ledger:1
+{
+  "package": "@weaveio/weave-cli",
+  "version": "0.1.0",
+  "changesets": [
+    {
+      "id": "portable-delegation-limits",
+      "sourceDigest": "2001d38f95726fd3c91bc58f2d71c8c4599e8dae66fcc6562b218abedb81a4fd"
+    }
+  ]
+}
+-->
+
+### Added
+
+<!-- weave-changelog-entry:1 ["portable-delegation-limits"] -->
+- Delegation limits are portable across harnesses.
+"
+`;
