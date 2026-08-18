@@ -10,6 +10,8 @@ import { errAsync, okAsync } from "neverthrow";
 import type { PiAdapterFailure } from "../errors.js";
 import { makeChildCapacityExceededFailure } from "../errors.js";
 import {
+  PROVIDER_FAST_REASONS,
+  PROVIDER_FAST_STATES,
   PROVIDER_FAST_UNSUPPORTED_SNAPSHOT,
   type ProviderFastPublicSnapshot,
 } from "../provider-fast-activation.js";
@@ -620,6 +622,50 @@ function providerFastSnapshot(
   return { ...PROVIDER_FAST_UNSUPPORTED_SNAPSHOT, ...overrides };
 }
 
+/** One codex-mapping call that wrote both routing parts, evidence pending. */
+const CODEX_REQUESTED: Partial<ProviderFastPublicSnapshot> = {
+  state: "requested",
+  evidenceKind: "openai-service-tier",
+  evidenceOutcome: "absent",
+  reason: "none",
+  ruleId: "codex-sub-05",
+};
+
+/** The same call settling on the pinned host's observed standard tier. */
+const CODEX_STANDARD: Partial<ProviderFastPublicSnapshot> = {
+  state: "not-confirmed",
+  evidenceKind: "openai-service-tier",
+  evidenceOutcome: "standard",
+  reason: "none",
+  ruleId: "codex-sub-05",
+};
+
+/** The same call settling with no readable proof for that attempt. */
+const CODEX_UNREAD: Partial<ProviderFastPublicSnapshot> = {
+  state: "not-confirmed",
+  evidenceKind: "openai-service-tier",
+  evidenceOutcome: "absent",
+  reason: "response-proof-unavailable",
+  ruleId: "codex-sub-05",
+};
+
+/** The only shape that may be reported as applied. */
+const CODEX_APPLIED: Partial<ProviderFastPublicSnapshot> = {
+  state: "applied",
+  evidenceKind: "openai-service-tier",
+  evidenceOutcome: "confirmed",
+  reason: "none",
+  ruleId: "codex-sub-05",
+};
+
+/** An eligible owner whose request already carried a conflicting control. */
+const CODEX_COLLISION: Partial<ProviderFastPublicSnapshot> = {
+  state: "unsupported",
+  evidenceKind: "none",
+  evidenceOutcome: "absent",
+  reason: "request-collision",
+};
+
 function expectOkValue<T>(result: {
   match: (ok: (value: T) => T, err: () => never) => T;
 }): T {
@@ -636,17 +682,25 @@ function expectExactJournalData(
   expected: PiProviderFastJournalData,
 ): void {
   expect(data).toEqual(expected);
+  // Exactly the expected keys: no extra field can ride along, and every key
+  // must be one the closed journal contract names.
   expect(Object.keys(data as object).sort()).toEqual(
-    [...PI_PROVIDER_FAST_JOURNAL_DATA_KEYS].sort(),
+    Object.keys(expected).sort(),
   );
-  expect(typeof (data as PiProviderFastJournalData).state).toBe("string");
-  expect(typeof (data as PiProviderFastJournalData).evidenceKind).toBe(
-    "string",
+  for (const key of Object.keys(data as object)) {
+    expect(PI_PROVIDER_FAST_JOURNAL_DATA_KEYS).toContain(
+      key as (typeof PI_PROVIDER_FAST_JOURNAL_DATA_KEYS)[number],
+    );
+    expect(typeof (data as Record<string, unknown>)[key]).toBe("string");
+  }
+}
+
+function providerFastEntries(
+  store: ReturnType<typeof createInMemoryRuntimeStore>,
+) {
+  return [...store.journal.snapshot().values()].filter((entry) =>
+    entry.eventType.startsWith("provider-fast."),
   );
-  expect(typeof (data as PiProviderFastJournalData).evidenceOutcome).toBe(
-    "string",
-  );
-  expect(typeof (data as PiProviderFastJournalData).reason).toBe("string");
 }
 
 describe("PiTelemetry — provider-fast journal family", () => {
@@ -661,6 +715,23 @@ describe("PiTelemetry — provider-fast journal family", () => {
       evidenceKind: "none",
       evidenceOutcome: "absent",
       reason: "harness-seam-unavailable",
+    });
+  });
+
+  it("projects a codex mapping outcome with its allowlist rule ID", () => {
+    const projected = projectProviderFastJournalData(
+      providerFastSnapshot(CODEX_APPLIED),
+    );
+    expect(projected.isOk()).toBe(true);
+    if (projected.isErr()) {
+      return;
+    }
+    expectExactJournalData(projected.value, {
+      state: "applied",
+      evidenceKind: "openai-service-tier",
+      evidenceOutcome: "confirmed",
+      reason: "none",
+      ruleId: "codex-sub-05",
     });
   });
 
@@ -693,10 +764,23 @@ describe("PiTelemetry — provider-fast journal family", () => {
     ).toBe(true);
   });
 
-  it("rejects every retired attempt state and evidence token", () => {
-    // These values described an attempt that carried controls. The adapter
-    // makes no attempt, so they must not be persistable at all.
-    for (const state of ["declared", "requested", "not-confirmed", "applied"]) {
+  it("accepts every widened state and reason the contract defines", () => {
+    for (const state of PROVIDER_FAST_STATES) {
+      const projected = projectProviderFastJournalData(
+        providerFastSnapshot({ state }),
+      );
+      expect(projected.isOk()).toBe(true);
+    }
+    for (const reason of PROVIDER_FAST_REASONS) {
+      const projected = projectProviderFastJournalData(
+        providerFastSnapshot({ reason }),
+      );
+      expect(projected.isOk()).toBe(true);
+    }
+  });
+
+  it("rejects every token outside the widened vocabulary", () => {
+    for (const state of ["active", "pending", "fast", PROVIDER_FAST_SECRET]) {
       expect(
         projectProviderFastJournalData(
           providerFastSnapshot({
@@ -726,32 +810,104 @@ describe("PiTelemetry — provider-fast journal family", () => {
         } as unknown as Partial<ProviderFastPublicSnapshot>),
       ).isErr(),
     ).toBe(true);
+    // A rule ID is the only model-adjacent token, so it must be an exact
+    // allowlist ID and never model text or a secret-shaped value.
+    for (const ruleId of [
+      "codex-sub-99",
+      "gpt-5.6-sol",
+      "none",
+      PROVIDER_FAST_SECRET,
+    ]) {
+      expect(
+        projectProviderFastJournalData(
+          providerFastSnapshot({
+            ruleId,
+          } as unknown as Partial<ProviderFastPublicSnapshot>),
+        ).isErr(),
+      ).toBe(true);
+    }
   });
 
-  it("persists the terminal unsupported outcome once and deduplicates repeats", async () => {
+  it("persists one outcome per distinct state, reason, and evidence tuple", async () => {
     const store = createInMemoryRuntimeStore();
     const telemetry = buildTelemetry({
       journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
     });
-    const snapshot = providerFastSnapshot();
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
-    ).toBe("recorded");
-    expect(
-      expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
-    ).toBe("duplicate");
+    const distinct: readonly ProviderFastPublicSnapshot[] = [
+      providerFastSnapshot(),
+      providerFastSnapshot(CODEX_REQUESTED),
+      providerFastSnapshot(CODEX_STANDARD),
+      providerFastSnapshot(CODEX_UNREAD),
+      providerFastSnapshot(CODEX_APPLIED),
+    ];
+    for (const snapshot of distinct) {
+      expect(
+        expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
+      ).toBe("recorded");
+      expect(
+        expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
+      ).toBe("duplicate");
+    }
 
-    const entries = [...store.journal.snapshot().values()].filter((entry) =>
-      entry.eventType.startsWith("provider-fast."),
-    );
+    const entries = providerFastEntries(store);
     expect(entries.map((entry) => entry.eventType)).toEqual([
       "provider-fast.unsupported",
+      "provider-fast.requested",
+      "provider-fast.not-confirmed",
+      "provider-fast.not-confirmed",
+      "provider-fast.applied",
     ]);
-    expectExactJournalData(entries[0]?.data, {
-      state: "unsupported",
-      evidenceKind: "none",
+    // Same state, different evidence: both facts survive, because "standard
+    // tier" and "no proof could be read" are not the same outcome.
+    expectExactJournalData(entries[2]?.data, {
+      state: "not-confirmed",
+      evidenceKind: "openai-service-tier",
+      evidenceOutcome: "standard",
+      reason: "none",
+      ruleId: "codex-sub-05",
+    });
+    expectExactJournalData(entries[3]?.data, {
+      state: "not-confirmed",
+      evidenceKind: "openai-service-tier",
       evidenceOutcome: "absent",
-      reason: "harness-seam-unavailable",
+      reason: "response-proof-unavailable",
+      ruleId: "codex-sub-05",
+    });
+  });
+
+  it("journals requested as a request, never as an application", async () => {
+    const store = createInMemoryRuntimeStore();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+    });
+    expect(
+      expectOkValue(
+        await telemetry.recordProviderFastTransition(
+          providerFastSnapshot(CODEX_REQUESTED),
+        ),
+      ),
+    ).toBe("recorded");
+    // The same call later settles below applied; that is a second fact.
+    expect(
+      expectOkValue(
+        await telemetry.recordProviderFastTransition(
+          providerFastSnapshot(CODEX_STANDARD),
+        ),
+      ),
+    ).toBe("recorded");
+
+    const entries = providerFastEntries(store);
+    expect(entries.map((entry) => entry.eventType)).toEqual([
+      "provider-fast.requested",
+      "provider-fast.not-confirmed",
+    ]);
+    expect(JSON.stringify(entries)).not.toContain("applied");
+    expectExactJournalData(entries[0]?.data, {
+      state: "requested",
+      evidenceKind: "openai-service-tier",
+      evidenceOutcome: "absent",
+      reason: "none",
+      ruleId: "codex-sub-05",
     });
   });
 
@@ -764,12 +920,9 @@ describe("PiTelemetry — provider-fast journal family", () => {
     for (let repeat = 0; repeat < PI_PROVIDER_FAST_DEDUPE_LIMIT * 4; repeat++) {
       await telemetry.recordProviderFastTransition(providerFastSnapshot());
     }
-    // One state/reason key exists, so the window can never exceed its bound
-    // and the durable journal keeps exactly one record.
-    const entries = [...store.journal.snapshot().values()].filter((entry) =>
-      entry.eventType.startsWith("provider-fast."),
-    );
-    expect(entries).toHaveLength(1);
+    // One state/reason/evidence key exists, so the window can never exceed
+    // its bound and the durable journal keeps exactly one record.
+    expect(providerFastEntries(store)).toHaveLength(1);
   });
 
   it("degrades through the typed journal path when persistence fails", async () => {
@@ -794,18 +947,71 @@ describe("PiTelemetry — provider-fast journal family", () => {
     }
   });
 
-  it("renders the bounded unsupported status line and omits no-intent", () => {
+  it("renders each neutral state distinctly from bounded tokens", () => {
     expect(
       expectOkValue(renderProviderFastStatusLine(undefined)),
     ).toBeUndefined();
-    const rendered = expectOkValue(
-      renderProviderFastStatusLine(providerFastSnapshot()),
+    const render = (snapshot: ProviderFastPublicSnapshot) =>
+      expectOkValue(renderProviderFastStatusLine(snapshot));
+
+    expect(render(providerFastSnapshot())).toBe(
+      "fast: unsupported (harness-seam-unavailable)",
     );
-    expect(rendered).toBe("fast: unsupported (harness-seam-unavailable)");
-    expect(rendered).not.toContain("applied");
-    expect(rendered).not.toContain("requested");
-    expect(rendered).not.toContain("active");
-    expect(rendered).not.toMatch(/(?<!not-)confirmed/);
+    expect(
+      render(providerFastSnapshot({ state: "declared", reason: "none" })),
+    ).toBe("fast: declared");
+    expect(render(providerFastSnapshot(CODEX_REQUESTED))).toBe(
+      "fast: requested (codex-sub-05, openai-service-tier=absent)",
+    );
+    expect(render(providerFastSnapshot(CODEX_APPLIED))).toBe(
+      "fast: applied (codex-sub-05, openai-service-tier=confirmed)",
+    );
+    expect(render(providerFastSnapshot(CODEX_STANDARD))).toBe(
+      "fast: not-confirmed (codex-sub-05, openai-service-tier=standard)",
+    );
+    expect(render(providerFastSnapshot(CODEX_UNREAD))).toBe(
+      "fast: not-confirmed (codex-sub-05, response-proof-unavailable, openai-service-tier=absent)",
+    );
+    expect(render(providerFastSnapshot(CODEX_COLLISION))).toBe(
+      "fast: unsupported (request-collision)",
+    );
+  });
+
+  it("never renders an unproven state as applied or confirmed", () => {
+    for (const snapshot of [
+      providerFastSnapshot(),
+      providerFastSnapshot(CODEX_REQUESTED),
+      providerFastSnapshot(CODEX_STANDARD),
+      providerFastSnapshot(CODEX_UNREAD),
+      providerFastSnapshot(CODEX_COLLISION),
+    ]) {
+      const rendered = expectOkValue(renderProviderFastStatusLine(snapshot));
+      expect(rendered).not.toContain("applied");
+      expect(rendered).not.toContain("active");
+      expect(rendered).not.toMatch(/(?<!not-)confirmed/);
+    }
+  });
+
+  it("keeps model text, headers, and URLs out of every rendered line", () => {
+    for (const snapshot of [
+      providerFastSnapshot(),
+      providerFastSnapshot(CODEX_APPLIED),
+      providerFastSnapshot(CODEX_UNREAD),
+    ]) {
+      const rendered = expectOkValue(renderProviderFastStatusLine(snapshot));
+      for (const forbidden of [
+        "gpt-",
+        "service_tier",
+        "originator",
+        "codex_cli_rs",
+        "x-codex-routing-hint",
+        "chatgpt.com",
+        "Bearer",
+        PROVIDER_FAST_SECRET,
+      ]) {
+        expect(rendered).not.toContain(forbidden);
+      }
+    }
   });
 
   it("clears in-memory reporting dedupe on session reset without rewriting durable events", async () => {
@@ -824,9 +1030,7 @@ describe("PiTelemetry — provider-fast journal family", () => {
     expect(
       expectOkValue(await telemetry.recordProviderFastTransition(snapshot)),
     ).toBe("recorded");
-    const entries = [...store.journal.snapshot().values()].filter((entry) =>
-      entry.eventType.startsWith("provider-fast."),
-    );
+    const entries = providerFastEntries(store);
     expect(entries).toHaveLength(2);
     expect(
       entries.every((entry) => entry.eventType === "provider-fast.unsupported"),
@@ -857,6 +1061,44 @@ describe("PiTelemetry — provider-fast journal family", () => {
       expect(sink).not.toContain("Authorization");
       expect(sink).not.toContain("applied");
       expect(sink).not.toContain("gpt-5.6-sol");
+    }
+  });
+
+  it("keeps secret-shaped values out of a codex mapping record", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { logger, logs } = fakeLogger();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+      logger,
+    });
+    const hostile = {
+      ...providerFastSnapshot(CODEX_APPLIED),
+      apiKey: PROVIDER_FAST_SECRET,
+      authorization: `Bearer ${PROVIDER_FAST_SECRET}`,
+      model: "gpt-5.6-sol",
+    } as unknown as ProviderFastPublicSnapshot;
+    // The hostile copy cannot be persisted at all.
+    expect(
+      (await telemetry.recordProviderFastTransition(hostile)).isErr(),
+    ).toBe(true);
+    // The sanitized original can, and carries nothing but bounded tokens.
+    expect(
+      (
+        await telemetry.recordProviderFastTransition(
+          providerFastSnapshot(CODEX_APPLIED),
+        )
+      ).isOk(),
+    ).toBe(true);
+    const sinks = [
+      JSON.stringify(store.journal.snapshot()),
+      JSON.stringify(logs),
+    ];
+    for (const sink of sinks) {
+      expect(sink).not.toContain(PROVIDER_FAST_SECRET);
+      expect(sink).not.toContain("sk-proj");
+      expect(sink).not.toContain("Authorization");
+      expect(sink).not.toContain("gpt-5.6-sol");
+      expect(sink).not.toContain("service_tier");
     }
   });
 });

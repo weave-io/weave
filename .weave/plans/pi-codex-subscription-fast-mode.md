@@ -182,7 +182,7 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
     - Tests with a mocked native provider + mocked fetch prove: exact header/body writes for eligible calls on both header casing variants; zero mutation otherwise; per-attempt evidence wiring; no real process or network (`packages/adapters/AGENTS.md` rules).
     - Tests inspect the final payload *and* the outgoing headers together under case-insensitive hint collisions in every header source, proving no request reaches the network carrying a wrapper-set `service_tier: "priority"` without both routing parts for that same attempt.
 
-- [ ] 6. Widen the adapter's fast state vocabulary and telemetry
+- [x] 6. Widen the adapter's fast state vocabulary and telemetry
   - **What**: Replace the single-state `unsupported` contract in `provider-fast-activation.ts` with the full bounded vocabulary, keeping the hook-audit `unsupported` outcome for every non-codex mapping, and extend telemetry to journal and render the new snapshots.
   - **Files**: `packages/adapters/pi/src/provider-fast-activation.ts`, `packages/adapters/pi/src/telemetry.ts`, `packages/adapters/pi/src/__tests__/provider-fast-activation.test.ts`, `packages/adapters/pi/src/__tests__/telemetry.test.ts` (or the existing telemetry test file).
   - **Depends on**: Task 2 (vocabulary), parallel with 4–5.

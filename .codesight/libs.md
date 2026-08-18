@@ -845,13 +845,13 @@
   - interface PromptChunk
   - _...4 more_
 - `packages/adapters/pi/src/provider-fast-activation.ts`
+  - function isProviderFastRuleId: (value) => value is ProviderFastRuleId
+  - function projectCodexFastSnapshot: (snapshot) => ProviderFastPublicSnapshot | undefined
   - function classifyProviderFastIntent: (intent) => ProviderFastClassification
-  - type ProviderFastUnsupportedReason
   - type ProviderFastState
+  - type ProviderFastReason
   - type ProviderFastEvidenceKind
-  - type ProviderFastEvidenceOutcome
-  - type ProviderFastPublicSnapshot
-  - _...8 more_
+  - _...13 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -931,7 +931,7 @@
   - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
   - function createPiTelemetryLogger: (options) => ResultAsync<
   - function createPiTelemetry: (options) => ResultAsync<
-  - _...21 more_
+  - _...22 more_
 - `packages/adapters/pi/src/thread-sources.ts`
   - function openPiThreadSources: (input) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>
   - function createProductionPiThreadSourceFactory: (options) => PiThreadSourceFactory

@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 315 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~34,600 tokens. Without it, AI exploration would cost ~100,900 tokens. **Saves ~66,400 tokens per conversation.**
-> **Last scanned:** 2026-08-18 04:04 — re-run after significant changes
+> **Token savings:** this file is ~34,600 tokens. Without it, AI exploration would cost ~100,900 tokens. **Saves ~66,300 tokens per conversation.**
+> **Last scanned:** 2026-08-18 04:21 — re-run after significant changes
 
 ---
 
@@ -856,13 +856,13 @@
   - interface PromptChunk
   - _...4 more_
 - `packages/adapters/pi/src/provider-fast-activation.ts`
+  - function isProviderFastRuleId: (value) => value is ProviderFastRuleId
+  - function projectCodexFastSnapshot: (snapshot) => ProviderFastPublicSnapshot | undefined
   - function classifyProviderFastIntent: (intent) => ProviderFastClassification
-  - type ProviderFastUnsupportedReason
   - type ProviderFastState
+  - type ProviderFastReason
   - type ProviderFastEvidenceKind
-  - type ProviderFastEvidenceOutcome
-  - type ProviderFastPublicSnapshot
-  - _...8 more_
+  - _...13 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -942,7 +942,7 @@
   - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
   - function createPiTelemetryLogger: (options) => ResultAsync<
   - function createPiTelemetry: (options) => ResultAsync<
-  - _...21 more_
+  - _...22 more_
 - `packages/adapters/pi/src/thread-sources.ts`
   - function openPiThreadSources: (input) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>
   - function createProductionPiThreadSourceFactory: (options) => PiThreadSourceFactory
