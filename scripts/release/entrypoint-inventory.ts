@@ -10,8 +10,9 @@
  *
  * Task 14 registers the one pre-existing new-pipeline root,
  * `publish-main.ts`; Task 15 adds the read-only `doctor.ts` root; Task 22 adds
- * the CI API report controller. Later tasks add, rename, or remove entries in
- * the same change. Test-only roots are never inventoried as production.
+ * the CI API report controller; Task 23 adds the stable preparation
+ * controller. Later tasks add, rename, or remove entries in the same change.
+ * Test-only roots are never inventoried as production.
  */
 
 import { dirname, join, relative, resolve } from "node:path";
@@ -86,6 +87,12 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "legacy",
     rationale:
       "Task 22 CI API compatibility controller. It runs API Extractor and the checked-in surface-map gate; it performs no publication mutation.",
+  },
+  {
+    path: "scripts/release/prepare-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 23 stable release-PR preparation controller. It validates the maintainer request and delegates marker ownership/finalization to Task 9; it never publishes.",
   },
 ] as const satisfies readonly ProductionEntrypoint[];
 

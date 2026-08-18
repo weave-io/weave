@@ -82,6 +82,54 @@ Trains remain serialized until required metadata replay merges. After promotion,
 
 The pipeline accepts GitHub artifact identity, npm provenance, and platform immutable-release attestations. It does not invent a separate attestation or SBOM format.
 
+## Stable release PR
+
+The only maintainer-request entry point is
+`.github/workflows/release-stable-prepare.yml`. A dispatch has four exact
+package booleans (`cli`, `opencode`, `claude-code`, and `pi`) and a `thinking`
+choice whose default is `medium`. At least one package must be selected. The
+workflow rejects the request before closure calculation or model work when the
+selection is empty, the actor is not in the `release-maintainer` team, `main` is
+not green, an open stable release PR already exists, or the recomputed merged
+release is not terminal. `CompleteWithIncident` is terminal and allows
+fix-forward. A second request is not a regeneration and never silently edits the
+existing PR.
+
+The plan records the exact green `plannedBaseSha`, selection closure, consumed
+Changeset identities, versions, and evidence. The deterministic docs checker,
+conditional docs AI, and shared Task 19 gate all use that SHA. Style findings
+are warnings; deterministic failures, missing/skipped/cancelled required AI,
+and hard findings are terminal failures. The gate runs again for every stale-head
+replan. The final release PR carries the docs-audit metadata with
+`auditedSha === baseSha`.
+
+Task 9 owns the marker race, ownership generation, finalization, and cleanup.
+There is no shared release-PR concurrency group: every explicit request reaches
+a typed result. A losing marker race polls for and reports `ReleasePrExists` with
+the visible URL. A `PreparationStale` result triggers a statically bounded
+`plan → docs-release-audit → changelog-ai → open-pr` sequence. The replan
+recomputes the closure and evidence and applies the prose reuse rule: reuse is
+allowed only for unchanged Changeset identity sets; unseen Changesets require
+fresh prose. The workflow never calls `regenerate` and never runs `npm publish`.
+
+Every failure after marker ownership uses `abortOwnedCreation`. A visible PR
+keeps the marker. A proven absent PR permits only an owned-marker CAS delete.
+An ABA successor marker is never deleted by an older run. An unverifiable cleanup
+returns `CreationCleanupPending` with the doctor/resume recovery link. Exhausted
+freshness returns retryable `PreparationFreshnessExhausted` and deletes only the
+run's marker. These rules prevent a silent `(marker, no PR)` orphan. The PR diff
+contains only permitted public manifest version fields and changelog files plus
+bounded release metadata.
+
+### Operator recovery
+
+For a failed request, open the run summary and follow its recovery link. Fix
+source or documentation failures on `main`, then dispatch a new request. For
+`CreationCleanupPending`, run the read-only doctor first and use its resume
+command only after it reports the authoritative marker and PR state. Do not
+manually delete `release-pr/stable` or edit the release PR to repair a failed
+creation.
+
 ## Pi acceptance assets
 
 Machine-consumed Pi acceptance files live under [`scripts/release/pi-acceptance/`](../../scripts/release/pi-acceptance), not in documentation. Generation and validation scripts own their format. Human documentation may link to them but must not duplicate their requirement rows.

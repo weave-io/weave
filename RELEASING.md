@@ -60,6 +60,38 @@ has been retested. Never introduce an automation token.
    the metadata replay PR and clean up the train branch only through its approved
    workflow.
 
+## Prepare a stable release PR
+
+Use **Actions → Prepare stable release PR → Run workflow**. Select at least one
+of the four package checkboxes (`cli`, `opencode`, `claude-code`, or `pi`). The
+thinking input defaults to `medium`; an empty selection fails before any plan or
+AI call. The workflow authorizes `github.actor` through the `release-maintainer`
+team, verifies green `main`, computes the selection closure, versions, consumed
+Changeset identities, and evidence, then runs the SHA-bound docs audit and the
+changelog agent.
+
+The request is a create operation, not a regeneration. If an open stable release
+PR exists, or a merged release is in a non-terminal state, the run stops with the
+existing URL and a recovery link. `CompleteWithIncident` is terminal and permits
+fix-forward preparation. Do not dispatch a second request to edit an existing
+PR; use the automatic regeneration workflow when that path is available.
+
+The release-PR diff is limited to versioned public manifests and changelogs plus
+Task 8/9 metadata. The final `baseSha` and docs-audit `auditedSha` must match.
+Never add prose, edit a Changeset, call `regenerate`, or run `npm publish` in this
+workflow. Human prose edits are preserved only when the Changeset identity set
+and evidence are unchanged; otherwise the next preparation generates fresh
+prose.
+
+If `main` advances during creation, Task 9 owns the bounded static replan
+sequence. Each iteration recomputes closure and evidence and reruns the complete
+deterministic and conditional AI docs gate at the new head before changelog AI
+and creation. If freshness is exhausted, the run deletes only its own marker and
+returns retryable `PreparationFreshnessExhausted`. If cleanup cannot prove marker
+ownership or PR absence, it returns `CreationCleanupPending`; run the doctor and
+resume command in the failure summary. A visible PR always keeps its marker and
+its URL is reported. A race loser polls and returns `ReleasePrExists { url }`.
+
 ## Manual promotion and rollback
 
 The standalone release control records the prior `latest` values and emits the
