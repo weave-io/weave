@@ -1,10 +1,10 @@
-# @weaveio/weave-adapter-opencode
+# @weaveio/weave-core
 
 ## 0.1.0
 
 ### Minor Changes
 
-- Align all packages to v0.1.0 for initial public release.
+- 2d401d0: Add `review_models` agent configuration and engine review fan-out intent support.
 
 ### Patch Changes
 
