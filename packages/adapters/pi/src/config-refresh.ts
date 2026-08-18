@@ -156,6 +156,8 @@ export interface PiConfigCatalogState {
 /** Injected ports for one candidate build. */
 export interface PiConfigRefreshDeps {
   readonly fs: PiConfigSourceFsPort;
+  /** Optional observer for source SHA-256 operation-count tests. */
+  readonly onHashComputation?: () => void;
   readonly configLoader?: PiConfigLoaderPort;
   readonly materializer?: PiMaterializerPort;
 }
@@ -406,6 +408,7 @@ function createRefreshAttempt(
         );
       })
       .map((content): PiConfigSourceCachedContent => {
+        deps.onHashComputation?.();
         const cachedContent = {
           content,
           sha256: hashConfigSourceContent(content),
@@ -785,9 +788,11 @@ export function refreshPiConfigCandidate(
 ): ResultAsync<PiConfigRefreshCandidate, PiConfigRefreshFailure> {
   return safelyAwaitPortResult(
     () =>
-      refreshConfigSourceManifest(current.manifest, deps.fs).mapErr(
-        (source): ManifestRefreshError => ({ kind: "source", source }),
-      ),
+      refreshConfigSourceManifest(
+        current.manifest,
+        deps.fs,
+        deps.onHashComputation,
+      ).mapErr((source): ManifestRefreshError => ({ kind: "source", source })),
     (): ManifestRefreshError => ({ kind: "threw" }),
   )
     .mapErr(
@@ -1012,6 +1017,8 @@ export interface PiConfigRefreshCoordinatorDeps {
    */
   readonly ownsGeneration: () => boolean;
   readonly fs: PiConfigSourceFsPort;
+  /** Optional observer for source SHA-256 operation-count tests. */
+  readonly onHashComputation?: () => void;
   readonly configLoader?: PiConfigLoaderPort;
   readonly materializer?: PiMaterializerPort;
   /** The committed primary descriptor, or `undefined` before one commits. */
@@ -1179,6 +1186,9 @@ export function createPiConfigRefreshCoordinator(
   const minIntervalMs = deps.minIntervalMs ?? 0;
   const buildDeps: PiConfigRefreshDeps = {
     fs: deps.fs,
+    ...(deps.onHashComputation === undefined
+      ? {}
+      : { onHashComputation: deps.onHashComputation }),
     ...(deps.configLoader === undefined
       ? {}
       : { configLoader: deps.configLoader }),

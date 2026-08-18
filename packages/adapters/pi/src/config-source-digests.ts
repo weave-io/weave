@@ -609,6 +609,7 @@ function absentEntry(entry: PiConfigSourceEntry): PiConfigSourceEntry {
 function refreshOne(
   probe: PiConfigSourceProbe,
   fs: PiConfigSourceFsPort,
+  onHashComputation: (() => void) | undefined,
 ): ResultAsync<PiConfigSourceRefreshedSource, PiConfigSourceFailure> {
   const { entry, status, stat } = probe;
 
@@ -645,6 +646,7 @@ function refreshOne(
       }),
     )
     .map((content): PiConfigSourceRefreshedSource => {
+      onHashComputation?.();
       const sha256 = hashConfigSourceContent(content);
       const contentChanged = sha256 !== entry.sha256;
       return {
@@ -710,29 +712,31 @@ export function classifyConfigSourceChange(
  * A source whose metadata moved but whose bytes hash to the cached digest is
  * *not* a change: its entry is updated with the fresh metadata (so the next
  * probe is cheap again) and it contributes nothing to the classification.
+ * `onHashComputation` observes operation counts only; SHA-256 remains fixed.
  */
 export function refreshChangedSources(
   manifest: PiConfigSourceManifest,
   probes: readonly PiConfigSourceProbe[],
   fs: PiConfigSourceFsPort,
+  onHashComputation?: () => void,
 ): ResultAsync<PiConfigSourceRefresh, PiConfigSourceFailure> {
-  return ResultAsync.combine(probes.map((probe) => refreshOne(probe, fs))).map(
-    (refreshed): PiConfigSourceRefresh => {
-      const reads = refreshed
-        .map((source) => source.read)
-        .filter((read): read is PiConfigSourceRead => read !== undefined);
+  return ResultAsync.combine(
+    probes.map((probe) => refreshOne(probe, fs, onHashComputation)),
+  ).map((refreshed): PiConfigSourceRefresh => {
+    const reads = refreshed
+      .map((source) => source.read)
+      .filter((read): read is PiConfigSourceRead => read !== undefined);
 
-      return {
-        manifest: {
-          identity: manifest.identity,
-          builtin: manifest.builtin,
-          files: refreshed.map((source) => source.entry),
-        },
-        reads,
-        change: classifyConfigSourceChange(refreshed),
-      };
-    },
-  );
+    return {
+      manifest: {
+        identity: manifest.identity,
+        builtin: manifest.builtin,
+        files: refreshed.map((source) => source.entry),
+      },
+      reads,
+      change: classifyConfigSourceChange(refreshed),
+    };
+  });
 }
 
 /**
@@ -744,8 +748,9 @@ export function refreshChangedSources(
 export function refreshConfigSourceManifest(
   manifest: PiConfigSourceManifest,
   fs: PiConfigSourceFsPort,
+  onHashComputation?: () => void,
 ): ResultAsync<PiConfigSourceRefresh, PiConfigSourceFailure> {
   return probeConfigSources(manifest, fs).andThen((probes) =>
-    refreshChangedSources(manifest, probes, fs),
+    refreshChangedSources(manifest, probes, fs, onHashComputation),
   );
 }
