@@ -164,16 +164,6 @@ export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       readiness: "degraded",
     },
     {
-      id: "runtime-model-fallback",
-      description:
-        "Advance through an agent's ordered models after Pi exhausts native recovery",
-      readiness: "native",
-      notes:
-        "Optional. The adapter uses Pi's public post-recovery hook when the host advertises pi.features.agent_recovery_exhausted as an own enumerable true data property. Absence leaves settlement and every other capability unchanged and never enters health-only mode.",
-      remediationHint:
-        "Upgrade to a Pi host that advertises pi.features.agent_recovery_exhausted === true. Until then, exhausted recovery settles as it does today.",
-    },
-    {
       id: "eval-integration",
       description:
         "Evaluation harness integration (explicitly out of scope under the Pi adapter contract)",

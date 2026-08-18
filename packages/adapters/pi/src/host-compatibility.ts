@@ -100,7 +100,10 @@ export function checkHostCompatibility(
 export const UNKNOWN_HOST_VERSION = "unknown";
 
 /** How one missing host capability degrades the adapter (Spec 33 §16). */
-export type HostCapabilityGapMode = "health-only" | "custom-editor-fallback";
+export type HostCapabilityGapMode =
+  | "health-only"
+  | "custom-editor-fallback"
+  | "feature-unavailable";
 
 /**
  * The strong-debug diagnostic shape for a missing host capability. Every

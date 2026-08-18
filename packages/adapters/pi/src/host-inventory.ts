@@ -68,6 +68,11 @@ export interface PiHostSurfaceReport {
    * child-inspection fallback (§7).
    */
   readonly overlayFallbackGaps: readonly PiHostSurfaceId[];
+  /**
+   * Feature-only surfaces that are not natively available. These never force
+   * health-only mode and never select the overlay fallback.
+   */
+  readonly featureGaps: readonly PiHostSurfaceId[];
 }
 export interface PiHostSurfaceReadInput {
   readonly api: PiExtensionApi;
@@ -198,10 +203,16 @@ export function readHostSurfaceReport(
       (probe) => overlayOnly(probe.surfaceId) && probe.status !== "native",
     )
     .map((probe) => probe.surfaceId);
+  const featureGaps = probes
+    .filter(
+      (probe) => featureOnly(probe.surfaceId) && probe.status === "unavailable",
+    )
+    .map((probe) => probe.surfaceId);
   return Object.freeze({
     probes: Object.freeze(probes),
     requiredGaps: Object.freeze(requiredGaps),
     overlayFallbackGaps: Object.freeze(overlayFallbackGaps),
+    featureGaps: Object.freeze(featureGaps),
   });
 }
 
@@ -254,7 +265,9 @@ export const emptyHostSurfaceReport = (): PiHostSurfaceReport =>
 /**
  * Builds the strong-debug diagnostics for every host-surface gap (Spec 33
  * §16). Required gaps report `health-only`; overlay-only gaps report the
- * existing custom-editor fallback and never health-only. Pure and read-only.
+ * existing custom-editor fallback and never health-only; feature-only gaps
+ * report `feature-unavailable` and never change those two modes. Pure and
+ * read-only.
  */
 export function buildHostSurfaceGapDiagnostics(
   report: PiHostSurfaceReport,
@@ -290,6 +303,9 @@ export function buildHostSurfaceGapDiagnostics(
     ),
     ...report.overlayFallbackGaps.map((surfaceId) =>
       describe(surfaceId, "custom-editor-fallback"),
+    ),
+    ...report.featureGaps.map((surfaceId) =>
+      describe(surfaceId, "feature-unavailable"),
     ),
   ].filter(
     (diagnostic): diagnostic is HostCapabilityGapDiagnostic =>

@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 330 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~36,700 tokens. Without it, AI exploration would cost ~104,800 tokens. **Saves ~68,100 tokens per conversation.**
-> **Last scanned:** 2026-08-18 16:27 — re-run after significant changes
+> **Last scanned:** 2026-08-18 16:41 — re-run after significant changes
 
 ---
 
@@ -1500,7 +1500,7 @@
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
   - function lowerReadinessByProbe: (declared, resolution) => CapabilityReadiness
   - function evaluateEffectiveCapabilities: (contract, probeResults) => EffectiveCapabilityEvaluation
-  - _...31 more_
+  - _...30 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext, promptFileReader?) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>

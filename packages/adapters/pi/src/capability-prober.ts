@@ -485,7 +485,9 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
     // health-only mode (Spec 33 §16). An `overlay-only` gap never reaches
     // `requiredGaps`; it is reported through the host surface report's
     // `overlayFallbackGaps` and selects the existing custom-editor child
-    // inspection fallback instead.
+    // inspection fallback instead. A `feature-only` gap is likewise absent
+    // from engine capability IDs: hook readiness stays on the host-surface
+    // report and never lowers an engine probe.
     if (
       context.hostSurface !== undefined &&
       context.hostSurface.requiredGaps.length > 0 &&
@@ -522,23 +524,6 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
         probeStatus: "unavailable",
         details:
           context.delegationAuthority?.reason ?? "pi-session-api-unavailable",
-      };
-    }
-    if (id === "runtime-model-fallback") {
-      const surface = context.hostSurface?.probes.find(
-        (probe) => probe.surfaceId === "post-recovery-model-switch",
-      );
-      if (surface?.status === "native") {
-        return {
-          capabilityId: id,
-          probeStatus: "ok",
-          details: AGENT_RECOVERY_EXHAUSTED_PRESENT,
-        };
-      }
-      return {
-        capabilityId: id,
-        probeStatus: "unavailable",
-        details: AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
       };
     }
     if (id === "command-entrypoints") {

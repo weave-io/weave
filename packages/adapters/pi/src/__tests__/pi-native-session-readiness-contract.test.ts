@@ -63,6 +63,7 @@ describe("Pi-native delegation readiness contract", () => {
         ],
         requiredGaps: ["session-restore"],
         overlayFallbackGaps: [],
+        featureGaps: [],
       },
     });
     const readiness = probes.find(

@@ -1489,7 +1489,7 @@
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
   - function lowerReadinessByProbe: (declared, resolution) => CapabilityReadiness
   - function evaluateEffectiveCapabilities: (contract, probeResults) => EffectiveCapabilityEvaluation
-  - _...31 more_
+  - _...30 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext, promptFileReader?) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>

@@ -3,7 +3,7 @@
  *
  * Covers:
  * - All 4 readiness levels are valid; no extra values accepted by schema.
- * - All 22 capability IDs are valid.
+ * - All 21 capability IDs are valid.
  * - CapabilityEntry accepts all readiness levels and required/optional fields.
  * - AdapterCapabilityContract structural assertions.
  * - Tool-policy capability references @weaveio/weave-core concepts (no duplication).
@@ -77,16 +77,16 @@ describe("CapabilityReadiness", () => {
 // ---------------------------------------------------------------------------
 
 describe("CapabilityId", () => {
-  it("has exactly 22 capability IDs", () => {
-    expect(ALL_CAPABILITY_IDS).toHaveLength(22);
+  it("has exactly 21 capability IDs", () => {
+    expect(ALL_CAPABILITY_IDS).toHaveLength(21);
   });
 
   it("has exactly 12 required capability IDs", () => {
     expect(REQUIRED_CAPABILITIES).toHaveLength(12);
   });
 
-  it("has exactly 10 optional capability IDs", () => {
-    expect(OPTIONAL_CAPABILITIES).toHaveLength(10);
+  it("has exactly 9 optional capability IDs", () => {
+    expect(OPTIONAL_CAPABILITIES).toHaveLength(9);
   });
 
   it("includes model-thinking-activation as an optional capability", () => {
@@ -97,11 +97,7 @@ describe("CapabilityId", () => {
     expect(OPTIONAL_CAPABILITIES).toContain("provider-fast-activation");
   });
 
-  it("includes runtime-model-fallback as an optional capability", () => {
-    expect(OPTIONAL_CAPABILITIES).toContain("runtime-model-fallback");
-  });
-
-  it("accepts all 22 capability IDs via schema", () => {
+  it("accepts all 21 capability IDs via schema", () => {
     for (const id of ALL_CAPABILITY_IDS) {
       const result = CapabilityIdSchema.safeParse(id);
       expect(result.success).toBe(true);
@@ -157,7 +153,6 @@ describe("CapabilityId", () => {
     expect(optional.has("multiple-active-workflows")).toBe(true);
     expect(optional.has("model-thinking-activation")).toBe(true);
     expect(optional.has("provider-fast-activation")).toBe(true);
-    expect(optional.has("runtime-model-fallback")).toBe(true);
   });
 });
 
@@ -314,12 +309,12 @@ describe("engine barrel re-exports", () => {
   });
 
   it("exports OPTIONAL_CAPABILITIES from @weaveio/weave-engine", () => {
-    expect(BARREL_OPTIONAL).toHaveLength(10);
+    expect(BARREL_OPTIONAL).toHaveLength(9);
     expect(BARREL_OPTIONAL).toEqual(OPTIONAL_CAPABILITIES);
   });
 
   it("exports ALL_CAPABILITY_IDS from @weaveio/weave-engine", () => {
-    expect(BARREL_ALL).toHaveLength(22);
+    expect(BARREL_ALL).toHaveLength(21);
   });
 
   it("exports evaluateCoreReadinessProfile from @weaveio/weave-engine", () => {

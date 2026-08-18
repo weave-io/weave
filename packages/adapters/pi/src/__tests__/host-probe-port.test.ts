@@ -78,8 +78,12 @@ describe("PiHostProbePort: independent Spec 33 §16 session probes", () => {
     const report = await reportFor(capablePort());
     expect(report.requiredGaps).toEqual([]);
     expect(report.overlayFallbackGaps).toEqual([]);
+    expect(report.featureGaps).toEqual(["post-recovery-model-switch"]);
     expect(selectsCustomEditorFallback(report)).toBe(false);
-    expect(buildHostSurfaceGapDiagnostics(report, "0.83.0")).toEqual([]);
+    const diagnostics = buildHostSurfaceGapDiagnostics(report, "0.83.0");
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.mode).toBe("feature-unavailable");
+    expect(diagnostics[0]?.capability).toBe("post-recovery-model-switch");
   });
 
   /**
@@ -111,8 +115,16 @@ describe("PiHostProbePort: independent Spec 33 §16 session probes", () => {
       expect(selectsCustomEditorFallback(report)).toBe(false);
 
       const diagnostics = buildHostSurfaceGapDiagnostics(report, "0.83.0");
-      expect(diagnostics).toHaveLength(1);
-      const diagnostic = diagnostics[0];
+      const healthOnly = diagnostics.filter(
+        (diagnostic) => diagnostic.mode === "health-only",
+      );
+      expect(healthOnly).toHaveLength(1);
+      expect(
+        diagnostics.some(
+          (diagnostic) => diagnostic.mode === "feature-unavailable",
+        ),
+      ).toBe(true);
+      const diagnostic = healthOnly[0];
       // All six strong-debug fields are present and non-empty.
       expect(diagnostic?.capability).toBe(surface);
       expect(diagnostic?.hostVersion).toBe("0.83.0");

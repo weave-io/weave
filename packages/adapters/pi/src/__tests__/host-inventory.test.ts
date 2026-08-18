@@ -139,6 +139,7 @@ describe("host surface inventory", () => {
     ]);
     expect(report.requiredGaps).toEqual([]);
     expect(report.overlayFallbackGaps).toEqual([]);
+    expect(report.featureGaps).toEqual(["post-recovery-model-switch"]);
   });
 
   it("uses fallback status for every optional rendering surface when exports are absent", async () => {
@@ -231,6 +232,7 @@ describe("host surface inventory", () => {
     });
     expect(hookLessReport.requiredGaps).toEqual([]);
     expect(hookLessReport.overlayFallbackGaps).toEqual([]);
+    expect(hookLessReport.featureGaps).toEqual(["post-recovery-model-switch"]);
 
     const hookApi = Object.defineProperty(
       { appendEntry: () => undefined } as object,
@@ -266,6 +268,7 @@ describe("host surface inventory", () => {
     });
     expect(hookBearingReport.requiredGaps).toEqual([]);
     expect(hookBearingReport.overlayFallbackGaps).toEqual([]);
+    expect(hookBearingReport.featureGaps).toEqual([]);
   });
 
   it("uses only public VERSION and matrix facts for required protocol surfaces", async () => {

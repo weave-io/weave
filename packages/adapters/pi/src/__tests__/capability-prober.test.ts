@@ -787,7 +787,7 @@ describe("post-recovery hook feature detection", () => {
     }
   });
 
-  it("treats a hook-less host as an unsupported optional capability without changing gates", () => {
+  it("treats a hook-less host as an unsupported feature-only surface without changing gates", () => {
     const report = readHostSurfaceReport(
       PI_HOST_SURFACE_IDS.filter(
         (surfaceId) => surfaceId !== "post-recovery-model-switch",
@@ -800,7 +800,19 @@ describe("post-recovery hook feature detection", () => {
     expect(report.requiredGaps).toEqual([]);
     expect(report.overlayFallbackGaps).toEqual([]);
     expect(selectsCustomEditorFallback(report)).toBe(false);
-    expect(buildHostSurfaceGapDiagnostics(report, "0.83.0")).toEqual([]);
+    expect(report.featureGaps).toEqual(["post-recovery-model-switch"]);
+    expect(buildHostSurfaceGapDiagnostics(report, "0.83.0")).toEqual([
+      {
+        capability: "post-recovery-model-switch",
+        hostVersion: "0.83.0",
+        contract:
+          "Spec 33 post-recovery hook: pi.features.agent_recovery_exhausted",
+        probeResult: `unavailable:${AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED}`,
+        mode: "feature-unavailable",
+        remediation:
+          "Upgrade the Pi host to one that advertises pi.features.agent_recovery_exhausted === true; until then exhausted recovery settles as it does today.",
+      },
+    ]);
     expect(
       report.probes.find(
         (probe) => probe.surfaceId === "post-recovery-model-switch",
@@ -813,12 +825,10 @@ describe("post-recovery hook feature detection", () => {
 
     const probes = prober.probe({ ...trustedBase, hostSurface: report });
     expect(
-      probes.find((probe) => probe.capabilityId === "runtime-model-fallback"),
-    ).toEqual({
-      capabilityId: "runtime-model-fallback",
-      probeStatus: "unavailable",
-      details: AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
-    });
+      probes.some(
+        (probe) => (probe.capabilityId as string) === "runtime-model-fallback",
+      ),
+    ).toBe(false);
     expect(
       probes.find(
         (probe) => probe.capabilityId === "delegated-specialist-execution",
@@ -830,7 +840,7 @@ describe("post-recovery hook feature detection", () => {
     ).toBe("ok");
   });
 
-  it("treats a hook-bearing host as a supported optional capability", () => {
+  it("treats a hook-bearing host as a supported feature-only surface", () => {
     const report = readHostSurfaceReport(
       PI_HOST_SURFACE_IDS.map((surfaceId) => ({
         surfaceId,
@@ -843,6 +853,8 @@ describe("post-recovery hook feature detection", () => {
     );
     expect(report.requiredGaps).toEqual([]);
     expect(report.overlayFallbackGaps).toEqual([]);
+    expect(report.featureGaps).toEqual([]);
+    expect(buildHostSurfaceGapDiagnostics(report, "0.83.0")).toEqual([]);
     expect(
       report.probes.find(
         (probe) => probe.surfaceId === "post-recovery-model-switch",
@@ -855,12 +867,10 @@ describe("post-recovery hook feature detection", () => {
 
     const probes = prober.probe({ ...trustedBase, hostSurface: report });
     expect(
-      probes.find((probe) => probe.capabilityId === "runtime-model-fallback"),
-    ).toEqual({
-      capabilityId: "runtime-model-fallback",
-      probeStatus: "ok",
-      details: AGENT_RECOVERY_EXHAUSTED_PRESENT,
-    });
+      probes.some(
+        (probe) => (probe.capabilityId as string) === "runtime-model-fallback",
+      ),
+    ).toBe(false);
     expect(
       probes.find(
         (probe) => probe.capabilityId === "delegated-specialist-execution",

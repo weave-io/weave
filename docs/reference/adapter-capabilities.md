@@ -37,8 +37,6 @@ An adapter returns one ordered `AdapterCapabilityContract`. Each entry has:
 
 The closed ID vocabulary and current required/optional profile live in [`packages/engine/src/capability-contract.ts`](../../packages/engine/src/capability-contract.ts). Do not copy the list into adapter code or documentation; import it so additions cannot drift.
 
-`runtime-model-fallback` is the optional in-session model-fallback capability. Pi declares it as a native ceiling and probes `pi.features.agent_recovery_exhausted` once per activation. A missing hook lowers the effective entry to unsupported and never enters health-only mode.
-
 `provider-fast-activation` is the optional provider-acceleration capability. When `runtimeStatus` is present, the exported contract accepts only the bounded evidence tokens from that module. Other capabilities keep sanitized freeform status strings. A descriptor without `fast true` does not require this capability and emits no requested or applied state.
 
 ### Current provider-fast support
@@ -96,6 +94,8 @@ The Pi adapter declares four severities:
 | `overlay-only` | The overlay falls back to the custom-editor path; delegation keeps working |
 | `rendering-fallback` | The harness's default rendering is used |
 | `feature-only` | An optional host feature stays off; health stays ready and the overlay is unchanged |
+
+Pi's `post-recovery-model-switch` surface is `feature-only`. The adapter probes `pi.features.agent_recovery_exhausted` once per activation. A missing hook reports `agent-recovery-exhausted-unsupported` on the adapter health and host-surface capability surfaces and never enters health-only mode or the overlay fallback. This surface does not add an engine capability ID.
 
 Its native child-session storage adds four `required-for-delegation` probes — `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` — plus the `overlay-only` `child-overlay-lifecycle` surface. A missing session read surface is never treated as overlay-only, because reading recorded child work must not silently disappear.
 

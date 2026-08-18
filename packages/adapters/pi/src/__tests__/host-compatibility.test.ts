@@ -54,6 +54,18 @@ describe("renderHostCapabilityGapDiagnostic", () => {
     expect(line).toContain("mode: custom-editor-fallback");
     expect(line).not.toContain("mode: health-only");
   });
+
+  it("reports feature-unavailable for a feature-only gap without health-only or overlay fallback", () => {
+    const line = renderHostCapabilityGapDiagnostic({
+      ...diagnostic,
+      capability: "post-recovery-model-switch",
+      probeResult: "unavailable:agent-recovery-exhausted-unsupported",
+      mode: "feature-unavailable",
+    });
+    expect(line).toContain("mode: feature-unavailable");
+    expect(line).not.toContain("mode: health-only");
+    expect(line).not.toContain("mode: custom-editor-fallback");
+  });
 });
 
 describe("BunHostPackageReader", () => {
