@@ -166,6 +166,7 @@ interface FakeHooks {
   beforeUpdateRef?: () => void;
   beforeCreatePullRequest?: () => void;
   afterCreatePullRequest?: () => void;
+  afterUpdatePullRequest?: () => void;
   beforeReadMain?: (count: number) => void;
 }
 
@@ -401,6 +402,7 @@ class FakeGitHub {
     };
     this.pulls[index] = updated;
     this.log.push(`updatePullRequest ${input.number}`);
+    this.hooks.afterUpdatePullRequest?.();
     return okAsync(updated);
   }
 
@@ -1022,6 +1024,42 @@ describe("discovery", () => {
     });
     const state = await manager(world).discover();
     expect(state._unsafeUnwrapErr().type).toBe("ReleasePrProtocolAnomaly");
+  });
+
+  it("blocks discovery on a stable-labeled PR from a noncanonical head", async () => {
+    const world = new FakeGitHub();
+    world.openPullRequest({
+      title: "release",
+      body: "",
+      headRef: "release-pr/not-stable",
+      baseRef: "main",
+      labels: [RELEASE_PR_LABEL],
+    });
+    const result = await manager(world).discover();
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "ReleasePrProtocolAnomaly",
+      url: "https://github.com/weave-io/weave/pull/1",
+    });
+  });
+
+  it("reports a canonical and noncanonical stable PR as duplicate identities", async () => {
+    const world = new FakeGitHub();
+    for (const headRef of [RELEASE_PR_MARKER_REF, "release-pr/not-stable"])
+      world.openPullRequest({
+        title: "release",
+        body: "",
+        headRef,
+        baseRef: "main",
+        labels: [RELEASE_PR_LABEL],
+      });
+    const result = await manager(world).discover();
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "DuplicateReleasePr",
+      urls: [
+        "https://github.com/weave-io/weave/pull/1",
+        "https://github.com/weave-io/weave/pull/2",
+      ],
+    });
   });
 
   it("refuses two open release PRs", async () => {
@@ -2907,6 +2945,57 @@ describe("race model", () => {
     const head = world.markerSha() ?? "";
     expect(head).toBe(sha("newest-regeneration"));
     expect(envelopeAt(world, head)._unsafeUnwrap().baseSha).toBe(newest);
+  });
+
+  it("repairs an older PATCH after a newer marker writer and never returns false Regenerated", async () => {
+    const world = new FakeGitHub();
+    const created = await createRelease(world);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const olderBase = world.advanceMain();
+    let newest = "";
+    world.hooks.afterUpdatePullRequest = () => {
+      world.hooks.afterUpdatePullRequest = undefined;
+      newest = world.advanceMain();
+      const envelope = renderReleasePrEnvelope({
+        schemaVersion: 1,
+        ref: RELEASE_PR_MARKER_REF,
+        ownerGeneration: created.value.ownership.ownerGeneration,
+        plannedBaseSha: created.value.ownership.plannedBaseSha,
+        baseSha: newest,
+        regeneratedFrom: [olderBase],
+        entryProse: [],
+        evidenceDigest: EVIDENCE_DIGEST,
+      })._unsafeUnwrap();
+      const winner = sha("metadata-race-winner");
+      world.commits.set(winner, {
+        message: `chore(release): version packages\n\n${envelope}\n`,
+        parent: newest,
+        files: [],
+      });
+      world.refs.set(REF_PATH, winner);
+      const existing = world.pulls[0];
+      if (existing !== undefined)
+        world.pulls[0] = {
+          ...existing,
+          body: `Seed: @weaveio/weave-cli\n\n${envelope}\n`,
+        };
+    };
+
+    const result = await manager(world).regenerate({
+      builder: builderFor(world),
+    });
+    const outcome = result._unsafeUnwrap();
+    expect(outcome.kind).toBe("PrMetadataReconciled");
+    expect(outcome.kind).not.toBe("Regenerated");
+    const marker = world.markerSha() ?? "";
+    const markerEnvelope = envelopeAt(world, marker)._unsafeUnwrap();
+    const pullEnvelope = parseReleasePrEnvelope(
+      world.pulls[0]?.body ?? "",
+    )._unsafeUnwrap();
+    expect(markerEnvelope).toEqual(pullEnvelope);
+    expect(markerEnvelope.baseSha).toBe(newest);
+    expect(markerEnvelope.baseSha).not.toBe(olderBase);
   });
 
   it("main-advance before the marker still produces a PR on the newest base", async () => {
