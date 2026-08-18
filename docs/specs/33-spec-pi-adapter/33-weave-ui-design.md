@@ -104,6 +104,27 @@ Reference: `prototypes/weave-pi-tui-grilling.ts`.
 | 4.4 | It degrades through measured width bands, never guessed ones. | `widgetTier` (`wide` ≥ 96, `mid` ≥ 68, `tight` ≥ 46, `micro` below) |
 | 4.5 | The cycle hint appears only when there is somewhere to cycle to, drops its descriptive word before its key, and is placed ahead of the plan name, so a narrowing terminal surrenders the plan before the key. | `cycleHint`, `joinFit` |
 | 4.6 | The agent name is the last thing the widget may lose. | `joinFit`, `widgetBadge` |
+| 4.7 | Each band's content is exactly the table below. Production is a port of the prototype's tier expressions, not an independent ladder. | `renderPlanRailWidget` |
+
+The normative tier table, read directly off `renderPlanRailWidget`:
+
+| tier | mark | `cycle` word | plan name | marks row | `next` row |
+| --- | --- | --- | --- | --- | --- |
+| `wide` | `◆ WEAVE` | yes | yes | dots + `n/N` | yes |
+| `mid` | `◆ WEAVE` | yes | yes | dots + `n/N` | yes |
+| `tight` | `◆ WEAVE` | no | yes | dots + `n/N` | no |
+| `micro` | `◆` | no | no | `n/N` | no |
+
+The plan name is a BAND decision only at `micro`
+(`tier === "micro" ? "" : p.muted(f.plan)`). At every wider band it is offered
+to `joinFit`, which drops it when the measured row cannot hold it — which is
+what §4.5 means by "surrenders the plan before the key". Hiding it by band
+instead (production briefly showed it only at `wide`) surrenders the plan in a
+terminal with room for it, and keeps the longer `Alt+A cycle` at `tight` where
+the prototype has already shed the word.
+
+Production's `plan-render.ts` mirrors each expression one for one, and
+`plan-render.test.ts` pins the whole table rather than individual examples.
 
 ## 5. Production mapping decisions
 
@@ -123,6 +144,7 @@ here because they are choices, not consequences.
 | Telemetry lives only on the Status Matrix rail, and the overlay header loses its telemetry row. | Identity is stated once and in one place: model beside the child name, numbers on the rail, parent context above the editor. |
 | The header's bounded slot carries the child's assignment, and a durable STORAGE title (`shuttle-1d33e680`) is dropped rather than printed. | The prototype's `boundedTitle` is a task title. Production's stored title is derived by `resolveDurableChildTitle` from the agent name plus an opaque id fragment, so printing it repeats the name the header already carries and puts a thread-like id in a semantic slot, against §2.4 and §2.20. An absent fact prints nothing, which is the same honesty rule the rail follows. |
 | The live prompt renders Pi's own editor INSIDE the locked panel, with the editor's own top and bottom rules removed. | Pi's editor draws two bare horizontal rules and no side rails, so using it unwrapped turns §2.10's bordered, labelled panel into an unlabelled underline at the bottom of the overlay. The panel keeps the editor's caret, multi-line editing and app keybindings while the design keeps its geometry. Scroll edges (`─── ↑ 3 more ───`) carry words and survive, because they are content. |
+| The marks row states the ordinal ALONE when the measured dots would not fit beside it, in addition to the prototype's `micro` rule. | The prototype's demo plan is a fixed eight tasks, so its `cell()` clip is never reached. A real plan contributes up to `PLAN_RAIL_MAX_MARKS` marks, and a clipped row of dots would misreport how long the plan is — an invented fact, which §2.19's honesty rule forbids everywhere else on these surfaces. Stating `3/40` alone says less and says it truthfully. |
 | The composed body takes every row the header and the prompt did not reserve, exactly as `bodyRightRail` composes it. | The prototype's transcript window and Status Matrix both pad to the rows they were given, so the rail reads as one full column beside the transcript and the surface keeps a stable height across a child's first events. Budgeting the body against its content instead was tried and reverted: it shrank the rail mid-run and produced a surface the design record does not describe. |
 | §2.6's transcript is `child-overlay-pi-native.ts`, a direct port of `renderPiNative` over `PiChildTranscriptEntry`. Pi's own native message components are NOT used for this pane. | Pi's components paint the HOST's transcript: they carry its shell-integration markers, follow its own width contract, and emit no queue, status, retry or tool-outcome row at all. Mounting them inside the inspector produced neither the prototype's design nor half of what the child was doing. The port keeps the glyph gutter, the `⎿` continuation, the reasoning SUMMARY and the streaming caret, and adds only the two things a real child forces: a per-family row budget, and `safeTrim` / `stripPathLike` on every untrusted value. |
 | §2.7's rail projects LIFECYCLE and WORK from the transcript reducer, and falls back to the descriptor only for facts no event reported. | The descriptor is a snapshot taken when the reader opened the child and is refreshed exactly once, at settlement. Projecting the rail from it printed `—` for every WORK fact for the whole life of a run, and froze queue depth, turn and tokens at their open-time values. The reducer is fed by `applyLiveEvent` and rebuilt from replay steps, so a live stream and a replayed window reach identical rail facts. Unknown still prints `—`; nothing is estimated. |

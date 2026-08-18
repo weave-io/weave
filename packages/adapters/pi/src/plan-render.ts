@@ -17,12 +17,24 @@
  *   reason this surface cannot leak it.
  *
  * NARROW LADDER (measured, never guessed)
+ *   Ported tier for tier from `renderPlanRailWidget` in
+ *   `prototypes/weave-pi-tui-grilling.ts`, which §4 of
+ *   `docs/specs/33-spec-pi-adapter/33-weave-ui-design.md` makes normative:
+ *
+ *   | tier  | mark      | `cycle` word | plan name | marks row  | `next` row |
+ *   | wide  | `◆ WEAVE` | yes          | yes       | dots + n/N | yes        |
+ *   | mid   | `◆ WEAVE` | yes          | yes       | dots + n/N | yes        |
+ *   | tight | `◆ WEAVE` | no           | yes       | dots + n/N | no         |
+ *   | micro | `◆`       | no           | no        | n/N        | no         |
+ *
  *   The selected agent name and the active task text survive to the narrowest
- *   supported tier. Everything else leaves in one fixed order, one drop per
- *   measured width band: the plan name goes first, then the `next` row, then
- *   the word `cycle` from the `Alt+A` hint. `Alt+A` itself is the last hint
- *   standing. {@link joinFit} enforces the same order inside row 1 for any
- *   width, so a long agent name degrades the header rather than the identity.
+ *   supported tier. The plan IDENTITY survives every tier but `micro`, because
+ *   §4.5's "a narrowing terminal surrenders the plan before the key" is
+ *   {@link joinFit}'s job — the plan is dropped when it does not FIT, not
+ *   because the band changed — while the `Alt+A` hint sheds its descriptive
+ *   word at `tight`. {@link joinFit} enforces the priority order inside row 1
+ *   for any width, so a long agent name degrades the header rather than the
+ *   identity.
  *
  * Nothing here decides *which* plan is active: callers resolve that once
  * through `active-plan-ui-state.ts` and hand the result to
@@ -106,19 +118,29 @@ export function planRailTier(width: number): PlanRailTier {
   return "micro";
 }
 
-/** The plan name survives only in the widest band. It is the first to go. */
+/**
+ * The plan name leaves the header only at `micro`
+ * (`tier === "micro" ? "" : p.muted(f.plan)` in the prototype).
+ *
+ * At every wider band it is offered to {@link joinFit}, which drops it when
+ * the measured row cannot hold it. Hiding it by BAND instead surrendered the
+ * plan at `mid` even in a terminal with room for it.
+ */
 function showsPlanName(tier: PlanRailTier): boolean {
-  return tier === "wide";
+  return tier !== "micro";
 }
 
-/** The `next` row goes after the plan name and before the word `cycle`. */
+/** The `next` row leaves at `tight` (`tier === "micro" || tier === "tight"`). */
 function showsNextRow(tier: PlanRailTier): boolean {
   return tier === "wide" || tier === "mid";
 }
 
-/** The descriptive word leaves the hint last; the `Alt+A` key never does. */
+/**
+ * The descriptive word leaves the hint at `tight`; the `Alt+A` key never does
+ * (`tier === "wide" || tier === "mid" ? \`${key} cycle\` : key`).
+ */
 function showsCycleWord(tier: PlanRailTier): boolean {
-  return tier !== "micro";
+  return tier === "wide" || tier === "mid";
 }
 
 /**
@@ -283,10 +305,16 @@ function renderCycleHint(
 /**
  * Row 2: spaced task marks and the ordinal.
  *
- * The marks are the first thing this row gives up: at the narrowest band, and
- * whenever the marks would not fit beside the ordinal, the position is stated
- * as `3/8` alone rather than as a truncated row of dots that would misreport
- * the plan's length.
+ * The marks are the first thing this row gives up: at the narrowest band the
+ * position is stated as `3/8` alone, exactly as the prototype's `tier ===
+ * "micro" ? p.acc(f.progress) : …` does.
+ *
+ * The measured fallback beside it is production's own, and §5 of the design
+ * record names it: the prototype's demo plan is a fixed eight tasks, so its
+ * `cell()` clip is never reached, while a real plan may contribute up to
+ * {@link PLAN_RAIL_MAX_MARKS} marks and a clipped row of dots would misreport
+ * how long the plan is. Stating the ordinal alone is the same honesty rule the
+ * rest of the rail follows.
  */
 function renderMarksRow(
   plan: PlanRailPlanFacts,
