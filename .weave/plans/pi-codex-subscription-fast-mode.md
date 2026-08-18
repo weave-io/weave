@@ -246,7 +246,7 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
   - **Acceptance**:
     - All commands exit 0 with no new warnings attributable to this change.
 
-- [ ] 11. Real-harness verification (adapter-verification five stages)
+- [x] 11. Real-harness verification (adapter-verification five stages)
   - **What**: Prove install, load, readiness, and live fast behavior in a fresh interactive Pi TUI per `docs/testing/adapter-verification.md`, and record the evidence.
   - **Depends on**: Task 10.
   - **Implementation outline**:
@@ -260,7 +260,24 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
     - If live verification cannot run, report the missing proof as a blocker; do not claim completion.
   - **Acceptance**:
     - Evidence bundle (digests, health output, sanitized wire/headers proof, terminal states, lease check) recorded; completion claim only with all five stages.
-  - **Result (2026-08-18): blocked.** Stages 1–4 pass; stage 5 fails. Evidence:
+  - **Result (2026-08-18): pass.** All five stages re-run from a clean build at HEAD `19c2b9a`
+    after the host-subpath remediation. Evidence:
+    [`.weave/evidence/pi-codex-subscription-fast-mode-task11.md`](../evidence/pi-codex-subscription-fast-mode-task11.md)
+    §9. `verify:pi-host-singleton` prints PASS with all four closed specifiers proven, the codex
+    provider subpath among them; a fresh interactive TUI reports `ready`, `health-only: false`,
+    and `host runtime: single-copy; redirected 4`. Every fast-declared attempt — primary, ordinary
+    delegated child, and direct workflow step — carries `service_tier: "priority"` **and**
+    `originator: codex_cli_rs` **and** a shape-valid `x-codex-routing-hint` on the same outgoing
+    request, with no body-only partial anywhere. The honest terminal is
+    `not-confirmed (codex-sub-06, response-proof-unavailable, openai-service-tier=ambiguous)` in
+    both `/weave:status` and the durable journal; `applied` is never claimed. A bounded diagnostic
+    showed why: this backend's first SSE event completes ~96–115 KiB into the body, past the
+    sniffer's 64 KiB ceiling, and reports `service_tier: "auto"` rather than `"default"`, so no
+    genuine priority evidence exists. The no-intent control leaves over a WebSocket carrying
+    `originator: pi`, no routing hint, and no Weave control; the gateway control reports
+    `transport-not-first-party` and passes through natively. Both children settled, no child
+    process remained, and the Runtime Store reported no active lease.
+  - **Earlier result (2026-08-18, superseded): blocked.** Stages 1–4 pass; stage 5 fails. Evidence:
     [`.weave/evidence/pi-codex-subscription-fast-mode-task11.md`](../evidence/pi-codex-subscription-fast-mode-task11.md).
     A fast-declared codex generation put `service_tier: "priority"` on the wire without the routing
     header pair (a partial fast request, forbidden by rule 8) and reported
