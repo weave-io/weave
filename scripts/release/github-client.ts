@@ -262,6 +262,16 @@ export type GreenMainHeadBounds = {
   -readonly [Key in keyof typeof GREEN_MAIN_HEAD_BOUNDS]: number;
 };
 
+/** Bounds for every pull-request collection; Link pagination is fail-closed. */
+export const PULL_REQUEST_BOUNDS = {
+  pageSize: 100,
+  maxPages: 3,
+} as const;
+
+export type PullRequestBounds = {
+  -readonly [Key in keyof typeof PULL_REQUEST_BOUNDS]: number;
+};
+
 export interface GitHubRestClientOptions {
   /**
    * Precise required-check policy. When set, the client does not read branch
@@ -269,6 +279,7 @@ export interface GitHubRestClientOptions {
    */
   requiredChecks?: readonly GitHubRequiredCheck[];
   greenHeadBounds?: Partial<GreenMainHeadBounds>;
+  pullRequestBounds?: Partial<PullRequestBounds>;
 }
 
 export interface GitHubPullRequestClient {
@@ -325,6 +336,7 @@ export class GitHubRestClient
 {
   private cachedRepositoryId: string | undefined;
   private readonly greenHeadBounds: GreenMainHeadBounds;
+  private readonly pullRequestBounds: PullRequestBounds;
 
   constructor(
     private readonly repository: string,
@@ -336,6 +348,10 @@ export class GitHubRestClient
     this.greenHeadBounds = {
       ...GREEN_MAIN_HEAD_BOUNDS,
       ...options.greenHeadBounds,
+    };
+    this.pullRequestBounds = {
+      ...PULL_REQUEST_BOUNDS,
+      ...options.pullRequestBounds,
     };
   }
 
@@ -675,15 +691,12 @@ export class GitHubRestClient
   listOpenPullRequestsByLabel(
     label: string,
   ): ResultAsync<readonly GitHubPullRequestSummary[], GitHubError> {
-    const path = "/pulls?state=open&per_page=100";
-    return this.requestJson(path).andThen((value) => {
-      if (!Array.isArray(value)) return errAsync(invalidResponse(path));
-      const pulls = value.map(parsePullRequest);
-      if (pulls.some((pull) => pull === undefined))
-        return errAsync(invalidResponse(path));
-      const summaries = pulls as GitHubPullRequestSummary[];
-      return okAsync(summaries.filter((pull) => pull.labels.includes(label)));
-    });
+    const path = `/pulls?state=open&per_page=${this.pullRequestBounds.pageSize}`;
+    return this.collectPages(
+      path,
+      (value, pagePath) => parsePullRequestPage(value, pagePath),
+      this.pullRequestBounds,
+    ).map((pulls) => pulls.filter((pull) => pull.labels.includes(label)));
   }
 
   /**
@@ -699,18 +712,14 @@ export class GitHubRestClient
     state: GitHubPullRequestState,
   ): ResultAsync<readonly GitHubPullRequestSummary[], GitHubError> {
     const owner = this.repository.split("/")[0] ?? "";
-    const path = `/pulls?state=${encodeURIComponent(state)}&per_page=100&head=${encodeURIComponent(`${owner}:${headRef}`)}`;
-    return this.requestJson(path).andThen((value) => {
-      if (!Array.isArray(value)) return errAsync(invalidResponse(path));
-      const pulls = value.map(parsePullRequest);
-      if (pulls.some((pull) => pull === undefined))
-        return errAsync(invalidResponse(path));
-      return okAsync(
-        (pulls as GitHubPullRequestSummary[]).filter(
-          (pull) => pull.headRef === headRef && pull.state === state,
-        ),
-      );
-    });
+    const path = `/pulls?state=${encodeURIComponent(state)}&per_page=${this.pullRequestBounds.pageSize}&head=${encodeURIComponent(`${owner}:${headRef}`)}`;
+    return this.collectPages(
+      path,
+      (value, pagePath) => parsePullRequestPage(value, pagePath),
+      this.pullRequestBounds,
+    ).map((pulls) =>
+      pulls.filter((pull) => pull.headRef === headRef && pull.state === state),
+    );
   }
 
   createPullRequest(
@@ -1025,11 +1034,12 @@ export class GitHubRestClient
       value: unknown,
       path: string,
     ) => Result<{ items: readonly T[]; totalCount?: number }, GitHubError>,
+    bounds: { maxPages: number } = this.greenHeadBounds,
   ): ResultAsync<readonly T[], GitHubError> {
     return fromAsync(async () => {
       const collected: T[] = [];
       let url: string | null = this.repoUrl(startPath);
-      for (let page = 1; page <= this.greenHeadBounds.maxPages; page += 1) {
+      for (let page = 1; page <= bounds.maxPages; page += 1) {
         if (url === null) break;
         const pageDocument: Result<
           { value: unknown; nextUrl: string | null },
@@ -1051,12 +1061,9 @@ export class GitHubRestClient
             ),
           );
         url = pageDocument.value.nextUrl;
-        if (url !== null && page === this.greenHeadBounds.maxPages)
+        if (url !== null && page === bounds.maxPages)
           return err(
-            truncatedResponse(
-              url,
-              `exceeded ${this.greenHeadBounds.maxPages} pages`,
-            ),
+            truncatedResponse(url, `exceeded ${bounds.maxPages} pages`),
           );
       }
       return ok(collected);
@@ -1290,6 +1297,17 @@ function parseReleaseAsset(value: unknown): GitHubReleaseAsset | undefined {
     size: value.size,
     digest: value.digest,
   };
+}
+
+function parsePullRequestPage(
+  value: unknown,
+  operation: string,
+): Result<{ items: readonly GitHubPullRequestSummary[] }, GitHubError> {
+  if (!Array.isArray(value)) return err(invalidResponse(operation));
+  const pulls = value.map(parsePullRequest);
+  if (pulls.some((pull) => pull === undefined))
+    return err(invalidResponse(operation));
+  return ok({ items: pulls as readonly GitHubPullRequestSummary[] });
 }
 
 function parsePullRequest(
