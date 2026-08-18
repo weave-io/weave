@@ -1,0 +1,5 @@
+name: seam-leak-workflow-run
+jobs:
+  leak:
+    steps:
+      - run: bun scripts/release/__tests__/fixtures/local-registry/deprecation-seam.ts

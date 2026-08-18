@@ -1,0 +1,6 @@
+{
+  "name": "@weaveio/seam-leak-root-script",
+  "scripts": {
+    "release:leak": "bun scripts/release/__tests__/fixtures/local-registry/deprecation-seam.ts"
+  }
+}

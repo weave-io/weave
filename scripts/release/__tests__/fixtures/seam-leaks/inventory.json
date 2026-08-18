@@ -1,0 +1,5 @@
+{
+  "path": "scripts/release/__tests__/fixtures/local-registry/deprecation-seam.ts",
+  "role": "oidc-publish",
+  "rationale": "Synthetic leak fixture for the inventory root class."
+}

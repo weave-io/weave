@@ -1,0 +1,8 @@
+{
+  "entries": [
+    {
+      "source": "scripts/release/__tests__/fixtures/local-registry/deprecation-seam.ts",
+      "output": "dist/leak.js"
+    }
+  ]
+}
