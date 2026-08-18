@@ -133,15 +133,36 @@ user-authorized paths may set it: `/weave:start`, from the plan the user
 selected and confirmed, and one direct interactive message that explicitly asks
 for exactly one contained `.weave/plans/<name>.md` to be executed.
 
-The direct path is parsed by a closed grammar, not by searching for keywords.
-The message must be within a bounded length; the clause immediately before the
-plan path must be, in full, an optional lead-in (`please`, `let's`, `go ahead
-and`, …), one execution verb (`execute`, `run`, `start`, `implement`,
-`continue`, `resume`, `finish`, `work through`, …), and optional connectors
-(`the`, `this`, `plan`, `at`, `through`, …); and the name must be in this
-root's plan catalog with a readable snapshot. A question mark anywhere, a
-negation anywhere (`don't run …`, `run the tests, not …`), and any clause that
-is not an execution request all set nothing.
+The direct path is parsed by a closed grammar over the **whole message**, not
+by searching for keywords and not by reading only the clause beside the path.
+The message must be within a bounded length, and every token outside the plan
+path itself must be in one of four closed vocabularies, in this order:
+
+```
+<lead-in>* <execution verb> <connector>* PATH <trailer>*
+```
+
+- lead-ins: `please`, `now`, `then`, `first`, `let's`, `go ahead and`,
+  `i want you to`, `you should`, …
+- execution verbs: `execute`, `run`, `start`, `implement`, `continue`,
+  `resume`, `finish`, `complete`, `work through`, `carry out`, `pick up`
+- connectors: `the`, `this`, `plan`, `file`, `at`, `in`, `through`, …
+- trailers: `end to end`, `now`, `please`, `thanks`, `for me`, …
+
+One token outside those vocabularies rejects the message, and so does one
+character the grammar has no rule for — a colon, a period, a digit, a bullet,
+an angle quote, or a code fence before the path. That is what makes a
+quotation, an example, or an instruction *about* a request fail: `For example:
+run .weave/plans/alpha.md`, `Ignore this quoted sample: run …`, `> execute …`,
+and ` ```\nrun …\n``` ` all name a plan inside a sample rather than asking for
+one. A question mark anywhere, a negation anywhere (`don't run …`, `run the
+tests, not …`), and any trailing qualification (`… for example`, `… but only
+if it exists`) also set nothing. The grammar is total: every message reaches
+either one plan name or one typed rejection, and anything it does not accept
+falls back to `/weave:start`, which asks the user explicitly.
+
+A parse is still not authority to display: the name must also be in this
+root's plan catalog with a readable snapshot.
 
 A plan-path-like mention the parser will not accept rejects the **whole**
 message, even when a valid path sits beside it: a traversal, an absolute path,

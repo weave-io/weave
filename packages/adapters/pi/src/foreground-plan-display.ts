@@ -75,48 +75,183 @@ export type ForegroundPlanRequestRejection =
   | "no-execution-intent";
 
 /**
- * The closed grammar of the ONE clause that may move the rail.
+ * The closed grammar of a positive user request, over the WHOLE message.
  *
- * A message is a request to execute a plan when the clause immediately before
- * the plan path is, in full:
+ * A message asks for a plan to be executed when, and only when, every token
+ * outside the plan path itself is in one of four closed vocabularies, in this
+ * order:
  *
- *     [lead-in]* <execution verb> [connector]*
+ *     <lead-in>* <execution verb> <connector>* PATH <trailer>*
  *
- * and nothing else. Every part is a closed vocabulary, and the match is
- * ANCHORED at both ends of the clause, so a verb that merely occurs somewhere
- * in the sentence proves nothing. This is the difference between
- * `run .weave/plans/alpha.md` and `before you run anything, diff
- * .weave/plans/alpha.md`: the second one's clause is `before you run anything,
- * diff`, which the grammar does not accept.
+ * Nothing is inferred, nothing is scored, and no token is ignored: a single
+ * word outside the vocabularies rejects the message. That is the difference
+ * between `run .weave/plans/alpha.md` and `For example: run
+ * .weave/plans/alpha.md` — the second states `for`, `example` and `:` before
+ * the verb, none of which this grammar has a rule for, so it is not a request.
  *
- * The predecessor was a bare `\b(execute|run|start|…)\b` search anywhere in the
- * message. It accepted a review, a question, a plan mentioned in passing, and
- * a refusal, because all four can contain the word `run`.
+ * ## Why the whole message, and not the clause before the path
+ *
+ * The predecessor matched only the clause between the previous punctuation
+ * and the path. It therefore accepted every framing that ends in a colon or a
+ * comma: `For example: run …`, `Ignore this quoted sample: run …`, `The docs
+ * say: execute …`. All three name a plan inside a QUOTATION or an EXAMPLE, and
+ * all three left the clause `run` / `execute`, which the clause grammar
+ * accepted as the user's own instruction. Reading the whole message is what
+ * makes "the user asked for this" structural rather than positional.
+ *
+ * ## Total, closed, and unambiguous
+ *
+ * Total: every input reaches exactly one verdict — accepted, or one typed
+ * rejection. Closed: the four vocabularies below are the entire language, and
+ * a character outside the punctuation each part allows is a rejection rather
+ * than a separator to skip. Unambiguous: the head is parsed left to right,
+ * longest phrase first, with no backtracking, and the trailer is a set
+ * membership test per token, so there is no second reading of any message.
+ *
+ * Anything the grammar does not accept is not "maybe a request": the caller
+ * falls back to `/weave:start`, which asks the user explicitly.
  */
-const EXECUTION_LEAD_IN =
-  "(?:please|now|then|and|ok|okay|next|let'?s|lets|go\\s+ahead\\s+and|i\\s+want\\s+you\\s+to|i'?d\\s+like\\s+you\\s+to|you\\s+should)";
-const EXECUTION_VERB =
-  "(?:execute|run|start|implement|continue|resume|finish|complete|work\\s+through|carry\\s+out|pick\\s+up)";
-const EXECUTION_CONNECTOR =
-  "(?:the|this|that|our|my|its|it|plan|file|at|in|on|with|from|through|path|located|stored|working|work|executing|running)";
-const EXECUTION_CLAUSE_RE = new RegExp(
-  `^(?:${EXECUTION_LEAD_IN}\\s+)*${EXECUTION_VERB}(?:\\s+${EXECUTION_CONNECTOR})*\\s*$`,
-  "iu",
-);
+type PhraseVocabulary = readonly (readonly string[])[];
+
+/** Words that may precede the verb. */
+const EXECUTION_LEAD_INS: PhraseVocabulary = [
+  ["i", "want", "you", "to"],
+  ["i'd", "like", "you", "to"],
+  ["go", "ahead", "and"],
+  ["you", "should"],
+  ["let's"],
+  ["lets"],
+  ["please"],
+  ["now"],
+  ["then"],
+  ["and"],
+  ["ok"],
+  ["okay"],
+  ["next"],
+  ["first"],
+];
+
+/** The verbs that ask for execution. Nothing else is an execution request. */
+const EXECUTION_VERBS: PhraseVocabulary = [
+  ["work", "through"],
+  ["carry", "out"],
+  ["pick", "up"],
+  ["execute"],
+  ["run"],
+  ["start"],
+  ["implement"],
+  ["continue"],
+  ["resume"],
+  ["finish"],
+  ["complete"],
+];
+
+/** Words that may sit between the verb and the path. */
+const EXECUTION_CONNECTORS: ReadonlySet<string> = new Set([
+  "the",
+  "this",
+  "that",
+  "our",
+  "my",
+  "its",
+  "it",
+  "plan",
+  "file",
+  "at",
+  "in",
+  "on",
+  "with",
+  "from",
+  "through",
+  "path",
+  "located",
+  "stored",
+  "working",
+  "work",
+  "executing",
+  "running",
+]);
+
+/**
+ * Words that may follow the path.
+ *
+ * Deliberately narrow: it covers how a user finishes an instruction (`end to
+ * end`, `please`, `now`, `thanks`) and nothing that would reframe the sentence.
+ * `for example`, `as a sample`, `if`, `but` and every other framing word are
+ * absent, so a trailing qualification rejects the message instead of being
+ * read as emphasis.
+ */
+const EXECUTION_TRAILERS: ReadonlySet<string> = new Set([
+  "end",
+  "to",
+  "now",
+  "then",
+  "and",
+  "yes",
+  "please",
+  "thanks",
+  "thank",
+  "you",
+  "for",
+  "me",
+  "us",
+  "completely",
+  "fully",
+  "in",
+  "full",
+  "completion",
+  "step",
+  "by",
+  "the",
+  "plan",
+  "file",
+  "again",
+  "right",
+  "away",
+  "asap",
+  "today",
+]);
+
+/**
+ * The quote or bracket a path may be OPENED with.
+ *
+ * It belongs to the path, not to the sentence, so it is stripped from the end
+ * of the head and is admitted nowhere else. A fence, a quotation mark or a
+ * bracket earlier in the head frames the path as a sample rather than asking
+ * for it (` ```\nrun …\n``` `, `"execute …" is what you told me`), and the
+ * tokenizer rejects the message instead of stepping over it.
+ */
+const HEAD_PATH_OPENER_RE = /[\s"'`([]+$/u;
+
+/**
+ * The only separator between words BEFORE the path: whitespace or a comma.
+ *
+ * A colon, a period, a digit, a bullet, an angle quote or any other character
+ * is not a separator this grammar knows, so `e.g. run …`, `> execute …`,
+ * `1. run …` and `Example: run …` are rejected rather than tokenized.
+ *
+ * An apostrophe is deliberately NOT a separator: it is a letter inside `let's`
+ * and `i'd`, and a stray one around a word is trimmed when the word is closed.
+ */
+const HEAD_WORD_SEPARATOR_RE = /[\s,]/u;
+
+/** The characters a head word may be built from. */
+const HEAD_WORD_CHARACTER_RE = /['a-z]/iu;
+
+/** Characters that separate words AFTER the path, including sentence-final ones. */
+const TRAILER_SEPARATOR_RE = /[\s"'`()[\],.;:!\u2014\u2013-]+/u;
 
 /**
  * Words that make a message something other than a request, wherever they
  * appear.
  *
  * A negation can sit far from the verb (`run the tests, not
- * .weave/plans/alpha.md`), so unlike the clause grammar this is a whole-input
- * veto. It is a veto and never an acceptance: it can only ever refuse.
+ * .weave/plans/alpha.md`), so unlike the grammar this is a whole-input veto.
+ * It is a veto and never an acceptance: it can only ever refuse, so it narrows
+ * the closed grammar rather than widening it.
  */
 const NEGATION_RE =
   /\b(?:no|not|never|dont|don't|doesn't|didn't|won't|wouldn't|shouldn't|cannot|can't|stop|cancel|abort|skip|avoid|without|instead|unless)\b/iu;
-
-/** Clause boundaries. A `.` counts only when it ends a word, never inside a path. */
-const CLAUSE_BOUNDARY_RE = /[\n;:,!?]|\.(?=\s)/gu;
 
 /**
  * One contained plan path: an optional `./`, then exactly `.weave/plans/`,
@@ -181,64 +316,139 @@ export function parseForegroundPlanRequest(
   }
   if (!isSafeForegroundPlanName(first.name)) return err("unsafe-plan-path");
 
-  if (!isExecutionRequest(text, first.index)) {
+  if (!isExecutionRequest(text, matches)) {
     return err("no-execution-intent");
   }
   return ok(first.name);
 }
 
 /**
- * True when the message asks, positively and unambiguously, for the plan at
- * `pathIndex` to be executed.
+ * True when the WHOLE message is a positive request to execute the plan.
+ *
+ * The message is read as `head PATH (gap PATH)* tail`, where every path has
+ * already been proven to name the same plan. The head must parse as
+ * `lead-in* verb connector*`, and every gap and the tail must consist only of
+ * trailer words. Nothing else is admitted.
  */
-function isExecutionRequest(text: string, pathIndex: number): boolean {
+function isExecutionRequest(
+  text: string,
+  matches: readonly PlanPathMatch[],
+): boolean {
   // A question is not an instruction, however many execution verbs it holds.
   if (text.includes("?")) return false;
   if (NEGATION_RE.test(text)) return false;
-  return EXECUTION_CLAUSE_RE.test(clauseBefore(text, pathIndex));
-}
-
-/** The clause the plan path belongs to: the text after the last boundary. */
-function clauseBefore(text: string, pathIndex: number): string {
-  const head = text.slice(0, pathIndex);
-  const boundaries = new RegExp(
-    CLAUSE_BOUNDARY_RE.source,
-    CLAUSE_BOUNDARY_RE.flags,
-  );
-  let start = 0;
-  let match = boundaries.exec(head);
-  while (match !== null) {
-    start = match.index + match[0].length;
-    match = boundaries.exec(head);
+  const first = matches[0];
+  if (first === undefined) return false;
+  if (!isExecutionHead(text.slice(0, first.index))) return false;
+  let cursor = first.index + first.length;
+  for (const match of matches.slice(1)) {
+    if (!isExecutionTrailer(text.slice(cursor, match.index))) return false;
+    cursor = match.index + match.length;
   }
-  return (
-    head
-      .slice(start)
-      .replace(/\s+/gu, " ")
-      // The opening quote or bracket a path may be wrapped in belongs to the
-      // path, not to the clause: `run \`` is still `run`.
-      .replace(/[\s"'`([]+$/u, "")
-      .trim()
-  );
+  return isExecutionTrailer(text.slice(cursor));
 }
 
-/** Every accepted plan path, with the offset its clause ends at. */
-function collectPlanPathMatches(
-  text: string,
-): readonly { readonly name: string; readonly index: number }[] {
+/**
+ * Tokenizes the text before the path into lowercase words.
+ *
+ * `undefined` — not an empty list — when the head holds a character this
+ * grammar has no rule for, so an unknown separator rejects the message instead
+ * of silently splitting it.
+ */
+function tokenizeExecutionHead(head: string): string[] | undefined {
+  const body = head.replace(HEAD_PATH_OPENER_RE, "");
+  const tokens: string[] = [];
+  let word = "";
+  const flush = (): void => {
+    const trimmed = word.replace(/^'+|'+$/gu, "");
+    if (trimmed !== "") tokens.push(trimmed);
+    word = "";
+  };
+  for (const raw of body) {
+    // A typographic apostrophe is the same character to a reader.
+    const char = raw === "\u2019" ? "'" : raw;
+    if (HEAD_WORD_SEPARATOR_RE.test(char)) {
+      flush();
+      continue;
+    }
+    if (HEAD_WORD_CHARACTER_RE.test(char)) {
+      word += char.toLowerCase();
+      continue;
+    }
+    return undefined;
+  }
+  flush();
+  return tokens;
+}
+
+/** Matches one phrase of a vocabulary at `index`, longest phrase first. */
+function matchPhrase(
+  tokens: readonly string[],
+  index: number,
+  vocabulary: PhraseVocabulary,
+): number {
+  for (const phrase of vocabulary) {
+    if (phrase.every((word, offset) => tokens[index + offset] === word)) {
+      return phrase.length;
+    }
+  }
+  return 0;
+}
+
+/** True when the head is exactly `lead-in* verb connector*`. */
+function isExecutionHead(head: string): boolean {
+  const tokens = tokenizeExecutionHead(head);
+  if (tokens === undefined) return false;
+  let index = 0;
+  for (;;) {
+    const leadIn = matchPhrase(tokens, index, EXECUTION_LEAD_INS);
+    if (leadIn === 0) break;
+    index += leadIn;
+  }
+  const verb = matchPhrase(tokens, index, EXECUTION_VERBS);
+  if (verb === 0) return false;
+  index += verb;
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token === undefined || !EXECUTION_CONNECTORS.has(token)) return false;
+    index += 1;
+  }
+  return true;
+}
+
+/** True when every word after the path is a trailer word. */
+function isExecutionTrailer(tail: string): boolean {
+  for (const token of tail.split(TRAILER_SEPARATOR_RE)) {
+    if (token === "") continue;
+    if (!EXECUTION_TRAILERS.has(token.toLowerCase())) return false;
+  }
+  return true;
+}
+
+/** One accepted plan path: its name, where it starts, and how long it is. */
+interface PlanPathMatch {
+  readonly name: string;
+  readonly index: number;
+  readonly length: number;
+}
+
+/** Every accepted plan path, with the exact span it occupies. */
+function collectPlanPathMatches(text: string): readonly PlanPathMatch[] {
   // A fresh regex per call: a shared /g literal carries `lastIndex` between
   // calls and would skip the first match of every second message.
   const pattern = new RegExp(PLAN_PATH_RE.source, PLAN_PATH_RE.flags);
-  const found: { name: string; index: number }[] = [];
+  const found: PlanPathMatch[] = [];
   let match = pattern.exec(text);
   while (match !== null) {
     const name = match[1];
-    // The match consumes one leading separator; the clause ends where the path
+    // The match consumes one leading separator; the head ends where the path
     // itself begins.
     if (name !== undefined) {
+      const length = matchedPathLength(match[0]);
       found.push({
         name,
-        index: match.index + (match[0].length - matchedPathLength(match[0])),
+        index: match.index + (match[0].length - length),
+        length,
       });
     }
     match = pattern.exec(text);

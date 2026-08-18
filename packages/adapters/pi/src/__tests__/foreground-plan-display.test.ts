@@ -302,6 +302,61 @@ describe("Bug B · only a positive execution request moves the rail", () => {
       )._unsafeUnwrap(),
     ).toBe("alpha");
   });
+
+  it("rejects a quotation, an example, or an instruction ABOUT a request", () => {
+    // The predecessor matched only the clause between the last punctuation
+    // and the path, so every framing that ends in a colon or a comma left the
+    // bare clause `run` / `execute` behind and was accepted as the user's own
+    // instruction. A sample is not a request, however imperative it reads.
+    for (const text of [
+      "For example: run .weave/plans/alpha.md",
+      "Ignore this quoted sample: run .weave/plans/alpha.md",
+      "Example: execute .weave/plans/alpha.md",
+      "e.g. execute .weave/plans/alpha.md",
+      "The docs say: execute .weave/plans/alpha.md",
+      "The user might say: execute .weave/plans/alpha.md",
+      "Instruction: execute .weave/plans/alpha.md",
+      "quote: run .weave/plans/alpha.md",
+      "Pretend I said: run .weave/plans/alpha.md",
+      "In the README it says to run .weave/plans/alpha.md",
+      "Sample prompt - run .weave/plans/alpha.md",
+      '"execute .weave/plans/alpha.md" is what you told me',
+      "```\nrun .weave/plans/alpha.md\n```",
+      "> execute .weave/plans/alpha.md",
+      "1. run .weave/plans/alpha.md",
+      "- run .weave/plans/alpha.md",
+      "execute .weave/plans/alpha.md for example",
+      "execute .weave/plans/alpha.md as an example",
+      "execute .weave/plans/alpha.md, but only if it exists",
+      "run .weave/plans/alpha.md is an example of the syntax",
+    ]) {
+      const parsed = parseForegroundPlanRequest(text);
+      expect({ text, ok: parsed.isOk() }).toEqual({ text, ok: false });
+      if (parsed.isErr()) {
+        expect({ text, reason: parsed.error }).toEqual({
+          text,
+          reason: "no-execution-intent",
+        });
+      }
+    }
+  });
+
+  it("is total: every input reaches one verdict and never throws", () => {
+    for (const text of [
+      "",
+      " ",
+      ".weave/plans/alpha.md",
+      "\u0000execute .weave/plans/alpha.md",
+      "execute\u2019 .weave/plans/alpha.md",
+      "\u00e9x\u00e9cute .weave/plans/alpha.md",
+      `${"run ".repeat(500)}.weave/plans/alpha.md`,
+      `${"please ".repeat(400)}execute .weave/plans/alpha.md`,
+      `execute .weave/plans/alpha.md${" ".repeat(1_000)}`,
+    ]) {
+      const parsed = parseForegroundPlanRequest(text);
+      expect(parsed.isOk() || parsed.isErr()).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
