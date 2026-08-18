@@ -901,6 +901,11 @@ function leadChangesetId(entry: ChangelogEntry): string {
 // Envelope rendering and parsing
 // ---------------------------------------------------------------------------
 
+/** Returns the UTF-8 byte length used by the envelope carrier bound. */
+function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
 /** Renders the hidden ownership envelope a commit message or PR body carries. */
 export function renderReleasePrEnvelope(
   envelope: ReleasePrEnvelope,
@@ -913,10 +918,11 @@ export function renderReleasePrEnvelope(
     });
   const body = JSON.stringify(sortValue(parsed.data), null, 2);
   const text = `${COMMENT_OPEN} ${RELEASE_PR_ENVELOPE_MARKER}:${RELEASE_PR_ENVELOPE_SCHEMA_VERSION}\n${body}\n${COMMENT_CLOSE}`;
-  if (text.length > RELEASE_PR_BOUNDS.envelopeBytes)
+  const bytes = utf8ByteLength(text);
+  if (bytes > RELEASE_PR_BOUNDS.envelopeBytes)
     return err({
       type: "ReleasePrEnvelopeTooLarge",
-      bytes: text.length,
+      bytes,
       limit: RELEASE_PR_BOUNDS.envelopeBytes,
     });
   return ok(text);
@@ -931,10 +937,11 @@ export function renderReleasePrEnvelope(
 export function parseReleasePrEnvelope(
   text: string,
 ): Result<ReleasePrEnvelope, ReleasePrError> {
-  if (text.length > RELEASE_PR_BOUNDS.envelopeBytes)
+  const bytes = utf8ByteLength(text);
+  if (bytes > RELEASE_PR_BOUNDS.envelopeBytes)
     return err({
       type: "ReleasePrEnvelopeTooLarge",
-      bytes: text.length,
+      bytes,
       limit: RELEASE_PR_BOUNDS.envelopeBytes,
     });
   const blocks = collectEnvelopeBlocks(text);
