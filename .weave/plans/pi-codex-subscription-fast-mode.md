@@ -135,7 +135,7 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
     - Spec builds a coherent story: hook seam still unsupported; provider seam supported with exact rules; states table unchanged in vocabulary.
     - `bun run docs:check-links` passes.
 
-- [ ] 3. Pure routing + eligibility module (test-first)
+- [x] 3. Pure routing + eligibility module (test-first)
   - **What**: A pure module for routing resolution, the frozen model allowlist, and eligibility classification with bounded reasons.
   - **Files**: `packages/adapters/pi/src/codex-fast/routing.ts`, `packages/adapters/pi/src/__tests__/codex-fast-routing.test.ts`.
   - **Depends on**: Task 2.

@@ -589,6 +589,14 @@
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
   - _...18 more_
+- `packages/adapters/pi/src/codex-fast/routing.ts`
+  - function isSafeCodexModelId: (modelId) => modelId is string
+  - function findCodexFastAllowlistEntry: (modelId) => CodexFastAllowlistEntry | undefined
+  - function resolveCodexFastRouting: (input) => CodexFastRouting
+  - function classifyCodexFastEligibility: (input) => CodexFastEligibility
+  - type CodexFastAllowlistRuleId
+  - type CodexFastAllowlistEntry
+  - _...15 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
