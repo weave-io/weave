@@ -120,12 +120,20 @@ export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
     {
       id: "provider-fast-activation",
       description: "Request provider acceleration and report bounded evidence",
-      readiness: "unsupported",
-      runtimeStatus: "unsupported",
+      // A ceiling, not a claim. Exactly one mapping can request acceleration,
+      // and it cannot reach the top of the vocabulary on the pinned host, so
+      // `native` would be a lie and `unsupported` now understates what the
+      // wrapped provider really does. No static value can name the live
+      // state, so this entry declares no `runtimeStatus`: the reportable
+      // state comes from one correlated attempt and is read at runtime
+      // through `providerFastActivationState` and
+      // `effectiveProviderFastReadiness`, which may lower this ceiling and
+      // can never raise it.
+      readiness: "degraded",
       notes:
-        "Pi's public extension contract cannot bind an effective-transport proof or a response-body proof to the same prepared provider request, so the adapter sends no acceleration control and leaves every provider payload and header unchanged. Declared intent is reported as unsupported and agents still activate.",
+        "One mapping only: an agent that declares fast true and resolves to an allowlisted OpenAI Codex subscription model reached through the adapter's own wrapped codex provider on the first-party subscription transport. That wrapper owns the effective transport, the final request, and the same attempt's response, so it may request acceleration under the exact eligibility rules of the fast provider acceleration contract. The public OpenAI API and every other Pi provider stay unsupported: they send no acceleration control and their payloads and headers stay unchanged. The pinned host reports the same standard-speed response evidence for an accelerated request and for an untouched control, so a successful eligible request terminates at not-confirmed with a standard evidence outcome; applied needs same-attempt positive evidence that has never been observed here. Any eligibility failure is byte-identical passthrough with a bounded reason. This capability is optional: no state it reports changes readiness, health-only mode, or agent activation.",
       remediationHint:
-        "Keep reporting unsupported until the host exposes both the transport of one prepared request and correlated official response-body evidence for that same request.",
+        "Keep this ceiling at degraded while the subscription transport returns standard-speed evidence for accelerated and control requests alike. Raise it only on correlated same-attempt positive evidence, and return it to unsupported if a recheck of the mapping fails.",
     },
     {
       id: "idle-continuation",

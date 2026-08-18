@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 319 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~35,200 tokens. Without it, AI exploration would cost ~102,000 tokens. **Saves ~66,800 tokens per conversation.**
-> **Last scanned:** 2026-08-18 09:25 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 324 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~35,800 tokens. Without it, AI exploration would cost ~103,300 tokens. **Saves ~67,500 tokens per conversation.**
+> **Last scanned:** 2026-08-18 11:06 — re-run after significant changes
 
 ---
 
@@ -612,6 +612,46 @@
   - function truncateLatestOutput: (text) => string
   - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
   - _...20 more_
+- `packages/adapters/pi/src/codex-fast/attempt.ts`
+  - function createCodexFastAttempt: (eligibility) => CodexFastAttempt
+  - type CodexFastState
+  - type CodexFastReason
+  - type CodexFastPayloadDecision
+  - type CodexFastEvidenceKind
+  - type CodexFastEvidenceOutcome
+  - _...14 more_
+- `packages/adapters/pi/src/codex-fast/evidence-sniffer.ts`
+  - function createCodexServiceTierSniffer: (input) => Result<TransformStream<Uint8Array, Uint8Array>, CodexEvidenceSnifferError>
+  - type CodexEvidenceSnifferError
+  - type CodexEvidenceSnifferInput
+  - const CODEX_EVIDENCE_SCAN_BUDGET_BYTES
+  - const CODEX_STANDARD_SERVICE_TIER
+  - const CODEX_EVIDENCE_EVENT_CREATED
+  - _...1 more_
+- `packages/adapters/pi/src/codex-fast/provider.ts`
+  - function hasCodexSubscriptionAccountClaim: (apiKey) => boolean
+  - function wrapCodexProviderForFast: (native, intentPort, attemptSink) => Result<T, CodexFastWrapError>
+  - type CodexFastIntent
+  - type CodexFastIntentPort
+  - type CodexFastAttemptSink
+  - type CodexWrappableProvider
+  - _...2 more_
+- `packages/adapters/pi/src/codex-fast/register.ts`
+  - function isCodexFastHostVersionSupported: (version) => boolean
+  - function registerCodexFastProvider: (input) => ResultAsync<CodexFastRegistrationOutcome, CodexFastRegistrationFailure>
+  - type CodexFastRegistrationDegradation
+  - type CodexFastRegistrationFailure
+  - type CodexFastRegistrationOutcome
+  - type CodexFastRegistrationInput
+  - _...4 more_
+- `packages/adapters/pi/src/codex-fast/routing.ts`
+  - function isSafeCodexModelId: (modelId) => modelId is string
+  - function findCodexFastAllowlistEntry: (modelId) => CodexFastAllowlistEntry | undefined
+  - function resolveCodexFastRouting: (input) => CodexFastRouting
+  - function classifyCodexFastEligibility: (input) => CodexFastEligibility
+  - type CodexFastAllowlistRuleId
+  - type CodexFastAllowlistEntry
+  - _...15 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -711,7 +751,7 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
-  - _...13 more_
+  - _...15 more_
 - `packages/adapters/pi/src/foreground-plan-display.ts`
   - function parseForegroundPlanRequest: (text) => Result<string, ForegroundPlanRequestRejection>
   - function isSafeForegroundPlanName: (value) => value is string
@@ -751,21 +791,21 @@
   - function createDefaultPiHostProbePort: (input) => PiHostProbePort
   - _...11 more_
 - `packages/adapters/pi/src/host-module-loader.ts`
+  - function resolveHostModuleProvenance: (specifier, outcome) => PiHostModuleProvenance
   - function escapeExactPathRegExp: (value) => string
   - function exactPathLoadFilter: (exactPath) => RegExp
   - function deriveHostPackageRoot: (cliEntryPath) => Result<string,
   - function renderHostModuleProofLine: (outcome) => string
   - function maybeWriteHostModuleProofLine: (outcome, options?) => boolean
-  - function resolveHostModules: (env, options?) => ResultAsync<PiHostModuleOutcome, never>
-  - _...20 more_
+  - _...24 more_
 - `packages/adapters/pi/src/host-module-redirect.ts`
   - function hostEntrySpecifierFor: (specifier) => string
+  - function isPiHostModuleSpecifier: (value) => value is PiHostModuleSpecifier
   - function isSafeAbsoluteHostPath: (value) => boolean
   - function planHostModuleRedirect: (input) => Result<PiHostRedirectPlan, PiHostRedirectDiagnostic>
   - function renderHostReexportStub: (input) => string
   - function summarizeHostRedirect: (plan) => string
-  - interface PiHostSpecifierFacts
-  - _...13 more_
+  - _...15 more_
 - `packages/adapters/pi/src/message-update-carrier.ts`
   - function isRawReasoningAssistantEventType: (type) => boolean
   - function classifyPiMessageUpdate: (record) => PiMessageUpdateCarrier
@@ -883,13 +923,13 @@
   - interface PromptChunk
   - _...4 more_
 - `packages/adapters/pi/src/provider-fast-activation.ts`
+  - function isProviderFastRuleId: (value) => value is ProviderFastRuleId
+  - function projectCodexFastSnapshot: (snapshot) => ProviderFastPublicSnapshot | undefined
   - function classifyProviderFastIntent: (intent) => ProviderFastClassification
-  - type ProviderFastUnsupportedReason
   - type ProviderFastState
+  - type ProviderFastReason
   - type ProviderFastEvidenceKind
-  - type ProviderFastEvidenceOutcome
-  - type ProviderFastPublicSnapshot
-  - _...8 more_
+  - _...13 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -969,7 +1009,7 @@
   - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
   - function createPiTelemetryLogger: (options) => ResultAsync<
   - function createPiTelemetry: (options) => ResultAsync<
-  - _...21 more_
+  - _...22 more_
 - `packages/adapters/pi/src/thread-sources.ts`
   - function openPiThreadSources: (input) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>
   - function createProductionPiThreadSourceFactory: (options) => PiThreadSourceFactory
@@ -2065,7 +2105,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 359 test files found
+> 362 test files found
 
 ---
 

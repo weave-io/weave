@@ -18,11 +18,27 @@ import { err, ok, type Result } from "neverthrow";
  */
 const EXPECTED_HOST_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
-/** Closed set of Pi packages the adapter must share with the host process. */
+/**
+ * The one pi-ai subpath this adapter imports directly.
+ *
+ * It is a distinct member of the closed proof set rather than a consequence
+ * of the bare `@earendil-works/pi-ai` entry: a subpath import resolves to its
+ * own file, so redirecting the package entry proves nothing about it. The
+ * codex-fast wrapper depends on `options.fetch` support that only exists in
+ * the host's copy, so this exact module must be proven, by itself.
+ */
+export const CODEX_PROVIDER_SUBPATH_SPECIFIER =
+  "@earendil-works/pi-ai/providers/openai-codex";
+
+/**
+ * Closed set of Pi host modules the adapter must share with the host
+ * process: three package entries plus the one proven subpath import.
+ */
 export const PI_HOST_MODULE_SPECIFIERS = [
   "@earendil-works/pi-coding-agent",
   "@earendil-works/pi-ai",
   "@earendil-works/pi-tui",
+  CODEX_PROVIDER_SUBPATH_SPECIFIER,
 ] as const;
 
 export type PiHostModuleSpecifier = (typeof PI_HOST_MODULE_SPECIFIERS)[number];
@@ -126,7 +142,8 @@ export type PiHostRedirectDiagnostic =
 
 /**
  * Host specifier the override must load. Bare `pi-ai` maps to the compat
- * entry; the other two keep their own names.
+ * entry; every other member — including the codex provider subpath — keeps
+ * its own name and is resolved from the proven host root.
  */
 export function hostEntrySpecifierFor(
   specifier: PiHostModuleSpecifier,
@@ -140,6 +157,13 @@ export function hostEntrySpecifierFor(
  * component. Matches {@link validateAbsoluteSpawnPath} in `rpc-child.ts`,
  * plus an explicit length bound.
  */
+/** Whether a string is one of the closed host-module specifiers. */
+export function isPiHostModuleSpecifier(
+  value: string,
+): value is PiHostModuleSpecifier {
+  return (PI_HOST_MODULE_SPECIFIERS as readonly string[]).includes(value);
+}
+
 export function isSafeAbsoluteHostPath(value: string): boolean {
   if (value.length === 0 || value.length > MAX_HOST_MODULE_PATH_LENGTH) {
     return false;

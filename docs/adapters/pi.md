@@ -60,17 +60,73 @@ Alt+A cycles healthy `primary` and `all` descriptors in materialization order wh
 
 The badge tints the agent name with a stable background drawn only from theme background tokens Pi itself supports. The choice is deterministic: the normalized agent name (trimmed, whitespace-collapsed, case-folded) always selects the same token in every session and on every machine, with no stored assignment, so you learn one color per agent. Distinct agents may share a color; the same agent never changes color. The agent name keeps its accent foreground. If the active theme exposes no background helper, the badge renders foreground-only — accent, bold agent name, no tint — rather than substituting a different color.
 
-### Provider acceleration is unsupported
+### Provider acceleration
 
-A descriptor's `fast true` reaches Pi as neutral intent, and the adapter carries it on the active primary and inside authenticated ordinary and direct-step child bootstraps. It is never translated into a provider control.
+A descriptor's `fast true` reaches Pi as neutral intent, and the adapter carries it on the active primary and inside authenticated ordinary and direct-step child bootstraps. Pi translates that intent into a provider control in exactly one mapping.
+
+| Mapping | Status |
+| --- | --- |
+| OpenAI Codex subscription, the ChatGPT-backed `openai-codex` provider | Mapped through Weave's own wrapped provider |
+| Public OpenAI API Fast/Priority, the `openai` provider | Unsupported |
+| Every other Pi provider | Unsupported |
+
+These are two different OpenAI contracts, and they share no fact, allowlist entry, request field, or response value. See the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#openai-codex-subscription-fast-mode-chatgpt-backend).
+
+#### The hook seam stays unsupported
 
 Pi's public extension contract exposes `before_provider_headers`, `before_provider_request`, and `after_provider_response`, but none of them binds the effective transport of one prepared request or that request's response body to the same attempt. `ctx.model.baseUrl` is declared configuration that auth resolution may replace, and `ctx.modelRegistry.getProviderAuth()` performs a fresh resolution rather than reporting the resolution the held request used. Without that proof an allowlist match would be a guess, so even `requested` would be untrue.
 
-The adapter therefore registers **no** provider request, header, or response handler. Every provider payload reference and header map is left exactly as other extensions left it; no `service_tier`, `speed`, or `anthropic-beta` value is ever written. The `provider-fast-activation` capability declares `unsupported` with runtime status `unsupported` and the bounded reason `harness-seam-unavailable`.
+The adapter therefore registers **no** provider request, header, or response handler. Every provider payload reference and header map is left exactly as other extensions left it; no `service_tier`, `speed`, or `anthropic-beta` value is ever written there. Intent that reaches no eligible Codex attempt reports `unsupported` with the bounded reason `harness-seam-unavailable`.
 
-The adapter records that outcome when a turn settles (`agent_settled`). A bounded in-memory dedupe window collapses repeats of the same state and reason to one durable journal record, and the key is claimed before the write so two settled turns cannot persist it twice. A failed write releases the claim, so a later settled turn may record it again. The window is in-memory only: it is cleared on session start, after a successful primary switch, and on shutdown or a failed boot activation, so the new active intent owner records its own outcome. Durable journal events already written are never removed by that reset.
+#### The wrapped codex provider
 
-This is an optional-capability gap. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or bootstrap. `/weave:status` may show `fast: unsupported (harness-seam-unavailable)`; it never says applied, active, or confirmed. Raising Pi above `unsupported` requires a documented host seam that reports the effective transport of one prepared request plus correlated official response-body evidence for that same request, proven in a fresh real harness under [Adapter Verification](../testing/adapter-verification.md). Unit confidence is not that proof.
+Weave registers its own `openai-codex` provider that wraps Pi's native one: same id, name, `auth` object, and model list, with only `stream` and `streamSimple` wrapped. That object holds what the hooks cannot — the effective post-auth transport, the resolved credential shape, the final body after other extensions ran, the outgoing request headers, and the same attempt's response.
+
+Registration happens once per process and fails closed. It requires the host's public `VERSION` to be at least `0.83.0` (the first version whose codex SSE path honors `options.fetch`), the pi-ai codex provider subpath to import with the expected factory, and `registerProvider` to be callable. A parent registers only in a trusted, non-health-only session; a child registers only after its bootstrap handshake proved the process is a real Weave child. Any failure registers nothing, leaves Pi's native provider in place, reports `unsupported`, and leaves activation untouched.
+
+#### Exact eligibility
+
+The wrapper computes one verdict per stream call, before any mutation. A request is mapped only when every rule holds:
+
+- the process-local active owner declares `fast true` — the committed primary in a parent, or the authenticated applied bootstrap in a child or direct workflow step;
+- the call reached the wrapped `openai-codex` provider;
+- the request model id is an exact member of the frozen allowlist, matches `^[A-Za-z0-9._-]{1,64}$`, and equals the owner's resolved model id;
+- the effective base URL is absent or exactly the first-party ChatGPT backend, compared as a whole string. Any gateway, proxy, localhost, or lookalike URL is `transport-not-first-party`;
+- the resolved credential parses as a ChatGPT subscription OAuth token carrying an account claim. The token and the account id never enter state, logs, evidence, or errors;
+- no collision exists: the final body carries no foreign `service_tier`, and neither caller-held header source carries an `x-codex-routing-hint` in any casing.
+
+#### What a mapped request sends
+
+An eligible request uses `transport: "sse"`, the only codex path with header authority, and carries both parts of the contract or neither:
+
+1. `service_tier: "priority"` in the final body;
+2. `originator: codex_cli_rs` and `x-codex-routing-hint: model=<model id>;tier=priority` on the outgoing request.
+
+The activation window is process-level, because no per-request agent identity exists at the provider seam. While a fast owner is active, an ambient host request on the same allowlisted model — a branch summary or a title generation — is mapped too. That window is accepted deliberately; narrowing it by heuristic would be a guess.
+
+#### Fail-closed behavior
+
+Registration itself is gated on proof, not on the host version alone. The wrapper's only seam for header authority is `options.fetch` on pi-ai's codex SSE path, which exists from pi-ai `0.83.0`, so the adapter registers only when the exact module it wraps — `@earendil-works/pi-ai/providers/openai-codex` — is proven to be the running host's own copy. That subpath is its own member of the closed [host-module set](#host-runtime-resolution); a proof about the bare `@earendil-works/pi-ai` package entry does not answer for it, because a subpath import resolves to its own file. An unproven, unknown, or skipped subpath registers nothing, leaves the native provider in place, and reports one bounded token, so no body this adapter mutated can reach the network through a copy that would ignore its headers.
+
+No intent, any eligibility failure, a gateway base URL, a host below the version gate, a failed registration, and a known collision all produce the same result: the call runs on the native implementation with the caller's own transport, fetch, and payload hook, the request stays byte-identical to the same configuration without `fast true`, and the adapter records one bounded reason. A failure known before the body exists delegates the caller's own options object. A body collision is knowable only after the caller's hook has run, so the wrapper puts those three fields back before the host reads any of them.
+
+One case cannot be a passthrough. The body is serialized, and possibly compressed, before any fetch runs, so a routing-hint collision that appears only at fetch time cannot roll back a tier Weave already wrote. The wrapper then does not send that attempt at all and fails the call, rather than putting a half-mapped request on the wire.
+
+#### What the states mean
+
+`requested` means the wrapper's own fetch ran for that attempt and wrote both parts. It does not mean the request was faster. Only same-attempt evidence carrying exactly `service_tier: "priority"` permits `applied`.
+
+On the pinned host, Pi 0.84.2, the backend reported `service_tier: "default"` — standard speed — for a fully mapped request, a tier-only request, and an untouched control alike. A successful eligible request therefore terminates at `not-confirmed` with the evidence outcome `standard`, and `applied` has never been observed. The adapter never infers acceleration from HTTP status, latency, absence of error, or its own mutation.
+
+`/weave:status` renders the sanitized snapshot: `fast: requested (codex-sub-05, openai-service-tier=absent)`, `fast: not-confirmed (codex-sub-05, openai-service-tier=standard)`, or `fast: unsupported (harness-seam-unavailable)`. A mapped attempt names the evidence kind as soon as it writes both controls, and the outcome stays `absent` until that same attempt's response resolves it. The allowlist rule id is the only model-adjacent token; no provider string, model text, URL, header, or credential can enter it.
+
+#### Capability and journaling
+
+The `provider-fast-activation` capability declares the static readiness `degraded`: one mapping only, capped below `applied` on the pinned host. A live attempt is read through `providerFastActivationState` and `effectiveProviderFastReadiness`, which may lower that ceiling and can never raise it.
+
+A mapped attempt journals its own sanitized snapshots, and the latest of them is also the state `/weave:status` reports. `requested` is recorded immediately, as soon as both controls land on the outgoing request, and the terminal snapshot is recorded later, when that same attempt's evidence resolves or the call ends below `applied`. A mapped snapshot therefore does not wait for the turn to settle. Intent that reached no mapped attempt is recorded instead when a turn settles (`agent_settled`). A bounded in-memory dedupe window collapses repeats of the same `(state, reason, evidenceOutcome)` triple to one durable journal record, so the transient `requested` state and its terminal outcome are each kept once, and the key is claimed before the write so two settled turns cannot persist it twice. A failed write releases the claim, so a later settled turn may record it again. The window is in-memory only: it is cleared on session start, after a successful primary switch, and on shutdown or a failed boot activation, so the new active intent owner records its own outcome. The latest mapped snapshot is dropped with it, because it describes one session's request. Durable journal events already written are never removed by that reset.
+
+This capability is optional. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or bootstrap. Raising Pi to `applied`, or mapping any further provider, requires the same proof this mapping already carries: the effective transport of one prepared request plus correlated response evidence for that same request, shown in a fresh real harness under [Adapter Verification](../testing/adapter-verification.md). Unit confidence is not that proof. The Codex mapping also carries a [recheck obligation](../specs/fast-provider-acceleration-contract.md#recheck-obligation-for-this-transport): a failed recheck returns it to `unsupported`.
 
 ## Config refresh at delegation boundaries
 
@@ -756,11 +812,13 @@ A gap reports the stable surface id plus a remediation string, for example upgra
 
 The package ships two extension files. `dist/extension.js` is a thin loader that imports no Pi package; `dist/extension-impl.js` holds the adapter. Pi awaits the loader's async factory, so the loader completes before `session_start`.
 
-The loader resolves `@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`, and `@earendil-works/pi-tui` to the copies the running host already evaluated. Without it, Bun's native import resolves those bare specifiers from the extension's own directory, so a nested copy silently wins and a second Pi runtime is evaluated inside the host process. The loader proves the host package root from the running CLI entry, confirms that root's `package.json` name and version, and installs one exact-path load override per differing specifier that re-exports the host entry. The bare `pi-ai` specifier targets the host's compat entry, matching Pi's own alias table. Only then does the loader import the implementation.
+The loader resolves `@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`, `@earendil-works/pi-tui`, and the one subpath the adapter imports directly, `@earendil-works/pi-ai/providers/openai-codex`, to the copies the running host already evaluated. The subpath is proven separately because it resolves to its own file: redirecting the `pi-ai` package entry says nothing about it. Without it, Bun's native import resolves those bare specifiers from the extension's own directory, so a nested copy silently wins and a second Pi runtime is evaluated inside the host process. The loader proves the host package root from the running CLI entry, confirms that root's `package.json` name and version, and installs one exact-path load override per differing specifier that re-exports the host entry. The bare `pi-ai` specifier targets the host's compat entry, matching Pi's own alias table. Only then does the loader import the implementation.
 
 Redirection is fail-open. An unproven host root, a mismatched host package, a missing local copy, a local copy that is already the host copy, an unsafe path, or an unavailable plugin surface skips that specifier with a closed reason and preserves the previous behavior. The extension never fails to load because a redirect did not happen. Setting `WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT=1` skips every specifier; it is the operator escape hatch and the negative control for verification.
 
 `/weave:health` carries one path-free line: `host runtime: single-copy; redirected <n>`, or `host runtime: duplicate-detected (host-runtime-duplicate); redirected <n>` when the imported `VERSION` disagrees with the proven host `package.json` version. The proven version wins, so every host-version gate reasons about the real host. **Duplicate detection is warning-only.** It never enters health-only mode, because the mismatch removes no declared capability and health-only would break a session mid-upgrade. The compatibility floor above is unchanged.
+
+Consumers that need a specific copy read that outcome as provenance: one specifier is `host` when it was redirected to the host file or already was it, and `unproven` with a bounded reason otherwise. The codex fast provider registration is the first such consumer and refuses to run on anything but `host`.
 
 Setting `WEAVE_PI_HOST_MODULE_PROOF=1` writes exactly one bounded JSON line to stderr with the host root, host version, and per-specifier resolutions. That line carries absolute paths, so it is strictly opt-in and no other surface prints them. `bun run verify:pi-host-singleton` reads it against a real Pi process; see [Adapter Verification](../testing/adapter-verification.md#prove-one-host-runtime-copy-pi).
 

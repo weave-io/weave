@@ -17,10 +17,12 @@ import {
   type PiHostModuleEnvironmentPort,
   type PiHostModuleOutcome,
   recordPiExtensionEntryPath,
+  resolveHostModuleProvenance,
   resolveHostModules,
   WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT_ENV,
 } from "../host-module-loader.js";
 import {
+  CODEX_PROVIDER_SUBPATH_SPECIFIER,
   hostEntrySpecifierFor,
   PI_HOST_MODULE_SPECIFIERS,
   type PiHostModuleSpecifier,
@@ -40,6 +42,7 @@ const HOST_ENTRIES = {
   "@earendil-works/pi-coding-agent": `${HOST_ROOT}/dist/index.js`,
   "@earendil-works/pi-ai": `${HOST_ROOT}/node_modules/@earendil-works/pi-ai/dist/compat.js`,
   "@earendil-works/pi-tui": `${HOST_ROOT}/node_modules/@earendil-works/pi-tui/dist/index.js`,
+  [CODEX_PROVIDER_SUBPATH_SPECIFIER]: `${HOST_ROOT}/node_modules/@earendil-works/pi-ai/dist/providers/openai-codex.js`,
 } as const;
 
 const LOCAL_ROOT = "/Users/jose/projects/weave/node_modules/@earendil-works";
@@ -47,6 +50,7 @@ const LOCAL_ENTRIES = {
   "@earendil-works/pi-coding-agent": `${LOCAL_ROOT}/pi-coding-agent/dist/index.js`,
   "@earendil-works/pi-ai": `${LOCAL_ROOT}/pi-ai/dist/index.js`,
   "@earendil-works/pi-tui": `${LOCAL_ROOT}/pi-tui/dist/index.js`,
+  [CODEX_PROVIDER_SUBPATH_SPECIFIER]: `${LOCAL_ROOT}/pi-ai/dist/providers/openai-codex.js`,
 } as const;
 
 const ISOLATED_ENV = {} as const;
@@ -193,7 +197,7 @@ describe("deriveHostPackageRoot", () => {
 });
 
 describe("resolveHostModules", () => {
-  it("registers a redirect for all three specifiers when a local copy differs", async () => {
+  it("registers a redirect for every closed specifier when a local copy differs", async () => {
     const env = new FakePiHostModuleEnvironment({
       namespaces: {
         [HOST_ENTRIES["@earendil-works/pi-coding-agent"]]: {
@@ -210,7 +214,7 @@ describe("resolveHostModules", () => {
     expect(outcome.localResolutions).toEqual(LOCAL_ENTRIES);
     expect(outcome.proofRecord.hostRoot).toBe(HOST_ROOT);
     expect(outcome.proofRecord.hostVersion).toBe(HOST_VERSION);
-    expect(outcome.proofRecord.specifiers).toHaveLength(3);
+    expect(outcome.proofRecord.specifiers).toHaveLength(4);
     expect(outcome.proofRecord.specifiers[0]).toEqual({
       specifier: "@earendil-works/pi-coding-agent",
       hostSpecifier: "@earendil-works/pi-coding-agent",
@@ -221,7 +225,7 @@ describe("resolveHostModules", () => {
       loadedFrom: HOST_ENTRIES["@earendil-works/pi-coding-agent"],
     });
 
-    expect(env.registerCalls).toHaveLength(3);
+    expect(env.registerCalls).toHaveLength(4);
     expect(env.registerCalls[0]).toEqual({
       exactPath: LOCAL_ENTRIES["@earendil-works/pi-coding-agent"],
       contents: renderHostReexportStub({
@@ -240,6 +244,15 @@ describe("resolveHostModules", () => {
       exactPath: LOCAL_ENTRIES["@earendil-works/pi-tui"],
       contents: renderHostReexportStub({
         hostEntryPath: HOST_ENTRIES["@earendil-works/pi-tui"],
+        hasDefaultExport: false,
+      }),
+    });
+    // The codex provider subpath is redirected as its own exact path, not as
+    // a consequence of the bare pi-ai entry above.
+    expect(env.registerCalls[3]).toEqual({
+      exactPath: LOCAL_ENTRIES[CODEX_PROVIDER_SUBPATH_SPECIFIER],
+      contents: renderHostReexportStub({
+        hostEntryPath: HOST_ENTRIES[CODEX_PROVIDER_SUBPATH_SPECIFIER],
         hasDefaultExport: false,
       }),
     });
@@ -341,6 +354,9 @@ describe("resolveHostModules", () => {
           specifier: "@earendil-works/pi-ai",
         }),
         "@earendil-works/pi-tui": ok(LOCAL_ENTRIES["@earendil-works/pi-tui"]),
+        [CODEX_PROVIDER_SUBPATH_SPECIFIER]: ok(
+          LOCAL_ENTRIES[CODEX_PROVIDER_SUBPATH_SPECIFIER],
+        ),
       },
     });
     const outcome = await resolveOutcome(env);
@@ -348,6 +364,7 @@ describe("resolveHostModules", () => {
     expect(outcome.redirected).toEqual([
       "@earendil-works/pi-coding-agent",
       "@earendil-works/pi-tui",
+      CODEX_PROVIDER_SUBPATH_SPECIFIER,
     ]);
     expect(outcome.skipped).toEqual([
       { specifier: "@earendil-works/pi-ai", reason: "no-local-copy" },
@@ -356,6 +373,7 @@ describe("resolveHostModules", () => {
     expect(env.registerCalls.map((entry) => entry.exactPath)).toEqual([
       LOCAL_ENTRIES["@earendil-works/pi-coding-agent"],
       LOCAL_ENTRIES["@earendil-works/pi-tui"],
+      LOCAL_ENTRIES[CODEX_PROVIDER_SUBPATH_SPECIFIER],
     ]);
   });
 
@@ -375,11 +393,11 @@ describe("resolveHostModules", () => {
     expect(outcome.hostRoot).toBeUndefined();
     expect(
       outcome.proofRecord.specifiers.map((entry) => entry.skipReason),
-    ).toEqual([
-      PI_HOST_MODULE_REDIRECT_DISABLED_REASON,
-      PI_HOST_MODULE_REDIRECT_DISABLED_REASON,
-      PI_HOST_MODULE_REDIRECT_DISABLED_REASON,
-    ]);
+    ).toEqual(
+      PI_HOST_MODULE_SPECIFIERS.map(
+        () => PI_HOST_MODULE_REDIRECT_DISABLED_REASON,
+      ),
+    );
     expect(env.calls).toEqual([]);
     expect(env.registerCalls).toEqual([]);
   });
@@ -393,11 +411,12 @@ describe("resolveHostModules", () => {
     expect(second.redirected).toEqual([...PI_HOST_MODULE_SPECIFIERS]);
     expect(first.skipped).toEqual([]);
     expect(second.skipped).toEqual([]);
-    expect(env.registerCalls).toHaveLength(3);
+    expect(env.registerCalls).toHaveLength(4);
     expect(env.registerCalls.map((entry) => entry.exactPath)).toEqual([
       LOCAL_ENTRIES["@earendil-works/pi-coding-agent"],
       LOCAL_ENTRIES["@earendil-works/pi-ai"],
       LOCAL_ENTRIES["@earendil-works/pi-tui"],
+      LOCAL_ENTRIES[CODEX_PROVIDER_SUBPATH_SPECIFIER],
     ]);
   });
 
@@ -410,6 +429,7 @@ describe("resolveHostModules", () => {
     const outcome = result._unsafeUnwrap();
     expect(outcome.redirected).toEqual([]);
     expect(outcome.skipped.map((entry) => entry.reason)).toEqual([
+      "host-root-unproven",
       "host-root-unproven",
       "host-root-unproven",
       "host-root-unproven",
@@ -454,5 +474,92 @@ describe("recordPiExtensionEntryPath", () => {
     // A second load, a moved copy, or a hostile caller cannot replace it.
     recordPiExtensionEntryPath(LATER);
     expect(getPiExtensionEntryPath()).toBe(latched);
+  });
+});
+
+/**
+ * Provenance is what the codex-fast registration gate consumes: it must be
+ * able to say "this exact module is the host's copy" and refuse everything
+ * else, including an answer about a sibling package entry.
+ */
+describe("resolveHostModuleProvenance", () => {
+  function outcome(
+    overrides: Partial<PiHostModuleOutcome> = {},
+  ): PiHostModuleOutcome {
+    return {
+      redirected: [],
+      skipped: [],
+      localResolutions: {
+        "@earendil-works/pi-coding-agent": undefined,
+        "@earendil-works/pi-ai": undefined,
+        "@earendil-works/pi-tui": undefined,
+        [CODEX_PROVIDER_SUBPATH_SPECIFIER]: undefined,
+      },
+      proofRecord: { specifiers: [] },
+      ...overrides,
+    };
+  }
+
+  it("proves a redirected specifier as the host copy", () => {
+    expect(
+      resolveHostModuleProvenance(
+        CODEX_PROVIDER_SUBPATH_SPECIFIER,
+        outcome({ redirected: [CODEX_PROVIDER_SUBPATH_SPECIFIER] }),
+      ),
+    ).toEqual({ kind: "host", outcome: "redirected" });
+  });
+
+  it("proves an already-host specifier without a redirect", () => {
+    expect(
+      resolveHostModuleProvenance(
+        CODEX_PROVIDER_SUBPATH_SPECIFIER,
+        outcome({
+          skipped: [
+            {
+              specifier: CODEX_PROVIDER_SUBPATH_SPECIFIER,
+              reason: "already-host",
+            },
+          ],
+        }),
+      ),
+    ).toEqual({ kind: "host", outcome: "already-host" });
+  });
+
+  it.each([
+    "no-local-copy",
+    "host-root-unproven",
+    "host-package-mismatch",
+    "local-path-unsafe",
+    "plugin-unavailable",
+    PI_HOST_MODULE_REDIRECT_DISABLED_REASON,
+  ] as const)("leaves %s unproven", (reason) => {
+    expect(
+      resolveHostModuleProvenance(
+        CODEX_PROVIDER_SUBPATH_SPECIFIER,
+        outcome({
+          skipped: [{ specifier: CODEX_PROVIDER_SUBPATH_SPECIFIER, reason }],
+        }),
+      ),
+    ).toEqual({ kind: "unproven", reason });
+  });
+
+  it("never infers the subpath from the bare pi-ai package entry", () => {
+    // The exact live-blocker shape: pi-ai's entry was redirected while the
+    // provider subpath was not even considered.
+    expect(
+      resolveHostModuleProvenance(
+        CODEX_PROVIDER_SUBPATH_SPECIFIER,
+        outcome({
+          redirected: ["@earendil-works/pi-ai"],
+          skipped: [],
+        }),
+      ),
+    ).toEqual({ kind: "unproven", reason: "specifier-unknown" });
+  });
+
+  it("reports a missing outcome rather than assuming one", () => {
+    expect(
+      resolveHostModuleProvenance(CODEX_PROVIDER_SUBPATH_SPECIFIER, undefined),
+    ).toEqual({ kind: "unproven", reason: "outcome-missing" });
   });
 });

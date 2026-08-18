@@ -517,14 +517,34 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
         T004: {
           file: "packages/adapters/pi/src/__tests__/capability-declarations.test.ts",
-          name: "declares provider-fast-activation as unsupported, never requested or applied",
+          name: "declares provider-fast-activation as a degraded ceiling scoped to the codex subscription mapping",
+        },
+        T005: {
+          file: "packages/adapters/pi/src/__tests__/capability-declarations.test.ts",
+          name: "lets a live codex attempt lower the declared ceiling but never raise it",
+        },
+        T006: {
+          file: "packages/adapters/pi/src/__tests__/capability-declarations.test.ts",
+          name: "keeps provider-fast-activation optional, so no state it reports changes readiness",
+        },
+        T007: {
+          file: "packages/adapters/pi/src/__tests__/codex-fast-provider.test.ts",
+          name: "writes exactly the two routing headers and touches nothing else",
+        },
+        T008: {
+          file: "packages/adapters/pi/src/__tests__/codex-fast-provider.test.ts",
+          name: "delegates with the exact options reference when no intent holds",
+        },
+        T009: {
+          file: "packages/adapters/pi/src/__tests__/codex-fast-attempt.test.ts",
+          name: "never reaches applied without same-attempt confirmed final evidence",
         },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S004"] },
       result: "pass",
       notes:
-        "Closed-set check verifies every ALL_CAPABILITY_IDS member appears across the referenced tests, including the optional provider-fast-activation capability. Pi 0.84.1 Task 14 live evidence proves Pi-native readiness on the exact artifact and the closed path-free failure reasons.",
+        "Closed-set check covers every ALL_CAPABILITY_IDS member, including optional provider-fast-activation. Pi 0.84.1 Task 14 live evidence proves Pi-native readiness on the exact artifact. That optional capability is a degraded ceiling for one mapping: fast true on an allowlisted OpenAI Codex subscription model via the wrapped codex provider, writing both request parts or neither. Any other provider, failed rule, or absent intent is byte-identical passthrough. applied needs same-attempt evidence.",
     },
     {
       id: "PI-ERR",

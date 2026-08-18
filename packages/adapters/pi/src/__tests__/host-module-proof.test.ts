@@ -25,6 +25,10 @@ function sampleOutcome(): PiHostModuleOutcome {
     skipped: [
       { specifier: "@earendil-works/pi-ai", reason: "no-local-copy" },
       { specifier: "@earendil-works/pi-tui", reason: "already-host" },
+      {
+        specifier: "@earendil-works/pi-ai/providers/openai-codex",
+        reason: "already-host",
+      },
     ],
     hostVersion: HOST_VERSION,
     hostRoot: HOST_ROOT,
@@ -32,6 +36,7 @@ function sampleOutcome(): PiHostModuleOutcome {
       "@earendil-works/pi-coding-agent": LOCAL_ENTRY,
       "@earendil-works/pi-ai": undefined,
       "@earendil-works/pi-tui": undefined,
+      "@earendil-works/pi-ai/providers/openai-codex": undefined,
     },
     proofRecord: {
       hostRoot: HOST_ROOT,
@@ -55,6 +60,12 @@ function sampleOutcome(): PiHostModuleOutcome {
         {
           specifier: "@earendil-works/pi-tui",
           hostSpecifier: "@earendil-works/pi-tui",
+          redirected: false,
+          skipReason: "already-host",
+        },
+        {
+          specifier: "@earendil-works/pi-ai/providers/openai-codex",
+          hostSpecifier: "@earendil-works/pi-ai/providers/openai-codex",
           redirected: false,
           skipReason: "already-host",
         },
@@ -134,6 +145,10 @@ describe("renderHostModuleProofLine", () => {
           },
           {
             specifier: "@earendil-works/pi-tui",
+            redirected: false,
+          },
+          {
+            specifier: "@earendil-works/pi-ai/providers/openai-codex",
             redirected: false,
           },
         ],

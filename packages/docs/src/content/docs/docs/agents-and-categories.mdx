@@ -22,7 +22,7 @@ Supported fields include `description`, `prompt`, `prompt_file`, prompt appends,
 
 `triggers` is an ordered list of plain strings, such as `triggers ["Use for pull request review"]`. Structured trigger objects with `domain`, `trigger`, or `routing_hint` are invalid.
 
-`fast true` is optional neutral intent asking an adapter to request provider acceleration. Only the literal `fast true` is valid; omit the field to preserve provider defaults. `fast false` and the aliases `service_class`, `speed`, `variant`, and `priority` are invalid. Every shipped adapter currently reports this capability as unsupported and sends no provider control.
+`fast true` is optional neutral intent asking an adapter to request provider acceleration. Only the literal `fast true` is valid; omit the field to preserve provider defaults. `fast false` and the aliases `service_class`, `speed`, `variant`, and `priority` are invalid. Each adapter decides whether the intent becomes a provider control: OpenCode and Claude Code send none, and Pi sends one only for its OpenAI Codex subscription mapping.
 
 ## Define a category
 

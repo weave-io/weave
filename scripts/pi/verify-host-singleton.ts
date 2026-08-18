@@ -1,6 +1,9 @@
 /**
- * Real-process proof that a Bun-hosted Pi loads one copy of the three host
- * packages — the installed host's — when Weave's extension entry is attached.
+ * Real-process proof that a Bun-hosted Pi loads one copy of every closed host
+ * module — the installed host's — when Weave's extension entry is attached.
+ * That set is the three host package entries plus the pi-ai codex provider
+ * subpath the adapter imports directly, which resolves to its own file and so
+ * has to be proven on its own.
  *
  * Adapter package tests must never spawn a harness. This script is the
  * real-process seam: it starts `pi --mode rpc`, reads the opt-in proof
@@ -17,6 +20,10 @@ import {
   WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT_ENV,
   WEAVE_PI_HOST_MODULE_PROOF_ENV,
 } from "../../packages/adapters/pi/src/host-module-loader.js";
+import {
+  CODEX_PROVIDER_SUBPATH_SPECIFIER,
+  PI_HOST_MODULE_SPECIFIERS,
+} from "../../packages/adapters/pi/src/host-module-redirect.js";
 
 const log = logger.child({ module: "verify-pi-host-singleton" });
 
@@ -107,6 +114,7 @@ export type MappedPathClassification = {
 export type SingletonVerdict =
   | "single-copy"
   | "duplicate"
+  | "subpath-not-host"
   | "redirect-not-observed"
   | "host-version-mismatch"
   | "loaded-from-outside-host"
@@ -472,6 +480,39 @@ export function evaluateSingletonProof(input: {
     );
   }
 
+  const proofBySpecifier = new Map(
+    input.proof.specifiers.map((entry) => [entry.specifier, entry]),
+  );
+  for (const required of PI_HOST_MODULE_SPECIFIERS) {
+    if (!proofBySpecifier.has(required)) {
+      fail("proof-incomplete", `proof line omitted ${required}`);
+    }
+  }
+
+  // A subpath import resolves to its own file, so the package-entry
+  // redirects prove nothing about it. Every closed specifier must therefore
+  // end at a file inside the host, either because it was redirected there or
+  // because its own resolution already was the host copy. Without that,
+  // `single-copy` would be a claim about three package entries while a fourth
+  // module quietly loaded from somewhere else.
+  const subpath = proofBySpecifier.get(CODEX_PROVIDER_SUBPATH_SPECIFIER);
+  if (subpath !== undefined) {
+    const effective = subpath.redirected
+      ? subpath.loadedFrom
+      : subpath.bareResolution;
+    if (effective === undefined) {
+      fail(
+        "subpath-not-host",
+        `${CODEX_PROVIDER_SUBPATH_SPECIFIER} has no proven resolution`,
+      );
+    } else if (!isPathInside(effective, hostPrefix)) {
+      fail(
+        "subpath-not-host",
+        `${CODEX_PROVIDER_SUBPATH_SPECIFIER} resolves outside the host root`,
+      );
+    }
+  }
+
   let sawRedirectPair = false;
   for (const specifier of input.proof.specifiers) {
     if (specifier.loadedFrom === undefined) continue;
@@ -515,7 +556,11 @@ export function evaluateSingletonProof(input: {
     );
   }
 
-  if (verdict !== "single-copy" && verdict !== "redirect-not-observed") {
+  if (
+    verdict !== "single-copy" &&
+    verdict !== "redirect-not-observed" &&
+    verdict !== "subpath-not-host"
+  ) {
     if (
       classified.checkoutEarendilPaths.length > 0 ||
       classified.nativePackageRoots.length > 1 ||

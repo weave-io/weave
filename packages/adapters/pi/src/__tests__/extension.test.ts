@@ -25,6 +25,7 @@ import {
 } from "../agent-cycle.js";
 import { DefaultPiCapabilityProber } from "../capability-prober.js";
 import {
+  bytesToHex,
   generateNonceHex,
   hexToBytes,
   WebCryptoHmacPort,
@@ -60,6 +61,7 @@ import type { PiAdapterFailure } from "../errors.js";
 import {
   createPiExtension,
   PI_SHARED_LOG_PATH,
+  type PiCodexFastProviderSeam,
   type PiExtensionDeps,
   type PiExtensionInstance,
   parsePiSkillsFromSystemPrompt,
@@ -75,6 +77,7 @@ import {
   type PiHostSurfaceId,
   type PiHostSurfaceReader,
 } from "../host-inventory.js";
+import type { PiHostModuleProvenance } from "../host-module-loader.js";
 import { FakePathContainmentPort } from "../path-containment.js";
 import { FakePiPlanCatalogPort } from "../plan-catalog.js";
 import type { ProviderFastPublicSnapshot } from "../provider-fast-activation.js";
@@ -84,7 +87,10 @@ import type {
 } from "../recovery-pointer.js";
 import { InMemoryRecoveryPointerStore } from "../recovery-pointer.js";
 import type { JsonValue } from "../strict-json.js";
-import { serializeCompletionCandidate } from "../structured-completion.js";
+import {
+  serializeCompletionCandidate,
+  WEAVE_COMPLETE_STEP_TOOL_NAME,
+} from "../structured-completion.js";
 import {
   createProductionPiThreadSourceFactory,
   type PiThreadSourceFactory,
@@ -9120,6 +9126,17 @@ function defineOwnData(target: object, key: string, value: unknown): void {
   });
 }
 
+/**
+ * The hook seam and every non-Codex provider.
+ *
+ * Exactly one mapping may request acceleration, and it lives in the wrapped
+ * `openai-codex` provider (proven in the codex describes below). Everything
+ * here is the other side of that line: the public OpenAI API provider, the
+ * Anthropic provider, and Pi's request/header hooks. For all of them a
+ * declared `fast true` stays inert - no hook is registered, no payload or
+ * header changes, and the reported state is the terminal hook-seam
+ * `unsupported`.
+ */
 describe("createPiExtension: provider fast intent", () => {
   const openaiModel = {
     provider: "openai",
@@ -9208,7 +9225,7 @@ describe("createPiExtension: provider fast intent", () => {
       .filter((eventType) => eventType.startsWith("provider-fast."));
   }
 
-  it("registers no provider request or header mutation at all", async () => {
+  it("registers no provider request or header hook at all, on any provider", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
@@ -9217,6 +9234,8 @@ describe("createPiExtension: provider fast intent", () => {
     installFastPrimary(host, { fast: true });
     await host.triggerSessionStart();
 
+    // The codex mapping is a provider override, so the hook seam stays empty
+    // whether or not an agent declares intent.
     expect(host.registeredEventHandlerCount("before_provider_headers")).toBe(0);
     expect(host.registeredEventHandlerCount("before_provider_request")).toBe(0);
     expect(host.registeredEventHandlerCount("after_provider_response")).toBe(0);
@@ -9225,7 +9244,7 @@ describe("createPiExtension: provider fast intent", () => {
   it.each([
     ["openai", openaiModel],
     ["anthropic", anthropicModel],
-  ] as const)("leaves a fast-declaring %s primary's payload and headers exactly unchanged", async (_provider, model) => {
+  ] as const)("leaves a fast-declaring non-codex %s primary's payload and headers exactly unchanged", async (_provider, model) => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
@@ -9348,7 +9367,7 @@ describe("createPiExtension: provider fast intent", () => {
     );
   });
 
-  it("reports unsupported on the status line for a fast primary", async () => {
+  it("reports unsupported on the status line for a fast non-codex primary", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
@@ -12274,5 +12293,1263 @@ workflow hot-flow {
     expect(host.notifyCalls.at(-1)?.message ?? "").not.toContain(
       "config refresh:",
     );
+  });
+});
+/**
+ * Codex subscription fast mode, wired into the running extension.
+ *
+ * These tests exercise the registration seam and the intent/reporting wiring
+ * against the real `piAdapterExtension` function: the host object is a fake,
+ * the host version and the pi-ai provider module are injected probes, and the
+ * "native" provider is a stand-in that records what the wrapper handed it.
+ * Nothing here starts a Pi process, opens a socket, or touches a real module.
+ */
+
+/** Never echoed by a log, a status line, a journal entry, or a snapshot. */
+const CODEX_IMPORT_SECRET = "sk-proj-codex-import-secret-DO-NOT-ECHO-77aa11bc";
+
+/** Handed to the seam as a hostile provenance "reason"; never renderable. */
+const CODEX_PROVENANCE_SECRET =
+  "sk-proj-codex-provenance-secret-DO-NOT-ECHO-91ff22de";
+
+/** The other shape a hostile reason takes: an absolute host path. */
+const CODEX_PROVENANCE_SECRET_PATH =
+  "/Users/fixture/node_modules/@earendil-works/pi-ai/providers/openai-codex.js";
+
+/**
+ * The loader's closed provenance reason enum, restated at the assertion site.
+ * A token outside this list reaching a log is the boundary failure these
+ * tests exist to catch.
+ */
+const CODEX_FAST_PROVENANCE_REASON_TOKENS: readonly unknown[] = [
+  "host-root-unproven",
+  "host-package-mismatch",
+  "no-local-copy",
+  "already-host",
+  "local-path-unsafe",
+  "plugin-unavailable",
+  "redirect-registered",
+  "redirect-disabled",
+  "outcome-missing",
+  "specifier-unknown",
+];
+
+const CODEX_PROVIDER_ID = "openai-codex";
+const CODEX_ELIGIBLE_MODEL_ID = "gpt-5.6-sol";
+const CODEX_ELIGIBLE_RULE_ID = "codex-sub-06";
+const CODEX_FIRST_PARTY_BASE_URL = "https://chatgpt.com/backend-api";
+const CODEX_SUPPORTED_HOST_VERSION = "0.84.2";
+
+const codexHostModel = {
+  provider: CODEX_PROVIDER_ID,
+  id: CODEX_ELIGIBLE_MODEL_ID,
+  api: "openai-codex-responses",
+};
+
+const nonCodexHostModel = {
+  provider: "anthropic",
+  id: "claude-opus-5",
+  api: "anthropic-messages",
+};
+
+/** A ChatGPT-shaped OAuth token whose payload carries the account claim. */
+function codexSubscriptionToken(accountId = "acct-extension-fixture"): string {
+  const payload = {
+    "https://api.openai.com/auth": { chatgpt_account_id: accountId },
+  };
+  const body = btoa(JSON.stringify(payload))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+  return `${btoa('{"alg":"none"}')}.${body}.${btoa("sig")}`;
+}
+
+const CODEX_SUBSCRIPTION_TOKEN = codexSubscriptionToken();
+
+type RecordedNativeCall = {
+  readonly model: unknown;
+  readonly options: unknown;
+};
+
+type CodexSeamHarness = {
+  readonly seam: PiCodexFastProviderSeam;
+  readonly registered: unknown[];
+  readonly nativeCalls: RecordedNativeCall[];
+  readonly factoryCalls: () => number;
+  readonly importCalls: () => number;
+  readonly provenanceCalls: () => number;
+  readonly nativeProviders: () => readonly Record<string, unknown>[];
+  /** Attaches `registerProvider` to the fake host, as a real Pi 0.84 host has. */
+  readonly attachTo: (host: RecordingFakePiHost) => void;
+  /** The single wrapped provider the host was handed, if any. */
+  readonly wrapped: () => Record<string, unknown> | undefined;
+};
+
+/**
+ * Builds the injected host probes plus a native provider stand-in with the
+ * same shape pi-ai's codex provider has.
+ */
+function codexSeamHarness(
+  options: {
+    readonly hostVersion?: string;
+    readonly importProviderModule?: () => Promise<unknown>;
+    readonly moduleNamespace?: unknown;
+    /**
+     * Provenance of the codex provider subpath itself. Defaults to the proven
+     * host copy; a test that wants the live blocker's shape passes an
+     * `unproven` verdict here while leaving the host version supported.
+     */
+    readonly providerModuleProvenance?: () => PiHostModuleProvenance;
+  } = {},
+): CodexSeamHarness {
+  const registered: unknown[] = [];
+  const nativeCalls: RecordedNativeCall[] = [];
+  const nativeProviders: Record<string, unknown>[] = [];
+  let factoryCalls = 0;
+  let importCalls = 0;
+  let provenanceCalls = 0;
+
+  const createNative = (): Record<string, unknown> => {
+    const nativeResult = { kind: "native-stream" };
+    const provider: Record<string, unknown> = {
+      id: CODEX_PROVIDER_ID,
+      name: "OpenAI Codex",
+      baseUrl: CODEX_FIRST_PARTY_BASE_URL,
+      auth: { oauth: { kind: "chatgpt" } },
+      stream: (...args: unknown[]) => {
+        nativeCalls.push({ model: args[0], options: args[2] });
+        return nativeResult;
+      },
+      streamSimple: (...args: unknown[]) => {
+        nativeCalls.push({ model: args[0], options: args[2] });
+        return nativeResult;
+      },
+    };
+    nativeProviders.push(provider);
+    return provider;
+  };
+
+  const defaultNamespace = {
+    openaiCodexProvider: () => {
+      factoryCalls += 1;
+      return createNative();
+    },
+  };
+
+  const seam: PiCodexFastProviderSeam = {
+    readHostVersion: () => options.hostVersion ?? CODEX_SUPPORTED_HOST_VERSION,
+    readProviderModuleProvenance: (): PiHostModuleProvenance => {
+      provenanceCalls += 1;
+      if (options.providerModuleProvenance !== undefined) {
+        return options.providerModuleProvenance();
+      }
+      return { kind: "host", outcome: "redirected" };
+    },
+    importProviderModule: () => {
+      importCalls += 1;
+      if (options.importProviderModule !== undefined) {
+        return options.importProviderModule();
+      }
+      return Promise.resolve(options.moduleNamespace ?? defaultNamespace);
+    },
+  };
+
+  return {
+    seam,
+    registered,
+    nativeCalls,
+    factoryCalls: () => factoryCalls,
+    importCalls: () => importCalls,
+    provenanceCalls: () => provenanceCalls,
+    nativeProviders: () => nativeProviders,
+    attachTo: (host) => {
+      host.api.registerProvider = (provider: unknown) => {
+        registered.push(provider);
+      };
+    },
+    wrapped: () => {
+      const provider = registered.at(-1);
+      return typeof provider === "object" && provider !== null
+        ? (provider as Record<string, unknown>)
+        : undefined;
+    },
+  };
+}
+
+function encodeChunk(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
+function codexSseBody(serviceTier: string): ReadableStream<Uint8Array> {
+  const chunks = [
+    `event: response.created\ndata: ${JSON.stringify({
+      type: "response.created",
+      response: { service_tier: "auto" },
+    })}\n\n`,
+    `event: response.completed\ndata: ${JSON.stringify({
+      type: "response.completed",
+      response: { service_tier: serviceTier },
+    })}\n\n`,
+  ].map(encodeChunk);
+  let index = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const next = chunks[index];
+      index += 1;
+      if (next === undefined) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(next);
+    },
+  });
+}
+
+async function drainResponseBody(response: Response): Promise<void> {
+  const body = response.body;
+  if (body === null) return;
+  const reader = body.getReader();
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+  }
+}
+
+/**
+ * Drives one stream call through the registered provider exactly as pi-ai's
+ * codex api does: run the options' `onPayload` chain, then its `fetch`, then
+ * read the response the caller would read.
+ */
+async function runCodexProviderCall(
+  harness: CodexSeamHarness,
+  input: {
+    readonly modelId?: string;
+    readonly baseUrl?: string;
+    readonly apiKey?: string;
+    readonly serviceTier?: string;
+    readonly requestHeaders?: Record<string, string>;
+  } = {},
+): Promise<{
+  readonly callerOptions: Record<string, unknown>;
+  readonly nativeOptions: Record<string, unknown> | undefined;
+  readonly sentInit: Record<string, unknown> | undefined;
+  readonly payload: Record<string, unknown>;
+}> {
+  const wrapped = harness.wrapped();
+  if (wrapped === undefined) {
+    throw new Error("test setup: no provider was registered");
+  }
+  const modelId = input.modelId ?? CODEX_ELIGIBLE_MODEL_ID;
+  const sentInits: Record<string, unknown>[] = [];
+  const callerOptions: Record<string, unknown> = {
+    apiKey: input.apiKey ?? CODEX_SUBSCRIPTION_TOKEN,
+    fetch: async (_url: unknown, init?: unknown): Promise<Response> => {
+      sentInits.push((init ?? {}) as Record<string, unknown>);
+      return new Response(codexSseBody(input.serviceTier ?? "default"), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  };
+  const requestModel = {
+    id: modelId,
+    baseUrl: input.baseUrl ?? CODEX_FIRST_PARTY_BASE_URL,
+  };
+  const before = harness.nativeCalls.length;
+  (wrapped.streamSimple as (...args: unknown[]) => unknown)(
+    requestModel,
+    { messages: [] },
+    callerOptions,
+  );
+  const recorded = harness.nativeCalls[before];
+  const nativeOptions =
+    typeof recorded?.options === "object" && recorded.options !== null
+      ? (recorded.options as Record<string, unknown>)
+      : undefined;
+  const payload: Record<string, unknown> = { model: modelId, input: [] };
+  const onPayload = nativeOptions?.onPayload;
+  if (typeof onPayload === "function") {
+    await (onPayload as (p: unknown, m: unknown) => Promise<unknown>)(
+      payload,
+      requestModel,
+    );
+  }
+  const fetchImpl = nativeOptions?.fetch;
+  if (typeof fetchImpl === "function") {
+    const response = await (
+      fetchImpl as (u: unknown, i: unknown) => Promise<Response>
+    )(`${CODEX_FIRST_PARTY_BASE_URL}/codex/responses`, {
+      method: "POST",
+      headers: input.requestHeaders ?? { "content-type": "application/json" },
+    });
+    await drainResponseBody(response);
+  }
+  return {
+    callerOptions,
+    nativeOptions,
+    sentInit: sentInits.at(-1),
+    payload,
+  };
+}
+
+/**
+ * Reads one outgoing header regardless of which shape reached the transport:
+ * a mapped attempt hands the fetch a `Headers` object, while a passthrough
+ * attempt leaves the caller's own plain record exactly as it was. `null` means
+ * the header is absent from either shape.
+ */
+function headerValue(
+  init: Record<string, unknown> | undefined,
+  name: string,
+): string | null {
+  const headers = init?.headers;
+  if (headers instanceof Headers) {
+    return headers.get(name);
+  }
+  if (typeof headers !== "object" || headers === null) {
+    return null;
+  }
+  const record = headers as Record<string, unknown>;
+  const key = Object.keys(record).find(
+    (candidate) => candidate.toLowerCase() === name,
+  );
+  return key === undefined ? null : String(record[key]);
+}
+
+describe("createPiExtension: codex subscription fast provider", () => {
+  function installCodexPrimary(
+    host: RecordingFakePiHost,
+    harness: CodexSeamHarness,
+    extras: {
+      readonly fast?: true;
+      readonly model?: typeof codexHostModel;
+      readonly second?: {
+        readonly name: string;
+        readonly model: typeof codexHostModel | typeof nonCodexHostModel;
+        readonly fast?: true;
+      };
+      readonly overrides?: Partial<PiExtensionDeps>;
+      readonly realProber?: boolean;
+    } = {},
+  ): PiExtensionInstance {
+    const model = extras.model ?? codexHostModel;
+    const agents = [
+      {
+        agentName: "loom",
+        source: "explicit" as const,
+        descriptor: loomDescriptor({
+          name: "loom",
+          models: [`${model.provider}/${model.id}`],
+          ...(extras.fast === true ? { fast: true as const } : {}),
+        }),
+      },
+    ];
+    if (extras.second !== undefined) {
+      agents.push({
+        agentName: extras.second.name,
+        source: "explicit",
+        descriptor: tapestryDescriptor({
+          name: extras.second.name,
+          models: [`${extras.second.model.provider}/${extras.second.model.id}`],
+          ...(extras.second.fast === true ? { fast: true as const } : {}),
+        }),
+      });
+    }
+    return installExtension(host, "0.81.1", {
+      ...(extras.realProber === true
+        ? {}
+        : { capabilityProber: allOkCapabilityProber() }),
+      configActivator: fakeConfigActivator({ agents, errors: [] }),
+      codexFastProviderSeam: harness.seam,
+      ...extras.overrides,
+    });
+  }
+
+  function codexHost(models = [codexHostModel]): RecordingFakePiHost {
+    return new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: models,
+    });
+  }
+
+  it("registers one wrapped codex provider for a trusted parent generation", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness();
+    harness.attachTo(host);
+    installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(1);
+    const wrapped = harness.wrapped();
+    const native = harness.nativeProviders()[0];
+    expect(wrapped?.id).toBe(CODEX_PROVIDER_ID);
+    expect(wrapped?.name).toBe("OpenAI Codex");
+    expect(wrapped?.auth).toBe(native?.auth);
+    expect(wrapped?.stream).not.toBe(native?.stream);
+    expect(wrapped?.streamSimple).not.toBe(native?.streamSimple);
+    // The mapping is a provider override, never a request/header hook.
+    expect(host.registeredEventHandlerCount("before_provider_headers")).toBe(0);
+    expect(host.registeredEventHandlerCount("before_provider_request")).toBe(0);
+    expect(host.registeredEventHandlerCount("after_provider_response")).toBe(0);
+  });
+
+  it("registers at most once per process and always wraps a fresh native provider", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness();
+    harness.attachTo(host);
+    installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+    await host.triggerSessionStart();
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(1);
+    expect(harness.importCalls()).toBe(1);
+    expect(harness.factoryCalls()).toBe(1);
+    // A wrapper is never built from an already-registered provider.
+    expect(harness.nativeProviders()).toHaveLength(1);
+    expect(harness.registered[0]).not.toBe(harness.nativeProviders()[0]);
+  });
+
+  it("registers nothing when the host version is below the seam floor", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness({ hostVersion: "0.82.9" });
+    harness.attachTo(host);
+    const extension = installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(0);
+    expect(harness.importCalls()).toBe(0);
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+  });
+
+  it("registers nothing when the host exposes no registerProvider", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness();
+    const extension = installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+
+    expect(host.api.registerProvider).toBeUndefined();
+    expect(harness.registered).toHaveLength(0);
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+  });
+
+  it("registers nothing in health-only mode", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness();
+    harness.attachTo(host);
+    installCodexPrimary(host, harness, { fast: true, realProber: true });
+    await host.triggerSessionStart();
+
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
+    expect(harness.registered).toHaveLength(0);
+    expect(harness.importCalls()).toBe(0);
+  });
+
+  /**
+   * The Task 11 live blocker, in one test.
+   *
+   * The host package was 0.84.2 — comfortably above the seam floor — while
+   * `@earendil-works/pi-ai/providers/openai-codex` still resolved to the
+   * checkout's pi-ai 0.81.1, whose codex path ignores `options.fetch`. The
+   * wrapper therefore mutated the body to `service_tier: "priority"` and could
+   * never write the routing pair. Registration must refuse before the import,
+   * so no wrapper exists and no `onPayload` of this adapter's can run.
+   */
+  it("refuses to register when the provider subpath is not the proven host copy", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness({
+      hostVersion: CODEX_SUPPORTED_HOST_VERSION,
+      providerModuleProvenance: () => ({
+        kind: "unproven",
+        reason: "no-local-copy",
+      }),
+    });
+    harness.attachTo(host);
+    const logger = new RecordingLogger();
+    const extension = installCodexPrimary(host, harness, {
+      fast: true,
+      overrides: { logger },
+    });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(0);
+    expect(harness.wrapped()).toBeUndefined();
+    // Refused before the import: the unproven module is never even loaded,
+    // so nothing of this adapter's can reach a request body.
+    expect(harness.importCalls()).toBe(0);
+    expect(harness.factoryCalls()).toBe(0);
+    expect(harness.provenanceCalls()).toBe(1);
+    const degradations = logger.entries.filter(
+      (entry) => entry.obj.reason === "provider-module-unproven",
+    );
+    expect(degradations).toHaveLength(1);
+    expect(degradations[0]?.obj.provenance).toBe("no-local-copy");
+    const serialized = JSON.stringify(logger.entries);
+    expect(serialized).not.toContain("@earendil-works/pi-ai");
+    expect(serialized).not.toContain("/node_modules/");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+  });
+
+  it.each([
+    [
+      "a bare-package-only proof, which says nothing about the subpath",
+      (): PiHostModuleProvenance => ({
+        kind: "unproven",
+        reason: "specifier-unknown",
+      }),
+      "specifier-unknown",
+    ],
+    [
+      "a disabled redirect",
+      (): PiHostModuleProvenance => ({
+        kind: "unproven",
+        reason: "redirect-disabled",
+      }),
+      "redirect-disabled",
+    ],
+    [
+      "a plugin that could not install the override",
+      (): PiHostModuleProvenance => ({
+        kind: "unproven",
+        reason: "plugin-unavailable",
+      }),
+      "plugin-unavailable",
+    ],
+    [
+      "no recorded host-module outcome at all",
+      (): PiHostModuleProvenance => ({
+        kind: "unproven",
+        reason: "outcome-missing",
+      }),
+      "outcome-missing",
+    ],
+    [
+      "a probe that throws",
+      (): PiHostModuleProvenance => {
+        throw new Error(CODEX_IMPORT_SECRET);
+      },
+      "outcome-missing",
+    ],
+  ] as const)("registers nothing for %s", async (_label, provenance, expectedToken) => {
+    const host = codexHost();
+    const harness = codexSeamHarness({
+      providerModuleProvenance: provenance,
+    });
+    harness.attachTo(host);
+    const logger = new RecordingLogger();
+    installCodexPrimary(host, harness, { fast: true, overrides: { logger } });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(0);
+    expect(harness.importCalls()).toBe(0);
+    const degradations = logger.entries.filter(
+      (entry) => entry.obj.reason === "provider-module-unproven",
+    );
+    expect(degradations).toHaveLength(1);
+    expect(degradations[0]?.obj.provenance).toBe(expectedToken);
+    expect(JSON.stringify(logger.entries)).not.toContain(CODEX_IMPORT_SECRET);
+  });
+
+  /**
+   * The probe's declared return type is a promise, not a proof.
+   *
+   * `readProviderModuleProvenance` is injected — by `extension-impl`, by a
+   * test, and in principle by anything else holding the seam — and its answer
+   * becomes the `provenance` field of a bounded failure the caller logs
+   * verbatim. So the seam re-checks every answer against the loader's closed
+   * reason enum: an unknown string, a secret- or path-shaped string, a
+   * non-string, an accessor, a throwing trap, and a malformed `host` verdict
+   * all collapse to one of this module's own tokens, and nothing of the
+   * caller's text is ever carried through.
+   */
+  it.each([
+    [
+      "an invented reason token",
+      (): unknown => ({ kind: "unproven", reason: "totally-made-up-reason" }),
+      "outcome-missing",
+    ],
+    [
+      "a secret-shaped reason",
+      (): unknown => ({ kind: "unproven", reason: CODEX_PROVENANCE_SECRET }),
+      "outcome-missing",
+    ],
+    [
+      "a path-shaped reason",
+      (): unknown => ({
+        kind: "unproven",
+        reason: CODEX_PROVENANCE_SECRET_PATH,
+      }),
+      "outcome-missing",
+    ],
+    [
+      "a reason that is an object with a hostile `toString`",
+      (): unknown => ({
+        kind: "unproven",
+        reason: {
+          toString: () => CODEX_PROVENANCE_SECRET,
+        },
+      }),
+      "outcome-missing",
+    ],
+    [
+      "a reason that is not a string at all",
+      (): unknown => ({ kind: "unproven", reason: 42 }),
+      "outcome-missing",
+    ],
+    [
+      "a reason behind a getter that leaks on read",
+      (): unknown => {
+        const verdict = { kind: "unproven" };
+        Object.defineProperty(verdict, "reason", {
+          enumerable: true,
+          get: () => CODEX_PROVENANCE_SECRET,
+        });
+        return verdict;
+      },
+      "outcome-missing",
+    ],
+    [
+      "a reason behind a getter that throws",
+      (): unknown => {
+        const verdict = { kind: "unproven" };
+        Object.defineProperty(verdict, "reason", {
+          enumerable: true,
+          get: () => {
+            throw new Error(CODEX_PROVENANCE_SECRET);
+          },
+        });
+        return verdict;
+      },
+      "outcome-missing",
+    ],
+    [
+      "a reason inherited from a prototype rather than stated as data",
+      (): unknown =>
+        Object.create({ kind: "unproven", reason: "no-local-copy" }) as object,
+      "outcome-missing",
+    ],
+    [
+      "a proxy whose traps throw",
+      (): unknown =>
+        new Proxy(
+          { kind: "unproven", reason: "no-local-copy" },
+          {
+            getOwnPropertyDescriptor: () => {
+              throw new Error(CODEX_PROVENANCE_SECRET);
+            },
+            get: () => {
+              throw new Error(CODEX_PROVENANCE_SECRET);
+            },
+          },
+        ),
+      "outcome-missing",
+    ],
+    [
+      "a bare string where a verdict belongs",
+      (): unknown => CODEX_PROVENANCE_SECRET,
+      "outcome-missing",
+    ],
+    ["a null verdict", (): unknown => null, "outcome-missing"],
+    ["an undefined verdict", (): unknown => undefined, "outcome-missing"],
+    [
+      "a `host` verdict whose outcome is the caller's own string",
+      (): unknown => ({ kind: "host", outcome: CODEX_PROVENANCE_SECRET }),
+      "specifier-unknown",
+    ],
+    [
+      "a `host` verdict whose outcome hides behind a getter",
+      (): unknown => {
+        const verdict = { kind: "host" };
+        Object.defineProperty(verdict, "outcome", {
+          enumerable: true,
+          get: () => "redirected",
+        });
+        return verdict;
+      },
+      "specifier-unknown",
+    ],
+    [
+      "a `kind` that hides behind a getter claiming the host copy",
+      (): unknown => {
+        const verdict = { outcome: "redirected", reason: "no-local-copy" };
+        Object.defineProperty(verdict, "kind", {
+          enumerable: true,
+          get: () => "host",
+        });
+        return verdict;
+      },
+      "no-local-copy",
+    ],
+  ] as const)("bounds the logged provenance token for %s", async (_label, verdict, expectedToken) => {
+    const host = codexHost();
+    const harness = codexSeamHarness({
+      providerModuleProvenance:
+        verdict as unknown as () => PiHostModuleProvenance,
+    });
+    harness.attachTo(host);
+    const logger = new RecordingLogger();
+    const extension = installCodexPrimary(host, harness, {
+      fast: true,
+      overrides: { logger },
+    });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(0);
+    expect(harness.wrapped()).toBeUndefined();
+    expect(harness.importCalls()).toBe(0);
+    expect(harness.factoryCalls()).toBe(0);
+    const degradations = logger.entries.filter(
+      (entry) => entry.obj.reason === "provider-module-unproven",
+    );
+    expect(degradations).toHaveLength(1);
+    expect(degradations[0]?.obj.provenance).toBe(expectedToken);
+    // The token is a member of the loader's closed enum, so a consumer may
+    // render it as-is.
+    expect(CODEX_FAST_PROVENANCE_REASON_TOKENS).toContain(
+      degradations[0]?.obj.provenance,
+    );
+    const serialized = JSON.stringify([
+      logger.entries,
+      host.statusCalls,
+      extension.providerFastLatestForTest(),
+    ]);
+    expect(serialized).not.toContain(CODEX_PROVENANCE_SECRET);
+    expect(serialized).not.toContain("totally-made-up-reason");
+    expect(serialized).not.toContain("/node_modules/");
+    expect(serialized).not.toContain("@earendil-works/pi-ai");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+  });
+
+  it("registers when the subpath is already the host copy, with no redirect", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness({
+      providerModuleProvenance: () => ({
+        kind: "host",
+        outcome: "already-host",
+      }),
+    });
+    harness.attachTo(host);
+    installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(1);
+    expect(harness.wrapped()?.id).toBe(CODEX_PROVIDER_ID);
+  });
+
+  it("checks provenance even when the host version passes", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness({ hostVersion: "0.82.9" });
+    harness.attachTo(host);
+    installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+
+    // Version is the first gate, so an unsupported host stops before the
+    // provenance probe and the reported token stays the version one.
+    expect(harness.provenanceCalls()).toBe(0);
+  });
+
+  it.each([
+    [
+      "a rejecting import",
+      () =>
+        codexSeamHarness({
+          importProviderModule: () =>
+            Promise.reject(new Error(CODEX_IMPORT_SECRET)),
+        }),
+      "provider-module-unavailable",
+    ],
+    [
+      "a namespace without the factory",
+      () => codexSeamHarness({ moduleNamespace: { other: () => undefined } }),
+      "provider-factory-unavailable",
+    ],
+    [
+      "a factory returning a foreign provider",
+      () =>
+        codexSeamHarness({
+          moduleNamespace: {
+            openaiCodexProvider: () => ({
+              id: "openai",
+              stream: () => undefined,
+              streamSimple: () => undefined,
+            }),
+          },
+        }),
+      "provider-identity-unexpected",
+    ],
+    [
+      "a provider the wrapper cannot copy",
+      () =>
+        codexSeamHarness({
+          moduleNamespace: {
+            openaiCodexProvider: () =>
+              new Proxy(
+                {
+                  id: CODEX_PROVIDER_ID,
+                  stream: () => undefined,
+                  streamSimple: () => undefined,
+                },
+                {
+                  ownKeys: () => {
+                    throw new Error("hostile provider");
+                  },
+                },
+              ),
+          },
+        }),
+      "provider-not-wrappable",
+    ],
+  ] as const)("degrades to native behavior on %s, reporting one bounded token", async (_label, buildHarness, reason) => {
+    const host = codexHost();
+    const harness = buildHarness();
+    harness.attachTo(host);
+    const logger = new RecordingLogger();
+    const extension = installCodexPrimary(host, harness, {
+      fast: true,
+      overrides: { logger },
+    });
+    await host.triggerSessionStart();
+
+    expect(harness.registered).toHaveLength(0);
+    const degradations = logger.entries.filter(
+      (entry) => entry.obj.reason === reason,
+    );
+    expect(degradations).toHaveLength(1);
+    const serialized = JSON.stringify(logger.entries);
+    expect(serialized).not.toContain(CODEX_IMPORT_SECRET);
+    expect(serialized).not.toContain("@earendil-works/pi-ai");
+    // Startup is unaffected: the generation still becomes ready.
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+  });
+
+  it("maps an eligible parent call and reports requested, then not-confirmed", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness();
+    harness.attachTo(host);
+    const extension = installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+
+    const call = await runCodexProviderCall(harness);
+    expect(call.nativeOptions).not.toBe(call.callerOptions);
+    expect(call.nativeOptions?.transport).toBe("sse");
+    expect(call.payload.service_tier).toBe("priority");
+    expect(headerValue(call.sentInit, "originator")).toBe("codex_cli_rs");
+    expect(headerValue(call.sentInit, "x-codex-routing-hint")).toBe(
+      `model=${CODEX_ELIGIBLE_MODEL_ID};tier=priority`,
+    );
+
+    expect(extension.providerFastLatestForTest()).toEqual({
+      state: "not-confirmed",
+      evidenceKind: "openai-service-tier",
+      evidenceOutcome: "standard",
+      reason: "none",
+      ruleId: CODEX_ELIGIBLE_RULE_ID,
+    });
+    await host.invokeCommand("weave:status");
+    const message = host.notifyCalls.at(-1)?.message ?? "";
+    expect(message).toContain(
+      `fast: not-confirmed (${CODEX_ELIGIBLE_RULE_ID}, openai-service-tier=standard)`,
+    );
+    expect(message).not.toContain(CODEX_SUBSCRIPTION_TOKEN);
+    expect(message).not.toContain(CODEX_ELIGIBLE_MODEL_ID);
+    expect(message).not.toContain(CODEX_FIRST_PARTY_BASE_URL);
+  });
+
+  it("reports applied only from same-attempt confirmed evidence", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness();
+    harness.attachTo(host);
+    const extension = installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+
+    await runCodexProviderCall(harness, { serviceTier: "priority" });
+    expect(extension.providerFastLatestForTest()).toEqual({
+      state: "applied",
+      evidenceKind: "openai-service-tier",
+      evidenceOutcome: "confirmed",
+      reason: "none",
+      ruleId: CODEX_ELIGIBLE_RULE_ID,
+    });
+    await host.invokeCommand("weave:status");
+    expect(host.notifyCalls.at(-1)?.message ?? "").toContain("fast: applied");
+  });
+
+  it("reads intent fresh per call, so a primary switch changes the very next one", async () => {
+    const host = codexHost([codexHostModel, nonCodexHostModel]);
+    const harness = codexSeamHarness();
+    harness.attachTo(host);
+    installCodexPrimary(host, harness, {
+      fast: true,
+      second: { name: "tapestry", model: nonCodexHostModel },
+    });
+    await host.triggerSessionStart();
+
+    const mapped = await runCodexProviderCall(harness);
+    expect(mapped.nativeOptions).not.toBe(mapped.callerOptions);
+
+    await host.invokeShortcut("alt+a");
+    const passthrough = await runCodexProviderCall(harness);
+    // Referential identity: the native implementation received the caller's
+    // own options object, so nothing was added, forced, or observed.
+    expect(passthrough.nativeOptions).toBe(passthrough.callerOptions);
+    expect(passthrough.payload.service_tier).toBeUndefined();
+    expect(headerValue(passthrough.sentInit, "originator")).toBeNull();
+  });
+
+  it("leaves an ineligible gateway transport untouched and reports the bounded reason", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness();
+    harness.attachTo(host);
+    const extension = installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+
+    const call = await runCodexProviderCall(harness, {
+      baseUrl: "http://127.0.0.1:17399/backend-api",
+    });
+    expect(call.nativeOptions).toBe(call.callerOptions);
+    expect(call.payload.service_tier).toBeUndefined();
+    expect(extension.providerFastLatestForTest()).toEqual({
+      state: "unsupported",
+      evidenceKind: "none",
+      evidenceOutcome: "absent",
+      reason: "transport-not-first-party",
+    });
+  });
+
+  it("journals each distinct mapped outcome once and survives a failing write", async () => {
+    const journalEntries: unknown[] = [];
+    const host = codexHost();
+    const harness = codexSeamHarness();
+    harness.attachTo(host);
+    installCodexPrimary(host, harness, {
+      fast: true,
+      overrides: {
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+        telemetryJournal: {
+          write: (entry) => {
+            journalEntries.push(entry);
+            return okAsync(undefined);
+          },
+        },
+        telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+      },
+    });
+    await host.triggerSessionStart();
+    await runCodexProviderCall(harness);
+    await runCodexProviderCall(harness);
+    await flushBackgroundWork();
+
+    const events = journalEntries
+      .map((entry) =>
+        typeof entry === "object" && entry !== null && "eventType" in entry
+          ? String((entry as { eventType?: unknown }).eventType)
+          : "",
+      )
+      .filter((eventType) => eventType.startsWith("provider-fast."));
+    expect(events).toEqual([
+      "provider-fast.requested",
+      "provider-fast.not-confirmed",
+    ]);
+    const serialized = JSON.stringify(journalEntries);
+    expect(serialized).not.toContain(CODEX_SUBSCRIPTION_TOKEN);
+    expect(serialized).not.toContain(CODEX_ELIGIBLE_MODEL_ID);
+    expect(serialized).not.toContain(CODEX_FIRST_PARTY_BASE_URL);
+  });
+
+  it("keeps serving provider calls when the journal write fails", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness();
+    harness.attachTo(host);
+    const extension = installCodexPrimary(host, harness, {
+      fast: true,
+      overrides: {
+        runtimeStoreFactory: {
+          open: () => okAsync(createInMemoryRuntimeStore()),
+        },
+        telemetryJournal: {
+          write: () =>
+            errAsync({
+              type: "journal_write",
+              message: CODEX_IMPORT_SECRET,
+            } as RuntimeStoreError),
+        },
+        telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+      },
+    });
+    await host.triggerSessionStart();
+    const call = await runCodexProviderCall(harness);
+    await flushBackgroundWork();
+
+    expect(call.payload.service_tier).toBe("priority");
+    expect(extension.providerFastLatestForTest()?.state).toBe("not-confirmed");
+    expect(JSON.stringify(host.notifyCalls)).not.toContain(CODEX_IMPORT_SECRET);
+  });
+
+  it("drops the latest mapped state when the session is replaced", async () => {
+    const host = codexHost();
+    const harness = codexSeamHarness();
+    harness.attachTo(host);
+    const extension = installCodexPrimary(host, harness, { fast: true });
+    await host.triggerSessionStart();
+    await runCodexProviderCall(harness);
+    expect(extension.providerFastLatestForTest()?.state).toBe("not-confirmed");
+
+    await host.triggerSessionStart();
+    expectSanitizedProviderFast(
+      extension.providerFastLatestForTest(),
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+  });
+});
+
+describe("createPiExtension: codex subscription fast provider in child mode", () => {
+  class CodexChildEnvPort implements PiEnvPort {
+    constructor(private readonly values: Map<string, string>) {}
+    read(name: string): string | undefined {
+      return this.values.get(name);
+    }
+    deleteValue(name: string): void {
+      this.values.delete(name);
+    }
+  }
+
+  class CodexChildOutputPort {
+    readonly lines: Record<string, unknown>[] = [];
+    writeLine(bytes: Uint8Array): ResultAsync<void, never> {
+      for (const line of new TextDecoder().decode(bytes).split("\n")) {
+        if (line.length > 0) {
+          this.lines.push(JSON.parse(line) as Record<string, unknown>);
+        }
+      }
+      return okAsync(undefined);
+    }
+  }
+
+  class CodexChildTimerPort {
+    schedule(): { cancel: () => void } {
+      return { cancel: () => undefined };
+    }
+  }
+
+  /**
+   * Boots this extension as a private RPC child: the bootstrap secret arrives
+   * only through the environment, exactly as a real spawned child receives it.
+   */
+  async function bootCodexChild(
+    harness: CodexSeamHarness,
+    options: {
+      readonly overrides?: Partial<PiExtensionDeps>;
+      readonly withoutChildId?: boolean;
+    } = {},
+  ): Promise<{
+    readonly host: RecordingFakePiHost;
+    readonly extension: PiExtensionInstance;
+    readonly secretBytes: Uint8Array;
+    readonly applyBootstrap: (body: Record<string, unknown>) => Promise<void>;
+  }> {
+    const randomPort = new WebCryptoRandomPort();
+    const hmacPort = new WebCryptoHmacPort();
+    const secretBytes = randomPort.randomBytes(32);
+    const host = new RecordingFakePiHost({
+      mode: "rpc",
+      trusted: true,
+      availableModels: [codexHostModel],
+    });
+    harness.attachTo(host);
+    const extension = createPiExtension({
+      hostPackageReader: FakeHostPackageReader.ok({
+        name: HOST_PACKAGE_NAME,
+        version: "0.81.1",
+      }),
+      capabilityProber: allOkCapabilityProber(),
+      idGenerator: new FakeIdGenerator(),
+      clock: new FakeClock(),
+      logger: new RecordingLogger(),
+      configActivator: fakeConfigActivator(),
+      pathContainmentPort: new FakePathContainmentPort(
+        new Map(),
+        ok("/fake/project"),
+      ),
+      threadSourceFactory: undefined,
+      hostSurfaceReader: hostSurfaceReader(),
+      sessionStorageAuthority: TEST_ONLY_GRANTED_SESSION_STORAGE_AUTHORITY,
+      codexFastProviderSeam: harness.seam,
+      envPort: new CodexChildEnvPort(
+        new Map([
+          [WEAVE_CHILD_SECRET_ENV, bytesToHex(secretBytes)],
+          ...(options.withoutChildId === true
+            ? []
+            : ([[WEAVE_CHILD_ID_ENV, "child-codex-1"]] as [string, string][])),
+          [WEAVE_CONTROLLER_GENERATION_ENV, "gen-codex-1"],
+        ]),
+      ),
+      randomPort,
+      hmacPort,
+      processPort: new FakeChildProcessPort(),
+      childOutputPort: new CodexChildOutputPort(),
+      childTimerPort: new CodexChildTimerPort(),
+      ...options.overrides,
+    });
+    extension(host.api);
+    await host.triggerSessionStart();
+
+    let sequence = 1;
+    const applyBootstrap = async (
+      body: Record<string, unknown>,
+    ): Promise<void> => {
+      const envelope = await signEnvelope(
+        {
+          childId: "child-codex-1",
+          generationId: "gen-codex-1",
+          direction: "parent-to-child",
+          sequence: sequence++,
+          nonce: generateNonceHex(randomPort),
+          correlationId: "child-codex-1",
+          kind: "bootstrap",
+          body: body as unknown as JsonValue,
+        },
+        secretBytes,
+        hmacPort,
+      );
+      if (envelope.isErr()) {
+        throw new Error(`test setup failed to sign: ${envelope.error.type}`);
+      }
+      await host.invokeCommand(
+        "weave:__control__",
+        JSON.stringify(envelope.value),
+      );
+      await flushBackgroundWork();
+    };
+
+    return { host, extension, secretBytes, applyBootstrap };
+  }
+
+  function childBootstrapBody(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      mode: "ordinary",
+      agentName: "shuttle",
+      composedPrompt: "You are Shuttle, a delegated specialist.",
+      models: [`${codexHostModel.provider}/${codexHostModel.id}`],
+      correlationId: "child-codex-1",
+      context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
+      resolvedModel: {
+        provider: codexHostModel.provider,
+        id: codexHostModel.id,
+      },
+      ...overrides,
+    };
+  }
+
+  it("registers the wrapped provider in an authenticated child process", async () => {
+    const harness = codexSeamHarness();
+    await bootCodexChild(harness);
+
+    expect(harness.registered).toHaveLength(1);
+    expect(harness.wrapped()?.id).toBe(CODEX_PROVIDER_ID);
+  });
+
+  it("registers nothing when the child handshake never authenticated", async () => {
+    const harness = codexSeamHarness();
+    // A child whose bootstrap environment is incomplete never activates, so
+    // the process has no authenticated owner and overrides no provider.
+    await bootCodexChild(harness, { withoutChildId: true });
+
+    expect(harness.registered).toHaveLength(0);
+    expect(harness.importCalls()).toBe(0);
+  });
+
+  it("never activates fast mode before the authenticated bootstrap applies", async () => {
+    const harness = codexSeamHarness();
+    const { extension, applyBootstrap } = await bootCodexChild(harness);
+
+    // Pending bootstrap: the child owns no intent at all.
+    const pending = await runCodexProviderCall(harness);
+    expect(pending.nativeOptions).toBe(pending.callerOptions);
+    expect(pending.payload.service_tier).toBeUndefined();
+    expect(headerValue(pending.sentInit, "originator")).toBeNull();
+    expect(extension.providerFastLatestForTest()).toBeUndefined();
+
+    await applyBootstrap(childBootstrapBody({ fast: true }));
+
+    const mapped = await runCodexProviderCall(harness);
+    expect(mapped.nativeOptions).not.toBe(mapped.callerOptions);
+    expect(mapped.payload.service_tier).toBe("priority");
+    expect(headerValue(mapped.sentInit, "x-codex-routing-hint")).toBe(
+      `model=${CODEX_ELIGIBLE_MODEL_ID};tier=priority`,
+    );
+    expect(extension.providerFastLatestForTest()).toEqual({
+      state: "not-confirmed",
+      evidenceKind: "openai-service-tier",
+      evidenceOutcome: "standard",
+      reason: "none",
+      ruleId: CODEX_ELIGIBLE_RULE_ID,
+    });
+  });
+
+  it("leaves a bootstrapped child without fast intent completely untouched", async () => {
+    const harness = codexSeamHarness();
+    const { extension, applyBootstrap } = await bootCodexChild(harness);
+    await applyBootstrap(childBootstrapBody());
+
+    const call = await runCodexProviderCall(harness);
+    expect(call.nativeOptions).toBe(call.callerOptions);
+    expect(call.payload.service_tier).toBeUndefined();
+    expect(extension.providerFastLatestForTest()).toBeUndefined();
+  });
+
+  it("registers and activates for a direct-step child the same way", async () => {
+    const harness = codexSeamHarness();
+    const { extension, applyBootstrap } = await bootCodexChild(harness);
+    expect(harness.registered).toHaveLength(1);
+
+    await applyBootstrap(
+      childBootstrapBody({
+        mode: "direct-step",
+        fast: true,
+        workflowInstanceId: "wf-1",
+        leaseId: "lease-1",
+        stepName: "implement",
+        completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+      }),
+    );
+
+    const mapped = await runCodexProviderCall(harness);
+    expect(mapped.payload.service_tier).toBe("priority");
+    expect(headerValue(mapped.sentInit, "originator")).toBe("codex_cli_rs");
+    expect(extension.providerFastLatestForTest()?.state).toBe("not-confirmed");
   });
 });

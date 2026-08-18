@@ -12,6 +12,7 @@
 import { dirname, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
+  CODEX_PROVIDER_SUBPATH_SPECIFIER,
   hostEntrySpecifierFor,
   isSafeAbsoluteHostPath,
   PI_HOST_MODULE_SPECIFIERS,
@@ -158,7 +159,61 @@ function emptyLocalResolutions(): PiHostLocalResolutions {
     "@earendil-works/pi-coding-agent": undefined,
     "@earendil-works/pi-ai": undefined,
     "@earendil-works/pi-tui": undefined,
+    [CODEX_PROVIDER_SUBPATH_SPECIFIER]: undefined,
   };
+}
+
+/**
+ * Whether one closed specifier is proven to load the host's own copy, and
+ * how that was established.
+ *
+ * `redirected` means this process installed an exact-path override that
+ * re-exports the host file; `already-host` means the local resolution *is*
+ * the host file, so there was never a second copy to redirect. Everything
+ * else is `unproven` with one bounded reason, and a consumer that needs the
+ * host copy must fail closed on it rather than import and hope.
+ */
+export type PiHostModuleProvenance =
+  | {
+      readonly kind: "host";
+      readonly outcome: "redirected" | "already-host";
+    }
+  | {
+      readonly kind: "unproven";
+      readonly reason: PiHostModuleProvenanceReason;
+    };
+
+export type PiHostModuleProvenanceReason =
+  | PiHostModuleSkipReason
+  /** No loader outcome was recorded in this process at all. */
+  | "outcome-missing"
+  /** The outcome listed the specifier as neither redirected nor skipped. */
+  | "specifier-unknown";
+
+/**
+ * Decide one specifier's provenance from an already-gathered outcome. Pure:
+ * it reads the recorded facts and never resolves, imports, or guesses.
+ */
+export function resolveHostModuleProvenance(
+  specifier: PiHostModuleSpecifier,
+  outcome: PiHostModuleOutcome | undefined,
+): PiHostModuleProvenance {
+  if (outcome === undefined) {
+    return { kind: "unproven", reason: "outcome-missing" };
+  }
+  if (outcome.redirected.includes(specifier)) {
+    return { kind: "host", outcome: "redirected" };
+  }
+  const skipped = outcome.skipped.find(
+    (entry) => entry.specifier === specifier,
+  );
+  if (skipped === undefined) {
+    return { kind: "unproven", reason: "specifier-unknown" };
+  }
+  if (skipped.reason === "already-host") {
+    return { kind: "host", outcome: "already-host" };
+  }
+  return { kind: "unproven", reason: skipped.reason };
 }
 
 function skipAllSpecifiers(
@@ -415,6 +470,7 @@ async function gatherSpecifierFacts(
     "@earendil-works/pi-coding-agent": {},
     "@earendil-works/pi-ai": {},
     "@earendil-works/pi-tui": {},
+    [CODEX_PROVIDER_SUBPATH_SPECIFIER]: {},
   } as {
     [K in PiHostModuleSpecifier]: {
       localEntryPath?: string;
@@ -779,4 +835,14 @@ export function recordHostModuleOutcome(outcome: PiHostModuleOutcome): void {
 /** The outcome recorded by the extension entry, if any. */
 export function getHostModuleOutcome(): PiHostModuleOutcome | undefined {
   return recordedHostModuleOutcome;
+}
+
+/**
+ * Provenance of one closed specifier in this process, from the recorded
+ * outcome. Absent evidence is `unproven`, never an optimistic default.
+ */
+export function getHostModuleProvenance(
+  specifier: PiHostModuleSpecifier,
+): PiHostModuleProvenance {
+  return resolveHostModuleProvenance(specifier, getHostModuleOutcome());
 }

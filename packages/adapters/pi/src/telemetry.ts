@@ -45,15 +45,17 @@ import {
   type PiAdapterFailure,
 } from "./errors.js";
 import {
+  isProviderFastRuleId,
   PROVIDER_FAST_EVIDENCE_KINDS,
   PROVIDER_FAST_EVIDENCE_OUTCOMES,
+  PROVIDER_FAST_REASONS,
   PROVIDER_FAST_STATES,
-  PROVIDER_FAST_UNSUPPORTED_REASONS,
   type ProviderFastEvidenceKind,
   type ProviderFastEvidenceOutcome,
   type ProviderFastPublicSnapshot,
+  type ProviderFastReason,
+  type ProviderFastRuleId,
   type ProviderFastState,
-  type ProviderFastUnsupportedReason,
 } from "./provider-fast-activation.js";
 import type { JsonValue } from "./strict-json.js";
 import type { Clock, PiAdapterLogger } from "./types.js";
@@ -92,35 +94,64 @@ export type PiJournalSafeData = Readonly<
 >;
 
 /**
- * The adapter sends no acceleration control, so the only outcome it can ever
- * journal is the terminal unsupported one.
+ * One journal event per neutral runtime state. The event name *is* the state,
+ * so a consumer can filter `provider-fast.applied` from
+ * `provider-fast.not-confirmed` without parsing data.
  */
-export const PI_PROVIDER_FAST_JOURNAL_EVENTS = ["unsupported"] as const;
+export const PI_PROVIDER_FAST_JOURNAL_EVENTS = PROVIDER_FAST_STATES;
 
-export type PiProviderFastJournalEvent =
-  (typeof PI_PROVIDER_FAST_JOURNAL_EVENTS)[number];
+export type PiProviderFastJournalEvent = ProviderFastState;
 
+/**
+ * Every key a provider-fast journal entry may carry. `ruleId` is the only
+ * optional one, present exactly when an allowlist entry matched.
+ */
 export const PI_PROVIDER_FAST_JOURNAL_DATA_KEYS = [
+  "state",
+  "evidenceKind",
+  "evidenceOutcome",
+  "reason",
+  "ruleId",
+] as const;
+
+export type PiProviderFastJournalDataKey =
+  (typeof PI_PROVIDER_FAST_JOURNAL_DATA_KEYS)[number];
+
+/** The keys every entry must carry. */
+export const PI_PROVIDER_FAST_JOURNAL_REQUIRED_DATA_KEYS = [
   "state",
   "evidenceKind",
   "evidenceOutcome",
   "reason",
 ] as const;
 
-export type PiProviderFastJournalDataKey =
-  (typeof PI_PROVIDER_FAST_JOURNAL_DATA_KEYS)[number];
-
 export type PiProviderFastJournalData = {
   readonly state: ProviderFastState;
   readonly evidenceKind: ProviderFastEvidenceKind;
   readonly evidenceOutcome: ProviderFastEvidenceOutcome;
-  readonly reason: ProviderFastUnsupportedReason;
+  readonly reason: ProviderFastReason;
+  readonly ruleId?: ProviderFastRuleId;
 };
 
 export type PiProviderFastJournalRecordOutcome = "recorded" | "duplicate";
 
 /** Bound for the in-memory terminal-outcome dedupe window. */
 export const PI_PROVIDER_FAST_DEDUPE_LIMIT = 64;
+
+/**
+ * Severity per state. A reached or requested acceleration is ordinary
+ * information; an intent that could not be proven is the case an operator may
+ * want to notice, so it is a warning.
+ */
+const PI_PROVIDER_FAST_SEVERITY: Readonly<
+  Record<ProviderFastState, JournalSeverity>
+> = Object.freeze({
+  declared: "info",
+  requested: "info",
+  applied: "info",
+  "not-confirmed": "warn",
+  unsupported: "warn",
+});
 
 function isProviderFastState(value: unknown): value is ProviderFastState {
   return (
@@ -149,14 +180,10 @@ function isProviderFastEvidenceOutcome(
   );
 }
 
-function isProviderFastUnsupportedReason(
-  value: unknown,
-): value is ProviderFastUnsupportedReason {
+function isProviderFastReason(value: unknown): value is ProviderFastReason {
   return (
     typeof value === "string" &&
-    PROVIDER_FAST_UNSUPPORTED_REASONS.includes(
-      value as ProviderFastUnsupportedReason,
-    )
+    PROVIDER_FAST_REASONS.includes(value as ProviderFastReason)
   );
 }
 
@@ -185,7 +212,10 @@ const inspectProviderFastPublicState = Result.fromThrowable(
       return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
     }
     const ownKeys = Reflect.ownKeys(input);
-    if (ownKeys.length !== PI_PROVIDER_FAST_JOURNAL_DATA_KEYS.length) {
+    if (
+      ownKeys.length < PI_PROVIDER_FAST_JOURNAL_REQUIRED_DATA_KEYS.length ||
+      ownKeys.length > PI_PROVIDER_FAST_JOURNAL_DATA_KEYS.length
+    ) {
       return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
     }
     for (const key of ownKeys) {
@@ -217,8 +247,23 @@ const inspectProviderFastPublicState = Result.fromThrowable(
       !isProviderFastState(state.value) ||
       !isProviderFastEvidenceKind(evidenceKind.value) ||
       !isProviderFastEvidenceOutcome(evidenceOutcome.value) ||
-      !isProviderFastUnsupportedReason(reason.value)
+      !isProviderFastReason(reason.value)
     ) {
+      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+    }
+    const carriesRuleId = ownKeys.includes("ruleId");
+    if (!carriesRuleId) {
+      return ok(
+        Object.freeze({
+          state: state.value,
+          evidenceKind: evidenceKind.value,
+          evidenceOutcome: evidenceOutcome.value,
+          reason: reason.value,
+        }),
+      );
+    }
+    const ruleId = readOwnDataDescriptor(input, "ruleId");
+    if (ruleId.isErr() || !isProviderFastRuleId(ruleId.value)) {
       return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
     }
     return ok(
@@ -227,6 +272,7 @@ const inspectProviderFastPublicState = Result.fromThrowable(
         evidenceKind: evidenceKind.value,
         evidenceOutcome: evidenceOutcome.value,
         reason: reason.value,
+        ruleId: ruleId.value,
       }),
     );
   },
@@ -243,14 +289,25 @@ export function projectProviderFastJournalData(
   return inspectProviderFastPublicState(snapshot).andThen((copied) => copied);
 }
 
+/**
+ * The durable identity of one outcome. Evidence outcome is part of it because
+ * `not-confirmed` for standard-tier evidence and `not-confirmed` for evidence
+ * that could not be read are different facts an operator needs to tell apart.
+ */
 function providerFastDedupeKey(data: PiProviderFastJournalData): string {
-  return `${data.state}:${data.reason}`;
+  return `${data.state}:${data.reason}:${data.evidenceOutcome}`;
 }
 
 /**
  * Render the optional `/weave:status` fast line from sanitized public state.
- * No declared intent produces no line. The line can only report the bounded
- * unsupported outcome; it never says requested, confirmed, or applied.
+ *
+ * No declared intent produces no line. The state always leads, so the five
+ * neutral states are distinguishable at a glance, and the parenthesized detail
+ * is built from bounded tokens only: the allowlist rule id when one matched,
+ * the bounded reason when there is something to explain, and the evidence kind
+ * and outcome when a request actually carried controls. No model text,
+ * provider string, URL, header name, or header value can reach this line,
+ * because the projection would have rejected the snapshot first.
  */
 export function renderProviderFastStatusLine(
   snapshot: ProviderFastPublicSnapshot | undefined,
@@ -258,9 +315,21 @@ export function renderProviderFastStatusLine(
   if (snapshot === undefined) {
     return ok(undefined);
   }
-  return projectProviderFastJournalData(snapshot).map(
-    (data) => `fast: ${data.state} (${data.reason})`,
-  );
+  return projectProviderFastJournalData(snapshot).map((data) => {
+    const details: string[] = [];
+    if (data.ruleId !== undefined) {
+      details.push(data.ruleId);
+    }
+    if (data.reason !== "none") {
+      details.push(data.reason);
+    }
+    if (data.evidenceKind !== "none") {
+      details.push(`${data.evidenceKind}=${data.evidenceOutcome}`);
+    }
+    return details.length === 0
+      ? `fast: ${data.state}`
+      : `fast: ${data.state} (${details.join(", ")})`;
+  });
 }
 
 /**
@@ -506,10 +575,14 @@ export class PiTelemetry implements PiTelemetryUsageSink {
   }
 
   /**
-   * Persist one sanitized terminal provider-fast outcome. The adapter sends
-   * no acceleration control, so the only durable outcome is the bounded
-   * unsupported one. Repeats of the same state/reason are no-ops, and the
-   * dedupe window itself is bounded.
+   * Persist one sanitized provider-fast outcome.
+   *
+   * Each distinct `(state, reason, evidenceOutcome)` tuple persists once per
+   * session, so a session that reaches `requested` and then settles at
+   * `not-confirmed` keeps both facts, while a hundred repeats of either keep
+   * one record each. `requested` is journaled as exactly that: the dedupe key
+   * and the event name both carry the state, so a transient request can never
+   * be read back as an application. The dedupe window itself is bounded.
    */
   recordProviderFastTransition(
     snapshot: ProviderFastPublicSnapshot,
@@ -530,7 +603,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
     return this.recordJournalEvent({
       family: "provider-fast",
       event: data.state,
-      severity: "warn",
+      severity: PI_PROVIDER_FAST_SEVERITY[data.state],
       data,
     })
       .map(() => "recorded" as const)
