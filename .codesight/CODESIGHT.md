@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 312 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~34,300 tokens. Without it, AI exploration would cost ~100,200 tokens. **Saves ~65,900 tokens per conversation.**
-> **Last scanned:** 2026-08-18 03:13 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 313 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~34,400 tokens. Without it, AI exploration would cost ~100,400 tokens. **Saves ~66,100 tokens per conversation.**
+> **Last scanned:** 2026-08-18 03:26 — re-run after significant changes
 
 ---
 
@@ -600,6 +600,14 @@
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
   - _...18 more_
+- `packages/adapters/pi/src/codex-fast/attempt.ts`
+  - function createCodexFastAttempt: (eligibility) => CodexFastAttempt
+  - type CodexFastState
+  - type CodexFastReason
+  - type CodexFastPayloadDecision
+  - type CodexFastEvidenceKind
+  - type CodexFastEvidenceOutcome
+  - _...14 more_
 - `packages/adapters/pi/src/codex-fast/routing.ts`
   - function isSafeCodexModelId: (modelId) => modelId is string
   - function findCodexFastAllowlistEntry: (modelId) => CodexFastAllowlistEntry | undefined
@@ -2014,7 +2022,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 349 test files found
+> 350 test files found
 
 ---
 

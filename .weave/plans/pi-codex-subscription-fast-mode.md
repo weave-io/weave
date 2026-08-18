@@ -150,7 +150,7 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
   - **Acceptance**:
     - `bun test packages/adapters/pi/src/__tests__/codex-fast-routing.test.ts` passes; module has no imports from pi-ai, engine, or Node.
 
-- [ ] 4. Request-scoped attempt correlator (test-first)
+- [x] 4. Request-scoped attempt correlator (test-first)
   - **What**: A small state machine correlating one stream call's payload decision, header activation, per-attempt fetches, and response evidence into one sanitized terminal snapshot.
   - **Files**: `packages/adapters/pi/src/codex-fast/attempt.ts`, `packages/adapters/pi/src/__tests__/codex-fast-attempt.test.ts`.
   - **Depends on**: Task 3.
