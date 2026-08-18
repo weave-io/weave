@@ -63,6 +63,17 @@
  * which already treats a disappeared prompt file as a failed refresh rather
  * than a change.
  *
+ * ## Diagnostics
+ *
+ * Two projections, deliberately different in what they may say. The internal
+ * {@link PiConfigRefreshOutcome} names the offending source and carries the
+ * port's own message, because it never leaves the adapter. Everything an
+ * operator sees goes through {@link PiConfigRefreshPublicState} instead: three
+ * kinds, closed reason literals, and facet names from the fixed
+ * primary-contract list. The coordinator emits at most one notice per distinct
+ * (classification, digest-state), so a config left broken cannot flood the
+ * log or the toast area at every delegation boundary.
+ *
  * ## Trust
  *
  * Refresh never widens what a trust state may read. With trust withheld the
@@ -100,7 +111,11 @@ import {
   refreshConfigSourceManifest,
   resolvePiConfigSourcePaths,
 } from "./config-source-digests.js";
-import type { PiAdapterFailure } from "./errors.js";
+import {
+  makeConfigRefreshFailedFailure,
+  type PiAdapterFailure,
+  type PiConfigRefreshFailureReason,
+} from "./errors.js";
 import { safelyAwaitPortResult } from "./port-safety.js";
 import {
   decidePiPrimaryContract,
@@ -842,6 +857,150 @@ export type PiConfigRefreshOutcome =
   | { readonly kind: "stale" }
   | { readonly kind: "failed"; readonly failure: PiConfigRefreshFailure };
 
+// ---------------------------------------------------------------------------
+// Public diagnostics
+// ---------------------------------------------------------------------------
+
+/**
+ * What an operator is allowed to learn about the last refresh attempt.
+ *
+ * {@link PiConfigRefreshOutcome} is the adapter's own record and may name a
+ * source path or carry a filesystem message. This is the projection that
+ * reaches a log line, a toast, and `/weave:status`: three kinds, closed reason
+ * literals, and facet names from the fixed primary-contract facet list — never
+ * a path, a raw port message, config content, or prompt text.
+ */
+export type PiConfigRefreshPublicState =
+  /** The published catalog matches what the last probe found on disk. */
+  | { readonly kind: "fresh" }
+  /** A valid candidate is held back because it would change the primary. */
+  | {
+      readonly kind: "deferred";
+      readonly facets: readonly PiPrimaryContractFacet[];
+    }
+  /** No candidate could be built; the last valid catalog keeps serving. */
+  | {
+      readonly kind: "failed";
+      readonly reason: PiConfigRefreshFailureReason;
+    };
+
+/** The bounded diagnostic state one generation's coordinator maintains. */
+export interface PiConfigRefreshDiagnostics {
+  readonly state: PiConfigRefreshPublicState;
+  /** Catalog publications this generation has performed. */
+  readonly publishCount: number;
+}
+
+/**
+ * One operator-facing notice, emitted at most once per distinct state.
+ *
+ * A boundary that keeps failing the same way, or keeps re-deriving the same
+ * deferral, emits nothing after the first notice: the coordinator compares an
+ * internal (classification, digest-state) key and stays silent while it holds.
+ */
+export interface PiConfigRefreshNotice {
+  readonly state: PiConfigRefreshNoticeState;
+  /** Fixed, actionable text. Safe to log and to show verbatim. */
+  readonly message: string;
+}
+
+/** The two states worth telling an operator about. `fresh` is not one. */
+export type PiConfigRefreshNoticeState = Exclude<
+  PiConfigRefreshPublicState,
+  { readonly kind: "fresh" }
+>;
+
+/** The only text a primary-affecting deferral ever produces. */
+export const PI_CONFIG_REFRESH_DEFERRAL_MESSAGE =
+  "Weave config change affects the active primary; switch primary or restart to apply.";
+
+/** How a deferral renders on the status line. */
+const DEFERRED_STATUS_REASON = "primary-affecting";
+
+/** Upper bound on facet names rendered on one status line. */
+const MAX_RENDERED_REFRESH_FACETS = 4;
+
+/** Upper bound on the internal dedupe key, so no state grows unboundedly. */
+const MAX_NOTICE_KEY_LENGTH = 256;
+
+const FRESH_STATE: PiConfigRefreshPublicState = Object.freeze({
+  kind: "fresh",
+});
+
+/** Projects an internal failure onto the closed public reason set. */
+export function toPiConfigRefreshPublicReason(
+  failure: PiConfigRefreshFailure,
+): PiConfigRefreshFailureReason {
+  switch (failure.type) {
+    case "SourceReadFailed":
+      return "source-unreadable";
+    case "ConfigParseFailed":
+      return "config-invalid";
+    case "PromptFileMissing":
+      return "prompt-unavailable";
+    case "LifecycleSettingsInvalid":
+      return "settings-invalid";
+    case "MaterializationFailed":
+      return "composition-failed";
+  }
+}
+
+/**
+ * Projects one recorded outcome onto the public state.
+ *
+ * `undefined` means the attempt taught an operator nothing new: a debounced
+ * probe, a generation that lost authority, or a generation with no manifest
+ * at all leave the last rendered state exactly as it was.
+ */
+export function toPiConfigRefreshPublicState(
+  outcome: PiConfigRefreshOutcome,
+): PiConfigRefreshPublicState | undefined {
+  switch (outcome.kind) {
+    case "unchanged":
+    case "published":
+      return FRESH_STATE;
+    case "deferred":
+      return { kind: "deferred", facets: outcome.changedFacets };
+    case "failed":
+      return {
+        kind: "failed",
+        reason: toPiConfigRefreshPublicReason(outcome.failure),
+      };
+    case "skipped":
+    case "stale":
+    case "unavailable":
+      return undefined;
+  }
+}
+
+/**
+ * One concise `/weave:status` row.
+ *
+ * Every component is closed or numeric: the outcome kind, a closed reason
+ * literal, the generation's publish count, and a hard-capped number of facet
+ * names from the fixed contract list. Nothing here can carry a path or any
+ * config byte.
+ */
+export function renderPiConfigRefreshStatusLine(
+  diagnostics: PiConfigRefreshDiagnostics,
+): string {
+  const { state } = diagnostics;
+  const suffix = `published ${diagnostics.publishCount}`;
+  if (state.kind === "failed") {
+    return `config refresh: failed: ${state.reason}; ${suffix}`;
+  }
+  if (state.kind === "fresh") {
+    return `config refresh: fresh; ${suffix}`;
+  }
+  const shown = state.facets.slice(0, MAX_RENDERED_REFRESH_FACETS);
+  const omitted = state.facets.length - shown.length;
+  const facets =
+    shown.length === 0
+      ? ""
+      : `; facets ${shown.join(", ")}${omitted > 0 ? ` (+${omitted})` : ""}`;
+  return `config refresh: deferred: ${DEFERRED_STATUS_REASON}; ${suffix}${facets}`;
+}
+
 /** Everything one generation's coordinator reads. */
 export interface PiConfigRefreshCoordinatorDeps {
   /** The generation's catalog cell. The only thing the coordinator writes. */
@@ -870,6 +1029,15 @@ export interface PiConfigRefreshCoordinatorDeps {
   readonly minIntervalMs?: number;
   /** Receives every recorded outcome, for diagnostics surfaces. */
   readonly onOutcome?: (outcome: PiConfigRefreshOutcome) => void;
+  /**
+   * Receives one notice per distinct failure or deferral state.
+   *
+   * Called only when the state an operator would act on actually changed, so
+   * a boundary that keeps failing identically stays silent after the first
+   * notice. Success emits nothing: the rendered state simply returns to
+   * `fresh`, and a later failure of the same kind is a new state again.
+   */
+  readonly onNotice?: (notice: PiConfigRefreshNotice) => void;
 }
 
 /**
@@ -902,6 +1070,13 @@ export interface PiConfigRefreshCoordinator {
   /** The last recorded attempt outcome, or `undefined` before the first. */
   lastOutcome(): PiConfigRefreshOutcome | undefined;
   /**
+   * The bounded state a status surface renders.
+   *
+   * A generation that has never refreshed reads `fresh` with a publish count
+   * of zero: its catalog is exactly what boot activation produced.
+   */
+  diagnostics(): PiConfigRefreshDiagnostics;
+  /**
    * Drops all coordinator state. An attempt still in flight can no longer
    * publish, defer, or record anything.
    */
@@ -931,6 +1106,67 @@ function manifestEntriesMoved(
 }
 
 /**
+ * The internal half of the dedupe key: what distinguishes *this* failed or
+ * deferred boundary from the previous one of the same classification.
+ *
+ * Coordinator-private and never rendered, logged, or handed to a notice, so
+ * it may read the source detail the public projection drops. Bounded by
+ * {@link MAX_NOTICE_KEY_LENGTH}: a pathological manifest cannot grow it.
+ */
+function failureDigestToken(failure: PiConfigRefreshFailure): string {
+  switch (failure.type) {
+    case "SourceReadFailed":
+      return `${failure.kind}|${failure.path ?? ""}|${failure.message}`;
+    case "ConfigParseFailed":
+      return `${failure.errorCount}|${failure.errorTypes.join(",")}`;
+    case "PromptFileMissing":
+      return failure.path;
+    case "LifecycleSettingsInvalid":
+      return String(failure.issueCount);
+    case "MaterializationFailed":
+      return failure.reason;
+  }
+}
+
+/**
+ * The (classification, digest-state) key one notice is deduped by.
+ *
+ * A `fresh` state collapses to a single key, so a recovery clears the way for
+ * a later identical failure to notify exactly once more.
+ */
+function noticeKeyOf(
+  state: PiConfigRefreshPublicState,
+  outcome: PiConfigRefreshOutcome,
+): string {
+  const classification = classificationKeyOf(state);
+  const digest = digestKeyOf(outcome);
+  return `${classification}#${digest}`.slice(0, MAX_NOTICE_KEY_LENGTH);
+}
+
+function classificationKeyOf(state: PiConfigRefreshPublicState): string {
+  if (state.kind === "failed") return `failed:${state.reason}`;
+  if (state.kind === "deferred") {
+    return `deferred:${[...state.facets].sort().join(",")}`;
+  }
+  return "fresh";
+}
+
+function digestKeyOf(outcome: PiConfigRefreshOutcome): string {
+  if (outcome.kind === "failed") return failureDigestToken(outcome.failure);
+  if (outcome.kind === "deferred") {
+    return [...outcome.changedPaths].sort().join("|");
+  }
+  return "";
+}
+
+/** The fixed text one notice carries. */
+function noticeMessageOf(state: PiConfigRefreshNoticeState): string {
+  return state.kind === "failed"
+    ? makeConfigRefreshFailedFailure(state.reason).safeMessage
+    : PI_CONFIG_REFRESH_DEFERRAL_MESSAGE;
+}
+
+/**
  * Builds one generation's refresh coordinator.
  *
  * Constructed only by generations that actually register delegation surfaces;
@@ -955,12 +1191,34 @@ export function createPiConfigRefreshCoordinator(
   let inFlight: Promise<void> | undefined;
   let lastProbeAtMs: number | undefined;
   let outcome: PiConfigRefreshOutcome | undefined;
+  let publicState: PiConfigRefreshPublicState = FRESH_STATE;
+  let publishCount = 0;
+  let noticeKey: string | undefined;
 
   const owns = (): boolean => !disposed && deps.ownsGeneration();
 
   const record = (next: PiConfigRefreshOutcome): void => {
     if (disposed) return;
     outcome = next;
+    if (next.kind === "published") publishCount += 1;
+
+    // An attempt that taught an operator nothing new (a debounced probe, a
+    // revoked generation) leaves both the rendered state and the dedupe key
+    // untouched, so it can neither hide nor re-trigger a notice.
+    const nextState = toPiConfigRefreshPublicState(next);
+    if (nextState !== undefined) {
+      publicState = nextState;
+      const key = noticeKeyOf(nextState, next);
+      if (key !== noticeKey) {
+        noticeKey = key;
+        if (nextState.kind !== "fresh") {
+          deps.onNotice?.({
+            state: nextState,
+            message: noticeMessageOf(nextState),
+          });
+        }
+      }
+    }
     deps.onOutcome?.(next);
   };
 
@@ -1097,11 +1355,15 @@ export function createPiConfigRefreshCoordinator(
         })(),
       ),
     lastOutcome: () => outcome,
+    diagnostics: () => ({ state: publicState, publishCount }),
     dispose: () => {
       disposed = true;
       inFlight = undefined;
       lastProbeAtMs = undefined;
       outcome = undefined;
+      publicState = FRESH_STATE;
+      publishCount = 0;
+      noticeKey = undefined;
     },
   };
 }

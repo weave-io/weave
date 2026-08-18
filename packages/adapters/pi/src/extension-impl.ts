@@ -220,6 +220,8 @@ import {
   createPiConfigRefreshCoordinator,
   DEFAULT_PI_CONFIG_REFRESH_MIN_INTERVAL_MS,
   type PiConfigRefreshCoordinator,
+  type PiConfigRefreshDiagnostics,
+  renderPiConfigRefreshStatusLine,
 } from "./config-refresh.js";
 import {
   defaultPiConfigSourceFsPort,
@@ -2151,6 +2153,11 @@ function renderStatusMessage(
   delegationController?: PiDelegationController,
   reconstructed?: PiChildReconstructionSummary | undefined,
   providerFastLatest?: ProviderFastPublicSnapshot,
+  /**
+   * Bounded refresh diagnostics, absent for a generation that runs no
+   * delegation-boundary refresh at all (health-only or trust-withheld).
+   */
+  configRefresh?: PiConfigRefreshDiagnostics,
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
@@ -2162,6 +2169,9 @@ function renderStatusMessage(
     `mode: ${generation.preflight.mode}`,
     `health-only: ${effectiveHealthOnly(generation)}`,
   ];
+  if (configRefresh !== undefined) {
+    lines.push(renderPiConfigRefreshStatusLine(configRefresh));
+  }
   const fastLine = renderProviderFastStatusLine(providerFastLatest);
   if (fastLine.isOk() && fastLine.value !== undefined) {
     lines.push(fastLine.value);
@@ -3688,6 +3698,7 @@ export function createPiExtension(
           delegationControllerCell.controller,
           currentChildReconstruction(),
           resolveProviderFastState(),
+          configRefreshCell.coordinator?.diagnostics(),
         ),
         "info",
       );
@@ -5136,12 +5147,22 @@ export function createPiExtension(
           minIntervalMs:
             deps.configRefreshMinIntervalMs ??
             DEFAULT_PI_CONFIG_REFRESH_MIN_INTERVAL_MS,
-          onOutcome: (outcome) => {
-            if (outcome.kind !== "failed") return;
+          // One notice per distinct failure or deferral state, minted by the
+          // coordinator. A boundary that keeps failing the same way is
+          // silent after the first, so a broken config cannot flood the log
+          // or the toast area at every delegation.
+          onNotice: (notice) => {
+            const detail =
+              notice.state.kind === "failed"
+                ? { reason: notice.state.reason }
+                : { facets: notice.state.facets.join(",") };
             deps.logger.warn(
-              { failure: outcome.failure.type },
-              "config refresh failed; the last valid catalog keeps serving",
+              { refresh: notice.state.kind, ...detail },
+              notice.message,
             );
+            // The freshest context this generation has seen: a notice can
+            // land long after `session_start` built this coordinator.
+            (latestSessionCtx ?? ctx).ui.notify(notice.message, "warning");
           },
         });
       }

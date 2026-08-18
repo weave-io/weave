@@ -42,7 +42,10 @@ import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 import { MAX_FINAL_OUTPUT_BYTES } from "../child-tree.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
-import type { PiConfigCatalogState } from "../config-refresh.js";
+import {
+  PI_CONFIG_REFRESH_DEFERRAL_MESSAGE,
+  type PiConfigCatalogState,
+} from "../config-refresh.js";
 import {
   createPiConfigSourceManifest,
   type PiConfigSourceFsPort,
@@ -10026,5 +10029,264 @@ agent alpha {
     await flushBackgroundWork();
 
     expect(extension.configRefreshForTest()).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Bounded diagnostics on the existing status surface
+  // -------------------------------------------------------------------------
+
+  /** Everything a rendered refresh diagnostic must never contain. */
+  const REFRESH_SENTINELS = [
+    PROJECT_CONFIG_PATH,
+    ALPHA_PROMPT_PATH,
+    ".weave",
+    "loom prompt v1",
+    "loom prompt v2",
+    "alpha prompt v1",
+    "UnterminatedString",
+    "SourceReadFailed",
+    "ConfigParseFailed",
+    "PromptSourceDisappeared",
+  ] as const;
+
+  function installWithLogger(
+    host: RecordingFakePiHost,
+    files: RefreshFiles,
+    logger: RecordingLogger,
+  ): PiExtensionInstance {
+    return installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: memoryActivator(files),
+      configSourceFsPort: memoryConfigSourceFs(files),
+      configRefreshMinIntervalMs: 0,
+      logger,
+    });
+  }
+
+  /** The one `/weave:status` row this task owns. */
+  async function refreshStatusLine(
+    host: RecordingFakePiHost,
+  ): Promise<string | undefined> {
+    await host.invokeCommand("weave:status");
+    const message = host.notifyCalls.at(-1)?.message ?? "";
+    return message
+      .split("\n")
+      .find((line) => line.startsWith("config refresh:"));
+  }
+
+  function expectBoundedRefreshLine(line: string | undefined): string {
+    expect(line).toBeDefined();
+    const rendered = line ?? "";
+    for (const sentinel of REFRESH_SENTINELS) {
+      expect(rendered).not.toContain(sentinel);
+    }
+    return rendered;
+  }
+
+  it("reports a fresh catalog and its publish count on /weave:status", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+
+    expect(expectBoundedRefreshLine(await refreshStatusLine(host))).toBe(
+      "config refresh: fresh; published 0",
+    );
+
+    files[ALPHA_PROMPT_PATH] = { content: "alpha prompt v2\n", mtimeMs: 9_000 };
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    expect(expectBoundedRefreshLine(await refreshStatusLine(host))).toBe(
+      "config refresh: fresh; published 1",
+    );
+  });
+
+  it("reports a deferral as primary-affecting with its facet names", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    files[PROJECT_CONFIG_PATH] = {
+      content: PROJECT_CONFIG_V1.replace(
+        '"loom prompt v1"',
+        '"loom prompt v2"',
+      ),
+      mtimeMs: 9_000,
+    };
+
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    expect(expectBoundedRefreshLine(await refreshStatusLine(host))).toBe(
+      "config refresh: deferred: primary-affecting; published 1; facets prompt",
+    );
+  });
+
+  it("reports a refresh failure as a closed reason", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    files[PROJECT_CONFIG_PATH] = {
+      content: 'agent loom {\n  description "unterminated',
+      mtimeMs: 9_000,
+    };
+
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    expect(expectBoundedRefreshLine(await refreshStatusLine(host))).toBe(
+      "config refresh: failed: config-invalid; published 1",
+    );
+    // A missing prompt source is its own closed reason.
+    files[PROJECT_CONFIG_PATH] = {
+      content: PROJECT_CONFIG_V1,
+      mtimeMs: 11_000,
+    };
+    delete files[ALPHA_PROMPT_PATH];
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    expect(expectBoundedRefreshLine(await refreshStatusLine(host))).toBe(
+      "config refresh: failed: prompt-unavailable; published 1",
+    );
+  });
+
+  it("returns to fresh after a failure without leaking the old state", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    files[PROJECT_CONFIG_PATH] = {
+      content: 'agent loom {\n  description "unterminated',
+      mtimeMs: 9_000,
+    };
+    await extension.configRefreshForTest()?.ensureFresh();
+    expect(await refreshStatusLine(host)).toContain("failed");
+
+    // The operator finished the edit; the next boundary publishes it.
+    files[PROJECT_CONFIG_PATH] = {
+      content: PROJECT_CONFIG_V1,
+      mtimeMs: 11_000,
+    };
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    const line = expectBoundedRefreshLine(await refreshStatusLine(host));
+    expect(line).toBe("config refresh: fresh; published 2");
+    expect(line).not.toContain("failed");
+    expect(line).not.toContain("config-invalid");
+  });
+
+  it("notifies and warns once per distinct failure state", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const logger = new RecordingLogger();
+    const extension = installWithLogger(host, files, logger);
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    files[PROJECT_CONFIG_PATH] = {
+      content: 'agent loom {\n  description "unterminated',
+      mtimeMs: 9_000,
+    };
+
+    // Five boundaries, one broken config, one notice.
+    for (let index = 0; index < 5; index += 1) {
+      await extension.configRefreshForTest()?.ensureFresh();
+    }
+
+    const notices = host.notifyCalls.filter((call) =>
+      call.message.startsWith("Weave could not apply a configuration change"),
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.level).toBe("warning");
+    for (const sentinel of REFRESH_SENTINELS) {
+      expect(notices[0]?.message).not.toContain(sentinel);
+    }
+
+    const warnings = logger.entries.filter(
+      (entry) => entry.level === "warn" && entry.obj.refresh === "failed",
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.obj).toEqual({
+      refresh: "failed",
+      reason: "config-invalid",
+    });
+    expect(JSON.stringify(warnings[0])).not.toContain(PROJECT_CONFIG_PATH);
+  });
+
+  it("notifies and warns once per distinct deferral state", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const logger = new RecordingLogger();
+    const extension = installWithLogger(host, files, logger);
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    files[PROJECT_CONFIG_PATH] = {
+      content: PROJECT_CONFIG_V1.replace(
+        '"loom prompt v1"',
+        '"loom prompt v2"',
+      ),
+      mtimeMs: 9_000,
+    };
+
+    for (let index = 0; index < 4; index += 1) {
+      await extension.configRefreshForTest()?.ensureFresh();
+    }
+
+    const notices = host.notifyCalls.filter(
+      (call) => call.message === PI_CONFIG_REFRESH_DEFERRAL_MESSAGE,
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.level).toBe("warning");
+    // Fixed and actionable: what happened, and what to do about it.
+    expect(notices[0]?.message).toContain("affects the active primary");
+    expect(notices[0]?.message).toContain("switch primary or restart to apply");
+
+    const warnings = logger.entries.filter(
+      (entry) => entry.level === "warn" && entry.obj.refresh === "deferred",
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.obj).toEqual({
+      refresh: "deferred",
+      facets: "prompt",
+    });
+  });
+
+  it("keeps delegation working while a refresh keeps failing", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    files[PROJECT_CONFIG_PATH] = {
+      content: 'agent loom {\n  description "unterminated',
+      mtimeMs: 9_000,
+    };
+
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    expect(extension.configRefreshForTest()?.lastOutcome()?.kind).toBe(
+      "failed",
+    );
+    // The last valid catalog still resolves every delegation target.
+    expect(composedPromptOf(extension, "alpha")).toContain("alpha prompt v1");
+    expect(extension.catalogCellForTest()?.isLive()).toBe(true);
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+  });
+
+  it("omits the refresh row for a generation that never refreshes", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: false });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+    expect(extension.configRefreshForTest()).toBeUndefined();
+
+    await host.invokeCommand("weave:status");
+
+    expect(host.notifyCalls.at(-1)?.message ?? "").not.toContain(
+      "config refresh:",
+    );
   });
 });

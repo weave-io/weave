@@ -18,11 +18,16 @@ import {
 import {
   buildPiConfigRefreshCandidate,
   createPiConfigRefreshCoordinator,
+  PI_CONFIG_REFRESH_DEFERRAL_MESSAGE,
   type PiConfigCatalogState,
   type PiConfigRefreshCoordinator,
   type PiConfigRefreshDeps,
+  type PiConfigRefreshNotice,
   type PiConfigRefreshOutcome,
   refreshPiConfigCandidate,
+  renderPiConfigRefreshStatusLine,
+  toPiConfigRefreshPublicReason,
+  toPiConfigRefreshPublicState,
 } from "../config-refresh.js";
 import {
   createPiConfigSourceManifest,
@@ -40,7 +45,11 @@ import type {
   PiDelegationRequest,
 } from "../delegation-controller.js";
 import { buildDelegationToolRegistration } from "../delegation-tool.js";
-import type { PiAdapterFailure } from "../errors.js";
+import {
+  makeConfigRefreshFailedFailure,
+  PI_CONFIG_REFRESH_FAILURE_REASONS,
+  type PiAdapterFailure,
+} from "../errors.js";
 import { createOpenSessionMutationGate } from "../required-capability-gate.js";
 import type { PiChildSettlement } from "../rpc-child.js";
 import { PiSkillCatalog } from "../skill-catalog.js";
@@ -1070,6 +1079,8 @@ interface CoordinatorHarness {
     primary: AgentDescriptor | undefined;
     disabledSkills: readonly string[];
     readonly outcomes: PiConfigRefreshOutcome[];
+    readonly notices: PiConfigRefreshNotice[];
+    readonly statFailures: Record<string, string>;
   };
 }
 
@@ -1088,10 +1099,9 @@ async function coordinatorHarness(
     manifest: seeded.manifest,
     contents: seeded.contents,
   });
-  const fs = fakeFs(
-    files,
-    options.statFailures === undefined ? {} : { stat: options.statFailures },
-  );
+  // Mutable so a test can clear a failure and prove recovery.
+  const statFailures: Record<string, string> = { ...options.statFailures };
+  const fs = fakeFs(files, { stat: statFailures });
   const loader = countingLoader();
   const control: CoordinatorHarness["control"] = {
     owns: true,
@@ -1099,6 +1109,8 @@ async function coordinatorHarness(
     primary: seeded.activation.descriptors.byName.get("loom"),
     disabledSkills: [],
     outcomes: [],
+    notices: [],
+    statFailures,
   };
   const coordinator = createPiConfigRefreshCoordinator({
     catalog: cell,
@@ -1112,6 +1124,7 @@ async function coordinatorHarness(
     clock: { now: () => control.nowMs },
     minIntervalMs: options.minIntervalMs ?? 0,
     onOutcome: (outcome) => control.outcomes.push(outcome),
+    onNotice: (notice) => control.notices.push(notice),
   });
   return { files, seeded, cell, fs, loader, coordinator, control };
 }
@@ -1474,6 +1487,378 @@ describe("PiConfigRefreshCoordinator — failure and staleness", () => {
       reason: "no-source-manifest",
     });
     expect(fs.statCalls).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bounded public diagnostics
+// ---------------------------------------------------------------------------
+
+/** Everything a rendered diagnostic must never contain. */
+const SENTINELS = [
+  PROJECT_CONFIG,
+  GLOBAL_CONFIG,
+  PROMPT_ALPHA,
+  "permission denied",
+  "loom prompt v1",
+  "loom prompt v2",
+  "alpha prompt v1",
+  "SourceReadFailed",
+  "ConfigParseFailed",
+] as const;
+
+function expectNoSentinels(rendered: string): void {
+  for (const sentinel of SENTINELS) {
+    expect(rendered).not.toContain(sentinel);
+  }
+}
+
+describe("PiConfigRefreshCoordinator — bounded public diagnostics", () => {
+  it("starts fresh with nothing published", async () => {
+    const { coordinator } = await coordinatorHarness();
+
+    expect(coordinator.diagnostics()).toEqual({
+      state: { kind: "fresh" },
+      publishCount: 0,
+    });
+    expect(renderPiConfigRefreshStatusLine(coordinator.diagnostics())).toBe(
+      "config refresh: fresh; published 0",
+    );
+  });
+
+  it("counts publications and stays fresh without notifying", async () => {
+    const { files, coordinator, control } = await coordinatorHarness();
+
+    // A probe that changes nothing publishes nothing.
+    await coordinator.ensureFresh();
+    expect(coordinator.diagnostics().publishCount).toBe(0);
+
+    files[PROMPT_ALPHA] = { content: ALPHA_V2, mtimeMs: 9_000 };
+    await coordinator.ensureFresh();
+
+    expect(coordinator.diagnostics()).toEqual({
+      state: { kind: "fresh" },
+      publishCount: 1,
+    });
+    const rendered = renderPiConfigRefreshStatusLine(coordinator.diagnostics());
+    expect(rendered).toBe("config refresh: fresh; published 1");
+    expectNoSentinels(rendered);
+    expect(control.notices).toEqual([]);
+  });
+
+  it("renders a deferral as primary-affecting with its facet names", async () => {
+    const { files, coordinator, control } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_PRIMARY_PROMPT_EDIT,
+      mtimeMs: 9_000,
+    };
+
+    await coordinator.ensureFresh();
+
+    expect(coordinator.diagnostics()).toEqual({
+      state: { kind: "deferred", facets: ["prompt"] },
+      publishCount: 0,
+    });
+    const rendered = renderPiConfigRefreshStatusLine(coordinator.diagnostics());
+    expect(rendered).toBe(
+      "config refresh: deferred: primary-affecting; published 0; facets prompt",
+    );
+    expectNoSentinels(rendered);
+    expect(control.notices).toEqual([
+      {
+        state: { kind: "deferred", facets: ["prompt"] },
+        message: PI_CONFIG_REFRESH_DEFERRAL_MESSAGE,
+      },
+    ]);
+    expectNoSentinels(PI_CONFIG_REFRESH_DEFERRAL_MESSAGE);
+    // Fixed and actionable.
+    expect(PI_CONFIG_REFRESH_DEFERRAL_MESSAGE).toContain("active primary");
+    expect(PI_CONFIG_REFRESH_DEFERRAL_MESSAGE).toContain(
+      "switch primary or restart to apply",
+    );
+  });
+
+  it("renders a failure as a closed reason with no source detail", async () => {
+    const { coordinator, control } = await coordinatorHarness({
+      statFailures: { [PROJECT_CONFIG]: "permission denied" },
+    });
+
+    await coordinator.ensureFresh();
+
+    expect(coordinator.diagnostics()).toEqual({
+      state: { kind: "failed", reason: "source-unreadable" },
+      publishCount: 0,
+    });
+    const rendered = renderPiConfigRefreshStatusLine(coordinator.diagnostics());
+    expect(rendered).toBe(
+      "config refresh: failed: source-unreadable; published 0",
+    );
+    expectNoSentinels(rendered);
+    // The internal outcome may still name the source; the notice may not.
+    expect(coordinator.lastOutcome()).toMatchObject({
+      kind: "failed",
+      failure: { path: PROJECT_CONFIG, message: "permission denied" },
+    });
+    expect(control.notices).toHaveLength(1);
+    const notice = control.notices[0];
+    expect(notice?.state).toEqual({
+      kind: "failed",
+      reason: "source-unreadable",
+    });
+    expect(notice?.message).toBe(
+      makeConfigRefreshFailedFailure("source-unreadable").safeMessage,
+    );
+    expectNoSentinels(notice?.message ?? "");
+    expect(JSON.stringify(notice)).not.toContain(PROJECT_CONFIG);
+  });
+
+  it("notifies once for an identical failure repeated at every boundary", async () => {
+    const { coordinator, control } = await coordinatorHarness({
+      statFailures: { [PROJECT_CONFIG]: "permission denied" },
+    });
+
+    await coordinator.ensureFresh();
+    await coordinator.ensureFresh();
+    await coordinator.ensureFresh();
+
+    expect(
+      control.outcomes.filter((outcome) => outcome.kind === "failed"),
+    ).toHaveLength(3);
+    expect(control.notices).toHaveLength(1);
+  });
+
+  it("notifies once for a deferral re-derived at every boundary", async () => {
+    const { files, coordinator, control } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_PRIMARY_PROMPT_EDIT,
+      mtimeMs: 9_000,
+    };
+
+    await coordinator.ensureFresh();
+    await coordinator.ensureFresh();
+    await coordinator.ensureFresh();
+
+    expect(
+      control.outcomes.filter((outcome) => outcome.kind === "deferred"),
+    ).toHaveLength(3);
+    expect(control.notices).toHaveLength(1);
+  });
+
+  it("notifies again when the classification genuinely changes", async () => {
+    const { files, coordinator, control } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_PRIMARY_PROMPT_EDIT,
+      mtimeMs: 9_000,
+    };
+    await coordinator.ensureFresh();
+    await coordinator.ensureFresh();
+
+    // The same file, now unreadable: a different state, one more notice.
+    control.statFailures[PROJECT_CONFIG] = "permission denied";
+    await coordinator.ensureFresh();
+    await coordinator.ensureFresh();
+
+    expect(control.notices.map((notice) => notice.state.kind)).toEqual([
+      "deferred",
+      "failed",
+    ]);
+  });
+
+  it("clears a failed state on recovery and re-notifies a later failure", async () => {
+    const { coordinator, control } = await coordinatorHarness({
+      statFailures: { [PROJECT_CONFIG]: "permission denied" },
+    });
+    await coordinator.ensureFresh();
+    expect(coordinator.diagnostics().state).toEqual({
+      kind: "failed",
+      reason: "source-unreadable",
+    });
+
+    delete control.statFailures[PROJECT_CONFIG];
+    await coordinator.ensureFresh();
+
+    // Recovery rewrites the rendered state; no trace of the old reason.
+    expect(coordinator.lastOutcome()).toEqual({ kind: "unchanged" });
+    const recovered = renderPiConfigRefreshStatusLine(
+      coordinator.diagnostics(),
+    );
+    expect(recovered).toBe("config refresh: fresh; published 0");
+    expect(recovered).not.toContain("failed");
+    expect(recovered).not.toContain("deferred");
+    expectNoSentinels(recovered);
+    expect(control.notices).toHaveLength(1);
+
+    // The same failure after a recovery is a new state, so it speaks once.
+    control.statFailures[PROJECT_CONFIG] = "permission denied";
+    await coordinator.ensureFresh();
+    await coordinator.ensureFresh();
+
+    expect(control.notices).toHaveLength(2);
+    expect(coordinator.diagnostics()).toEqual({
+      state: { kind: "failed", reason: "source-unreadable" },
+      publishCount: 0,
+    });
+  });
+
+  it("clears a deferred state once an explicit reactivation publishes it", async () => {
+    const { files, coordinator, control } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_PRIMARY_PROMPT_EDIT,
+      mtimeMs: 9_000,
+    };
+    await coordinator.ensureFresh();
+    expect(coordinator.diagnostics().state.kind).toBe("deferred");
+
+    control.primary = undefined;
+    await coordinator.refreshAfterPrimaryReactivation();
+
+    const rendered = renderPiConfigRefreshStatusLine(coordinator.diagnostics());
+    expect(rendered).toBe("config refresh: fresh; published 1");
+    expect(rendered).not.toContain("primary-affecting");
+    expectNoSentinels(rendered);
+  });
+
+  it("leaves the rendered state untouched for a debounced or stale attempt", async () => {
+    const { files, coordinator, control } = await coordinatorHarness({
+      minIntervalMs: 1_000,
+    });
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_PRIMARY_PROMPT_EDIT,
+      mtimeMs: 9_000,
+    };
+    await coordinator.ensureFresh();
+    const deferred = coordinator.diagnostics();
+
+    // Inside the debounce window: nothing was probed, so nothing was learned.
+    await coordinator.ensureFresh();
+    expect(coordinator.lastOutcome()).toEqual({ kind: "skipped" });
+    expect(coordinator.diagnostics()).toEqual(deferred);
+
+    // A revoked generation writes nothing and reports nothing new either.
+    control.owns = false;
+    control.nowMs = 10_000;
+    await coordinator.ensureFresh();
+    expect(coordinator.lastOutcome()).toEqual({
+      kind: "unavailable",
+      reason: "stale-generation",
+    });
+    expect(coordinator.diagnostics()).toEqual(deferred);
+    expect(control.notices).toHaveLength(1);
+  });
+
+  it("drops the diagnostic state on dispose", async () => {
+    const { files, coordinator } = await coordinatorHarness();
+    files[PROMPT_ALPHA] = { content: ALPHA_V2, mtimeMs: 9_000 };
+    await coordinator.ensureFresh();
+    expect(coordinator.diagnostics().publishCount).toBe(1);
+
+    coordinator.dispose();
+
+    expect(coordinator.diagnostics()).toEqual({
+      state: { kind: "fresh" },
+      publishCount: 0,
+    });
+  });
+});
+
+describe("refresh diagnostic projections", () => {
+  it("maps every internal failure onto a closed public reason", () => {
+    expect(
+      toPiConfigRefreshPublicReason({
+        type: "SourceReadFailed",
+        kind: "project-config",
+        path: PROJECT_CONFIG,
+        message: "permission denied",
+      }),
+    ).toBe("source-unreadable");
+    expect(
+      toPiConfigRefreshPublicReason({
+        type: "ConfigParseFailed",
+        errorCount: 2,
+        errorTypes: ["ParseError"],
+      }),
+    ).toBe("config-invalid");
+    expect(
+      toPiConfigRefreshPublicReason({
+        type: "PromptFileMissing",
+        path: PROMPT_ALPHA,
+      }),
+    ).toBe("prompt-unavailable");
+    expect(
+      toPiConfigRefreshPublicReason({
+        type: "LifecycleSettingsInvalid",
+        issueCount: 1,
+      }),
+    ).toBe("settings-invalid");
+    expect(
+      toPiConfigRefreshPublicReason({
+        type: "MaterializationFailed",
+        reason: "materialize-threw",
+      }),
+    ).toBe("composition-failed");
+  });
+
+  it("reports no public state for outcomes that teach an operator nothing", () => {
+    expect(toPiConfigRefreshPublicState({ kind: "skipped" })).toBeUndefined();
+    expect(toPiConfigRefreshPublicState({ kind: "stale" })).toBeUndefined();
+    expect(
+      toPiConfigRefreshPublicState({
+        kind: "unavailable",
+        reason: "no-source-manifest",
+      }),
+    ).toBeUndefined();
+    expect(toPiConfigRefreshPublicState({ kind: "unchanged" })).toEqual({
+      kind: "fresh",
+    });
+  });
+
+  it("bounds the facet names one status line renders", () => {
+    const line = renderPiConfigRefreshStatusLine({
+      state: {
+        kind: "deferred",
+        facets: [
+          "prompt",
+          "models",
+          "thinking",
+          "temperature",
+          "fast",
+          "tool-policy",
+          "delegation-targets",
+        ],
+      },
+      publishCount: 3,
+    });
+
+    expect(line).toBe(
+      "config refresh: deferred: primary-affecting; published 3; facets prompt, models, thinking, temperature (+3)",
+    );
+    expect(line.split("\n")).toHaveLength(1);
+    expectNoSentinels(line);
+  });
+
+  it("renders a deferral with no named facet as one plain line", () => {
+    expect(
+      renderPiConfigRefreshStatusLine({
+        state: { kind: "deferred", facets: [] },
+        publishCount: 0,
+      }),
+    ).toBe("config refresh: deferred: primary-affecting; published 0");
+  });
+
+  it("keeps every public failure reason free of source detail", () => {
+    for (const reason of PI_CONFIG_REFRESH_FAILURE_REASONS) {
+      const failure = makeConfigRefreshFailedFailure(reason);
+      expect(failure.code).toBe("ConfigRefreshFailed");
+      expect(failure.impact).toBe("degraded");
+      expect(failure.correlation).toEqual({ reason });
+      expectNoSentinels(failure.safeMessage);
+      expectNoSentinels(
+        renderPiConfigRefreshStatusLine({
+          state: { kind: "failed", reason },
+          publishCount: 0,
+        }),
+      );
+    }
   });
 });
 
