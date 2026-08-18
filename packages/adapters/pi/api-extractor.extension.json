@@ -1,6 +1,6 @@
 {
   "extends": "../../../config/api-extractor.base.json",
-  "mainEntryPointFilePath": "<projectFolder>/dist-types/index.d.ts",
+  "mainEntryPointFilePath": "<projectFolder>/dist-types/extension.d.ts",
   "compiler": {
     "tsconfigFilePath": "<projectFolder>/tsconfig.build.json"
   },
@@ -8,14 +8,15 @@
     "enabled": true,
     "reportFolder": "<projectFolder>/etc/",
     "reportTempFolder": "<projectFolder>/temp/",
-    "reportFileName": "weave-adapter-claude-code"
+    "reportFileName": "weave-adapter-pi-extension"
   },
   "dtsRollup": {
-    "publicTrimmedFilePath": "<projectFolder>/dist/index.d.ts",
-    "untrimmedFilePath": "<projectFolder>/dist-types/untrimmed.d.ts"
+    "publicTrimmedFilePath": "<projectFolder>/dist/extension.d.ts",
+    "untrimmedFilePath": "<projectFolder>/dist-types/untrimmed-extension.d.ts"
   },
   "bundledPackages": [
     "@weaveio/weave-core",
+    "@weaveio/weave-config",
     "@weaveio/weave-engine"
   ]
 }

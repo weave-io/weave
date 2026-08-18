@@ -8,14 +8,15 @@
     "enabled": true,
     "reportFolder": "<projectFolder>/etc/",
     "reportTempFolder": "<projectFolder>/temp/",
-    "reportFileName": "weave-adapter-claude-code"
+    "reportFileName": "weave-adapter-pi-index"
   },
   "dtsRollup": {
     "publicTrimmedFilePath": "<projectFolder>/dist/index.d.ts",
-    "untrimmedFilePath": "<projectFolder>/dist-types/untrimmed.d.ts"
+    "untrimmedFilePath": "<projectFolder>/dist-types/untrimmed-index.d.ts"
   },
   "bundledPackages": [
     "@weaveio/weave-core",
+    "@weaveio/weave-config",
     "@weaveio/weave-engine"
   ]
 }
