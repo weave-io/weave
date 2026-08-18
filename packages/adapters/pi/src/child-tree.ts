@@ -9,6 +9,7 @@ import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   parsePiChildSessionEvent,
   preserveUnknownChildEvent,
+  redactRawReasoningFromEvent,
 } from "./child-session-events.js";
 import {
   EMPTY_PI_CHILD_TRANSCRIPT_STATE,
@@ -187,21 +188,38 @@ export class PiChildInspectionRegistry {
     this.transcriptListener = listener;
   }
 
+  /**
+   * Records one child event in every retention path this registry owns.
+   *
+   * The transcript reducer and the durable history port receive the SAME
+   * value: one parser-approved, redacted event. Handing the reducer the parsed
+   * event while handing history the raw one meant the observed frame - raw
+   * chain-of-thought, unbounded strings, and whatever else the child put on
+   * the wire - was written to durable history unredacted, from where a
+   * rebuild, a search, or a snapshot could read it back.
+   *
+   * An event the parser refuses is not retained at all: history still learns
+   * that a checkpoint happened, with no payload, because a value this boundary
+   * could not validate is a value it cannot describe honestly.
+   */
   checkpointEvent(
     id: string,
     event: unknown,
   ): ResultAsync<void, PiChildInspectionHistoryError> {
     if (!this.live.has(id)) return okAsync(undefined);
     const parsed = parsePiChildSessionEvent(event);
-    if (parsed.success) {
+    const retained = parsed.success
+      ? redactRawReasoningFromEvent(parsed.data)
+      : undefined;
+    if (retained !== undefined) {
       const reducer =
         this.transcriptStates.get(id) ?? new PiChildTranscriptReducer();
-      reducer.applyEvent(parsed.data);
+      reducer.applyEvent(retained);
       this.transcriptStates.set(id, reducer);
       this.transcriptListener?.(id);
     }
     return this.enqueue(() =>
-      (this.history?.checkpoint?.(id, event) ?? okAsync(undefined)).map(
+      (this.history?.checkpoint?.(id, retained) ?? okAsync(undefined)).map(
         () => undefined,
       ),
     );

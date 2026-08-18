@@ -25,6 +25,7 @@
  * learns that the child reasoned.
  */
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 import {
   projectLiveEntry,
   pushReplayEvent,
@@ -40,6 +41,11 @@ import {
   createPiChildTranscriptState,
   reducePiChildTranscript,
 } from "../child-transcript.js";
+import {
+  EMPTY_USAGE_AGGREGATE,
+  PiChildInspectionRegistry,
+  ROOT_NODE_ID,
+} from "../child-tree.js";
 
 /**
  * One sentinel per carrier, so a failure names the exact field that leaked
@@ -522,5 +528,110 @@ describe("retained history carries no HIDDEN chain-of-thought", () => {
       .map((raw, index) => projectLiveEntry(parsed(raw), index, false))
       .filter((entry) => entry !== undefined);
     expectNoSentinel(JSON.stringify(transcriptFromOverlayEntries(entries)));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. The registry's two retention paths receive the SAME redacted event
+// ---------------------------------------------------------------------------
+
+describe("PiChildInspectionRegistry.checkpointEvent · one retained event", () => {
+  /** Captures exactly what the durable history port is handed. */
+  function capturingRegistry(): {
+    readonly registry: PiChildInspectionRegistry;
+    readonly captured: unknown[];
+  } {
+    const captured: unknown[] = [];
+    const registry = new PiChildInspectionRegistry({
+      checkpoint: (_id: string, event?: unknown) => {
+        captured.push(event);
+        return okAsync(undefined);
+      },
+    });
+    return { registry, captured };
+  }
+
+  async function registerChild(
+    registry: PiChildInspectionRegistry,
+  ): Promise<void> {
+    const registered = await registry.register({
+      id: "child",
+      parentId: ROOT_NODE_ID,
+      name: "child",
+      kind: "ordinary",
+      snapshot: () => ({
+        parentId: ROOT_NODE_ID,
+        name: "child",
+        status: "running",
+        currentTurn: 0,
+        currentTool: undefined,
+        startedAtMs: 0,
+        elapsedMs: 0,
+        usage: EMPTY_USAGE_AGGREGATE,
+        latestOutput: "",
+        id: "child",
+      }),
+    });
+    expect(registered.isOk()).toBe(true);
+  }
+
+  it("hands durable history the redacted thinking_end, not the raw frame", async () => {
+    const { registry, captured } = capturingRegistry();
+    await registerChild(registry);
+
+    await registry.checkpointEvent("child", {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_end",
+        contentIndex: 0,
+        content: [{ type: "thinking", text: COT.end }],
+      },
+    });
+    await registry.drain();
+
+    // The history port previously received the OBSERVED event while only the
+    // transcript reducer saw the redacted one, so the completed thought was
+    // written to durable history in full.
+    expectNoSentinel(JSON.stringify(captured));
+    expect(captured).toEqual([
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 0,
+          content: [{ type: "thinking", text: "" }],
+        },
+      },
+    ]);
+    expectNoSentinel(JSON.stringify(registry.getTranscriptState("child")));
+  });
+
+  it("hands both paths the same redacted event for a hidden carrier", async () => {
+    const { registry, captured } = capturingRegistry();
+    await registerChild(registry);
+
+    for (const raw of hiddenCarrierLifecycle()) {
+      await registry.checkpointEvent("child", raw);
+    }
+    await registry.drain();
+
+    expectNoSentinel(JSON.stringify(captured));
+    expectNoSentinel(JSON.stringify(registry.getTranscriptState("child")));
+  });
+
+  it("retains no payload at all for an event the parser refuses", async () => {
+    const { registry, captured } = capturingRegistry();
+    await registerChild(registry);
+
+    // A KNOWN event type whose shape fails validation is not parser-approved,
+    // so history learns that a checkpoint happened and nothing more.
+    await registry.checkpointEvent("child", {
+      type: "thinking",
+      text: { nested: COT.block },
+    });
+    await registry.drain();
+
+    expect(captured).toEqual([undefined]);
+    expectNoSentinel(JSON.stringify(captured));
   });
 });
