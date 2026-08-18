@@ -71,6 +71,9 @@ export type PiOrderedModelResolution = Extract<
   { readonly resolved: true }
 >;
 
+/** Candidate-list bound shared by ordered runtime model selection. */
+export const MAX_PI_ORDERED_MODEL_CANDIDATES = 64;
+
 function thinkingFields(level: ThinkingLevelDecl | undefined): {
   readonly thinkingLevel?: ThinkingLevelDecl;
 } {
@@ -166,6 +169,7 @@ export class PiModelResolver {
       if (seenCanonicalIdentities.has(identity)) continue;
       seenCanonicalIdentities.add(identity);
       resolved.push(candidate);
+      if (resolved.length >= MAX_PI_ORDERED_MODEL_CANDIDATES) break;
     }
 
     return resolved;
@@ -190,6 +194,20 @@ export class PiModelResolver {
     return ok(matches[0] as PiModelInfo);
   }
 }
+
+/** Resolve an ordered, canonical-distinct model list without applying a model. */
+export function resolvePiOrderedDistinctModels(
+  modelIntent: readonly string[],
+  availableModels: readonly PiModelInfo[],
+): readonly PiOrderedModelResolution[] {
+  return new PiModelResolver().resolveOrderedDistinct(
+    modelIntent,
+    availableModels,
+  );
+}
+
+/** Compatibility spelling for the fallback coordinator. */
+export const resolveOrderedDistinctPiModels = resolvePiOrderedDistinctModels;
 
 /**
  * Adapter-facing seam over Pi's real `ExtensionAPI.setModel(model)`

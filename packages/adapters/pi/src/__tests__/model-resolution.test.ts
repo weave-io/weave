@@ -5,7 +5,11 @@ import type {
   PiModelInfo,
   PiThinkingApplyPort,
 } from "../model-resolution.js";
-import { PiModelActivator, PiModelResolver } from "../model-resolution.js";
+import {
+  PiModelActivator,
+  PiModelResolver,
+  resolvePiOrderedDistinctModels,
+} from "../model-resolution.js";
 
 const catalog: PiModelInfo[] = [
   {
@@ -290,6 +294,24 @@ describe("PiModelResolver", () => {
     expect(
       resolver.resolveOrderedDistinct(["same"], catalogWithAliases),
     ).toEqual([]);
+  });
+
+  it("exposes the same bounded ordered resolution through the pure helper", () => {
+    const intent = ["anthropic/claude-sonnet-4-5", "gpt-5"];
+    expect(resolvePiOrderedDistinctModels(intent, catalog)).toEqual([
+      {
+        resolved: true,
+        model: catalog[0],
+        intentEntry: intent[0],
+        source: "canonical",
+      },
+      {
+        resolved: true,
+        model: catalog[1],
+        intentEntry: intent[1],
+        source: "bare-id",
+      },
+    ]);
   });
 
   it("does not fuzzy match partial or case-differing strings", () => {
