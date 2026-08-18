@@ -2,4 +2,7 @@
 "@weaveio/weave-adapter-pi": minor
 ---
 
-Add bounded diagnostics, exact-once usage projection, retention, rotating log cleanup, packed-artifact policy checks, offline fake-host consumption, and nightly release integration.
+Report bounded Pi diagnostics and keep the packed adapter artifact honest.
+
+- Usage projection is exact-once, and retention plus rotating-log cleanup bound what stays on disk.
+- Packed-artifact policy checks and offline fake-host consumption prove the published tarball loads without a live host.

@@ -1,12 +1,11 @@
 ---
 "@weaveio/weave-cli": minor
+"@weaveio/weave-adapter-claude-code": minor
 ---
 
-Add Claude Code adapter with compose CLI command
+Generate a Claude Code plugin from Weave configuration.
 
-- New `@weaveio/weave-adapter-claude-code` package: generates a Claude Code plugin directory from Weave config
-- New `weave compose --adapter claude-code` CLI command drives the full pipeline (load config → materialize agents → write plugin)
-- `--init` flag scaffolds the bootstrap plugin for automatic SessionStart regeneration
-- Model alias mapping (claude-sonnet-4-5 → sonnet, claude-opus-4 → opus, etc.)
-- Tool policy mapping to Claude Code's tools frontmatter arrays
-- Bootstrap plugin with SessionStart hook and /weave:compose skill
+- The new `@weaveio/weave-adapter-claude-code` package writes a Claude Code plugin directory from a loaded `.weave` config.
+- `weave compose --adapter claude-code` runs the whole pipeline: load config, materialize agents, write the plugin.
+- `weave compose --adapter claude-code --init` scaffolds the bootstrap plugin that regenerates the plugin on session start.
+- Agent models map to Claude Code aliases, and tool policy maps to the `tools` frontmatter array.

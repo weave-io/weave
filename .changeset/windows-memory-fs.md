@@ -2,4 +2,4 @@
 "@weaveio/weave-cli": patch
 ---
 
-Normalize in-memory CLI test paths consistently on Windows.
+Normalize in-memory CLI paths consistently on Windows.

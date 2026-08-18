@@ -1,6 +1,10 @@
 ---
 "@weaveio/weave-cli": minor
 "@weaveio/weave-adapter-opencode": minor
+"@weaveio/weave-adapter-claude-code": minor
 ---
 
-Add `review_models` agent configuration and engine review fan-out intent support.
+Configure `review_models` on an agent and fan review work out across them.
+
+- An agent may declare `review_models` in its `.weave` configuration.
+- The engine carries the review fan-out intent through to the harness.
