@@ -335,7 +335,7 @@ The live local setup runs Pi `0.84.2` from `~/.bun/install/global/node_modules/@
   - **Acceptance**:
     - Every command exits `0`; record the Pi package test count and the built `dist/extension.js` SHA-256 in the work log.
 
-- [ ] 15. Prove the fix in a real Pi host
+- [x] 15. Prove the fix in a real Pi host
   - **What**: Follow `docs/testing/adapter-verification.md` end to end and capture memory evidence for the duplicate-runtime claim.
   - **Depends on**: Task 14
   - **Implementation outline**:
