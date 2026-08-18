@@ -46,6 +46,7 @@
  */
 import { err, ok, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
+import type { AiAuditMetadata } from "./ai/audit-metadata.js";
 import type { ChangelogEntry, ChangelogEvidence } from "./changelog-format.js";
 import type { ChangesetIdentity } from "./changeset-policy.js";
 import {
@@ -639,6 +640,8 @@ export interface PreparedRelease {
   entries: readonly ChangelogEntry[];
   /** The refs the prose was allowed to cite. */
   evidence: ChangelogEvidence;
+  /** Task 18 changelog-AI provenance, when this content was AI-authored. */
+  aiAudit?: AiAuditMetadata;
 }
 
 export interface PreparationFailure {

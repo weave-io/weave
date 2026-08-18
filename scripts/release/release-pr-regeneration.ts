@@ -5,6 +5,10 @@
  * convergence. Metadata repair is an injected collaborator.
  */
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
+import {
+  appendAiAuditMetadata,
+  describeAiAuditError,
+} from "./ai/audit-metadata.js";
 import type { GitHubPullRequestSummary } from "./github-client.js";
 import {
   cleanupPending,
@@ -202,10 +206,21 @@ export class ReleasePrRegenerationLifecycle {
 
       const parsedNext = parseReleasePrEnvelope(nextEnvelope.value);
       if (parsedNext.isErr()) return err(parsedNext.error);
+      const body = appendAiAuditMetadata(
+        `${rendered.value.body}\n\n${nextEnvelope.value}\n`,
+        rendered.value.aiAudit,
+      );
+      if (body.isErr())
+        return err({
+          type: "ReleasePreparationFailed",
+          stage: "changelog-ai",
+          message: describeAiAuditError(body.error),
+          retryable: false,
+        });
       const published = await this.context.metadata.publishPullRequestMetadata({
         pullRequest,
         title: rendered.value.title,
-        body: `${rendered.value.body}\n\n${nextEnvelope.value}\n`,
+        body: body.value,
         expected: parsedNext.value,
         expectedHead: commit.value,
         builder,

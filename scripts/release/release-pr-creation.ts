@@ -5,6 +5,10 @@
  * transactional pre-PR abort. The facade supplies only typed reads and ports.
  */
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
+import {
+  appendAiAuditMetadata,
+  describeAiAuditError,
+} from "./ai/audit-metadata.js";
 import type {
   GitHubPullRequestSummary,
   GitHubPullRequestWriteError,
@@ -315,10 +319,21 @@ export class ReleasePrCreationLifecycle {
     );
     if (freshForPullRequest.isErr()) return err(freshForPullRequest.error);
 
+    const body = appendAiAuditMetadata(
+      `${prepared.body}\n\n${envelope.value}\n`,
+      prepared.aiAudit,
+    );
+    if (body.isErr())
+      return err({
+        type: "ReleasePreparationFailed",
+        stage: "changelog-ai",
+        message: describeAiAuditError(body.error),
+        retryable: false,
+      });
     const opened = await settle(
       this.context.ports.pullRequests.createPullRequest({
         title: prepared.title,
-        body: `${prepared.body}\n\n${envelope.value}\n`,
+        body: body.value,
         headRef: RELEASE_PR_MARKER_REF,
         baseRef: MAIN_BRANCH,
         labels: [RELEASE_PR_LABEL],
