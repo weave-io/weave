@@ -47,6 +47,8 @@ describe("pi adapter packed artifact (Pi adapter contract, PI-PKG)", () => {
           "package/dist/cli.js",
           "package/dist/extension.d.ts",
           "package/dist/extension.js",
+          "package/dist/extension-build-identity.js",
+          "package/dist/extension-build-identity.json",
           "package/dist/extension-impl.d.ts",
           "package/dist/extension-impl.js",
           "package/dist/host-module-loader.js",

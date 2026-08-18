@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
+  createExtensionBuildManifest,
+  evaluateExtensionBuildIdentity,
+} from "../extension-build-identity.js";
+import {
   BunHostPackageReader,
   checkHostCompatibility,
   HOST_PACKAGE_NAME,
@@ -9,6 +13,7 @@ import {
   hostRuntimeHealthLineFromOutcome,
   isSupportedHostVersion,
   parseSemver,
+  renderExtensionIdentityHealthLine,
   renderHostCapabilityGapDiagnostic,
   renderHostRuntimeHealthLine,
   resolveReportedHostIdentity,
@@ -350,5 +355,82 @@ describe("BunHostPackageReader proven-version precedence", () => {
     const result = await reader.read();
     expect(result._unsafeUnwrap().version).toBe("0.84.2");
     expect(reader.duplicateDiagnostic()).toBeUndefined();
+  });
+});
+
+describe("renderExtensionIdentityHealthLine", () => {
+  const digestA = "a".repeat(64);
+  const digestB = "b".repeat(64);
+  const subject = "1".repeat(40);
+  const manifest = createExtensionBuildManifest({
+    subject,
+    dirty: false,
+    buildInputs: [digestA],
+    outputs: [{ name: "extension", sha256: digestA }],
+    buildCompletedAt: "1970-01-01T00:00:00.100Z",
+  });
+
+  it("reports current identity facts without absolute paths", () => {
+    expect(manifest.isOk()).toBe(true);
+    const line = renderExtensionIdentityHealthLine(
+      evaluateExtensionBuildIdentity({
+        loaded: {
+          artifactPath: "/tmp/extension.js",
+          artifactSha256: digestA,
+          loadTimeMs: 200,
+          processStartMs: 1,
+        },
+        diskArtifactSha256: digestA,
+        manifest: manifest._unsafeUnwrap(),
+      }),
+    );
+    expect(line).toContain("extension identity: current");
+    expect(line).toContain(`loaded=${digestA}`);
+    expect(line).toContain(`disk=${digestA}`);
+    expect(line).toContain(`subject=${subject}`);
+    expect(line).not.toContain("/tmp/");
+    expect(line.includes("/")).toBe(false);
+  });
+
+  it("keeps stale, mismatch, and unverifiable as closed states", () => {
+    expect(manifest.isOk()).toBe(true);
+    const parsed = manifest._unsafeUnwrap();
+    expect(
+      renderExtensionIdentityHealthLine(
+        evaluateExtensionBuildIdentity({
+          loaded: {
+            artifactSha256: digestA,
+            loadTimeMs: 200,
+            processStartMs: 1,
+          },
+          diskArtifactSha256: digestB,
+          manifest: parsed,
+        }),
+      ),
+    ).toContain("extension identity: stale-on-disk");
+    expect(
+      renderExtensionIdentityHealthLine(
+        evaluateExtensionBuildIdentity({
+          loaded: {
+            artifactSha256: digestA,
+            loadTimeMs: 200,
+            processStartMs: 1,
+          },
+          diskArtifactSha256: digestA,
+          manifest: {
+            ...parsed,
+            outputs: [{ name: "extension", sha256: digestB }],
+          },
+        }),
+      ),
+    ).toContain("extension identity: manifest-mismatch");
+    expect(
+      renderExtensionIdentityHealthLine(
+        evaluateExtensionBuildIdentity({
+          loaded: { processStartMs: 1 },
+          manifestReason: "manifest-malformed",
+        }),
+      ),
+    ).toContain("extension identity: unverifiable");
   });
 });

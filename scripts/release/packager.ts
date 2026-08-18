@@ -240,6 +240,8 @@ export class PublicPackagePackager {
       files.add(declaration.output.slice(source.length + 1));
     if (build.bootstrap !== undefined)
       for (const file of build.bootstrap) files.add(`dist/bootstrap/${file}`);
+    if (build.extraFiles !== undefined)
+      for (const file of build.extraFiles) files.add(file);
     if (packageName !== "@weaveio/weave-cli") files.add("README.md");
     let result = okAsync<void, PackagerError>(undefined);
     for (const file of files) {

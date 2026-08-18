@@ -733,14 +733,22 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeConfigRefreshFailedFailure: (reason) => PiAdapterFailure
   - _...95 more_
+- `packages/adapters/pi/src/extension-build-identity.ts`
+  - function extensionProcessStartMs: () => number
+  - function unverifiableExtensionLoadIdentity: (reason) => ExtensionLoadedIdentity
+  - function sha256Hex: (bytes) => Result<string, ExtensionBuildIdentityError>
+  - function parseExtensionBuildManifest: (value) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
+  - function renderExtensionBuildManifest: (manifest) => Result<string, ExtensionBuildIdentityError>
+  - function createExtensionBuildManifest: (input) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
+  - _...26 more_
 - `packages/adapters/pi/src/extension-impl.ts`
+  - function setLoadedPiExtensionIdentity: (identity) => void
   - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
   - function resolveAgentRuntimeMeta: (descriptorsByName, AgentDescriptor>, agentName, ctx?) => void
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
-  - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
-  - _...15 more_
+  - _...16 more_
 - `packages/adapters/pi/src/foreground-plan-display.ts`
   - function parseForegroundPlanRequest: (text) => Result<string, ForegroundPlanRequestRejection>
   - function isSafeForegroundPlanName: (value) => value is string
@@ -770,7 +778,7 @@
   - function renderHostCapabilityGapDiagnostic: (diagnostic) => string
   - function resolveReportedHostIdentity: (input) => ReportedHostIdentity
   - function renderHostRuntimeHealthLine: (input) => string
-  - _...14 more_
+  - _...15 more_
 - `packages/adapters/pi/src/host-inventory.ts`
   - function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>
   - function readHostSurfaceReport: (raw) => PiHostSurfaceReport
@@ -803,14 +811,30 @@
   - type PiMessageUpdateRejection
   - type PiMessageUpdateCarrier
   - _...2 more_
+- `packages/adapters/pi/src/model-failover-context.ts`
+  - function repairPiFailoverContext: (input) => Result<readonly unknown[], PiFailoverContextRepairError>;
+  - function repairPiFailoverContext: (messages, token, fingerprint) => Result<readonly unknown[], PiFailoverContextRepairError>;
+  - function repairPiFailoverContext: (inputOrMessages, token?, fingerprint?) => Result<readonly unknown[], PiFailoverContextRepairError>
+  - function canRepairPiFailoverContext: (input) => boolean
+  - interface PiFailoverContextRepairInput
+  - type PiFailoverContextRepairError
+  - _...3 more_
+- `packages/adapters/pi/src/model-failover-contract.ts`
+  - function readPiOwnEnumerableData: (target, key) => PiOwnDataRead
+  - function classifyPiFailure: (messageOrEvent) => PiFailureClassification | undefined
+  - function classifyPiMessageEndFailure: (event) => PiFailureClassification | undefined
+  - function isPiPayloadlessAgentSettledEvent: (event) => event is
+  - function isPiFailureAdvanceEligible: (failureClass, unknownAdvancesUsed) => boolean
+  - function consumePiFailureAdvance: (failureClass, unknownAdvancesUsed) => PiFailoverAdvanceState
+  - _...55 more_
 - `packages/adapters/pi/src/model-resolution.ts`
+  - function resolvePiOrderedDistinctModels: (modelIntent, availableModels) => readonly PiOrderedModelResolution[]
   - class PiModelResolver
   - class PiModelActivator
   - interface PiModelApplyPort
   - interface PiThinkingApplyPort
-  - type PiModelResolutionSource
-  - type PiModelResolution
-  - _...2 more_
+  - type PiModelInfo
+  - _...8 more_
 - `packages/adapters/pi/src/native-session-fs.ts`
   - function setForcedPreadByteLimitForTests: (limit) => void
   - function createBunPiNativeSessionFs: () => PiNativeSessionFsPort
@@ -1769,12 +1793,13 @@
   - type UnmappedToolDecision
   - _...3 more_
 - `scripts/build-public-packages.ts`
+  - function piOutputName: (path) => string
+  - function piIdentityOutputFiles: () => readonly
+  - function writePiExtensionBuildIdentityManifest: (input) => ResultAsync<void, PublicPackageBuildError>
   - function hasPrivateDependencyReference: (contents, packageName) => boolean
   - function hasPrivateDeclarationReference: (contents, packageName) => boolean
   - class BunPublicPackageFileSystem
-  - class PublicPackageBuilder
-  - interface PublicPackageFileSystem
-  - type PublicPackageBuildError
+  - _...4 more_
 - `scripts/ci/verify-action-pins.ts`
   - function verifyActionPins: (files, string>>) => Result<void, ActionPinError[]>
   - function loadActionFiles: (root) => Promise<Record<string, string>>
@@ -1793,6 +1818,16 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts/pi/verify-child-streaming.ts`
+  - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
+  - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void
+  - function classifyChildStreamingEvidence: (input, VerifyChildStreamingFailure
+  >;
+  readonly uiLanes?) => ChildStreamingEvidenceClass | "blocked"
+  - function verifyCurrentBuildIdentity: (input) => ResultAsync<IdentityVerificationSuccess, VerifyChildStreamingFailure>
+  - function parseVerifyChildStreamingArgs: (argv) => Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure>
+  - interface IdentityVerificationSuccess
+  - _...6 more_
 - `scripts/pi/verify-host-singleton.ts`
   - function parseVerifyArgs: (argv) => Result<VerifyArgs, VerifyFailure>
   - function decideSkip: (presence, allowSkip) => SkipDecision
@@ -1855,6 +1890,14 @@
   - function requireChangesetCoverage: (input) => Result<PublicImpact, readonly ChangesetPolicyError[]>
   - class BunChangesetFileSystem
   - _...21 more_
+- `scripts/release/channel-versions.ts`
+  - function computeWouldBeNextStableVersions: (input) => Result<Readonly<Record<PublicPackageName, string>>, ChannelVersionError>
+  - function renderChannelVersion: (input) => Result<string, ChannelVersionError>
+  - function computeChannelVersions: (input) => ResultAsync<ChannelVersionPlan, ChannelVersionError>
+  - function computeNightlyAffectedSet: (input) => ResultAsync<NightlyAffectedSet, ChannelVersionError>
+  - function computeNightlyVersions: (input) => ResultAsync<ChannelVersionPlan, ChannelVersionError>
+  - function asChannelRegistry: (client) => ChannelRegistry
+  - _...17 more_
 - `scripts/release/clock.ts` — class SystemClock, interface Clock
 - `scripts/release/command-runner.ts`
   - class BunCommandRunner
@@ -1880,7 +1923,7 @@
   - interface ActionsArtifactMetadata
   - interface GitHubClient
   - interface GitHubRefClient
-  - _...16 more_
+  - _...23 more_
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - function validateReleaseControlEnvironment: (input) => Result<ReleaseControlEnvironment, InputValidationError>
@@ -1971,14 +2014,24 @@
   - function serializeReleasePlanArtifact: (plan) => Result<string, ReleasePlanError>
   - function parseReleasePlanArtifact: (text) => Result<ReleasePlanArtifact, ReleasePlanError>
   - _...50 more_
-- `scripts/release/release-pr.ts`
+- `scripts/release/release-pr-contract.ts`
   - function markerRefPath: () => string
   - function classifyReleaseCompletionState: (state) => Result<"terminal" | "blocking", ReleasePrError>
   - function validateReleasePrDiff: (changes) => Result<void, ReleasePrError>
   - function validateCleanupPrDiff: (input) => Result<void, ReleasePrError>
   - function entryIdentityKey: (sources) => string
   - function evidenceDigest: (evidence) => string
-  - _...51 more_
+  - _...67 more_
+- `scripts/release/release-pr-creation.ts` — class ReleasePrCreationLifecycle, interface ReleasePrCreationContext
+- `scripts/release/release-pr-metadata.ts`
+  - class ReleasePrMetadataLifecycle
+  - interface ReleasePrMetadataContext
+  - interface PublishedPrAuthority
+  - interface PublishedPrMetadata
+  - interface ReconciledPrMetadata
+  - interface ReleasePrMetadataPort
+- `scripts/release/release-pr-regeneration.ts` — class ReleasePrRegenerationLifecycle, interface ReleasePrRegenerationContext
+- `scripts/release/release-pr.ts` — class StableReleasePrManager
 - `scripts/release/selection-closure.ts`
   - function computeSelectionClosure: (input) => Result<SelectionClosure, SelectionClosureError>
   - interface WorkspaceManifest

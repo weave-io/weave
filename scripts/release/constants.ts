@@ -132,6 +132,8 @@ export interface PublicPackageBuild {
   entries: readonly PublicBuildEntry[];
   declarations: readonly PublicDeclarationBuild[];
   bootstrap?: readonly string[];
+  /** Extra package-relative files copied into the packed artifact as-is. */
+  extraFiles?: readonly string[];
   runtimeExternals?: readonly string[];
 }
 
@@ -223,6 +225,11 @@ export const PUBLIC_PACKAGE_BUILDS = {
         output: "packages/adapters/pi/dist/host-module-loader.js",
       },
       {
+        source: "packages/adapters/pi/src/extension-build-identity.ts",
+        output: "packages/adapters/pi/dist/extension-build-identity.js",
+        transpileOnly: true,
+      },
+      {
         source: "packages/adapters/pi/src/extension.ts",
         output: "packages/adapters/pi/dist/extension.js",
         transpileOnly: true,
@@ -250,6 +257,7 @@ export const PUBLIC_PACKAGE_BUILDS = {
         output: "packages/adapters/pi/dist/extension-impl.d.ts",
       },
     ],
+    extraFiles: ["dist/extension-build-identity.json"],
   },
 } as const satisfies Record<PublicPackageName, PublicPackageBuild>;
 

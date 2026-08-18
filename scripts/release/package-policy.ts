@@ -341,6 +341,8 @@ function expectedFiles(packageName: PublicPackageName): Set<string> {
   if (build.bootstrap !== undefined)
     for (const file of build.bootstrap)
       files.add(`package/dist/bootstrap/${file}`);
+  if (build.extraFiles !== undefined)
+    for (const file of build.extraFiles) files.add(`package/${file}`);
   if (packageName !== "@weaveio/weave-cli") files.add("package/README.md");
   return files;
 }

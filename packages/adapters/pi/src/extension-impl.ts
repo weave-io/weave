@@ -272,6 +272,13 @@ import {
   type PiAdapterFailure,
 } from "./errors.js";
 import {
+  type ExtensionBuildIdentityHealth,
+  type ExtensionLoadedIdentity,
+  evaluateExtensionBuildIdentity,
+  readExtensionBuildIdentityHealth,
+  unverifiableExtensionLoadIdentity,
+} from "./extension-build-identity.js";
+import {
   createForegroundPlanDisplayState,
   FOREGROUND_PLAN_ENTRY_TYPE,
   foregroundPlanEntry,
@@ -288,6 +295,7 @@ import {
   BunHostPackageReader,
   type HostPackageReader,
   hostRuntimeHealthLineFromOutcome,
+  renderExtensionIdentityHealthLine,
   renderHostCapabilityGapDiagnostic,
 } from "./host-compatibility.js";
 import {
@@ -440,6 +448,20 @@ import { PiWorkflowController } from "./workflow-controller.js";
 
 export const PI_SHARED_LOG_PATH = ".weave/weave.log";
 const TAPESTRY_PRIMARY_AGENT_NAME = "tapestry";
+
+let loadedPiExtensionIdentity: ExtensionLoadedIdentity =
+  unverifiableExtensionLoadIdentity();
+
+/**
+ * Called by the thin loader after it hashes the exact entry it loaded. The
+ * setter is intentionally narrow: the implementation owns the generation
+ * snapshot, while the loader owns the load-time fact.
+ */
+export function setLoadedPiExtensionIdentity(
+  identity: ExtensionLoadedIdentity,
+): void {
+  loadedPiExtensionIdentity = identity;
+}
 
 type PiPrimarySwitchFailure =
   | { readonly type: "PrimarySwitchUnavailable" }
@@ -782,6 +804,11 @@ export interface PiExtensionDeps {
    * default; tests set `0` so every boundary probes deterministically.
    */
   readonly configRefreshMinIntervalMs?: number;
+  /**
+   * Test-only loaded-artifact identity. Production omits this; the thin
+   * loader calls `setLoadedPiExtensionIdentity` before the factory runs.
+   */
+  readonly loadedExtensionIdentity?: ExtensionLoadedIdentity;
   /**
    * Host probes for the wrapped `openai-codex` provider registration
    * (`docs/specs/fast-provider-acceleration-contract.md`, OD-4). Production
@@ -2244,6 +2271,12 @@ function renderHealthMessage(
    * reads the fallback cause from here.
    */
   overlayKeyDiagnostics: readonly string[] = [],
+  extensionIdentityHealth: ExtensionBuildIdentityHealth = evaluateExtensionBuildIdentity(
+    {
+      loaded: unverifiableExtensionLoadIdentity(),
+      manifestReason: "artifact-path-missing",
+    },
+  ),
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
@@ -2259,6 +2292,7 @@ function renderHealthMessage(
   const mode = effectiveHealthOnly(generation) ? "health-only" : "ready";
   const result = [`Weave adapter mode: ${mode}`, ...lines];
   result.push(hostRuntimeHealthLineFromOutcome(getHostModuleOutcome()));
+  result.push(renderExtensionIdentityHealthLine(extensionIdentityHealth));
 
   for (const diagnostic of generation.preflight.hostSurfaceGapDiagnostics.slice(
     0,
@@ -2829,6 +2863,10 @@ export type PiExtensionInstance = ((pi: PiExtensionApi) => void) & {
   readonly providerFastLatestForTest: () =>
     | ProviderFastPublicSnapshot
     | undefined;
+  /** The loader fact captured for the current factory generation. */
+  readonly loadedPiExtensionIdentityForTest: () => ExtensionLoadedIdentity;
+  /** The latest bounded disk/manifest identity health snapshot. */
+  readonly extensionBuildIdentityHealthForTest: () => ExtensionBuildIdentityHealth;
   /**
    * The generation's published catalog cell, or `undefined` before boot
    * activation and after every revoke. Exposed so tests can publish a
@@ -3093,6 +3131,29 @@ export function createPiExtension(
     configRefreshCell.coordinator?.ensureFresh() ??
     okAsync<void, never>(undefined);
   let activeSession: PiActiveSession | undefined;
+  /**
+   * Identity is captured once per factory invocation and snapshotted again for
+   * each generation. Health re-reads the disk artifact and sidecar on demand;
+   * it never trusts a modification time or a sidecar digest by itself.
+   */
+  const resolveLoadedIdentity = (): ExtensionLoadedIdentity =>
+    deps.loadedExtensionIdentity ?? loadedPiExtensionIdentity;
+  let generationLoadedPiExtensionIdentity = resolveLoadedIdentity();
+  const extensionBuildIdentityHealthCell: {
+    value: ExtensionBuildIdentityHealth;
+  } = {
+    value: evaluateExtensionBuildIdentity({
+      loaded: generationLoadedPiExtensionIdentity,
+      manifestReason: "artifact-path-missing",
+    }),
+  };
+  const refreshExtensionBuildIdentityHealth = (): ResultAsync<void, never> =>
+    readExtensionBuildIdentityHealth(generationLoadedPiExtensionIdentity).map(
+      (health) => {
+        extensionBuildIdentityHealthCell.value = health;
+        return undefined;
+      },
+    );
   /**
    * The reconstruction summary the *current* generation and *live* parent may
    * read. Everything else reads as absent, so a stale callback or a
@@ -4470,12 +4531,14 @@ export function createPiExtension(
     // Health is the one command that must remain available when boot failed
     // before a generation could retain authority. It reads diagnostics only.
     if (name === "weave:health") {
+      await refreshExtensionBuildIdentityHealth();
       ctx.ui.notify(
         renderHealthMessage(
           controller,
           activeSession,
           lastBootActivationFailure,
           overlayKeysCell.diagnostics,
+          extensionBuildIdentityHealthCell.value,
         ),
         "info",
       );
@@ -5655,6 +5718,13 @@ export function createPiExtension(
   const piAdapterExtension = function piAdapterExtension(
     pi: PiExtensionApi,
   ): void {
+    // The loader calls its setter before invoking this factory. Snapshot that
+    // fact now so a later reload or test embedding cannot mutate this parent.
+    generationLoadedPiExtensionIdentity = resolveLoadedIdentity();
+    extensionBuildIdentityHealthCell.value = evaluateExtensionBuildIdentity({
+      loaded: generationLoadedPiExtensionIdentity,
+      manifestReason: generationLoadedPiExtensionIdentity.loadReason,
+    });
     pi.registerShortcut?.(PI_PRIMARY_AGENT_CYCLE_SHORTCUT, {
       description: "Cycle Weave primary agent",
       handler: async (ctx: PiSessionContext) => {
@@ -5875,6 +5945,9 @@ export function createPiExtension(
       const startupSequence = sessionStartSequence;
       const startupStillCurrent = (): boolean =>
         sessionStartSequence === startupSequence;
+      generationLoadedPiExtensionIdentity = resolveLoadedIdentity();
+      await refreshExtensionBuildIdentityHealth();
+      if (!startupStillCurrent()) return;
       ctx.ui.setStatus("weave", "starting");
 
       // First statement of the generation, before log redirect, child-mode
@@ -7818,6 +7891,10 @@ export function createPiExtension(
   };
   piAdapterExtension.providerFastLatestForTest = () =>
     resolveProviderFastState();
+  piAdapterExtension.loadedPiExtensionIdentityForTest = () =>
+    generationLoadedPiExtensionIdentity;
+  piAdapterExtension.extensionBuildIdentityHealthForTest = () =>
+    extensionBuildIdentityHealthCell.value;
   piAdapterExtension.catalogCellForTest = () => catalogCellHolder.cell;
   piAdapterExtension.configRefreshForTest = () => configRefreshCell.coordinator;
   return piAdapterExtension;

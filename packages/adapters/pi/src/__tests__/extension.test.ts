@@ -1954,6 +1954,55 @@ After loading a skill, follow its instructions.
   });
 });
 
+describe("createPiExtension: stale-runtime identity gate", () => {
+  const digestA = "a".repeat(64);
+  const digestB = "b".repeat(64);
+
+  function loadedIdentity(sha256: string) {
+    return {
+      artifactSha256: sha256,
+      loadTimeMs: 200,
+      processStartMs: 1,
+    };
+  }
+
+  it("retains generation-scoped loaded digest and time without sharing reload state", () => {
+    const hostA = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const factoryA = installExtension(hostA, "0.81.1", {
+      loadedExtensionIdentity: loadedIdentity(digestA),
+    });
+    const hostB = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const factoryB = installExtension(hostB, "0.81.1", {
+      loadedExtensionIdentity: loadedIdentity(digestB),
+    });
+    expect(factoryA.loadedPiExtensionIdentityForTest().artifactSha256).toBe(
+      digestA,
+    );
+    expect(factoryB.loadedPiExtensionIdentityForTest().artifactSha256).toBe(
+      digestB,
+    );
+    expect(factoryA.loadedPiExtensionIdentityForTest().loadTimeMs).toBe(200);
+    expect(factoryA.loadedPiExtensionIdentityForTest().processStartMs).toBe(1);
+    expect(
+      factoryA.extensionBuildIdentityHealthForTest().loadedArtifactSha256,
+    ).toBe(digestA);
+  });
+
+  it("prints a path-free identity line from /weave:health", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      loadedExtensionIdentity: loadedIdentity(digestA),
+    });
+    await host.triggerSessionStart();
+    await host.invokeCommand("weave:health");
+    const message = host.notifyCalls.at(-1)?.message ?? "";
+    expect(message).toContain("extension identity:");
+    expect(message).not.toContain("/Users/");
+    expect(message).not.toContain("/tmp/");
+    expect(message).not.toContain("artifactPath");
+  });
+});
+
 describe("createPiExtension: startup generation races", () => {
   it("does not let a stale preflight overwrite the ready generation", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });

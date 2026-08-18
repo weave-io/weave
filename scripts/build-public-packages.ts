@@ -1,7 +1,13 @@
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 
+import {
+  createExtensionBuildManifest,
+  EXTENSION_BUILD_MANIFEST_FILENAME,
+  renderExtensionBuildManifest,
+  sha256Hex,
+} from "../packages/adapters/pi/src/extension-build-identity.js";
 import {
   PRIVATE_PACKAGE_NAMES,
   type PrivatePackageName,
@@ -13,6 +19,38 @@ import {
   type PublicPackageBuild,
   type PublicPackageName,
 } from "./release/constants.js";
+
+const PI_EXTENSION_IDENTITY_SOURCE =
+  "packages/adapters/pi/src/extension-build-identity.ts";
+const PI_EXTENSION_IDENTITY_OUTPUT =
+  "packages/adapters/pi/dist/extension-build-identity.js";
+export const PI_EXTENSION_IDENTITY_MANIFEST = join(
+  "packages/adapters/pi/dist",
+  EXTENSION_BUILD_MANIFEST_FILENAME,
+);
+const PI_BUILD = PUBLIC_PACKAGE_BUILDS["@weaveio/weave-adapter-pi"];
+const PI_BUILD_OUTPUT_PATHS = [
+  ...PI_BUILD.entries.map((entry) => entry.output),
+  ...PI_BUILD.declarations.map((declaration) => declaration.output),
+] as const;
+
+export function piOutputName(path: string): string {
+  const name = basename(path);
+  if (name.endsWith(".d.ts")) return `${name.slice(0, -5)}-declarations`;
+  if (name.endsWith(".js")) return name.slice(0, -3);
+  return name;
+}
+
+/** Logical output names and relative paths hashed into the sidecar. */
+export function piIdentityOutputFiles(): readonly {
+  readonly name: string;
+  readonly relativePath: string;
+}[] {
+  return PI_BUILD_OUTPUT_PATHS.map((relativePath) => ({
+    name: piOutputName(relativePath),
+    relativePath,
+  }));
+}
 
 export type PublicPackageBuildError =
   | {
@@ -33,6 +71,15 @@ export type PublicPackageBuildError =
     }
   | { type: "CliManifest"; path: string }
   | {
+      type: "BuildIdentity";
+      reason:
+        | "git-subject-unavailable"
+        | "git-state-unavailable"
+        | "manifest-invalid"
+        | "input-unavailable"
+        | "output-unavailable";
+    }
+  | {
       type: "PrivateDependencyReference";
       packageName: PublicPackageName;
       output: string;
@@ -52,12 +99,62 @@ export interface PublicPackageFileSystem {
   listDeclarationFiles(
     directory: string,
   ): ResultAsync<readonly string[], PublicPackageBuildError>;
+  /** Optional source-tree listing seam used by the post-build identity record. */
+  listPiBuildInputFiles?(): ResultAsync<
+    readonly string[],
+    PublicPackageBuildError
+  >;
   readText(path: string): ResultAsync<string, PublicPackageBuildError>;
   removeFile(path: string): ResultAsync<void, PublicPackageBuildError>;
   writeText(
     path: string,
     contents: string,
   ): ResultAsync<void, PublicPackageBuildError>;
+}
+
+/**
+ * Render and write the sidecar only after every hashed output exists.
+ * The sidecar itself is never one of those outputs.
+ */
+export function writePiExtensionBuildIdentityManifest(input: {
+  readonly fileSystem: PublicPackageFileSystem;
+  readonly subject: string;
+  readonly dirty: boolean;
+  readonly inputDigests: readonly string[];
+  readonly outputs: readonly {
+    readonly name: string;
+    readonly sha256: string;
+  }[];
+  readonly buildCompletedAt?: string;
+}): ResultAsync<void, PublicPackageBuildError> {
+  const manifest = createExtensionBuildManifest({
+    subject: input.subject,
+    dirty: input.dirty,
+    buildInputs: input.inputDigests,
+    outputs: input.outputs,
+    buildCompletedAt: input.buildCompletedAt,
+  });
+  if (manifest.isErr()) {
+    return errAsync({
+      type: "BuildIdentity",
+      reason: "manifest-invalid",
+    });
+  }
+  const rendered = renderExtensionBuildManifest(manifest.value);
+  if (rendered.isErr()) {
+    return errAsync({
+      type: "BuildIdentity",
+      reason: "manifest-invalid",
+    });
+  }
+  return input.fileSystem
+    .ensureDirectory(join(PI_EXTENSION_IDENTITY_MANIFEST, ".."))
+    .andThen(() =>
+      input.fileSystem.writeText(
+        PI_EXTENSION_IDENTITY_MANIFEST,
+        rendered.value,
+      ),
+    );
 }
 
 /**
@@ -147,6 +244,17 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
     );
   }
 
+  listPiBuildInputFiles(): ResultAsync<
+    readonly string[],
+    PublicPackageBuildError
+  > {
+    return ResultAsync.fromPromise(this.scanPiBuildInputFiles(), () => ({
+      type: "Filesystem" as const,
+      path: "packages/adapters/pi/src",
+      operation: "list" as const,
+    }));
+  }
+
   readText(path: string): ResultAsync<string, PublicPackageBuildError> {
     return ResultAsync.fromPromise(Bun.file(path).text(), () => ({
       type: "Filesystem" as const,
@@ -198,6 +306,25 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
     }
     return files;
   }
+
+  private async scanPiBuildInputFiles(): Promise<string[]> {
+    const files: string[] = [];
+    for await (const path of new Bun.Glob(
+      "packages/adapters/pi/src/**/*.ts",
+    ).scan({ onlyFiles: true })) {
+      if (
+        path.includes("/__tests__/") ||
+        path.includes("/__fixtures__/") ||
+        path.endsWith(".test.ts") ||
+        path.endsWith(".spec.ts")
+      ) {
+        continue;
+      }
+      files.push(path);
+    }
+    files.push(PI_EXTENSION_IDENTITY_SOURCE);
+    return [...new Set(files)].sort();
+  }
 }
 
 /** Builds public entry points with workspace code inlined and approved runtime imports external. */
@@ -225,7 +352,9 @@ export class PublicPackageBuilder {
     for (const packageName of packageBuildOrder) {
       result = result.andThen(() => this.build(packageName));
     }
-    return result;
+    // The identity module and sidecar are deliberately emitted last. A
+    // sidecar from a partial build is never a valid proof of any output.
+    return result.andThen(() => this.emitPiBuildIdentityArtifacts());
   }
 
   build(
@@ -583,6 +712,162 @@ export class PublicPackageBuilder {
     ).andThen(([exitCode, diagnostics]) => {
       if (exitCode === 0) return okAsync(undefined);
       return errAsync({ ...error, diagnostics });
+    });
+  }
+
+  private emitPiBuildIdentityArtifacts(): ResultAsync<
+    void,
+    PublicPackageBuildError
+  > {
+    return this.transpileEntry("@weaveio/weave-adapter-pi", {
+      source: PI_EXTENSION_IDENTITY_SOURCE,
+      output: PI_EXTENSION_IDENTITY_OUTPUT,
+    })
+      .andThen(() => this.readGitBuildIdentity())
+      .andThen((git) =>
+        this.readPiBuildInputs().map((buildInputs) => ({ git, buildInputs })),
+      )
+      .andThen(({ git, buildInputs }) =>
+        this.hashPiBuildInputs(buildInputs).map((inputDigests) => ({
+          git,
+          inputDigests,
+        })),
+      )
+      .andThen(({ git, inputDigests }) =>
+        this.hashPiBuildOutputs().map((outputs) => ({
+          git,
+          inputDigests,
+          outputs,
+        })),
+      )
+      .andThen(({ git, inputDigests, outputs }) =>
+        writePiExtensionBuildIdentityManifest({
+          fileSystem: this.fileSystem,
+          subject: git.subject,
+          dirty: git.dirty,
+          inputDigests,
+          outputs,
+        }),
+      );
+  }
+
+  private readGitBuildIdentity(): ResultAsync<
+    { readonly subject: string; readonly dirty: boolean },
+    PublicPackageBuildError
+  > {
+    return this.runGit(
+      ["rev-parse", "HEAD"],
+      "git-subject-unavailable",
+    ).andThen((subject) =>
+      this.runGit(
+        ["status", "--porcelain", "--untracked-files=all"],
+        "git-state-unavailable",
+      ).andThen((status) => {
+        const normalizedSubject = subject.trim();
+        if (!/^[0-9a-f]{40}$/u.test(normalizedSubject)) {
+          return errAsync({
+            type: "BuildIdentity" as const,
+            reason: "git-subject-unavailable" as const,
+          });
+        }
+        return okAsync({
+          subject: normalizedSubject,
+          dirty: status.trim().length > 0,
+        });
+      }),
+    );
+  }
+
+  private runGit(
+    command: readonly string[],
+    reason: "git-subject-unavailable" | "git-state-unavailable",
+  ): ResultAsync<string, PublicPackageBuildError> {
+    const spawned = Result.fromThrowable(
+      () =>
+        Bun.spawn({ cmd: ["git", ...command], stdout: "pipe", stderr: "pipe" }),
+      (): PublicPackageBuildError => ({ type: "BuildIdentity", reason }),
+    )();
+    if (spawned.isErr()) return errAsync(spawned.error);
+    return ResultAsync.fromPromise(
+      Promise.all([
+        spawned.value.exited,
+        new Response(spawned.value.stdout).text(),
+      ]),
+      (): PublicPackageBuildError => ({ type: "BuildIdentity", reason }),
+    ).andThen(([exitCode, stdout]) =>
+      exitCode === 0
+        ? okAsync(stdout)
+        : errAsync({ type: "BuildIdentity" as const, reason }),
+    );
+  }
+
+  private readPiBuildInputs(): ResultAsync<
+    readonly string[],
+    PublicPackageBuildError
+  > {
+    const fallback = [
+      ...PI_BUILD.entries.map((entry) => entry.source),
+      PI_EXTENSION_IDENTITY_SOURCE,
+    ];
+    const listed = this.fileSystem.listPiBuildInputFiles?.();
+    return (listed ?? okAsync([...new Set(fallback)].sort())).andThen(
+      (files) => {
+        const normalized = [...new Set(files)].sort();
+        return normalized.length === 0
+          ? errAsync({
+              type: "BuildIdentity" as const,
+              reason: "input-unavailable" as const,
+            })
+          : okAsync(normalized);
+      },
+    );
+  }
+
+  private hashPiBuildInputs(
+    files: readonly string[],
+  ): ResultAsync<readonly string[], PublicPackageBuildError> {
+    let result = okAsync<string[], PublicPackageBuildError>([]);
+    for (const file of files) {
+      result = result.andThen((digests) =>
+        this.hashTextForIdentity(file, "input-unavailable").map((digest) => [
+          ...digests,
+          digest,
+        ]),
+      );
+    }
+    return result.map((digests) => [...digests].sort());
+  }
+
+  private hashPiBuildOutputs(): ResultAsync<
+    readonly { readonly name: string; readonly sha256: string }[],
+    PublicPackageBuildError
+  > {
+    let result = okAsync<
+      { readonly name: string; readonly sha256: string }[],
+      PublicPackageBuildError
+    >([]);
+    for (const path of PI_BUILD_OUTPUT_PATHS) {
+      result = result.andThen((outputs) =>
+        this.hashTextForIdentity(path, "output-unavailable").map((sha256) => [
+          ...outputs,
+          { name: piOutputName(path), sha256 },
+        ]),
+      );
+    }
+    return result.map((outputs) =>
+      [...outputs].sort((left, right) => left.name.localeCompare(right.name)),
+    );
+  }
+
+  private hashTextForIdentity(
+    path: string,
+    reason: "input-unavailable" | "output-unavailable",
+  ): ResultAsync<string, PublicPackageBuildError> {
+    return this.fileSystem.readText(path).andThen((contents) => {
+      const digest = sha256Hex(new TextEncoder().encode(contents));
+      return digest.isOk()
+        ? okAsync(digest.value)
+        : errAsync({ type: "BuildIdentity" as const, reason });
     });
   }
 

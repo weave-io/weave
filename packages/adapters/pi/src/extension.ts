@@ -12,6 +12,11 @@
  * case rather than inventing a path.
  */
 import {
+  loadExtensionBuildIdentity,
+  maybeWriteExtensionBuildIdentityProofLine,
+  unverifiableExtensionLoadIdentity,
+} from "./extension-build-identity.js";
+import {
   BunPiHostModuleEnvironment,
   recordHostModuleOutcome,
   recordPiExtensionEntryPath,
@@ -22,10 +27,23 @@ export default async function weaveAdapterExtension(
   pi: unknown,
 ): Promise<void> {
   recordPiExtensionEntryPath(import.meta.path as unknown);
+  const loadedIdentity = (
+    await loadExtensionBuildIdentity(import.meta.path as unknown)
+  ).match(
+    (value) => value,
+    () => unverifiableExtensionLoadIdentity("artifact-read-failed"),
+  );
+  maybeWriteExtensionBuildIdentityProofLine(loadedIdentity);
   const outcome = await resolveHostModules(new BunPiHostModuleEnvironment());
   const impl = await import("./extension-impl.js");
   if (outcome.isOk()) {
     recordHostModuleOutcome(outcome.value);
   }
+  const setLoadedIdentity = (
+    impl as typeof impl & {
+      setLoadedPiExtensionIdentity?: (identity: typeof loadedIdentity) => void;
+    }
+  ).setLoadedPiExtensionIdentity;
+  setLoadedIdentity?.(loadedIdentity);
   return (impl.default as (host: unknown) => void)(pi);
 }

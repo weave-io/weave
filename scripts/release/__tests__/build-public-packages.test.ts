@@ -1,7 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import { errAsync, okAsync } from "neverthrow";
 import {
   hasPrivateDeclarationReference,
   hasPrivateDependencyReference,
+  PI_EXTENSION_IDENTITY_MANIFEST,
+  type PublicPackageBuildError,
+  type PublicPackageFileSystem,
+  piIdentityOutputFiles,
+  piOutputName,
+  writePiExtensionBuildIdentityManifest,
 } from "../../build-public-packages.js";
 import {
   PUBLIC_PACKAGE_BUILDS,
@@ -66,7 +73,11 @@ describe("public package build guard", () => {
     const piBuild = PUBLIC_PACKAGE_BUILDS["@weaveio/weave-adapter-pi"];
     const outputs = piBuild.entries.map((entry) => entry.output);
     expect(outputs).toContain("packages/adapters/pi/dist/extension.js");
+    expect(outputs).toContain(
+      "packages/adapters/pi/dist/extension-build-identity.js",
+    );
     expect(outputs).toContain("packages/adapters/pi/dist/extension-impl.js");
+    expect(piBuild.extraFiles).toEqual(["dist/extension-build-identity.json"]);
     expect(
       piBuild.entries.find(
         (entry) => entry.output === "packages/adapters/pi/dist/extension.js",
@@ -80,5 +91,119 @@ describe("public package build guard", () => {
     );
     expect(PUBLIC_RUNTIME_EXTERNALS).toContain("@earendil-works/pi-ai");
     expect(PUBLIC_RUNTIME_EXTERNALS).toContain("@earendil-works/pi-tui");
+  });
+});
+
+class MemoryPublicPackageFileSystem implements PublicPackageFileSystem {
+  readonly files = new Map<string, string>();
+  readonly writes: string[] = [];
+
+  copyFile(): ReturnType<PublicPackageFileSystem["copyFile"]> {
+    return okAsync(undefined);
+  }
+  ensureDirectory(): ReturnType<PublicPackageFileSystem["ensureDirectory"]> {
+    return okAsync(undefined);
+  }
+  makeExecutable(): ReturnType<PublicPackageFileSystem["makeExecutable"]> {
+    return okAsync(undefined);
+  }
+  listDeclarationFiles(): ReturnType<
+    PublicPackageFileSystem["listDeclarationFiles"]
+  > {
+    return okAsync([]);
+  }
+  readText(path: string): ReturnType<PublicPackageFileSystem["readText"]> {
+    const contents = this.files.get(path);
+    return contents === undefined
+      ? errAsync({
+          type: "Filesystem",
+          path,
+          operation: "copy",
+        } satisfies PublicPackageBuildError)
+      : okAsync(contents);
+  }
+  removeFile(): ReturnType<PublicPackageFileSystem["removeFile"]> {
+    return okAsync(undefined);
+  }
+  writeText(
+    path: string,
+    contents: string,
+  ): ReturnType<PublicPackageFileSystem["writeText"]> {
+    this.writes.push(path);
+    this.files.set(path, contents);
+    return okAsync(undefined);
+  }
+}
+
+describe("Pi extension build identity sidecar", () => {
+  const digestA = "a".repeat(64);
+  const digestB = "b".repeat(64);
+  const subject = "c".repeat(40);
+
+  it("names outputs logically and writes the sidecar after those outputs exist", async () => {
+    expect(piOutputName("packages/adapters/pi/dist/extension.js")).toBe(
+      "extension",
+    );
+    expect(piOutputName("packages/adapters/pi/dist/index.d.ts")).toBe(
+      "index-declarations",
+    );
+    expect(piIdentityOutputFiles().map((output) => output.name)).toContain(
+      "extension",
+    );
+    expect(
+      piIdentityOutputFiles().some((output) => output.name.includes("/")),
+    ).toBe(false);
+
+    const fileSystem = new MemoryPublicPackageFileSystem();
+    const result = await writePiExtensionBuildIdentityManifest({
+      fileSystem,
+      subject,
+      dirty: true,
+      inputDigests: [digestB, digestA],
+      outputs: [
+        { name: "index", sha256: digestB },
+        { name: "extension", sha256: digestA },
+      ],
+      buildCompletedAt: "1970-01-01T00:00:00.100Z",
+    });
+    expect(result.isOk()).toBe(true);
+    expect(fileSystem.writes).toEqual([PI_EXTENSION_IDENTITY_MANIFEST]);
+    const sidecar = fileSystem.files.get(PI_EXTENSION_IDENTITY_MANIFEST);
+    expect(sidecar).toBeDefined();
+    expect(sidecar).not.toContain("packages/");
+    expect(sidecar).not.toContain("/Users/");
+    expect(sidecar).not.toContain("PATH");
+    const parsed = JSON.parse(sidecar ?? "") as {
+      schemaVersion: number;
+      git: { subject: string; dirty: boolean };
+      buildInputs: string[];
+      outputs: { name: string; sha256: string }[];
+      buildCompletedAt: string;
+    };
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.git).toEqual({ subject, dirty: true });
+    expect(parsed.buildInputs).toEqual([digestA, digestB]);
+    expect(parsed.outputs.map((output) => output.name)).toEqual([
+      "extension",
+      "index",
+    ]);
+    expect(parsed.buildCompletedAt).toBe("1970-01-01T00:00:00.100Z");
+  });
+
+  it("refuses a sidecar when hashed outputs are missing or unsorted names collide", async () => {
+    const fileSystem = new MemoryPublicPackageFileSystem();
+    const result = await writePiExtensionBuildIdentityManifest({
+      fileSystem,
+      subject,
+      dirty: false,
+      inputDigests: [],
+      outputs: [],
+    });
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "BuildIdentity",
+      reason: "manifest-invalid",
+    });
+    expect(fileSystem.writes).toEqual([]);
   });
 });
