@@ -88,6 +88,9 @@ export type SettlementAdmission =
   | { readonly kind: "admit" }
   | { readonly kind: "suppress" };
 
+/** Outcome of a structural compaction turn start. */
+export type CompactionTurnStartDecision = "none" | "resumed" | "unrelated";
+
 type GateState =
   | { readonly kind: "open" }
   | {
@@ -324,10 +327,10 @@ export class PiChildAbortSettlementGate {
    * adopt the stale verdict and resume it into a success. The captured failure
    * is published immediately instead and the gate closes for good.
    */
-  observeTurnStart(): void {
+  observeTurnStart(): CompactionTurnStartDecision {
     if (this.state.kind === "deferred") {
       this.publish();
-      return;
+      return "unrelated";
     }
     if (this.state.kind === "compacting") {
       this.state.timer.cancel();
@@ -341,13 +344,36 @@ export class PiChildAbortSettlementGate {
       // is still captured and published.
       this.discardedEpoch = this.state.epoch;
       this.state = { kind: "open" };
-      return;
+      return "resumed";
     }
     if (this.state.kind === "evidenced" && !this.state.resumed) {
       // The resumed run is already in flight. Its own bounded evidence window
       // still owns the timer, so nothing new is armed here.
       this.state = { ...this.state, resumed: true };
+      return "resumed";
     }
+    return "none";
+  }
+
+  /** True while this gate owns structural compaction evidence. */
+  get hasCompactionEvidence(): boolean {
+    return this.state.kind === "evidenced" || this.state.kind === "compacting";
+  }
+
+  /**
+   * Return the compaction gate to a fresh open epoch.
+   *
+   * A child fallback starts a separate recovery epoch. The previous
+   * compaction observation must therefore be dropped without publishing it;
+   * a later compaction event belongs to the fallback run and is observed by a
+   * newly open compaction gate, never by the fallback gate.
+   */
+  reset(): void {
+    if (this.state.kind !== "open" && this.state.kind !== "closed") {
+      this.state.timer.cancel();
+    }
+    this.state = { kind: "open" };
+    this.discardedEpoch = undefined;
   }
 
   /**
@@ -407,5 +433,250 @@ export class PiChildAbortSettlementGate {
     timer.cancel();
     this.state = { kind: "closed" };
     this.onExpire(failure);
+  }
+}
+
+/**
+ * The child-side fallback epoch is intentionally independent from
+ * {@link PiChildAbortSettlementGate}.
+ *
+ * Compaction is proved by Pi lifecycle events. Model fallback is proved by an
+ * exact custom `message_start` followed by the validated context repair owned
+ * by the model-failover coordinator. A bare turn, a compaction event, or a
+ * late event can never move this gate between those phases.
+ */
+export interface ChildFallbackEpoch {
+  readonly generation: number;
+  readonly attempt: number;
+}
+
+export type FallbackEvidenceDecision =
+  | { readonly kind: "admit" }
+  | {
+      readonly kind: "suppress";
+      readonly why: "not-expected" | "stale" | "closed";
+    };
+
+export type FallbackSettlementAdmission =
+  | { readonly kind: "admit" }
+  | { readonly kind: "suppress" };
+
+export const DEFAULT_FALLBACK_RECOVERY_TIMEOUT_MS = 10 * 60 * 1_000;
+
+type FallbackGateState =
+  | { readonly kind: "open" }
+  | {
+      readonly kind: "awaiting-marker";
+      readonly epoch: ChildFallbackEpoch;
+      readonly failure: DeferredChildFailure;
+    }
+  | {
+      readonly kind: "awaiting-context";
+      readonly epoch: ChildFallbackEpoch;
+      readonly failure: DeferredChildFailure;
+    }
+  | {
+      readonly kind: "recovering";
+      readonly epoch: ChildFallbackEpoch;
+      readonly failure: DeferredChildFailure;
+      readonly timer: TimerHandle;
+    }
+  | { readonly kind: "closed" };
+
+export interface PiChildFallbackSettlementGateOptions {
+  readonly timerPort: TimerPort;
+  /** Publishes the retained failure at most once. */
+  readonly onExpire: (failure: DeferredChildFailure) => void;
+  /** Optional terminal-success callback, invoked after the epoch closes. */
+  readonly onSuccess?: (epoch: ChildFallbackEpoch) => void;
+  readonly recoveryTimeoutMs?: number;
+}
+
+function sameFallbackEpoch(
+  left: ChildFallbackEpoch,
+  right: ChildFallbackEpoch,
+): boolean {
+  return left.generation === right.generation && left.attempt === right.attempt;
+}
+
+function newerFallbackEpoch(
+  left: ChildFallbackEpoch,
+  right: ChildFallbackEpoch,
+): boolean {
+  return (
+    left.generation > right.generation ||
+    (left.generation === right.generation && left.attempt > right.attempt)
+  );
+}
+
+/**
+ * Bounded fallback admission gate.
+ *
+ * `beginFallback()` records the retained failure but does not admit a new
+ * model run. `observeMarker()` and `observeContextRepair()` are separate
+ * evidence transitions. Only the latter starts the fallback settlement timer;
+ * final success is admitted by `admitSuccess()` after the coordinator has
+ * observed the recovered `agent_settled` event.
+ */
+export class PiChildFallbackSettlementGate {
+  private state: FallbackGateState = { kind: "open" };
+  private readonly timerPort: TimerPort;
+  private readonly onExpire: (failure: DeferredChildFailure) => void;
+  private readonly onSuccess: ((epoch: ChildFallbackEpoch) => void) | undefined;
+  private readonly recoveryTimeoutMs: number;
+
+  constructor(options: PiChildFallbackSettlementGateOptions) {
+    this.timerPort = options.timerPort;
+    this.onExpire = options.onExpire;
+    this.onSuccess = options.onSuccess;
+    this.recoveryTimeoutMs =
+      options.recoveryTimeoutMs ?? DEFAULT_FALLBACK_RECOVERY_TIMEOUT_MS;
+  }
+
+  get active(): boolean {
+    return this.state.kind !== "open" && this.state.kind !== "closed";
+  }
+
+  get recovering(): boolean {
+    return this.state.kind === "recovering";
+  }
+
+  get epoch(): ChildFallbackEpoch | undefined {
+    return this.state.kind === "open" || this.state.kind === "closed"
+      ? undefined
+      : this.state.epoch;
+  }
+
+  get failure(): DeferredChildFailure | undefined {
+    return this.state.kind === "open" || this.state.kind === "closed"
+      ? undefined
+      : this.state.failure;
+  }
+
+  /** Begin or replace one fallback attempt without treating a turn as proof. */
+  beginFallback(
+    failure: DeferredChildFailure,
+    epoch: ChildFallbackEpoch,
+  ): FallbackEvidenceDecision {
+    if (this.state.kind === "closed") {
+      return { kind: "suppress", why: "closed" };
+    }
+    if (this.state.kind !== "open") {
+      if (sameFallbackEpoch(epoch, this.state.epoch)) {
+        return { kind: "suppress", why: "not-expected" };
+      }
+      if (!newerFallbackEpoch(epoch, this.state.epoch)) {
+        return { kind: "suppress", why: "stale" };
+      }
+      this.cancelStateTimer();
+    }
+    this.state = { kind: "awaiting-marker", epoch, failure };
+    return { kind: "admit" };
+  }
+
+  /** Replace only the retained failure for the active fallback epoch. */
+  replaceFailure(
+    failure: DeferredChildFailure,
+    epoch: ChildFallbackEpoch,
+  ): void {
+    if (this.state.kind === "open" || this.state.kind === "closed") return;
+    if (!sameFallbackEpoch(epoch, this.state.epoch)) return;
+    this.state = { ...this.state, failure };
+  }
+
+  /** Exact marker evidence. Bare turns never call this method. */
+  observeMarker(epoch: ChildFallbackEpoch): FallbackEvidenceDecision {
+    if (this.state.kind === "closed") {
+      return { kind: "suppress", why: "closed" };
+    }
+    if (this.state.kind !== "awaiting-marker") {
+      return { kind: "suppress", why: "not-expected" };
+    }
+    if (!sameFallbackEpoch(epoch, this.state.epoch)) {
+      return { kind: "suppress", why: "stale" };
+    }
+    this.state = {
+      kind: "awaiting-context",
+      epoch: this.state.epoch,
+      failure: this.state.failure,
+    };
+    return { kind: "admit" };
+  }
+
+  /** Exact context-repair evidence. This is the only transition to recovery. */
+  observeContextRepair(epoch: ChildFallbackEpoch): FallbackEvidenceDecision {
+    if (this.state.kind === "closed") {
+      return { kind: "suppress", why: "closed" };
+    }
+    if (this.state.kind !== "awaiting-context") {
+      return { kind: "suppress", why: "not-expected" };
+    }
+    if (!sameFallbackEpoch(epoch, this.state.epoch)) {
+      return { kind: "suppress", why: "stale" };
+    }
+    const { failure } = this.state;
+    this.state = {
+      kind: "recovering",
+      epoch: this.state.epoch,
+      failure,
+      timer: this.timerPort.schedule(
+        () => this.expireRecovery(epoch),
+        this.recoveryTimeoutMs,
+      ),
+    };
+    return { kind: "admit" };
+  }
+
+  /** Admit the final recovered settlement exactly once. */
+  admitSuccess(epoch: ChildFallbackEpoch): FallbackSettlementAdmission {
+    if (this.state.kind !== "recovering") return { kind: "suppress" };
+    if (!sameFallbackEpoch(epoch, this.state.epoch)) {
+      return { kind: "suppress" };
+    }
+    this.state.timer.cancel();
+    this.state = { kind: "closed" };
+    this.onSuccess?.(epoch);
+    return { kind: "admit" };
+  }
+
+  /** Fail the active fallback attempt with its retained failure. */
+  fail(epoch?: ChildFallbackEpoch): void {
+    if (this.state.kind === "open" || this.state.kind === "closed") return;
+    if (epoch !== undefined && !sameFallbackEpoch(epoch, this.state.epoch)) {
+      return;
+    }
+    const failure = this.state.failure;
+    this.cancelStateTimer();
+    this.state = { kind: "closed" };
+    this.onExpire(failure);
+  }
+
+  /** Close without publishing on authenticated cancellation or teardown. */
+  dispose(): void {
+    this.cancelStateTimer();
+    this.state = { kind: "closed" };
+  }
+
+  /**
+   * Start a fresh fallback epoch after the child receives a new bootstrap.
+   * Stale callbacks have already been closed by the caller; this method only
+   * clears this gate's bounded timer/state and never publishes the old failure.
+   */
+  reset(): void {
+    this.cancelStateTimer();
+    this.state = { kind: "open" };
+  }
+
+  private expireRecovery(epoch: ChildFallbackEpoch): void {
+    if (this.state.kind !== "recovering") return;
+    if (!sameFallbackEpoch(epoch, this.state.epoch)) return;
+    const failure = this.state.failure;
+    this.state.timer.cancel();
+    this.state = { kind: "closed" };
+    this.onExpire(failure);
+  }
+
+  private cancelStateTimer(): void {
+    if (this.state.kind === "recovering") this.state.timer.cancel();
   }
 }

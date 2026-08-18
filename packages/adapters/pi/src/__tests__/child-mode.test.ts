@@ -118,15 +118,23 @@ class MinimalFakeHost implements PiExtensionApi {
     return [];
   }
   setActiveTools(_names: readonly string[]): void {}
+  readonly sentMessages: {
+    readonly customType: string;
+    readonly content: string;
+    readonly display: boolean;
+    readonly details?: unknown;
+  }[] = [];
   sendMessage(
-    _message: {
+    message: {
       customType: string;
       content: string;
       display: boolean;
       details?: unknown;
     },
     _options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
-  ): void {}
+  ): void {
+    this.sentMessages.push(message);
+  }
   /** Every `registerTool()` call, in order. */
   readonly registerToolCalls: PiToolRegistration[] = [];
   registerTool(tool: PiToolRegistration): void {
@@ -204,6 +212,7 @@ function fakeCtx(overrides: Partial<PiSessionContext> = {}): PiSessionContext {
     cwd: "/project",
     isProjectTrusted: () => true,
     isIdle: () => true,
+    hasPendingMessages: () => false,
     ui: {
       notify: () => {},
       setStatus: () => {},
@@ -276,11 +285,11 @@ async function buildChildExtension(
     ...overrides,
   });
   factory(host);
-  // The hidden hidden `weave:__control__` command handler only takes
-  // `rawArgs` - `applyChildBootstrap()` always closes over the *session's*
-  // own `ctx` (captured once, at `session_start`), not any per-invocation
-  // ctx a caller might pass to the command handler. Tests that need a
-  // specific `ctx.modelRegistry`/`ctx.model` must supply it here.
+  // The hidden `weave:__control__` command handler only takes `rawArgs`.
+  // Bootstrap uses the latest lifecycle context, initialized from
+  // `session_start`, rather than the per-invocation context passed to this
+  // command. Tests that need a specific `ctx.modelRegistry`/`ctx.model` must
+  // supply it here.
   await host.fire("session_start", {}, sessionCtx);
   return { host, output, secretBytes, timers };
 }
@@ -420,6 +429,104 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect((settled?.body as Record<string, unknown>).outcome).toBe(
       "completed",
     );
+  });
+
+  it("keeps a child fallback epoch open through exact marker/context recovery and settles the fallback output once", async () => {
+    const origin: PiModelInfo = {
+      provider: "origin",
+      id: "first",
+      name: "First",
+    };
+    const fallback: PiModelInfo = {
+      provider: "fallback",
+      id: "second",
+      name: "Second",
+    };
+    const recoveryCtx = fakeCtx({
+      model: origin,
+      modelRegistry: { getAvailable: () => [origin, fallback] },
+      hasPendingMessages: () => false,
+    });
+    const { host, output, secretBytes } =
+      await buildChildExtension(recoveryCtx);
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, {
+        models: ["origin/first", "fallback/second"],
+      }),
+      recoveryCtx,
+    );
+
+    // The failed assistant is retained as the coordinator fingerprint, not
+    // copied into the later fallback result.
+    const failedMessage = {
+      role: "assistant",
+      id: "failed-assistant",
+      stopReason: "error",
+      error: { status: 429, message: "rate limited" },
+      content: [{ type: "text", text: "partial failed output" }],
+    } as const;
+    await host.fire(
+      "message_end",
+      { type: "message_end", message: failedMessage },
+      recoveryCtx,
+    );
+    await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
+    await waitFor(() => host.setModelCalls.length >= 2);
+    expect(host.setModelCalls.at(-1)?.id).toBe("second");
+
+    await host.fire(
+      "model_select",
+      { type: "model_select", model: fallback },
+      recoveryCtx,
+    );
+    await waitFor(() => host.sentMessages.length === 1);
+    const marker = host.sentMessages[0];
+    expect(marker?.customType).toBe("weave.model-fallback.recovery-marker");
+
+    await host.fire(
+      "message_start",
+      { type: "message_start", message: marker },
+      recoveryCtx,
+    );
+    const contextResult = await host.fire(
+      "context",
+      [{ role: "user", content: "keep this history" }, failedMessage, marker],
+      recoveryCtx,
+    );
+    expect(contextResult).toEqual([
+      { role: "user", content: "keep this history" },
+    ]);
+
+    await host.fire("turn_start", { type: "turn_start" }, recoveryCtx);
+    await host.fire(
+      "message_end",
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          id: "fallback-assistant",
+          stopReason: "stop",
+          content: [{ type: "text", text: "fallback answer" }],
+        },
+      },
+      recoveryCtx,
+    );
+    await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
+    await waitFor(
+      () => output.lines.filter((line) => line.kind === "settled").length === 1,
+    );
+    const settled = output.lines.filter((line) => line.kind === "settled");
+    expect(settled).toHaveLength(1);
+    expect((settled[0]?.body as Record<string, unknown>).outcome).toBe(
+      "completed",
+    );
+    expect((settled[0]?.body as Record<string, unknown>).assistantOutput).toBe(
+      "fallback answer",
+    );
+    expect(
+      (settled[0]?.body as Record<string, unknown>).assistantOutput,
+    ).not.toContain("partial failed output");
   });
 
   it("retries settlement once after a failed output write without leaving a sequence gap", async () => {

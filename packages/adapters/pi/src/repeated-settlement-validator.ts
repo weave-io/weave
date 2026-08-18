@@ -10,6 +10,8 @@ export interface PiSettlementValidationRun {
 
 export interface PiSettlementValidationObservation {
   readonly settlement: PiChildSettlement;
+  /** Number of terminal child envelopes observed for this run, when measured. */
+  readonly settlementCount?: number;
   /** Full private output captured by the inspector/history seam. */
   readonly privateOutput: string;
   /** Diagnostic only. Validation never searches log text. */
@@ -46,6 +48,11 @@ export type PiRepeatedSettlementValidationError =
   | {
       readonly type: "DuplicateSentinel";
       readonly sentinel: string;
+    }
+  | {
+      readonly type: "SettlementCountMismatch";
+      readonly run: PiSettlementValidationRun;
+      readonly count: number;
     };
 
 export interface PiRepeatedSettlementValidationReport {
@@ -76,6 +83,16 @@ function validateObservation(
       outcome: observation.settlement.outcome,
     });
   }
+  if (
+    observation.settlementCount !== undefined &&
+    observation.settlementCount !== 1
+  ) {
+    return err({
+      type: "SettlementCountMismatch",
+      run,
+      count: observation.settlementCount,
+    });
+  }
   if (!observation.privateOutput.includes(run.sentinel)) {
     return err({ type: "SentinelMissing", run });
   }
@@ -100,7 +117,10 @@ function executeRun(
 
 function rejectDuplicateSentinels(
   runs: readonly PiSettlementValidationRun[],
-): Result<readonly PiSettlementValidationRun[], PiRepeatedSettlementValidationError> {
+): Result<
+  readonly PiSettlementValidationRun[],
+  PiRepeatedSettlementValidationError
+> {
   const seen = new Set<string>();
   for (const run of runs) {
     if (seen.has(run.sentinel)) {

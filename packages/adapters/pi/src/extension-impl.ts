@@ -60,8 +60,10 @@ import {
   type PiCatalogCell,
 } from "./catalog-cell.js";
 import {
+  type ChildFallbackEpoch,
   type ChildTurnEpoch,
   PiChildAbortSettlementGate,
+  PiChildFallbackSettlementGate,
 } from "./child-compaction-settlement.js";
 import {
   MAX_SETTLEMENT_OUTPUT_BYTES,
@@ -319,6 +321,7 @@ import {
   type PiModelFailoverAppliedEvent,
   type PiModelFailoverCoordinator,
   type PiModelFailoverEventScope,
+  type PiModelFailoverFailureInput,
   type PiModelFailoverRecoveryConfirmedEvent,
   type PiModelFailoverTerminalDecision,
 } from "./model-failover-coordinator.js";
@@ -1443,6 +1446,10 @@ interface PiChildModeState {
    * not be claimed as a fast owner's model.
    */
   resolvedModelId: string | undefined;
+  /** Frozen authenticated model intent used to build this child's fallback scope. */
+  modelIntent: readonly string[];
+  /** Full catalog object actually applied by this child, when one was applied. */
+  appliedModel: PiModelInfo | undefined;
   /**
    * Incremented once per committed bootstrap. Provider hooks use it as this
    * child's intent generation, so an attempt cannot survive a re-bootstrap.
@@ -1530,6 +1537,8 @@ function createChildModeState(): PiChildModeState {
     composedPrompt: "",
     fast: undefined,
     resolvedModelId: undefined,
+    modelIntent: [],
+    appliedModel: undefined,
     bootstrapGeneration: 0,
     delegationTargets: [],
     promptAppended: false,
@@ -1680,7 +1689,8 @@ async function applyChildBootstrap(
   // whatever model Pi already had active in that case, so `appliedModel`
   // may legitimately stay `undefined` (no override took effect) without
   // blocking the rest of bootstrap.
-  let appliedModel: PiModelInfo | undefined;
+  let appliedCatalogModel: PiModelInfo | undefined;
+  let appliedModel: ReturnType<typeof toModelIdentityBody> | undefined;
   if (parsed.resolvedModel !== undefined) {
     const availableModels = safelyListAvailableModels(
       ctx.modelRegistry,
@@ -1708,6 +1718,7 @@ async function applyChildBootstrap(
       runtime.dispose();
       return;
     }
+    appliedCatalogModel = resolved.value;
     appliedModel = toModelIdentityBody(resolved.value);
     await applyChildThinkingLevel(pi, parsed.thinkingLevel, deps.logger);
   } else {
@@ -1739,6 +1750,7 @@ async function applyChildBootstrap(
     // `ModelIdentityBodySchema`-validated field (Pi adapter contract).
     const rawAppliedModel =
       outcome.status === "applied" ? outcome.model : outcome.currentModel;
+    appliedCatalogModel = rawAppliedModel;
     appliedModel =
       rawAppliedModel === undefined
         ? undefined
@@ -1761,6 +1773,8 @@ async function applyChildBootstrap(
   // resolved model, so the child records the identity it really applied.
   state.resolvedModelId =
     typeof appliedModel?.id === "string" ? appliedModel.id : undefined;
+  state.modelIntent = copyBootstrapModels(parsed.models);
+  state.appliedModel = appliedCatalogModel;
   state.delegationTargets = copyDelegationTargets(parsed.delegationTargets);
   state.bootstrapApplied = true;
   state.bootstrapGeneration += 1;
@@ -1836,6 +1850,40 @@ async function activateChildModeIfApplicable(
       },
     );
 
+  // Child fallback has its own epoch and terminal claim. The compaction gate
+  // remains reusable for a later fallback turn, but it never owns a fallback
+  // marker, context repair, or terminal callback.
+  let latestChildCtx = ctx;
+  let childFailoverCoordinator: PiModelFailoverCoordinator | undefined;
+  let childFailoverGeneration: number | undefined;
+  let childFallbackAttempt = 0;
+  let childFallbackEpoch: ChildFallbackEpoch | undefined;
+  let childFallbackFailure: { readonly reason: string } | undefined;
+  let childPendingFailure: PiModelFailoverFailureInput | undefined;
+  let terminalSettlementClaimed = false;
+  let cancellationClaimed = false;
+  let shuttingDown = false;
+  let fallbackGate: PiChildFallbackSettlementGate | undefined;
+
+  const claimTerminalSettlement = (): boolean => {
+    if (
+      terminalSettlementClaimed ||
+      cancellationClaimed ||
+      shuttingDown ||
+      runtime.isCancelled()
+    ) {
+      return false;
+    }
+    terminalSettlementClaimed = true;
+    return true;
+  };
+
+  const reportChildFailure = (reason: string): void => {
+    if (state.directStep !== undefined) state.directStep.windowOpen = false;
+    if (!claimTerminalSettlement()) return;
+    void reportSettlement("failed", { reason });
+  };
+
   /**
    * Bounded gate that keeps a compaction-intent local abort from becoming a
    * terminal failure. See `child-compaction-settlement.ts` for the observed
@@ -1844,12 +1892,302 @@ async function activateChildModeIfApplicable(
   const abortGate = new PiChildAbortSettlementGate({
     timerPort: deps.childTimerPort,
     onExpire: (failure) => {
-      // The deferred verdict is now terminal, so no late completion candidate
-      // may still be recorded for it.
-      if (state.directStep !== undefined) state.directStep.windowOpen = false;
-      void reportSettlement("failed", { reason: failure.reason });
+      // A compaction observed during a fallback attempt is still a compaction
+      // epoch. If it exhausts, the fallback gate publishes its retained
+      // failure; this callback must not create a second child settlement.
+      if (fallbackGate?.active === true) {
+        fallbackGate.fail(childFallbackEpoch);
+        return;
+      }
+      reportChildFailure(failure.reason);
     },
   });
+
+  fallbackGate = new PiChildFallbackSettlementGate({
+    timerPort: deps.childTimerPort,
+    onExpire: (failure) => {
+      // A fallback timeout or fail-closed coordinator decision retains the
+      // original sanitized failure, never the successful recovery's output.
+      if (childFailoverCoordinator !== undefined) {
+        void childFailoverCoordinator.shutdown();
+      }
+      reportChildFailure(failure.reason);
+    },
+  });
+
+  const childFailoverScope = (): PiModelFailoverEventScope => {
+    const generation = state.bootstrapGeneration;
+    return {
+      generationId: `child:${state.childId}:${generation}`,
+      nativeSessionId: state.childId,
+      activationId: `bootstrap:${generation}`,
+    };
+  };
+
+  const resetChildTransientAttempt = (): void => {
+    state.latestAssistantOutput = "";
+    state.fullAssistantOutput = "";
+    state.terminalError = undefined;
+    state.lastAssistantStopReason = undefined;
+    state.lastAssistantEpoch = undefined;
+  };
+
+  /**
+   * Reports one ordinary or recovered child success. The claim is taken
+   * before any transfer work, so a late `agent_settled` cannot race a direct
+   * completion candidate or a large-output transfer into a second report.
+   */
+  async function settleChildCompleted(): Promise<void> {
+    if (!claimTerminalSettlement()) return;
+    if (state.directStep !== undefined) state.directStep.windowOpen = false;
+    if (state.directStep !== undefined) {
+      const candidate = state.directStep.recorder.take();
+      if (candidate !== undefined) {
+        const serialized = serializeCompletionCandidate(candidate);
+        const candidateBytes = new TextEncoder().encode(serialized).byteLength;
+        if (candidateBytes > MAX_SETTLEMENT_OUTPUT_BYTES) {
+          const transferred = await runtime.transferOutput(serialized);
+          if (transferred.isErr()) {
+            await reportSettlement("failed", {
+              reason: `completion-transfer:${transferred.error.type}`,
+            });
+            return;
+          }
+          await reportSettlement("completed", {
+            completionCandidateTransferred: true,
+            outputTransferId: transferred.value.transferId,
+            outputByteLength: transferred.value.byteLength,
+          });
+          return;
+        }
+        await reportSettlement("completed", {
+          completionCandidate: serialized,
+        });
+        return;
+      }
+      const attempt = state.directStep.lastAttempt;
+      if (attempt === undefined) {
+        await reportSettlement("failed", { reason: "missing" });
+        return;
+      }
+      if (attempt.outcome === "malformed") {
+        await reportSettlement("failed", {
+          reason: `malformed:${attempt.malformedReason ?? "unknown"}`,
+        });
+        return;
+      }
+      await reportSettlement("failed", { reason: attempt.outcome });
+      return;
+    }
+
+    // Only message_end populates fullAssistantOutput. Streamed previews are
+    // intermediate state and must never become a parent result.
+    const fullOutput = state.fullAssistantOutput;
+    if (fullOutput.length === 0) {
+      await reportSettlement("completed", {});
+      return;
+    }
+    const projection = truncateLatestOutput(fullOutput);
+    const byteLength = new TextEncoder().encode(fullOutput).byteLength;
+    if (byteLength > 8 * 1024) {
+      const transferred = await runtime.transferOutput(fullOutput);
+      if (transferred.isOk()) {
+        await reportSettlement("completed", {
+          assistantOutput: projection,
+          outputTransferId: transferred.value.transferId,
+          outputByteLength: transferred.value.byteLength,
+        });
+        return;
+      }
+      await reportSettlement("failed", {
+        reason: `output-transfer:${transferred.error.type}`,
+      });
+      return;
+    }
+    await reportSettlement("completed", {
+      assistantOutput: projection,
+      outputByteLength: byteLength,
+    });
+  }
+
+  const ensureChildFailoverCoordinator = ():
+    | PiModelFailoverCoordinator
+    | undefined => {
+    if (!state.bootstrapApplied || state.modelIntent.length === 0) {
+      return undefined;
+    }
+    const generation = state.bootstrapGeneration;
+    if (
+      childFailoverCoordinator !== undefined &&
+      childFailoverGeneration === generation
+    ) {
+      return childFailoverCoordinator;
+    }
+    if (childFailoverCoordinator !== undefined) {
+      // A bootstrap replacement invalidates the old coordinator and its
+      // fallback epoch. Close that epoch before resetting the reusable gate;
+      // any stale terminal callback must therefore be a no-op.
+      fallbackGate?.dispose();
+      void childFailoverCoordinator.shutdown();
+      childFailoverCoordinator = undefined;
+      childFallbackEpoch = undefined;
+      childFallbackFailure = undefined;
+      childPendingFailure = undefined;
+      abortGate.reset();
+    }
+    // The gate can also be closed by a previous terminal outcome before a
+    // later bootstrap creates its first coordinator. Re-open it only at this
+    // explicit generation boundary, never from an ordinary turn.
+    fallbackGate?.reset();
+    const live = latestChildCtx;
+    const available = safelyListAvailableModels(live.modelRegistry).unwrapOr(
+      [],
+    );
+    const candidates = resolvePiOrderedDistinctModels(
+      state.modelIntent,
+      available,
+    );
+    const scope = {
+      generationId: `child:${state.childId}:${generation}`,
+      nativeSessionId: state.childId,
+      activationId: `bootstrap:${generation}`,
+      candidates,
+      ...(state.appliedModel === undefined && live.model === undefined
+        ? {}
+        : { currentModel: state.appliedModel ?? live.model }),
+    };
+    childFailoverGeneration = generation;
+    childFailoverCoordinator = createPiModelFailoverCoordinator({
+      host: {
+        setModel: (model) => pi.setModel(model),
+        sendMessage: (message, options) => pi.sendMessage(message, options),
+      },
+      scope,
+      onAppliedModel: (event) => {
+        const matches = available.filter(
+          (model) =>
+            model.provider === event.model.provider &&
+            model.id === event.model.id,
+        );
+        if (matches.length === 1) state.appliedModel = matches[0];
+      },
+      context: () => {
+        const current = latestChildCtx;
+        return {
+          isIdle: () => current.isIdle(),
+          ...(typeof current.hasPendingMessages === "function"
+            ? {
+                hasPendingMessages: () =>
+                  current.hasPendingMessages?.() === true,
+              }
+            : {}),
+          modelRegistry: current.modelRegistry,
+        };
+      },
+      getGenerationId: () =>
+        `child:${state.childId}:${state.bootstrapGeneration}`,
+      getNativeSessionId: () => state.childId,
+      isGenerationCurrent: (generationId) =>
+        generationId ===
+          `child:${state.childId}:${state.bootstrapGeneration}` &&
+        state.bootstrapGeneration === generation,
+      isSessionCurrent: (nativeSessionId) => nativeSessionId === state.childId,
+      isCancelled: () => cancellationClaimed || runtime.isCancelled(),
+      onRecoveryConfirmed: () => {
+        const epoch = childFallbackEpoch;
+        const gate = fallbackGate;
+        if (epoch === undefined || gate === undefined) return;
+        if (gate.observeContextRepair(epoch).kind === "admit") {
+          // The failed assistant remains in native history. Only this
+          // confirmed context proof clears transient assembly for the new
+          // provider run, so failed text can never join fallback output.
+          resetChildTransientAttempt();
+        }
+      },
+      onTerminal: (decision) => {
+        const gate = fallbackGate;
+        const epoch = childFallbackEpoch;
+        if (gate === undefined || shuttingDown || cancellationClaimed) return;
+        if (decision.kind === "cancelled") {
+          gate.dispose();
+          return;
+        }
+        if (decision.kind === "success") {
+          if (epoch === undefined) return;
+          // Compaction and fallback remain separate authorities. Closing the
+          // compaction epoch silently here prevents a late compaction timer
+          // from publishing beside the already-proven fallback result.
+          abortGate.dispose();
+          if (gate.admitSuccess(epoch).kind === "admit") {
+            void settleChildCompleted();
+          }
+          return;
+        }
+        abortGate.dispose();
+        gate.fail(epoch);
+      },
+    });
+    return childFailoverCoordinator;
+  };
+
+  const childFailoverShouldDeferSettlement = (): boolean => {
+    const coordinator = childFailoverCoordinator;
+    if (coordinator === undefined) return false;
+    const snapshot = coordinator.snapshot();
+    if (snapshot.manualOverrideLatched) return false;
+    if (snapshot.state === "recovering") return true;
+    if (
+      snapshot.state === "switching" ||
+      snapshot.state === "awaiting-marker-proof" ||
+      snapshot.state === "awaiting-context-repair"
+    ) {
+      return true;
+    }
+    if (
+      snapshot.state !== "armed" ||
+      childPendingFailure === undefined ||
+      snapshot.retainedFailureClass === undefined ||
+      abortGate.hasCompactionEvidence
+    ) {
+      return false;
+    }
+    // An unclassified error with no provider evidence is left to the genuine
+    // structural compaction gate. Known provider classes enter Weave fallback
+    // immediately; this preserves the old local-abort compaction contract.
+    return childPendingFailure.failureClass !== "unknown_provider_failure";
+  };
+
+  const routeChildFailoverSettlement = (): boolean => {
+    const coordinator = childFailoverCoordinator;
+    const gate = fallbackGate;
+    if (
+      coordinator === undefined ||
+      gate === undefined ||
+      !childFailoverShouldDeferSettlement()
+    ) {
+      return false;
+    }
+    const snapshot = coordinator.snapshot();
+    const startsNewAttempt =
+      snapshot.state === "armed" ||
+      (snapshot.state === "recovering" && childPendingFailure !== undefined);
+    if (startsNewAttempt) {
+      const failure = childFallbackFailure ?? {
+        reason: "assistant error · details unavailable",
+      };
+      childFallbackAttempt += 1;
+      const epoch: ChildFallbackEpoch = {
+        generation: state.bootstrapGeneration,
+        attempt: childFallbackAttempt,
+      };
+      if (gate.beginFallback(failure, epoch).kind !== "admit") return true;
+      childFallbackEpoch = epoch;
+      childPendingFailure = undefined;
+      abortGate.reset();
+    }
+    void coordinator.handleAgentSettled(undefined, childFailoverScope());
+    return true;
+  };
 
   pi.registerCommand(PROMPT_CHUNK_COMMAND.slice(1), {
     handler: async (rawArgs: string) => {
@@ -1895,15 +2233,16 @@ async function activateChildModeIfApplicable(
       // actually applied, never merely dispatched.
       await runtime.admitControlLine(parsed.value, {
         onBootstrap: (body) =>
-          applyChildBootstrap(pi, ctx, deps, state, runtime, body),
+          applyChildBootstrap(pi, latestChildCtx, deps, state, runtime, body),
         onCancel: () => {
-          // Cancellation is terminal, so it must close the compaction gate
-          // BEFORE `cancelled` is published: a deferred or compacting gate
-          // still holds an armed timer, and a timer that survived this point
-          // would publish a second authenticated `settled` failure after the
-          // parent already recorded the cancellation. `dispose()` is
-          // synchronous, so no await can interleave between closing the gate
-          // and reporting.
+          // Authenticated parent cancellation is the one cancelled authority.
+          // Close both independent epochs before publishing it, so no timer or
+          // coordinator callback can race a second terminal settlement.
+          cancellationClaimed = true;
+          fallbackGate?.dispose();
+          childFailoverCoordinator?.cancel({
+            authority: "authenticated-parent",
+          });
           abortGate.dispose();
           return runtime.reportCancelled().match(
             () => undefined,
@@ -1928,18 +2267,31 @@ async function activateChildModeIfApplicable(
   // A new turn starts a fresh transient output buffer rather than carrying
   // a previous turn's trailing text forward forever (mirrors the parent's
   // own `PiChildRpc` buffer semantics under the Pi adapter contract.
-  pi.on("turn_start", () => {
-    state.latestAssistantOutput = "";
-    state.fullAssistantOutput = "";
-    state.terminalError = undefined;
-    // A new turn is a new epoch. Verdicts already captured keep the epoch they
-    // were read in, which is what tells a pre-compaction abort apart from the
-    // resumed run's own failure.
+  pi.on("turn_start", (_event, eventCtx) => {
+    latestChildCtx = eventCtx;
+    // A turn is never fallback evidence. Keep the failed attempt's transient
+    // assembly intact until the coordinator has proved both the exact marker
+    // and the repaired context. This is what prevents failed text from being
+    // concatenated with a later fallback answer.
+    const turnStart = abortGate.observeTurnStart();
     state.turnEpoch += 1;
-    // A turn that begins after a deferred abort is the resumed run the
-    // compaction extension asked for - the only structural resumption
-    // evidence Pi exposes. It hands the outcome back to the ordinary path.
-    abortGate.observeTurnStart();
+    if (fallbackGate?.active !== true) {
+      state.latestAssistantOutput = "";
+      state.fullAssistantOutput = "";
+      state.terminalError = undefined;
+    }
+    // If compaction proved that an observed failure belonged to the compacted
+    // run before fallback started, clear only the coordinator's pending
+    // observation. A bare turn never performs this reset.
+    if (
+      turnStart === "resumed" &&
+      childFailoverCoordinator?.state === "armed" &&
+      childPendingFailure !== undefined
+    ) {
+      childFailoverCoordinator.explicitActivate(childFailoverCoordinator.scope);
+      childPendingFailure = undefined;
+      childFallbackFailure = undefined;
+    }
   });
 
   // The two structural compaction-lifecycle events. Their *existence* - not
@@ -1966,12 +2318,57 @@ async function activateChildModeIfApplicable(
   pi.on("session_before_compact", observeCompaction);
   pi.on("session_compact", observeCompaction);
 
+  // Child fallback admission is deliberately narrower than compaction: only
+  // the coordinator's exact custom marker can move the fallback epoch, and
+  // only its validated context repair can confirm recovery.
+  pi.on("message_start", (event, eventCtx) => {
+    latestChildCtx = eventCtx;
+    const coordinator = childFailoverCoordinator;
+    const epoch = childFallbackEpoch;
+    if (coordinator === undefined || epoch === undefined) return undefined;
+    const accepted = coordinator.onMessageStart(event, childFailoverScope());
+    if (accepted.isOk() && accepted.value) {
+      fallbackGate?.observeMarker(epoch);
+    }
+    return undefined;
+  });
+
+  pi.on("context", (event, eventCtx) => {
+    latestChildCtx = eventCtx;
+    const coordinator = childFailoverCoordinator;
+    if (coordinator === undefined) return undefined;
+    let messages: readonly unknown[] | undefined;
+    if (Array.isArray(event)) {
+      messages = event;
+    } else {
+      const payload = readPiOwnEnumerableData(event, "messages");
+      if (payload.state === "data" && Array.isArray(payload.value)) {
+        messages = payload.value as readonly unknown[];
+      }
+    }
+    if (messages === undefined) return undefined;
+    const repaired = coordinator.onContext(messages, childFailoverScope());
+    return repaired.match(
+      (value) => (value === messages ? undefined : value),
+      () => undefined,
+    );
+  });
+
+  pi.on("model_select", (event, eventCtx) => {
+    latestChildCtx = eventCtx;
+    childFailoverCoordinator?.onModelSelect(event, childFailoverScope());
+    return undefined;
+  });
+
   // By the time this fires the adapter's own shutdown handler (registered at
   // factory time, so always first) has already torn the child runtime down -
   // an envelope sent from here is rejected as `runtime not activated`. So the
   // gate only drops its armed timer; the parent's existing
   // exit-without-settlement classification owns that outcome.
   pi.on("session_shutdown", () => {
+    shuttingDown = true;
+    fallbackGate?.dispose();
+    childFailoverCoordinator?.shutdown();
     abortGate.dispose();
     return undefined;
   });
@@ -1998,7 +2395,8 @@ async function activateChildModeIfApplicable(
   // one observable signal the RPC protocol exposes for this (Task 9 finding
   // 2). We track it here and consult it below instead of trusting
   // `agent_settled` to carry an outcome it structurally cannot express.
-  pi.on("message_end", (event) => {
+  pi.on("message_end", (event, eventCtx) => {
+    latestChildCtx = eventCtx;
     const record = asJsonRecord(event);
     if (record === undefined) return undefined;
     const stopReason = extractAssistantStopReason(record);
@@ -2031,26 +2429,61 @@ async function activateChildModeIfApplicable(
     ) {
       state.fullAssistantOutput = completed;
     }
+
+    // Capture only the bounded fingerprint and closed failure class. The
+    // assistant text remains native-session history and never enters the
+    // coordinator or fallback marker.
+    const classification = classifyPiMessageEndFailure(event);
+    const coordinator = ensureChildFailoverCoordinator();
+    if (classification !== undefined && coordinator !== undefined) {
+      const message = readPiOwnEnumerableData(event, "message");
+      if (message.state === "data") {
+        const fingerprint = fingerprintPiAssistantMessage(message.value);
+        if (fingerprint.isOk()) {
+          const input: PiModelFailoverFailureInput = {
+            failureClass: classification.failureClass,
+            ...(state.appliedModel === undefined &&
+            latestChildCtx.model === undefined
+              ? {}
+              : { failedModel: state.appliedModel ?? latestChildCtx.model }),
+            fingerprint: fingerprint.value,
+            ...childFailoverScope(),
+          };
+          const observed =
+            coordinator.state === "recovering"
+              ? coordinator.observeLaterFailure(input, childFailoverScope())
+              : coordinator.observeFailure(input, childFailoverScope());
+          if (observed.isOk()) {
+            childPendingFailure = input;
+            childFallbackFailure = {
+              reason: formatPiChildProviderError(state.terminalError),
+            };
+            const epoch = childFallbackEpoch;
+            if (epoch !== undefined) {
+              fallbackGate?.replaceFailure(childFallbackFailure, epoch);
+            }
+          }
+        }
+      }
+    }
     return undefined;
   });
 
-  pi.on("agent_settled", async () => {
+  pi.on("agent_settled", async (_event, eventCtx) => {
+    latestChildCtx = eventCtx;
     // A cancellation already in flight (or already reported) owns the
-    // terminal outcome - never race a stray `"completed"` report past a
-    // `"cancelled"` one that already went out, and never report completed
-    // more than once (Task 9).
-    if (runtime.isCancelled()) return;
+    // terminal outcome. The fallback coordinator keeps this handler open
+    // until its own terminal decision releases it.
+    if (runtime.isCancelled() || cancellationClaimed || shuttingDown) return;
+    if (routeChildFailoverSettlement()) return;
+
     if (
       state.lastAssistantStopReason === "error" ||
       state.lastAssistantStopReason === "aborted"
     ) {
-      // A third-party compaction extension forces a threshold compaction by
-      // aborting the run and then compacting from its own `agent_settled`
-      // handler. Pi awaits extension handlers sequentially, so this handler
-      // must return immediately: awaiting a grace period here would stop a
-      // later-ordered `ctx.compact()` from ever running. The sanitized
-      // verdict is captured now (it belongs to *this* turn) and published on
-      // a bounded deferral unless compaction evidence arrives first.
+      // This synchronous path is intentionally the only place where the
+      // compaction gate sees an abort/error settlement. A bare turn_start
+      // never reaches the fallback coordinator and cannot release its gate.
       abortGate.observeAbortSettlement(
         {
           reason:
@@ -2065,89 +2498,8 @@ async function activateChildModeIfApplicable(
       );
       return;
     }
-    // A genuine settlement always wins over any deferred abort verdict, so no
-    // settlement is lost and none is ever reported twice.
     if (abortGate.admitSettlement().kind === "suppress") return;
-    // Direct-step completion window closes the instant a settlement is
-    // admitted (Pi adapter contract) - a tool call that races in afterward
-    // must observe `windowOpen === false` and be rejected as late, never
-    // recorded.
-    if (state.directStep !== undefined) state.directStep.windowOpen = false;
-    if (state.directStep !== undefined) {
-      // A direct-step child's settlement is NEVER free-form prose (Pi adapter contract
-      //): report the one recorded structured completion candidate as
-      // JSON, or a specific typed failure reason - `missing`/`duplicate`/
-      // `late`/`malformed:<msg>` - that `direct-dispatch.ts`'s
-      // `interpretSettlement` parses on the parent side. Process exit or
-      // prose is never success.
-      const candidate = state.directStep.recorder.take();
-      if (candidate !== undefined) {
-        const serialized = serializeCompletionCandidate(candidate);
-        const candidateBytes = new TextEncoder().encode(serialized).byteLength;
-        if (candidateBytes > MAX_SETTLEMENT_OUTPUT_BYTES) {
-          const transferred = await runtime.transferOutput(serialized);
-          if (transferred.isErr()) {
-            await reportSettlement("failed", {
-              reason: `completion-transfer:${transferred.error.type}`,
-            });
-            return;
-          }
-          await reportSettlement("completed", {
-            completionCandidateTransferred: true,
-            outputTransferId: transferred.value.transferId,
-            outputByteLength: transferred.value.byteLength,
-          });
-          return;
-        }
-        await reportSettlement("completed", {
-          completionCandidate: serialized,
-        });
-        return;
-      }
-      const attempt = state.directStep.lastAttempt;
-      if (attempt === undefined) {
-        await reportSettlement("failed", { reason: "missing" });
-        return;
-      }
-      if (attempt.outcome === "malformed") {
-        await reportSettlement("failed", {
-          reason: `malformed:${attempt.malformedReason ?? "unknown"}`,
-        });
-        return;
-      }
-      await reportSettlement("failed", { reason: attempt.outcome });
-      return;
-    }
-    // Only message_end populates fullAssistantOutput. Streamed previews are
-    // intermediate state and must never become a parent result.
-    const fullOutput = state.fullAssistantOutput;
-    if (fullOutput.length === 0) {
-      await reportSettlement("completed", {});
-      return;
-    }
-    const projection = truncateLatestOutput(fullOutput);
-    const byteLength = new TextEncoder().encode(fullOutput).byteLength;
-    if (byteLength > 8 * 1024) {
-      const transferred = await runtime.transferOutput(fullOutput);
-      if (transferred.isOk()) {
-        await reportSettlement("completed", {
-          assistantOutput: projection,
-          outputTransferId: transferred.value.transferId,
-          outputByteLength: transferred.value.byteLength,
-        });
-        return;
-      }
-      // The bounded projection is not an authoritative result. Fail closed so
-      // the parent never persists or reports a partial result as complete.
-      await reportSettlement("failed", {
-        reason: `output-transfer:${transferred.error.type}`,
-      });
-      return;
-    }
-    await reportSettlement("completed", {
-      assistantOutput: projection,
-      outputByteLength: byteLength,
-    });
+    await settleChildCompleted();
   });
 
   return true;

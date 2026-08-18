@@ -212,7 +212,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - Manual model selection latches fallback off until explicit Weave agent activation.
     - Provider/model badge and acceleration state report the actual applied model after every successful `setModel`, including a switch whose recovery later fails.
 
-- [ ] 5. Generalize child settlement without mixing compaction and fallback epochs
+- [x] 5. Generalize child settlement without mixing compaction and fallback epochs
   - **What**: Extend the child settlement gate so Pi compaction and Weave fallback have separate evidence and neither an unrelated turn nor a late event can publish twice.
   - **Files**: `packages/adapters/pi/src/child-compaction-settlement.ts` (rename only if a deeper interface results), `packages/adapters/pi/src/extension-impl.ts`, `packages/adapters/pi/src/repeated-settlement-validator.ts`, `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/rpc-child-settlement-race.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`.
   - **Depends on**: Tasks 2–4.
