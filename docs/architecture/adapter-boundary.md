@@ -26,7 +26,7 @@ If yes, it belongs in an adapter. Engine-to-adapter calls are fine when they exc
 | `.weave` language | Core parses and validates | None |
 | Config | Config discovers trusted Weave layers, merges intent, resolves prompt paths | Supplies project trust and harness context when needed |
 | Agent descriptors | Engine builds stable normalized descriptors | Converts descriptors into harness agents/config |
-| Prompts | Engine renders templates and delegation context | Delivers composed text through the harness's prompt surface |
+| Prompts | Engine selects the prompt source, renders templates and delegation context, fixes composition order, and creates the descriptor | Delivers composed text through the harness's prompt surface; may supply pre-read prompt bytes through an injected reader |
 | Models | Engine resolves ordered intent against explicit candidates | Discovers candidates and selected model; activates the result |
 | Skills | Engine matches declared names, disables, and policy | Discovers, reads, and normalizes harness skill files |
 | Categories | Engine carries declared category metadata (name, description, ordered trigger strings) | Presents that metadata through the harness's own routing surface; there is no file-pattern field and no deterministic file routing |
@@ -66,6 +66,21 @@ The adapter decides how to activate `result`; the engine does not call a harness
 ### Skills
 
 The adapter discovers skill descriptors and passes them to the engine matcher. The engine returns the available requested skills and non-fatal warnings for requested names that are absent. The adapter reports those warnings, asks the harness to load the resolved skill names before agent work starts, and continues with the available set. Disabled skills are silently filtered. The engine never scans OpenCode, Claude Code, Pi, XDG, or home-directory skill paths.
+
+### Prompt sources
+
+Composition reads `prompt_file` and `prompt_append_file` through an optional
+`PromptFileReader` the caller supplies (`composeAgentDescriptor`'s trailing
+argument, or `MaterializationInput.promptFileReader`). An adapter that has
+already read those bytes — to hash them for change detection, for example — may
+hand the same bytes back so composition never re-reads the path.
+
+The seam moves I/O only. The engine still decides which source wins, renders the
+Mustache templates, fixes the composition order, and creates the descriptor; the
+reader cannot substitute one prompt source for another or alter the
+`prompt_append` trust boundary. Omitting a reader keeps the default Bun read, so
+adapters that do not need the seam are unaffected. See [Prompt
+Composition](../reference/prompts.md#prompt-file-reader).
 
 ### Lifecycle
 

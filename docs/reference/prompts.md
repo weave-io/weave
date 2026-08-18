@@ -129,7 +129,7 @@ pipeline:
 
 2. **Load prompt source**
    - If `agentConfig.prompt` is defined, use it directly.
-   - Otherwise read `agentConfig.prompt_file` from disk.
+   - Otherwise read `agentConfig.prompt_file` through the [prompt file reader](#prompt-file-reader).
    - If neither exists, return `PromptSourceMissingError`.
    - If file reading fails, return `PromptFileReadError`.
 
@@ -144,8 +144,9 @@ pipeline:
    - If `prompt_append` is present, it is rendered as Mustache using the same
      Template Context.
    - If `prompt_append_file` is present (and `prompt_append` is absent), the
-     file is read from disk and rendered as Mustache using the same Template
-     Context. `prompt_append` and `prompt_append_file` are mutually exclusive.
+     file is read through the same [prompt file reader](#prompt-file-reader) and
+     rendered as Mustache using the same Template Context. `prompt_append` and
+     `prompt_append_file` are mutually exclusive.
 
 5. **Resolve tool policy**
    - The engine calls `evaluateEffectiveToolPolicy(agentConfig.tool_policy)`.
@@ -159,6 +160,43 @@ pipeline:
 
 The implementation lives in
 [`packages/engine/src/compose.ts`](../../packages/engine/src/compose.ts).
+
+### Prompt file reader
+
+`prompt_file` and `prompt_append_file` are read through an optional injected
+reader:
+
+```ts
+interface PromptFileReader {
+  read(path: string): ResultAsync<string, { message: string }>;
+}
+```
+
+Supply one as the trailing `promptFileReader` argument of
+`composeAgentDescriptor()` or as `MaterializationInput.promptFileReader`. Omit
+it and composition uses `defaultPromptFileReader`, which reads the path with
+`Bun.file(path).text()` exactly as before. Default behavior is unchanged, and
+existing positional callers are unaffected.
+
+Materialization memoizes the reader by path, so each distinct prompt path is
+read at most once per `materializeAgents()` call and agents that share a prompt
+file compose from the same bytes. Concurrent agents share one in-flight read and
+observe the same content, or the same failure.
+
+The reader substitutes I/O only:
+
+- it never decides which prompt source wins — inline `prompt` still takes
+  precedence over `prompt_file`, and the [trust boundary for prompt
+  appends](#trust-boundary-for-prompt-appends) is unchanged;
+- it does not change [composition order](#composition-order), template
+  rendering, or the Template Context;
+- a reader failure produces the same `PromptFileReadError`, with the reader's
+  `message` copied verbatim into `fileErrorMessage`.
+
+The seam exists so a caller that already read (and hashed) those bytes can
+compose from the very same bytes instead of re-reading the path. The Pi adapter
+uses it for [config refresh at delegation
+boundaries](../adapters/pi.md#config-refresh-at-delegation-boundaries).
 
 ---
 
@@ -383,7 +421,9 @@ An inline prompt is part of its config file, not a separate source. The Pi
 adapter's config refresh digests each config file and each referenced prompt
 file on its own, so an inline prompt edit is detected through the owning config
 file's digest; there is no separate manifest entry for inline prompt text. A
-`prompt_file` edit is detected through that file's own digest.
+`prompt_file` edit is detected through that file's own digest. See [Pi — Config
+refresh at delegation
+boundaries](../adapters/pi.md#config-refresh-at-delegation-boundaries).
 
 ---
 

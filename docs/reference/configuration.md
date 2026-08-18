@@ -115,6 +115,21 @@ For the Pi-specific `child_inspection` block, link to the canonical [Spec 33 set
 
 Pi also owns a strict `settings.adapters.pi.child_lifecycle` block. Its positive integer millisecond fields are `handshake_timeout_ms` (default 30,000; maximum 300,000), `reply_timeout_ms` (default 60,000; maximum 900,000), `settlement_inactivity_timeout_ms` (default 3,600,000; maximum 86,400,000), and `absolute_runtime_budget_ms` (default 21,600,000; maximum 604,800,000). The inactivity budget renews only on authenticated control messages or parser-approved session activity. The absolute runtime budget never renews.
 
+### When a config edit takes effect in Pi
+
+The Pi adapter re-checks its config sources before each child dispatch and publishes a newer validated configuration for later work. Most edits therefore need no restart, but changes to the active primary do. Other adapters read config once per session.
+
+| Edit | When it applies in Pi |
+| --- | --- |
+| Subagent prompts, models, temperature, `fast`, tool policy, skills, delegation limits, `child_lifecycle` timeouts, workflows, disabled agents and skills | The next delegation, direct workflow step, or recovery restore |
+| An agent added or removed outside the active primary's delegation targets | The next dispatch that resolves it |
+| Anything that changes the active primary's rendered prompt, model list, thinking level, temperature, `fast`, tool policy, or eligibility | Deferred until an explicit `Alt+A` reactivation or a restart |
+| Adding, removing, or re-describing one of the active primary's delegation targets | Deferred for the same reason — a newly added target is not delegable until reactivation |
+| Project trust granted or withdrawn | A new session; refresh never re-evaluates trust |
+| Host capability and `child_inspection` settings | A new session |
+
+An edit that does not parse or validate publishes nothing: the last valid configuration keeps serving and the delegation still runs. In-flight children keep the configuration they were dispatched with. `/weave:status` reports the last refresh outcome. See [Pi — Config refresh at delegation boundaries](../adapters/pi.md#config-refresh-at-delegation-boundaries).
+
 ---
 
 ## Workflow Extension
