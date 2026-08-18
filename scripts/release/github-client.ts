@@ -2151,9 +2151,13 @@ function validatePaginationContinuation(
         "next URL is outside the configured API origin",
       ),
     );
-  if (candidate.username !== "" || candidate.password !== "")
+  if (
+    candidate.username !== "" ||
+    candidate.password !== "" ||
+    hasRawUrlUserinfo(nextUrl)
+  )
     return err(paginationError(currentUrl, "next URL contains userinfo"));
-  if (candidate.hash !== "")
+  if (candidate.hash !== "" || nextUrl.includes("#"))
     return err(paginationError(currentUrl, "next URL contains a fragment"));
   if (candidate.pathname !== initialUrl.pathname)
     return err(
@@ -2223,6 +2227,25 @@ function validatePaginationContinuation(
       ),
     );
   return ok(candidate.href);
+}
+
+function hasRawUrlUserinfo(value: string): boolean {
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:/u.exec(value);
+  let authorityPrefix = -1;
+  if (scheme !== null) authorityPrefix = scheme[0].length;
+  else if (value.startsWith("//")) authorityPrefix = 0;
+  if (
+    authorityPrefix < 0 ||
+    value.slice(authorityPrefix, authorityPrefix + 2) !== "//"
+  )
+    return false;
+  const authorityStart = authorityPrefix + 2;
+  let authorityEnd = value.length;
+  for (const delimiter of ["/", "?", "#"]) {
+    const index = value.indexOf(delimiter, authorityStart);
+    if (index >= 0) authorityEnd = Math.min(authorityEnd, index);
+  }
+  return value.slice(authorityStart, authorityEnd).includes("@");
 }
 
 function queryEntries(
