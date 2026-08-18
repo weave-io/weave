@@ -122,6 +122,33 @@ function messageEnd(text: string, id = "asst-1"): PiChildSessionEvent {
   } as unknown as PiChildSessionEvent;
 }
 
+/**
+ * `message_start` exactly as Pi 0.84 sends it over the RPC/JSON protocol: the
+ * message carries no id at all.
+ */
+function anonymousMessageStart(): PiChildSessionEvent {
+  return {
+    type: "message_start",
+    message: { role: "assistant", content: [] },
+  } as unknown as PiChildSessionEvent;
+}
+
+/** A `text_delta` frame with no message id, as the real wire sends it. */
+function anonymousTextDelta(delta: string): PiChildSessionEvent {
+  return {
+    type: "message_update",
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+  } as unknown as PiChildSessionEvent;
+}
+
+/** `message_end` whose message states no id either. */
+function anonymousMessageEnd(text: string): PiChildSessionEvent {
+  return {
+    type: "message_end",
+    message: { role: "assistant", content: [{ type: "text", text }] },
+  } as unknown as PiChildSessionEvent;
+}
+
 function failedMessageEnd(errorMessage: string): PiChildSessionEvent {
   return {
     type: "message_end",
@@ -157,6 +184,29 @@ function frameBytes(facts: PiDelegationCardFacts): string {
 /** The exact lines the card draws at a fixed width. */
 function frameLines(facts: PiDelegationCardFacts, width = 72): string[] {
   return renderDelegationCard(facts, { width, paint: plainPaint() });
+}
+
+/** The lines the EXPANDED card draws, viewport included. */
+function expandedFrameLines(
+  facts: PiDelegationCardFacts,
+  width = 72,
+): string[] {
+  return renderDelegationCard(facts, {
+    width,
+    paint: plainPaint(),
+    expanded: true,
+  });
+}
+
+/** How many times one sentence appears in a rendered frame. */
+function occurrences(haystack: string, needle: string): number {
+  let count = 0;
+  let from = haystack.indexOf(needle);
+  while (from !== -1) {
+    count += 1;
+    from = haystack.indexOf(needle, from + needle.length);
+  }
+  return count;
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +526,92 @@ describe("PiChildCardProjection", () => {
     const messageRows = facts.viewport.rows.filter((row) => row.kind === "msg");
     expect(messageRows).toHaveLength(1);
     expect(messageRows[0]?.text).toBe("hello world");
+  });
+
+  it("keeps one row for an anonymous lifecycle the host names only at the end", () => {
+    // The exact real-host shape: `message_start` with no id, deltas with no id,
+    // and a `message_end` that names the message for the first time. Treating
+    // that late name as a new lifecycle left the empty `message_start` row
+    // orphaned in the viewport beside a second row holding the terminal body.
+    const projection = new PiChildCardProjection(streamConfig());
+    projection.applySessionEvent(anonymousMessageStart());
+    // A framed but wordless message is not a row: nothing was written yet.
+    expect(projection.facts().viewport.rows).toHaveLength(0);
+    expect(projection.facts().activity.text).toBe("shuttle is writing");
+
+    projection.applySessionEvent(anonymousTextDelta("the suite "));
+    projection.applySessionEvent(anonymousTextDelta("is green"));
+    const facts = projection.applySessionEvent(
+      messageEnd("the suite is green", "asst-late-id"),
+    );
+
+    const messageRows = facts.viewport.rows.filter((row) => row.kind === "msg");
+    expect(messageRows).toHaveLength(1);
+    expect(messageRows[0]?.text).toBe("the suite is green");
+    expect(facts.viewport.rows.some((row) => row.text === "")).toBe(false);
+
+    // Settlement rewrites the rail, the Native Line and the footer, and adds
+    // no row: the answer stands once, where the child wrote it.
+    const settled = projection.settle({
+      outcome: "completed",
+      assistantOutput: "the suite is green",
+    });
+    expect(settled.viewport.rows).toEqual(facts.viewport.rows);
+    expect(
+      settled.viewport.rows.filter((row) =>
+        row.text.includes("the suite is green"),
+      ),
+    ).toHaveLength(1);
+
+    // Expanded, the answer appears exactly twice, and both are load-bearing:
+    // once on the Native Line, which reports the child's current state, and
+    // once as the ONE literal transcript row the child actually wrote. The
+    // third copy — a card-authored settlement row — is what settlement no
+    // longer adds.
+    const expanded = expandedFrameLines(settled, 72);
+    expect(occurrences(expanded.join("\n"), "the suite is green")).toBe(2);
+    expect(expanded.filter((line) => line.includes("▌ shuttle"))).toHaveLength(
+      1,
+    );
+    // Collapsed, there is no viewport at all, so the Native Line states it once.
+    const collapsed = frameLines(settled, 72).join("\n");
+    expect(occurrences(collapsed, "the suite is green")).toBe(1);
+  });
+
+  it("keeps one row when the host never names the message at all", () => {
+    const projection = new PiChildCardProjection(streamConfig());
+    projection.applySessionEvent(anonymousMessageStart());
+    projection.applySessionEvent(anonymousTextDelta("partial"));
+    const facts = projection.applySessionEvent(
+      anonymousMessageEnd("partial answer"),
+    );
+
+    const messageRows = facts.viewport.rows.filter((row) => row.kind === "msg");
+    expect(messageRows).toHaveLength(1);
+    expect(messageRows[0]?.text).toBe("partial answer");
+    expect(facts.viewport.rows.some((row) => row.text === "")).toBe(false);
+  });
+
+  it("still separates two messages the host names differently", () => {
+    // The late-name rule applies only to a lifecycle whose identity this
+    // projection had to invent. A host that names both messages is reporting
+    // two messages, and they keep two rows.
+    const projection = new PiChildCardProjection(streamConfig());
+    projection.applySessionEvent({
+      type: "message_start",
+      message: { id: "asst-1", role: "assistant", content: [] },
+    } as unknown as PiChildSessionEvent);
+    projection.applySessionEvent(textDelta("first", "asst-1"));
+    projection.applySessionEvent(messageEnd("first answer", "asst-1"));
+    const facts = projection.applySessionEvent(
+      messageEnd("second answer", "asst-2"),
+    );
+
+    const messageRows = facts.viewport.rows.filter((row) => row.kind === "msg");
+    expect(messageRows.map((row) => row.text)).toEqual([
+      "first answer",
+      "second answer",
+    ]);
   });
 
   it("freezes a prior run and refuses out-of-order run reports", () => {

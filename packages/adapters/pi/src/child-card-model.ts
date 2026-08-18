@@ -156,6 +156,12 @@ export type PiCardRowKind =
   | "queue"
   | "retry"
   | "error"
+  /**
+   * Historical only. The reducer produces no settled row — a settlement adds
+   * nothing to the viewport (§1.13) — but a card persisted by an earlier
+   * version replays its `details` payload through the same strict parser, and
+   * a kind the parser refuses would discard that reader's whole card.
+   */
   | "settled";
 
 /** The safe, derived vocabulary of ONE authoritative outcome. */
@@ -467,18 +473,29 @@ function applyAssistantFragment(
       ? { kind: "say", text, live: true }
       : { kind: "say", text: `${state.agentName} is writing`, live: true };
 
-  return {
-    ...pushRow(state, {
-      id: rowId,
-      kind: "msg",
-      head: state.agentName,
-      text,
-    }),
+  const opened: PiDelegationCardState = {
+    ...state,
     phase: "responding",
     openMessageId: input.itemId,
     openMessageStream: { itemId: input.itemId, raw },
     activity,
   };
+  // A `message_start` OPENS a lifecycle; it is not something the child wrote.
+  // Its fragment is empty by construction, and materializing it put a blank
+  // `▌ shuttle` row in the expanded viewport — a row §1.12's literal bottom
+  // slice must not invent, because nothing on the child's transcript
+  // corresponds to it. The lifecycle still moves the Native Line (`is
+  // writing`), and the row appears with the first text the child actually
+  // wrote. An existing row is still rewritten, so a `replace` frame that
+  // clears an answer is not silently ignored.
+  if (text.length === 0 && !hasRow(state, rowId)) return opened;
+
+  return pushRow(opened, {
+    id: rowId,
+    kind: "msg",
+    head: state.agentName,
+    text,
+  });
 }
 
 function applyAssistantEnd(
@@ -510,18 +527,23 @@ function applyAssistantEnd(
       ? { kind: "say", text, live: false }
       : { kind: "say", text: `${state.agentName} is writing`, live: false };
 
-  return {
-    ...pushRow(state, {
-      id: rowId,
-      kind: "msg",
-      head: state.agentName,
-      text,
-    }),
+  const closed: PiDelegationCardState = {
+    ...state,
     openMessageId: undefined,
     openMessageStream: undefined,
     usage: mergeUsage(state.usage, input.usage),
     activity,
   };
+  // A message that ended having said nothing leaves no row behind either: the
+  // viewport prints what the child wrote, and an empty message is not it.
+  if (text.length === 0 && !hasRow(state, rowId)) return closed;
+
+  return pushRow(closed, {
+    id: rowId,
+    kind: "msg",
+    head: state.agentName,
+    text,
+  });
 }
 
 /**
@@ -734,13 +756,16 @@ function applySettle(
   if (terminal === undefined) {
     return { ...settled, activity: freezeActivity(settled.activity) };
   }
+  // NATIVE SETTLE (prototype item 10, §1.13). The settlement rewrites the rail
+  // word, the Native Line and the footer verb, and ADDS NOTHING: no row, no
+  // banner, no border verdict, no action deck. The expanded viewport is a
+  // literal bottom slice of the child's own transcript (§1.12), so a
+  // card-authored `✓ COMPLETED` row would be a line the child never wrote,
+  // printed directly under the identical text the terminal message already
+  // holds. `terminal` carries the same verdict to the footer, and the Native
+  // Line states the headline once.
   return {
-    ...pushRow(settled, {
-      id: `settled:${terminal.outcome}`,
-      kind: "settled",
-      head: terminal.verdict,
-      text: terminal.headline,
-    }),
+    ...settled,
     activity: {
       kind: terminalActivityKind(terminal.outcome),
       text: terminal.headline,
@@ -955,6 +980,11 @@ function pushRow(
   }
   const rows = [...state.rows, bounded].slice(-CARD_VIEWPORT_RING_ROWS);
   return { ...state, rows, producedRows: state.producedRows + 1 };
+}
+
+/** True when the ring already holds a row under this id. */
+function hasRow(state: PiDelegationCardState, id: string): boolean {
+  return state.rows.some((row) => row.id === id);
 }
 
 function extendToolCalls(
@@ -1195,6 +1225,17 @@ export class PiChildCardProjection {
   private readonly frozenRuns = new Map<number, PiDelegationCardFacts>();
   private dedupKeys = new Set<string>();
   private activeMessageId: string | undefined;
+  /**
+   * True when {@link PiChildCardProjection.activeMessageId} was INVENTED here
+   * because the host named no message.
+   *
+   * Pi 0.84 sends `message_start` and every `message_update` of an answer with
+   * no id at all, and may name the message for the first time on
+   * `message_end`. Treating that late name as a new lifecycle split one
+   * message across two rows: the streamed row kept the partial answer while a
+   * second row appeared with the terminal body.
+   */
+  private activeMessageIdInvented = false;
   private messageSeq = 0;
   private runNumber: number;
   private assignment: string;
@@ -1252,6 +1293,7 @@ export class PiChildCardProjection {
     this.assignment = input.assignment ?? this.assignment;
     this.dedupKeys = new Set<string>();
     this.activeMessageId = undefined;
+    this.activeMessageIdInvented = false;
     this.settled = false;
     this.state = createDelegationCardState({
       agentName: this.agentName,
@@ -1367,27 +1409,16 @@ export class PiChildCardProjection {
   private correlateItemId(event: PiChildSessionEvent): string {
     switch (event.type) {
       case "message_start": {
-        const id =
-          messageIdFromUnknown(event.message) ?? this.allocateMessageId();
+        const named = messageIdFromUnknown(event.message);
+        const id = named ?? this.allocateMessageId();
         this.activeMessageId = id;
+        this.activeMessageIdInvented = named === undefined;
         return id;
       }
-      case "message_update": {
-        const id =
-          messageIdFromMessageUpdate(event) ??
-          this.activeMessageId ??
-          this.allocateMessageId();
-        this.activeMessageId = id;
-        return id;
-      }
-      case "message_end": {
-        const id =
-          messageIdFromUnknown(event.message) ??
-          this.activeMessageId ??
-          this.allocateMessageId();
-        this.activeMessageId = id;
-        return id;
-      }
+      case "message_update":
+        return this.openLifecycleId(messageIdFromMessageUpdate(event));
+      case "message_end":
+        return this.openLifecycleId(messageIdFromUnknown(event.message));
       case "tool_call":
       case "tool_partial_result":
       case "tool_result":
@@ -1408,6 +1439,32 @@ export class PiChildCardProjection {
       default:
         return this.activeMessageId ?? "assistant";
     }
+  }
+
+  /**
+   * The identity of the assistant lifecycle in flight, for an update or an end
+   * frame.
+   *
+   * ONE lifecycle keeps ONE identity from `message_start` to `message_end`. A
+   * host id that appears part-way through NAMES the message already in flight
+   * whenever this projection had to invent that message's identity, so the
+   * terminal body updates the row the deltas were written into instead of
+   * opening a second one beside it. A host that named the start and then names
+   * a DIFFERENT message is reporting a different message, and that id is
+   * honoured.
+   */
+  private openLifecycleId(named: string | undefined): string {
+    const active = this.activeMessageId;
+    if (active === undefined) {
+      const id = named ?? this.allocateMessageId();
+      this.activeMessageId = id;
+      this.activeMessageIdInvented = named === undefined;
+      return id;
+    }
+    if (named === undefined || this.activeMessageIdInvented) return active;
+    this.activeMessageId = named;
+    this.activeMessageIdInvented = false;
+    return named;
   }
 
   private allocateMessageId(): string {

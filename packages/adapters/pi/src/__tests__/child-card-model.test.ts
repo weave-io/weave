@@ -639,7 +639,12 @@ describe("child-card-model settlement", () => {
     expect(facts(state).status).toBe("completed");
   });
 
-  it("adds exactly one settled row and never marks activity live afterwards", () => {
+  it("adds NO viewport row and never marks activity live afterwards", () => {
+    // NATIVE SETTLE (§1.13): the settlement rewrites the rail word, the Native
+    // Line and the footer verb, and adds nothing. The expanded viewport is a
+    // literal bottom slice of the child's transcript (§1.12), so a card-authored
+    // verdict row would be a line the child never wrote — printed directly
+    // under the terminal message that already says it.
     const running = facts(applyEvent(started(), { type: "text", text: "hi" }));
     const settled = facts(
       apply(applyEvent(started(), { type: "text", text: "hi" }), {
@@ -647,8 +652,31 @@ describe("child-card-model settlement", () => {
         settlement: { outcome: "completed", assistantOutput: "bye" },
       }),
     );
-    expect(settled.viewport.rows.length).toBe(running.viewport.rows.length + 1);
+    expect(settled.viewport.rows).toEqual(running.viewport.rows);
+    expect(settled.viewport.above).toBe(running.viewport.above);
+    expect(settled.viewport.rows.some((row) => row.kind === "settled")).toBe(
+      false,
+    );
+    // The verdict still reaches the reader, exactly three times over: the rail
+    // word, the Native Line, and the footer's terminal facts.
+    expect(settled.status).toBe("completed");
+    expect(settled.activity.text).toBe("bye");
+    expect(settled.terminal?.headline).toBe("bye");
     expect(settled.activity.live).toBe(false);
+  });
+
+  it("adds no row when the settlement carries the answer already on screen", () => {
+    // The live proof's shape: the child's terminal message and the settlement
+    // say the same sentence, so a settlement row printed it twice.
+    const answer = "the suite is green";
+    const state = apply(applyEvent(started(), { type: "text", text: answer }), {
+      kind: "settle",
+      settlement: { outcome: "completed", assistantOutput: answer },
+    });
+    const f = facts(state);
+    expect(
+      f.viewport.rows.filter((row) => row.text.includes(answer)),
+    ).toHaveLength(1);
   });
 });
 
