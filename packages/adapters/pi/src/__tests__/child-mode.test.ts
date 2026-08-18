@@ -144,7 +144,7 @@ class MinimalFakeHost implements PiExtensionApi {
     | { readonly kind: "thinking"; readonly level: string }
   )[] = [];
   thinkingLevelBehavior: "accept" | "throw" | "reject" = "accept";
-  setModel(model: PiModelInfo): boolean {
+  async setModel(model: PiModelInfo): Promise<boolean> {
     this.setModelCalls.push(model);
     this.activationCalls.push({ kind: "model", model });
     return this.modelAccepted;

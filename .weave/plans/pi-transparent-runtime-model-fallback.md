@@ -167,7 +167,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - Tests prove later fallback errors advance boundedly and never revisit a candidate.
     - Tests prove final success and chain exhaustion each settle once, with no double settlement after delayed events.
 
-- [ ] 3. Replace stale host assumptions with an optional public-surface capability
+- [x] 3. Replace stale host assumptions with an optional public-surface capability
   - **What**: Align narrow Pi types and compatibility probes with the public 0.84.2 surfaces used by the coordinator. Keep the feature optional on all other hosts.
   - **Files**: `packages/adapters/pi/src/types.ts`, `packages/adapters/pi/src/host-compatibility-matrix.ts`, `packages/adapters/pi/src/capability-prober.ts`, `packages/adapters/pi/src/host-inventory.ts`, `packages/adapters/pi/src/capability-declarations.ts`, `packages/adapters/pi/src/host-probe-port.ts`, and matching tests under `packages/adapters/pi/src/__tests__/` including `host-compatibility-matrix.test.ts`, `capability-prober.test.ts`, `host-inventory.test.ts`, `capability-declarations.test.ts`, `host-probe-port.test.ts`, `host-compatibility.test.ts`, and `safe-initializer.test.ts`.
   - **Depends on**: Tasks 1–2.

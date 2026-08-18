@@ -514,11 +514,12 @@ export class RecordingFakePiHost {
           return this.sendMessageOverride(message, options);
         this.sendMessageCalls.push({ message, options });
       },
-      setModel: (model) => {
+      setModel: async (model) => {
         this.setModelCalls.push(model);
         this.activationCalls.push({ kind: "model", model });
         if (this.setModelOverride !== undefined) {
-          return this.setModelOverride(model);
+          // Keep the raw host fact. `undefined` is indeterminate, not false.
+          return (await this.setModelOverride(model)) as boolean;
         }
         this.currentModel = model;
         return true;

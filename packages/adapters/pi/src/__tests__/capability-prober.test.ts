@@ -8,13 +8,15 @@ import {
   PI_SESSION_CAPABILITY_SURFACE_IDS,
 } from "../capability-declarations.js";
 import {
-  AGENT_RECOVERY_EXHAUSTED_PRESENT,
-  AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
   buildBlockedProbeSet,
   DefaultPiCapabilityProber,
   describeDelegationReadinessGap,
+  describeRuntimeModelFallbackPresence,
   PROJECT_PATH_DEPENDENT_CAPABILITIES,
-  probeAgentRecoveryExhaustedFeature,
+  RUNTIME_MODEL_FALLBACK_REASON_CODES,
+  RUNTIME_MODEL_FALLBACK_SURFACE_PROBES,
+  RUNTIME_MODEL_FALLBACK_SURFACES_PRESENT,
+  RUNTIME_MODEL_FALLBACK_UNSUPPORTED,
   sanitizeCapabilityProbeResults,
 } from "../capability-prober.js";
 import { ADAPTER_PACKAGE_IDENTITY, WEAVE_COMMAND_NAMES } from "../commands.js";
@@ -567,7 +569,7 @@ describe("native session capability probes", () => {
       expect(PI_REQUIRED_FOR_DELEGATION_SURFACE_IDS).toContain(id);
     }
     expect(PI_OVERLAY_ONLY_SURFACE_IDS).toEqual(["child-overlay-lifecycle"]);
-    expect(PI_FEATURE_ONLY_SURFACE_IDS).toEqual(["post-recovery-model-switch"]);
+    expect(PI_FEATURE_ONLY_SURFACE_IDS).toEqual(["runtime-model-fallback"]);
   });
 
   it("probes without creating a session or any other side effect", async () => {
@@ -695,7 +697,7 @@ describe("native session capability probes", () => {
   });
 });
 
-describe("post-recovery hook feature detection", () => {
+describe("runtime-model-fallback public-surface detection", () => {
   const prober = new DefaultPiCapabilityProber();
   const trustedBase = {
     mode: "tui" as const,
@@ -713,84 +715,38 @@ describe("post-recovery hook feature detection", () => {
     },
     delegationAuthority: READY_AUTHORITY,
   };
+  const completeAnswers = Object.fromEntries(
+    RUNTIME_MODEL_FALLBACK_SURFACE_PROBES.map(([probe]) => [probe, true]),
+  );
 
-  function hookHost(features: unknown) {
-    return Object.defineProperty({} as object, "features", {
-      value: features,
-      enumerable: true,
-      writable: true,
-      configurable: true,
+  it("enables the feature only when every public surface is present", () => {
+    expect(describeRuntimeModelFallbackPresence(completeAnswers)).toEqual({
+      supported: true,
+      details: RUNTIME_MODEL_FALLBACK_SURFACES_PRESENT,
     });
-  }
+    expect(RUNTIME_MODEL_FALLBACK_SURFACES_PRESENT).not.toContain("order");
+    expect(RUNTIME_MODEL_FALLBACK_SURFACES_PRESENT).not.toContain("0.84.2");
+  });
 
-  it("accepts only an own enumerable data property equal to true", () => {
-    const supported = probeAgentRecoveryExhaustedFeature(
-      hookHost(
-        Object.defineProperty({} as object, "agent_recovery_exhausted", {
-          value: true,
-          enumerable: true,
-          writable: false,
-          configurable: false,
+  it("emits a bounded reason for each missing public surface", () => {
+    for (const [probe, reason] of RUNTIME_MODEL_FALLBACK_SURFACE_PROBES) {
+      expect(
+        describeRuntimeModelFallbackPresence({
+          ...completeAnswers,
+          [probe]: false,
         }),
-      ),
-    );
-    expect(supported.isOk()).toBe(true);
-    if (supported.isOk()) expect(supported.value).toBe(true);
-  });
-
-  it("rejects absence, non-true values, inherited keys, accessors, and throws", () => {
-    const inherited = Object.create({
-      agent_recovery_exhausted: true,
-    }) as object;
-    const nonEnumerable = Object.defineProperty(
-      {} as object,
-      "agent_recovery_exhausted",
-      { value: true, enumerable: false },
-    );
-    const accessor = Object.defineProperty(
-      {} as object,
-      "agent_recovery_exhausted",
-      {
-        get: () => true,
-        enumerable: true,
-      },
-    );
-    const throwingFeatures = new Proxy(
-      {},
-      {
-        getOwnPropertyDescriptor() {
-          throw new Error("trap");
-        },
-      },
-    );
-
-    const cases: unknown[] = [
-      {},
-      { features: undefined },
-      hookHost(null),
-      hookHost("true"),
-      hookHost({ agent_recovery_exhausted: false }),
-      hookHost({ agent_recovery_exhausted: "true" }),
-      hookHost({ agent_recovery_exhausted: 1 }),
-      hookHost(inherited),
-      hookHost(nonEnumerable),
-      hookHost(accessor),
-      hookHost(throwingFeatures),
-    ];
-    for (const host of cases) {
-      const result = probeAgentRecoveryExhaustedFeature(host);
-      const supported = result.match(
-        (value) => value,
-        () => false,
-      );
-      expect(supported).toBe(false);
+      ).toEqual({ supported: false, details: reason });
     }
+    expect(describeRuntimeModelFallbackPresence({})).toEqual({
+      supported: false,
+      details: RUNTIME_MODEL_FALLBACK_REASON_CODES.agentSettled,
+    });
   });
 
-  it("treats a hook-less host as an unsupported feature-only surface without changing gates", () => {
+  it("treats a missing optional surface as an unsupported feature without changing gates", () => {
     const report = readHostSurfaceReport(
       PI_HOST_SURFACE_IDS.filter(
-        (surfaceId) => surfaceId !== "post-recovery-model-switch",
+        (surfaceId) => surfaceId !== "runtime-model-fallback",
       ).map((surfaceId) => ({
         surfaceId,
         status: "native" as const,
@@ -800,27 +756,29 @@ describe("post-recovery hook feature detection", () => {
     expect(report.requiredGaps).toEqual([]);
     expect(report.overlayFallbackGaps).toEqual([]);
     expect(selectsCustomEditorFallback(report)).toBe(false);
-    expect(report.featureGaps).toEqual(["post-recovery-model-switch"]);
+    expect(report.featureGaps).toEqual(["runtime-model-fallback"]);
+    const fallbackSurface = PI_HOST_COMPATIBILITY_MATRIX.surfaces.find(
+      (surface) => surface.id === "runtime-model-fallback",
+    );
+    expect(fallbackSurface).toBeDefined();
     expect(buildHostSurfaceGapDiagnostics(report, "0.83.0")).toEqual([
       {
-        capability: "post-recovery-model-switch",
+        capability: "runtime-model-fallback",
         hostVersion: "0.83.0",
-        contract:
-          "Spec 33 post-recovery hook: pi.features.agent_recovery_exhausted",
-        probeResult: `unavailable:${AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED}`,
+        contract: fallbackSurface?.contract ?? "",
+        probeResult: `unavailable:${RUNTIME_MODEL_FALLBACK_UNSUPPORTED}`,
         mode: "feature-unavailable",
-        remediation:
-          "Upgrade the Pi host to one that advertises pi.features.agent_recovery_exhausted === true; until then exhausted recovery settles as it does today.",
+        remediation: fallbackSurface?.remediation ?? "",
       },
     ]);
     expect(
       report.probes.find(
-        (probe) => probe.surfaceId === "post-recovery-model-switch",
+        (probe) => probe.surfaceId === "runtime-model-fallback",
       ),
     ).toEqual({
-      surfaceId: "post-recovery-model-switch",
+      surfaceId: "runtime-model-fallback",
       status: "unavailable",
-      details: AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
+      details: RUNTIME_MODEL_FALLBACK_UNSUPPORTED,
     });
 
     const probes = prober.probe({ ...trustedBase, hostSurface: report });
@@ -840,14 +798,14 @@ describe("post-recovery hook feature detection", () => {
     ).toBe("ok");
   });
 
-  it("treats a hook-bearing host as a supported feature-only surface", () => {
+  it("treats a complete public-surface host as a supported feature-only surface", () => {
     const report = readHostSurfaceReport(
       PI_HOST_SURFACE_IDS.map((surfaceId) => ({
         surfaceId,
         status: "native" as const,
         details:
-          surfaceId === "post-recovery-model-switch"
-            ? AGENT_RECOVERY_EXHAUSTED_PRESENT
+          surfaceId === "runtime-model-fallback"
+            ? RUNTIME_MODEL_FALLBACK_SURFACES_PRESENT
             : "validated-native-host-surface",
       })),
     );
@@ -857,12 +815,12 @@ describe("post-recovery hook feature detection", () => {
     expect(buildHostSurfaceGapDiagnostics(report, "0.83.0")).toEqual([]);
     expect(
       report.probes.find(
-        (probe) => probe.surfaceId === "post-recovery-model-switch",
+        (probe) => probe.surfaceId === "runtime-model-fallback",
       ),
     ).toEqual({
-      surfaceId: "post-recovery-model-switch",
+      surfaceId: "runtime-model-fallback",
       status: "native",
-      details: AGENT_RECOVERY_EXHAUSTED_PRESENT,
+      details: RUNTIME_MODEL_FALLBACK_SURFACES_PRESENT,
     });
 
     const probes = prober.probe({ ...trustedBase, hostSurface: report });

@@ -1,9 +1,9 @@
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
-  AGENT_RECOVERY_EXHAUSTED_PRESENT,
-  AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
-  probeAgentRecoveryExhaustedFeature,
+  describeRuntimeModelFallbackPresence,
+  RUNTIME_MODEL_FALLBACK_SURFACE_PROBES,
+  RUNTIME_MODEL_FALLBACK_UNSUPPORTED,
 } from "./capability-prober.js";
 import {
   makeInvariantViolationFailure,
@@ -19,7 +19,12 @@ import {
   PI_HOST_SURFACE_IDS,
   type PiHostSurfaceId,
 } from "./host-compatibility-matrix.js";
-import type { PiCommandInfo, PiExtensionApi, PiUiPort } from "./types.js";
+import type {
+  PiCommandInfo,
+  PiExtensionApi,
+  PiSessionContext,
+  PiUiPort,
+} from "./types.js";
 
 const PiSourceInfoSchema = z.object({
   path: z.string(),
@@ -79,6 +84,13 @@ export interface PiHostSurfaceReadInput {
   readonly ui: PiUiPort;
   /** Public root exports imported by the extension loader. Never package.json. */
   readonly rootExports?: Readonly<Record<string, unknown>>;
+  /**
+   * Public session helpers used only for presence checks. Never invoked.
+   * Absence leaves runtime-model-fallback unproven.
+   */
+  readonly session?: Pick<PiSessionContext, "isIdle"> & {
+    readonly hasPendingMessages?: () => boolean;
+  };
 }
 export type PiHostSurfaceReadError =
   | { readonly type: "ReaderThrew" }
@@ -149,7 +161,7 @@ export function readHostSurfaceReport(
     required(surfaceId) || featureOnly(surfaceId);
   const missingDetails = (surfaceId: PiHostSurfaceId): string => {
     if (required(surfaceId)) return "surface-missing";
-    if (featureOnly(surfaceId)) return AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED;
+    if (featureOnly(surfaceId)) return RUNTIME_MODEL_FALLBACK_UNSUPPORTED;
     return fallbackDetails(surfaceId);
   };
   const probes = PI_HOST_SURFACE_IDS.map((surfaceId): PiHostSurfaceProbe => {
@@ -325,6 +337,17 @@ export function selectsCustomEditorFallback(
   return report.overlayFallbackGaps.length > 0;
 }
 
+/**
+ * True when every public runtime-model-fallback surface is present. This is
+ * not lifecycle proof: exact marker start and exact context repair remain
+ * per-attempt dynamic requirements.
+ */
+export function isRuntimeModelFallbackEnabled(
+  report: PiHostSurfaceReport,
+): boolean {
+  return !report.featureGaps.includes("runtime-model-fallback");
+}
+
 function defaultSurfaceProbe(surfaceId: PiHostSurfaceId): {
   readonly surfaceId: PiHostSurfaceId;
   readonly status: PiHostSurfaceStatus;
@@ -341,7 +364,7 @@ function defaultSurfaceProbe(surfaceId: PiHostSurfaceId): {
     return {
       surfaceId,
       status: "unavailable",
-      details: AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
+      details: RUNTIME_MODEL_FALLBACK_UNSUPPORTED,
     };
   }
   return {
@@ -409,6 +432,24 @@ export interface PiHostProbePort {
   hasOverlayLifecycle(): boolean;
   /** The installed host version satisfies the supported-version contract. */
   hasSupportedVersion(): boolean;
+  /** `pi.on("agent_settled", ...)` registration is publicly callable. */
+  hasAgentSettledRegistration(): boolean;
+  /** Terminal `message_end` registration is publicly callable. */
+  hasTerminalMessageEnd(): boolean;
+  /** Replacement-returning `context` registration is publicly callable. */
+  hasReplacementReturningContext(): boolean;
+  /** `message_start` registration is publicly callable. */
+  hasMessageStart(): boolean;
+  /** `model_select` registration is publicly callable. */
+  hasModelSelect(): boolean;
+  /** `api.setModel` is a callable async boolean surface. */
+  hasCallableSetModel(): boolean;
+  /** `api.sendMessage` is a callable fire-and-forget surface. */
+  hasCallableSendMessage(): boolean;
+  /** Public `ctx.isIdle` is callable. Never invoked by the probe. */
+  hasCallableIdleHelper(): boolean;
+  /** Public `ctx.hasPendingMessages` is callable. Never invoked by the probe. */
+  hasCallablePendingMessageHelper(): boolean;
 }
 
 const isFn = (value: unknown): boolean => typeof value === "function";
@@ -433,6 +474,15 @@ export function createDefaultPiHostProbePort(
     return isFn((proto as Record<string, unknown>)[name]);
   };
   const versionValid = hostVersionIsValid(root);
+  const present = (read: () => unknown): boolean =>
+    Result.fromThrowable(
+      () => isFn(read()),
+      (): boolean => false,
+    )().match(
+      (value) => value,
+      () => false,
+    );
+  const hasEventRegistration = () => present(() => input.api.on);
   return Object.freeze({
     hasSessionCreate: () => statik("create"),
     hasSessionOpen: () => statik("open"),
@@ -450,6 +500,16 @@ export function createDefaultPiHostProbePort(
       isFn(input.ui.setEditorComponent) &&
       isFn(input.ui.getEditorComponent),
     hasSupportedVersion: () => versionValid,
+    hasAgentSettledRegistration: hasEventRegistration,
+    hasTerminalMessageEnd: hasEventRegistration,
+    hasReplacementReturningContext: hasEventRegistration,
+    hasMessageStart: hasEventRegistration,
+    hasModelSelect: hasEventRegistration,
+    hasCallableSetModel: () => present(() => input.api.setModel),
+    hasCallableSendMessage: () => present(() => input.api.sendMessage),
+    hasCallableIdleHelper: () => present(() => input.session?.isIdle),
+    hasCallablePendingMessageHelper: () =>
+      present(() => input.session?.hasPendingMessages),
   });
 }
 
@@ -481,6 +541,7 @@ export class DefaultPiHostSurfaceReader implements PiHostSurfaceReader {
         const root = input.rootExports ?? {};
         const port = this.probePortFactory(input);
         const versionValid = port.hasSupportedVersion();
+        const runtimeModelFallback = readRuntimeModelFallbackPresence(port);
         const has = (name: string): boolean => typeof root[name] === "function";
         const native = (
           id: PiHostSurfaceId,
@@ -581,19 +642,35 @@ export class DefaultPiHostSurfaceReader implements PiHostSurfaceReader {
             "overlay-or-editor-restore-missing",
           ),
           native(
-            "post-recovery-model-switch",
-            probeAgentRecoveryExhaustedFeature(input.api).match(
-              (supported) => supported,
-              () => false,
-            ),
-            AGENT_RECOVERY_EXHAUSTED_PRESENT,
-            AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED,
+            "runtime-model-fallback",
+            runtimeModelFallback.supported,
+            runtimeModelFallback.details,
+            runtimeModelFallback.details,
           ),
         ];
       },
       () => ({ type: "ReaderThrew" as const }),
     )();
   }
+}
+
+function readRuntimeModelFallbackPresence(
+  port: PiHostProbePort,
+): ReturnType<typeof describeRuntimeModelFallbackPresence> {
+  return describeRuntimeModelFallbackPresence(
+    Object.fromEntries(
+      RUNTIME_MODEL_FALLBACK_SURFACE_PROBES.map(([probe]) => [
+        probe,
+        Result.fromThrowable(
+          () => port[probe](),
+          (): boolean => false,
+        )().match(
+          (value) => value === true,
+          () => false,
+        ),
+      ]),
+    ),
+  );
 }
 
 function matrixNative(id: PiHostSurfaceId): boolean {

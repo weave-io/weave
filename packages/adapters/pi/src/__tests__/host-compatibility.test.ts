@@ -58,8 +58,8 @@ describe("renderHostCapabilityGapDiagnostic", () => {
   it("reports feature-unavailable for a feature-only gap without health-only or overlay fallback", () => {
     const line = renderHostCapabilityGapDiagnostic({
       ...diagnostic,
-      capability: "post-recovery-model-switch",
-      probeResult: "unavailable:agent-recovery-exhausted-unsupported",
+      capability: "runtime-model-fallback",
+      probeResult: "unavailable:runtime-model-fallback-unsupported",
       mode: "feature-unavailable",
     });
     expect(line).toContain("mode: feature-unavailable");

@@ -265,7 +265,7 @@ describe("Pi adapter capability contract", () => {
   });
 
   it("keeps runtime-model-fallback on the feature-only host surface, not an engine CapabilityId", () => {
-    expect(PI_FEATURE_ONLY_SURFACE_IDS).toEqual(["post-recovery-model-switch"]);
+    expect(PI_FEATURE_ONLY_SURFACE_IDS).toEqual(["runtime-model-fallback"]);
     expect(
       PI_ADAPTER_CAPABILITY_CONTRACT.capabilities.map((entry) => entry.id),
     ).not.toContain("runtime-model-fallback");

@@ -24,7 +24,7 @@ export const PI_HOST_SURFACE_IDS = [
   "rpc-session-tree-read",
   "custom-session-directory",
   "child-overlay-lifecycle",
-  "post-recovery-model-switch",
+  "runtime-model-fallback",
 ] as const;
 export type PiHostSurfaceId = (typeof PI_HOST_SURFACE_IDS)[number];
 
@@ -40,7 +40,7 @@ export type PiHostSurfaceId = (typeof PI_HOST_SURFACE_IDS)[number];
  * - `rendering-fallback`: Pi's own default rendering covers the gap.
  * - `feature-only`: an optional host feature. A gap must not enter
  *   health-only mode and must not select the overlay fallback; behavior
- *   stays the current hook-less path.
+ *   stays on legacy visible/child settlement.
  */
 export type PiHostSurfaceSeverity =
   | "required-for-delegation"
@@ -120,11 +120,10 @@ const featureOnly = (
  * to the floor's minor line: the floor states what the adapter supports, while
  * this states what was proved (Spec 33 §16).
  *
- * Task 14 may move this only after an official Pi release ships the
- * post-recovery hook and Weave re-proves the affected rows. Hook support is a
- * feature-only surface; it does not raise the floor or this pin.
+ * Task 15 must prove this pin on real Pi 0.84.2. Version alone is never
+ * capability evidence; `runtime-model-fallback` is optional and feature-only.
  */
-export const EXACT_TESTED_HOST_VERSION = "0.84.1";
+export const EXACT_TESTED_HOST_VERSION = "0.84.2";
 
 export interface PiHostCompatibilityMatrix {
   readonly package: string;
@@ -179,9 +178,9 @@ export const PI_HOST_COMPATIBILITY_MATRIX: PiHostCompatibilityMatrix = {
       "Upgrade the Pi host to one that exposes the overlay UI and editor-restore lifecycle; until then the custom-editor child inspection fallback is used.",
     ),
     featureOnly(
-      "post-recovery-model-switch",
-      "Spec 33 post-recovery hook: pi.features.agent_recovery_exhausted",
-      "Upgrade the Pi host to one that advertises pi.features.agent_recovery_exhausted === true; until then exhausted recovery settles as it does today.",
+      "runtime-model-fallback",
+      "Public Pi surfaces for optional runtime model fallback: agent_settled registration, terminal message_end, replacement-returning context, message_start, model_select, callable setModel, fire-and-forget sendMessage, and callable idle/pending helpers. Surface presence is not lifecycle proof.",
+      "Missing or unproven public fallback surfaces keep ready health and legacy visible/child settlement. Exact-tested behavior is claimed only for Pi 0.84.2 after live proof.",
     ),
   ]),
 } as const;

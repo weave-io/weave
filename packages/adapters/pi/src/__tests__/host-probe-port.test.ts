@@ -3,11 +3,16 @@ import {
   buildHostSurfaceGapDiagnostics,
   createDefaultPiHostProbePort,
   DefaultPiHostSurfaceReader,
+  isRuntimeModelFallbackEnabled,
   type PiHostProbePort,
   type PiHostSurfaceId,
   readHostSurfaceReport,
   selectsCustomEditorFallback,
 } from "../host-inventory.js";
+import { fingerprintPiAssistantMessage } from "../model-failover-contract.js";
+import { createPiModelFailoverCoordinator } from "../model-failover-coordinator.js";
+import type { PiModelInfo } from "../model-resolution.js";
+import { RecordingFakePiHost } from "./fakes/fake-pi-host.js";
 
 /**
  * Task 3 remediation coverage. Every Spec 33 §16 session probe is toggled
@@ -26,6 +31,15 @@ function capablePort(): Record<keyof PiHostProbePort, boolean> {
     hasCustomSessionDirectoryContract: true,
     hasOverlayLifecycle: true,
     hasSupportedVersion: true,
+    hasAgentSettledRegistration: true,
+    hasTerminalMessageEnd: true,
+    hasReplacementReturningContext: true,
+    hasMessageStart: true,
+    hasModelSelect: true,
+    hasCallableSetModel: true,
+    hasCallableSendMessage: true,
+    hasCallableIdleHelper: true,
+    hasCallablePendingMessageHelper: true,
   };
 }
 
@@ -40,6 +54,17 @@ function portFrom(answers: Record<keyof PiHostProbePort, boolean>) {
       answers.hasCustomSessionDirectoryContract,
     hasOverlayLifecycle: () => answers.hasOverlayLifecycle,
     hasSupportedVersion: () => answers.hasSupportedVersion,
+    hasAgentSettledRegistration: () => answers.hasAgentSettledRegistration,
+    hasTerminalMessageEnd: () => answers.hasTerminalMessageEnd,
+    hasReplacementReturningContext: () =>
+      answers.hasReplacementReturningContext,
+    hasMessageStart: () => answers.hasMessageStart,
+    hasModelSelect: () => answers.hasModelSelect,
+    hasCallableSetModel: () => answers.hasCallableSetModel,
+    hasCallableSendMessage: () => answers.hasCallableSendMessage,
+    hasCallableIdleHelper: () => answers.hasCallableIdleHelper,
+    hasCallablePendingMessageHelper: () =>
+      answers.hasCallablePendingMessageHelper,
   });
 }
 
@@ -78,12 +103,10 @@ describe("PiHostProbePort: independent Spec 33 §16 session probes", () => {
     const report = await reportFor(capablePort());
     expect(report.requiredGaps).toEqual([]);
     expect(report.overlayFallbackGaps).toEqual([]);
-    expect(report.featureGaps).toEqual(["post-recovery-model-switch"]);
+    expect(report.featureGaps).toEqual([]);
     expect(selectsCustomEditorFallback(report)).toBe(false);
-    const diagnostics = buildHostSurfaceGapDiagnostics(report, "0.83.0");
-    expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0]?.mode).toBe("feature-unavailable");
-    expect(diagnostics[0]?.capability).toBe("post-recovery-model-switch");
+    expect(isRuntimeModelFallbackEnabled(report)).toBe(true);
+    expect(buildHostSurfaceGapDiagnostics(report, "0.83.0")).toEqual([]);
   });
 
   /**
@@ -123,7 +146,7 @@ describe("PiHostProbePort: independent Spec 33 §16 session probes", () => {
         diagnostics.some(
           (diagnostic) => diagnostic.mode === "feature-unavailable",
         ),
-      ).toBe(true);
+      ).toBe(false);
       const diagnostic = healthOnly[0];
       // All six strong-debug fields are present and non-empty.
       expect(diagnostic?.capability).toBe(surface);
@@ -179,6 +202,37 @@ describe("PiHostProbePort: independent Spec 33 §16 session probes", () => {
     expect(report.overlayFallbackGaps).not.toContain("rpc-session-tree-read");
     expect(report.requiredGaps).toContain("rpc-session-tree-read");
   });
+
+  const optionalFallbackProbes: readonly (keyof PiHostProbePort)[] = [
+    "hasAgentSettledRegistration",
+    "hasTerminalMessageEnd",
+    "hasReplacementReturningContext",
+    "hasMessageStart",
+    "hasModelSelect",
+    "hasCallableSetModel",
+    "hasCallableSendMessage",
+    "hasCallableIdleHelper",
+    "hasCallablePendingMessageHelper",
+  ];
+
+  for (const probe of optionalFallbackProbes) {
+    it(`keeps ready legacy settlement when ${probe} is missing`, async () => {
+      const report = await reportFor({ ...capablePort(), [probe]: false });
+      expect(report.requiredGaps).toEqual([]);
+      expect(report.overlayFallbackGaps).toEqual([]);
+      expect(report.featureGaps).toEqual(["runtime-model-fallback"]);
+      expect(selectsCustomEditorFallback(report)).toBe(false);
+      expect(isRuntimeModelFallbackEnabled(report)).toBe(false);
+      const diagnostics = buildHostSurfaceGapDiagnostics(report, "0.83.0");
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]?.capability).toBe("runtime-model-fallback");
+      expect(diagnostics[0]?.mode).toBe("feature-unavailable");
+      expect(diagnostics[0]?.probeResult.startsWith("unavailable:")).toBe(true);
+      expect(diagnostics[0]?.remediation).toContain(
+        "legacy visible/child settlement",
+      );
+    });
+  }
 });
 
 describe("createDefaultPiHostProbePort", () => {
@@ -222,6 +276,11 @@ describe("createDefaultPiHostProbePort", () => {
     expect(port.hasCustomSessionDirectoryContract()).toBe(true);
     expect(port.hasOverlayLifecycle()).toBe(true);
     expect(port.hasSupportedVersion()).toBe(true);
+    expect(port.hasAgentSettledRegistration()).toBe(false);
+    expect(port.hasCallableSetModel()).toBe(false);
+    expect(port.hasCallableSendMessage()).toBe(false);
+    expect(port.hasCallableIdleHelper()).toBe(false);
+    expect(port.hasCallablePendingMessageHelper()).toBe(false);
     // The whole point: presence checks only.
     expect(calls).toEqual([]);
   });
@@ -239,6 +298,15 @@ describe("createDefaultPiHostProbePort", () => {
     expect(port.hasAppendEntry()).toBe(false);
     expect(port.hasCustomSessionDirectoryContract()).toBe(false);
     expect(port.hasOverlayLifecycle()).toBe(false);
+    expect(port.hasAgentSettledRegistration()).toBe(false);
+    expect(port.hasTerminalMessageEnd()).toBe(false);
+    expect(port.hasReplacementReturningContext()).toBe(false);
+    expect(port.hasMessageStart()).toBe(false);
+    expect(port.hasModelSelect()).toBe(false);
+    expect(port.hasCallableSetModel()).toBe(false);
+    expect(port.hasCallableSendMessage()).toBe(false);
+    expect(port.hasCallableIdleHelper()).toBe(false);
+    expect(port.hasCallablePendingMessageHelper()).toBe(false);
   });
 
   it("fails the session-directory contract when the host version is unsupported", () => {
@@ -268,5 +336,121 @@ describe("createDefaultPiHostProbePort", () => {
     expect(port.hasSessionGetEntries()).toBe(false);
     expect(port.hasSessionGetTree()).toBe(false);
     expect(port.hasCustomSessionDirectoryContract()).toBe(false);
+  });
+});
+
+describe("runtime-model-fallback public surfaces on a fake host", () => {
+  const origin: PiModelInfo = {
+    provider: "origin",
+    id: "first",
+    name: "First",
+  };
+  const fallback: PiModelInfo = {
+    provider: "fallback",
+    id: "second",
+    name: "Second",
+  };
+  const failedAssistant = {
+    role: "assistant",
+    id: "failed-assistant",
+    stopReason: "error",
+    content: [{ type: "text", text: "bounded partial output" }],
+  };
+
+  it("proves presence on a complete fake without invoking host helpers", () => {
+    const host = new RecordingFakePiHost({
+      currentModel: origin,
+      availableModels: [origin, fallback],
+    });
+    const session = host.createSessionContext();
+    const port = createDefaultPiHostProbePort({
+      api: host.api,
+      ui: session.ui,
+      session,
+      rootExports: { VERSION: "0.84.2" },
+    });
+
+    expect(port.hasAgentSettledRegistration()).toBe(true);
+    expect(port.hasTerminalMessageEnd()).toBe(true);
+    expect(port.hasReplacementReturningContext()).toBe(true);
+    expect(port.hasMessageStart()).toBe(true);
+    expect(port.hasModelSelect()).toBe(true);
+    expect(port.hasCallableSetModel()).toBe(true);
+    expect(port.hasCallableSendMessage()).toBe(true);
+    expect(port.hasCallableIdleHelper()).toBe(true);
+    expect(port.hasCallablePendingMessageHelper()).toBe(true);
+    expect(host.setModelCalls).toEqual([]);
+    expect(host.sendMessageCalls).toEqual([]);
+  });
+
+  it("does not infer the feature from Pi 0.84.2 or a stale hook flag", () => {
+    const port = createDefaultPiHostProbePort({
+      api: { features: { agent_recovery_exhausted: true } } as never,
+      ui: {} as never,
+      rootExports: { VERSION: "0.84.2" },
+    });
+    expect(port.hasSupportedVersion()).toBe(true);
+    expect(port.hasAgentSettledRegistration()).toBe(false);
+    expect(port.hasCallableSetModel()).toBe(false);
+    expect(port.hasCallableSendMessage()).toBe(false);
+    expect(port.hasCallableIdleHelper()).toBe(false);
+    expect(port.hasCallablePendingMessageHelper()).toBe(false);
+  });
+
+  it("enables the coordinator on a complete fake but still fails malformed event order", async () => {
+    const host = new RecordingFakePiHost({
+      currentModel: origin,
+      availableModels: [origin, fallback],
+    });
+    const session = host.createSessionContext();
+    const rows = await new DefaultPiHostSurfaceReader().read({
+      api: host.api,
+      ui: session.ui,
+      session,
+      rootExports: { VERSION: "0.84.2" },
+    });
+    const report = readHostSurfaceReport(rows._unsafeUnwrap());
+    expect(isRuntimeModelFallbackEnabled(report)).toBe(true);
+
+    const fingerprint = fingerprintPiAssistantMessage(failedAssistant);
+    expect(fingerprint.isOk()).toBe(true);
+    const coordinator = createPiModelFailoverCoordinator({
+      host: host.api,
+      context: session,
+      generationId: "generation-1",
+      nativeSessionId: "session-1",
+      activationId: "activation-1",
+      currentModel: origin,
+      candidates: [origin, fallback],
+    });
+    expect(
+      (
+        await coordinator.handleFailure({
+          failureClass: "provider_unavailable",
+          failedModel: origin,
+          fingerprint: fingerprint._unsafeUnwrap(),
+        })
+      ).isOk(),
+    ).toBe(true);
+    expect(coordinator.onModelSelect({ model: fallback })._unsafeUnwrap()).toBe(
+      true,
+    );
+    expect(coordinator.state).toBe("awaiting-marker-proof");
+    expect(
+      coordinator.onMessageStart({ type: "turn_start" })._unsafeUnwrap(),
+    ).toBe(false);
+    expect(coordinator.state).toBe("awaiting-marker-proof");
+    const marker = host.sendMessageCalls.at(-1)?.message;
+    expect(marker).toBeDefined();
+    expect(
+      coordinator
+        .onMessageStart({ type: "message_start", message: marker })
+        ._unsafeUnwrap(),
+    ).toBe(true);
+    expect(coordinator.state).toBe("awaiting-context-repair");
+    expect(
+      coordinator.onContext([{ role: "user", content: "task" }]).isErr(),
+    ).toBe(true);
+    expect(coordinator.state).not.toBe("recovering");
   });
 });

@@ -3,6 +3,7 @@ import { errAsync, okAsync } from "neverthrow";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
 import {
   DefaultPiHostSurfaceReader,
+  isRuntimeModelFallbackEnabled,
   PI_HOST_SURFACE_IDS,
   type PiHostSurfaceReader,
   readHostSurfaceReport,
@@ -127,19 +128,19 @@ describe("host surface inventory", () => {
     expect(report.probes).toHaveLength(PI_HOST_SURFACE_IDS.length);
     // A complete public namespace on a supported version proves every
     // required surface, including Pi's real path-addressed session API.
-    // The post-recovery hook is feature-only and stays unsupported until the
-    // host advertises the flag.
+    // Runtime model fallback stays unproven until the public event, model,
+    // send, idle, and pending helpers are all present.
     expect(
       report.probes
         .filter((probe) => probe.status !== "native")
         .map((probe) => probe.surfaceId),
-    ).toEqual(["post-recovery-model-switch"]);
+    ).toEqual(["runtime-model-fallback"]);
     expect(report.probes.map((probe) => probe.surfaceId)).toEqual([
       ...PI_HOST_SURFACE_IDS,
     ]);
     expect(report.requiredGaps).toEqual([]);
     expect(report.overlayFallbackGaps).toEqual([]);
-    expect(report.featureGaps).toEqual(["post-recovery-model-switch"]);
+    expect(report.featureGaps).toEqual(["runtime-model-fallback"]);
   });
 
   it("uses fallback status for every optional rendering surface when exports are absent", async () => {
@@ -209,66 +210,67 @@ describe("host surface inventory", () => {
     }
   });
 
-  it("proves post-recovery-model-switch only from the own enumerable feature flag", async () => {
+  it("proves runtime-model-fallback only from public surface presence", async () => {
     const reader = new DefaultPiHostSurfaceReader();
-    const hookLess = await reader.read({
-      api: { appendEntry: () => undefined } as never,
+    const missing = await reader.read({
+      api: {
+        appendEntry: () => undefined,
+        features: { agent_recovery_exhausted: true },
+      } as never,
       ui: overlayCapableUi(),
       rootExports: {
-        VERSION: "0.81.1",
+        VERSION: "0.84.2",
         CustomEditor: () => undefined,
         SessionManager: sessionManagerStub(),
       },
     });
-    const hookLessReport = readHostSurfaceReport(hookLess._unsafeUnwrap());
+    const missingReport = readHostSurfaceReport(missing._unsafeUnwrap());
     expect(
-      hookLessReport.probes.find(
-        (probe) => probe.surfaceId === "post-recovery-model-switch",
+      missingReport.probes.find(
+        (probe) => probe.surfaceId === "runtime-model-fallback",
       ),
     ).toEqual({
-      surfaceId: "post-recovery-model-switch",
+      surfaceId: "runtime-model-fallback",
       status: "unavailable",
-      details: "agent-recovery-exhausted-unsupported",
+      details: "agent-settled-registration-unsupported",
     });
-    expect(hookLessReport.requiredGaps).toEqual([]);
-    expect(hookLessReport.overlayFallbackGaps).toEqual([]);
-    expect(hookLessReport.featureGaps).toEqual(["post-recovery-model-switch"]);
+    expect(missingReport.requiredGaps).toEqual([]);
+    expect(missingReport.overlayFallbackGaps).toEqual([]);
+    expect(missingReport.featureGaps).toEqual(["runtime-model-fallback"]);
+    expect(isRuntimeModelFallbackEnabled(missingReport)).toBe(false);
 
-    const hookApi = Object.defineProperty(
-      { appendEntry: () => undefined } as object,
-      "features",
-      {
-        value: Object.defineProperty({} as object, "agent_recovery_exhausted", {
-          value: true,
-          enumerable: true,
-        }),
-        enumerable: true,
-      },
-    );
-    const hookBearing = await reader.read({
-      api: hookApi as never,
+    const complete = await reader.read({
+      api: {
+        appendEntry: () => undefined,
+        on: () => undefined,
+        setModel: async () => true,
+        sendMessage: () => undefined,
+      } as never,
       ui: overlayCapableUi(),
+      session: {
+        isIdle: () => true,
+        hasPendingMessages: () => false,
+      },
       rootExports: {
         VERSION: "0.81.1",
         CustomEditor: () => undefined,
         SessionManager: sessionManagerStub(),
       },
     });
-    const hookBearingReport = readHostSurfaceReport(
-      hookBearing._unsafeUnwrap(),
-    );
+    const completeReport = readHostSurfaceReport(complete._unsafeUnwrap());
     expect(
-      hookBearingReport.probes.find(
-        (probe) => probe.surfaceId === "post-recovery-model-switch",
+      completeReport.probes.find(
+        (probe) => probe.surfaceId === "runtime-model-fallback",
       ),
     ).toEqual({
-      surfaceId: "post-recovery-model-switch",
+      surfaceId: "runtime-model-fallback",
       status: "native",
-      details: "agent-recovery-exhausted-present",
+      details: "runtime-model-fallback-surfaces-present",
     });
-    expect(hookBearingReport.requiredGaps).toEqual([]);
-    expect(hookBearingReport.overlayFallbackGaps).toEqual([]);
-    expect(hookBearingReport.featureGaps).toEqual([]);
+    expect(completeReport.requiredGaps).toEqual([]);
+    expect(completeReport.overlayFallbackGaps).toEqual([]);
+    expect(completeReport.featureGaps).toEqual([]);
+    expect(isRuntimeModelFallbackEnabled(completeReport)).toBe(true);
   });
 
   it("uses only public VERSION and matrix facts for required protocol surfaces", async () => {

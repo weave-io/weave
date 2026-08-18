@@ -3,7 +3,6 @@ import type {
   CapabilityProbeResult,
 } from "@weaveio/weave-engine";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
-import { Result } from "neverthrow";
 import type { PiChildSessionReadinessReason } from "./child-session-storage-authority.js";
 import { isOwnSourceInfo, WEAVE_COMMAND_NAMES } from "./commands.js";
 import {
@@ -96,48 +95,74 @@ const SESSION_HOST_SURFACES: ReadonlySet<PiHostSurfaceId> = new Set([
   "custom-session-directory",
 ]);
 
-/** Bounded probe detail when the host advertises the post-recovery hook. */
-export const AGENT_RECOVERY_EXHAUSTED_PRESENT =
-  "agent-recovery-exhausted-present" as const;
-/** Bounded probe detail when the host does not advertise the hook. */
-export const AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED =
-  "agent-recovery-exhausted-unsupported" as const;
+/** Bounded probe detail when every public fallback surface is present. */
+export const RUNTIME_MODEL_FALLBACK_SURFACES_PRESENT =
+  "runtime-model-fallback-surfaces-present" as const;
+/** Bounded probe detail when fallback surfaces were never proved. */
+export const RUNTIME_MODEL_FALLBACK_UNSUPPORTED =
+  "runtime-model-fallback-unsupported" as const;
 
-const AGENT_RECOVERY_EXHAUSTED_KEY = "agent_recovery_exhausted";
+/**
+ * Closed reason codes for one missing or unproven public fallback surface.
+ * Static probing reports presence only; these never claim lifecycle order.
+ */
+export const RUNTIME_MODEL_FALLBACK_REASON_CODES = Object.freeze({
+  agentSettled: "agent-settled-registration-unsupported",
+  messageEnd: "terminal-message-end-unsupported",
+  context: "replacement-context-unsupported",
+  messageStart: "message-start-unsupported",
+  modelSelect: "model-select-unsupported",
+  setModel: "callable-set-model-unsupported",
+  sendMessage: "callable-send-message-unsupported",
+  idle: "callable-idle-helper-unsupported",
+  pending: "callable-pending-message-helper-unsupported",
+} as const);
 
-export type AgentRecoveryExhaustedProbeError = {
-  readonly type: "FeatureProbeThrew";
+export type RuntimeModelFallbackSurfaceProbe =
+  keyof typeof RUNTIME_MODEL_FALLBACK_REASON_CODES;
+
+export const RUNTIME_MODEL_FALLBACK_SURFACE_PROBES = Object.freeze([
+  [
+    "hasAgentSettledRegistration",
+    RUNTIME_MODEL_FALLBACK_REASON_CODES.agentSettled,
+  ],
+  ["hasTerminalMessageEnd", RUNTIME_MODEL_FALLBACK_REASON_CODES.messageEnd],
+  [
+    "hasReplacementReturningContext",
+    RUNTIME_MODEL_FALLBACK_REASON_CODES.context,
+  ],
+  ["hasMessageStart", RUNTIME_MODEL_FALLBACK_REASON_CODES.messageStart],
+  ["hasModelSelect", RUNTIME_MODEL_FALLBACK_REASON_CODES.modelSelect],
+  ["hasCallableSetModel", RUNTIME_MODEL_FALLBACK_REASON_CODES.setModel],
+  ["hasCallableSendMessage", RUNTIME_MODEL_FALLBACK_REASON_CODES.sendMessage],
+  ["hasCallableIdleHelper", RUNTIME_MODEL_FALLBACK_REASON_CODES.idle],
+  [
+    "hasCallablePendingMessageHelper",
+    RUNTIME_MODEL_FALLBACK_REASON_CODES.pending,
+  ],
+] as const);
+
+export type RuntimeModelFallbackPresence = {
+  readonly supported: boolean;
+  readonly details: string;
 };
 
 /**
- * True only when `pi.features.agent_recovery_exhausted` is an own enumerable
- * data property equal to `true`. Never compares VERSION or any other string.
- * Throwing accessors, proxies, absence, and non-true values are unsupported.
+ * Map independently probed public surfaces onto one bounded feature fact.
+ * The first missing surface wins. Version strings are never consulted.
  */
-export function probeAgentRecoveryExhaustedFeature(
-  host: unknown,
-): Result<boolean, AgentRecoveryExhaustedProbeError> {
-  return Result.fromThrowable(
-    (): boolean => readAgentRecoveryExhaustedFlag(host),
-    (): AgentRecoveryExhaustedProbeError => ({ type: "FeatureProbeThrew" }),
-  )();
-}
-
-function readAgentRecoveryExhaustedFlag(host: unknown): boolean {
-  if (typeof host !== "object" || host === null) return false;
-  const featuresDescriptor = Object.getOwnPropertyDescriptor(host, "features");
-  if (featuresDescriptor === undefined || !("value" in featuresDescriptor))
-    return false;
-  const features = featuresDescriptor.value;
-  if (typeof features !== "object" || features === null) return false;
-  const flagDescriptor = Object.getOwnPropertyDescriptor(
-    features,
-    AGENT_RECOVERY_EXHAUSTED_KEY,
-  );
-  if (flagDescriptor === undefined || !("value" in flagDescriptor))
-    return false;
-  if (flagDescriptor.enumerable !== true) return false;
-  return flagDescriptor.value === true;
+export function describeRuntimeModelFallbackPresence(
+  answers: Readonly<Record<string, boolean>>,
+): RuntimeModelFallbackPresence {
+  for (const [probe, reason] of RUNTIME_MODEL_FALLBACK_SURFACE_PROBES) {
+    if (answers[probe] !== true) {
+      return { supported: false, details: reason };
+    }
+  }
+  return {
+    supported: true,
+    details: RUNTIME_MODEL_FALLBACK_SURFACES_PRESENT,
+  };
 }
 
 const CANDIDATE_PLAN_CAPABILITIES: ReadonlySet<CapabilityId> = new Set([
@@ -486,8 +511,8 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
     // `requiredGaps`; it is reported through the host surface report's
     // `overlayFallbackGaps` and selects the existing custom-editor child
     // inspection fallback instead. A `feature-only` gap is likewise absent
-    // from engine capability IDs: hook readiness stays on the host-surface
-    // report and never lowers an engine probe.
+    // from engine capability IDs: runtime-model-fallback readiness stays on
+    // the host-surface report and never lowers an engine probe.
     if (
       context.hostSurface !== undefined &&
       context.hostSurface.requiredGaps.length > 0 &&

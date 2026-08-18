@@ -862,6 +862,7 @@ export {
   DefaultPiHostSurfaceReader,
   defaultHostSurfaceReport,
   emptyHostSurfaceReport,
+  isRuntimeModelFallbackEnabled,
   PI_HOST_SURFACE_IDS,
   type PiHostProbePort,
   type PiHostProbePortFactory,

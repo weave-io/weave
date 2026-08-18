@@ -458,6 +458,12 @@ export interface PiSessionContext {
   isProjectTrusted(): boolean;
   /** Whether Pi is idle and can accept an immediate user-message turn. */
   isIdle(): boolean;
+  /**
+   * Whether the host currently has queued or pending user messages.
+   * Optional: older or incomplete hosts omit it. Unproven presence keeps
+   * runtime model fallback disabled and uses legacy settlement.
+   */
+  hasPendingMessages?(): boolean;
   readonly ui: PiUiPort;
   /** Whether dialog-capable UI is available (`ctx.hasUI`) - false in headless/print modes. */
   readonly hasUI: boolean;
@@ -595,7 +601,11 @@ export interface PiExtensionApi {
    * evidence, never an exception.
    */
   getAllTools?: () => readonly PiToolInfo[];
-  /** Injects a custom context message without impersonating the user. */
+  /**
+   * Injects a custom context message without impersonating the user.
+   * Fire-and-forget: the return is not dispatch proof. Dispatch is proven
+   * only by the exact marker's `message_start`.
+   */
   sendMessage(
     message: {
       customType: string;
@@ -607,7 +617,7 @@ export interface PiExtensionApi {
       triggerTurn?: boolean;
       deliverAs?: "steer" | "followUp" | "nextTurn";
     },
-  ): void | Promise<void>;
+  ): void;
   /** Registers a tool the LLM can call (`ExtensionAPI.registerTool`). */
   registerTool(tool: PiToolRegistration): void;
   /**
@@ -620,14 +630,11 @@ export interface PiExtensionApi {
    */
   registerProvider?: (provider: unknown) => void;
   /**
-   * Applies a model selection (`ExtensionAPI.setModel`). May reject/throw for
-   * an invalid or unauthenticated model. May also *resolve* to `false`
-   * without throwing (e.g. the host declined the selection) - callers MUST
-   * treat a resolved `false` as a failed application, not as success.
+   * Applies a model selection (`ExtensionAPI.setModel`). The public 0.84.2
+   * result is an async boolean. Callers MUST await it and treat `false` as a
+   * failed application, not as success.
    */
-  setModel(
-    model: PiModelInfo,
-  ): boolean | undefined | Promise<boolean | undefined>;
+  setModel(model: PiModelInfo): Promise<boolean>;
   /** Reads Pi's current-session thinking level (`ExtensionAPI.getThinkingLevel`). */
   getThinkingLevel?: () => string;
   /** Applies Pi's current-session thinking level (`ExtensionAPI.setThinkingLevel`). */

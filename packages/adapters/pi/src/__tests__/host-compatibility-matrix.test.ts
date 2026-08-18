@@ -14,7 +14,7 @@ describe("PI_HOST_COMPATIBILITY_MATRIX", () => {
     expect(PI_HOST_COMPATIBILITY_MATRIX.package).toBe(HOST_PACKAGE_NAME);
     expect(PI_HOST_COMPATIBILITY_MATRIX.supportedRange).toBe(">=0.81.1");
     expect(PI_HOST_COMPATIBILITY_MATRIX.floorVersion).toBe(HOST_VERSION_FLOOR);
-    expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).toBe("0.84.1");
+    expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).toBe("0.84.2");
     expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).toBe(
       EXACT_TESTED_HOST_VERSION,
     );
@@ -74,20 +74,26 @@ describe("PI_HOST_COMPATIBILITY_MATRIX", () => {
     expect(overlay?.remediation.length).toBeGreaterThan(0);
   });
 
-  it("declares post-recovery-model-switch as a feature-only surface that cannot force health-only or overlay fallback", () => {
+  it("declares runtime-model-fallback as a feature-only surface that cannot force health-only or overlay fallback", () => {
     const featureOnly = PI_HOST_COMPATIBILITY_MATRIX.surfaces.filter(
       (surface) => surface.severity === "feature-only",
     );
     expect(featureOnly.map((surface) => surface.id)).toEqual([
-      "post-recovery-model-switch",
+      "runtime-model-fallback",
     ]);
     const surface = featureOnly[0];
     expect(surface?.required).toBe(false);
     expect(surface?.fallback).toBeUndefined();
     expect(surface?.nativeSupport).toBe(true);
     expect(surface?.minimumHostVersion).toBe(HOST_VERSION_FLOOR);
-    expect(surface?.contract).toContain("agent_recovery_exhausted");
-    expect(surface?.remediation.length).toBeGreaterThan(0);
+    expect(surface?.contract).toContain("agent_settled");
+    expect(surface?.contract).toContain("setModel");
+    expect(surface?.contract).not.toContain("agent_recovery_exhausted");
+    expect(surface?.remediation).toContain("legacy visible/child settlement");
+    expect(surface?.remediation).toContain("0.84.2");
+    expect(surface?.contract).toContain(
+      "Surface presence is not lifecycle proof",
+    );
   });
 
   it("keeps every surface at the 0.81.1 floor with no maximum", () => {
@@ -159,10 +165,10 @@ describe("validateHostCompatibilityMatrix", () => {
     }
   });
 
-  it("accepts the stable release-tested version 0.84.1", () => {
+  it("accepts the stable release-tested version 0.84.2", () => {
     const result = validateHostCompatibilityMatrix({
       ...PI_HOST_COMPATIBILITY_MATRIX,
-      exactTestedVersion: "0.84.1",
+      exactTestedVersion: "0.84.2",
     });
     expect(result.isOk()).toBe(true);
   });
@@ -230,7 +236,7 @@ describe("validateHostCompatibilityMatrix", () => {
     const requiredClaim = validateHostCompatibilityMatrix({
       ...PI_HOST_COMPATIBILITY_MATRIX,
       surfaces: PI_HOST_COMPATIBILITY_MATRIX.surfaces.map((surface) =>
-        surface.id === "post-recovery-model-switch"
+        surface.id === "runtime-model-fallback"
           ? { ...surface, severity: "required-for-delegation" as const }
           : surface,
       ),
@@ -240,14 +246,14 @@ describe("validateHostCompatibilityMatrix", () => {
       expect(requiredClaim.error.type).toBe("SurfaceDrift");
       if (requiredClaim.error.type === "SurfaceDrift")
         expect(requiredClaim.error.reason).toBe(
-          "surface-policy:post-recovery-model-switch",
+          "surface-policy:runtime-model-fallback",
         );
     }
 
     const overlayFallback = validateHostCompatibilityMatrix({
       ...PI_HOST_COMPATIBILITY_MATRIX,
       surfaces: PI_HOST_COMPATIBILITY_MATRIX.surfaces.map((surface) =>
-        surface.id === "post-recovery-model-switch"
+        surface.id === "runtime-model-fallback"
           ? { ...surface, fallback: "custom-editor" as const }
           : surface,
       ),

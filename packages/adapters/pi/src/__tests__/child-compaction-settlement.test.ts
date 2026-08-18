@@ -162,7 +162,7 @@ class MinimalFakeHost implements PiExtensionApi {
   registerTool(tool: PiToolRegistration): void {
     this.registerToolCalls.push(tool);
   }
-  setModel(_model: PiModelInfo): boolean {
+  async setModel(_model: PiModelInfo): Promise<boolean> {
     return true;
   }
   setThinkingLevel(_level: string): void {}
