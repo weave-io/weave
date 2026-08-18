@@ -212,7 +212,7 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
   - **Acceptance**:
     - Extension tests prove: registration in parent and child mode with mocked `PiExtensionApi`; no registration when host lacks `registerProvider` (version gate from OD-4); passthrough when health-only; status line renders new states.
 
-- [ ] 8. Reconcile capability declaration, acceptance manifest, and stale no-mutation assertions
+- [x] 8. Reconcile capability declaration, acceptance manifest, and stale no-mutation assertions
   - **What**: Raise the static ceiling honestly and update every artifact that pins the old "never requested or applied" claim.
   - **Files**: `packages/adapters/pi/src/capability-declarations.ts`, `scripts/release/acceptance-manifest-data.ts`, remaining `packages/adapters/pi/src/__tests__/*` no-mutation assertions.
   - **Depends on**: Task 7.

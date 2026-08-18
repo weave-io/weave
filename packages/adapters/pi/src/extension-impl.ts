@@ -5043,14 +5043,18 @@ export function createPiExtension(
       },
     });
 
-    // No provider request or header hook is registered. Pi cannot bind a
-    // transport proof or a response proof to one prepared request, so the
-    // adapter sends no acceleration control and leaves every provider payload
-    // and header exactly as other handlers left it.
+    // No provider request or header hook is registered. On that seam Pi
+    // cannot bind a transport proof or a response proof to one prepared
+    // request, so every provider reached through it - the public OpenAI API
+    // included - keeps its payload and headers exactly as other handlers left
+    // them. Acceleration is requested only inside the wrapped codex provider,
+    // which owns one call end to end.
     //
     // A settled turn is the point where the session's committed intent is
-    // known and stable, so the bounded terminal unsupported outcome is
-    // recorded here. Telemetry dedupes it to one durable record.
+    // known and stable, so the session's terminal outcome is recorded here:
+    // the latest correlated codex state when a mapping ran, and the bounded
+    // hook-seam unsupported outcome when none did. Telemetry dedupes it to
+    // one durable record.
     pi.on("agent_settled", () => {
       reportProviderFastIntent();
     });

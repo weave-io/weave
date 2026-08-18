@@ -9110,6 +9110,17 @@ function defineOwnData(target: object, key: string, value: unknown): void {
   });
 }
 
+/**
+ * The hook seam and every non-Codex provider.
+ *
+ * Exactly one mapping may request acceleration, and it lives in the wrapped
+ * `openai-codex` provider (proven in the codex describes below). Everything
+ * here is the other side of that line: the public OpenAI API provider, the
+ * Anthropic provider, and Pi's request/header hooks. For all of them a
+ * declared `fast true` stays inert - no hook is registered, no payload or
+ * header changes, and the reported state is the terminal hook-seam
+ * `unsupported`.
+ */
 describe("createPiExtension: provider fast intent", () => {
   const openaiModel = {
     provider: "openai",
@@ -9198,7 +9209,7 @@ describe("createPiExtension: provider fast intent", () => {
       .filter((eventType) => eventType.startsWith("provider-fast."));
   }
 
-  it("registers no provider request or header mutation at all", async () => {
+  it("registers no provider request or header hook at all, on any provider", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
@@ -9207,6 +9218,8 @@ describe("createPiExtension: provider fast intent", () => {
     installFastPrimary(host, { fast: true });
     await host.triggerSessionStart();
 
+    // The codex mapping is a provider override, so the hook seam stays empty
+    // whether or not an agent declares intent.
     expect(host.registeredEventHandlerCount("before_provider_headers")).toBe(0);
     expect(host.registeredEventHandlerCount("before_provider_request")).toBe(0);
     expect(host.registeredEventHandlerCount("after_provider_response")).toBe(0);
@@ -9215,7 +9228,7 @@ describe("createPiExtension: provider fast intent", () => {
   it.each([
     ["openai", openaiModel],
     ["anthropic", anthropicModel],
-  ] as const)("leaves a fast-declaring %s primary's payload and headers exactly unchanged", async (_provider, model) => {
+  ] as const)("leaves a fast-declaring non-codex %s primary's payload and headers exactly unchanged", async (_provider, model) => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
@@ -9338,7 +9351,7 @@ describe("createPiExtension: provider fast intent", () => {
     );
   });
 
-  it("reports unsupported on the status line for a fast primary", async () => {
+  it("reports unsupported on the status line for a fast non-codex primary", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
       trusted: true,
