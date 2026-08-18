@@ -391,6 +391,7 @@ export class RecordingFakePiHost {
         options: RecordedSendMessage["options"],
       ) => void | Promise<void>)
     | undefined;
+  private sendUserMessageThrows = false;
 
   constructor(options: FakePiHostOptions = {}) {
     this.mode = options.mode ?? "tui";
@@ -446,6 +447,11 @@ export class RecordingFakePiHost {
         this.handlers.set(event, existing);
       },
       sendUserMessage: (content, options) => {
+        // A host that refuses the dispatch never records the turn either:
+        // `sendUserMessage` reports failure only by throwing.
+        if (this.sendUserMessageThrows) {
+          throw new Error("simulated host failure: sendUserMessage");
+        }
         this.generatedTurnCount += 1;
         this.sentUserMessages.push({
           content,
@@ -718,6 +724,11 @@ export class RecordingFakePiHost {
     this.notifyFailure = new Error(
       "leaked: /Users/attacker/.config/weave/history.json",
     );
+  }
+
+  /** Makes `sendUserMessage()` throw synchronously, as a refused dispatch. */
+  poisonSendUserMessage(): void {
+    this.sendUserMessageThrows = true;
   }
 
   /** Makes `sendMessage()` throw synchronously. */

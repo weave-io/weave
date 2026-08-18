@@ -2219,6 +2219,41 @@ export function resolveDirectStepBadgeAgent(
   return committedPrimary?.getCurrent()?.descriptor.name;
 }
 
+/** What the adapter tells Pi to do with one interactive submission. */
+export interface PiInputDecision {
+  readonly action: "continue" | "handled";
+}
+
+/**
+ * The ONE rule that ties a foreground-plan observation to the submission it
+ * came from.
+ *
+ * Two orderings are load-bearing, and both are stated here rather than in the
+ * event handler, so neither can drift:
+ *
+ * 1. the observation generation is CLAIMED first, synchronously, before the
+ *    submission is routed and before its text is parsed. Every interactive
+ *    text therefore supersedes every older pending observation, whatever it
+ *    turns out to say;
+ * 2. the observation only COMPLETES when the host actually routed the message
+ *    into the session. A declined pause confirmation returns `handled`, which
+ *    submits nothing, so nothing may be adopted, recorded, or painted for it.
+ *
+ * Previously the observation was fired beside the decision, so a user who
+ * answered "no" to "pause the running workflow?" still moved the Plan Rail
+ * onto a plan whose kickoff turn never existed.
+ */
+export async function resolveWeaveInputDecision(input: {
+  /** Claims the generation; returns the completion to run iff routing succeeds. */
+  readonly claimObservation: () => (() => void) | undefined;
+  readonly routeInput: () => Promise<PiInputDecision>;
+}): Promise<PiInputDecision> {
+  const completeObservation = input.claimObservation();
+  const decision = await input.routeInput();
+  if (decision.action === "continue") completeObservation?.();
+  return decision;
+}
+
 /**
  * Builds the narrow read-only port the one active-plan resolver needs from a
  * workflow controller. `undefined` whenever this session has no controller at
@@ -3412,28 +3447,47 @@ export function createPiExtension(
     readonly generation: number;
     readonly root: string;
     readonly ctx: PiSessionContext;
-    readonly request: number;
+    readonly request: object;
   }
 
   /**
-   * Bounded latest-request counter. It wraps rather than growing, because only
-   * "is this still the newest observation?" is ever asked of it.
+   * The ONE generation of foreground-plan observation, as an identity rather
+   * than a number.
+   *
+   * A counter has to answer "could this token's number be the current one
+   * again?", and a wrapping counter's honest answer is "eventually yes". A
+   * fresh object cannot be minted twice, so a token issued before a session
+   * or root replacement can never compare equal to one issued after it - the
+   * generation and root checks beside it are then belt AND braces rather than
+   * the only thing standing between two sessions' observations.
    */
-  const foregroundPlanObservations = { latest: 0 };
-  const MAX_FOREGROUND_PLAN_REQUEST_ID = 1_000_000;
+  const foregroundPlanObservations: { latest: object } = {
+    latest: Object.freeze({}),
+  };
+
+  /**
+   * Supersedes every pending observation, and returns the marker that is now
+   * current.
+   *
+   * Called from exactly three places, all of them authoritative statements
+   * about what the user last asked for: a new interactive submission (before
+   * its text is parsed), a confirmed `/weave:start` selection, and session
+   * replacement.
+   */
+  function invalidatePendingForegroundPlanObservations(): object {
+    const marker = Object.freeze({});
+    foregroundPlanObservations.latest = marker;
+    return marker;
+  }
 
   function beginForegroundPlanObservation(
     ctx: PiSessionContext,
   ): ForegroundPlanToken {
-    foregroundPlanObservations.latest =
-      foregroundPlanObservations.latest >= MAX_FOREGROUND_PLAN_REQUEST_ID
-        ? 1
-        : foregroundPlanObservations.latest + 1;
     return {
       generation: sessionStartSequence,
       root: ctx.cwd,
       ctx,
-      request: foregroundPlanObservations.latest,
+      request: invalidatePendingForegroundPlanObservations(),
     };
   }
 
@@ -3556,40 +3610,68 @@ export function createPiExtension(
   }
 
   /**
+   * Claims the observation generation for ONE interactive submission, before
+   * a word of its text is parsed.
+   *
+   * This is the whole of "one monotonic generation": every interactive text
+   * the user sends supersedes every observation still in flight, whether the
+   * new text names a plan, names a different plan, names the SAME plan, is
+   * ordinary prose, is malformed, or is a refusal. The claim is taken first
+   * precisely so that a message this parser will not accept still invalidates
+   * the slower message before it - otherwise "execute alpha" followed by "no,
+   * do something else" could still land alpha on the rail a second later.
+   *
+   * It returns the parsed request only when the submission is one; the claim
+   * has already happened either way.
+   */
+  function claimForegroundPlanObservation(
+    event: unknown,
+    ctx: PiSessionContext,
+  ):
+    | { readonly token: ForegroundPlanToken; readonly planName: string }
+    | undefined {
+    const record = asJsonRecord(event);
+    if (record === undefined) return undefined;
+    if (record.source !== "interactive") return undefined;
+    if (typeof record.text !== "string") return undefined;
+    const token = beginForegroundPlanObservation(ctx);
+    const parsed = parseForegroundPlanRequest(record.text);
+    if (parsed.isErr()) return undefined;
+    return { token, planName: parsed.value };
+  }
+
+  /**
    * Adopts a foreground plan named by one direct interactive message.
    *
-   * Four independent proofs are required before a single column of the rail
+   * Five independent proofs are required before a single column of the rail
    * moves, and any one of them failing leaves the rail exactly as it was:
    *
    * 1. the message is the USER's own interactive submission;
    * 2. it parses, strictly, to exactly one contained
    *    `.weave/plans/<safe-name>.md` inside an explicit execution request;
-   * 3. that name is in THIS project root's plan catalog and its snapshot
+   * 3. the host ACTUALLY ROUTED that submission into the session. A declined
+   *    pause confirmation, or any other decision that ends the message before
+   *    it is submitted, runs no observation at all: the rail would otherwise
+   *    name a plan for a turn that never happened;
+   * 4. that name is in THIS project root's plan catalog and its snapshot
    *    reads, so a plan that exists only in another worktree is never read
    *    across roots and never displayed;
-   * 4. the session, the root and the request are still the current ones when
-   *    each await returns - so an older slow message cannot overwrite a newer
-   *    one, and a message observed just before a session switch cannot paint
-   *    into the session that replaced it.
+   * 5. the session, the root and the observation generation are still the
+   *    current ones when each await returns - so an older slow message cannot
+   *    overwrite a newer one, and a message observed just before a session
+   *    switch cannot paint into the session that replaced it.
    *
    * Read-only throughout: it lists a directory, reads a plan, and repaints.
    */
-  async function observeForegroundPlanRequest(
+  async function completeForegroundPlanObservation(
     pi: PiExtensionApi,
-    event: unknown,
-    ctx: PiSessionContext,
+    token: ForegroundPlanToken,
+    planName: string,
   ): Promise<void> {
-    const record = asJsonRecord(event);
-    if (record === undefined) return;
-    if (record.source !== "interactive") return;
-    if (typeof record.text !== "string") return;
-    const parsed = parseForegroundPlanRequest(record.text);
-    if (parsed.isErr()) return;
-    const planName = parsed.value;
     if (planName === foregroundPlanDisplay.planName()) return;
     const workflowController = workflowControllerCell.controller;
     if (workflowController === undefined) return;
-    const token = beginForegroundPlanObservation(ctx);
+    if (!foregroundPlanObservationCurrent(token)) return;
     const listed = await deps.planCatalogPort.listPlanNames(token.root);
     if (!foregroundPlanObservationCurrent(token)) return;
     if (listed.isErr() || !listed.value.includes(planName)) return;
@@ -4464,10 +4546,16 @@ export function createPiExtension(
       )
       .andThen(() => ensureForegroundStartReady(ctx, generationGuard))
       .andThen(() => {
-        // The plan the user selected and confirmed becomes the rail's display
-        // identity BEFORE the turn is submitted, so the rail names the plan
-        // from the first frame of the run rather than after it.
-        adoptForegroundPlan(pi, ctx, planName);
+        // The user's confirmed selection is authoritative, so it supersedes
+        // every direct observation still in flight BEFORE the turn is sent. A
+        // slower "execute .weave/plans/other.md" observed a moment earlier can
+        // then never land on top of the plan the user just chose.
+        invalidatePendingForegroundPlanObservations();
+        // Pi's `sendUserMessage` reports a failed dispatch only by throwing,
+        // so the Result-wrapped call IS the dispatch proof, and the identity
+        // is adopted from inside its success arm. Adopting first (which is
+        // what this did) left the rail naming a plan, and the session holding
+        // a recorded selection, for a kickoff turn that never started.
         const sendStartPrompt = Result.fromThrowable(
           () => pi.sendUserMessage(renderPlanStartPrompt(planName)),
           (): PiForegroundPlanStartFailure => ({
@@ -4476,7 +4564,12 @@ export function createPiExtension(
               "Pi could not submit the Tapestry start prompt to this session.",
           }),
         );
-        return sendStartPrompt();
+        return sendStartPrompt().map(() => {
+          // Still the first frame of the run: the turn now exists, and nothing
+          // it produces has been rendered yet.
+          adoptForegroundPlan(pi, ctx, planName);
+          return undefined;
+        });
       });
   }
 
@@ -4856,10 +4949,38 @@ export function createPiExtension(
       // else: assistant text, tool output and system prompts never reach this
       // handler, and the parse is strict enough that a message merely
       // mentioning a plan file moves nothing. It never changes the input's
-      // routing: the adoption runs beside the decision below, not inside it.
-      runForegroundPlanObservation(
-        observeForegroundPlanRequest(pi, event, ctx),
-      );
+      // routing: `resolveWeaveInputDecision` runs the adoption AFTER the
+      // routing decision, and only when the message was actually submitted.
+      return await resolveWeaveInputDecision({
+        claimObservation: () => {
+          const claimed = claimForegroundPlanObservation(event, ctx);
+          if (claimed === undefined) return undefined;
+          return () =>
+            runForegroundPlanObservation(
+              completeForegroundPlanObservation(
+                pi,
+                claimed.token,
+                claimed.planName,
+              ),
+            );
+        },
+        routeInput: () => routeParentInput(ctx),
+      });
+    });
+
+    /**
+     * The pause-before-prompt decision, on its own.
+     *
+     * Parent-chat/workflow concurrency (Pi adapter contract): an ordinary
+     * prompt arriving while a direct-step child is active must never be
+     * silently interleaved with the workflow's own mutation. Ask first; only a
+     * confirmed pause cancels the direct-step subtree and lets the prompt
+     * continue to Loom - a reject leaves the workflow running untouched and
+     * never submits the prompt.
+     */
+    async function routeParentInput(
+      ctx: PiSessionContext,
+    ): Promise<PiInputDecision> {
       if (!directStepChildRegistry.isActive()) return { action: "continue" };
       const confirmed = await ctx.ui.confirm(
         "Weave workflow active",
@@ -4898,7 +5019,7 @@ export function createPiExtension(
         );
       }
       return { action: "continue" };
-    });
+    }
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
       latestSessionCtx = ctx;
@@ -4930,6 +5051,12 @@ export function createPiExtension(
       // explicit selection later in the session supersedes whatever is
       // reconstructed here, because both paths write through the same cell.
       foregroundPlanDisplay.clear();
+      // The replaced session's pending observations are superseded here, not
+      // merely outvoted by the generation counter: their tokens hold a marker
+      // object that can never be minted again, so none of them can adopt into
+      // the session that replaced them - including when this startup returns
+      // early below and reconstructs nothing.
+      invalidatePendingForegroundPlanObservations();
       restoreForegroundPlanFromSession(ctx);
       // The active-agent badge is generation-scoped exactly like those
       // surfaces. A prior generation may have committed a primary and

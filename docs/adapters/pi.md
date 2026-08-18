@@ -182,9 +182,21 @@ with no incomplete task left clears it too. A plan that exists only in another
 worktree is not read across roots: the rail shows the agent row alone.
 
 Every one of these observations is guarded by the session generation, the
-project root, and its own request ordinal, rechecked after each read: an older
-slow request never overwrites a newer one, and an observation started before a
-session switch never paints into the session that replaced it.
+project root, and one monotonic observation generation, rechecked after each
+read. The generation is claimed by **every** interactive submission, before
+the text is parsed — ordinary prose, a malformed request, a negation, and a
+resubmission of the same plan all supersede a slower predecessor — and an
+authoritative `/weave:start` selection claims it too. The marker is a fresh
+identity rather than a counter, so a token issued before a session or root
+replacement can never compare equal to one issued after it.
+
+Adoption follows **actual routing**, never intent. A direct request adopts only
+after Pi routed that submission into the session: if a running workflow step
+prompts "pause it and interrupt with this message?" and the answer is no, the
+message is never submitted and the rail does not move. `/weave:start` likewise
+appends and records the identity only after `sendUserMessage` accepted the
+kickoff turn; a refused dispatch reports the failure and leaves no rail state
+and no session entry behind.
 
 Progress is re-read when the work can have changed it — after a turn settles
 and after the tool completions that can write a plan file — so the task marks,
