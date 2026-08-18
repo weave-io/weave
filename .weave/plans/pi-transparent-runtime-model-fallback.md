@@ -137,7 +137,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - Context tests prove exact marker/fingerprint/adjacency admission, exact two-item removal, stable order for all other messages, and fail-closed behavior for missing, duplicate, ambiguous, malformed, or misplaced markers.
     - Tests prove equal-looking but distinct failed assistants cannot be selected by loose text matching.
 
-- [ ] 2. Build the bounded fallback coordinator
+- [x] 2. Build the bounded fallback coordinator
   - **What**: Add one adapter-local state machine that owns candidate selection, model switching, marker proof, context repair, manual override, resets, and exact terminal decisions.
   - **Files**: `packages/adapters/pi/src/model-failover-coordinator.ts` (new), `packages/adapters/pi/src/model-failover-preflight.ts` (new or extracted from the contract), `packages/adapters/pi/src/__tests__/model-failover-coordinator.test.ts` (new), `packages/adapters/pi/src/__tests__/model-failover-preflight.test.ts` (new), `packages/adapters/pi/src/__tests__/fakes/fake-pi-host.ts`.
   - **Depends on**: Task 1.

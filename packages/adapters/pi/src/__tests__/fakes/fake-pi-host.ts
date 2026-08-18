@@ -1,6 +1,7 @@
 import type { WeaveConfig } from "@weaveio/weave-core";
 import type { MaterializationPlan } from "@weaveio/weave-engine";
 import { okAsync } from "neverthrow";
+import type { TimerHandle, TimerPort } from "../../child-timer.js";
 import { ADAPTER_PACKAGE_IDENTITY } from "../../commands.js";
 import type {
   PiConfigLoaderPort,
@@ -117,6 +118,47 @@ const DEFAULT_FAKE_KEYBINDING_KEYS: Record<string, readonly string[]> = {
   "tui.select.down": ["down"],
   "tui.select.cancel": ["escape", "ctrl+c"],
 };
+
+/** Deterministic timer port shared by bounded coordinator tests. */
+export class RecordingFakeTimerPort implements TimerPort {
+  readonly scheduled: {
+    readonly callback: () => void;
+    readonly delayMs: number;
+    cancelled: boolean;
+    fired: boolean;
+  }[] = [];
+
+  schedule(callback: () => void, delayMs: number): TimerHandle {
+    const entry = { callback, delayMs, cancelled: false, fired: false };
+    this.scheduled.push(entry);
+    return {
+      cancel: () => {
+        entry.cancelled = true;
+      },
+    };
+  }
+
+  pending(): readonly (typeof this.scheduled)[number][] {
+    return this.scheduled.filter((entry) => !entry.cancelled && !entry.fired);
+  }
+
+  fireNext(): void {
+    const entry = this.pending()[0];
+    if (entry === undefined) return;
+    entry.fired = true;
+    entry.callback();
+  }
+
+  fireAll(): void {
+    for (const entry of [...this.scheduled]) {
+      if (entry.cancelled || entry.fired) continue;
+      entry.fired = true;
+      entry.callback();
+    }
+  }
+}
+
+export const FakePiTimerPort = RecordingFakeTimerPort;
 
 export interface RecordedCommandRegistration {
   readonly name: string;
@@ -373,7 +415,9 @@ export class RecordingFakePiHost {
   private readonly handlers = new Map<string, PiEventHandler[]>();
   private getCommandsOverride: (() => readonly PiCommandInfo[]) | undefined;
   private setModelOverride:
-    | ((model: PiModelInfo) => boolean | Promise<boolean>)
+    | ((
+        model: PiModelInfo,
+      ) => boolean | undefined | Promise<boolean | undefined>)
     | undefined;
   private setThinkingLevelOverride:
     | ((level: string) => void | Promise<void>)
@@ -631,6 +675,24 @@ export class RecordingFakePiHost {
     };
   }
 
+  /** Makes the next `setModel()` call return a rejected promise. */
+  rejectSetModel(): void {
+    const previousOverride = this.setModelOverride;
+    this.setModelOverride = () => {
+      this.setModelOverride = previousOverride;
+      return Promise.reject(new Error("simulated host rejection: setModel"));
+    };
+  }
+
+  /** Makes the next `setModel()` call return no applied-state fact. */
+  indeterminateSetModel(): void {
+    const previousOverride = this.setModelOverride;
+    this.setModelOverride = () => {
+      this.setModelOverride = previousOverride;
+      return undefined;
+    };
+  }
+
   /** Makes `pi.setThinkingLevel()` throw synchronously. */
   poisonSetThinkingLevel(): void {
     this.setThinkingLevelOverride = () => {
@@ -650,7 +712,11 @@ export class RecordingFakePiHost {
    * `poisonSetModel()`'s thrown-exception case).
    */
   declineNextSetModel(): void {
-    this.setModelOverride = () => false;
+    const previousOverride = this.setModelOverride;
+    this.setModelOverride = () => {
+      this.setModelOverride = previousOverride;
+      return false;
+    };
   }
 
   /**
