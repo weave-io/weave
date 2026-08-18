@@ -236,7 +236,7 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
   - **Acceptance**:
     - `bun run docs:check-links` passes; docs and spec tell the same story; OpenCode/Claude Code docs remain unchanged.
 
-- [ ] 10. Full validation
+- [x] 10. Full validation
   - **What**: Run the complete repo validation suite.
   - **Depends on**: Tasks 3–9.
   - **Implementation outline**:
