@@ -11,7 +11,8 @@ export interface CommandRunner {
 }
 
 const META = /[;&|`$<>\n\r]/;
-const TAGS = new Set(["nightly", "next"]);
+const LEGACY_TAGS = new Set(["nightly", "next"]);
+const PROVENANCE_TAGS = new Set(["latest", "next", "nightly"]);
 const safe = (value: string): boolean => value.length > 0 && !META.test(value);
 
 /** Runs only argv-shaped npm publication and read-only verification commands. */
@@ -59,17 +60,8 @@ function validate(argv: readonly string[]): string | undefined {
   if (argv[0] !== "npm" || argv.some((part) => !safe(part)))
     return "only safe npm argv values are permitted";
   if (argv[1] === "publish") {
-    if (
-      argv.length !== 7 ||
-      argv[2]?.startsWith("-") ||
-      !argv[2]?.endsWith(".tgz") ||
-      argv[3] !== "--access" ||
-      argv[4] !== "public" ||
-      argv[5] !== "--tag" ||
-      !TAGS.has(argv[6] ?? "")
-    )
-      return "publish must be npm publish <tarball.tgz> --access public --tag <nightly|next>";
-    return undefined;
+    if (isLegacyPublish(argv) || isProvenancePublish(argv)) return undefined;
+    return "publish must be npm publish <tarball.tgz> --access public --tag <nightly|next> or npm publish <tarball.tgz> --provenance --tag <latest|next|nightly>";
   }
   if (argv[1] === "ping" && argv.length === 2) return undefined;
   if (
@@ -87,4 +79,33 @@ function validate(argv: readonly string[]): string | undefined {
   )
     return undefined;
   return "npm subcommand or arguments are not allowlisted";
+}
+
+function isTarballArg(value: string | undefined): value is string {
+  return (
+    value !== undefined && !value.startsWith("-") && value.endsWith(".tgz")
+  );
+}
+
+/** Old OIDC path: public access, nightly/next only. Kept until cutover. */
+function isLegacyPublish(argv: readonly string[]): boolean {
+  return (
+    argv.length === 7 &&
+    isTarballArg(argv[2]) &&
+    argv[3] === "--access" &&
+    argv[4] === "public" &&
+    argv[5] === "--tag" &&
+    LEGACY_TAGS.has(argv[6] ?? "")
+  );
+}
+
+/** Task 11 path: provenance at publish time, including direct latest. */
+function isProvenancePublish(argv: readonly string[]): boolean {
+  return (
+    argv.length === 6 &&
+    isTarballArg(argv[2]) &&
+    argv[3] === "--provenance" &&
+    argv[4] === "--tag" &&
+    PROVENANCE_TAGS.has(argv[5] ?? "")
+  );
 }

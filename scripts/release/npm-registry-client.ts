@@ -1,6 +1,33 @@
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import type { CommandRunner } from "./command-runner.js";
+import { PACKAGE_ARCHIVE_LIMITS } from "./constants.js";
 import type { RegistryError } from "./errors.js";
+
+export type PublishTag = "latest" | "next" | "nightly";
+
+export type PublishedTarballState =
+  | { state: "unpublished" }
+  | { state: "published"; sha256: string };
+
+/**
+ * Registry port for the resumable OIDC executor. Mutation is provenance
+ * publish only; there is no unpublish or dist-tag promotion.
+ */
+export interface PublishRegistry {
+  publishWithProvenance(
+    tarballPath: string,
+    tag: PublishTag,
+  ): ResultAsync<void, RegistryError>;
+  readPublishedTarballDigest(
+    packageName: string,
+    version: string,
+  ): ResultAsync<PublishedTarballState, RegistryError>;
+  verifyPublished(
+    packageName: string,
+    version: string,
+    expectedSha256: string,
+  ): ResultAsync<void, RegistryError>;
+}
 
 export interface NpmRegistryClient {
   publish(
@@ -25,14 +52,32 @@ export interface NpmRegistryClient {
   ): ResultAsync<void, RegistryError>;
 }
 
-export class NpmCliRegistryClient implements NpmRegistryClient {
-  constructor(private readonly commands: CommandRunner) {}
+export class NpmCliRegistryClient
+  implements NpmRegistryClient, PublishRegistry
+{
+  constructor(
+    private readonly commands: CommandRunner,
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
   publish(
     tarballPath: string,
     tag: "nightly" | "next",
   ): ResultAsync<void, RegistryError> {
     return this.commands
       .run(["npm", "publish", tarballPath, "--access", "public", "--tag", tag])
+      .map(() => undefined)
+      .mapErr((error) => ({
+        type: "RegistryError",
+        operation: "publish",
+        message: error.type,
+      }));
+  }
+  publishWithProvenance(
+    tarballPath: string,
+    tag: PublishTag,
+  ): ResultAsync<void, RegistryError> {
+    return this.commands
+      .run(["npm", "publish", tarballPath, "--provenance", "--tag", tag])
       .map(() => undefined)
       .mapErr((error) => ({
         type: "RegistryError",
@@ -157,37 +202,86 @@ export class NpmCliRegistryClient implements NpmRegistryClient {
             },
       );
   }
+  readPublishedTarballDigest(
+    packageName: string,
+    version: string,
+  ): ResultAsync<PublishedTarballState, RegistryError> {
+    return this.fetchTarball(
+      packageName,
+      version,
+      "readPublishedTarballDigest",
+    ).andThen(({ response, bytes }) => {
+      if (response.status === 404)
+        return okAsync({ state: "unpublished" as const });
+      if (!response.ok)
+        return errAsync({
+          type: "RegistryError" as const,
+          operation: "readPublishedTarballDigest",
+          message: `HTTP ${response.status}`,
+        });
+      if (bytes.byteLength > PACKAGE_ARCHIVE_LIMITS.compressedBytes)
+        return errAsync({
+          type: "RegistryError" as const,
+          operation: "readPublishedTarballDigest",
+          message: "tarball exceeds archive limit",
+        });
+      return okAsync({
+        state: "published" as const,
+        sha256: tarballDigest(bytes),
+      });
+    });
+  }
   verifyPublished(
     packageName: string,
     version: string,
     expectedSha256: string,
   ): ResultAsync<void, RegistryError> {
-    const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/-/${packageName.split("/").pop()}-${version}.tgz`;
+    return this.readPublishedTarballDigest(packageName, version).andThen(
+      (state) => {
+        if (state.state === "unpublished")
+          return errAsync({
+            type: "RegistryError" as const,
+            operation: "verifyPublished",
+            message: "HTTP 404",
+          });
+        if (state.sha256 !== expectedSha256)
+          return errAsync({
+            type: "RegistryError" as const,
+            operation: "verifyPublished",
+            message: "tarball digest mismatch",
+          });
+        return okAsync(undefined);
+      },
+    );
+  }
+  private fetchTarball(
+    packageName: string,
+    version: string,
+    operation: string,
+  ): ResultAsync<{ response: Response; bytes: Uint8Array }, RegistryError> {
+    const url = publishedTarballUrl(packageName, version);
     return ResultAsync.fromPromise(
-      fetch(url).then(async (response) => ({
+      this.fetchImpl(url).then(async (response) => ({
         response,
         bytes: new Uint8Array(await response.arrayBuffer()),
       })),
       (cause) => ({
         type: "RegistryError" as const,
-        operation: "verifyPublished",
+        operation,
         message: String(cause),
       }),
-    ).andThen(({ response, bytes }) => {
-      if (!response.ok)
-        return errAsync({
-          type: "RegistryError" as const,
-          operation: "verifyPublished",
-          message: `HTTP ${response.status}`,
-        });
-      const digest = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
-      if (digest !== expectedSha256)
-        return errAsync({
-          type: "RegistryError" as const,
-          operation: "verifyPublished",
-          message: "tarball digest mismatch",
-        });
-      return okAsync(undefined);
-    });
+    );
   }
+}
+
+export function publishedTarballUrl(
+  packageName: string,
+  version: string,
+): string {
+  const unscoped = packageName.split("/").pop() ?? packageName;
+  return `https://registry.npmjs.org/${encodeURIComponent(packageName)}/-/${unscoped}-${version}.tgz`;
+}
+
+function tarballDigest(bytes: Uint8Array): string {
+  return `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
 }
