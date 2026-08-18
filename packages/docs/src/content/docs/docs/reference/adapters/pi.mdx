@@ -64,17 +64,44 @@ Press `Alt+T` to open the read-only plan-task list. It reads the same active pla
 
 When no plan is available or Weave cannot read the plan or workflow, the list reports a short notice instead of opening a stale or empty view.
 
-## Provider acceleration is unsupported
+## Provider acceleration
 
-An agent's `fast true` is neutral intent in Pi. The adapter carries that intent on the active agent and on authenticated child sessions, and never turns it into a provider control.
+An agent's `fast true` is neutral intent. The adapter carries it on the active agent and on authenticated child sessions, and turns it into a provider control for one mapping only.
 
-Pi's extension contract exposes provider header, request, and response hooks, but none of them proves the effective transport of one prepared request together with that same request's official response body. Without that evidence, an acceleration claim would be a guess.
+| Mapping | What Pi does |
+| --- | --- |
+| OpenAI Codex subscription, the ChatGPT-backed `openai-codex` provider | Sends the Codex fast control under the exact rules below |
+| Public OpenAI API Fast/Priority, the `openai` provider | Nothing. Reports `unsupported` |
+| Every other provider | Nothing. Reports `unsupported` |
 
-The adapter therefore registers no provider header, request, or response handler. It mutates no provider request payload and no header, and it never writes `service_tier`, `speed`, or `anthropic-beta`. The `provider-fast-activation` capability reports `unsupported` with the bounded reason `harness-seam-unavailable`.
+These are two different OpenAI contracts. The public API contract stays unsupported on Pi, because Pi's provider header, request, and response hooks cannot prove the effective transport of one prepared request together with that same request's response body. The adapter registers no such hook and writes no `service_tier`, `speed`, or `anthropic-beta` value there.
 
-This is an optional-capability gap. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or child bootstrap. `/weave:status` may show `fast: unsupported (harness-seam-unavailable)`; it never reports acceleration as applied, active, or confirmed.
+### When the Codex mapping applies
 
-Support can be enabled only after Pi exposes a documented seam that reports the effective transport of one prepared request plus correlated official response-body evidence for that same request, proven in a fresh real harness. Unit coverage is not that proof.
+Weave registers its own `openai-codex` provider that wraps Pi's native one, so it holds the effective transport, the final request, and the same attempt's response. A request is mapped only when all of this is true:
+
+- your active agent declares `fast true`;
+- its resolved model is one of the allowlisted Codex models, and the request asks for that same model;
+- the request goes to the first-party ChatGPT backend, with no gateway or proxy base URL in `models.json`;
+- your credential is a ChatGPT subscription OAuth login;
+- nothing else already set a `service_tier` or a Codex routing hint on the request;
+- your Pi host is at least `0.83.0`, exposes the codex provider seam, and Weave's registration succeeded in a trusted, non-health-only session or an authenticated Weave child.
+
+A mapped request is sent over SSE and carries both parts of the Codex contract, or neither: `service_tier: "priority"` in the body, plus the `originator` and `x-codex-routing-hint` routing headers.
+
+The window is process-level, because the provider seam has no per-request agent identity. While a fast agent is active, an ambient Pi request on the same allowlisted model, such as a branch summary or a title generation, is mapped too.
+
+### What happens otherwise
+
+No `fast true`, any failed rule, a gateway base URL, an older host, a failed registration, or a conflicting value already on the request: Pi uses its native behavior and your request is byte-identical to the same setup without `fast true`. The one exception is a routing-hint conflict that appears only as the request is sent, after Weave already wrote the tier. Weave cannot take the tier back, so it blocks that request instead of sending a partial control.
+
+### What the states mean
+
+`requested` means Weave sent both controls on that attempt. It does not mean the request was faster. `applied` needs response evidence from the same attempt with the exact value `service_tier: "priority"`.
+
+On Pi 0.84.2 the backend reported `service_tier: "default"`, standard speed, for a mapped request and an untouched control alike, so a successful mapped request ends at `not-confirmed`. `applied` has never been observed. `/weave:status` shows the sanitized state, such as `fast: requested (codex-sub-05, openai-service-tier=absent)`, `fast: not-confirmed (codex-sub-05, openai-service-tier=standard)`, or `fast: unsupported (harness-seam-unavailable)`. `requested` appears as soon as Weave writes both controls, with the evidence outcome still `absent`; the same attempt's response resolves it to a terminal state. Weave never infers acceleration from status, latency, or its own change to the request.
+
+This capability is optional. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or child bootstrap.
 
 ## Private children
 

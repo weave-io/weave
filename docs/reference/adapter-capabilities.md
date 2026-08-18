@@ -41,15 +41,18 @@ The closed ID vocabulary and current required/optional profile live in [`package
 
 ### Current provider-fast support
 
-No shipped adapter can prove that a provider applied acceleration, so every adapter declares `unsupported` and sends no acceleration control:
+No shipped adapter can prove that a provider applied acceleration. One adapter mapping can nevertheless prove what it sent, so it declares a ceiling below `applied`:
 
-| Adapter | Readiness | Runtime status | Missing seam |
+| Adapter | Readiness | Runtime status | Seam |
 | --- | --- | --- | --- |
-| Pi | `unsupported` | `unsupported` (`harness-seam-unavailable`) | Pi's public extension contract cannot bind the effective transport or the response body of one prepared provider request, so the adapter registers no provider request or header hook. |
+| Pi, OpenAI Codex subscription mapping | `degraded` | Read from one correlated attempt: `requested`, `not-confirmed`, or `unsupported` | Weave's own wrapped `openai-codex` provider holds the effective transport, the final body, the outgoing headers, and the same attempt's response. It sends the two-part Codex control only under the exact eligibility rules, and the pinned host's standard-speed response evidence caps a successful request at `not-confirmed`. |
+| Pi, public OpenAI API and every other provider | — | `unsupported` (`harness-seam-unavailable`) | Pi's hook contract cannot bind the effective transport or the response body of one prepared provider request, so the adapter registers no provider request or header hook. |
 | OpenCode | `unsupported` | `unsupported` (`response-proof-unavailable`) | OpenCode's plugin surface can mutate a request, but no correlated official response-body proof exists for the same attempt. |
 | Claude Code | `unsupported` | `unsupported` (`harness-seam-unavailable`) | Static file materialization owns no per-invocation request seam and no response evidence. Claude Code's own `/fast` and Agent SDK controls are outside the adapter's surface. |
 
-These are optional-capability gaps. They warn, and they never enter health-only mode, block descriptor materialization, agent activation, prompts, models, tools, or delegation. `fast true` still travels through the config, descriptor, and Pi child-bootstrap layers as neutral intent; it is simply never translated into a provider control. See the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#truthful-states-and-transitions) for the state vocabulary and the evidence threshold that `applied` requires.
+Pi declares one static entry for the whole capability. `degraded` is its ceiling because the mapping covers one provider and cannot reach `applied` on the pinned host; a live attempt may lower that ceiling and can never raise it. Every mapping in the table that reports `unsupported` sends no acceleration control and leaves its provider payloads and headers unchanged, so `fast true` stays inert there. A Pi request that fails any eligibility rule is also byte-identical passthrough.
+
+These remain optional-capability outcomes. They warn, and they never enter health-only mode, block descriptor materialization, agent activation, prompts, models, tools, or delegation. `fast true` still travels through the config, descriptor, and Pi child-bootstrap layers as neutral intent. See [Pi Adapter](../adapters/pi.md#provider-acceleration) for the exact Pi rules, and the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#truthful-states-and-transitions) for the state vocabulary and the evidence threshold that `applied` requires.
 
 ## Effective evaluation
 

@@ -224,7 +224,7 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
   - **Acceptance**:
     - `bun run lint` and the release acceptance data checks pass; capability tests reflect `degraded` + runtime statuses.
 
-- [ ] 9. Documentation and changeset
+- [x] 9. Documentation and changeset
   - **What**: Update all user-facing docs to the new truthful behavior and add the changeset.
   - **Files**: `docs/adapters/pi.md`, `docs/reference/adapter-capabilities.md`, `docs/reference/configuration.md`, `docs/reference/dsl.md` (the "changes nothing about your requests" caveat), `docs/architecture/adapter-boundary.md` ("Today every adapter reports `unsupported`" sentence), `packages/docs/src/content/docs/docs/reference/adapters/pi.mdx`, `.changeset/<new>.md`.
   - **Depends on**: Tasks 7–8.

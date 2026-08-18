@@ -105,7 +105,7 @@ category backend {
 
 A handwritten `.weave` file gets no such best-effort conversion: each old form is a hard validation error you must fix by hand.
 
-Declaring `fast true` is safe to migrate today. Every shipped adapter reports the `provider-fast-activation` capability as unsupported and sends no provider control, so the declaration changes nothing about your requests. See [Adapter Capabilities](adapter-capabilities.md#current-provider-fast-support) and the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#breaking-dsl-merge-and-migration-contract) for the full cross-layer contract.
+Declaring `fast true` stays neutral in every config layer: it selects no provider, model, endpoint, or credential, and it adds no field to the core, config, or engine schema. Each adapter decides on its own whether the intent becomes a provider control, so the effect of migrating it depends only on the adapter you run. See [Adapter Capabilities](adapter-capabilities.md#current-provider-fast-support) and the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#breaking-dsl-merge-and-migration-contract) for the full cross-layer contract.
 
 ## Harness adapter settings
 

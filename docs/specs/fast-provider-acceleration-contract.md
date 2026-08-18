@@ -4,7 +4,7 @@ Date: 2026-08-12
 
 Last amended: 2026-08-18
 
-Status: Approved. OpenCode and Claude Code stay `unsupported`. The public OpenAI API and Anthropic mappings stay unimplemented on every adapter. The shipped Pi adapter still declares `provider-fast-activation` as `unsupported` and mutates no provider request; this note now authorizes exactly one Pi mapping, the OpenAI Codex subscription transport through a Weave-registered wrapped provider, under the rules below.
+Status: Approved and implemented for the one mapping it authorizes. OpenCode and Claude Code stay `unsupported`. The public OpenAI API and Anthropic mappings stay unimplemented on every adapter. The Pi adapter ships exactly one mapping, the OpenAI Codex subscription transport through a Weave-registered wrapped provider, under the rules below; it declares `provider-fast-activation` at the `degraded` ceiling those rules fix and mutates no other provider request.
 
 Retrieval date for web sources: 2026-08-12
 
@@ -21,6 +21,7 @@ Normative provider facts below come from first-party API documentation, with one
 | 2026-08-12 | Original note. Every adapter `unsupported`; no adapter mutates a provider request. |
 | 2026-08-17 | Added the OpenAI Codex subscription contract, the Pi wrapped-provider seam verdict, the normative Pi Codex mapping rules, and the pinned-host probe appendix. Owner approved OD-1, OD-5, and OD-6; Task 1 resolved OD-2, OD-3, and OD-4. Public OpenAI and Anthropic thresholds unchanged. |
 | 2026-08-18 | Sharpened Pi Codex rules 7 and 8: the preexisting-hint check is a preflight over both caller-held header sources, and a mapped body whose routing pair cannot be written is not sent at all rather than sent partially. No threshold, allowlist, or state change. |
+| 2026-08-18 | Recorded the shipped state: the Pi adapter implements and registers the wrapped codex provider and declares the capability at the `degraded` codex ceiling. No threshold, allowlist, rule, or state-vocabulary change. |
 
 ## Neutral Weave boundary
 
@@ -100,7 +101,7 @@ This is a second, distinct OpenAI mapping. It is not the [public OpenAI API cont
 | Response proof | `service_tier` on the response object | `service_tier` on the SSE `response.*` objects |
 | Positive value | `"fast"`, or `"priority"` for GPT-5.6 and earlier models | `"priority"` only |
 | Allowlist source | Official pricing and Fast mode eligibility | The pinned host's `openai-codex` model catalog |
-| Weave adapter status | Unmapped on every adapter | Authorized on Pi only, through the wrapped-provider seam; the shipped build still reports `unsupported` |
+| Weave adapter status | Unmapped on every adapter | Mapped on Pi only, through the wrapped-provider seam, at the ceiling fixed below |
 
 ### Two-part request contract
 
@@ -391,7 +392,7 @@ No Weave harness adapter has a complete request-plus-response seam that can prov
 - OpenCode: unsupported (`response-proof-unavailable`); request option/header hooks exist, but no success evidence does.
 - Claude Code materialization: unsupported (`harness-seam-unavailable`); native fast controls exist outside the adapter's owned surface.
 
-Outside the Pi Codex subscription mapping, every adapter still declares `provider-fast-activation` as `unsupported`, sends no acceleration control, and leaves provider requests untouched, so `fast true` stays inert neutral intent end to end and leaves those requests byte-identical to the same config without it. The Pi adapter's shipped build reports `unsupported` until the mapping is implemented; this note authorizes that implementation and fixes its rules and ceiling in advance.
+Outside the Pi Codex subscription mapping, every adapter sends no acceleration control and leaves provider requests untouched, so `fast true` stays inert neutral intent end to end and leaves those requests byte-identical to the same config without it. OpenCode and Claude Code declare `provider-fast-activation` as `unsupported`. Pi declares one static entry for the whole capability at the `degraded` ceiling this note fixes, because that entry also covers the mapping it does implement; its unmapped providers still report the runtime state `unsupported` with `harness-seam-unavailable`.
 
 Within the Pi Codex subscription mapping, a request that fails any rule in [Pi Codex subscription mapping rules](#pi-codex-subscription-mapping-rules) is also byte-identical passthrough. `requested` is not a success alias, and the adapter must not describe this mapping as making anything faster.
 
