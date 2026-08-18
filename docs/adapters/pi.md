@@ -190,18 +190,42 @@ authoritative `/weave:start` selection claims it too. The marker is a fresh
 identity rather than a counter, so a token issued before a session or root
 replacement can never compare equal to one issued after it.
 
-Adoption follows **actual routing**, never intent. A direct request adopts only
-after Pi routed that submission into the session: if a running workflow step
-prompts "pause it and interrupt with this message?" and the answer is no, the
-message is never submitted and the rail does not move. `/weave:start` likewise
-appends and records the identity only after `sendUserMessage` accepted the
-kickoff turn; a refused dispatch reports the failure and leaves no rail state
-and no session entry behind.
+Adoption follows a **host turn-start proof**, never intent. A parsed direct
+request is held as pending intent and adopted only when Pi's
+`before_agent_start` reports that a turn started for **that exact prompt**.
+That event is the earliest point where the host itself states it accepted the
+submission: input interception is over, skill and template expansion have run,
+and the agent loop is about to begin.
+
+The first proof spends the intent, whatever it proves. So the rail does not
+move when:
+
+- a running workflow step prompts "pause it and interrupt with this message?"
+  and the answer is no, so the message is never submitted;
+- another handler answers `handled`, or the host drops the submission;
+- no turn ever starts for it;
+- a turn starts for a different prompt — an unrelated turn is not a second
+  chance to adopt the earlier request, and a later turn quoting the original
+  text cannot redeem an intent that is already spent;
+- a newer submission superseded it, the session was replaced, or the project
+  root changed.
+
+Nothing here reads assistant text, tool output, or model prose: the proof is a
+host lifecycle event plus the user's own submitted string.
+
+`/weave:start` is the deliberate exception, because it is the path that submits
+the turn itself: it appends and records the identity inside the success arm of
+`sendUserMessage`, which is that path's own dispatch proof. A refused dispatch
+reports the failure and leaves no rail state and no session entry behind. The
+direct path cannot use the same rule, because it does not submit anything — it
+only declines to stop a message the host may still refuse.
 
 Progress is re-read when the work can have changed it — after a turn settles
 and after the tool completions that can write a plan file — so the task marks,
 `┃ now`, and `┗ next` move with the plan's checkboxes. There is no polling
-timer; concurrent refreshes coalesce onto one lookup.
+timer; concurrent refreshes coalesce onto one lookup, and the queue keeps the
+**latest** request with its own session context, so a refresh from a replaced
+session can never drop the work a newer session asked for.
 
 ### Alt+T plan-task list
 
@@ -338,7 +362,11 @@ The finalized surface is one high-contrast titled outer frame — ` WEAVE · CHI
 
 - **Session header, row 1.** An inverse ` CHILD ` badge, the child agent name, its model, its role, and its bounded task title, all left-aligned. The model sits immediately after the name and appears **exactly once**. The header grows to two rows before it drops the title.
 - **Session header, row 2.** `delegated by <PARENT>` followed by the plan › task › subtask breadcrumb, shedding subtask first, then plan.
-- **Transcript.** A Pi-native pane on the left: role gutters, understated read / edit / bash calls and results, reasoning as a bounded summary only, and plain streaming and final assistant responses. Raw chain-of-thought is never rendered. Raw reasoning — a `thinking_delta`, a legacy `delta.thinking`, a standalone `thinking` event, or a persisted `thinking` content block — prints a content-free `✻ reasoning` marker and nothing else, and its text is dropped before it reaches transcript state. Only an explicit host `reasoning_summary` event or `delta.reasoningSummary` field prints prose, under `✻ reasoning · SUMMARY`; no summary is ever derived by truncating or relabelling raw reasoning. The originating prompt comes first, then user messages, assistant text, reasoning summaries, tool calls and results, errors, retry dividers, and images.
+- **Transcript.** A Pi-native pane on the left: role gutters, understated read / edit / bash calls and results, reasoning as a bounded summary only, and plain streaming and final assistant responses. Raw chain-of-thought is never rendered. Raw reasoning — a `thinking_delta`, a legacy `delta.thinking`, a standalone `thinking` event, or a persisted `thinking` content block — prints a content-free `✻ reasoning` marker and nothing else, and its text is dropped before it reaches transcript state.
+
+A carrier is judged by what it holds, not by what it calls itself. A frame whose `assistantMessageEvent.type` says `text_delta` or `answer` while it buries prose in a `thinking` or `reasoning` member, or in a nested `{ type: "thinking" }` content block, is a raw-reasoning carrier: beside an answer it is rejected outright and moves nothing, and on its own it yields the content-free marker. A reasoning key with no prose under it — for example the numeric `usage.reasoning` token count — declares nothing, and a hostile carrier (a throwing proxy, or one nested deeper or wider than the bounded scan reads) is rejected rather than published.
+
+The **retention boundary** is the same for every path that keeps an event. Redaction empties every carrier of a reasoning frame — declared, hidden, or ambiguous — before the event reaches the transcript reducer, the live overlay projection, the replay-step builder, or the durable child-history port; the shape and block kinds survive, so a reader still learns that the child reasoned. The inspection registry hands the transcript reducer and the history port the **same** parser-approved, redacted event, and an event the parser refuses is retained nowhere: history records that a checkpoint happened and carries no payload. Only an explicit host `reasoning_summary` event or `delta.reasoningSummary` field prints prose, under `✻ reasoning · SUMMARY`; no summary is ever derived by truncating or relabelling raw reasoning. The originating prompt comes first, then user messages, assistant text, reasoning summaries, tool calls and results, errors, retry dividers, and images.
 - **Status Matrix rail.** An aligned key/value matrix on the right, grouped lifecycle · work · spend, with an inverse alert pair above the matrix when a tool fails. Below the width at which the rail and the transcript minimum both fit, it folds to its compact matrix form rather than disappearing.
 - **Prompt panel.** A primary-like bordered editor over one muted key row. A disabled key prints an explicit `✕` rather than only dim colour, so a settled child reads as unactionable on a monochrome terminal. The key row sheds ordinary notes, then the danger note, then whole chips in ladder order — `/ search`, then `Alt+Enter queue`, then `q cancel` — with `Enter` and `Esc` as the floor.
 

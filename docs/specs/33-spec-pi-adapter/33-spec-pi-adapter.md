@@ -294,7 +294,15 @@ Behavior:
   reasoning fact, framing that states nothing, or a typed rejection. A frame
   that declares an answer carrier and a raw-reasoning carrier at once is
   rejected fail-closed — it produces no text and no reasoning claim on any
-  surface, and both carriers are emptied before the event is retained.
+  surface, and both carriers are emptied before the event is retained. A
+  carrier is judged by what it HOLDS, not by the type it declares: prose under
+  a `thinking` / `reasoning` member, or in a nested thinking content block,
+  makes a `text_delta` or `answer` frame a raw-reasoning carrier too, and a
+  carrier the bounded descriptor-safe scan cannot read is rejected.
+- Every path that retains a child event retains the SAME parser-approved,
+  redacted event: the transcript reducer, the live overlay projection, the
+  replay-step builder, and the durable child-history port. An event the parser
+  refuses is retained nowhere — history records the checkpoint with no payload.
 - All child-sourced text is sanitized for terminal control sequences before
   render, and box-drawing glyphs are reachable only through the frame
   primitives, so child text structurally cannot forge a frame.
@@ -413,6 +421,17 @@ Required behavior:
   structurally cannot print a child ID, token count, cost, elapsed time, or
   queue depth, and it is byte-identical in every child state. No duplicate task
   footer is published beside it.
+- The rail's display-only foreground plan identity is adopted from a direct
+  interactive request only after the HOST proves the turn started: Pi's
+  `before_agent_start` must report that same submission's prompt. The adapter's
+  own `input` decision records pending intent and adopts nothing, the first
+  proof spends that intent whatever it proves, and an unsubmitted, superseded,
+  session-replaced, or unrelated turn adopts nothing. `/weave:start`, which
+  submits its own kickoff turn, adopts inside the success arm of
+  `sendUserMessage` instead, because that call is its dispatch proof.
+- Plan refreshes coalesce onto one lookup, and the queue keeps the latest
+  request with its own session context, so a refresh belonging to a replaced
+  session can never clear or drop a newer session's queued repaint.
 - A renderer failure falls back to the existing custom-editor inspection path
   with the same transcript.
 - Pi does not enable terminal mouse reporting, so wheel events cannot reach the
