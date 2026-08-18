@@ -33,6 +33,10 @@ import {
   makeChildAbortFailedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
+import {
+  type PiModelFailoverCoordinatorCell,
+  shutdownModelFailoverCoordinator,
+} from "./generation-resources.js";
 import type {
   PiEventHandler,
   PiExtensionApi,
@@ -380,6 +384,8 @@ export interface PiGenerationRevokePorts {
     | undefined;
   /** Clears the recovery coordinator cell. */
   readonly clearRecoveryCoordinator: () => void;
+  /** Invalidates the generation-owned primary model-fallback coordinator. */
+  readonly clearModelFailoverCoordinator: () => void;
   /** Closes and clears the inspection registry for the generation. */
   readonly closeInspectionRegistry: () => void;
   /** Clears the plan-state provider cell. */
@@ -418,6 +424,7 @@ export function revokeGenerationAuthority(
   const shuttingResources = ports.takeResources();
   ports.closeInspectionRegistry();
   ports.clearRecoveryCoordinator();
+  ports.clearModelFailoverCoordinator();
   const shuttingDelegation = ports.takeDelegationController();
   ports.clearThreadSources();
   noticeCell.value = undefined;
@@ -549,6 +556,7 @@ export function revokeGenerationForReplacement(
   noticeCell.value = undefined;
   ports.takeWorkflowController();
   ports.clearRecoveryCoordinator();
+  ports.clearModelFailoverCoordinator();
   ports.closeInspectionRegistry();
   ports.clearPlanStateProvider();
   ports.takeWorkflowInstance();
@@ -595,6 +603,8 @@ export interface PiSessionTransitionShutdownCells {
       | undefined;
   };
   readonly recoveryCoordinatorCell: { coordinator: unknown };
+  /** Optional so existing revoke tests compile until Task 4 tests land. */
+  readonly modelFailoverCoordinatorCell?: PiModelFailoverCoordinatorCell;
   readonly planStateProviderCell: { value: unknown };
   readonly telemetryCell: {
     telemetry: PiSessionShutdownTelemetryPort | undefined;
@@ -674,6 +684,11 @@ export function buildGenerationRevokePorts(
     },
     clearRecoveryCoordinator: () => {
       deps.recoveryCoordinatorCell.coordinator = undefined;
+    },
+    clearModelFailoverCoordinator: () => {
+      const cell = deps.modelFailoverCoordinatorCell;
+      if (cell === undefined) return;
+      shutdownModelFailoverCoordinator(cell);
     },
     closeInspectionRegistry: () => {
       deps.inspectionRegistryCell.registry?.closeGeneration();

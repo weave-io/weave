@@ -402,6 +402,7 @@ export class PiPrimarySession {
   private current: PiActivePrimary | undefined;
   private previousDescriptorName: string | undefined;
   private activationGeneration = 0;
+  private appliedModelOverride: PiModelInfo | undefined;
   private readonly warnedKeys = new Set<string>();
   private readonly warnings: PiPrimaryCapabilityWarning[] = [];
   private parentSession: PiParentSessionState = UNKNOWN_PARENT_SESSION;
@@ -427,7 +428,39 @@ export class PiPrimarySession {
    */
   captureRequestSnapshot(): PiPrimaryRequestSnapshot | undefined {
     if (this.current === undefined) return undefined;
-    return copyRequestSnapshot(this.current);
+    return copyRequestSnapshot(this.current, this.appliedModelOverride);
+  }
+
+  /**
+   * Stable id of the current explicit Weave agent activation. Ordinary turns
+   * and native model changes do not mint a new id.
+   */
+  getActivationId(): string | undefined {
+    if (this.current === undefined) return undefined;
+    return `activation-${this.current.generation}`;
+  }
+
+  /**
+   * The model actually applied on the host. After a proven failover `setModel`
+   * this is the fallback candidate, not the originally activated intent.
+   */
+  getAppliedModel(): PiModelInfo | undefined {
+    if (this.appliedModelOverride !== undefined) {
+      return copyModelInfo(this.appliedModelOverride);
+    }
+    if (this.current === undefined) return undefined;
+    const selected = selectedModelFromActivation(this.current.modelActivation);
+    return selected === undefined ? undefined : copyModelInfo(selected);
+  }
+
+  /**
+   * Record a host-proven applied model without minting a new activation.
+   * Explicit `activate()` remains the only path that clears this override.
+   */
+  noteAppliedModel(model: PiModelInfo): Result<void, never> {
+    if (this.current === undefined) return ok(undefined);
+    this.appliedModelOverride = copyModelInfo(model);
+    return ok(undefined);
   }
 
   /**
@@ -442,7 +475,10 @@ export class PiPrimarySession {
       return err({ type: "StalePrimaryRequestSnapshot" });
     }
 
-    const currentSnapshot = copyRequestSnapshot(current);
+    const currentSnapshot = copyRequestSnapshot(
+      current,
+      this.appliedModelOverride,
+    );
     const matches = Result.fromThrowable(
       () => requestSnapshotsMatch(snapshot, currentSnapshot),
       () => false,
@@ -622,6 +658,7 @@ export class PiPrimarySession {
 
       this.previousDescriptorName = this.current?.descriptor.name;
       this.activationGeneration = activePrimary.generation;
+      this.appliedModelOverride = undefined;
       this.current = activePrimary;
       return copyActivePrimary(activePrimary);
     });
@@ -1073,8 +1110,11 @@ function copySelectedModel(model: PiModelInfo): PiModelInfo {
 
 function copyRequestSnapshot(
   current: PiActivePrimary,
+  appliedModelOverride?: PiModelInfo,
 ): PiPrimaryRequestSnapshot {
-  const selectedModel = selectedModelFromActivation(current.modelActivation);
+  const selectedModel =
+    appliedModelOverride ??
+    selectedModelFromActivation(current.modelActivation);
   return Object.freeze({
     generation: current.generation,
     primaryName: current.descriptor.name,

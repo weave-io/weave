@@ -20,6 +20,7 @@ import {
   createPiTelemetryLogger,
   extractAssistantUsageFromMessage,
   PI_JOURNAL_FAMILIES,
+  PI_MODEL_FALLBACK_JOURNAL_DATA_KEYS,
   PI_PROVIDER_FAST_DEDUPE_LIMIT,
   PI_PROVIDER_FAST_JOURNAL_DATA_KEYS,
   type PiJournalPort,
@@ -274,6 +275,7 @@ describe("PiTelemetry — data ban (Pi adapter contract)", () => {
       "retention",
       "telemetry-degradation",
       "provider-fast",
+      "model-fallback",
     ]);
   });
 
@@ -703,6 +705,14 @@ function providerFastEntries(
   );
 }
 
+function modelFallbackEntries(
+  store: ReturnType<typeof createInMemoryRuntimeStore>,
+) {
+  return [...store.journal.snapshot().values()].filter((entry) =>
+    entry.eventType.startsWith("model-fallback."),
+  );
+}
+
 describe("PiTelemetry — provider-fast journal family", () => {
   it("projects only closed sanitized keys and types", () => {
     const projected = projectProviderFastJournalData(providerFastSnapshot());
@@ -1100,5 +1110,115 @@ describe("PiTelemetry — provider-fast journal family", () => {
       expect(sink).not.toContain("gpt-5.6-sol");
       expect(sink).not.toContain("service_tier");
     }
+  });
+});
+
+describe("PiTelemetry — model-fallback journal family", () => {
+  it("accepts one bounded applied fallback record with failure truth", async () => {
+    const store = createInMemoryRuntimeStore();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+    });
+    const accepted = {
+      outcome: "applied",
+      failureClass: "provider_unavailable",
+      fromProvider: "openai-codex",
+      fromId: "gpt-5.6-luna",
+      toProvider: "anthropic",
+      toId: "claude-sonnet-4-5",
+      cursorPosition: 0,
+    } as const;
+
+    const result = await telemetry.recordModelFallbackTransition(accepted);
+    expect(result.isOk()).toBe(true);
+
+    const entries = modelFallbackEntries(store);
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    expect(entry).toBeDefined();
+    if (entry === undefined) return;
+    expect(entry.eventType).toBe("model-fallback.applied");
+    expect(entry.severity).toBe("info");
+    expect(entry.data).toEqual(accepted);
+    expect(Object.keys(entry.data).sort()).toEqual(
+      [...PI_MODEL_FALLBACK_JOURNAL_DATA_KEYS].sort(),
+    );
+  });
+
+  it("rejects raw errors, marker tokens, failed content, extra keys, invalid identities, and invalid cursors", async () => {
+    const store = createInMemoryRuntimeStore();
+    const telemetry = buildTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+    });
+    const accepted = {
+      outcome: "applied",
+      failureClass: "provider_unavailable",
+      fromProvider: "openai-codex",
+      fromId: "gpt-5.6-luna",
+      toProvider: "anthropic",
+      toId: "claude-sonnet-4-5",
+      cursorPosition: 0,
+    } as const;
+    const rawError = "PRIVATE-RAW-PROVIDER-ERROR-CANARY";
+    const markerToken = "PRIVATE-MARKER-TOKEN-CANARY";
+    const failedContent = "PRIVATE-FAILED-CONTENT-CANARY";
+    const rejected: ReadonlyArray<{
+      readonly input: unknown;
+      readonly canary?: string;
+    }> = [
+      {
+        input: { ...accepted, errorMessage: rawError },
+        canary: rawError,
+      },
+      {
+        input: { ...accepted, markerToken },
+        canary: markerToken,
+      },
+      {
+        input: { ...accepted, failedContent },
+        canary: failedContent,
+      },
+      {
+        input: {
+          ...accepted,
+          unexpected: "PRIVATE-EXTRA-KEY-CANARY",
+        },
+        canary: "PRIVATE-EXTRA-KEY-CANARY",
+      },
+      { input: { ...accepted, fromProvider: "" } },
+      { input: { ...accepted, fromId: 42 } },
+      { input: { ...accepted, toProvider: "x".repeat(65) } },
+      { input: { ...accepted, cursorPosition: -1 } },
+      { input: { ...accepted, cursorPosition: 1.5 } },
+      {
+        input: {
+          ...accepted,
+          cursorPosition: Number.MAX_SAFE_INTEGER + 1,
+        },
+      },
+      {
+        input: { ...accepted, cursorPosition: Number.POSITIVE_INFINITY },
+      },
+    ];
+
+    for (const candidate of rejected) {
+      const result = await telemetry.recordModelFallbackTransition(
+        candidate.input,
+      );
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) {
+        expect(result.error.code).toBe("JournalWriteFailed");
+        if (candidate.canary !== undefined) {
+          expect(JSON.stringify(result.error)).not.toContain(candidate.canary);
+        }
+      }
+    }
+
+    expect(modelFallbackEntries(store)).toHaveLength(0);
+    const journal = JSON.stringify(store.journal.snapshot());
+    for (const canary of [rawError, markerToken, failedContent]) {
+      expect(journal).not.toContain(canary);
+    }
+    expect(journal).not.toContain("PRIVATE-EXTRA-KEY-CANARY");
   });
 });

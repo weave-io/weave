@@ -189,7 +189,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - Capability output has bounded reason codes and no misleading claim that every supported Pi version has this behavior.
     - Existing required capability and health-only tests remain unchanged in meaning.
 
-- [ ] 4. Wire primary-session recovery on the public lifecycle
+- [x] 4. Wire primary-session recovery on the public lifecycle
   - **What**: Compose one coordinator into the primary session without changing Pi's internal settlement or creating a second session.
   - **Files**: `packages/adapters/pi/src/extension-impl.ts`, `packages/adapters/pi/src/primary-session.ts`, `packages/adapters/pi/src/session-transition-runtime.ts`, `packages/adapters/pi/src/generation-resources.ts`, `packages/adapters/pi/src/provider-fast-activation.ts`, `packages/adapters/pi/src/telemetry.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/primary-session.test.ts`, `packages/adapters/pi/src/__tests__/session-transition-runtime.test.ts`, `packages/adapters/pi/src/__tests__/generation-resources.test.ts`, `packages/adapters/pi/src/__tests__/provider-fast-activation.test.ts`, `packages/adapters/pi/src/__tests__/telemetry.test.ts`.
   - **Depends on**: Tasks 2–3.

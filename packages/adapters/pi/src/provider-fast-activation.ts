@@ -363,3 +363,14 @@ export function classifyProviderFastIntent(
 ): ProviderFastClassification {
   return readOwnFastIntent(intent).unwrapOr(false) ? UNSUPPORTED : NO_INTENT;
 }
+
+/**
+ * After a proven applied-model change, prior acceleration evidence is
+ * invalid. Recompute from the new owner's intent only; never reuse a
+ * previous provider or model's snapshot.
+ */
+export function recomputeProviderFastAfterAppliedModel(
+  intent: unknown,
+): ProviderFastClassification {
+  return classifyProviderFastIntent(intent);
+}

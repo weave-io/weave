@@ -787,7 +787,7 @@ function installExtension(
 }
 
 describe("createPiExtension factory (layer C: compiled extension against a fake host)", () => {
-  it("registers commands, the palette shortcut, and seven lifecycle delegates without a tool-call interceptor", () => {
+  it("registers commands, the palette shortcut, and lifecycle delegates without a tool-call interceptor", () => {
     const host = new RecordingFakePiHost();
     installExtension(host);
     expect(host.registerCommandCalls.map((call) => call.name).sort()).toEqual(
@@ -815,8 +815,11 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       "agent_settled",
       "agent_start",
       "before_agent_start",
+      "context",
       "input",
       "message_end",
+      "message_start",
+      "model_select",
       "session_before_fork",
       "session_before_switch",
       "session_before_tree",
@@ -13551,5 +13554,447 @@ describe("createPiExtension: codex subscription fast provider in child mode", ()
     expect(mapped.payload.service_tier).toBe("priority");
     expect(headerValue(mapped.sentInit, "originator")).toBe("codex_cli_rs");
     expect(extension.providerFastLatestForTest()?.state).toBe("not-confirmed");
+  });
+});
+
+describe("createPiExtension: primary model fallback C4a", () => {
+  const loomOrigin = {
+    provider: "anthropic",
+    id: "loom-origin",
+    name: "Loom origin",
+  };
+  const loomFallback = {
+    provider: "openai",
+    id: "loom-fallback",
+    name: "Loom fallback",
+  };
+  const tapestryOrigin = {
+    provider: "google",
+    id: "tapestry-origin",
+    name: "Tapestry origin",
+  };
+  const tapestryFallback = {
+    provider: "mistral",
+    id: "tapestry-fallback",
+    name: "Tapestry fallback",
+  };
+  const manualModel = {
+    provider: "manual",
+    id: "user-selected",
+    name: "User selected",
+  };
+
+  function modelFallbackOverrides(
+    journalEntries: unknown[],
+  ): Partial<PiExtensionDeps> {
+    return {
+      hostSurfaceReader: hostSurfaceReader(),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      telemetryJournal: {
+        write: (entry) => {
+          journalEntries.push(entry);
+          return okAsync(undefined);
+        },
+      },
+      telemetryLogFileSystem: new MemoryRuntimeLogFileSystem(),
+    };
+  }
+
+  function installModelFallbackExtension(
+    host: RecordingFakePiHost,
+    journalEntries: unknown[],
+  ): PiExtensionInstance {
+    return installExtension(host, "0.81.1", {
+      ...modelFallbackOverrides(journalEntries),
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({
+              fast: true,
+              models: [
+                `${loomOrigin.provider}/${loomOrigin.id}`,
+                `${loomFallback.provider}/${loomFallback.id}`,
+              ],
+            }),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor({
+              models: [
+                `${tapestryOrigin.provider}/${tapestryOrigin.id}`,
+                `${tapestryFallback.provider}/${tapestryFallback.id}`,
+              ],
+            }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+  }
+
+  function failureEvent(id: string): {
+    readonly type: "message_end";
+    readonly message: Record<string, unknown>;
+  } {
+    return {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        id,
+        stopReason: "error",
+        status: 503,
+        content: [{ type: "text", text: "bounded provider failure" }],
+      },
+    };
+  }
+
+  function modelFallbackRecords(
+    entries: readonly unknown[],
+  ): Record<string, unknown>[] {
+    return entries.flatMap((entry) => {
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        !("eventType" in entry) ||
+        ((entry as { readonly eventType?: unknown }).eventType !==
+          "model-fallback.applied" &&
+          (entry as { readonly eventType?: unknown }).eventType !==
+            "model-fallback.recovery-confirmed" &&
+          (entry as { readonly eventType?: unknown }).eventType !==
+            "model-fallback.failed")
+      ) {
+        return [];
+      }
+      const data = (entry as { readonly data?: unknown }).data;
+      return typeof data === "object" && data !== null
+        ? [data as Record<string, unknown>]
+        : [];
+    });
+  }
+
+  async function applyFallbackCandidate(
+    host: RecordingFakePiHost,
+    expected: typeof loomFallback | typeof tapestryFallback,
+    failureId: string,
+  ): Promise<void> {
+    const deferred = host.deferNextSetModel();
+    await host.triggerEvent("message_end", failureEvent(failureId));
+    await flushBackgroundWork();
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await deferred.called;
+    expect(host.setModelCalls.at(-1)).toBe(expected);
+
+    // Prove the two facts in the conservative order used by the host: the
+    // application result arrives first, then the expected native model event.
+    deferred.settle(true);
+    await flushBackgroundWork();
+    expect(host.sendMessageCalls).toHaveLength(0);
+    await host.triggerModelSelect(expected, "set");
+    await flushBackgroundWork();
+    await flushBackgroundWork();
+  }
+
+  it("latches an unmatched model selection, keeps the latch across a user turn, and re-arms only on explicit Weave activation", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [
+        loomOrigin,
+        loomFallback,
+        tapestryOrigin,
+        tapestryFallback,
+        manualModel,
+      ],
+    });
+    installModelFallbackExtension(host, journalEntries);
+    await host.triggerSessionStart();
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · LOOM");
+
+    // `source` is not an ownership proof. This unmatched native selection is
+    // therefore a conservative manual override of automatic fallback.
+    await host.triggerModelSelect(manualModel, "set");
+    await host.triggerBeforeAgentStart({ systemPrompt: "ordinary user turn" });
+    await host.triggerEvent(
+      "message_end",
+      failureEvent("manual-latch-failure"),
+    );
+    await flushBackgroundWork();
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await flushBackgroundWork();
+    expect(host.setModelCalls).toEqual([loomOrigin]);
+
+    // Alt+A is an explicit Weave activation. It replaces the frozen scope with
+    // Tapestry's ordered candidates rather than clearing the latch for an
+    // ordinary turn or reusing Loom's candidates.
+    host.poisonSendMessage();
+    await host.invokeShortcut("alt+a");
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · TAPESTRY");
+    expect(host.setModelCalls).toEqual([loomOrigin, tapestryOrigin]);
+
+    await applyFallbackCandidate(host, tapestryFallback, "rearmed-failure");
+    expect(host.setModelCalls).toEqual([
+      loomOrigin,
+      tapestryOrigin,
+      tapestryFallback,
+    ]);
+    expect(host.getCurrentModel()).toBe(tapestryFallback);
+  });
+
+  it("keeps applied model and recomputed provider-fast truth after marker dispatch fails", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+    });
+    const extension = installModelFallbackExtension(host, journalEntries);
+    await host.triggerSessionStart();
+    host.poisonSendMessage();
+
+    await applyFallbackCandidate(host, loomFallback, "marker-failure");
+    await flushBackgroundWork();
+
+    expect(host.getCurrentModel()).toBe(loomFallback);
+    expect(shownAgentBadge(host)).toBe("◆ WEAVE · LOOM");
+    expect(extension.providerFastLatestForTest()).toEqual(
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+    const records = modelFallbackRecords(journalEntries);
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        outcome: "applied",
+        fromProvider: loomOrigin.provider,
+        fromId: loomOrigin.id,
+        toProvider: loomFallback.provider,
+        toId: loomFallback.id,
+      }),
+    );
+    expect(
+      records.some((record) => record.outcome === "recovery-confirmed"),
+    ).toBe(false);
+  });
+
+  it("keeps applied model and recomputed provider-fast truth after context admission fails", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+    });
+    const extension = installModelFallbackExtension(host, journalEntries);
+    await host.triggerSessionStart();
+
+    await applyFallbackCandidate(host, loomFallback, "context-failure");
+    const marker = host.sendMessageCalls.at(-1)?.message;
+    expect(marker).toMatchObject({
+      customType: "weave.model-fallback.recovery-marker",
+    });
+    await host.triggerEvent("message_start", {
+      type: "message_start",
+      message: marker,
+    });
+
+    // The marker dispatch was proven, but this provider context does not carry
+    // the exact failed assistant/marker pair. Admission fails closed without
+    // changing the model that Pi already applied.
+    await host.triggerEvent("context", [
+      { role: "user", content: "unrelated context" },
+    ]);
+    await flushBackgroundWork();
+
+    expect(host.getCurrentModel()).toBe(loomFallback);
+    expect(extension.providerFastLatestForTest()).toEqual(
+      UNSUPPORTED_FAST_SNAPSHOT,
+    );
+    const records = modelFallbackRecords(journalEntries);
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        outcome: "applied",
+        toProvider: loomFallback.provider,
+        toId: loomFallback.id,
+      }),
+    );
+    expect(
+      records.some((record) => record.outcome === "recovery-confirmed"),
+    ).toBe(false);
+  });
+
+  it("completes one primary fallback lifecycle with one deferred settlement (C4b)", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+    });
+    installModelFallbackExtension(host, journalEntries);
+
+    const bootContext = await host.triggerSessionStart();
+    const nativeSessionId = bootContext.sessionManager?.getSessionId();
+    const setModelCallsAtBoot = host.setModelCalls.length;
+    expect(nativeSessionId).toBe("fake-session-1");
+    expect(host.beforeAgentStartCalls).toBe(0);
+
+    // The failed assistant is observed first. The payloadless settlement is
+    // deferred until the coordinator proves the fallback model application.
+    const failedEvent = failureEvent("c4b-failed-assistant");
+    const failedAssistant = failedEvent.message;
+    const deferred = host.deferNextSetModel();
+    await host.triggerEvent("message_end", failedEvent);
+    await flushBackgroundWork();
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await deferred.called;
+
+    expect(host.setModelCalls).toHaveLength(setModelCallsAtBoot + 1);
+    expect(host.setModelCalls.at(-1)).toBe(loomFallback);
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(
+      journalEntries.some(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          "eventType" in entry &&
+          String((entry as { readonly eventType?: unknown }).eventType) ===
+            "provider-fast.unsupported",
+      ),
+    ).toBe(false);
+
+    // Apply proof arrives before the expected native model_select proof. The
+    // marker is not dispatched until both facts are true.
+    deferred.settle(true);
+    await flushBackgroundWork();
+    expect(host.sendMessageCalls).toHaveLength(0);
+    await host.triggerModelSelect(loomFallback, "set");
+    await flushBackgroundWork();
+    await flushBackgroundWork();
+
+    expect(host.setModelCalls).toHaveLength(setModelCallsAtBoot + 1);
+    expect(host.getCurrentModel()).toBe(loomFallback);
+    expect(host.sendMessageCalls).toHaveLength(1);
+    const markerRecord = host.sendMessageCalls[0];
+    expect(markerRecord?.options).toEqual({ triggerTurn: true });
+    const marker = markerRecord?.message;
+    expect(marker).toMatchObject({
+      role: "custom",
+      customType: "weave.model-fallback.recovery-marker",
+      display: false,
+    });
+    if (marker === undefined) throw new Error("fallback marker was not sent");
+
+    // Pi's generic fake event helper intentionally ignores replacement return
+    // values. Invoke the registered public context hook directly so this test
+    // can assert the exact provider-only repair.
+    await host.triggerEvent("message_start", {
+      type: "message_start",
+      message: marker,
+    });
+    const userMessage = { role: "user", content: "keep this durable input" };
+    const successfulAssistant = {
+      role: "assistant",
+      id: "c4b-successful-assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "fallback answer" }],
+    };
+    const durableInput = [
+      userMessage,
+      failedAssistant,
+      marker,
+      successfulAssistant,
+    ];
+    const durableInputSnapshot = [...durableInput];
+    const contextSubscription = host.onCalls.find(
+      (entry) => entry.event === "context",
+    );
+    if (contextSubscription === undefined) {
+      throw new Error("primary context hook was not registered");
+    }
+    const repairedContext = await contextSubscription.handler(
+      durableInput,
+      host.createSessionContext(),
+    );
+    expect(repairedContext).toEqual([userMessage, successfulAssistant]);
+    expect(repairedContext).not.toContain(failedAssistant);
+    expect(repairedContext).not.toContain(marker);
+    expect(repairedContext).toContain(successfulAssistant);
+    expect(durableInput).toEqual(durableInputSnapshot);
+    expect(durableInput).toHaveLength(4);
+    await flushBackgroundWork();
+
+    // The recovery run has its own successful assistant message, but it does
+    // not need a before_agent_start event or a new native session/process.
+    await host.triggerEvent("agent_start", { type: "agent_start" });
+    await host.triggerEvent("message_end", {
+      type: "message_end",
+      message: successfulAssistant,
+    });
+    await flushBackgroundWork();
+    const modelFallbackEventTypesBeforeFinalSettlement = journalEntries
+      .map((entry) =>
+        typeof entry === "object" && entry !== null && "eventType" in entry
+          ? String((entry as { readonly eventType?: unknown }).eventType)
+          : "",
+      )
+      .filter((eventType) => eventType.startsWith("model-fallback."));
+    expect(modelFallbackEventTypesBeforeFinalSettlement).not.toContain(
+      "model-fallback.success",
+    );
+
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await flushBackgroundWork();
+    await flushBackgroundWork();
+
+    const modelFallbackEventTypes = journalEntries
+      .map((entry) =>
+        typeof entry === "object" && entry !== null && "eventType" in entry
+          ? String((entry as { readonly eventType?: unknown }).eventType)
+          : "",
+      )
+      .filter((eventType) => eventType.startsWith("model-fallback."));
+    expect(modelFallbackEventTypes).toEqual([
+      "model-fallback.applied",
+      "model-fallback.recovery-confirmed",
+      "model-fallback.success",
+    ]);
+    expect(
+      modelFallbackEventTypes.filter(
+        (eventType) => eventType === "model-fallback.success",
+      ),
+    ).toHaveLength(1);
+
+    const providerFastEventTypes = journalEntries
+      .map((entry) =>
+        typeof entry === "object" && entry !== null && "eventType" in entry
+          ? String((entry as { readonly eventType?: unknown }).eventType)
+          : "",
+      )
+      .filter((eventType) => eventType.startsWith("provider-fast."));
+    expect(providerFastEventTypes).toEqual(["provider-fast.unsupported"]);
+
+    // One fallback switch occurred in the original primary session. The
+    // marker used sendMessage, not a user turn, and Weave never concatenated
+    // the failed partial assistant with the successful fallback assistant.
+    expect(host.setModelCalls).toHaveLength(setModelCallsAtBoot + 1);
+    expect(host.getCurrentModel()).toBe(loomFallback);
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(host.generatedTurnCount).toBe(0);
+    expect(host.appendedEntries).toHaveLength(0);
+    expect(host.beforeAgentStartCalls).toBe(0);
+    expect(host.createSessionContext().sessionManager?.getSessionId()).toBe(
+      nativeSessionId,
+    );
+    expect(JSON.stringify(journalEntries)).not.toContain("fallback answer");
+    expect(JSON.stringify(journalEntries)).not.toContain(
+      "bounded provider failure",
+    );
   });
 });

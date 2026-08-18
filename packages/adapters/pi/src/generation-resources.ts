@@ -12,6 +12,43 @@ import type { PiTelemetry } from "./telemetry.js";
 import type { PiSessionContext } from "./types.js";
 
 /**
+ * The generation-owned model-fallback coordinator, seen only through its
+ * reset/shutdown boundary so this module never imports coordinator internals.
+ */
+export interface PiGenerationModelFailoverPort {
+  reset(): unknown;
+  shutdown(): unknown;
+}
+
+/** Generation-scoped holder for the one primary-session failover coordinator. */
+export interface PiModelFailoverCoordinatorCell {
+  coordinator: PiGenerationModelFailoverPort | undefined;
+  generationId: string | undefined;
+}
+
+export function createModelFailoverCoordinatorCell(): PiModelFailoverCoordinatorCell {
+  return { coordinator: undefined, generationId: undefined };
+}
+
+/**
+ * Synchronously invalidate timers and publish any retained failure once.
+ * A replaced generation must not keep a live coordinator across the first
+ * await of shutdown or replacement.
+ */
+export function shutdownModelFailoverCoordinator(
+  cell: PiModelFailoverCoordinatorCell,
+): void {
+  const coordinator = cell.coordinator;
+  cell.coordinator = undefined;
+  cell.generationId = undefined;
+  if (coordinator === undefined) return;
+  Result.fromThrowable(
+    () => coordinator.shutdown(),
+    () => undefined,
+  )();
+}
+
+/**
  * Owns the resources a single extension generation created, so a replaced
  * generation releases them exactly once and never on its successor's behalf.
  */
@@ -19,6 +56,7 @@ export class PiGenerationResourceOwner {
   private disposed = false;
   private runtimeStore: RuntimeStore | undefined;
   private telemetry: PiTelemetry | undefined;
+  private modelFailover: PiGenerationModelFailoverPort | undefined;
 
   /**
    * `onDispose` runs exactly once, when this generation stops owning its
@@ -53,6 +91,23 @@ export class PiGenerationResourceOwner {
     this.telemetry = telemetry;
   }
 
+  adoptModelFailover(coordinator: PiGenerationModelFailoverPort): void {
+    if (this.disposed) {
+      Result.fromThrowable(
+        () => coordinator.shutdown(),
+        () => undefined,
+      )();
+      return;
+    }
+    this.modelFailover = coordinator;
+  }
+
+  takeModelFailover(): PiGenerationModelFailoverPort | undefined {
+    const held = this.modelFailover;
+    this.modelFailover = undefined;
+    return held;
+  }
+
   dispose(): ResultAsync<void, never> {
     if (this.disposed) return okAsync(undefined);
     this.disposed = true;
@@ -63,6 +118,14 @@ export class PiGenerationResourceOwner {
       () => undefined,
       () => undefined,
     );
+    const failover = this.modelFailover;
+    this.modelFailover = undefined;
+    if (failover !== undefined) {
+      Result.fromThrowable(
+        () => failover.shutdown(),
+        () => undefined,
+      )();
+    }
     const telemetry = this.telemetry;
     const runtimeStore = this.runtimeStore;
     this.telemetry = undefined;

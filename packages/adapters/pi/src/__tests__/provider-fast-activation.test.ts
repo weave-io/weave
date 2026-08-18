@@ -22,6 +22,7 @@ import {
   PROVIDER_FAST_UNSUPPORTED_SNAPSHOT,
   type ProviderFastReason,
   projectCodexFastSnapshot,
+  recomputeProviderFastAfterAppliedModel,
 } from "../provider-fast-activation.js";
 
 const SECRET_SHAPED_INPUT = "sk-proj-fast-secret-value-DO-NOT-ECHO-9f3c2a1b";
@@ -296,6 +297,42 @@ describe("classifyProviderFastIntent", () => {
     expect(serialized).not.toContain("codex_cli_rs");
     expect(serialized).not.toContain("chatgpt.com");
     expect(serialized).not.toContain(ELIGIBLE_MODEL_ID);
+  });
+});
+
+describe("recomputeProviderFastAfterAppliedModel", () => {
+  it("recomputes fallback truth from the new owner and drops the prior applied claim", () => {
+    const { attempt, sequence } = requestedAttempt();
+    attempt.recordEvidence(sequence, "confirmed");
+    const prior = projectCodexFastSnapshot(attempt.terminalize());
+    expect(prior).toMatchObject({
+      state: "applied",
+      ruleId: ELIGIBLE_RULE_ID,
+    });
+
+    const recomputed = recomputeProviderFastAfterAppliedModel({
+      fast: true,
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+    });
+    expect(recomputed).toEqual({
+      kind: "unsupported",
+      snapshot: PROVIDER_FAST_UNSUPPORTED_SNAPSHOT,
+    });
+    const serialized = JSON.stringify(recomputed);
+    expect(serialized).not.toContain("applied");
+    expect(serialized).not.toContain(ELIGIBLE_MODEL_ID);
+    expect(serialized).not.toContain(ELIGIBLE_RULE_ID);
+    expect(serialized).not.toContain("openai-codex");
+  });
+
+  it("returns no-intent when the applied fallback owner omits fast intent", () => {
+    expect(
+      recomputeProviderFastAfterAppliedModel({
+        provider: "anthropic",
+        model: "claude-sonnet-4-5",
+      }),
+    ).toEqual({ kind: "no-intent" });
   });
 });
 

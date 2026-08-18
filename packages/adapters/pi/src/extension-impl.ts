@@ -280,9 +280,12 @@ import {
 } from "./foreground-plan-display.js";
 import {
   createGenerationSessionCtxCell,
+  createModelFailoverCoordinatorCell,
   type PiChildRefEntryReadDegradation,
   PiGenerationResourceOwner,
+  type PiModelFailoverCoordinatorCell,
   readSessionManagerEntries,
+  shutdownModelFailoverCoordinator,
 } from "./generation-resources.js";
 import {
   BunHostPackageReader,
@@ -293,6 +296,7 @@ import {
 import {
   DefaultPiHostSurfaceReader,
   emptyHostSurfaceReport,
+  isRuntimeModelFallbackEnabled,
   type PiHostSurfaceReader,
   readValidatedCommands,
   safeReadHostSurfaceReport,
@@ -305,11 +309,26 @@ import {
 import { CODEX_PROVIDER_SUBPATH_SPECIFIER } from "./host-module-redirect.js";
 import { messageUpdateAnswerText } from "./message-update-carrier.js";
 import {
+  classifyPiMessageEndFailure,
+  fingerprintPiAssistantMessage,
+  isPiFailureAdvanceEligible,
+  readPiOwnEnumerableData,
+} from "./model-failover-contract.js";
+import {
+  createPiModelFailoverCoordinator,
+  type PiModelFailoverAppliedEvent,
+  type PiModelFailoverCoordinator,
+  type PiModelFailoverEventScope,
+  type PiModelFailoverRecoveryConfirmedEvent,
+  type PiModelFailoverTerminalDecision,
+} from "./model-failover-coordinator.js";
+import {
   PiModelActivator,
   type PiModelApplyPort,
   type PiModelResolution,
   PiModelResolver,
   type PiThinkingApplyPort,
+  resolvePiOrderedDistinctModels,
 } from "./model-resolution.js";
 import { createBunPiNativeSessionFs } from "./native-session-fs.js";
 import {
@@ -365,6 +384,7 @@ import {
   classifyProviderFastIntent,
   type ProviderFastPublicSnapshot,
   projectCodexFastSnapshot,
+  recomputeProviderFastAfterAppliedModel,
 } from "./provider-fast-activation.js";
 import {
   activeInstanceFromRecoveryPointer,
@@ -2931,6 +2951,8 @@ export function createPiExtension(
   const recoveryCoordinatorCell: {
     coordinator: PiChildRecoveryCoordinator | undefined;
   } = { coordinator: undefined };
+  const modelFailoverCoordinatorCell: PiModelFailoverCoordinatorCell =
+    createModelFailoverCoordinatorCell();
   // Bounded, live child-tree selection state (Pi adapter contract) - reset to the
   // root whenever a fresh generation activates.
   const treeSelectionCell = createChildTreeSelectionCell();
@@ -3335,6 +3357,351 @@ export function createPiExtension(
   const resetProviderFastReporting = (): void => {
     codexFastLatestCell.snapshot = undefined;
     telemetryCell.telemetry?.resetProviderFastReporting();
+  };
+
+  let primaryFailoverSettlementDeferred = false;
+
+  const readPrimaryModelFailover = ():
+    | PiModelFailoverCoordinator
+    | undefined => {
+    const held = modelFailoverCoordinatorCell.coordinator;
+    return held === undefined
+      ? undefined
+      : (held as PiModelFailoverCoordinator);
+  };
+
+  const currentModelFailoverEventScope = ():
+    | PiModelFailoverEventScope
+    | undefined => {
+    const session = activeSession;
+    const generation = controller.getCurrentGeneration();
+    if (
+      session === undefined ||
+      generation === undefined ||
+      session.generationId !== generation.id
+    ) {
+      return undefined;
+    }
+    const parent = session.primarySession.getParentSession();
+    return {
+      generationId: generation.id,
+      nativeSessionId:
+        parent.persistence === "persistent"
+          ? parent.sessionId
+          : `generation:${generation.id}`,
+      activationId: session.primarySession.getActivationId(),
+    };
+  };
+
+  const runtimeModelFallbackEnabled = (): boolean => {
+    const generation = controller.getCurrentGeneration();
+    if (generation === undefined || effectiveHealthOnly(generation)) {
+      return false;
+    }
+    return isRuntimeModelFallbackEnabled(generation.preflight.hostSurface);
+  };
+
+  const recordPrimaryModelFallbackTelemetry = (input: unknown): void => {
+    const telemetry = telemetryCell.telemetry;
+    if (telemetry === undefined) return;
+    void telemetry.recordModelFallbackTransition(input).orElse((failure) => {
+      telemetry.recordDegradation(failure);
+      return okAsync(undefined);
+    });
+  };
+
+  const applyProvenFailoverModel = (
+    event: PiModelFailoverAppliedEvent,
+  ): void => {
+    const session = activeSession;
+    if (session === undefined) return;
+    const catalog = latestSessionCtx?.modelRegistry;
+    const available =
+      catalog === undefined
+        ? []
+        : safelyListAvailableModels(catalog).unwrapOr([]);
+    const matches = available.filter(
+      (model) =>
+        model.provider === event.model.provider && model.id === event.model.id,
+    );
+    const applied =
+      matches.length === 1
+        ? matches[0]
+        : { provider: event.model.provider, id: event.model.id };
+    if (applied === undefined) return;
+    session.primarySession.noteAppliedModel(applied);
+    resetProviderFastReporting();
+    // The applied model invalidates every prior mapped attempt. Keep the
+    // recomputed current-owner classification in the live cell so status and
+    // the next settlement cannot expose the previous provider's claim while
+    // marker/context recovery is still pending.
+    const recomputedProviderFast = recomputeProviderFastAfterAppliedModel(
+      session.primarySession.captureRequestSnapshot(),
+    );
+    codexFastLatestCell.snapshot =
+      recomputedProviderFast.kind === "unsupported"
+        ? recomputedProviderFast.snapshot
+        : undefined;
+    recordPrimaryModelFallbackTelemetry({
+      outcome: "applied",
+      failureClass: event.failureClass,
+      ...(event.fromModel === undefined
+        ? {}
+        : {
+            fromProvider: event.fromModel.provider,
+            fromId: event.fromModel.id,
+          }),
+      toProvider: event.model.provider,
+      toId: event.model.id,
+      cursorPosition: event.candidateIndex,
+    });
+  };
+
+  const settleDeferredPrimaryWeave = (): void => {
+    if (!primaryFailoverSettlementDeferred) return;
+    primaryFailoverSettlementDeferred = false;
+    reportProviderFastIntent();
+    const ctx = latestSessionCtx;
+    if (
+      ctx !== undefined &&
+      !childModeState.active &&
+      hasPlanSurfaceToRefresh()
+    ) {
+      refreshPlanSurfaces(ctx);
+    }
+  };
+
+  const onPrimaryModelFailoverDecision = (
+    decision: PiModelFailoverTerminalDecision,
+  ): void => {
+    let outcome: "success" | "exhausted" | "cancelled" | "failed";
+    if (decision.kind === "success") {
+      outcome = "success";
+    } else if (decision.kind === "exhausted") {
+      outcome = "exhausted";
+    } else if (decision.kind === "cancelled") {
+      outcome = "cancelled";
+    } else {
+      outcome = "failed";
+    }
+    recordPrimaryModelFallbackTelemetry({
+      outcome,
+      ...(decision.failureClass === undefined
+        ? {}
+        : { failureClass: decision.failureClass }),
+      ...(decision.appliedModel === undefined
+        ? {}
+        : {
+            toProvider: decision.appliedModel.provider,
+            toId: decision.appliedModel.id,
+          }),
+      ...("cursorPosition" in decision
+        ? { cursorPosition: decision.cursorPosition }
+        : {}),
+    });
+  };
+
+  // The coordinator invokes `onDecision` and `onTerminal` for the same
+  // decision. Terminal release is deliberately separate from decision
+  // telemetry so one decision cannot journal the terminal outcome twice.
+  const onPrimaryModelFailoverTerminal = (): void => {
+    settleDeferredPrimaryWeave();
+  };
+
+  const onPrimaryRecoveryConfirmed = (
+    event: PiModelFailoverRecoveryConfirmedEvent,
+  ): void => {
+    recordPrimaryModelFallbackTelemetry({
+      outcome: "recovery-confirmed",
+      failureClass: event.failureClass,
+      ...(event.fromModel === undefined
+        ? {}
+        : {
+            fromProvider: event.fromModel.provider,
+            fromId: event.fromModel.id,
+          }),
+      toProvider: event.model.provider,
+      toId: event.model.id,
+      cursorPosition: event.candidateIndex,
+    });
+  };
+
+  const primaryFailoverShouldDeferSettlement = (): boolean => {
+    const coordinator = readPrimaryModelFailover();
+    if (coordinator === undefined) return false;
+    const snapshot = coordinator.snapshot();
+    if (snapshot.manualOverrideLatched) return false;
+    if (snapshot.state === "recovering") return true;
+    if (snapshot.retainedFailureClass === undefined) return false;
+    if (
+      !isPiFailureAdvanceEligible(
+        snapshot.retainedFailureClass,
+        snapshot.unknownAdvancesUsed,
+      )
+    ) {
+      return false;
+    }
+    return (
+      snapshot.state === "armed" ||
+      snapshot.state === "switching" ||
+      snapshot.state === "awaiting-marker-proof" ||
+      snapshot.state === "awaiting-context-repair"
+    );
+  };
+
+  const armPrimaryModelFailover = (
+    pi: PiExtensionApi,
+    ctx: PiSessionContext,
+  ): void => {
+    const session = activeSession;
+    const generation = controller.getCurrentGeneration();
+    if (
+      session === undefined ||
+      generation === undefined ||
+      session.generationId !== generation.id ||
+      !runtimeModelFallbackEnabled()
+    ) {
+      shutdownModelFailoverCoordinator(modelFailoverCoordinatorCell);
+      primaryFailoverSettlementDeferred = false;
+      return;
+    }
+    const current = session.primarySession.getCurrent();
+    if (current === undefined) {
+      shutdownModelFailoverCoordinator(modelFailoverCoordinatorCell);
+      return;
+    }
+    const available = safelyListAvailableModels(ctx.modelRegistry).unwrapOr([]);
+    const candidates = resolvePiOrderedDistinctModels(
+      current.descriptor.models,
+      available,
+    );
+    const parent = session.primarySession.getParentSession();
+    const scope = {
+      generationId: generation.id,
+      nativeSessionId:
+        parent.persistence === "persistent"
+          ? parent.sessionId
+          : `generation:${generation.id}`,
+      activationId:
+        session.primarySession.getActivationId() ??
+        `activation-${current.generation}`,
+      candidates,
+      currentModel: session.primarySession.getAppliedModel(),
+    };
+    const existing = readPrimaryModelFailover();
+    if (
+      existing !== undefined &&
+      modelFailoverCoordinatorCell.generationId === generation.id
+    ) {
+      existing.explicitActivate(scope);
+      primaryFailoverSettlementDeferred = false;
+      return;
+    }
+    shutdownModelFailoverCoordinator(modelFailoverCoordinatorCell);
+    const coordinator = createPiModelFailoverCoordinator({
+      host: {
+        setModel: (model) => pi.setModel(model),
+        sendMessage: (message, options) => pi.sendMessage(message, options),
+      },
+      scope,
+      context: () => {
+        const live = latestSessionCtx ?? ctx;
+        return {
+          isIdle: () => live.isIdle(),
+          ...(typeof live.hasPendingMessages === "function"
+            ? { hasPendingMessages: () => live.hasPendingMessages?.() === true }
+            : {}),
+          modelRegistry: live.modelRegistry,
+        };
+      },
+      getGenerationId: () => controller.getCurrentGeneration()?.id ?? "",
+      getNativeSessionId: () => {
+        const live = activeSession?.primarySession.getParentSession();
+        const generationId = controller.getCurrentGeneration()?.id ?? "";
+        return live?.persistence === "persistent"
+          ? live.sessionId
+          : `generation:${generationId}`;
+      },
+      isGenerationCurrent: (generationId) =>
+        controller.getCurrentGeneration()?.id === generationId,
+      isSessionCurrent: (nativeSessionId) => {
+        const live = activeSession?.primarySession.getParentSession();
+        const generationId = controller.getCurrentGeneration()?.id ?? "";
+        const current =
+          live?.persistence === "persistent"
+            ? live.sessionId
+            : `generation:${generationId}`;
+        return current === nativeSessionId;
+      },
+      onAppliedModel: applyProvenFailoverModel,
+      onRecoveryConfirmed: onPrimaryRecoveryConfirmed,
+      onDecision: onPrimaryModelFailoverDecision,
+      onTerminal: onPrimaryModelFailoverTerminal,
+    });
+    modelFailoverCoordinatorCell.coordinator = coordinator;
+    modelFailoverCoordinatorCell.generationId = generation.id;
+    generationResourcesCell.owner?.adoptModelFailover(coordinator);
+    primaryFailoverSettlementDeferred = false;
+  };
+
+  const observePrimaryFailoverMessageEnd = (event: unknown): void => {
+    const coordinator = readPrimaryModelFailover();
+    if (coordinator === undefined) return;
+    const classification = classifyPiMessageEndFailure(event);
+    if (classification === undefined) return;
+    const message = readPiOwnEnumerableData(event, "message");
+    if (message.state !== "data") return;
+    const fingerprint = fingerprintPiAssistantMessage(message.value);
+    if (fingerprint.isErr()) return;
+    const session = activeSession;
+    void coordinator.observeLaterFailure(
+      {
+        failureClass: classification.failureClass,
+        ...(session === undefined
+          ? {}
+          : { failedModel: session.primarySession.getAppliedModel() }),
+        fingerprint: fingerprint.value,
+        ...currentModelFailoverEventScope(),
+      },
+      currentModelFailoverEventScope(),
+    );
+  };
+
+  const routePrimaryFailoverContext = (
+    event: unknown,
+  ): readonly unknown[] | undefined => {
+    const coordinator = readPrimaryModelFailover();
+    if (coordinator === undefined) return undefined;
+    let messages: readonly unknown[] | undefined;
+    if (Array.isArray(event)) {
+      messages = event;
+    } else {
+      const payload = readPiOwnEnumerableData(event, "messages");
+      if (payload.state === "data" && Array.isArray(payload.value)) {
+        messages = payload.value as readonly unknown[];
+      }
+    }
+    if (messages === undefined) return undefined;
+    const repaired = coordinator.onContext(
+      messages,
+      currentModelFailoverEventScope(),
+    );
+    return repaired.match(
+      (value) => (value === messages ? undefined : value),
+      () => undefined,
+    );
+  };
+
+  const admitPrimaryFailoverMessageStart = (event: unknown): void => {
+    const coordinator = readPrimaryModelFailover();
+    if (coordinator === undefined) return;
+    void coordinator.onMessageStart(event, currentModelFailoverEventScope());
+  };
+
+  const routePrimaryFailoverModelSelect = (event: unknown): void => {
+    const coordinator = readPrimaryModelFailover();
+    if (coordinator === undefined) return;
+    void coordinator.onModelSelect(event, currentModelFailoverEventScope());
   };
 
   /**
@@ -4935,6 +5302,7 @@ export function createPiExtension(
           session.committedDisabledSkills = disabledSkills;
           resetProviderFastReporting();
           setActiveAgent(ctx, descriptor.name);
+          armPrimaryModelFailover(pi, ctx);
           return undefined;
         })
         .andThen(
@@ -5109,6 +5477,7 @@ export function createPiExtension(
         session.pendingPrimaryName = descriptor.name;
         session.primaryActivationFailure = undefined;
         session.committedDisabledSkills = disabledSkills;
+        armPrimaryModelFailover(pi, ctx);
         return undefined;
       });
   }
@@ -5595,6 +5964,7 @@ export function createPiExtension(
     workflowControllerCell,
     activeWorkflowInstanceCell,
     recoveryCoordinatorCell,
+    modelFailoverCoordinatorCell,
     planStateProviderCell,
     telemetryCell,
     generationResourcesCell,
@@ -5747,6 +6117,25 @@ export function createPiExtension(
     // hook-seam unsupported outcome when none did. Telemetry dedupes it to
     // one durable record.
     pi.on("agent_settled", (_event, ctx: PiSessionContext) => {
+      // A retained/eligible primary-failover failure, an in-flight switch, or
+      // a recovering retry all own this settlement instead of Weave: the
+      // coordinator's own `handleAgentSettled` decides whether that means
+      // beginning/advancing a switch or confirming the recovered turn's
+      // success. Either way the outer settlement stays latched - legacy
+      // provider-fast reporting and plan-rail refresh run only once the
+      // coordinator's own terminal decision (success or otherwise) releases
+      // it through `settleDeferredPrimaryWeave`, not here.
+      if (!childModeState.active && primaryFailoverShouldDeferSettlement()) {
+        primaryFailoverSettlementDeferred = true;
+        const coordinator = readPrimaryModelFailover();
+        if (coordinator !== undefined) {
+          void coordinator.handleAgentSettled(
+            undefined,
+            currentModelFailoverEventScope(),
+          );
+        }
+        return;
+      }
       reportProviderFastIntent();
       // Plan progress moves when a turn edits the plan file, so the rail is
       // re-resolved at turn settlement (and, below, after the tool completions
@@ -5755,6 +6144,24 @@ export function createPiExtension(
       if (childModeState.active) return;
       if (!hasPlanSurfaceToRefresh()) return;
       refreshPlanSurfaces(ctx);
+    });
+
+    // Primary runtime-model-fallback routes. Each public event is registered
+    // once and handed to the generation-owned coordinator. `context` returns
+    // a replacement list only after exact repair; otherwise the host keeps
+    // its normal provider context. Model-select expectation and override
+    // decisions stay coordinator-owned.
+    pi.on("message_start", (event) => {
+      if (childModeState.active) return;
+      admitPrimaryFailoverMessageStart(event);
+    });
+    pi.on("context", (event) => {
+      if (childModeState.active) return undefined;
+      return routePrimaryFailoverContext(event);
+    });
+    pi.on("model_select", (event) => {
+      if (childModeState.active) return;
+      routePrimaryFailoverModelSelect(event);
     });
 
     pi.on("tool_execution_end", (event, ctx: PiSessionContext) => {
@@ -7763,8 +8170,13 @@ export function createPiExtension(
     // cost scalars, never message content. A no-op when telemetry hasn't
     // been constructed (health-only/untrusted generation, or store open
     // failure) or when the generation has already been replaced.
+    // Parser-approved terminal assistant failures are also handed here to
+    // `observePrimaryFailoverMessageEnd`; the existing classifier refuses
+    // abort, nonterminal, malformed, and non-assistant messages, and only
+    // bounded facts/fingerprint leave that contract.
     pi.on("message_end", async (event, ctx) => {
       if (childModeState.active) return undefined;
+      observePrimaryFailoverMessageEnd(event);
       const session = activeSession;
       if (session === undefined) return undefined;
       const operation = controller.beginOperation();

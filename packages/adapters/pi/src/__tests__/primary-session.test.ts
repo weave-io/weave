@@ -4,10 +4,13 @@ import type {
   EffectiveToolPolicy,
 } from "@weaveio/weave-engine";
 import { errAsync, okAsync } from "neverthrow";
+import { fingerprintPiAssistantMessage } from "../model-failover-contract.js";
+import { createPiModelFailoverCoordinator } from "../model-failover-coordinator.js";
 import {
   type PiModelActivationOutcome,
   PiModelActivator,
   type PiModelApplyPort,
+  resolvePiOrderedDistinctModels,
 } from "../model-resolution.js";
 import {
   appendWeaveBlockOnce,
@@ -24,7 +27,11 @@ import {
   type PiSourceInfo,
   projectPiProviderEvent,
 } from "../types.js";
-import { RecordingLogger } from "./fakes/fake-pi-host.js";
+import {
+  RecordingFakePiHost,
+  RecordingFakeTimerPort,
+  RecordingLogger,
+} from "./fakes/fake-pi-host.js";
 
 const POLICY: EffectiveToolPolicy = {
   read: "allow",
@@ -1372,6 +1379,219 @@ describe("PiPrimarySession fast intent and request snapshots", () => {
     );
     expect(second.captureRequestSnapshot()).not.toHaveProperty("fast");
     expect(first.captureRequestSnapshot()?.fast).toBe(true);
+  });
+});
+
+describe("PiPrimarySession model failover seams", () => {
+  // Manual-override latching and ordinary user-turn handling belong to the
+  // coordinator integration. This primary-session unit has no ordinary-turn
+  // transition, so it does not add a fake test for that behavior.
+  it("supplies ordered distinct candidates and the applied origin after explicit activation", async () => {
+    const origin: PiModelInfo = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+    };
+    const fallback: PiModelInfo = {
+      provider: "openai",
+      id: "gpt-5.6",
+      name: "GPT-5.6",
+    };
+    const availableModels = [origin, fallback];
+    const modelIntent = [
+      "anthropic/claude-sonnet-4-5#high",
+      "gpt-5.6",
+      "openai/gpt-5.6",
+      "anthropic/claude-sonnet-4-5",
+    ];
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+
+    const activated = await session.activate(
+      descriptor({ models: modelIntent }),
+      context({ availableModels }),
+    );
+    expect(activated.isOk()).toBe(true);
+    const current = session.getCurrent();
+    expect(current).toBeDefined();
+    if (current === undefined) return;
+
+    // This is the same immutable activation data that the lifecycle seam uses
+    // to arm the coordinator: aliases resolve in intent order and duplicate
+    // provider/id identities are removed, while the applied model is the
+    // origin for the coordinator cursor.
+    const candidates = resolvePiOrderedDistinctModels(
+      current.descriptor.models,
+      availableModels,
+    );
+    expect(candidates).toEqual([
+      {
+        resolved: true,
+        model: origin,
+        intentEntry: "anthropic/claude-sonnet-4-5#high",
+        source: "canonical",
+        thinkingLevel: "high",
+      },
+      {
+        resolved: true,
+        model: fallback,
+        intentEntry: "gpt-5.6",
+        source: "bare-id",
+      },
+    ]);
+    expect(session.getActivationId()).toBe("activation-1");
+    expect(session.getAppliedModel()).toEqual(origin);
+    expect(session.captureRequestSnapshot()).toMatchObject({
+      generation: 1,
+      primaryName: "loom",
+      modelIntent,
+      selectedModel: origin,
+    });
+  });
+
+  it("updates the applied provider and model together for a proven fallback", async () => {
+    const origin: PiModelInfo = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+    };
+    const fallback: PiModelInfo = {
+      provider: "openai",
+      id: "gpt-5.6",
+      name: "GPT-5.6",
+      api: "openai-responses",
+    };
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await session.activate(
+      descriptor({ models: ["anthropic/claude-sonnet-4-5", "openai/gpt-5.6"] }),
+      context({ availableModels: [origin, fallback] }),
+    );
+
+    expect(session.noteAppliedModel(fallback).isOk()).toBe(true);
+    expect(session.getActivationId()).toBe("activation-1");
+    expect(session.getAppliedModel()).toEqual(fallback);
+    expect(session.captureRequestSnapshot()).toMatchObject({
+      modelIntent: ["anthropic/claude-sonnet-4-5", "openai/gpt-5.6"],
+      selectedModel: fallback,
+    });
+    // The activation record keeps configured intent separate from host truth;
+    // both provider and model in the request-facing applied identity change as
+    // one value.
+    expect(session.getCurrent()?.modelActivation).toEqual({
+      status: "applied",
+      model: origin,
+      intentEntry: "anthropic/claude-sonnet-4-5",
+      source: "canonical",
+    });
+  });
+
+  it("keeps applied fallback truth when context recovery fails later", async () => {
+    const origin: PiModelInfo = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+    };
+    const fallback: PiModelInfo = {
+      provider: "openai",
+      id: "gpt-5.6",
+      name: "GPT-5.6",
+    };
+    const availableModels = [origin, fallback];
+    const modelIntent = ["anthropic/claude-sonnet-4-5", "openai/gpt-5.6"];
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+    await session.activate(
+      descriptor({ models: modelIntent }),
+      context({ availableModels }),
+    );
+    const current = session.getCurrent();
+    expect(current).toBeDefined();
+    if (current === undefined) return;
+
+    const host = new RecordingFakePiHost({
+      currentModel: origin,
+      availableModels,
+    });
+    const timer = new RecordingFakeTimerPort();
+    const candidates = resolvePiOrderedDistinctModels(
+      current.descriptor.models,
+      availableModels,
+    );
+    const fingerprint = fingerprintPiAssistantMessage({
+      role: "assistant",
+      id: "failed-assistant",
+      stopReason: "error",
+      content: [{ type: "text", text: "bounded partial output" }],
+    });
+    expect(fingerprint.isOk()).toBe(true);
+    if (fingerprint.isErr()) return;
+
+    const coordinator = createPiModelFailoverCoordinator({
+      host: host.api,
+      context: host.createSessionContext(),
+      scope: {
+        generationId: "generation-1",
+        nativeSessionId: "session-1",
+        activationId: session.getActivationId() ?? "activation-missing",
+        candidates,
+        currentModel: session.getAppliedModel(),
+      },
+      timer,
+      switchTimeoutMs: 100,
+      markerTimeoutMs: 100,
+      contextTimeoutMs: 100,
+      getGenerationId: () => "generation-1",
+      getNativeSessionId: () => "session-1",
+      onAppliedModel: (event) => {
+        const applied = availableModels.find(
+          (model) =>
+            model.provider === event.model.provider &&
+            model.id === event.model.id,
+        );
+        if (applied !== undefined) session.noteAppliedModel(applied);
+      },
+    });
+
+    const started = await coordinator.handleFailure({
+      failureClass: "provider_unavailable",
+      failedModel: origin,
+      fingerprint: fingerprint.value,
+    });
+    expect(started.isOk()).toBe(true);
+    expect(coordinator.onModelSelect({ model: fallback }).isOk()).toBe(true);
+    expect(session.getAppliedModel()).toEqual(fallback);
+
+    const marker = host.sendMessageCalls.at(-1)?.message;
+    expect(marker).toBeDefined();
+    if (marker === undefined) return;
+    expect(
+      coordinator
+        .onMessageStart({ type: "message_start", message: marker })
+        .isOk(),
+    ).toBe(true);
+    // No context repair arrives. The coordinator fails closed, but primary
+    // session truth stays on the model that was actually applied.
+    timer.fireNext();
+    expect(coordinator.terminalDecision).toMatchObject({
+      kind: "failed",
+      reason: "context-timeout",
+    });
+    expect(session.getAppliedModel()).toEqual(fallback);
+    expect(session.captureRequestSnapshot()).toMatchObject({
+      modelIntent,
+      selectedModel: fallback,
+    });
+    expect(session.getCurrent()?.modelActivation).toMatchObject({
+      status: "applied",
+      model: origin,
+    });
   });
 });
 

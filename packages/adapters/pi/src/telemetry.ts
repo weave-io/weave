@@ -45,6 +45,10 @@ import {
   type PiAdapterFailure,
 } from "./errors.js";
 import {
+  isPiFailoverFailureClass,
+  type PiFailoverFailureClass,
+} from "./model-failover-contract.js";
+import {
   isProviderFastRuleId,
   PROVIDER_FAST_EVIDENCE_KINDS,
   PROVIDER_FAST_EVIDENCE_OUTCOMES,
@@ -84,6 +88,7 @@ export const PI_JOURNAL_FAMILIES = [
   "retention",
   "telemetry-degradation",
   "provider-fast",
+  "model-fallback",
 ] as const;
 
 export type PiJournalFamily = (typeof PI_JOURNAL_FAMILIES)[number];
@@ -137,6 +142,125 @@ export type PiProviderFastJournalRecordOutcome = "recorded" | "duplicate";
 
 /** Bound for the in-memory terminal-outcome dedupe window. */
 export const PI_PROVIDER_FAST_DEDUPE_LIMIT = 64;
+
+/** Closed model-fallback journal events. Never a token, error text, or request body. */
+export const PI_MODEL_FALLBACK_JOURNAL_EVENTS = Object.freeze([
+  "applied",
+  "recovery-confirmed",
+  "exhausted",
+  "failed",
+  "success",
+  "cancelled",
+] as const);
+
+export type PiModelFallbackJournalEvent =
+  (typeof PI_MODEL_FALLBACK_JOURNAL_EVENTS)[number];
+
+export const PI_MODEL_FALLBACK_JOURNAL_DATA_KEYS = Object.freeze([
+  "outcome",
+  "failureClass",
+  "fromProvider",
+  "fromId",
+  "toProvider",
+  "toId",
+  "cursorPosition",
+] as const);
+
+export type PiModelFallbackJournalDataKey =
+  (typeof PI_MODEL_FALLBACK_JOURNAL_DATA_KEYS)[number];
+
+const MAX_MODEL_FALLBACK_IDENTITY_CHARS = 64;
+
+export type PiModelFallbackJournalData = {
+  readonly outcome: PiModelFallbackJournalEvent;
+  readonly failureClass?: PiFailoverFailureClass;
+  readonly fromProvider?: string;
+  readonly fromId?: string;
+  readonly toProvider?: string;
+  readonly toId?: string;
+  readonly cursorPosition?: number;
+};
+
+function isPiModelFallbackJournalEvent(
+  value: unknown,
+): value is PiModelFallbackJournalEvent {
+  return (
+    typeof value === "string" &&
+    (PI_MODEL_FALLBACK_JOURNAL_EVENTS as readonly string[]).includes(value)
+  );
+}
+
+function boundedModelFallbackIdentity(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  if (value.length > MAX_MODEL_FALLBACK_IDENTITY_CHARS) return undefined;
+  return value;
+}
+
+function projectModelFallbackJournalData(
+  input: unknown,
+): Result<PiModelFallbackJournalData, PiAdapterFailure> {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return err(makeJournalWriteFailedFailure("invalid-model-fallback-state"));
+  }
+  const ownKeys = Reflect.ownKeys(input);
+  if (
+    ownKeys.length === 0 ||
+    ownKeys.length > PI_MODEL_FALLBACK_JOURNAL_DATA_KEYS.length
+  ) {
+    return err(makeJournalWriteFailedFailure("invalid-model-fallback-state"));
+  }
+  for (const key of ownKeys) {
+    if (
+      typeof key !== "string" ||
+      !(PI_MODEL_FALLBACK_JOURNAL_DATA_KEYS as readonly string[]).includes(key)
+    ) {
+      return err(makeJournalWriteFailedFailure("invalid-model-fallback-state"));
+    }
+  }
+  const record = input as Record<string, unknown>;
+  if (!isPiModelFallbackJournalEvent(record.outcome)) {
+    return err(makeJournalWriteFailedFailure("invalid-model-fallback-state"));
+  }
+  const failureClass = record.failureClass;
+  if (failureClass !== undefined && !isPiFailoverFailureClass(failureClass)) {
+    return err(makeJournalWriteFailedFailure("invalid-model-fallback-state"));
+  }
+  const rawCursor = record.cursorPosition;
+  let cursorPosition: number | undefined;
+  if (rawCursor !== undefined) {
+    if (
+      typeof rawCursor !== "number" ||
+      !Number.isSafeInteger(rawCursor) ||
+      rawCursor < 0
+    ) {
+      return err(makeJournalWriteFailedFailure("invalid-model-fallback-state"));
+    }
+    cursorPosition = rawCursor;
+  }
+  const fromProvider = boundedModelFallbackIdentity(record.fromProvider);
+  const fromId = boundedModelFallbackIdentity(record.fromId);
+  const toProvider = boundedModelFallbackIdentity(record.toProvider);
+  const toId = boundedModelFallbackIdentity(record.toId);
+  if (
+    (record.fromProvider !== undefined && fromProvider === undefined) ||
+    (record.fromId !== undefined && fromId === undefined) ||
+    (record.toProvider !== undefined && toProvider === undefined) ||
+    (record.toId !== undefined && toId === undefined)
+  ) {
+    return err(makeJournalWriteFailedFailure("invalid-model-fallback-state"));
+  }
+  return ok(
+    Object.freeze({
+      outcome: record.outcome,
+      ...(failureClass === undefined ? {} : { failureClass }),
+      ...(fromProvider === undefined ? {} : { fromProvider }),
+      ...(fromId === undefined ? {} : { fromId }),
+      ...(toProvider === undefined ? {} : { toProvider }),
+      ...(toId === undefined ? {} : { toId }),
+      ...(cursorPosition === undefined ? {} : { cursorPosition }),
+    }),
+  );
+}
 
 /**
  * Severity per state. A reached or requested acceleration is ordinary
@@ -788,6 +912,30 @@ export class PiTelemetry implements PiTelemetryUsageSink {
       this.usageTimestamps.set(id, timestamp);
     }
     return timestamp;
+  }
+
+  /**
+   * Persist one closed model-fallback outcome. Accepts only failure class,
+   * canonical identities, cursor position, and a closed outcome. Rejects raw
+   * errors, content, marker tokens, credentials, and request bodies.
+   */
+  recordModelFallbackTransition(
+    input: unknown,
+  ): ResultAsync<void, PiAdapterFailure> {
+    const projected = projectModelFallbackJournalData(input);
+    if (projected.isErr()) {
+      return errAsync(projected.error);
+    }
+    const data = projected.value;
+    return this.recordJournalEvent({
+      family: "model-fallback",
+      event: data.outcome,
+      severity:
+        data.outcome === "failed" || data.outcome === "exhausted"
+          ? "warn"
+          : "info",
+      data,
+    });
   }
 
   /** Records a telemetry-degradation journal entry and always logs, without recursing through a failed sink. */

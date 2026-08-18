@@ -11,6 +11,10 @@ import {
 import { ROOT_NODE_ID } from "../child-tree.js";
 import { makeChildAbortFailedFailure } from "../errors.js";
 import {
+  createModelFailoverCoordinatorCell,
+  type PiGenerationModelFailoverPort,
+} from "../generation-resources.js";
+import {
   buildGenerationRevokePorts,
   createSessionTransitionHandlers,
   createSessionTransitionNoticeCell,
@@ -49,6 +53,33 @@ function fakeController(
   };
 }
 
+class TrackedFailover implements PiGenerationModelFailoverPort {
+  shutdownCalls = 0;
+  private live = true;
+  private readonly timers: (() => void)[] = [];
+  constructor(private readonly onShutdown?: () => void) {}
+
+  reset(): void {
+    this.live = false;
+  }
+
+  shutdown(): void {
+    this.shutdownCalls += 1;
+    this.live = false;
+    this.onShutdown?.();
+  }
+
+  armTimer(callback: () => void): void {
+    this.timers.push(() => {
+      if (this.live) callback();
+    });
+  }
+
+  fireTimers(): void {
+    for (const timer of this.timers) timer();
+  }
+}
+
 function fakeCtx(overrides: {
   hasUI?: boolean;
   select?: () => Promise<string | undefined>;
@@ -65,9 +96,15 @@ function fakeCtx(overrides: {
   } as unknown as PiSessionContext;
 }
 
+type TestSessionTransitionRuntimeDeps = PiSessionTransitionRuntimeDeps & {
+  readonly modelFailoverCoordinatorCell: NonNullable<
+    PiSessionTransitionRuntimeDeps["modelFailoverCoordinatorCell"]
+  >;
+};
+
 function runtimeDeps(
   overrides: Partial<PiSessionTransitionRuntimeDeps> = {},
-): PiSessionTransitionRuntimeDeps {
+): TestSessionTransitionRuntimeDeps {
   return {
     noticeCell: createSessionTransitionNoticeCell(),
     delegationControllerCell: createDelegationControllerCell(),
@@ -79,6 +116,7 @@ function runtimeDeps(
     workflowControllerCell: { controller: undefined },
     activeWorkflowInstanceCell: { value: undefined },
     recoveryCoordinatorCell: { coordinator: undefined },
+    modelFailoverCoordinatorCell: createModelFailoverCoordinatorCell(),
     planStateProviderCell: { value: undefined },
     telemetryCell: { telemetry: undefined },
     generationResourcesCell: { owner: undefined },
@@ -324,6 +362,120 @@ describe("session-transition-runtime shutdown helpers", () => {
     expect(disposed).toEqual(["delegation"]);
     expect(deps.delegationControllerCell.controller).toBeUndefined();
     expect(deps.noticeCell.value).toBeUndefined();
+  });
+
+  test("replacement clears the old coordinator before successor state is published", () => {
+    const deps = runtimeDeps();
+    const first = new TrackedFailover();
+    let staleMutations = 0;
+    first.armTimer(() => {
+      staleMutations += 1;
+      deps.modelFailoverCoordinatorCell.coordinator = undefined;
+    });
+    deps.modelFailoverCoordinatorCell.coordinator = first;
+    deps.modelFailoverCoordinatorCell.generationId = "generation-1";
+    deps.delegationControllerCell.controller = fakeController() as never;
+    const runtime = createSessionTransitionRuntime(deps);
+
+    runtime.revokeForReplacement(() => undefined);
+
+    expect(first.shutdownCalls).toBe(1);
+    expect(deps.modelFailoverCoordinatorCell.coordinator).toBeUndefined();
+    expect(deps.modelFailoverCoordinatorCell.generationId).toBeUndefined();
+    expect(deps.delegationControllerCell.controller).toBeUndefined();
+
+    const second = new TrackedFailover();
+    deps.modelFailoverCoordinatorCell.coordinator = second;
+    deps.modelFailoverCoordinatorCell.generationId = "generation-2";
+    first.fireTimers();
+
+    expect(staleMutations).toBe(0);
+    expect(deps.modelFailoverCoordinatorCell.coordinator).toBe(second);
+    expect(deps.modelFailoverCoordinatorCell.generationId).toBe("generation-2");
+  });
+
+  test("reload/revoke clears the coordinator without changing snapshot order", () => {
+    const deps = runtimeDeps();
+    const order: string[] = [];
+    const owner = {
+      dispose: () => okAsync<void, never>(undefined),
+    };
+    const controller = fakeController();
+    deps.generationResourcesCell.owner = owner;
+    deps.delegationControllerCell.controller = controller as never;
+    const first = new TrackedFailover(() => {
+      order.push(
+        deps.generationResourcesCell.owner === undefined
+          ? "resources-taken"
+          : "resources-held",
+      );
+      order.push(
+        deps.delegationControllerCell.controller === undefined
+          ? "delegation-taken"
+          : "delegation-held",
+      );
+    });
+    deps.modelFailoverCoordinatorCell.coordinator = first;
+    deps.modelFailoverCoordinatorCell.generationId = "generation-1";
+
+    const snapshot = revokeGenerationAuthority(
+      deps.noticeCell,
+      buildGenerationRevokePorts(deps),
+    );
+
+    expect(first.shutdownCalls).toBe(1);
+    expect(order).toEqual(["resources-taken", "delegation-held"]);
+    expect(snapshot.shuttingResources).toBe(owner);
+    expect(snapshot.shuttingDelegation).toBe(controller);
+    expect(deps.modelFailoverCoordinatorCell.coordinator).toBeUndefined();
+    expect(deps.modelFailoverCoordinatorCell.generationId).toBeUndefined();
+  });
+
+  test("runBoundedShutdown shuts down the coordinator before legacy cleanup", async () => {
+    const order: string[] = [];
+    const deps = runtimeDeps();
+    const owner = {
+      dispose: () => {
+        order.push("resources");
+        return okAsync<void, never>(undefined);
+      },
+    };
+    const controller = fakeController({
+      shutdownWithinBudget: () => {
+        order.push("delegation");
+        return okAsync({
+          gracefullyCancelled: 1,
+          forceStopped: 0,
+          timedOut: false,
+        });
+      },
+    });
+    const first = new TrackedFailover(() => {
+      order.push("coordinator");
+    });
+    first.armTimer(() => {
+      order.push("stale-timer");
+      deps.modelFailoverCoordinatorCell.coordinator = undefined;
+    });
+    deps.modelFailoverCoordinatorCell.coordinator = first;
+    deps.modelFailoverCoordinatorCell.generationId = "generation-1";
+    deps.delegationControllerCell.controller = controller as never;
+    deps.generationResourcesCell.owner = owner;
+
+    const runtime = createSessionTransitionRuntime(deps);
+    await runtime.runBoundedShutdown(fakeCtx({}));
+
+    expect(order).toEqual(["coordinator", "delegation", "resources"]);
+    expect(first.shutdownCalls).toBe(1);
+    expect(deps.modelFailoverCoordinatorCell.coordinator).toBeUndefined();
+    expect(deps.modelFailoverCoordinatorCell.generationId).toBeUndefined();
+
+    const second = new TrackedFailover();
+    deps.modelFailoverCoordinatorCell.coordinator = second;
+    deps.modelFailoverCoordinatorCell.generationId = "generation-2";
+    first.fireTimers();
+    expect(order).toEqual(["coordinator", "delegation", "resources"]);
+    expect(deps.modelFailoverCoordinatorCell.coordinator).toBe(second);
   });
 
   test("runBoundedShutdown awaits shutdownWithinBudget on the snapshot", async () => {
