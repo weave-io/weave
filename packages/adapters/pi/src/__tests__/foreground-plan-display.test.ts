@@ -517,6 +517,133 @@ describe("Bug B · restart reconstructs only from the adapter-owned entry", () =
     ).toBeUndefined();
   });
 
+  it("never throws for a hostile LIST, however it traps the scan", () => {
+    // `entries` is host data. `list.length`, `Array.isArray`, an index read
+    // and validation are all reachable from a proxy trap, so the complete
+    // bounded scan is guarded and `length` is read through its descriptor.
+    const entry = {
+      type: "custom",
+      customType: FOREGROUND_PLAN_ENTRY_TYPE,
+      data: foregroundPlanEntry("alpha"),
+    };
+    const hostile: readonly (readonly [string, unknown[]])[] = [
+      [
+        "length descriptor throws",
+        new Proxy([entry], {
+          getOwnPropertyDescriptor(target, key) {
+            if (key === "length") throw new Error("hostile length");
+            return Object.getOwnPropertyDescriptor(target, key);
+          },
+        }),
+      ],
+      [
+        "length is an accessor",
+        new Proxy([entry], {
+          getOwnPropertyDescriptor(target, key) {
+            if (key === "length") {
+              return {
+                get() {
+                  throw new Error("hostile length getter");
+                },
+                configurable: true,
+              };
+            }
+            return Object.getOwnPropertyDescriptor(target, key);
+          },
+        }),
+      ],
+      [
+        "index descriptor throws",
+        new Proxy([entry], {
+          getOwnPropertyDescriptor(target, key) {
+            if (key === "0") throw new Error("hostile index");
+            return Object.getOwnPropertyDescriptor(target, key);
+          },
+        }),
+      ],
+      [
+        "absurd reported length",
+        new Proxy([entry], {
+          getOwnPropertyDescriptor(target, key) {
+            if (key === "length") {
+              return {
+                value: Number.MAX_SAFE_INTEGER,
+                writable: true,
+                enumerable: false,
+                configurable: false,
+              };
+            }
+            return Object.getOwnPropertyDescriptor(target, key);
+          },
+        }),
+      ],
+    ];
+    for (const [name, list] of hostile) {
+      let outcome: unknown;
+      try {
+        outcome = readForegroundPlanEntry(list);
+      } catch (error) {
+        outcome = `threw: ${String(error)}`;
+      }
+      expect({ name, outcome }).toEqual({ name, outcome: undefined });
+    }
+  });
+
+  it("reads the entry without consulting get, has, ownKeys or slice", () => {
+    // None of those traps decide anything, so a list that throws from them is
+    // still read honestly rather than discarded - and none of them is a way
+    // to make the scan run host code.
+    const entry = {
+      type: "custom",
+      customType: FOREGROUND_PLAN_ENTRY_TYPE,
+      data: foregroundPlanEntry("alpha"),
+    };
+    const traps: readonly (readonly [string, unknown[]])[] = [
+      [
+        "get throws",
+        new Proxy([entry], {
+          get(target, key, receiver) {
+            if (key === "length") throw new Error("hostile get");
+            return Reflect.get(target, key, receiver);
+          },
+        }),
+      ],
+      [
+        "ownKeys throws",
+        new Proxy([entry], {
+          ownKeys() {
+            throw new Error("hostile ownKeys");
+          },
+        }),
+      ],
+      [
+        "has throws",
+        new Proxy([entry], {
+          has() {
+            throw new Error("hostile has");
+          },
+        }),
+      ],
+      [
+        "slice throws",
+        Object.assign([entry], {
+          slice() {
+            throw new Error("hostile slice");
+          },
+        }),
+      ],
+    ];
+    for (const [name, list] of traps) {
+      let outcome: unknown;
+      try {
+        outcome = readForegroundPlanEntry(list);
+      } catch (error) {
+        outcome = `threw: ${String(error)}`;
+      }
+      expect({ name, outcome }).toEqual({ name, outcome: "alpha" });
+    }
+  });
+
   it("ignores an inherited or non-enumerable envelope field", () => {
     const inherited = Object.create({
       type: "custom",

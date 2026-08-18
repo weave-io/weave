@@ -626,21 +626,60 @@ function isPlainObject(value: unknown): value is object {
 export function readForegroundPlanEntry(
   entries: readonly unknown[],
 ): string | undefined {
-  const list = Result.fromThrowable(
-    () => (Array.isArray(entries) ? entries : []),
-    () => [] as readonly unknown[],
+  // The COMPLETE scan is guarded, not one step of it. The list is host data
+  // that may be a proxy, and every step can throw: `Array.isArray` on a
+  // revoked proxy, a `getOwnPropertyDescriptor` trap on `length` or on an
+  // index, a `Symbol.toPrimitive` reached inside validation. A list that
+  // cannot be read states no selection, which is exactly `undefined`.
+  return Result.fromThrowable(
+    () => scanForegroundPlanEntries(entries),
+    () => undefined,
   )().match(
-    (value) => value,
-    () => [] as readonly unknown[],
+    (planName) => planName,
+    () => undefined,
   );
-  const start = Math.max(0, list.length - MAX_FOREGROUND_PLAN_ENTRY_SCAN);
-  for (let index = list.length - 1; index >= start; index -= 1) {
+}
+
+/**
+ * The bounded, descriptor-safe scan itself.
+ *
+ * Nothing here reads a member any other way than through its own property
+ * descriptor: `length` included, so a `get` trap on the list never runs and a
+ * getter never decides how far the scan goes.
+ */
+function scanForegroundPlanEntries(entries: unknown): string | undefined {
+  if (typeof entries !== "object" || entries === null) return undefined;
+  if (!Array.isArray(entries)) return undefined;
+  const size = ownArrayLength(entries);
+  if (size === undefined) return undefined;
+  const start = Math.max(0, size - MAX_FOREGROUND_PLAN_ENTRY_SCAN);
+  for (let index = size - 1; index >= start; index -= 1) {
     const parsed = ForegroundPlanSessionEntrySchema.safeParse(
-      materializeEntry(ownValue(list, String(index))),
+      materializeEntry(ownValue(entries, String(index))),
     );
     if (parsed.success) return parsed.data.data.planName;
   }
   return undefined;
+}
+
+/**
+ * A real array's `length`, read as an own non-enumerable DATA property.
+ *
+ * `list.length` would run a proxy's `get` trap; this cannot. A descriptor that
+ * is absent, an accessor, enumerable, or not a safe non-negative integer is
+ * not a length this scan will trust, and the list is then read as stating
+ * nothing rather than scanned to a fabricated bound.
+ */
+function ownArrayLength(list: object): number | undefined {
+  const descriptor = ownDescriptor(list, "length");
+  if (descriptor.isErr()) return undefined;
+  const found = descriptor.value;
+  if (found === undefined || !("value" in found)) return undefined;
+  if (found.enumerable === true) return undefined;
+  const size = found.value;
+  if (typeof size !== "number") return undefined;
+  if (!Number.isSafeInteger(size) || size < 0) return undefined;
+  return size;
 }
 
 /**
