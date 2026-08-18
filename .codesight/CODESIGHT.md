@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 319 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~35,100 tokens. Without it, AI exploration would cost ~102,000 tokens. **Saves ~66,800 tokens per conversation.**
-> **Last scanned:** 2026-08-18 07:40 — re-run after significant changes
+> **Token savings:** this file is ~35,200 tokens. Without it, AI exploration would cost ~102,000 tokens. **Saves ~66,800 tokens per conversation.**
+> **Last scanned:** 2026-08-18 08:11 — re-run after significant changes
 
 ---
 
@@ -361,11 +361,11 @@
 - `packages/adapters/pi/src/child-overlay-input-modes.ts`
   - function stepOverlaySearch: (state, data, draft, aliasTrigger) => OverlaySearchTransition
   - function overlaySearchQuery: (state, committed) => string
+  - function createOverlaySearchRunTracker: (focus) => OverlaySearchRunTracker
   - function answerOverlayCancelConfirm: (data) => OverlayCancelConfirmAnswer
   - interface OverlaySearchState
   - interface OverlaySearchTransition
-  - type OverlaySearchMode
-  - _...5 more_
+  - _...10 more_
 - `packages/adapters/pi/src/child-overlay-keys.ts`
   - function isPiChildOverlayActionId: (value) => value is PiChildOverlayActionId
   - function childOverlayActionFromId: (id) => PiChildOverlayAction | undefined
@@ -419,6 +419,9 @@
   - function matchingEntryIds: (entries, needle, rendered?, string>) => string[]
   - function matchingTerminalErrorEntryIds: (entries, error, needle) => string[]
   - function mergeMatchIds: (older, newer) => string[]
+  - function createCommittedSearch: (port) => CommittedSearch
+  - interface CommittedSearchPort
+  - _...1 more_
 - `packages/adapters/pi/src/child-overlay-stream.ts`
   - function createChildOverlayLiveStream: (config) => ChildOverlayLiveStream
   - class ChildOverlayLiveStream
@@ -2062,7 +2065,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 358 test files found
+> 359 test files found
 
 ---
 

@@ -41,6 +41,7 @@ import {
 import {
   answerOverlayCancelConfirm,
   CLOSED_OVERLAY_SEARCH,
+  createOverlaySearchRunTracker,
   type OverlaySearchState,
   overlaySearchQuery,
   stepOverlaySearch,
@@ -396,6 +397,7 @@ export function createChildOverlayCustomComponent(
   let fallbackEmitted = false;
   let inputBusy = false;
   let search: OverlaySearchState = CLOSED_OVERLAY_SEARCH;
+  const searchRuns = createOverlaySearchRunTracker(controller);
   /** The child whose cancellation is awaiting a `y` / `n` answer, if any. */
   let confirmingCancelChildId: string | undefined;
   let lastDraftChildId: string | undefined;
@@ -646,6 +648,8 @@ export function createChildOverlayCustomComponent(
   };
 
   const exitSearch = (clearQuery: boolean): void => {
+    // Leaving search abandons the commit it was still fetching for.
+    searchRuns.abandon();
     search = CLOSED_OVERLAY_SEARCH;
     if (!clearQuery) {
       requestPaint();
@@ -665,6 +669,8 @@ export function createChildOverlayCustomComponent(
    * commit key owns both the historical search and the jump.
    */
   const previewSearchQuery = (query: string): void => {
+    // A query edit abandons the commit still fetching for the previous one.
+    searchRuns.abandon();
     controller.previewSearch(query).match(
       () => requestPaint(),
       (error) => {
@@ -680,16 +686,23 @@ export function createChildOverlayCustomComponent(
   };
 
   const runSearchQuery = (query: string): void => {
+    const run = searchRuns.begin();
     inputBusy = true;
     void controller.search(query).match(
       () => {
-        inputBusy = false;
-        focusSearchMatch();
+        const settled = searchRuns.settle(run);
+        inputBusy = settled.busy;
+        // A superseded run may not jump the viewport under the query, child,
+        // or closed overlay the reader moved on to.
+        if (settled.current) focusSearchMatch();
         requestPaint();
       },
       (error) => {
-        inputBusy = false;
-        afterControllerOutcome(err(error));
+        const settled = searchRuns.settle(run);
+        inputBusy = settled.busy;
+        // Nor may its failure collapse a surface it no longer describes.
+        if (settled.current) afterControllerOutcome(err(error));
+        else requestPaint();
       },
     );
   };

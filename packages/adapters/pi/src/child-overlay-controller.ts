@@ -47,6 +47,8 @@ import {
   scrollDelta,
 } from "./child-overlay-scroll.js";
 import {
+  type CommittedSearch,
+  createCommittedSearch,
   matchingEntryIds,
   matchingTerminalErrorEntryIds,
   mergeMatchIds,
@@ -126,6 +128,14 @@ export class ChildOverlayController {
   private readonly planContext: ChildOverlayPlanContextPort | undefined;
   private openChild: ChildOverlayChild | undefined;
   private clock = 0;
+  /**
+   * The committed search, and the only thing allowed to page for one.
+   *
+   * It holds the monotonic revision of the search the reader is looking at, so
+   * a page fetched for an earlier one can never write here — not even when the
+   * same query is committed twice against the same child.
+   */
+  private readonly committedSearch: CommittedSearch;
 
   constructor(
     source: ChildOverlaySourcePort,
@@ -156,6 +166,18 @@ export class ChildOverlayController {
         config.maxSearchPages ?? CHILD_OVERLAY_BOUNDS.maxSearchPages,
       ),
     );
+    this.committedSearch = createCommittedSearch({
+      maxPages: this.maxSearchPages,
+      pageSize: this.pageSize,
+      openChild: () => this.openChild,
+      savedState: (childId) => this.saved.get(childId),
+      loadOlder: (childId, cursor, pageSize) =>
+        this.source.loadOlder(childId, cursor, pageSize),
+      prependPage: (state, page) => this.applyPage(state, page, "prepend"),
+      view: (child, state) => this.toView(child, state),
+      sourceFailed: (childId, error) =>
+        this.fallbackFromError(childId, "source-failed", error),
+    });
   }
 
   isOpen(): boolean {
@@ -179,6 +201,10 @@ export class ChildOverlayController {
   ): ResultAsync<ChildOverlayView, ChildOverlayError> {
     const childId =
       typeof childInput === "string" ? childInput : childInput.childId;
+    // Walking to another child — or re-opening this one after a close, which is
+    // the same child identity and a different reading — abandons every page
+    // still in flight for the search the reader left behind.
+    this.committedSearch.invalidate();
     if (this.openChild !== undefined && this.openChild.childId !== childId) {
       this.persistOpen();
     }
@@ -446,6 +472,8 @@ export class ChildOverlayController {
     if (this.openChild === undefined) return err({ type: "OverlayNotOpen" });
     this.persistOpen();
     this.openChild = undefined;
+    // Nothing may land in a window the reader has closed.
+    this.committedSearch.invalidate();
     return ok(undefined);
   }
 
@@ -494,7 +522,9 @@ export class ChildOverlayController {
    * `maxSearchPages` budget is scanned and merged in transcript order.
    *
    * The query is adopted through `previewSearch`, so the committed query and
-   * the typed one can never be bounded or stored two different ways.
+   * the typed one can never be bounded or stored two different ways. Adopting
+   * it also moves the search revision on, which is what makes THIS commit the
+   * only one whose pages may still be written anywhere.
    */
   search(query: string): ResultAsync<ChildOverlayView, ChildOverlayError> {
     const adopted = this.previewSearch(query);
@@ -502,13 +532,7 @@ export class ChildOverlayController {
     return this.withOpen((child, state) => {
       const needle = state.searchQuery.toLowerCase();
       if (needle.length === 0) return okAsync(this.toView(child, state));
-      // Seed from the loaded window; older pages prepend ahead of it.
-      state.searchMatchIds = matchingEntryIds(
-        state.entries,
-        needle,
-        state.renderedSearchText,
-      );
-      return this.searchFetchPages(child, state, needle, 0);
+      return this.committedSearch.run(child, state, needle);
     });
   }
 
@@ -524,46 +548,16 @@ export class ChildOverlayController {
    */
   previewSearch(query: string): Result<ChildOverlayView, ChildOverlayError> {
     const text = boundOverlayText(query);
+    // A different query is a different search. Pages still in flight for the
+    // previous one describe text the reader is no longer asking about, so they
+    // lose their licence to write here, exactly as their ids lose their count.
+    this.committedSearch.invalidate();
     return this.mutateOpen((child, state) => {
       state.searchQuery = text;
       // Ids from the previous query would be counted against this one.
       state.searchMatchIds = [];
       return this.toView(child, state);
     });
-  }
-  /**
-   * Fetches one older page per step until the page budget is spent or the
-   * transcript start is reached. Unlike the load-more paths this never stops
-   * early on a hit: a match on a newer page says nothing about older ones.
-   */
-  private searchFetchPages(
-    child: ChildOverlayChild,
-    state: SavedChildState,
-    needle: string,
-    pagesFetched: number,
-  ): ResultAsync<ChildOverlayView, ChildOverlayError> {
-    if (
-      pagesFetched >= this.maxSearchPages ||
-      state.olderCursor === undefined
-    ) {
-      return okAsync(this.toView(child, state));
-    }
-    return this.source
-      .loadOlder(child.childId, state.olderCursor, this.pageSize)
-      .mapErr(
-        (error): ChildOverlayError =>
-          this.fallbackFromError(child.childId, "source-failed", error),
-      )
-      .andThen((page) => {
-        this.applyPage(state, page, "prepend");
-        // `applyPage` may trim the window; a trimmed entry is still a match.
-        state.searchMatchIds = mergeMatchIds(
-          matchingEntryIds(page.entries, needle),
-          state.searchMatchIds,
-        );
-        if (!page.hasOlder) return okAsync(this.toView(child, state));
-        return this.searchFetchPages(child, state, needle, pagesFetched + 1);
-      });
   }
 
   /**

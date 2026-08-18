@@ -209,6 +209,79 @@ export function overlaySearchQuery(
 }
 
 // ---------------------------------------------------------------------------
+// Committed search runs
+// ---------------------------------------------------------------------------
+
+/** One committed run: which search it was, and whose transcript. */
+export interface OverlaySearchRun {
+  readonly revision: number;
+  readonly childId: string | undefined;
+}
+
+/** What a settling run is told about the surface it is answering. */
+export interface OverlaySearchRunOutcome {
+  /** Still the newest committed run, on the child it was started for. */
+  readonly current: boolean;
+  /** Some committed run is still fetching. */
+  readonly busy: boolean;
+}
+
+/** The one fact the tracker needs from the controller. */
+export interface OverlaySearchRunFocus {
+  currentChildId(): string | undefined;
+}
+
+/**
+ * Which committed search run this surface is still waiting on.
+ *
+ * Committing a query starts bounded historical paging, and a reader does not
+ * wait for it: they edit the query, re-open search, walk to another child or
+ * close the inspector while it is still fetching. The controller refuses to
+ * WRITE anything for a search that lost; this is the other half of the same
+ * rule, on the surface side — a run the reader has moved past may not jump the
+ * viewport to a match and may not take the inspector down into the fallback.
+ *
+ * `busy` deliberately tracks RUNS rather than the newest one: a superseded run
+ * that settles first must not report the surface idle while the current one is
+ * still fetching.
+ */
+export interface OverlaySearchRunTracker {
+  /** Claims the newest run for the child now on screen. */
+  begin(): OverlaySearchRun;
+  /** Retires the newest run without starting one. */
+  abandon(): void;
+  /** Settles one run and states what its completion is still allowed to do. */
+  settle(run: OverlaySearchRun): OverlaySearchRunOutcome;
+}
+
+export function createOverlaySearchRunTracker(
+  focus: OverlaySearchRunFocus,
+): OverlaySearchRunTracker {
+  let revision = 0;
+  let inFlight = 0;
+  return {
+    begin(): OverlaySearchRun {
+      revision += 1;
+      inFlight += 1;
+      return Object.freeze({ revision, childId: focus.currentChildId() });
+    },
+    abandon(): void {
+      revision += 1;
+    },
+    settle(run: OverlaySearchRun): OverlaySearchRunOutcome {
+      inFlight = Math.max(0, inFlight - 1);
+      return {
+        current:
+          run.revision === revision &&
+          run.childId !== undefined &&
+          focus.currentChildId() === run.childId,
+        busy: inFlight > 0,
+      };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Cancel confirmation
 // ---------------------------------------------------------------------------
 

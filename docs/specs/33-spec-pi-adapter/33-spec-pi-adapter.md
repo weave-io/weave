@@ -383,6 +383,15 @@ Required behavior:
   operates over the loaded window and fetches further pages on demand. The match
   list is built from an ANSI-free twin render, so no byte of transcript colour
   can paint the search rail.
+- A committed search is bound to the child it was committed against and to a
+  monotonic search revision. Editing the query, committing again, closing or
+  re-opening search, opening a child, and closing the overlay all move that
+  revision on. Both facts are re-checked after every await, so a page that
+  arrives for a superseded search is a NO-OP: it may not merge into the window,
+  merge its ids into the counter, move the viewport, return its own child, or
+  turn a failed read into the custom-editor fallback. It resolves to the view
+  the reader is actually looking at, or to `OverlayNotOpen` when the overlay is
+  closed. Typed query preview stays synchronous and window-only.
 - Live-tail follows new output, disengages on manual scroll, and resumes at the
   bottom. Resize reflows. PageUp, PageDown, Shift+Up, Shift+Down, Home, and End
   must be matched semantically, never by raw byte comparison, so legacy CSI,

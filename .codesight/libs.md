@@ -350,11 +350,11 @@
 - `packages/adapters/pi/src/child-overlay-input-modes.ts`
   - function stepOverlaySearch: (state, data, draft, aliasTrigger) => OverlaySearchTransition
   - function overlaySearchQuery: (state, committed) => string
+  - function createOverlaySearchRunTracker: (focus) => OverlaySearchRunTracker
   - function answerOverlayCancelConfirm: (data) => OverlayCancelConfirmAnswer
   - interface OverlaySearchState
   - interface OverlaySearchTransition
-  - type OverlaySearchMode
-  - _...5 more_
+  - _...10 more_
 - `packages/adapters/pi/src/child-overlay-keys.ts`
   - function isPiChildOverlayActionId: (value) => value is PiChildOverlayActionId
   - function childOverlayActionFromId: (id) => PiChildOverlayAction | undefined
@@ -408,6 +408,9 @@
   - function matchingEntryIds: (entries, needle, rendered?, string>) => string[]
   - function matchingTerminalErrorEntryIds: (entries, error, needle) => string[]
   - function mergeMatchIds: (older, newer) => string[]
+  - function createCommittedSearch: (port) => CommittedSearch
+  - interface CommittedSearchPort
+  - _...1 more_
 - `packages/adapters/pi/src/child-overlay-stream.ts`
   - function createChildOverlayLiveStream: (config) => ChildOverlayLiveStream
   - class ChildOverlayLiveStream
