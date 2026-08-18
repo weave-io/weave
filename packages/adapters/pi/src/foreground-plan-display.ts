@@ -242,13 +242,15 @@ const HEAD_PATH_OPENER_RE = /[\s"'`([]+$/u;
  * is not a separator this grammar knows, so `e.g. run …`, `> execute …`,
  * `1. run …` and `Example: run …` are rejected rather than tokenized.
  *
- * An apostrophe is deliberately NOT a separator: it is a letter inside `let's`
- * and `i'd`, and a stray one around a word is trimmed when the word is closed.
+ * An apostrophe is deliberately NOT a separator either: it is a letter inside
+ * `let's` and `i'd`. It is admitted ONLY there — see
+ * {@link isContractionApostrophe} — so a quote around a word is an unknown
+ * character that rejects the head, exactly as `"` and a backtick already do.
  */
 const HEAD_WORD_SEPARATOR_RE = /[\s,]/u;
 
-/** The characters a head word may be built from. */
-const HEAD_WORD_CHARACTER_RE = /['a-z]/iu;
+/** The characters a head word may be built from, apostrophe excluded. */
+const HEAD_WORD_LETTER_RE = /[a-z]/iu;
 
 /** Characters that separate words AFTER the path, including sentence-final ones. */
 const TRAILER_SEPARATOR_RE = /[\s"'`()[\],.;:!\u2014\u2013-]+/u;
@@ -264,6 +266,27 @@ const TRAILER_SEPARATOR_RE = /[\s"'`()[\],.;:!\u2014\u2013-]+/u;
  */
 const NEGATION_RE =
   /\b(?:no|not|never|dont|don't|doesn't|didn't|won't|wouldn't|shouldn't|cannot|can't|stop|cancel|abort|skip|avoid|without|instead|unless)\b/iu;
+
+/**
+ * The characters that can FRAME a whole message as a quotation or as code,
+ * each mapped to the framing it belongs to.
+ *
+ * A typographic pair maps to the straight pair a reader means by it, so
+ * `‘…’` and `“…”` are the same framing as `'…'` and `"…"` rather than two
+ * spellings this parser has to be taught separately.
+ */
+const REQUEST_FRAMING_CHARACTERS: ReadonlyMap<string, string> = new Map([
+  ["'", "'"],
+  ["\u2018", "'"],
+  ["\u2019", "'"],
+  ['"', '"'],
+  ["\u201c", '"'],
+  ["\u201d", '"'],
+  ["`", "`"],
+]);
+
+/** Whitespace, tested one character at a time so no scan can backtrack. */
+const REQUEST_WHITESPACE_RE = /\s/u;
 
 /**
  * One contained plan path: an optional `./`, then exactly `.weave/plans/`,
@@ -349,6 +372,8 @@ function isExecutionRequest(
   // A question is not an instruction, however many execution verbs it holds.
   if (text.includes("?")) return false;
   if (NEGATION_RE.test(text)) return false;
+  // A quoted or fenced message SHOWS a request; it does not make one.
+  if (isWholeRequestFramed(text, matches)) return false;
   const first = matches[0];
   if (first === undefined) return false;
   if (!isExecutionHead(text.slice(0, first.index))) return false;
@@ -361,36 +386,119 @@ function isExecutionRequest(
 }
 
 /**
+ * True when the WHOLE message is wrapped in one quotation or code framing.
+ *
+ * A whole-input veto, like the negation and the question mark, and never an
+ * acceptance: it can only refuse. `'Execute the existing Weave plan at
+ * .weave/plans/alpha.md'` READS as an instruction and is not one — it is an
+ * instruction being SHOWN, exactly like the fenced and double-quoted samples
+ * the head grammar already refuses. The single-quote spelling reached
+ * acceptance only because an apostrophe is a letter inside `let's`.
+ *
+ * Path-local quoting survives untouched: framing that opens immediately
+ * before the first path and closes immediately after the last one quotes the
+ * PATH, not the request, so `run '.weave/plans/alpha.md'` and its double-quote
+ * and backtick spellings are not framed messages.
+ *
+ * The scan is two bounded walks over a message whose length was already
+ * checked, and it reads only the first and last non-whitespace characters.
+ */
+function isWholeRequestFramed(
+  text: string,
+  matches: readonly PlanPathMatch[],
+): boolean {
+  const start = firstContentIndex(text);
+  const end = lastContentIndex(text);
+  // One framing character alone is not a pair, so it frames nothing.
+  if (start === undefined || end === undefined || end <= start) return false;
+  const opener = REQUEST_FRAMING_CHARACTERS.get(text.charAt(start));
+  if (opener === undefined) return false;
+  const closer = REQUEST_FRAMING_CHARACTERS.get(text.charAt(end));
+  if (closer === undefined || closer !== opener) return false;
+  return !framesOnlyThePlanPath(matches, start, end);
+}
+
+/** True when the framing hugs the plan paths themselves and nothing else. */
+function framesOnlyThePlanPath(
+  matches: readonly PlanPathMatch[],
+  start: number,
+  end: number,
+): boolean {
+  const first = matches[0];
+  const last = matches[matches.length - 1];
+  if (first === undefined || last === undefined) return false;
+  return first.index === start + 1 && last.index + last.length === end;
+}
+
+/** First index that is not whitespace, or `undefined` for a blank message. */
+function firstContentIndex(text: string): number | undefined {
+  for (let index = 0; index < text.length; index += 1) {
+    if (!REQUEST_WHITESPACE_RE.test(text.charAt(index))) return index;
+  }
+  return undefined;
+}
+
+/** Last index that is not whitespace, or `undefined` for a blank message. */
+function lastContentIndex(text: string): number | undefined {
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    if (!REQUEST_WHITESPACE_RE.test(text.charAt(index))) return index;
+  }
+  return undefined;
+}
+
+/**
  * Tokenizes the text before the path into lowercase words.
  *
  * `undefined` — not an empty list — when the head holds a character this
  * grammar has no rule for, so an unknown separator rejects the message instead
  * of silently splitting it.
+ *
+ * An apostrophe is a character this grammar knows in ONE place: between two
+ * letters, where it spells `let's` and `i'd`. A leading, trailing or standalone
+ * one is not trimmed off the word — it is the unknown character it looks like,
+ * and it rejects the head just as `"` and a backtick do.
  */
 function tokenizeExecutionHead(head: string): string[] | undefined {
   const body = head.replace(HEAD_PATH_OPENER_RE, "");
   const tokens: string[] = [];
   let word = "";
   const flush = (): void => {
-    const trimmed = word.replace(/^'+|'+$/gu, "");
-    if (trimmed !== "") tokens.push(trimmed);
+    if (word !== "") tokens.push(word);
     word = "";
   };
-  for (const raw of body) {
-    // A typographic apostrophe is the same character to a reader.
-    const char = raw === "\u2019" ? "'" : raw;
+  for (let index = 0; index < body.length; index += 1) {
+    const char = normalizeApostrophe(body.charAt(index));
     if (HEAD_WORD_SEPARATOR_RE.test(char)) {
       flush();
       continue;
     }
-    if (HEAD_WORD_CHARACTER_RE.test(char)) {
+    if (HEAD_WORD_LETTER_RE.test(char)) {
       word += char.toLowerCase();
+      continue;
+    }
+    if (char === "'" && isContractionApostrophe(body, index)) {
+      word += char;
       continue;
     }
     return undefined;
   }
   flush();
   return tokens;
+}
+
+/** A typographic apostrophe is the same character to a reader. */
+function normalizeApostrophe(char: string): string {
+  return char === "\u2018" || char === "\u2019" ? "'" : char;
+}
+
+/** True when the apostrophe at `index` sits between two letters. */
+function isContractionApostrophe(body: string, index: number): boolean {
+  if (index === 0) return false;
+  // `charAt` past the end is the empty string, which is not a letter, so the
+  // bound needs no separate check.
+  const before = normalizeApostrophe(body.charAt(index - 1));
+  const after = normalizeApostrophe(body.charAt(index + 1));
+  return HEAD_WORD_LETTER_RE.test(before) && HEAD_WORD_LETTER_RE.test(after);
 }
 
 /** Matches one phrase of a vocabulary at `index`, longest phrase first. */

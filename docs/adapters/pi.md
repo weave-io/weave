@@ -263,6 +263,15 @@ if it exists`) also set nothing. The grammar is total: every message reaches
 either one plan name or one typed rejection, and anything it does not accept
 falls back to `/weave:start`, which asks the user explicitly.
 
+A message wrapped in quote or code framing is refused for the same reason:
+`'Execute the existing Weave plan at .weave/plans/alpha.md'` shows a request
+rather than making one, and so do its `"…"`, `` `…` ``, `‘…’`, `“…”` and
+fenced spellings. An apostrophe is admitted only between two letters, where it
+spells `let's` and `i'd`, so a quote before the verb is an unknown character
+rather than one trimmed off the word. Quoting the **path** is untouched:
+`run '.weave/plans/alpha.md'`, `run ".weave/plans/alpha.md"` and
+`` run `.weave/plans/alpha.md` `` all name `alpha`.
+
 A parse is still not authority to display: the name must also be in this
 root's plan catalog with a readable snapshot.
 

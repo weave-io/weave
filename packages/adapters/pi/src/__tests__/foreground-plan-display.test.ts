@@ -371,6 +371,93 @@ describe("Bug B · only a positive execution request moves the rail", () => {
     }
   });
 
+  it("rejects a whole request wrapped in quote or code framing", () => {
+    // A quoted request SHOWS an instruction; it does not give one. The single
+    // -quote spelling reached acceptance because an apostrophe is a letter
+    // inside `let's`, so the opening quote was trimmed off `'Execute` and the
+    // closing one read as a trailer separator — the sample became the request.
+    for (const text of [
+      "'Execute the existing Weave plan at .weave/plans/alpha.md'",
+      "'Execute the existing Weave plan at .weave/plans/pi-weave-ui-redesign.md'",
+      '"Execute the existing Weave plan at .weave/plans/alpha.md"',
+      "`Execute the existing Weave plan at .weave/plans/alpha.md`",
+      "'run .weave/plans/alpha.md'",
+      '"run .weave/plans/alpha.md"',
+      "`run .weave/plans/alpha.md`",
+      "```\nExecute the existing Weave plan at .weave/plans/alpha.md\n```",
+      // The framing need not close the message, and it need not close at all:
+      // a quote before the verb is an unknown character, not a trimmable one.
+      "'execute .weave/plans/alpha.md'.",
+      "'execute .weave/plans/alpha.md",
+      "  'execute .weave/plans/alpha.md'  ",
+    ]) {
+      const parsed = parseForegroundPlanRequest(text);
+      expect({ text, ok: parsed.isOk() }).toEqual({ text, ok: false });
+      if (parsed.isErr()) {
+        expect({ text, reason: parsed.error }).toEqual({
+          text,
+          reason: "no-execution-intent",
+        });
+      }
+    }
+  });
+
+  it("rejects typographic quote framing the same way", () => {
+    // `‘…’` and `“…”` are what an editor, a chat client or a document turns
+    // straight quotes into. They frame a sample exactly as the straight pair
+    // does, so they set nothing either.
+    for (const text of [
+      "\u2018Execute the existing Weave plan at .weave/plans/alpha.md\u2019",
+      "\u201cExecute the existing Weave plan at .weave/plans/alpha.md\u201d",
+      "\u2018run .weave/plans/alpha.md\u2019",
+    ]) {
+      const parsed = parseForegroundPlanRequest(text);
+      expect({ text, ok: parsed.isOk() }).toEqual({ text, ok: false });
+    }
+  });
+
+  it("keeps quoting that belongs to the PATH accepted", () => {
+    // The veto is about framing the REQUEST. A quote or backtick that opens
+    // immediately before `.weave/plans/<safe>.md` and closes immediately after
+    // it quotes the path, which is how a user writes one.
+    for (const text of [
+      "run '.weave/plans/alpha.md'",
+      'run ".weave/plans/alpha.md"',
+      "run `.weave/plans/alpha.md`",
+      "execute the existing Weave plan at '.weave/plans/alpha.md'",
+      "execute the existing Weave plan at `.weave/plans/alpha.md`",
+      "please run '.weave/plans/alpha.md' end to end",
+    ]) {
+      const parsed = parseForegroundPlanRequest(text);
+      expect({
+        text,
+        name: parsed.isOk() ? parsed.value : parsed.error,
+      }).toEqual({ text, name: "alpha" });
+    }
+    expect(
+      parseForegroundPlanRequest(
+        "Go ahead and implement './.weave/plans/alpha-1.md'",
+      )._unsafeUnwrap(),
+    ).toBe("alpha-1");
+  });
+
+  it("keeps contractions parsing as the words they spell", () => {
+    // An apostrophe is admitted between two letters and nowhere else, so the
+    // lead-ins that contain one must still tokenize.
+    for (const text of [
+      "let's execute .weave/plans/alpha.md",
+      "let\u2019s execute .weave/plans/alpha.md",
+      "I'd like you to run .weave/plans/alpha.md",
+      "I\u2019d like you to run .weave/plans/alpha.md",
+    ]) {
+      const parsed = parseForegroundPlanRequest(text);
+      expect({
+        text,
+        name: parsed.isOk() ? parsed.value : parsed.error,
+      }).toEqual({ text, name: "alpha" });
+    }
+  });
+
   it("is total: every input reaches one verdict and never throws", () => {
     for (const text of [
       "",
@@ -378,6 +465,11 @@ describe("Bug B · only a positive execution request moves the rail", () => {
       ".weave/plans/alpha.md",
       "\u0000execute .weave/plans/alpha.md",
       "execute\u2019 .weave/plans/alpha.md",
+      "'",
+      "''",
+      "`\n`",
+      "'.weave/plans/alpha.md'",
+      "execute .weave/plans/alpha.md'",
       "\u00e9x\u00e9cute .weave/plans/alpha.md",
       `${"run ".repeat(500)}.weave/plans/alpha.md`,
       `${"please ".repeat(400)}execute .weave/plans/alpha.md`,
