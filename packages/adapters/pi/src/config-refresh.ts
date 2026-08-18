@@ -2,11 +2,16 @@
  * Candidate catalog builder for the Pi adapter's config refresh.
  *
  * The digest manifest in `config-source-digests.ts` answers *what changed*.
- * This module answers *what the catalog would become* — and nothing more. It
- * builds a fully validated {@link PiConfigActivationResult} plus the next
- * manifest and content cache, and hands them back to the caller. It never
- * publishes, never mutates the current catalog, and holds no state between
- * attempts.
+ * The builder in this module answers *what the catalog would become* — and
+ * nothing more. It produces a fully validated {@link PiConfigActivationResult}
+ * plus the next manifest and content cache, and hands them back to the caller.
+ * It never publishes, never mutates the current catalog, and holds no state
+ * between attempts.
+ *
+ * {@link createPiConfigRefreshCoordinator} is the one caller that decides.
+ * It runs probe → classify → build → primary-contract guard → publish at each
+ * delegation boundary, single-flight and generation-guarded, and it is total:
+ * a delegation never fails because a refresh did.
  *
  * ## Read once, compose from the hashed bytes
  *
@@ -67,8 +72,9 @@
  */
 
 import type { ConfigLoadError, FileReader } from "@weaveio/weave-config";
-import type { PromptFileReader } from "@weaveio/weave-engine";
+import type { AgentDescriptor, PromptFileReader } from "@weaveio/weave-engine";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import type { PiCatalogCell } from "./catalog-cell.js";
 import {
   buildDescriptorCatalog,
   defaultPiConfigLoaderPort,
@@ -96,6 +102,12 @@ import {
 } from "./config-source-digests.js";
 import type { PiAdapterFailure } from "./errors.js";
 import { safelyAwaitPortResult } from "./port-safety.js";
+import {
+  decidePiPrimaryContract,
+  type PiPrimaryContractFacet,
+  toPiPrimaryContractCandidate,
+} from "./primary-contract.js";
+import type { PiSkillResolutionPort } from "./primary-session.js";
 
 // ---------------------------------------------------------------------------
 // State
@@ -777,4 +789,319 @@ export function refreshPiConfigCandidate(
     .andThen((refresh) =>
       buildPiConfigRefreshCandidate(current, refresh, deps),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Delegation-boundary coordinator
+// ---------------------------------------------------------------------------
+
+/**
+ * The only clock the coordinator reads, used exclusively to space probes.
+ *
+ * It schedules nothing: the coordinator owns no timer, no interval, and no
+ * background watcher, so a generation that stops delegating stops refreshing.
+ */
+export interface PiConfigRefreshClock {
+  now(): number;
+}
+
+/** Why a boundary attempt could not even start. */
+export type PiConfigRefreshUnavailableReason =
+  /** The generation lost authority before the attempt began. */
+  | "stale-generation"
+  /** This generation carries no source manifest, so refresh cannot run. */
+  | "no-source-manifest";
+
+/**
+ * What one boundary attempt did.
+ *
+ * Recorded rather than returned: `ensureFresh` resolves successfully whatever
+ * happens, so this is the only place a failure or a deferral is observable.
+ * Every member carries facet literals, closed reasons, and source paths only —
+ * never config content.
+ */
+export type PiConfigRefreshOutcome =
+  | {
+      readonly kind: "unavailable";
+      readonly reason: PiConfigRefreshUnavailableReason;
+    }
+  /** The cheap probe ruled every source out. Nothing was read or published. */
+  | { readonly kind: "skipped" }
+  | { readonly kind: "unchanged" }
+  | {
+      readonly kind: "published";
+      readonly change: PiConfigRefreshCandidate["change"];
+      readonly changedPaths: readonly string[];
+    }
+  | {
+      readonly kind: "deferred";
+      readonly changedFacets: readonly PiPrimaryContractFacet[];
+      readonly changedPaths: readonly string[];
+    }
+  /** The generation was revoked while the attempt ran; nothing was written. */
+  | { readonly kind: "stale" }
+  | { readonly kind: "failed"; readonly failure: PiConfigRefreshFailure };
+
+/** Everything one generation's coordinator reads. */
+export interface PiConfigRefreshCoordinatorDeps {
+  /** The generation's catalog cell. The only thing the coordinator writes. */
+  readonly catalog: PiCatalogCell;
+  /**
+   * Whether this generation still holds authority. Consulted before an
+   * attempt starts and again immediately before publication, so an attempt
+   * that spans a session replacement writes nothing.
+   */
+  readonly ownsGeneration: () => boolean;
+  readonly fs: PiConfigSourceFsPort;
+  readonly configLoader?: PiConfigLoaderPort;
+  readonly materializer?: PiMaterializerPort;
+  /** The committed primary descriptor, or `undefined` before one commits. */
+  readonly primary: () => AgentDescriptor | undefined;
+  /** The `disabled.skills` the committed primary was rendered with. */
+  readonly primaryDisabledSkills: () => readonly string[];
+  /** Pi's current skill-discovery snapshot, as activation resolves it. */
+  readonly skills: () => PiSkillResolutionPort;
+  readonly clock: PiConfigRefreshClock;
+  /**
+   * Smallest gap between two probes. A burst of parallel delegations inside
+   * one window therefore costs one probe. `0` disables spacing entirely,
+   * which is what tests use.
+   */
+  readonly minIntervalMs?: number;
+  /** Receives every recorded outcome, for diagnostics surfaces. */
+  readonly onOutcome?: (outcome: PiConfigRefreshOutcome) => void;
+}
+
+/**
+ * The one refresh orchestrator a generation runs at its delegation boundaries.
+ *
+ * `ensureFresh` is called before a delegation resolves its target or
+ * descriptor: root `weave_delegate`, an authenticated nested relay, a direct
+ * workflow step, and a recovery restore. It is *total* — its error type is
+ * `never` — because refresh must never fail a delegation. A probe that fails,
+ * a config left mid-edit, or a candidate the primary-contract guard holds back
+ * all resolve successfully with the last valid catalog still serving; only
+ * {@link PiConfigRefreshCoordinator.lastOutcome} records what happened.
+ */
+export interface PiConfigRefreshCoordinator {
+  /**
+   * Probes, classifies, builds, guards, and publishes — at most once per
+   * concurrent burst. Concurrent callers join the single in-flight attempt
+   * rather than starting their own.
+   */
+  ensureFresh(): ResultAsync<void, never>;
+  /**
+   * Re-evaluates after an explicit primary reactivation committed.
+   *
+   * The stored deferred snapshot is dropped rather than published: it was
+   * validated against the *previous* primary and may have been built from
+   * bytes that have since changed. A fresh probe and rebuild run instead, and
+   * the result is guarded against the newly active primary.
+   */
+  refreshAfterPrimaryReactivation(): ResultAsync<void, never>;
+  /** The last recorded attempt outcome, or `undefined` before the first. */
+  lastOutcome(): PiConfigRefreshOutcome | undefined;
+  /**
+   * Drops all coordinator state. An attempt still in flight can no longer
+   * publish, defer, or record anything.
+   */
+  dispose(): void;
+}
+
+/** Production spacing between probes. Tests pass `0`. */
+export const DEFAULT_PI_CONFIG_REFRESH_MIN_INTERVAL_MS = 250;
+
+const REFRESH_THREW_MESSAGE = "refresh-threw";
+
+/**
+ * Whether the probe moved any source entry.
+ *
+ * `refreshChangedSources` returns the *same entry object* for a source it
+ * ruled unchanged, so reference equality is exact for the fast path: all
+ * entries identical means nothing was read and there is nothing to publish.
+ * Any other shape (fresh metadata after a re-hash, an entry that appeared or
+ * disappeared) is worth publishing so the next probe stays cheap.
+ */
+function manifestEntriesMoved(
+  current: PiConfigSourceManifest,
+  next: PiConfigSourceManifest,
+): boolean {
+  if (current.files.length !== next.files.length) return true;
+  return next.files.some((entry, index) => current.files[index] !== entry);
+}
+
+/**
+ * Builds one generation's refresh coordinator.
+ *
+ * Constructed only by generations that actually register delegation surfaces;
+ * health-only and trust-withheld generations have no boundary to trigger it
+ * from and never build one.
+ */
+export function createPiConfigRefreshCoordinator(
+  deps: PiConfigRefreshCoordinatorDeps,
+): PiConfigRefreshCoordinator {
+  const minIntervalMs = deps.minIntervalMs ?? 0;
+  const buildDeps: PiConfigRefreshDeps = {
+    fs: deps.fs,
+    ...(deps.configLoader === undefined
+      ? {}
+      : { configLoader: deps.configLoader }),
+    ...(deps.materializer === undefined
+      ? {}
+      : { materializer: deps.materializer }),
+  };
+
+  let disposed = false;
+  let inFlight: Promise<void> | undefined;
+  let lastProbeAtMs: number | undefined;
+  let outcome: PiConfigRefreshOutcome | undefined;
+
+  const owns = (): boolean => !disposed && deps.ownsGeneration();
+
+  const record = (next: PiConfigRefreshOutcome): void => {
+    if (disposed) return;
+    outcome = next;
+    deps.onOutcome?.(next);
+  };
+
+  /** Whether enough time has passed since the last probe started. */
+  const dueForProbe = (): boolean => {
+    if (minIntervalMs <= 0 || lastProbeAtMs === undefined) return true;
+    const elapsed = deps.clock.now() - lastProbeAtMs;
+    // A clock that moved backwards is never proof that a probe is too recent.
+    return !Number.isFinite(elapsed) || elapsed < 0 || elapsed >= minIntervalMs;
+  };
+
+  /** Applies one built candidate. Synchronous, so nothing races the guard. */
+  const applyCandidate = (
+    current: PiConfigCatalogState,
+    candidate: PiConfigRefreshCandidate,
+  ): PiConfigRefreshOutcome => {
+    if (!owns()) return { kind: "stale" };
+
+    if (candidate.change === "unchanged") {
+      // The candidate's activation *is* the current one, so there is no
+      // contract to guard: only probe metadata can have moved.
+      if (!manifestEntriesMoved(current.manifest, candidate.next.manifest)) {
+        return { kind: "unchanged" };
+      }
+      return deps.catalog.publish(candidate.next) === "accepted"
+        ? { kind: "published", change: "unchanged", changedPaths: [] }
+        : { kind: "stale" };
+    }
+
+    const decision = decidePiPrimaryContract({
+      primary: deps.primary(),
+      disabledSkills: deps.primaryDisabledSkills(),
+      candidate: toPiPrimaryContractCandidate(candidate.next.activation),
+      skills: deps.skills(),
+    });
+    if (decision.decision === "primary-affecting") {
+      // Held, never applied, and the manifest stays where it is: the next
+      // boundary re-probes, so the deferral is re-derived from whatever is on
+      // disk then rather than frozen at this attempt.
+      return deps.catalog.defer({
+        state: candidate.next,
+        changedFacets: decision.changedFacets,
+        changedPaths: candidate.changedPaths,
+      }) === "accepted"
+        ? {
+            kind: "deferred",
+            changedFacets: decision.changedFacets,
+            changedPaths: candidate.changedPaths,
+          }
+        : { kind: "stale" };
+    }
+
+    // Re-checked immediately before the write: the generation may have been
+    // revoked while the candidate was being built.
+    if (!owns()) return { kind: "stale" };
+    return deps.catalog.publish(candidate.next) === "accepted"
+      ? {
+          kind: "published",
+          change: candidate.change,
+          changedPaths: candidate.changedPaths,
+        }
+      : { kind: "stale" };
+  };
+
+  const attempt = (): Promise<PiConfigRefreshOutcome> => {
+    if (!owns()) {
+      return Promise.resolve<PiConfigRefreshOutcome>({
+        kind: "unavailable",
+        reason: "stale-generation",
+      });
+    }
+    const current = deps.catalog.refreshState();
+    if (current === undefined) {
+      return Promise.resolve<PiConfigRefreshOutcome>({
+        kind: "unavailable",
+        reason: "no-source-manifest",
+      });
+    }
+    lastProbeAtMs = deps.clock.now();
+
+    return ResultAsync.fromPromise(
+      refreshPiConfigCandidate(current, buildDeps).match(
+        (candidate) => applyCandidate(current, candidate),
+        (failure): PiConfigRefreshOutcome => ({ kind: "failed", failure }),
+      ),
+      // Defense in depth: every port this module owns is already wrapped, so
+      // reaching here means an injected port broke its own contract. The
+      // delegation still proceeds on the last valid catalog.
+      (): PiConfigRefreshOutcome => ({
+        kind: "failed",
+        failure: {
+          type: "SourceReadFailed",
+          kind: "unknown",
+          path: undefined,
+          message: REFRESH_THREW_MESSAGE,
+        },
+      }),
+    ).match(
+      (settled) => settled,
+      (failed) => failed,
+    );
+  };
+
+  const start = (force: boolean): Promise<void> => {
+    if (disposed) return Promise.resolve();
+    const joined = inFlight;
+    if (joined !== undefined) return joined;
+    if (!force && !dueForProbe()) {
+      record({ kind: "skipped" });
+      return Promise.resolve();
+    }
+    // Assigned synchronously, before any caller can await, so a burst of
+    // boundaries in the same tick joins this exact attempt.
+    const running = attempt().then((settled) => {
+      inFlight = undefined;
+      record(settled);
+    });
+    inFlight = running;
+    return running;
+  };
+
+  return {
+    ensureFresh: () => ResultAsync.fromSafePromise(start(false)),
+    refreshAfterPrimaryReactivation: () =>
+      ResultAsync.fromSafePromise(
+        (async () => {
+          // An attempt that started under the previous primary is drained
+          // first, so the stored deferral this drops is the final one.
+          const pending = inFlight;
+          if (pending !== undefined) await pending;
+          if (disposed) return;
+          deps.catalog.takeDeferred();
+          await start(true);
+        })(),
+      ),
+    lastOutcome: () => outcome,
+    dispose: () => {
+      disposed = true;
+      inFlight = undefined;
+      lastProbeAtMs = undefined;
+      outcome = undefined;
+    },
+  };
 }

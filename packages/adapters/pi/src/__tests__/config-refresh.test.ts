@@ -2,10 +2,12 @@ import { describe, expect, it } from "bun:test";
 import type { ConfigLoadError, FileReader } from "@weaveio/weave-config";
 import type { WeaveConfig } from "@weaveio/weave-core";
 import type {
+  AgentDescriptor,
   MaterializationPlan,
   PromptFileReader,
 } from "@weaveio/weave-engine";
-import { errAsync, okAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { createPiCatalogCell, type PiCatalogCell } from "../catalog-cell.js";
 import {
   defaultPiConfigLoaderPort,
   defaultPiMaterializerPort,
@@ -15,8 +17,11 @@ import {
 } from "../config-activator.js";
 import {
   buildPiConfigRefreshCandidate,
+  createPiConfigRefreshCoordinator,
   type PiConfigCatalogState,
+  type PiConfigRefreshCoordinator,
   type PiConfigRefreshDeps,
+  type PiConfigRefreshOutcome,
   refreshPiConfigCandidate,
 } from "../config-refresh.js";
 import {
@@ -30,6 +35,16 @@ import {
   refreshConfigSourceManifest,
   resolvePiConfigSourcePaths,
 } from "../config-source-digests.js";
+import type {
+  PiDelegationController,
+  PiDelegationRequest,
+} from "../delegation-controller.js";
+import { buildDelegationToolRegistration } from "../delegation-tool.js";
+import type { PiAdapterFailure } from "../errors.js";
+import { createOpenSessionMutationGate } from "../required-capability-gate.js";
+import type { PiChildSettlement } from "../rpc-child.js";
+import { PiSkillCatalog } from "../skill-catalog.js";
+import type { PiSessionContext, PiToolRegistration } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Fake filesystem port — never touches the real filesystem
@@ -968,5 +983,645 @@ describe("buildPiConfigRefreshCandidate", () => {
     expect(candidate.next.manifest).not.toBe(state.manifest);
     expect(candidate.next.activation).not.toBe(state.activation);
     expect(snapshot(state)).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Delegation-boundary coordinator
+// ---------------------------------------------------------------------------
+
+/**
+ * A config with two eligible primaries: `loom` delegates to everything, and
+ * `scribe` delegates to nothing. A newly added subagent therefore changes
+ * `loom`'s delegation-target set while leaving `scribe`'s contract intact,
+ * which is exactly the difference a primary switch is allowed to publish.
+ */
+const PRIMARY_CONFIG_V1 = `
+agent loom {
+  description "orchestrator"
+  prompt "loom prompt v1"
+  models ["m1"]
+  mode primary
+
+  tool_policy {
+    read allow
+    write allow
+    execute allow
+    network deny
+    delegate allow
+  }
+}
+
+agent scribe {
+  description "second primary"
+  prompt "scribe prompt"
+  models ["m1"]
+  mode primary
+
+  tool_policy {
+    read allow
+    write deny
+    execute deny
+    network deny
+    delegate deny
+  }
+}
+
+agent alpha {
+  description "alpha subagent"
+  prompt_file "alpha.md"
+  models ["m1"]
+  mode subagent
+}
+`;
+
+const PRIMARY_CONFIG_PRIMARY_PROMPT_EDIT = PRIMARY_CONFIG_V1.replace(
+  '"loom prompt v1"',
+  '"loom prompt v2"',
+);
+
+const PRIMARY_CONFIG_WITH_DELTA = `${PRIMARY_CONFIG_V1}
+agent delta {
+  description "delta subagent"
+  prompt "delta prompt"
+  models ["m1"]
+  mode subagent
+}
+`;
+
+function primaryFiles(): FakeFiles {
+  return {
+    [GLOBAL_CONFIG]: { content: GLOBAL_TEXT, mtimeMs: 1_000 },
+    [PROJECT_CONFIG]: { content: PRIMARY_CONFIG_V1, mtimeMs: 2_000 },
+    [PROMPT_ALPHA]: { content: ALPHA_V1, mtimeMs: 3_000 },
+  };
+}
+
+interface CoordinatorHarness {
+  readonly files: FakeFiles;
+  readonly seeded: PiConfigCatalogState;
+  readonly cell: PiCatalogCell;
+  readonly fs: FakeFs;
+  readonly loader: { readonly calls: string[] };
+  readonly coordinator: PiConfigRefreshCoordinator;
+  readonly control: {
+    owns: boolean;
+    nowMs: number;
+    primary: AgentDescriptor | undefined;
+    disabledSkills: readonly string[];
+    readonly outcomes: PiConfigRefreshOutcome[];
+  };
+}
+
+async function coordinatorHarness(
+  options: {
+    readonly files?: FakeFiles;
+    readonly minIntervalMs?: number;
+    readonly statFailures?: Record<string, string>;
+  } = {},
+): Promise<CoordinatorHarness> {
+  const files = options.files ?? primaryFiles();
+  const seeded = await seedState(files);
+  const cell = createPiCatalogCell({
+    generationId: "gen-1",
+    activation: seeded.activation,
+    manifest: seeded.manifest,
+    contents: seeded.contents,
+  });
+  const fs = fakeFs(
+    files,
+    options.statFailures === undefined ? {} : { stat: options.statFailures },
+  );
+  const loader = countingLoader();
+  const control: CoordinatorHarness["control"] = {
+    owns: true,
+    nowMs: 0,
+    primary: seeded.activation.descriptors.byName.get("loom"),
+    disabledSkills: [],
+    outcomes: [],
+  };
+  const coordinator = createPiConfigRefreshCoordinator({
+    catalog: cell,
+    ownsGeneration: () => control.owns,
+    fs,
+    configLoader: loader.port,
+    primary: () => control.primary,
+    primaryDisabledSkills: () => control.disabledSkills,
+    // Pi discovered no skills, so both sides of the guard render the same way.
+    skills: () => new PiSkillCatalog([]),
+    clock: { now: () => control.nowMs },
+    minIntervalMs: options.minIntervalMs ?? 0,
+    onOutcome: (outcome) => control.outcomes.push(outcome),
+  });
+  return { files, seeded, cell, fs, loader, coordinator, control };
+}
+
+function publishedPrompt(
+  cell: PiCatalogCell,
+  agentName: string,
+): string | undefined {
+  return cell.descriptors().get(agentName)?.composedPrompt;
+}
+
+describe("PiConfigRefreshCoordinator — unchanged fast path", () => {
+  it("probes metadata only, publishes nothing, and stays total", async () => {
+    const { cell, fs, loader, coordinator } = await coordinatorHarness();
+    const published = cell.publication();
+
+    const result = await coordinator.ensureFresh();
+
+    expect(result.isOk()).toBe(true);
+    // Zero reads, zero hashes, zero parses, zero materializations.
+    expect(fs.readCalls).toEqual([]);
+    expect(loader.calls).toEqual([]);
+    expect(fs.statCalls.length).toBe(cell.manifest()?.files.length ?? 0);
+    // Nothing was published: the publication object itself is untouched.
+    expect(cell.publication()).toBe(published);
+    expect(coordinator.lastOutcome()).toEqual({ kind: "unchanged" });
+  });
+
+  it("joins concurrent boundaries into exactly one probe and one build", async () => {
+    const { files, cell, fs, loader, coordinator } = await coordinatorHarness();
+    files[PROMPT_ALPHA] = { content: ALPHA_V2, mtimeMs: 9_000 };
+    const sourceCount = cell.manifest()?.files.length ?? 0;
+
+    await Promise.all([
+      coordinator.ensureFresh(),
+      coordinator.ensureFresh(),
+      coordinator.ensureFresh(),
+    ]);
+
+    // One probe: one stat per known source, not three.
+    expect(fs.statCalls.length).toBe(sourceCount);
+    expect(fs.readCalls).toEqual([PROMPT_ALPHA]);
+    // A prompt-only change never re-parses config.
+    expect(loader.calls).toEqual([]);
+    expect(publishedPrompt(cell, "alpha")).toContain("alpha prompt v2");
+  });
+
+  it("spaces probes by the injected minimum interval", async () => {
+    const { files, fs, coordinator, control } = await coordinatorHarness({
+      minIntervalMs: 1_000,
+    });
+    await coordinator.ensureFresh();
+    const afterFirstProbe = fs.statCalls.length;
+    files[PROMPT_ALPHA] = { content: ALPHA_V2, mtimeMs: 9_000 };
+
+    control.nowMs = 500;
+    await coordinator.ensureFresh();
+
+    expect(fs.statCalls.length).toBe(afterFirstProbe);
+    expect(coordinator.lastOutcome()).toEqual({ kind: "skipped" });
+
+    control.nowMs = 1_500;
+    await coordinator.ensureFresh();
+
+    expect(fs.statCalls.length).toBe(afterFirstProbe * 2);
+    expect(coordinator.lastOutcome()?.kind).toBe("published");
+  });
+});
+
+describe("PiConfigRefreshCoordinator — publishing", () => {
+  it("publishes a subagent prompt edit and leaves the primary alone", async () => {
+    const { files, cell, coordinator, control } = await coordinatorHarness();
+    const committedPrimary = control.primary;
+    files[PROMPT_ALPHA] = { content: ALPHA_V2, mtimeMs: 9_000 };
+
+    await coordinator.ensureFresh();
+
+    expect(coordinator.lastOutcome()).toEqual({
+      kind: "published",
+      change: "prompt-only",
+      changedPaths: [PROMPT_ALPHA],
+    });
+    expect(publishedPrompt(cell, "alpha")).toContain("alpha prompt v2");
+    // The committed primary descriptor is the object it always was.
+    expect(control.primary).toBe(committedPrimary);
+    expect(publishedPrompt(cell, "loom")).toContain("loom prompt v1");
+    expect(cell.deferred()).toBeUndefined();
+  });
+
+  it("publishes a config edit that leaves every primary facet intact", async () => {
+    const { files, cell, loader, coordinator } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_V1.replace(
+        'prompt_file "alpha.md"',
+        'prompt "inline alpha v2"',
+      ),
+      mtimeMs: 9_000,
+    };
+
+    await coordinator.ensureFresh();
+
+    expect(coordinator.lastOutcome()?.kind).toBe("published");
+    expect(loader.calls).toEqual([PROJECT_ROOT]);
+    expect(publishedPrompt(cell, "alpha")).toContain("inline alpha v2");
+    // The dropped prompt reference left the manifest with the config change.
+    expect(cell.manifest()?.files.map((file) => file.path)).toEqual([
+      GLOBAL_CONFIG,
+      PROJECT_CONFIG,
+    ]);
+  });
+});
+
+describe("PiConfigRefreshCoordinator — primary-contract deferral", () => {
+  it("defers a primary prompt edit and keeps the current catalog serving", async () => {
+    const { files, cell, coordinator } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_PRIMARY_PROMPT_EDIT,
+      mtimeMs: 9_000,
+    };
+
+    await coordinator.ensureFresh();
+
+    expect(coordinator.lastOutcome()).toEqual({
+      kind: "deferred",
+      changedFacets: ["prompt"],
+      changedPaths: [PROJECT_CONFIG],
+    });
+    expect(publishedPrompt(cell, "loom")).toContain("loom prompt v1");
+    expect(cell.deferred()?.changedFacets).toEqual(["prompt"]);
+    // The manifest was not advanced, so the next boundary re-derives it.
+    expect(
+      cell.manifest()?.files.find((file) => file.path === PROJECT_CONFIG)
+        ?.sha256,
+    ).toBe(digestOf(await seedState(primaryFiles()), PROJECT_CONFIG));
+  });
+
+  it("defers a change to the active primary's delegation targets", async () => {
+    const { files, cell, coordinator } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_WITH_DELTA,
+      mtimeMs: 9_000,
+    };
+
+    await coordinator.ensureFresh();
+
+    expect(coordinator.lastOutcome()).toEqual({
+      kind: "deferred",
+      changedFacets: ["delegation-targets"],
+      changedPaths: [PROJECT_CONFIG],
+    });
+    // A new agent aimed at the active primary is not delegable yet.
+    expect(cell.descriptors().has("delta")).toBe(false);
+    expect(
+      cell
+        .descriptors()
+        .get("loom")
+        ?.delegationTargets.map((t) => t.name),
+    ).not.toContain("delta");
+  });
+
+  it("re-derives the same deferral on every later boundary", async () => {
+    const { files, cell, coordinator } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_PRIMARY_PROMPT_EDIT,
+      mtimeMs: 9_000,
+    };
+
+    await coordinator.ensureFresh();
+    await coordinator.ensureFresh();
+
+    expect(coordinator.lastOutcome()?.kind).toBe("deferred");
+    expect(publishedPrompt(cell, "loom")).toContain("loom prompt v1");
+  });
+});
+
+describe("PiConfigRefreshCoordinator — explicit primary reactivation", () => {
+  it("publishes a deferred prompt edit once a matching primary commits", async () => {
+    const { files, cell, coordinator, control } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_PRIMARY_PROMPT_EDIT,
+      mtimeMs: 9_000,
+    };
+    await coordinator.ensureFresh();
+    expect(coordinator.lastOutcome()?.kind).toBe("deferred");
+
+    // The explicit Alt+A switch committed `scribe`, whose prompt, model
+    // intent, tool policy and (empty) target set the candidate preserves.
+    control.primary = cell.descriptors().get("scribe");
+    await coordinator.refreshAfterPrimaryReactivation();
+
+    expect(coordinator.lastOutcome()?.kind).toBe("published");
+    expect(publishedPrompt(cell, "loom")).toContain("loom prompt v2");
+    expect(cell.deferred()).toBeUndefined();
+  });
+
+  it("publishes a deferred target-set change after a matching switch", async () => {
+    const { files, cell, coordinator, control } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_WITH_DELTA,
+      mtimeMs: 9_000,
+    };
+    await coordinator.ensureFresh();
+    expect(coordinator.lastOutcome()?.kind).toBe("deferred");
+
+    control.primary = cell.descriptors().get("scribe");
+    await coordinator.refreshAfterPrimaryReactivation();
+
+    expect(coordinator.lastOutcome()?.kind).toBe("published");
+    expect(cell.descriptors().has("delta")).toBe(true);
+    expect(
+      cell
+        .descriptors()
+        .get("loom")
+        ?.delegationTargets.map((t) => t.name),
+    ).toContain("delta");
+  });
+
+  it("rebuilds from current sources instead of publishing the held snapshot", async () => {
+    const { files, cell, fs, coordinator, control } =
+      await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_WITH_DELTA,
+      mtimeMs: 9_000,
+    };
+    await coordinator.ensureFresh();
+    const deferred = cell.deferred();
+    expect(deferred).toBeDefined();
+
+    // The held snapshot goes stale before the switch: both sources moved
+    // again while the candidate sat unpublished.
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_WITH_DELTA.replace(
+        '"delta prompt"',
+        '"delta prompt v2"',
+      ),
+      mtimeMs: 11_000,
+    };
+    files[PROMPT_ALPHA] = { content: ALPHA_V2, mtimeMs: 12_000 };
+    const statsBefore = fs.statCalls.length;
+
+    control.primary = cell.descriptors().get("scribe");
+    await coordinator.refreshAfterPrimaryReactivation();
+
+    // A fresh probe ran, and what landed is what is on disk now - not the
+    // snapshot the guard held back.
+    expect(fs.statCalls.length).toBeGreaterThan(statsBefore);
+    expect(publishedPrompt(cell, "delta")).toContain("delta prompt v2");
+    expect(publishedPrompt(cell, "alpha")).toContain("alpha prompt v2");
+    expect(cell.refreshState()?.activation).not.toBe(
+      deferred?.state.activation,
+    );
+  });
+
+  it("keeps deferring when the newly committed primary is also affected", async () => {
+    const { files, cell, coordinator } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_WITH_DELTA,
+      mtimeMs: 9_000,
+    };
+    await coordinator.ensureFresh();
+
+    // Re-committing the same primary changes nothing about the contract.
+    await coordinator.refreshAfterPrimaryReactivation();
+
+    expect(coordinator.lastOutcome()?.kind).toBe("deferred");
+    expect(cell.descriptors().has("delta")).toBe(false);
+  });
+});
+
+describe("PiConfigRefreshCoordinator — failure and staleness", () => {
+  it("keeps the catalog and manifest when a probe fails", async () => {
+    const { cell, coordinator } = await coordinatorHarness({
+      statFailures: { [PROJECT_CONFIG]: "permission denied" },
+    });
+    const published = cell.publication();
+
+    const result = await coordinator.ensureFresh();
+
+    expect(result.isOk()).toBe(true);
+    expect(cell.publication()).toBe(published);
+    expect(coordinator.lastOutcome()).toEqual({
+      kind: "failed",
+      failure: {
+        type: "SourceReadFailed",
+        kind: "project-config",
+        path: PROJECT_CONFIG,
+        message: "permission denied",
+      },
+    });
+  });
+
+  it("keeps the catalog when a changed config no longer parses", async () => {
+    const { files, cell, coordinator } = await coordinatorHarness();
+    files[PROJECT_CONFIG] = {
+      content: PROJECT_TEXT_UNTERMINATED,
+      mtimeMs: 9_000,
+    };
+    const published = cell.publication();
+
+    await coordinator.ensureFresh();
+
+    expect(cell.publication()).toBe(published);
+    expect(coordinator.lastOutcome()?.kind).toBe("failed");
+    // The next boundary retries the probe from the manifest it kept.
+    expect(cell.manifest()).toBe(published?.manifest);
+  });
+
+  it("discards a candidate whose generation was replaced mid-refresh", async () => {
+    const { files, cell, coordinator, control } = await coordinatorHarness();
+    files[PROMPT_ALPHA] = { content: ALPHA_V2, mtimeMs: 9_000 };
+
+    const running = coordinator.ensureFresh();
+    // Session replacement lands while the candidate is still being built.
+    control.owns = false;
+    cell.invalidate();
+    await running;
+
+    expect(coordinator.lastOutcome()).toEqual({ kind: "stale" });
+    expect(cell.publication()).toBeUndefined();
+    expect(cell.deferred()).toBeUndefined();
+    expect(cell.isLive()).toBe(false);
+  });
+
+  it("records nothing and writes nothing after dispose", async () => {
+    const { files, cell, coordinator } = await coordinatorHarness();
+    files[PROMPT_ALPHA] = { content: ALPHA_V2, mtimeMs: 9_000 };
+    const published = cell.publication();
+
+    const running = coordinator.ensureFresh();
+    coordinator.dispose();
+    await running;
+
+    expect(coordinator.lastOutcome()).toBeUndefined();
+    expect(cell.publication()).toBe(published);
+    expect(publishedPrompt(cell, "alpha")).toContain("alpha prompt v1");
+    // A later boundary on a disposed coordinator is a no-op, not a throw.
+    expect((await coordinator.ensureFresh()).isOk()).toBe(true);
+  });
+
+  it("does nothing for a generation that carries no source manifest", async () => {
+    const { seeded, fs } = await coordinatorHarness();
+    const cell = createPiCatalogCell({
+      generationId: "gen-2",
+      activation: seeded.activation,
+    });
+    const coordinator = createPiConfigRefreshCoordinator({
+      catalog: cell,
+      ownsGeneration: () => true,
+      fs,
+      primary: () => undefined,
+      primaryDisabledSkills: () => [],
+      skills: () => new PiSkillCatalog([]),
+      clock: { now: () => 0 },
+    });
+
+    await coordinator.ensureFresh();
+
+    expect(coordinator.lastOutcome()).toEqual({
+      kind: "unavailable",
+      reason: "no-source-manifest",
+    });
+    expect(fs.statCalls).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The boundary the coordinator actually runs on
+// ---------------------------------------------------------------------------
+
+function toolSessionContext(): PiSessionContext {
+  return {
+    mode: "tui",
+    cwd: PROJECT_ROOT,
+    isProjectTrusted: () => true,
+    isIdle: () => true,
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setWidget: () => {},
+      select: async () => undefined,
+      confirm: async () => false,
+    },
+    hasUI: true,
+    model: undefined,
+    modelRegistry: { getAvailable: () => [] },
+  } as unknown as PiSessionContext;
+}
+
+describe("the root weave_delegate boundary refreshes before it resolves", () => {
+  /**
+   * Wires the real coordinator into the real tool exactly as `extension-impl`
+   * does: `ensureFresh` first, then the invocation context, the target, and
+   * the bootstrap - each read live from the same catalog cell.
+   */
+  function delegationToolFor(harness: CoordinatorHarness): {
+    readonly registration: PiToolRegistration;
+    readonly dispatched: PiDelegationRequest[];
+  } {
+    const dispatched: PiDelegationRequest[] = [];
+    const controller = {
+      delegate: (
+        request: PiDelegationRequest,
+      ): ResultAsync<PiChildSettlement, PiAdapterFailure> => {
+        dispatched.push(request);
+        return okAsync({ outcome: "completed", assistantOutput: "done" });
+      },
+      threadStatus: () => undefined,
+    } as unknown as PiDelegationController;
+
+    const registration = buildDelegationToolRegistration({
+      targets: [],
+      ensureFresh: async () => {
+        await harness.coordinator.ensureFresh();
+      },
+      getInvocationContext: () => {
+        const primary = harness.control.primary?.name ?? "loom";
+        const descriptor = harness.cell.descriptors().get(primary);
+        if (descriptor === undefined) return undefined;
+        return {
+          parentAgentName: primary,
+          targets: descriptor.delegationTargets,
+        };
+      },
+      getController: () => controller,
+      parentId: "root",
+      parentDepth: 0,
+      parentAgentName: "loom",
+      idGenerator: { next: () => "child-1" },
+      buildBootstrap: (target) => ({
+        composedPrompt:
+          harness.cell.descriptors().get(target.name)?.composedPrompt ?? "",
+      }),
+      buildEnv: () => ({}),
+      getParentSessionState: () => ({
+        persistence: "persistent",
+        sessionId: "session-test",
+        runtimeSessionId: "session-test",
+        identitySource: "session-header",
+        sessionFile: "/sessions/test.jsonl",
+      }),
+      sessionMutationGate: createOpenSessionMutationGate(),
+    });
+    return { registration, dispatched };
+  }
+
+  async function delegate(
+    registration: PiToolRegistration,
+    agent: string,
+  ): Promise<{ readonly ok: boolean; readonly error?: string }> {
+    const result = await registration.execute(
+      "call-1",
+      { agent, task: "do it" },
+      undefined,
+      undefined,
+      toolSessionContext(),
+    );
+    return JSON.parse((result.content[0] as { text: string }).text) as {
+      ok: boolean;
+      error?: string;
+    };
+  }
+
+  it("carries a subagent prompt edit into the next dispatch's bootstrap", async () => {
+    const harness = await coordinatorHarness();
+    const { registration, dispatched } = delegationToolFor(harness);
+    harness.files[PROMPT_ALPHA] = { content: ALPHA_V2, mtimeMs: 9_000 };
+
+    expect(await delegate(registration, "alpha")).toMatchObject({ ok: true });
+
+    expect(harness.coordinator.lastOutcome()?.kind).toBe("published");
+    expect(
+      (dispatched[0]?.bootstrap as { composedPrompt: string }).composedPrompt,
+    ).toContain("alpha prompt v2");
+  });
+
+  it("refuses a target the active primary has not been authorized to gain", async () => {
+    const harness = await coordinatorHarness();
+    const { registration, dispatched } = delegationToolFor(harness);
+    harness.files[PROJECT_CONFIG] = {
+      content: PRIMARY_CONFIG_WITH_DELTA,
+      mtimeMs: 9_000,
+    };
+
+    expect(await delegate(registration, "delta")).toEqual({
+      ok: false,
+      error: "invalid-delegation-target",
+    });
+    expect(harness.coordinator.lastOutcome()?.kind).toBe("deferred");
+    expect(dispatched).toEqual([]);
+
+    // The same stable tool reaches it once an explicit switch publishes it.
+    harness.control.primary = harness.cell.descriptors().get("scribe");
+    await harness.coordinator.refreshAfterPrimaryReactivation();
+    harness.control.primary = harness.cell.descriptors().get("loom");
+
+    expect(await delegate(registration, "delta")).toMatchObject({ ok: true });
+    expect(dispatched[0]?.agentName).toBe("delta");
+  });
+
+  it("dispatches on the last valid catalog when the refresh fails", async () => {
+    const harness = await coordinatorHarness({
+      statFailures: { [PROJECT_CONFIG]: "permission denied" },
+    });
+    const { registration, dispatched } = delegationToolFor(harness);
+
+    expect(await delegate(registration, "alpha")).toMatchObject({ ok: true });
+
+    expect(harness.coordinator.lastOutcome()?.kind).toBe("failed");
+    expect(
+      (dispatched[0]?.bootstrap as { composedPrompt: string }).composedPrompt,
+    ).toContain("alpha prompt v1");
   });
 });

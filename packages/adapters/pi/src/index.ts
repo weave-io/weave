@@ -675,14 +675,21 @@ export {
 export type {
   PiConfigCatalogState,
   PiConfigRefreshCandidate,
+  PiConfigRefreshClock,
+  PiConfigRefreshCoordinator,
+  PiConfigRefreshCoordinatorDeps,
   PiConfigRefreshDeps,
   PiConfigRefreshFailure,
   PiConfigRefreshMaterializationReason,
+  PiConfigRefreshOutcome,
+  PiConfigRefreshUnavailableReason,
   PiConfigSourceCachedContent,
   PiConfigSourceContents,
 } from "./config-refresh.js";
 export {
   buildPiConfigRefreshCandidate,
+  createPiConfigRefreshCoordinator,
+  DEFAULT_PI_CONFIG_REFRESH_MIN_INTERVAL_MS,
   refreshPiConfigCandidate,
   toPiConfigRefreshFailure,
 } from "./config-refresh.js";

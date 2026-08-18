@@ -43,7 +43,10 @@ import { MAX_FINAL_OUTPUT_BYTES } from "../child-tree.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
 import type { PiConfigCatalogState } from "../config-refresh.js";
-import { createPiConfigSourceManifest } from "../config-source-digests.js";
+import {
+  createPiConfigSourceManifest,
+  type PiConfigSourceFsPort,
+} from "../config-source-digests.js";
 import type {
   PiOverlayChildDescriptor,
   PiThreadCachePort,
@@ -9711,5 +9714,317 @@ describe("createPiExtension: the generation catalog cell", () => {
 
     expect(extension.catalogCellForTest()).toBeUndefined();
     expect(stale?.isLive()).toBe(false);
+  });
+});
+
+describe("createPiExtension: the delegation-boundary config refresh", () => {
+  const REFRESH_ROOT = "/fake/project";
+  const REFRESH_HOME = process.env.HOME ?? "/home/testuser";
+  const GLOBAL_CONFIG_PATH = `${REFRESH_HOME}/.weave/config.weave`;
+  const PROJECT_CONFIG_PATH = `${REFRESH_ROOT}/.weave/config.weave`;
+  const ALPHA_PROMPT_PATH = `${REFRESH_ROOT}/.weave/prompts/alpha.md`;
+
+  const PROJECT_CONFIG_V1 = `
+agent loom {
+  description "orchestrator"
+  prompt "loom prompt v1"
+  models ["m1"]
+  mode primary
+
+  tool_policy {
+    read allow
+    write allow
+    execute allow
+    network deny
+    delegate allow
+  }
+}
+
+agent alpha {
+  description "alpha subagent"
+  prompt_file "alpha.md"
+  models ["m1"]
+  mode subagent
+}
+`;
+
+  interface RefreshFiles {
+    [path: string]: { content: string; mtimeMs: number };
+  }
+
+  function refreshFiles(): RefreshFiles {
+    return {
+      [PROJECT_CONFIG_PATH]: { content: PROJECT_CONFIG_V1, mtimeMs: 2_000 },
+      [ALPHA_PROMPT_PATH]: { content: "alpha prompt v1\n", mtimeMs: 3_000 },
+    };
+  }
+
+  /** In-memory config-source port: no real `.weave` file is ever touched. */
+  function memoryConfigSourceFs(files: RefreshFiles): PiConfigSourceFsPort {
+    return {
+      statFile: (path) => {
+        const file = files[path];
+        return okAsync(
+          file === undefined
+            ? undefined
+            : { size: file.content.length, mtimeMs: file.mtimeMs },
+        );
+      },
+      readFile: (path) => {
+        const file = files[path];
+        return file === undefined
+          ? errAsync({
+              type: "ReadFailed" as const,
+              path,
+              message: "missing",
+            })
+          : okAsync(file.content);
+      },
+    };
+  }
+
+  function memoryActivator(files: RefreshFiles): PiConfigActivator {
+    return new PiConfigActivator({
+      fileReader: {
+        exists: async (path) => path in files,
+        read: (path) => {
+          const file = files[path];
+          return file === undefined
+            ? errAsync({
+                type: "FileReadError" as const,
+                path,
+                cause: new Error("missing"),
+              })
+            : okAsync(file.content);
+        },
+      },
+      promptFileReader: {
+        read: (path) => {
+          const file = files[path];
+          return file === undefined
+            ? errAsync({ message: "missing" })
+            : okAsync(file.content);
+        },
+      },
+    });
+  }
+
+  function installWithRefresh(
+    host: RecordingFakePiHost,
+    files: RefreshFiles,
+  ): PiExtensionInstance {
+    return installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: memoryActivator(files),
+      configSourceFsPort: memoryConfigSourceFs(files),
+      configRefreshMinIntervalMs: 0,
+    });
+  }
+
+  function composedPromptOf(
+    extension: PiExtensionInstance,
+    agentName: string,
+  ): string {
+    return (
+      extension.catalogCellForTest()?.descriptors().get(agentName)
+        ?.composedPrompt ?? ""
+    );
+  }
+
+  it("publishes a subagent prompt edit at the next delegation boundary", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+    // The seed manifest names its sources without observing them, so the
+    // first boundary is what turns them into digests.
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    expect(composedPromptOf(extension, "alpha")).toContain("alpha prompt v1");
+    files[ALPHA_PROMPT_PATH] = { content: "alpha prompt v2\n", mtimeMs: 9_000 };
+
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    expect(extension.configRefreshForTest()?.lastOutcome()).toEqual({
+      kind: "published",
+      change: "prompt-only",
+      changedPaths: [ALPHA_PROMPT_PATH],
+    });
+    expect(composedPromptOf(extension, "alpha")).toContain("alpha prompt v2");
+    // The committed primary keeps the prompt the harness already received.
+    const turn = await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    expect(turn.systemPrompt).toContain("loom prompt v1");
+  });
+
+  it("defers an edit to the active primary and keeps serving the current catalog", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    files[PROJECT_CONFIG_PATH] = {
+      content: PROJECT_CONFIG_V1.replace(
+        '"loom prompt v1"',
+        '"loom prompt v2"',
+      ),
+      mtimeMs: 9_000,
+    };
+
+    await extension.configRefreshForTest()?.ensureFresh();
+
+    expect(extension.configRefreshForTest()?.lastOutcome()).toEqual({
+      kind: "deferred",
+      changedFacets: ["prompt"],
+      changedPaths: [PROJECT_CONFIG_PATH],
+    });
+    expect(composedPromptOf(extension, "loom")).toContain("loom prompt v1");
+    const turn = await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+    expect(turn.systemPrompt).toContain("loom prompt v1");
+    expect(turn.systemPrompt).not.toContain("loom prompt v2");
+  });
+
+  it("publishes the deferred edit once an explicit Alt+A switch commits", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+    await extension.configRefreshForTest()?.ensureFresh();
+    files[PROJECT_CONFIG_PATH] = {
+      content: PROJECT_CONFIG_V1.replace(
+        '"loom prompt v1"',
+        '"loom prompt v2"',
+      ),
+      mtimeMs: 9_000,
+    };
+    await extension.configRefreshForTest()?.ensureFresh();
+    expect(extension.configRefreshForTest()?.lastOutcome()?.kind).toBe(
+      "deferred",
+    );
+
+    await host.invokeShortcut("alt+a");
+
+    // The reactivation re-probed, rebuilt, and guarded against the primary
+    // that just committed - which the edit leaves untouched.
+    expect(extension.configRefreshForTest()?.lastOutcome()?.kind).toBe(
+      "published",
+    );
+    expect(composedPromptOf(extension, "loom")).toContain("loom prompt v2");
+    expect(extension.catalogCellForTest()?.deferred()).toBeUndefined();
+  });
+
+  it("does not build a coordinator for a health-only generation", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    // One unavailable required capability keeps this generation health-only:
+    // it activates a catalog but registers no delegation surface at all.
+    const extension = installExtension(host, "0.81.1", {
+      capabilityProber: {
+        probe: () =>
+          ALL_CAPABILITY_IDS.map((capabilityId) => ({
+            capabilityId,
+            probeStatus:
+              capabilityId === "delegated-specialist-execution"
+                ? ("unavailable" as const)
+                : ("ok" as const),
+          })),
+      },
+      configActivator: memoryActivator(files),
+      configSourceFsPort: memoryConfigSourceFs(files),
+      configRefreshMinIntervalMs: 0,
+    });
+    await host.triggerSessionStart();
+
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
+    expect(extension.configRefreshForTest()).toBeUndefined();
+  });
+
+  it("does not build a coordinator for an untrusted project", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: false });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+
+    expect(extension.configRefreshForTest()).toBeUndefined();
+  });
+
+  it("does not build a coordinator when no config-source port is wired", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const extension = installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: memoryActivator(files),
+    });
+    await host.triggerSessionStart();
+
+    expect(extension.catalogCellForTest()?.isLive()).toBe(true);
+    expect(extension.configRefreshForTest()).toBeUndefined();
+  });
+
+  it("replaces the coordinator with the generation it belongs to", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const files = refreshFiles();
+    const extension = installWithRefresh(host, files);
+    await host.triggerSessionStart();
+    const first = extension.configRefreshForTest();
+    files[ALPHA_PROMPT_PATH] = { content: "alpha prompt v2\n", mtimeMs: 9_000 };
+    await first?.ensureFresh();
+    expect(first?.lastOutcome()?.kind).toBe("published");
+
+    await host.triggerSessionStart();
+
+    const second = extension.configRefreshForTest();
+    expect(second).toBeDefined();
+    expect(second).not.toBe(first);
+    // The replaced generation's coordinator was disposed with its catalog.
+    expect(first?.lastOutcome()).toBeUndefined();
+    await first?.ensureFresh();
+    expect(first?.lastOutcome()).toBeUndefined();
+  });
+
+  it("refreshes before a recovery restore spawns its child", async () => {
+    const order: string[] = [];
+    const files = refreshFiles();
+    const sourceFs = memoryConfigSourceFs(files);
+    const probingFs: PiConfigSourceFsPort = {
+      statFile: (path) => {
+        order.push("probe");
+        return sourceFs.statFile(path);
+      },
+      readFile: (path) => sourceFs.readFile(path),
+    };
+    const history = mutableChildRefSource();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect(undefined);
+    installRecoveryExtension(
+      host,
+      history,
+      () => {
+        order.push("restore");
+        return okAsync({ finalOutput: "done", interventionCount: 1 });
+      },
+      { recovery_countdown_seconds: 0 },
+      { configSourceFsPort: probingFs, configRefreshMinIntervalMs: 0 },
+    );
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+
+    // The restored child is a new dispatch, so the boundary probe runs first.
+    expect(order).toContain("restore");
+    expect(order.indexOf("probe")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("probe")).toBeLessThan(order.indexOf("restore"));
+  });
+
+  it("drops the coordinator when session shutdown revokes the generation", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const extension = installWithRefresh(host, refreshFiles());
+    await host.triggerSessionStart();
+    expect(extension.configRefreshForTest()).toBeDefined();
+
+    await host.triggerEvent("session_shutdown");
+    await flushBackgroundWork();
+
+    expect(extension.configRefreshForTest()).toBeUndefined();
   });
 });

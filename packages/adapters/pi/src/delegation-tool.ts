@@ -8,7 +8,7 @@
  */
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { DelegationTarget } from "@weaveio/weave-engine";
-import { err, ok, Result, type ResultAsync } from "neverthrow";
+import { err, ok, Result, ResultAsync } from "neverthrow";
 import { Type } from "typebox";
 import {
   CARD_AGENT_NAME_MAX,
@@ -204,6 +204,17 @@ export interface PiDelegationToolDeps {
    * somehow did.
    */
   readonly getController: () => PiDelegationController | undefined;
+  /**
+   * Refreshes the generation's published catalog before this call resolves a
+   * target, a descriptor, or a bootstrap, so a config edit made since the last
+   * dispatch reaches the next child.
+   *
+   * Total by contract and by construction: the wired coordinator never fails,
+   * and this tool additionally swallows a hook that breaks that contract. A
+   * refresh can never refuse a delegation, so a stale-but-valid catalog always
+   * serves.
+   */
+  readonly ensureFresh?: () => Promise<void>;
   readonly parentId: string;
   readonly parentDepth: number;
   /** The invoking primary's own agent name - limits are the parent's own budget, never the target's (Pi adapter contract). */
@@ -1341,6 +1352,21 @@ function parseDelegationCall(call: unknown): PiDelegationCall | undefined {
 }
 
 /**
+ * Runs the injected boundary refresh without ever letting it fail this call.
+ *
+ * A hook that throws or rejects is a broken contract, not a reason to refuse a
+ * delegation: the catalog simply stays where it was.
+ */
+async function ensureCatalogFresh(
+  ensureFresh: () => Promise<void>,
+): Promise<void> {
+  await ResultAsync.fromPromise(
+    Promise.resolve().then(() => ensureFresh()),
+    () => undefined,
+  ).unwrapOr(undefined);
+}
+
+/**
  * Reads the one authoritative target gate for a root delegation. When the call
  * site wires `getInvocationContext`, its answer is final - including
  * `undefined`, which fails closed. Only call sites that wire no hook fall back
@@ -1415,6 +1441,13 @@ export function buildDelegationToolRegistration(
       const controller = deps.getController();
       if (controller === undefined) {
         return failureResult("delegation-transport-unavailable");
+      }
+      // The delegation boundary: the published catalog is refreshed here,
+      // before any target, descriptor, or bootstrap is resolved, and before a
+      // thread run samples its own dispatch snapshot. A call site that wires
+      // no hook keeps its exact prior control flow - no await is introduced.
+      if (deps.ensureFresh !== undefined) {
+        await ensureCatalogFresh(deps.ensureFresh);
       }
       if (parsed.kind !== "start") {
         // A thread run reuses the thread's own recorded agent, model, and

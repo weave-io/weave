@@ -1375,6 +1375,40 @@ describe("PiDelegationController", () => {
     controller.disposeAll();
   });
 
+  it("refreshes the published catalog before an authenticated relay resolves its target", async () => {
+    const port = new FakeChildProcessPort();
+    const order: string[] = [];
+    const controller = makeController(config(GENEROUS), port, {
+      ensureFreshCatalog: () => {
+        order.push("refresh");
+        return okAsync(undefined);
+      },
+      currentDispatch: () =>
+        dispatchSnapshot({
+          resolveDelegationTarget: () => {
+            order.push("resolve");
+            return undefined;
+          },
+        }),
+    });
+
+    const settlement = await controller.delegateFromAuthenticatedParent({
+      parentId: "direct-workflow-step",
+      parentDepth: 0,
+      parentAgentName: "tapestry",
+      agentName: "tapestry-worker",
+      task: "Reply exactly TAPESTRY_CHILD_OK",
+      cwd: "/project",
+    });
+
+    // The refresh is the boundary: it runs before the relay's target lookup,
+    // and a target the refreshed catalog does not carry still fails closed.
+    expect(order).toEqual(["refresh", "resolve"]);
+    expect(settlement.isErr()).toBe(true);
+    expect(port.spawnedProcesses.length).toBe(0);
+    controller.disposeAll();
+  });
+
   it("relays a live child's delegate-request through the same tracked global budget, not an independent one", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(

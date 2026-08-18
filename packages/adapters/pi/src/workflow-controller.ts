@@ -279,6 +279,16 @@ export interface PiWorkflowControllerDeps {
   readonly resolveAgentDescriptor?: (
     agentName: string,
   ) => AgentDescriptor | undefined;
+  /**
+   * Refreshes the adapter's published catalog at the direct-step dispatch
+   * boundary, before {@link resolveAgentDescriptor} is consulted, so a step
+   * resolves the newest authorized descriptor rather than the one this
+   * generation happened to boot with.
+   *
+   * Total: its error type is `never`, so a refresh can never fail a step.
+   * Omitted by embeddings that publish no catalog of their own.
+   */
+  readonly ensureFreshCatalog?: () => ResultAsync<void, never>;
 }
 
 export interface PiStartWorkflowInput {
@@ -1009,6 +1019,39 @@ export class PiWorkflowController {
     const generationCheck = this.deps.assertGenerationCurrent();
     if (generationCheck.isErr()) return errAsync(generationCheck.error);
 
+    // The direct-step delegation boundary. Refresh runs first, so the catalog
+    // consulted below is the newest one this generation is authorized to hold.
+    return (
+      this.deps.ensureFreshCatalog?.() ?? okAsync<void, never>(undefined)
+    ).andThen(() =>
+      this.dispatchAgentEffectFromCatalog(
+        workflowInstanceId,
+        leaseId,
+        context,
+        dispatchEffect,
+        stepName,
+        iteration,
+        maxSteps,
+        stepPromptText,
+      ),
+    );
+  }
+
+  /**
+   * Runs one `dispatch-agent` effect against the already-refreshed catalog.
+   * Split from {@link runDispatchAgentEffect} only so the refresh boundary
+   * provably precedes every catalog read below.
+   */
+  private dispatchAgentEffectFromCatalog(
+    workflowInstanceId: string,
+    leaseId: string,
+    context: WorkflowExecutionContext,
+    dispatchEffect: DispatchAgentEffect,
+    stepName: string,
+    iteration: number,
+    maxSteps: number,
+    stepPromptText: string | undefined,
+  ): ResultAsync<PiRunResult, PiAdapterFailure> {
     // Resolve the real descriptor (composed prompt, models, delegation
     // targets) from the adapter's own activated catalog - never from
     // `dispatchEffect.runAgent.agentDescriptor`, whose corresponding fields

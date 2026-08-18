@@ -215,6 +215,14 @@ export interface PiDelegationControllerDeps {
     name: string,
   ) => DelegationTarget | undefined;
   /**
+   * Refreshes the generation's published catalog at the authenticated nested
+   * relay boundary, before that relay resolves its target and bootstrap.
+   *
+   * Total: its error type is `never`, so a refresh can never refuse a relay.
+   * Omitted by embeddings that publish no catalog of their own.
+   */
+  readonly ensureFreshCatalog?: () => ResultAsync<void, never>;
+  /**
    * Reads the live parent session id (Task 7's persistent-parent probe). Thread
    * ownership is measured against it, so a session transition can never let a
    * new parent inherit another parent's threads.
@@ -912,6 +920,17 @@ export class PiDelegationController {
   ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     const storageAuthority = this.requireSessionStorageAuthority("delegation");
     if (storageAuthority.isErr()) return errAsync(storageAuthority.error);
+    // The nested delegation boundary: refresh runs before the target and the
+    // bootstrap are resolved below.
+    const refreshed =
+      this.deps.ensureFreshCatalog?.() ?? okAsync<void, never>(undefined);
+    return refreshed.andThen(() => this.relayFromAuthenticatedParent(request));
+  }
+
+  /** Resolves and dispatches one already-refreshed authenticated relay. */
+  private relayFromAuthenticatedParent(
+    request: PiAuthenticatedDelegationRequest,
+  ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     const childId = this.deps.idGenerator.next();
     // The direct-step parent is deliberately outside this controller's tree,
     // so it carries its own pinned snapshot rather than being looked up here.
