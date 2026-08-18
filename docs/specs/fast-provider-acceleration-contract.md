@@ -2,7 +2,7 @@
 
 Date: 2026-08-12
 
-Last amended: 2026-08-17
+Last amended: 2026-08-18
 
 Status: Approved. OpenCode and Claude Code stay `unsupported`. The public OpenAI API and Anthropic mappings stay unimplemented on every adapter. The shipped Pi adapter still declares `provider-fast-activation` as `unsupported` and mutates no provider request; this note now authorizes exactly one Pi mapping, the OpenAI Codex subscription transport through a Weave-registered wrapped provider, under the rules below.
 
@@ -20,6 +20,7 @@ Normative provider facts below come from first-party API documentation, with one
 | --- | --- |
 | 2026-08-12 | Original note. Every adapter `unsupported`; no adapter mutates a provider request. |
 | 2026-08-17 | Added the OpenAI Codex subscription contract, the Pi wrapped-provider seam verdict, the normative Pi Codex mapping rules, and the pinned-host probe appendix. Owner approved OD-1, OD-5, and OD-6; Task 1 resolved OD-2, OD-3, and OD-4. Public OpenAI and Anthropic thresholds unchanged. |
+| 2026-08-18 | Sharpened Pi Codex rules 7 and 8: the preexisting-hint check is a preflight over both caller-held header sources, and a mapped body whose routing pair cannot be written is not sent at all rather than sent partially. No threshold, allowlist, or state change. |
 
 ## Neutral Weave boundary
 
@@ -257,11 +258,11 @@ These rules are normative for the Pi adapter's [wrapped-provider seam](#pi-0842-
 **Collisions**
 
 6. **Body.** After the caller's `onPayload` chain has run, if `service_tier` is absent, set `"priority"`. If it is already exactly `"priority"`, keep it. If it is present with any other value, is not a string, or the payload is not a plain object, record `request-collision`, leave the payload untouched, and activate no header.
-7. **Headers.** At fetch time, a preexisting `x-codex-routing-hint` in any casing that this attempt did not write yields `request-collision` and an unmodified request. A preexisting `originator` is Pi's hardcoded `"pi"`; the wrapper replaces it only under full activation. `Authorization`, `chatgpt-account-id`, `session-id`, and every other credential or routing header stay untouched.
+7. **Headers.** The check is a preflight, not a discovery. The host merges its request headers from two caller-held sources, `requestModel.headers` and `options.headers` (where a null value deletes the name), and the wrapper holds both before it touches the body. A preexisting `x-codex-routing-hint` in any casing in either source yields `request-collision` *before* any mutation, and the call is delegated to the native implementation with the caller's own options object, so the payload stays byte-for-byte native. The wrapper rechecks the outgoing headers at fetch time; a hint that appears only then is still `request-collision`. A preexisting `originator` is Pi's hardcoded `"pi"`; the wrapper replaces it only under full activation. `Authorization`, `chatgpt-account-id`, `session-id`, and every other credential or routing header stay untouched.
 
 **Transport, retry, and state**
 
-8. **Both parts or neither.** Headers activate only when fast intent held and the recorded final body for the same attempt carries `service_tier === "priority"`. Fast-off and ineligible requests gain neither part, and nothing is cached between attempts.
+8. **Both parts or neither.** Headers activate only when fast intent held and the recorded final body for the same attempt carries `service_tier === "priority"`. Fast-off and ineligible requests gain neither part, and nothing is cached between attempts. This is a property of the wire, not of the wrapper's intentions: a body the wrapper set to `"priority"` must never reach the network without both parts on the same attempt. Because the body is serialized, and possibly zstd-compressed, before any fetch runs, that mutation cannot be rolled back later. If the routing pair therefore cannot be written for an attempt — a late hint collision, or any other failure after the body was mapped — the wrapper does not send that attempt at all, records the bounded collision or degradation, and rejects the call. It never decodes or rewrites a serialized body. A `"priority"` tier the caller set itself is not the wrapper's mutation: such an attempt is passed through exactly as the native path would have sent it.
 9. **Forced SSE.** Eligible fast requests use `transport: "sse"`, because that is the only path with header authority. Fast-off and ineligible requests keep the native transport.
 10. **Retry.** Pi's SSE retry loop reuses the same body and headers for one logical call. The wrapper observes each attempt, records evidence per attempt, caps counters, and takes the terminal snapshot from the final attempt. The wrapper adds no retries of its own. An abort or timeout terminates as `canceled` or `timed-out`. An attempt aborted before any fetch is `canceled`, not `not-confirmed`.
 11. **State.** `requested` requires an exact allowlist match plus the wrapper's own fetch actually running for that attempt and writing both parts. `applied` requires same-attempt positive `openai-service-tier` evidence with the exact value `"priority"`. Mutation, HTTP success, or a completed stream alone terminates at `not-confirmed`. Intent with no eligible mapping terminates at `unsupported`.

@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 313 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~34,400 tokens. Without it, AI exploration would cost ~100,400 tokens. **Saves ~66,100 tokens per conversation.**
-> **Last scanned:** 2026-08-18 03:26 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 315 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~34,600 tokens. Without it, AI exploration would cost ~100,900 tokens. **Saves ~66,400 tokens per conversation.**
+> **Last scanned:** 2026-08-18 04:04 — re-run after significant changes
 
 ---
 
@@ -608,6 +608,22 @@
   - type CodexFastEvidenceKind
   - type CodexFastEvidenceOutcome
   - _...14 more_
+- `packages/adapters/pi/src/codex-fast/evidence-sniffer.ts`
+  - function createCodexServiceTierSniffer: (input) => Result<TransformStream<Uint8Array, Uint8Array>, CodexEvidenceSnifferError>
+  - type CodexEvidenceSnifferError
+  - type CodexEvidenceSnifferInput
+  - const CODEX_EVIDENCE_SCAN_BUDGET_BYTES
+  - const CODEX_STANDARD_SERVICE_TIER
+  - const CODEX_EVIDENCE_EVENT_CREATED
+  - _...1 more_
+- `packages/adapters/pi/src/codex-fast/provider.ts`
+  - function hasCodexSubscriptionAccountClaim: (apiKey) => boolean
+  - function wrapCodexProviderForFast: (native, intentPort, attemptSink) => Result<T, CodexFastWrapError>
+  - type CodexFastIntent
+  - type CodexFastIntentPort
+  - type CodexFastAttemptSink
+  - type CodexWrappableProvider
+  - _...2 more_
 - `packages/adapters/pi/src/codex-fast/routing.ts`
   - function isSafeCodexModelId: (modelId) => modelId is string
   - function findCodexFastAllowlistEntry: (modelId) => CodexFastAllowlistEntry | undefined
@@ -2022,7 +2038,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 350 test files found
+> 351 test files found
 
 ---
 

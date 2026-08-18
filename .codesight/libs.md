@@ -597,6 +597,22 @@
   - type CodexFastEvidenceKind
   - type CodexFastEvidenceOutcome
   - _...14 more_
+- `packages/adapters/pi/src/codex-fast/evidence-sniffer.ts`
+  - function createCodexServiceTierSniffer: (input) => Result<TransformStream<Uint8Array, Uint8Array>, CodexEvidenceSnifferError>
+  - type CodexEvidenceSnifferError
+  - type CodexEvidenceSnifferInput
+  - const CODEX_EVIDENCE_SCAN_BUDGET_BYTES
+  - const CODEX_STANDARD_SERVICE_TIER
+  - const CODEX_EVIDENCE_EVENT_CREATED
+  - _...1 more_
+- `packages/adapters/pi/src/codex-fast/provider.ts`
+  - function hasCodexSubscriptionAccountClaim: (apiKey) => boolean
+  - function wrapCodexProviderForFast: (native, intentPort, attemptSink) => Result<T, CodexFastWrapError>
+  - type CodexFastIntent
+  - type CodexFastIntentPort
+  - type CodexFastAttemptSink
+  - type CodexWrappableProvider
+  - _...2 more_
 - `packages/adapters/pi/src/codex-fast/routing.ts`
   - function isSafeCodexModelId: (modelId) => modelId is string
   - function findCodexFastAllowlistEntry: (modelId) => CodexFastAllowlistEntry | undefined

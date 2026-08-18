@@ -164,13 +164,13 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
   - **Acceptance**:
     - Property-style tests cover every transition and prove `applied` is unreachable without confirmed evidence; mutation-without-evidence yields exactly `requested`→`not-confirmed`.
 
-- [ ] 5. Wrapped provider (test-first, mocked native provider)
+- [x] 5. Wrapped provider (test-first, mocked native provider)
   - **What**: `wrapCodexProviderForFast(native, intentPort, attemptSink)` producing a `Provider` identical to the native one except for wrapped `stream`/`streamSimple`, implementing passthrough, injection, SSE forcing, header authority, and the bounded evidence sniffer.
   - **Files**: `packages/adapters/pi/src/codex-fast/provider.ts`, `packages/adapters/pi/src/codex-fast/evidence-sniffer.ts`, `packages/adapters/pi/src/__tests__/codex-fast-provider.test.ts`.
   - **Depends on**: Tasks 3–4.
   - **Implementation outline**:
     1. Ineligible/fast-off path: delegate with the caller's options object unchanged (assert referential identity in tests) — byte-identical behavior.
-    2. Eligible path: chain `onPayload` (caller first, then rule-6 mutation + recording), force `transport: "sse"`, install the wrapper `fetch` implementing rule 7/8 header writes and per-attempt evidence capture, pass everything else through.
+    2. Eligible path: chain `onPayload` (caller first, then rule-6 mutation + recording), force `transport: "sse"`, install the wrapper `fetch` implementing rule 7/8 header writes and per-attempt evidence capture, pass everything else through. Rule 7's preexisting-hint check runs as a preflight over both caller-held header sources (`requestModel.headers`, `options.headers`) *before* the payload mutation is installed, so a known collision takes the passthrough shape; a hint appearing only at fetch time cannot be rolled back after serialization and fails the attempt closed instead of sending a partial fast request.
     3. Evidence sniffer: a `TransformStream` passthrough that scans only until the first `response.created`/`response.completed` SSE event or a fixed byte budget (e.g. 64 KiB), extracts `service_tier`, then becomes pure passthrough; on parse trouble report `ambiguous`/`inaccessible`, never disturb the stream.
     4. On any thrown/rejected wrapper-internal step, fail closed to native behavior for that call and record a bounded degradation (neverthrow at every seam per repo rules).
   - **Pitfalls / non-goals**:
@@ -180,6 +180,7 @@ The wrapper computes one eligibility verdict per stream call, before any mutatio
     - Proxy/malicious cases in tests: hostile `onPayload` from another extension returning a poisoned payload (getter traps, `service_tier` accessor) ⇒ collision/ineligible, no throw; hostile response streams (no SSE framing, giant first event, binary) ⇒ bounded outcome.
   - **Acceptance**:
     - Tests with a mocked native provider + mocked fetch prove: exact header/body writes for eligible calls on both header casing variants; zero mutation otherwise; per-attempt evidence wiring; no real process or network (`packages/adapters/AGENTS.md` rules).
+    - Tests inspect the final payload *and* the outgoing headers together under case-insensitive hint collisions in every header source, proving no request reaches the network carrying a wrapper-set `service_tier: "priority"` without both routing parts for that same attempt.
 
 - [ ] 6. Widen the adapter's fast state vocabulary and telemetry
   - **What**: Replace the single-state `unsupported` contract in `provider-fast-activation.ts` with the full bounded vocabulary, keeping the hook-audit `unsupported` outcome for every non-codex mapping, and extend telemetry to journal and render the new snapshots.
