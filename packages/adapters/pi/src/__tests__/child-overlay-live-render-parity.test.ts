@@ -318,7 +318,8 @@ describe("live transcript rows match the prototype's renderPiNative design", () 
     }
     const rows = transcriptRows(component);
     expect(rows.some((r) => r.includes("▍"))).toBe(false);
-    expect(rows.some((r) => r.includes("● shuttle · reply"))).toBe(true);
+    expect(rows.some((r) => r.includes("shuttle · reply"))).toBe(true);
+    expect(rows.some((r) => r.includes("● shuttle · reply"))).toBe(false);
     expect(rows.some((r) => r.includes("  the suite is green"))).toBe(true);
   });
 });
@@ -612,7 +613,8 @@ describe("every streamed event kind matches its prototype fixture", () => {
         },
       },
     ]);
-    expect(ended).toEqual(["● shuttle · reply", "  the whole answer", ""]);
+    expect(ended).toEqual(["shuttle · reply", "  the whole answer", ""]);
+    expect(ended.some((row) => row.startsWith("●"))).toBe(false);
   });
 
   it("usage report", async () => {

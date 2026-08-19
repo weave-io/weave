@@ -768,13 +768,7 @@ function renderEntryRows(
         text,
       );
       if (body.length === 0) return [];
-      return [
-        headRow(
-          `${gutter(paint, "assistant", "run")} ${dim(`${input.childName} · reply`)}`,
-          width,
-        ),
-        ...body,
-      ];
+      return [headRow(dim(`${input.childName} · reply`), width), ...body];
     }
 
     case "assistant": {
@@ -789,9 +783,10 @@ function renderEntryRows(
         entry,
         !entry.streaming && entry.id === finalAssistantId,
       );
-      const header = streaming
-        ? dim(`${input.childName} · ${label}`)
-        : `${gutter(paint, "assistant", "run")} ${dim(`${input.childName} · ${label}`)}`;
+      // Assistant rows use the same plain identity in both live and terminal
+      // states. The status rail already carries the lifecycle glyph; adding a
+      // `●` here makes the transcript look like a second, different lane.
+      const header = dim(`${input.childName} · ${label}`);
       rows.push(headRow(header, width));
       const body = bodyRows(
         entry.text || entry.markdown,

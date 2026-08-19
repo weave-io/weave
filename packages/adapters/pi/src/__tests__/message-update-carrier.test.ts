@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import fixture from "../__fixtures__/pi-0.84.2-child-ui-events.v1.json";
 import {
   canonicalReasoningMessageUpdate,
   MAX_CHILD_EVENT_STRING,
@@ -704,7 +705,94 @@ describe("classifyPiMessageUpdate · hostile shapes", () => {
   });
 });
 
-describe("Pi 0.84.2 public assistant event ordering", () => {
+describe("Pi 0.84.2 captured public event ordering", () => {
+  it("replays the authoritative thinking and answer carriers without crossing lanes", () => {
+    const events = (
+      fixture as {
+        readonly events: readonly {
+          readonly eventType: string;
+          readonly payload: Record<string, unknown>;
+        }[];
+      }
+    ).events.filter((event) => event.eventType === "message_update");
+    const kinds: string[] = [];
+    let answerDeltas = 0;
+    for (const event of events) {
+      const classified = classifyPiMessageUpdate(event.payload);
+      if (classified.kind === "reasoning") kinds.push("reasoning");
+      if (classified.kind === "answer") {
+        kinds.push("answer");
+        answerDeltas += 1;
+      }
+      expect(classified.kind).not.toBe("rejected");
+      if (classified.kind === "rejected") continue;
+    }
+    expect(kinds.slice(0, 9)).toEqual(Array(9).fill("reasoning"));
+    expect(kinds.slice(9)).toEqual(["answer", "answer", "answer"]);
+    expect(answerDeltas).toBe(3);
+
+    // The red control is a mixed carrier: changing the authoritative thinking
+    // frame into an answer must fail closed rather than leak either payload.
+    const firstThinking = events.find((event) => {
+      const value = event.payload.assistantMessageEvent;
+      return (
+        typeof value === "object" &&
+        value !== null &&
+        (value as { readonly type?: unknown }).type === "thinking_delta"
+      );
+    });
+    expect(firstThinking).toBeDefined();
+    if (firstThinking === undefined) return;
+    const mutated = {
+      ...firstThinking.payload,
+      delta: { text: RAW_COT },
+    };
+    expect(classifyPiMessageUpdate(mutated)).toEqual({
+      kind: "rejected",
+      reason: "mixed-carriers",
+    });
+    expect(messageUpdateAnswerText(mutated)).toBeUndefined();
+  });
+
+  it("keeps the fixture's structural thinking markers content-free", () => {
+    const thinking = (
+      fixture as {
+        readonly events: readonly {
+          readonly eventType: string;
+          readonly payload: Record<string, unknown>;
+        }[];
+      }
+    ).events.filter((event) => {
+      if (event.eventType !== "message_update") return false;
+      const value = event.payload.assistantMessageEvent;
+      return (
+        typeof value === "object" &&
+        value !== null &&
+        ["thinking_start", "thinking_delta", "thinking_end"].includes(
+          String((value as { readonly type?: unknown }).type),
+        )
+      );
+    });
+    expect(thinking.length).toBe(9);
+    for (const event of thinking) {
+      const parsed = parsePiChildSessionEvent(event.payload);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      expect(retainedChildSessionEvent(parsed.data)).toEqual(
+        canonicalReasoningMessageUpdate(),
+      );
+    }
+  });
+
+  it("rejects the missing text-delta red control before answer projection", () => {
+    const mutated = {
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0 },
+    };
+    expect(classifyPiMessageUpdate(mutated)).toEqual({ kind: "reasoning" });
+    expect(messageUpdateAnswerText(mutated)).toBeUndefined();
+  });
+
   it("classifies thinking lifecycle and incremental answer carriers separately", () => {
     const lifecycle = [
       { type: "thinking_start", contentIndex: 0 },

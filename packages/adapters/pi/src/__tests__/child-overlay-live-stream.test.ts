@@ -259,9 +259,10 @@ function testKeybindings(): KeybindingsManager {
 
 function mountPane(
   controller: ReturnType<typeof createChildOverlayController>,
+  rows = ROWS,
 ) {
   return createChildOverlayCustomComponent(
-    testTui(),
+    testTui(rows),
     TEST_THEME,
     testKeybindings(),
     controller,
@@ -740,6 +741,105 @@ describe("the live stream drops what must not reach the pane", () => {
     expect(reopened.liveReasoning?.inspectorRows).toEqual([]);
     pane.invalidate();
     expect(pane.render(WIDTH).join("\n")).not.toContain(raw);
+  });
+
+  it("renders one indented assistant row without a dot prefix before and after settlement", async () => {
+    const { controller } = openLive();
+    expect((await controller.open(CHILD_ID)).isOk()).toBe(true);
+    expect(
+      controller
+        .applyLiveEvent({
+          type: "message_start",
+          message: { role: "assistant", model: "test-model", content: [] },
+        })
+        .isOk(),
+    ).toBe(true);
+    expect(
+      controller
+        .applyLiveEvent({
+          type: "message_update",
+          usage: { input: 1, output: 1 },
+          assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+        })
+        .isOk(),
+    ).toBe(true);
+    expect(
+      controller
+        .applyLiveEvent({
+          type: "message_update",
+          usage: { input: 1, output: 1 },
+          assistantMessageEvent: {
+            type: "text_delta",
+            contentIndex: 1,
+            delta: "INCREMENTAL_ASSISTANT_FRAGMENT",
+          },
+        })
+        .isOk(),
+    ).toBe(true);
+    const pane = mountPane(controller, 60);
+    pane.invalidate();
+    expect(controller.view()._unsafeUnwrap().transcript.entries).toContainEqual(
+      expect.objectContaining({ text: "INCREMENTAL_ASSISTANT_FRAGMENT" }),
+    );
+    expect(controller.view()._unsafeUnwrap().entries).toContainEqual(
+      expect.objectContaining({ text: "INCREMENTAL_ASSISTANT_FRAGMENT" }),
+    );
+    const streaming = pane.render(WIDTH).join("\n");
+    expect(streaming).toContain("shuttle · streaming reply");
+    expect(streaming).toContain("  INCREMENTAL_ASSISTANT_FRAGMENT");
+    expect(streaming).not.toContain("● shuttle · streaming reply");
+
+    expect(
+      controller
+        .applyLiveEvent({
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "INCREMENTAL_ASSISTANT_FRAGMENT" }],
+          },
+        })
+        .isOk(),
+    ).toBe(true);
+    expect(controller.markOpenChildReadOnly().isOk()).toBe(true);
+    pane.invalidate();
+    const terminal = pane.render(WIDTH).join("\n");
+    expect(terminal).toContain("shuttle · final response");
+    expect(terminal).toContain("  INCREMENTAL_ASSISTANT_FRAGMENT");
+    expect(terminal).not.toContain("● shuttle · final response");
+  });
+
+  it("keeps the inspector reasoning row out of transcript, replay and search", async () => {
+    const registry = createPiLiveReasoningRegistry();
+    const h = await harness(liveChild(), [], {
+      liveReasoningGenerationId: GENERATION,
+      liveReasoningRegistry: registry,
+    });
+    const pane = mountPane(h.controller);
+    const sentinel = "SEARCH_REPLAY_REASONING_SENTINEL";
+    expect(h.stream.ingestReasoning(reasoningUpdate("start", "")).kind).toBe(
+      "applied",
+    );
+    expect(
+      h.stream.ingestReasoning(reasoningUpdate("delta", sentinel)).kind,
+    ).toBe("applied");
+    pane.invalidate();
+    const live = h.controller.view()._unsafeUnwrap();
+    expect(pane.render(WIDTH).join("\n")).toContain(
+      "↪ reasoning • SEARCH_REPLA",
+    );
+    expect(JSON.stringify(live.entries)).not.toContain(sentinel);
+    expect(JSON.stringify(live.transcript)).not.toContain(sentinel);
+    expect(JSON.stringify(live.liveReasoning)).toContain(sentinel);
+    const searched = await h.controller.search(sentinel);
+    expect(searched.isOk()).toBe(true);
+    if (searched.isOk()) {
+      expect(searched.value.searchMatches).toEqual([]);
+      expect(JSON.stringify(searched.value.entries)).not.toContain(sentinel);
+      expect(JSON.stringify(searched.value.transcript)).not.toContain(sentinel);
+    }
+    expect(h.controller.close().isOk()).toBe(true);
+    expect(registry.size()).toBe(0);
+    expect(h.controller.liveReasoning.snapshot().text).toBe("");
   });
 
   it("keeps the inspector to three rows and marks omitted non-empty text", async () => {

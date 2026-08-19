@@ -398,7 +398,8 @@ describe("native session messages produce one call entry per tool call", () => {
       const rows = rowsOf(build());
       const joined = rows.join("\n");
       expect(joined.match(/shuttle · /gu)?.length).toBe(1);
-      expect(joined).toContain("● shuttle · final response");
+      expect(joined).toContain("shuttle · final response");
+      expect(joined).not.toContain("● shuttle · final response");
       expect(joined).toContain("all three checks ran");
       // The bash tool's own empty-output sentence is a TOOL RESULT. It may
       // never wear an assistant reply header.

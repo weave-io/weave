@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 342 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~38,400 tokens. Without it, AI exploration would cost ~108,200 tokens. **Saves ~69,900 tokens per conversation.**
-> **Last scanned:** 2026-08-19 04:09 — re-run after significant changes
+> **Last scanned:** 2026-08-19 05:42 — re-run after significant changes
 
 ---
 
@@ -407,7 +407,7 @@
   - function overlayToolArgs: (entry) => string
   - _...14 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
-  - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
+  - function pushReplayEvent: (steps, candidate, authoritativeTool) => Result<void, ChildOverlayMappingError>
   - function mergeReplaySteps: (existing, incoming) => Result<
   - function mapNativeSessionEntryToOverlay: (entry, sequence) => Result<ChildOverlayEntry | undefined, ChildOverlayMappingError>
   - function transcriptFromOverlayEntries: (entries) => PiChildTranscriptState
@@ -531,11 +531,11 @@
 - `packages/adapters/pi/src/child-session-events.ts`
   - function parsePiChildUsageReport: (event) => Result<PiChildUsageReport, PiChildUsageError>
   - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
+  - function markPiAuthoritativeToolEvent: (event) => PiChildSessionEvent
+  - function isPiAuthoritativeToolEvent: (event) => boolean
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
   - function redactRawReasoningFromEvent: (event) => PiChildSessionEvent
-  - function canonicalReasoningMessageUpdate: () => PiChildSessionEvent
-  - function retainedChildSessionEvent: (event) => PiChildSessionEvent | undefined
-  - _...15 more_
+  - _...17 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority

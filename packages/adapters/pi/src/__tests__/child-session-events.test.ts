@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import fixture from "../__fixtures__/pi-0.84.2-child-ui-events.v1.json";
 import {
   isPiAuthoritativeToolEvent,
   PiChildSessionEventSchema,
@@ -7,6 +8,50 @@ import {
 } from "../child-session-events.js";
 
 describe("Pi child session event protocol", () => {
+  it("replays every captured Pi 0.84.2 event through the parser boundary", () => {
+    const events = (
+      fixture as {
+        readonly events: readonly {
+          readonly payload: Record<string, unknown>;
+        }[];
+      }
+    ).events;
+    expect(events.length).toBeGreaterThan(0);
+    const parsedTypes: string[] = [];
+    for (const captured of events) {
+      const parsed = parsePiChildSessionEvent(captured.payload);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      parsedTypes.push(parsed.data.type);
+    }
+    expect(parsedTypes).toContain("message_update");
+    expect(parsedTypes).toContain("tool_call");
+    expect(parsedTypes).toContain("tool_result");
+    expect(parsedTypes).toContain("message_end");
+  });
+
+  it("rejects a descriptor mutation instead of invoking its accessor", () => {
+    let reads = 0;
+    const event: Record<string, unknown> = {
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0 },
+    };
+    Object.defineProperty(event.assistantMessageEvent as object, "delta", {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return "must not be read";
+      },
+    });
+    const parsed = parsePiChildSessionEvent(event);
+    expect(parsed.success).toBe(true);
+    expect(reads).toBe(0);
+    if (parsed.success) {
+      expect(parsed.data).toEqual({ type: "message_update" });
+      expect(JSON.stringify(parsed.data)).not.toContain("must not be read");
+    }
+  });
+
   it("parses every specified observed event kind", () => {
     const kinds = [
       "message_start",

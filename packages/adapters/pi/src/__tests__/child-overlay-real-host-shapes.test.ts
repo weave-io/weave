@@ -17,7 +17,7 @@
  *   2. a finished call still read `⎿ running`;
  *   3. a deliberate failure produced no `⎿` outcome at all;
  *   5. `· child ui widget` bookkeeping rows leaked into the transcript;
- *   6. empty `● shuttle · reply` headers appeared with no body;
+ *   6. empty assistant reply headers appeared with no body;
  *   7. the prompt said `turn 3` while the rail said `turn 7` in one frame;
  *   8. SPEND printed one message's accounting as the run's total.
  *
@@ -607,7 +607,8 @@ describe("non-conversation events render nothing", () => {
     expect(joined).not.toContain("✻ reasoning");
     expect(joined).not.toContain("SUMMARY");
     expect(joined).not.toContain("check the reporter first");
-    expect(joined).toContain("● shuttle · reply");
+    expect(joined).toContain("shuttle · reply");
+    expect(joined).not.toContain("● shuttle · reply");
     expect(joined).toContain("the reporter drops rows");
   });
 

@@ -317,10 +317,30 @@ describe("authoritative Pi 0.84.2 fixture and replay", () => {
     );
     expect(replay.value.toolRowCount).toBeGreaterThanOrEqual(2);
     expect(replay.value.syntheticReasoningLeaked).toBe(false);
-    expect(replay.value.parentRawReasoningLaneAvailable).toBe(true);
-    expect(replay.value.inspectorRawReasoningLaneAvailable).toBe(true);
-    expect(replay.value.inspectorToolDetailsLaneAvailable).toBe(true);
-    expect(replay.value.inspectorAssistantReplyLaneAvailable).toBe(true);
+    // The replay result is a proof-report object, not a live renderer. It may
+    // report lane status and bounded counts, but it must never retain the
+    // injected reasoning sentinel or echo it through rendered history.
+    expect(JSON.stringify(replay.value)).not.toContain(
+      "SYNTHETIC-CONTROLLED-REASONING-",
+    );
+    expect(JSON.stringify(replay.value.renderedLines)).not.toContain(
+      "SYNTHETIC-CONTROLLED-REASONING-",
+    );
+    const lanes = {
+      "parent-raw-reasoning-live": replay.value.parentRawReasoningLaneAvailable,
+      "inspector-raw-reasoning-live":
+        replay.value.inspectorRawReasoningLaneAvailable,
+      "inspector-tool-details": replay.value.inspectorToolDetailsLaneAvailable,
+      "inspector-assistant-reply-live":
+        replay.value.inspectorAssistantReplyLaneAvailable,
+    } as const;
+    expect(Object.keys(lanes)).toEqual([
+      "parent-raw-reasoning-live",
+      "inspector-raw-reasoning-live",
+      "inspector-tool-details",
+      "inspector-assistant-reply-live",
+    ]);
+    expect(Object.values(lanes)).toEqual([true, true, true, true]);
   });
 
   it("captures once through a real Pi 0.84.2 RPC process and refuses overwrite", async () => {

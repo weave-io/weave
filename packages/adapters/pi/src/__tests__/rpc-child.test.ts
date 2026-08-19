@@ -2982,6 +2982,66 @@ describe("PiRpcChild", () => {
     expect(registry.size()).toBe(0);
   });
 
+  it("keeps live-reasoning fanout exactly once and isolates a rejecting sink", async () => {
+    const processPort = new FakeChildProcessPort();
+    const diagnostics = createChildUiEventDiagnostics();
+    const registry = new PiLiveReasoningRegistry();
+    const inspectorUpdates: string[] = [];
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      diagnostics,
+      liveReasoningRegistry: registry,
+      onParentCardReasoning: () => {
+        throw new Error("RAW_REASONING_SINK_FAILURE");
+      },
+      onInspectorReasoning: (update) => {
+        inspectorUpdates.push(update.text);
+      },
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const sentinel = "INDEPENDENT_REASONING_SINK_SENTINEL";
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_start",
+        contentIndex: 0,
+        content: sentinel,
+      },
+    });
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 0,
+        delta: " tail",
+      },
+    });
+
+    expect(inspectorUpdates).toEqual([sentinel, `${sentinel} tail`]);
+    expect(registry.size()).toBe(1);
+    expect(JSON.stringify(child.snapshot())).not.toContain(sentinel);
+    const failure = diagnostics
+      .snapshot()
+      .buckets.find(
+        (bucket) =>
+          bucket.stage === "fanout" && bucket.reason === "callback-failed",
+      );
+    expect(failure?.count).toBe(2);
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(sentinel);
+    child.dispose();
+    expect(registry.size()).toBe(0);
+  });
+
   it("refuses a frame that carries answer text and raw reasoning at once", async () => {
     const processPort = new FakeChildProcessPort();
     const diagnostics = createChildUiEventDiagnostics();

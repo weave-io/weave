@@ -2,7 +2,10 @@ import { describe, expect, it } from "bun:test";
 import type { DelegationTarget } from "@weaveio/weave-engine";
 import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 import type { PiDelegationCardFacts } from "../child-card-model.js";
-import { createPiLiveReasoningRegistry } from "../child-live-reasoning.js";
+import {
+  createPiLiveReasoningRegistry,
+  PiLiveReasoningProjector,
+} from "../child-live-reasoning.js";
 import type { PiChildRefStatus } from "../child-session-refs.js";
 import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 import type {
@@ -553,6 +556,127 @@ describe("buildDelegationToolRegistration", () => {
       ?.render(80)
       .join("\n");
     expect(call).toContain("Shuttle");
+  });
+
+  it("execute: keeps raw reasoning in the TUI-only row and preserves settlement", async () => {
+    const registry = createPiLiveReasoningRegistry();
+    let capturedRequest: PiDelegationRequest | undefined;
+    let invalidations = 0;
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        generationId: "generation-card-contract",
+        liveReasoningRegistry: registry,
+        getController: () =>
+          fakeController((request) => {
+            capturedRequest = request;
+            return okAsync({
+              outcome: "completed",
+              assistantOutput: "AUTHORITATIVE_SETTLED_OUTPUT",
+            } as PiChildSettlement);
+          }),
+      }),
+    );
+    const executePromise = registration.execute(
+      "tool-call-contract",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    capturedRequest?.onParentCardReasoning?.({
+      childId: "child-1",
+      generationId: "generation-card-contract",
+      lifecycleEpoch: 1,
+      phase: "start",
+      contentIndex: 0,
+      text: "",
+    });
+    capturedRequest?.onParentCardReasoning?.({
+      childId: "child-1",
+      generationId: "generation-card-contract",
+      lifecycleEpoch: 1,
+      phase: "delta",
+      contentIndex: 0,
+      text: "TUI_ONLY_REASONING_SENTINEL",
+    });
+    expect(registry.size()).toBe(1);
+    const result: PiToolResult = {
+      content: [{ type: "text", text: "model-visible-placeholder" }],
+      details: cardDetails(),
+    };
+    const component = registration.renderResult?.(
+      result,
+      { expanded: false, isPartial: true },
+      { fg: (_color, text) => text, bold: (text) => text },
+      renderContext({
+        toolCallId: "tool-call-contract",
+        invalidate: () => {
+          invalidations += 1;
+        },
+      }),
+    );
+    const rendered = component?.render(120).join("\n") ?? "";
+    expect(rendered).toContain("↪ reasoning • TUI_ONLY_REASONING_SENTINEL");
+    expect(JSON.stringify(result)).not.toContain("TUI_ONLY_REASONING_SENTINEL");
+    expect(invalidations).toBe(0);
+
+    const settled = await executePromise;
+    expect(
+      JSON.parse((settled.content[0] as { text: string }).text),
+    ).toMatchObject({
+      ok: true,
+      settlement: {
+        finalOutput: "AUTHORITATIVE_SETTLED_OUTPUT",
+      },
+    });
+    expect(JSON.stringify(settled)).not.toContain(
+      "TUI_ONLY_REASONING_SENTINEL",
+    );
+    expect(registry.size()).toBe(0);
+    expect(registry.retainedBytes()).toBe(0);
+  });
+
+  it("renderResult: rejects a stale toolCallId instead of reading another row", () => {
+    const registry = createPiLiveReasoningRegistry();
+    const projector = new PiLiveReasoningProjector({
+      childId: "child-stale-call",
+      generationId: "generation-stale-call",
+      registry,
+      registryKey: "tool-call-current",
+    });
+    projector
+      .apply({
+        childId: "child-stale-call",
+        generationId: "generation-stale-call",
+        lifecycleEpoch: 1,
+        phase: "start",
+        contentIndex: 0,
+        text: "",
+      })
+      ._unsafeUnwrap();
+    projector
+      .apply({
+        childId: "child-stale-call",
+        generationId: "generation-stale-call",
+        lifecycleEpoch: 1,
+        phase: "delta",
+        contentIndex: 0,
+        text: "STALE_TOOL_CALL_REASONING_SENTINEL",
+      })
+      ._unsafeUnwrap();
+    const registration = buildDelegationToolRegistration(
+      baseDeps({ liveReasoningRegistry: registry }),
+    );
+    const component = registration.renderResult?.(
+      { content: [{ type: "text", text: "x" }], details: cardDetails() },
+      { expanded: false, isPartial: true },
+      { fg: (_color, text) => text, bold: (text) => text },
+      renderContext({ toolCallId: "tool-call-other" }),
+    );
+    expect(component?.render(120).join("\n")).not.toContain(
+      "STALE_TOOL_CALL_REASONING_SENTINEL",
+    );
+    projector.dispose();
   });
 
   it("renderResult: degrades a foreign (older compact) details payload", () => {

@@ -5,6 +5,7 @@ import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { WEAVE_CHILD_ID_ENV, WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
+import { PiLiveReasoningRegistry } from "../child-live-reasoning.js";
 import type {
   PiNativeSessionError,
   PiNativeSessionRecord,
@@ -2649,6 +2650,75 @@ describe("PiDelegationController", () => {
       "restore callback boom",
     );
     restoreController.disposeAll();
+  });
+
+  it("fans out reasoning to independent UI sinks and continues after one rejects", async () => {
+    const port = new FakeChildProcessPort();
+    const registry = new PiLiveReasoningRegistry();
+    const diagnostics = createChildUiEventDiagnostics();
+    const inspector: string[] = [];
+    const checkpoints: unknown[] = [];
+    const inspectionRegistry = new PiChildInspectionRegistry({
+      register: () => okAsync(undefined),
+      checkpoint: (_id, event) => {
+        checkpoints.push(event);
+        return okAsync(undefined);
+      },
+      terminal: () => okAsync(undefined),
+      interrupted: () => okAsync(undefined),
+    });
+    const controller = makeController(config(GENEROUS), port, {
+      diagnostics,
+      inspectionRegistry,
+      liveReasoningRegistry: registry,
+      onParentCardReasoning: () => {
+        throw new Error("RAW_REASONING_PARENT_SINK_FAILURE");
+      },
+      onInspectorReasoning: (update) => {
+        inspector.push(update.text);
+      },
+    });
+    const promise = controller.delegate(request());
+    await flush();
+    const child = spawnedAt(port, 0);
+    await sendChildToRunning(child, port, "gen-1");
+    const sentinel = "CONTROLLER_REASONING_SENTINEL";
+    child.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_start",
+        contentIndex: 0,
+        content: sentinel,
+      },
+    });
+    child.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 0,
+        delta: " tail",
+      },
+    });
+    await flush();
+
+    expect(inspector).toEqual([sentinel, `${sentinel} tail`]);
+    expect(JSON.stringify(checkpoints)).not.toContain(sentinel);
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(sentinel);
+    expect(
+      diagnostics
+        .snapshot()
+        .buckets.find(
+          (bucket) =>
+            bucket.stage === "fanout" && bucket.reason === "callback-failed",
+        )?.count,
+    ).toBe(2);
+
+    await settleRunningChild(child, port, "gen-1", 3);
+    const result = await promise;
+    expect(result.isOk()).toBe(true);
+    expect(registry.size()).toBe(0);
+    expect(registry.retainedBytes()).toBe(0);
+    controller.disposeAll();
   });
 
   it("steers and follows up a live child through steerChild/followUpChild", async () => {

@@ -396,7 +396,7 @@
   - function overlayToolArgs: (entry) => string
   - _...14 more_
 - `packages/adapters/pi/src/child-overlay-replay.ts`
-  - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
+  - function pushReplayEvent: (steps, candidate, authoritativeTool) => Result<void, ChildOverlayMappingError>
   - function mergeReplaySteps: (existing, incoming) => Result<
   - function mapNativeSessionEntryToOverlay: (entry, sequence) => Result<ChildOverlayEntry | undefined, ChildOverlayMappingError>
   - function transcriptFromOverlayEntries: (entries) => PiChildTranscriptState
@@ -520,11 +520,11 @@
 - `packages/adapters/pi/src/child-session-events.ts`
   - function parsePiChildUsageReport: (event) => Result<PiChildUsageReport, PiChildUsageError>
   - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
+  - function markPiAuthoritativeToolEvent: (event) => PiChildSessionEvent
+  - function isPiAuthoritativeToolEvent: (event) => boolean
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
   - function redactRawReasoningFromEvent: (event) => PiChildSessionEvent
-  - function canonicalReasoningMessageUpdate: () => PiChildSessionEvent
-  - function retainedChildSessionEvent: (event) => PiChildSessionEvent | undefined
-  - _...15 more_
+  - _...17 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority

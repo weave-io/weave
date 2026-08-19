@@ -7,6 +7,7 @@ import {
   PI_LIVE_REASONING_INSPECTOR_MAX_ROWS,
   PI_LIVE_REASONING_INSPECTOR_ROW_MAX_CODE_POINTS,
   PI_LIVE_REASONING_MAX_BYTES,
+  PI_LIVE_REASONING_MAX_INPUT_BYTES,
   PI_LIVE_REASONING_PARENT_MAX_CODE_POINTS,
   PI_LIVE_REASONING_PARENT_PREFIX,
   PI_LIVE_REASONING_TRUNCATION_MARKER,
@@ -15,6 +16,7 @@ import {
   PiLiveReasoningRegistry,
   type PiLiveReasoningUpdate,
   piLiveReasoningUtf8Bytes,
+  projectPiLiveReasoningUpdate,
 } from "../child-live-reasoning.js";
 import {
   parsePiChildSessionEvent,
@@ -197,6 +199,151 @@ describe("PiLiveReasoningProjector", () => {
         PI_LIVE_REASONING_INSPECTOR_ROW_MAX_CODE_POINTS,
       );
     }
+  });
+
+  it("rejects an oversized parser-approved carrier before any UI fanout", () => {
+    let observed = 0;
+    const projector = new PiLiveReasoningProjector({
+      childId: CHILD_ID,
+      generationId: GENERATION_ID,
+      parentCardObserver: () => {
+        observed += 1;
+      },
+    });
+    const rejected = projector.accept({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_start",
+        contentIndex: 0,
+        content: "x".repeat(PI_LIVE_REASONING_MAX_INPUT_BYTES + 1),
+      },
+    });
+    expect(rejected.isErr()).toBe(true);
+    expect(rejected.isErr() && rejected.error.reason).toBe("invalid-text");
+    expect(observed).toBe(0);
+    expect(projector.snapshot()).toMatchObject({
+      text: "",
+      retainedBytes: 0,
+      active: false,
+      inspectorRows: [],
+      parentCardLine: "",
+    });
+  });
+
+  it("uses exact UTF-8 and display bounds and keeps an honest marker", () => {
+    const projector = new PiLiveReasoningProjector({
+      childId: CHILD_ID,
+      generationId: GENERATION_ID,
+    });
+    expect(
+      projector
+        .accept({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "thinking_start",
+            contentIndex: 0,
+          },
+        })
+        .isOk(),
+    ).toBe(true);
+    expect(
+      projector
+        .accept({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "thinking_delta",
+            contentIndex: 0,
+            delta: "🙂".repeat(2_049),
+          },
+        })
+        .isOk(),
+    ).toBe(true);
+    const snapshot = projector.snapshot();
+    expect(snapshot.retainedBytes).toBe(PI_LIVE_REASONING_MAX_BYTES);
+    expect(piLiveReasoningUtf8Bytes(snapshot.text)).toBe(
+      PI_LIVE_REASONING_MAX_BYTES,
+    );
+    expect(snapshot.omitted).toBe(true);
+    expect(snapshot.parentCardLine).toBe(
+      `${PI_LIVE_REASONING_PARENT_PREFIX}${snapshot.parentCardText}`,
+    );
+    expect(snapshot.parentCardLine).toEndWith(
+      PI_LIVE_REASONING_TRUNCATION_MARKER,
+    );
+    expect(snapshot.parentCardLine).not.toBe(PI_LIVE_REASONING_PARENT_PREFIX);
+    expect(snapshot.inspectorRows.length).toBeLessThanOrEqual(
+      PI_LIVE_REASONING_INSPECTOR_MAX_ROWS,
+    );
+    expect(snapshot.inspectorRows.at(-1)).toEndWith(
+      PI_LIVE_REASONING_TRUNCATION_MARKER,
+    );
+    expect(Array.from(snapshot.parentCardText).length).toBeLessThanOrEqual(
+      PI_LIVE_REASONING_PARENT_MAX_CODE_POINTS,
+    );
+  });
+
+  it("keeps one lifecycle fanout and rejects a second terminal mutation", () => {
+    const phases: string[] = [];
+    const projector = new PiLiveReasoningProjector({
+      childId: CHILD_ID,
+      generationId: GENERATION_ID,
+      parentCardObserver: (update) => phases.push(`parent:${update.phase}`),
+      inspectorObserver: (update) => phases.push(`inspector:${update.phase}`),
+    });
+    const start = projector.accept({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_start",
+        contentIndex: 0,
+        content: "first",
+      },
+    });
+    const end = projector.accept({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_end",
+        contentIndex: 0,
+        content: "first",
+      },
+    });
+    const duplicateEnd = projector.accept({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_end",
+        contentIndex: 0,
+        content: "first again",
+      },
+    });
+    expect(start.isOk()).toBe(true);
+    expect(end.isOk()).toBe(true);
+    expect(duplicateEnd.isErr()).toBe(true);
+    expect(duplicateEnd.isErr() && duplicateEnd.error.reason).toBe(
+      "no-active-block",
+    );
+    expect(phases).toEqual([
+      "parent:start",
+      "inspector:start",
+      "parent:end",
+      "inspector:end",
+    ]);
+  });
+
+  it("projects an update only with a valid lifecycle identity", () => {
+    const missingEpoch = projectPiLiveReasoningUpdate(
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: "sentinel",
+        },
+      },
+      { childId: CHILD_ID, generationId: GENERATION_ID, lifecycleEpoch: 0 },
+    );
+    expect(missingEpoch.isErr()).toBe(true);
+    expect(missingEpoch.isErr() && missingEpoch.error.reason).toBe(
+      "stale-epoch",
+    );
   });
 
   it("reconciles a full end carrier without duplicating deltas", () => {
