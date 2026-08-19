@@ -1,0 +1,207 @@
+name: Docs audit follow-up
+
+# Manual-only. The dispatch value is bounded again by followup-main.ts before
+# any API request. The only checkout in this workflow is protected main.
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number (1 through 1000000)"
+        required: true
+        type: number
+      apply_patches:
+        description: "Apply validated docs proposals after docs-audit-patch approval"
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+jobs:
+  followup-audit:
+    name: audit fork as quarantined data
+    runs-on: ubuntu-latest
+    environment: release-ai
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      WEAVE_RELEASE_AI_API_KEY: ${{ secrets.WEAVE_RELEASE_AI_API_KEY }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      # Only the protected controller is installed. The fork is never a
+      # checkout, package source, dependency tree, or executable workspace.
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Fetch and audit fork data
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: >-
+          bun scripts/release/docs-audit/followup-main.ts
+          --phase audit
+          --pr-number "$PR_NUMBER"
+          --controller-ref refs/heads/main
+          --controller-root "$GITHUB_WORKSPACE"
+          --data-root "$RUNNER_TEMP/fork-content"
+          --output "$RUNNER_TEMP/docs-audit-followup.json"
+      - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+        if: always()
+        with:
+          name: docs-audit-followup-${{ github.run_id }}
+          path: ${{ runner.temp }}/docs-audit-followup.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  followup-post:
+    name: post digest-bound follow-up result
+    needs: followup-audit
+    if: always() && needs.followup-audit.result == 'success'
+    runs-on: ubuntu-latest
+    environment: release-app
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    env:
+      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: docs-audit-followup-${{ github.run_id }}
+          path: ${{ runner.temp }}/docs-audit-followup
+      - name: Post follow-up check and comment
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: >-
+          bun scripts/release/docs-audit/followup-main.ts
+          --phase post
+          --pr-number "$PR_NUMBER"
+          --controller-ref refs/heads/main
+          --controller-root "$GITHUB_WORKSPACE"
+          --data-root "$RUNNER_TEMP/fork-content"
+          --input "$RUNNER_TEMP/docs-audit-followup/docs-audit-followup.json"
+
+  docs-audit:
+    name: docs-audit
+    needs: [followup-audit, followup-post]
+    if: always()
+    runs-on: ubuntu-latest
+    environment: release-app
+    permissions:
+      contents: read
+      checks: write
+    env:
+      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
+      FOLLOWUP_RESULT: ${{ needs.followup-post.result }}
+      CONTROLLER_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: docs-audit-followup-${{ github.run_id }}
+          path: ${{ runner.temp }}/docs-audit-followup
+      - name: Rerun the terminal docs-audit check
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          followup_path="$RUNNER_TEMP/docs-audit-followup/docs-audit-followup.json"
+          audited_sha="$CONTROLLER_SHA"
+          if [ -s "$followup_path" ]; then
+            audited_sha="$(jq -er '.auditedSha' "$followup_path")"
+          fi
+          if [ "$FOLLOWUP_RESULT" = "success" ]; then
+            followup_status=passed
+          else
+            followup_status=failed
+          fi
+          bun scripts/release/docs-audit/gate-main.ts \
+            --audited-sha "$audited_sha" \
+            --classification public-impact \
+            --follow-up "$followup_path" \
+            --follow-up-status "$followup_status" \
+            --output "$RUNNER_TEMP/docs-audit-gate.json" \
+            --post true
+
+  apply-patches:
+    name: apply docs proposals (approval required)
+    needs: followup-audit
+    if: >-
+      always() &&
+      inputs.apply_patches == true &&
+      needs.followup-audit.result == 'success'
+    runs-on: ubuntu-latest
+    environment: docs-audit-patch
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
+      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: docs-audit-followup-${{ github.run_id }}
+          path: ${{ runner.temp }}/docs-audit-followup
+      - name: Apply only validated proposals to protected main
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          APPROVED_BY: ${{ github.actor }}
+        run: >-
+          bun scripts/release/docs-audit/followup-main.ts
+          --phase apply-patches
+          --pr-number "$PR_NUMBER"
+          --controller-ref refs/heads/main
+          --controller-root "$GITHUB_WORKSPACE"
+          --data-root "$RUNNER_TEMP/fork-content"
+          --input "$RUNNER_TEMP/docs-audit-followup/docs-audit-followup.json"
+          --approved-by "$APPROVED_BY"
+      - name: Open a normal patch PR
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          git config user.name "weave-release-app"
+          git config user.email "release-app@weave.invalid"
+          git add --all -- docs README.md packages/docs/src packages/cli/README.md packages/adapters/*/README.md
+          if git diff --cached --quiet; then
+            echo "No validated docs patch changes were produced."
+            exit 0
+          fi
+          git commit -m "docs: apply docs-audit proposals"
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/docs-audit/${PR_NUMBER}"
+          gh pr create \
+            --base main \
+            --head "docs-audit/${PR_NUMBER}" \
+            --title "docs: apply docs-audit proposals" \
+            --body "Validated proposals from docs-audit follow-up for PR #${PR_NUMBER}."

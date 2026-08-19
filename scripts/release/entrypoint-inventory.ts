@@ -14,8 +14,9 @@
  * controller; Task 24 adds the automatic regeneration controller; Task 25
  * registers every stable publish and independent-attestation workflow root;
  * Task 26 adds the guarded `next` prerelease controller; Task 27 adds the
- * guarded manual `nightly` controller; Task 28 adds the CI policy controller.
- * Later tasks add, rename, or remove entries in the same change.
+ * guarded manual `nightly` controller; Task 28 adds the CI policy controller;
+ * Task 30 adds the immutable-main docs-audit workflow controllers. Later tasks
+ * add, rename, or remove entries in the same change.
  * Test-only roots are never inventoried as production.
  */
 
@@ -192,6 +193,24 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "legacy",
     rationale:
       "Task 25 semantic workflow, script, module, permission, and deprecate-free reachability lint.",
+  },
+  {
+    path: "scripts/release/docs-audit/audit-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 30 deterministic and protected same-repository docs-audit phase adapter.",
+  },
+  {
+    path: "scripts/release/docs-audit/followup-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 30 immutable-main fork follow-up and approval-gated docs proposal adapter.",
+  },
+  {
+    path: "scripts/release/docs-audit/gate-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 30 protected controller for the single terminal docs-audit check.",
   },
 ] as const satisfies readonly ProductionEntrypoint[];
 

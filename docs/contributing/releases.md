@@ -190,6 +190,50 @@ one another. A failed creation cleanup is reported as `CreationCleanupPending`
 and is recovered through authoritative doctor/resume checks. Do not manually
 delete the marker or create a replacement PR.
 
+## Pull-request docs audit
+
+`.github/workflows/docs-audit.yml` is the only pull-request docs-audit trigger.
+It uses `pull_request` (never `pull_request_target`) and filters public package
+and adapter paths, the docs site, `docs/`, the root `README.md`, and
+`.changeset/`. The deterministic job has no secrets and always runs. A
+same-repository affected PR then runs the Task 19 isolated AI audit in the
+protected `release-ai` environment. A fork receives no AI credential: its AI
+feeder is a neutral skip with instructions to dispatch the follow-up.
+
+The only required check is the terminal job and check named exactly
+`docs-audit`. It runs with `if: always()` and reads the bounded feeder results
+through `gate-main.ts` from protected `main`. No-impact input is a successful
+not-required result. An affected same-repository PR needs a submitted AI
+result. An affected fork needs a completed follow-up. Deterministic failure,
+a hard finding, a missing/skipped/cancelled AI result, a pending or failed
+follow-up, or a SHA mismatch fails the terminal check. Style findings remain
+warnings. Feeder jobs are conditional and are never required directly.
+
+### Fork follow-up
+
+A maintainer dispatches **Docs audit follow-up** from
+`.github/workflows/docs-audit-followup.yml` with a bounded pull-request number.
+Every job checks out `refs/heads/main`; no job fetches a fork ref or checks out a
+fork. `followup-main.ts` verifies that the PR base is `weave-io/weave` `main`
+and the checked-out controller SHA. It downloads the head through the fixed
+GitHub API route as bytes, validates the gzip/tar stream, rejects traversal,
+symlink, hard-link, device, duplicate, and archive-bomb entries, and writes
+only regular files below a separate runner-temp quarantine root. The fork tree
+is never installed, imported, or used as a command or script tree. The Task 19
+deterministic checker and isolated agent read only that data root.
+
+The protected `release-app` job posts a check and comment that carry the head
+SHA, controller SHA, archive digest, and result digest. The workflow then
+reruns the terminal `docs-audit` check, so a follow-up converges the original
+PR check instead of creating a second required name. A changed head or base
+SHA requires a fresh dispatch.
+
+Patch proposals use the separate `apply_patches` workflow-dispatch path and
+explicit `docs-audit-patch` approval environment. The controller validates
+proposals against the protected `main` tree and the docs/README allowlist
+before opening a normal patch PR. The model never receives Git credentials or
+a write tool.
+
 ## Validation
 
 ```bash

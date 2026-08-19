@@ -21,7 +21,7 @@ import {
 const ROOT = resolve(import.meta.dir, "../../..");
 
 describe("entrypoint inventory", () => {
-  it("registers the Task 14, 15, 22, 23, 24, 25, 26, 27, and 28 production roots", () => {
+  it("registers the Task 14, 15, 22, 23, 24, 25, 26, 27, 28, and 30 production roots", () => {
     expect(PRODUCTION_ENTRYPOINTS.map((entry) => entry.path)).toEqual([
       "scripts/release/publish-main.ts",
       "scripts/release/doctor.ts",
@@ -43,6 +43,9 @@ describe("entrypoint inventory", () => {
       "scripts/release/registry-verify-main.ts",
       "scripts/release/refs-cleanup-main.ts",
       "scripts/release/publish-reachability.ts",
+      "scripts/release/docs-audit/audit-main.ts",
+      "scripts/release/docs-audit/followup-main.ts",
+      "scripts/release/docs-audit/gate-main.ts",
     ]);
     expect(validateEntrypointInventory().isOk()).toBe(true);
     expect(inventoriedPaths()).toContain("scripts/release/publish-main.ts");
@@ -61,6 +64,15 @@ describe("entrypoint inventory", () => {
     );
     expect(inventoriedPaths()).toContain(
       "scripts/release/publish-reachability.ts",
+    );
+    expect(inventoriedPaths()).toContain(
+      "scripts/release/docs-audit/audit-main.ts",
+    );
+    expect(inventoriedPaths()).toContain(
+      "scripts/release/docs-audit/followup-main.ts",
+    );
+    expect(inventoriedPaths()).toContain(
+      "scripts/release/docs-audit/gate-main.ts",
     );
     expect(PRODUCTION_ROOT_CLASSES).toHaveLength(14);
   });
