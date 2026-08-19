@@ -12,6 +12,7 @@ import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
+  LEGACY_PREFLIGHT_RUN_NAME,
   PUBLIC_PACKAGES,
   type PublicPackageName,
   RELEASE_ATTEST_WORKFLOW_PATH,
@@ -41,6 +42,8 @@ import {
 } from "./rollout-stage.js";
 
 const log = logger.child({ module: "release-doctor" });
+
+export { LEGACY_PREFLIGHT_RUN_NAME };
 
 export const DOCTOR_MODES = [
   "pre-cutover",
@@ -225,11 +228,25 @@ export interface DoctorAttestationWorkflowObservation {
 export interface OldSystemOperationalProof {
   readonly authoritative: boolean;
   readonly publicationPathEnabled: boolean;
+  /** True only for an accepted recent scheduled run on protected main. */
   readonly recentSuccessfulRun: boolean;
+  /** True only for an accepted recent named read-only preflight run. */
   readonly readOnlyPreflight: boolean;
   readonly runId?: number;
   readonly evidence?: string;
 }
+
+export type OldSystemRunEvidence =
+  | {
+      readonly kind: "scheduled";
+      readonly runId: number;
+      readonly evidence: string;
+    }
+  | {
+      readonly kind: "read-only-preflight";
+      readonly runId: number;
+      readonly evidence: string;
+    };
 
 export interface DoctorHarnessObservation {
   readonly binaries: Readonly<Record<string, boolean>>;
@@ -974,13 +991,40 @@ function verifyOldSystem(
     return failCheck(
       "release.old-system-operational",
       "old publication path is not authoritatively enabled",
-      "run the old workflow's read-only preflight or inspect a recent successful scheduled/dispatch run on protected main",
+      "run the old workflow's read-only preflight or inspect a recent successful scheduled run on protected main",
+    );
+  if (oldSystem.recentSuccessfulRun && oldSystem.readOnlyPreflight)
+    return failCheck(
+      "release.old-system-operational",
+      "old-system run evidence is ambiguous: scheduled and preflight proofs were both asserted",
+      "keep exactly one positively identified recent scheduled or read-only preflight run in the doctor snapshot",
     );
   if (!oldSystem.recentSuccessfulRun && !oldSystem.readOnlyPreflight)
     return failCheck(
       "release.old-system-operational",
-      "no recent successful old-system run or explicit read-only preflight was observed",
+      "no recent successful scheduled run or explicit read-only preflight was observed",
       "dispatch the old workflow's read-only preflight or prove a recent successful scheduled run, then rerun this mode",
+    );
+  if (
+    oldSystem.runId === undefined ||
+    !Number.isSafeInteger(oldSystem.runId) ||
+    oldSystem.runId <= 0 ||
+    oldSystem.evidence === undefined ||
+    oldSystem.evidence.length === 0
+  )
+    return failCheck(
+      "release.old-system-operational",
+      "accepted old-system proof is missing its authoritative run identity",
+      "capture the GitHub workflow run ID and exact scheduled/preflight evidence before rerunning the doctor",
+    );
+  const expectedEvidence = oldSystem.recentSuccessfulRun
+    ? `successful scheduled run ${oldSystem.runId} on protected main`
+    : `successful read-only preflight run ${oldSystem.runId} on protected main`;
+  if (oldSystem.evidence !== expectedEvidence)
+    return failCheck(
+      "release.old-system-operational",
+      "accepted old-system proof has an unrecognized run identity",
+      "capture the exact GitHub run evidence emitted by the bounded old-publisher collector before rerunning the doctor",
     );
   return ok(undefined);
 }
@@ -1760,44 +1804,140 @@ async function collectOldSystem(
   return {
     authoritative: hasSchedule && publicationPathEnabled,
     publicationPathEnabled,
-    recentSuccessfulRun: recent !== null,
-    readOnlyPreflight: false,
+    recentSuccessfulRun: recent?.kind === "scheduled",
+    readOnlyPreflight: recent?.kind === "read-only-preflight",
     ...(recent === null
       ? {}
       : { runId: recent.runId, evidence: recent.evidence }),
   };
 }
 
-function recentSuccessfulOldRun(
+/**
+ * Selects only bounded, positively identified old-publisher evidence. The
+ * workflow endpoint is already scoped to publish.yml; branch, repository, and
+ * run-name checks below prevent an unrelated successful dispatch from becoming
+ * operational proof.
+ */
+export function recentSuccessfulOldRun(
   value: unknown,
-): { runId: number; evidence: string } | null {
+  now = Date.now(),
+): OldSystemRunEvidence | null {
   const record = asRecord(value);
-  const runs = Array.isArray(record?.workflow_runs) ? record.workflow_runs : [];
-  const now = Date.now();
+  const runs = Array.isArray(record?.workflow_runs)
+    ? record.workflow_runs.slice(0, 20)
+    : [];
   const maxAgeMs = 90 * 24 * 60 * 60 * 1_000;
+  const candidates: (OldSystemRunEvidence & { readonly time: number })[] = [];
   for (const entry of runs) {
     const run = asRecord(entry);
-    if (
-      run === undefined ||
-      run.conclusion !== "success" ||
-      (run.event !== "schedule" && run.event !== "workflow_dispatch") ||
-      (run.head_branch !== undefined && run.head_branch !== "main")
-    )
-      continue;
-    let timestamp: string | undefined;
-    if (typeof run.updated_at === "string") timestamp = run.updated_at;
-    else if (typeof run.run_started_at === "string")
-      timestamp = run.run_started_at;
+    if (run === undefined || !isProtectedOldRun(run)) continue;
+    const timestamp = runTimestamp(run);
     if (timestamp === undefined) continue;
     const time = Date.parse(timestamp);
     if (Number.isNaN(time) || time > now || now - time > maxAgeMs) continue;
-    if (typeof run.id !== "number" || !Number.isSafeInteger(run.id)) continue;
-    return {
-      runId: run.id,
-      evidence: `successful ${run.event} run ${run.id} on main`,
-    };
+    const runId = run.id;
+    if (typeof runId !== "number" || !Number.isSafeInteger(runId) || runId <= 0)
+      continue;
+    const kind = oldRunKind(run);
+    if (kind === undefined) continue;
+    candidates.push({
+      kind,
+      runId,
+      time,
+      evidence:
+        kind === "scheduled"
+          ? `successful scheduled run ${runId} on protected main`
+          : `successful read-only preflight run ${runId} on protected main`,
+    });
   }
-  return null;
+  candidates.sort((left, right) => right.time - left.time);
+  const selected = candidates[0];
+  if (selected === undefined) return null;
+  return {
+    kind: selected.kind,
+    runId: selected.runId,
+    evidence: selected.evidence,
+  };
+}
+
+function isProtectedOldRun(run: Record<string, unknown>): boolean {
+  if (
+    run.conclusion !== "success" ||
+    (run.event !== "schedule" && run.event !== "workflow_dispatch") ||
+    run.head_branch !== "main"
+  )
+    return false;
+  if (
+    !matchesOptionalString(
+      run,
+      ["path", "workflow_path"],
+      RELEASE_WORKFLOW_PATH,
+    )
+  )
+    return false;
+  if (
+    !matchesOptionalString(
+      run,
+      ["workflow_ref", "workflowRef"],
+      `${RELEASE_REPOSITORY}/${RELEASE_WORKFLOW_PATH}@refs/heads/main`,
+    )
+  )
+    return false;
+  if (!matchesOptionalString(run, ["name"], "Publish control plane"))
+    return false;
+  for (const key of ["repository", "head_repository"]) {
+    const value = run[key];
+    if (value === undefined) continue;
+    const repository = asRecord(value);
+    if (repository?.full_name !== RELEASE_REPOSITORY) return false;
+  }
+  return true;
+}
+
+function oldRunKind(
+  run: Record<string, unknown>,
+): OldSystemRunEvidence["kind"] | undefined {
+  if (run.event === "schedule") return "scheduled";
+  if (run.event !== "workflow_dispatch") return undefined;
+  const identity = oldRunIdentity(run);
+  if (identity !== LEGACY_PREFLIGHT_RUN_NAME) return undefined;
+  return "read-only-preflight";
+}
+
+function oldRunIdentity(run: Record<string, unknown>): string | undefined {
+  const values: string[] = [];
+  for (const key of ["display_title", "run_name"]) {
+    const value = run[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string") return undefined;
+    values.push(value);
+  }
+  if (values.length === 0 || values.some((value) => value !== values[0]))
+    return undefined;
+  return values[0];
+}
+
+function runTimestamp(run: Record<string, unknown>): string | undefined {
+  const updated = run.updated_at;
+  if (typeof updated === "string" && !Number.isNaN(Date.parse(updated)))
+    return updated;
+  const started = run.run_started_at;
+  if (typeof started === "string" && !Number.isNaN(Date.parse(started)))
+    return started;
+  return undefined;
+}
+
+function matchesOptionalString(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+  expected: string,
+): boolean {
+  for (const key of keys) {
+    const value = record[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string" || value !== expected) return false;
+  }
+  return true;
 }
 
 async function readAttestationWorkflow(

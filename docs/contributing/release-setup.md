@@ -13,6 +13,26 @@ bun run release:doctor --pre-cutover
 The command prints grouped pass, warning, and failure checks. A failure
 includes the manual fix. An unknown or unreadable value fails closed.
 
+Before the first pre-cutover doctor run, prove the retained publisher with the
+explicit read-only operation from protected `main`:
+
+```sh
+gh workflow run publish.yml --repo weave-io/weave --ref main -f operation=preflight
+run_id="$(gh run list --repo weave-io/weave --workflow publish.yml --branch main --event workflow_dispatch --limit 20 --json databaseId,displayTitle --jq '.[] | select(.displayTitle == "legacy-publisher-preflight") | .databaseId' | head -n 1)"
+test -n "$run_id"
+gh run watch "$run_id" --repo weave-io/weave --exit-status
+gh run view "$run_id" --repo weave-io/weave --json databaseId,displayTitle,status,conclusion,event,headBranch,headSha,workflowName,workflowRef
+```
+
+Capture the final `gh run view` JSON with the doctor evidence. It must show
+`displayTitle` `legacy-publisher-preflight`, `conclusion` `success`, event
+`workflow_dispatch`, `headBranch` `main`, the protected-main `headSha`, and
+workflow ref `weave-io/weave/.github/workflows/publish.yml@refs/heads/main`.
+The run summary must state publication enablement `true`, read-only `true`, and
+side effects `none`. Do not use a normal `workflow_dispatch` operation as a
+substitute. The preflight does not install dependencies, query npm, mint OIDC
+or App credentials, publish packages, or mutate refs.
+
 ## Manual setup
 
 Complete these steps in GitHub and npm. Do not put credential values in a

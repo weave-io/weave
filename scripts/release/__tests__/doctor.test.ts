@@ -11,12 +11,14 @@ import {
 import {
   type DoctorMode,
   type DoctorSnapshot,
+  LEGACY_PREFLIGHT_RUN_NAME,
   type NpmPackageObservation,
   parseDoctorMode,
   parseTrustedPublisherResponse,
   RELEASE_APP_CREDENTIAL_NAMES,
   RELEASE_APP_SECRET_ENVIRONMENTS,
   REQUIRED_RELEASE_SECRET_NAMES,
+  recentSuccessfulOldRun,
   verifyDoctorSnapshot,
 } from "../doctor.js";
 import { PRODUCTION_ENTRYPOINTS } from "../entrypoint-inventory.js";
@@ -199,7 +201,7 @@ function snapshotFor(mode: DoctorMode = "final"): DoctorSnapshot {
       recentSuccessfulRun: true,
       readOnlyPreflight: false,
       runId: 42,
-      evidence: "successful scheduled run on main",
+      evidence: "successful scheduled run 42 on protected main",
     },
     harness: {
       binaries: { opencode: true, claude: true, pi: true },
@@ -626,6 +628,163 @@ describe("release doctor", () => {
     );
     expect(
       noSchedule.failures.some((item) => item.id === "rollout.tuple"),
+    ).toBe(true);
+  });
+
+  it("accepts only a positively identified recent scheduled or read-only preflight run", () => {
+    const now = Date.parse("2026-08-19T00:00:00.000Z");
+    const common = {
+      id: 43,
+      conclusion: "success",
+      head_branch: "main",
+      updated_at: "2026-08-18T23:00:00.000Z",
+      name: "Publish control plane",
+      workflow_ref:
+        "weave-io/weave/.github/workflows/publish.yml@refs/heads/main",
+      repository: { full_name: RELEASE_REPOSITORY },
+      head_repository: { full_name: RELEASE_REPOSITORY },
+    };
+    const scheduled = recentSuccessfulOldRun(
+      { workflow_runs: [{ ...common, event: "schedule" }] },
+      now,
+    );
+    expect(scheduled).toEqual({
+      kind: "scheduled",
+      runId: 43,
+      evidence: "successful scheduled run 43 on protected main",
+    });
+
+    const preflight = recentSuccessfulOldRun(
+      {
+        workflow_runs: [
+          {
+            ...common,
+            id: 44,
+            event: "workflow_dispatch",
+            display_title: LEGACY_PREFLIGHT_RUN_NAME,
+          },
+        ],
+      },
+      now,
+    );
+    expect(preflight).toEqual({
+      kind: "read-only-preflight",
+      runId: 44,
+      evidence: "successful read-only preflight run 44 on protected main",
+    });
+
+    const snapshot = snapshotFor("pre-cutover");
+    const result = verifyDoctorSnapshot(
+      {
+        ...snapshot,
+        oldSystem: {
+          authoritative: true,
+          publicationPathEnabled: true,
+          recentSuccessfulRun: false,
+          readOnlyPreflight: true,
+          runId: 44,
+          evidence: "successful read-only preflight run 44 on protected main",
+        },
+      },
+      "pre-cutover",
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("rejects disabled, arbitrary, ambiguous, wrong-branch, and stale dispatch evidence", () => {
+    const now = Date.parse("2026-08-19T00:00:00.000Z");
+    const base = {
+      id: 45,
+      event: "workflow_dispatch",
+      conclusion: "success",
+      head_branch: "main",
+      updated_at: "2026-08-18T23:00:00.000Z",
+      name: "Publish control plane",
+      workflow_ref:
+        "weave-io/weave/.github/workflows/publish.yml@refs/heads/main",
+    };
+    expect(
+      recentSuccessfulOldRun(
+        {
+          workflow_runs: [
+            { ...base, display_title: "legacy-publisher-nightly" },
+          ],
+        },
+        now,
+      ),
+    ).toBeNull();
+    expect(recentSuccessfulOldRun({ workflow_runs: [base] }, now)).toBeNull();
+    expect(
+      recentSuccessfulOldRun(
+        {
+          workflow_runs: [
+            {
+              ...base,
+              display_title: LEGACY_PREFLIGHT_RUN_NAME,
+              run_name: "legacy-publisher-dispatch",
+            },
+          ],
+        },
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      recentSuccessfulOldRun(
+        {
+          workflow_runs: [
+            {
+              ...base,
+              display_title: LEGACY_PREFLIGHT_RUN_NAME,
+              head_branch: "release/old",
+            },
+          ],
+        },
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      recentSuccessfulOldRun(
+        {
+          workflow_runs: [
+            {
+              ...base,
+              display_title: LEGACY_PREFLIGHT_RUN_NAME,
+              updated_at: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+        now,
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps npm trust verification independent from preflight evidence", () => {
+    const base = snapshotFor("pre-cutover");
+    const trustedPublishers = { ...base.trustedPublishers };
+    trustedPublishers["@weaveio/weave-cli"] = trust(
+      RELEASE_PUBLISH_WORKFLOW_PATH,
+    );
+    const failure = doctorFailure(
+      verifyDoctorSnapshot(
+        {
+          ...base,
+          oldSystem: {
+            authoritative: true,
+            publicationPathEnabled: true,
+            recentSuccessfulRun: false,
+            readOnlyPreflight: true,
+            runId: 44,
+            evidence: "successful read-only preflight run 44 on protected main",
+          },
+          trustedPublishers,
+        },
+        "pre-cutover",
+      ),
+    );
+    expect(
+      failure.failures.some((item) =>
+        item.id.startsWith("npm.trusted-publisher."),
+      ),
     ).toBe(true);
   });
 

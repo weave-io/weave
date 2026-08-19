@@ -15,8 +15,9 @@
  * registers every stable publish and independent-attestation workflow root;
  * Task 26 adds the guarded `next` prerelease controller; Task 27 adds the
  * guarded manual `nightly` controller; Task 28 adds the CI policy controller;
- * Task 30 adds the immutable-main docs-audit workflow controllers. Later tasks
- * add, rename, or remove entries in the same change.
+ * Task 30 adds the immutable-main docs-audit workflow controllers; Task 32
+ * adds the dependency-free retained-publisher preflight root. Later tasks add,
+ * rename, or remove entries in the same change.
  * Test-only roots are never inventoried as production.
  */
 
@@ -92,6 +93,12 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "legacy",
     rationale:
       "Task 22 CI API compatibility controller. It runs API Extractor and the checked-in surface-map gate; it performs no publication mutation.",
+  },
+  {
+    path: "scripts/release/legacy-preflight.ts",
+    role: "legacy",
+    rationale:
+      "Task 32 dependency-free read-only pre-cutover publisher preflight. It runs before dependency installation, proves protected-main enablement, and performs no publication mutation.",
   },
   {
     path: "scripts/release/release-policy-check.ts",
@@ -220,6 +227,8 @@ export const PRODUCTION_ENTRYPOINTS = [
  * unknown new-pipeline root. Task 35 removes them at cutover.
  */
 export const LEGACY_ENTRYPOINTS = [
+  // Task 32 removes this dependency-free root with the retained publisher at cutover.
+  "scripts/release/legacy-preflight.ts",
   "scripts/release/changeset-policy.ts",
   "scripts/release/clean-room.ts",
   "scripts/release/dry-run-nightly.ts",

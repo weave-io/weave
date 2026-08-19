@@ -307,6 +307,9 @@ export const PACKAGE_ARCHIVE_LIMITS = {
 /** @deprecated Old publish workflow. Use the per-workflow paths above. */
 export const RELEASE_WORKFLOW_PATH = ".github/workflows/publish.yml" as const;
 
+/** Stable workflow-run identity for the read-only pre-cutover proof. */
+export const LEGACY_PREFLIGHT_RUN_NAME = "legacy-publisher-preflight" as const;
+
 /** @deprecated Stable-train operation names. The new pipeline routes by channel. */
 export const RELEASE_OPERATIONS = [
   "nightly",
