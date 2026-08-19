@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import type { AstValue, Property } from "../ast.js";
+import type { AstNode, AstValue, Property } from "../ast.js";
 import { tokenize } from "../lexer.js";
 import { parse } from "../parser.js";
+import { MAX_CONFIG_ARRAY_LENGTH } from "../schema-common.js";
 import type { SourcePos } from "../tokens.js";
 import {
   MAX_VALIDATION_DIAGNOSTIC_SIZE,
@@ -37,7 +38,6 @@ type CyclicCategoryNode = {
 type OwnedAgentFields = {
   models: string[];
 };
-
 /** Helper: lex + parse + validate a source string */
 function validateSource(src: string) {
   const lexResult = tokenize(src);
@@ -47,6 +47,10 @@ function validateSource(src: string) {
   if (parseResult.isErr())
     throw new Error(`Parse errors: ${JSON.stringify(parseResult.error)}`);
   return validate(parseResult.value);
+}
+
+function validateRuntimeInput(input: AstNode[]): ValidateResult {
+  return validate(input);
 }
 
 function expectValidationFailure(result: ValidateResult) {
@@ -70,6 +74,60 @@ function expectValidationSuccess(result: ValidateResult) {
 function emptyDirectAstRecord(): DirectAstRecord {
   return Object.setPrototypeOf({}, null);
 }
+
+describe("validate — bounded public schema arrays", () => {
+  const agentWithModels = (count: number): AstNode => {
+    const position = (): SourcePos => ({ line: 1, column: 1 });
+    const models: AstValue = {
+      kind: "array",
+      elements: Array.from(
+        { length: count },
+        (_, index): AstValue => ({
+          kind: "string",
+          value: `model-${index}`,
+          pos: position(),
+        }),
+      ),
+      pos: position(),
+    };
+    return {
+      type: "agent",
+      name: "helper",
+      properties: [{ key: "models", value: models, pos: position() }],
+      pos: position(),
+    };
+  };
+
+  it("accepts 512 model items at the validator boundary", () => {
+    const result = validateRuntimeInput([
+      agentWithModels(MAX_CONFIG_ARRAY_LENGTH),
+    ]);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.agents.helper?.models).toHaveLength(
+        MAX_CONFIG_ARRAY_LENGTH,
+      );
+    }
+  });
+
+  it("rejects 513 model items with bounded typed diagnostics", () => {
+    const result = validateRuntimeInput([
+      agentWithModels(MAX_CONFIG_ARRAY_LENGTH + 1),
+    ]);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(
+        result.error.every((error) => error.type === "ValidationError"),
+      ).toBe(true);
+      expect(result.error.some((error) => error.path.includes("models"))).toBe(
+        true,
+      );
+      expect(JSON.stringify(result.error).length).toBeLessThanOrEqual(
+        MAX_VALIDATION_DIAGNOSTIC_SIZE,
+      );
+    }
+  });
+});
 
 describe("validate — fail-closed AST structure", () => {
   it.each([
@@ -210,7 +268,7 @@ describe("validate — fail-closed AST structure", () => {
   });
 
   it("rejects direct workflow extends destination collisions", () => {
-    const pos = { line: 1, column: 1 };
+    const position = () => ({ line: 1, column: 1 });
     const result = validate([
       {
         type: "workflow",
@@ -218,13 +276,17 @@ describe("validate — fail-closed AST structure", () => {
         properties: [
           {
             key: "extends",
-            value: { kind: "string", value: "generic", pos },
-            pos,
+            value: {
+              kind: "string",
+              value: "generic",
+              pos: position(),
+            },
+            pos: position(),
           },
         ],
         steps: [],
         extends: "dedicated",
-        pos,
+        pos: position(),
       },
     ]);
 
@@ -238,13 +300,17 @@ describe("validate — fail-closed AST structure", () => {
   });
 
   it("rejects direct step insertion destination collisions", () => {
-    const pos = { line: 1, column: 1 };
+    const position = () => ({ line: 1, column: 1 });
     const result = validate([
       {
         type: "workflow",
         name: "pipeline",
         properties: [
-          { key: "version", value: { kind: "number", value: 1, pos }, pos },
+          {
+            key: "version",
+            value: { kind: "number", value: 1, pos: position() },
+            pos: position(),
+          },
         ],
         steps: [
           {
@@ -252,21 +318,29 @@ describe("validate — fail-closed AST structure", () => {
             properties: [
               {
                 key: "insert_before",
-                value: { kind: "string", value: "generic-before", pos },
-                pos,
+                value: {
+                  kind: "string",
+                  value: "generic-before",
+                  pos: position(),
+                },
+                pos: position(),
               },
               {
                 key: "insert_after",
-                value: { kind: "string", value: "generic-after", pos },
-                pos,
+                value: {
+                  kind: "string",
+                  value: "generic-after",
+                  pos: position(),
+                },
+                pos: position(),
               },
             ],
             insert_before: "dedicated-before",
             insert_after: "dedicated-after",
-            pos,
+            pos: position(),
           },
         ],
-        pos,
+        pos: position(),
       },
     ]);
 
@@ -373,7 +447,10 @@ describe("validate — fail-closed AST structure", () => {
     ];
 
     for (const graph of unsafeGraphs) {
-      const errors = expectValidationFailure(validate(graph));
+      // SAFETY: hostile fixtures intentionally cross the typed public boundary.
+      const errors = expectValidationFailure(
+        validateRuntimeInput(graph as AstNode[]),
+      );
       expect(errors).toEqual([
         expect.objectContaining({
           type: "ValidationError",
@@ -396,7 +473,16 @@ describe("validate — fail-closed AST structure", () => {
       },
     });
 
-    const errors = expectValidationFailure(validate([callable]));
+    const callableGraph: AstNode[] = [];
+    Object.defineProperty(callableGraph, "0", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: callable,
+    });
+    callableGraph.length = 1;
+
+    const errors = expectValidationFailure(validateRuntimeInput(callableGraph));
 
     expect(errors).toEqual([
       expect.objectContaining({
@@ -412,7 +498,10 @@ describe("validate — fail-closed AST structure", () => {
     const malformedGraphs = [null, {}, [null], [{ type: "category" }]];
 
     for (const graph of malformedGraphs) {
-      const errors = expectValidationFailure(validate(graph));
+      // SAFETY: malformed fixtures intentionally cross the typed boundary.
+      const errors = expectValidationFailure(
+        validateRuntimeInput(graph as AstNode[]),
+      );
       expect(errors).toEqual([
         expect.objectContaining({
           type: "ValidationError",
@@ -424,7 +513,7 @@ describe("validate — fail-closed AST structure", () => {
   });
 
   it("accepts safe direct and null-prototype AST graphs", () => {
-    const pos = { line: 1, column: 1 };
+    const position = () => ({ line: 1, column: 1 });
     const directConfig = expectValidationSuccess(
       validate([
         {
@@ -433,11 +522,15 @@ describe("validate — fail-closed AST structure", () => {
           properties: [
             {
               key: "description",
-              value: { kind: "string", value: "Plain category", pos },
-              pos,
+              value: {
+                kind: "string",
+                value: "Plain category",
+                pos: position(),
+              },
+              pos: position(),
             },
           ],
-          pos,
+          pos: position(),
         },
       ]),
     );
@@ -448,18 +541,21 @@ describe("validate — fail-closed AST structure", () => {
     const stringValue = emptyDirectAstRecord();
     stringValue.kind = "string";
     stringValue.value = "Null category";
-    stringValue.pos = pos;
+    stringValue.pos = position();
     const property = emptyDirectAstRecord();
     property.key = "description";
     property.value = stringValue;
-    property.pos = pos;
+    property.pos = position();
     const node = emptyDirectAstRecord();
     node.type = "category";
     node.name = "null-prototype";
     node.properties = [property];
-    node.pos = pos;
+    node.pos = position();
 
-    const nullPrototypeConfig = expectValidationSuccess(validate([node]));
+    // SAFETY: the null-prototype fixture intentionally crosses the typed boundary.
+    const nullPrototypeConfig = expectValidationSuccess(
+      validateRuntimeInput([node] as AstNode[]),
+    );
     expect(nullPrototypeConfig.categories["null-prototype"]).toEqual({
       description: "Null category",
     });

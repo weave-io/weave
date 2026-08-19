@@ -1,17 +1,14 @@
 import { defineRule } from "@oxlint/plugins";
 
-function isStringRawTag(node: {
-	type: string;
-	object?: { type: string; name?: string };
-	property?: { type: string; name?: string };
-	computed?: boolean;
-}): boolean {
+import type { ESTree } from "@oxlint/plugins";
+
+function isStringRawTag(node: ESTree.Node): boolean {
+	if (node.type !== "MemberExpression") return false;
 	return (
-		node.type === "MemberExpression" &&
 		node.computed !== true &&
-		node.object?.type === "Identifier" &&
+		node.object.type === "Identifier" &&
 		node.object.name === "String" &&
-		node.property?.type === "Identifier" &&
+		node.property.type === "Identifier" &&
 		node.property.name === "raw"
 	);
 }

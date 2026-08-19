@@ -1,4 +1,4 @@
-import type { ESTree } from "@oxlint/plugins";
+import type { ESTree, SourceCode } from "@oxlint/plugins";
 
 /** Walk ancestors until `predicate` matches or the program root is reached. */
 export function findAncestor(
@@ -31,4 +31,14 @@ export function isFunctionNode(
 		node.type === "FunctionDeclaration" ||
 		node.type === "FunctionExpression"
 	);
+}
+
+/** Return true when a node is wrapped in a pair of source parentheses. */
+export function isExplicitlyParenthesized(
+	sourceCode: SourceCode,
+	node: ESTree.Node,
+): boolean {
+	const before = sourceCode.getTokenBefore(node);
+	const after = sourceCode.getTokenAfter(node);
+	return before?.value === "(" && after?.value === ")";
 }

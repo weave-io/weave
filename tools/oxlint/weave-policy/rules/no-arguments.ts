@@ -1,5 +1,7 @@
 import { defineRule } from "@oxlint/plugins";
 
+import type { ESTree } from "@oxlint/plugins";
+
 /** Disallow the `arguments` object. */
 export const noArgumentsRule = defineRule({
 	meta: {
@@ -12,22 +14,26 @@ export const noArgumentsRule = defineRule({
 		},
 	},
 	createOnce(context) {
+		const unresolvedArguments = new Set<ESTree.Node>();
 		return {
-			Identifier(node) {
-				if (node.name !== "arguments") return;
-				const parent = node.parent;
-				if (parent === null) return;
-				if (
-					(parent.type === "VariableDeclarator" && parent.id === node) ||
-					(parent.type === "Property" &&
-						parent.key === node &&
-						parent.shorthand !== true) ||
-					parent.type === "FunctionDeclaration" ||
-					parent.type === "FunctionExpression"
-				) {
-					return;
+			Program() {
+				unresolvedArguments.clear();
+				for (const scope of context.sourceCode.scopeManager.scopes) {
+					for (const reference of scope.references) {
+						if (
+							reference.identifier.name === "arguments" &&
+							(reference.resolved === null ||
+								reference.resolved.defs.length === 0)
+						) {
+							unresolvedArguments.add(reference.identifier);
+						}
+					}
 				}
-				context.report({ node, messageId: "noArguments" });
+			},
+			Identifier(node) {
+				if (unresolvedArguments.has(node)) {
+					context.report({ node, messageId: "noArguments" });
+				}
 			},
 		};
 	},

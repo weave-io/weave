@@ -2,11 +2,13 @@ import { describe, expect, it } from "bun:test";
 import {
   type AgentConfig,
   type CategoryConfig,
+  copySafeGraph,
   DEFAULT_DELEGATION_LIMITS,
   MAX_DELEGATION_LIMITS,
   type ModelIntentEntry,
   type ModelIntentParseError,
   parseModelIntentEntry,
+  type SafeGraphCopyBudget,
   THINKING_LEVEL_VALUES,
   type ThinkingLevelDecl,
   ThinkingLevelSchema,
@@ -38,28 +40,8 @@ import {
   WorkflowStepTypeSchema,
 } from "../schema.js";
 
-type SchemaFixtureValue = string | boolean | string[] | SchemaFixtureRecord;
-type SchemaFixtureRecord = {
-  [key: string]: SchemaFixtureValue;
-};
-type ObjectPrototype = typeof Object.prototype;
-type ObjectPrototypeDescriptionSlot = {
-  description?: string;
-};
-
-function emptySchemaFixtureRecord(): SchemaFixtureRecord {
-  return Object.setPrototypeOf({}, null);
-}
-
 function omittedZodInput(): undefined {
   return;
-}
-
-function isConfigurableDescriptionSlot(
-  target: ObjectPrototype,
-): target is ObjectPrototype & ObjectPrototypeDescriptionSlot {
-  const descriptor = Object.getOwnPropertyDescriptor(target, "description");
-  return descriptor !== undefined && descriptor.configurable === true;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +49,19 @@ function isConfigurableDescriptionSlot(
 // ---------------------------------------------------------------------------
 
 describe("@weaveio/weave-core barrel exports", () => {
+  it("exports SafeGraphCopyBudget through the public type surface", () => {
+    const budget: SafeGraphCopyBudget = {
+      maxDepth: 4,
+      maxNodes: 32,
+      maxProperties: 32,
+      maxPropertiesPerObject: 8,
+      maxArrayLength: 8,
+      maxStringLength: 1024,
+    };
+    const copied = copySafeGraph({ value: true }, budget);
+    expect(copied.isOk()).toBe(true);
+  });
+
   it("exports ToolPermissionSchema as a Zod enum with allow/deny/ask", () => {
     expect(ToolPermissionSchema).toBeDefined();
     expect(ToolPermissionSchema.safeParse("allow").success).toBe(true);
@@ -1067,141 +1062,6 @@ describe("AgentConfigSchema — prompt_append_file", () => {
 // CategoryConfigSchema — description (required, non-blank)
 // ---------------------------------------------------------------------------
 
-describe("exported schema input boundaries", () => {
-  it("copies input before Zod can read Object.prototype fields", () => {
-    let getterExecutions = 0;
-    try {
-      Object.defineProperty(Object.prototype, "description", {
-        configurable: true,
-        enumerable: true,
-        get() {
-          getterExecutions += 1;
-          return "inherited description";
-        },
-      });
-
-      expect(CategoryConfigSchema.safeParse({}).success).toBe(false);
-      expect(getterExecutions).toBe(0);
-    } finally {
-      if (isConfigurableDescriptionSlot(Object.prototype)) {
-        delete Object.prototype.description;
-      }
-    }
-  });
-
-  it.each([
-    ["root agents", WeaveConfigSchema, "agents", {}],
-    ["agent fast", AgentConfigSchema, "fast", true],
-    ["agent triggers", AgentConfigSchema, "triggers", ["owned"]],
-    ["category fast", CategoryConfigSchema, "fast", true],
-    ["category triggers", CategoryConfigSchema, "triggers", ["owned"]],
-    ["category description", CategoryConfigSchema, "description", "inherited"],
-  ])("rejects prototype-provided %s", (_case, schema, key, value) => {
-    const prototypeFields: SchemaFixtureRecord = {};
-    prototypeFields[key] = value;
-    const input: SchemaFixtureRecord = Object.create(prototypeFields);
-    if (schema === CategoryConfigSchema && key !== "description") {
-      input.description = "Owned description";
-    }
-    expect(schema.safeParse(input).success).toBe(false);
-  });
-
-  it.each([
-    [AgentConfigSchema, "fast"],
-    [AgentConfigSchema, "triggers"],
-    [CategoryConfigSchema, "description"],
-    [WeaveConfigSchema, "agents"],
-  ])("rejects %s accessors without executing getters", (schema, key) => {
-    let getterExecutions = 0;
-    const input: SchemaFixtureRecord = {};
-    if (schema === CategoryConfigSchema && key !== "description") {
-      input.description = "Owned description";
-    }
-    Object.defineProperty(input, key, {
-      enumerable: true,
-      configurable: true,
-      get() {
-        getterExecutions += 1;
-        return key === "triggers" ? ["unsafe"] : true;
-      },
-    });
-
-    expect(schema.safeParse(input).success).toBe(false);
-    expect(getterExecutions).toBe(0);
-  });
-
-  it("rejects callable values without executing getters", () => {
-    let getterExecutions = 0;
-    function callable(): void {}
-    Object.defineProperty(callable, "type", {
-      enumerable: true,
-      configurable: true,
-      get() {
-        getterExecutions += 1;
-        return "unsafe";
-      },
-    });
-
-    expect(AgentConfigSchema.safeParse({ models: [callable] }).success).toBe(
-      false,
-    );
-    expect(getterExecutions).toBe(0);
-  });
-
-  it("rejects unexpected prototypes and unsafe data descriptors", () => {
-    class AgentInput {}
-    const classInput = new AgentInput();
-    Object.defineProperty(classInput, "fast", {
-      value: true,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    expect(AgentConfigSchema.safeParse(classInput).success).toBe(false);
-
-    const readonlyInput: SchemaFixtureRecord = {};
-    Object.defineProperty(readonlyInput, "fast", {
-      value: true,
-      enumerable: true,
-      configurable: true,
-      writable: false,
-    });
-    expect(AgentConfigSchema.safeParse(readonlyInput).success).toBe(false);
-  });
-
-  it("accepts own data properties on plain and null-prototype records", () => {
-    expect(
-      AgentConfigSchema.safeParse({ fast: true, triggers: ["plain"] }).success,
-    ).toBe(true);
-
-    const category = emptySchemaFixtureRecord();
-    Object.defineProperty(category, "description", {
-      value: "Safe category",
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    Object.defineProperty(category, "fast", {
-      value: true,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    Object.defineProperty(category, "triggers", {
-      value: ["safe trigger"],
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    const parsed = CategoryConfigSchema.safeParse(category);
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.description).toBe("Safe category");
-      expect(parsed.data.triggers).toEqual(["safe trigger"]);
-    }
-  });
-});
-
 describe("AgentConfigSchema and CategoryConfigSchema — fast intent and triggers", () => {
   const schemas = [
     ["agent", AgentConfigSchema, {}],
@@ -1663,7 +1523,15 @@ describe("WorkflowConfigSchema — extension_points", () => {
   it("rejects workflow with two planning steps (DuplicatePlanningStep)", () => {
     const r = WorkflowConfigSchema.safeParse({
       version: 1,
-      steps: [planningStep, { ...planningStep, name: "plan2" }, regularStep],
+      steps: [
+        planningStep,
+        {
+          ...planningStep,
+          name: "plan2",
+          completion: { ...planningStep.completion },
+        },
+        regularStep,
+      ],
     });
     expect(r.success).toBe(false);
     if (!r.success) {

@@ -15,6 +15,15 @@ const TRUNCATION_SUFFIX = "... [truncated]";
 
 export const CONFIG_ERROR_COLLECTION_LIMIT = COLLECTION_LIMIT;
 
+function appendOwn<T>(target: T[], value: T): void {
+  Object.defineProperty(target, String(target.length), {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
 function truncate(value: string, limit: number): string {
   if (value.length <= limit) return value;
   return `${value.slice(0, limit - TRUNCATION_SUFFIX.length)}${TRUNCATION_SUFFIX}`;
@@ -115,9 +124,9 @@ export function boundConfigErrors(
     ) {
       break;
     }
-    bounded.push(error);
+    appendOwn(bounded, error);
     size += nextSize;
   }
-  bounded.push(truncationMarker());
+  appendOwn(bounded, truncationMarker());
   return bounded;
 }

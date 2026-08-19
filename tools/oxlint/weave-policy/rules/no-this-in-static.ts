@@ -2,27 +2,28 @@ import { defineRule } from "@oxlint/plugins";
 
 import type { ESTree } from "@oxlint/plugins";
 
-import { findAncestor, isFunctionNode } from "../shared/ancestors.ts";
-
 function isStaticContext(node: ESTree.Node): boolean {
-	const owner = findAncestor(
-		node,
-		(current) =>
-			current.type === "MethodDefinition" ||
-			current.type === "PropertyDefinition" ||
-			current.type === "StaticBlock",
-	);
-	if (owner === null) return false;
-	if (owner.type === "StaticBlock") return true;
-	if (
-		(owner.type === "MethodDefinition" || owner.type === "PropertyDefinition") &&
-		owner.static === true
-	) {
-		if (owner.type === "MethodDefinition") {
-			const fn = findAncestor(node, isFunctionNode);
-			return fn === owner.value;
+	let current: ESTree.Node | null = node.parent;
+	while (current !== null && current.type !== "Program") {
+		if (current.type === "PropertyDefinition" || current.type === "AccessorProperty") {
+			// Biome does not treat a class-field initializer as a static
+			// control-flow root, even when the field itself is static.
+			return false;
 		}
-		return true;
+		if (current.type === "StaticBlock") return true;
+		if (current.type === "MethodDefinition") return current.static === true;
+		if (current.type === "FunctionDeclaration" || current.type === "FunctionExpression") {
+			// A method's function node belongs to the method definition. Any
+			// other ordinary function starts a new `this` context.
+			if (
+				current.parent?.type !== "MethodDefinition" ||
+				current.parent.value !== current
+			) {
+				return false;
+			}
+		}
+		// Arrow functions preserve the surrounding `this` context.
+		current = current.parent;
 	}
 	return false;
 }

@@ -7,6 +7,8 @@ import {
 } from "../config-error-policy.js";
 import type { ConfigError } from "../errors.js";
 import { parseConfig } from "../parse-config.js";
+import { MAX_CONFIG_ARRAY_LENGTH } from "../schema-common.js";
+import { WorkflowConfigSchema } from "../schema-workflow.js";
 import {
   MAX_VALIDATION_DIAGNOSTIC_SIZE,
   MAX_VALIDATION_ISSUES,
@@ -14,6 +16,122 @@ import {
   MAX_VALIDATION_PATH_LENGTH,
   VALIDATION_DIAGNOSTICS_TRUNCATED,
 } from "../validate.js";
+
+describe("parseConfig — bounded configuration arrays", () => {
+  const sourceWithModels = (count: number): string => {
+    const models = Array.from({ length: count }, (_, index) =>
+      JSON.stringify(`model-${index}`),
+    ).join(", ");
+    return `agent helper { models [${models}] }`;
+  };
+
+  it("accepts 512 model items end to end", () => {
+    const result = parseConfig(sourceWithModels(MAX_CONFIG_ARRAY_LENGTH));
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.agents.helper?.models).toHaveLength(
+        MAX_CONFIG_ARRAY_LENGTH,
+      );
+    }
+  });
+
+  it("rejects 513 model items with bounded typed diagnostics", () => {
+    const result = parseConfig(sourceWithModels(MAX_CONFIG_ARRAY_LENGTH + 1));
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toContainEqual(
+        expect.objectContaining({
+          type: "UnexpectedToken",
+          found: "[array item limit exceeded]",
+          expected: `at most ${MAX_CONFIG_ARRAY_LENGTH} array items`,
+        }),
+      );
+      expect(JSON.stringify(result.error).length).toBeLessThanOrEqual(
+        MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+      );
+    }
+  });
+});
+
+describe("workflow step budget — schema and full pipeline", () => {
+  const workflowSource = (count: number): string =>
+    `workflow bounded { version 1\n${Array.from(
+      { length: count },
+      (_, index) =>
+        `step step_${index} { type autonomous agent worker prompt "run" completion agent_signal }`,
+    ).join("\n")}\n}`;
+
+  const workflowInput = (count: number) => ({
+    name: "bounded",
+    version: 1,
+    steps: Array.from({ length: count }, (_, index) => ({
+      name: `step_${index}`,
+      type: "autonomous" as const,
+      agent: "worker",
+      prompt: "run",
+      completion: { method: "agent_signal" as const },
+    })),
+  });
+
+  it("accepts 80 ordinary steps through the full pipeline", () => {
+    const result = parseConfig(workflowSource(80));
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.workflows.bounded?.steps).toHaveLength(80);
+    }
+  });
+
+  it("accepts exactly 512 ordinary steps through the schema and full pipeline", () => {
+    const schemaResult = WorkflowConfigSchema.safeParse(
+      workflowInput(MAX_CONFIG_ARRAY_LENGTH),
+    );
+    expect(schemaResult.success).toBe(true);
+    if (schemaResult.success) {
+      expect(schemaResult.data.steps).toHaveLength(MAX_CONFIG_ARRAY_LENGTH);
+    }
+
+    const pipelineResult = parseConfig(workflowSource(MAX_CONFIG_ARRAY_LENGTH));
+    expect(pipelineResult.isOk()).toBe(true);
+    if (pipelineResult.isOk()) {
+      expect(pipelineResult.value.workflows.bounded?.steps).toHaveLength(
+        MAX_CONFIG_ARRAY_LENGTH,
+      );
+    }
+  });
+
+  it("rejects 513 steps at the public item limit", () => {
+    const schemaResult = WorkflowConfigSchema.safeParse(
+      workflowInput(MAX_CONFIG_ARRAY_LENGTH + 1),
+    );
+    expect(schemaResult.success).toBe(false);
+    if (!schemaResult.success) {
+      expect(schemaResult.error.issues).toContainEqual(
+        expect.objectContaining({
+          code: "too_big",
+          path: ["steps"],
+          maximum: MAX_CONFIG_ARRAY_LENGTH,
+        }),
+      );
+    }
+
+    const pipelineResult = parseConfig(
+      workflowSource(MAX_CONFIG_ARRAY_LENGTH + 1),
+    );
+    expect(pipelineResult.isErr()).toBe(true);
+    if (pipelineResult.isErr()) {
+      expect(pipelineResult.error).toContainEqual(
+        expect.objectContaining({
+          type: "UnexpectedToken",
+          found: "[array item limit exceeded]",
+          expected: `at most ${MAX_CONFIG_ARRAY_LENGTH} workflow steps`,
+        }),
+      );
+      expect(JSON.stringify(pipelineResult.error).length).toBeLessThanOrEqual(
+        MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+      );
+    }
+  });
+});
 
 describe("parseConfig — fail-closed DSL structure", () => {
   it.each([
@@ -2436,7 +2554,9 @@ agent loom {
   delegation { max_concurrency 64 }
 }`);
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(64);
+    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(
+      64,
+    );
     expect(
       result._unsafeUnwrap().agents.loom?.delegation?.max_concurrency,
     ).toBe(64);

@@ -17,7 +17,11 @@ export const noOctalEscapeRule = defineRule({
 	createOnce(context) {
 		return {
 			Literal(node) {
-				if (typeof node.value !== "string" || node.raw === undefined) return;
+				if (
+					typeof node.value !== "string" ||
+					node.raw === undefined ||
+					node.raw === null
+				) return;
 				if (OCTAL_ESCAPE.test(node.raw)) {
 					context.report({
 						node,

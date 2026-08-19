@@ -15,18 +15,12 @@ export const noSuspiciousSemicolonInJsxRule = defineRule({
 	createOnce(context) {
 		return {
 			JSXText(node) {
-				if (!/^\s*;\s*$/u.test(node.value)) return;
-				const parent = node.parent;
-				if (parent === null || parent.type !== "JSXElement") return;
-				const index = parent.children.indexOf(node);
-				if (index <= 0) return;
-				const previous = parent.children[index - 1];
-				if (
-					previous?.type === "JSXElement" ||
-					previous?.type === "JSXFragment"
-				) {
-					context.report({ node, messageId: "suspiciousSemicolon" });
+				// Biome's JSX text rule looks for a semicolon followed by a
+				// line break. A same-line semicolon is ordinary text.
+				if (!node.value.startsWith(";\n") && !node.value.startsWith(";\r")) {
+					return;
 				}
+				context.report({ node, messageId: "suspiciousSemicolon" });
 			},
 		};
 	},

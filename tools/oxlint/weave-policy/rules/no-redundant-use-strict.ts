@@ -6,15 +6,28 @@ function isUseStrictDirective(node: ESTree.Node): boolean {
 	return node.type === "ExpressionStatement" && node.directive === "use strict";
 }
 
-function fileIsAlwaysStrict(filename: string, program: ESTree.Program): boolean {
-	if (/\.[cm]ts$|\.mjs$/u.test(filename)) return true;
-	return program.body.some(
-		(statement) =>
-			statement.type === "ImportDeclaration" ||
-			statement.type === "ExportNamedDeclaration" ||
-			statement.type === "ExportDefaultDeclaration" ||
-			statement.type === "ExportAllDeclaration",
+function isFunctionBody(node: ESTree.BlockStatement): boolean {
+	const parent = node.parent;
+	return (
+		parent?.type === "FunctionDeclaration" ||
+		parent?.type === "FunctionExpression" ||
+		parent?.type === "ArrowFunctionExpression"
 	);
+}
+
+function hasClassAncestor(node: ESTree.Node): boolean {
+	let current: ESTree.Node | null = node.parent;
+	while (current !== null && current.type !== "Program") {
+		if (current.type === "ClassDeclaration" || current.type === "ClassExpression") {
+			return true;
+		}
+		current = current.parent;
+	}
+	return false;
+}
+
+function hasStrictDirective(body: ESTree.Program | ESTree.BlockStatement): boolean {
+	return body.body.some(isUseStrictDirective);
 }
 
 /** Disallow redundant "use strict" directives. */
@@ -34,43 +47,41 @@ export const noRedundantUseStrictRule = defineRule({
 				if (!isUseStrictDirective(node)) return;
 				const parent = node.parent;
 				if (parent === null) return;
+				if (hasClassAncestor(node) || context.languageOptions.sourceType === "module") {
+					context.report({ node, messageId: "redundantUseStrict" });
+					return;
+				}
+
 				if (parent.type === "Program") {
-					if (fileIsAlwaysStrict(context.filename, parent)) {
-						context.report({ node, messageId: "redundantUseStrict" });
-						return;
-					}
 					const first = parent.body.find(isUseStrictDirective);
 					if (first !== undefined && first !== node) {
 						context.report({ node, messageId: "redundantUseStrict" });
 					}
 					return;
 				}
-				if (parent.type === "BlockStatement") {
-					const first = parent.body.find(isUseStrictDirective);
-					if (first !== undefined && first !== node) {
-						context.report({ node, messageId: "redundantUseStrict" });
+				if (parent.type !== "BlockStatement" || !isFunctionBody(parent)) return;
+
+				const first = parent.body.find(isUseStrictDirective);
+				if (first !== undefined && first !== node) {
+					context.report({ node, messageId: "redundantUseStrict" });
+					return;
+				}
+
+				let current: ESTree.Node | null = parent.parent;
+				while (current !== null) {
+					if (current.type === "Program") {
+						if (hasStrictDirective(current)) {
+							context.report({ node, messageId: "redundantUseStrict" });
+						}
 						return;
 					}
-					let current: ESTree.Node | null = parent.parent;
-					while (current !== null) {
-						if (current.type === "Program") {
-							if (
-								current.body.some(isUseStrictDirective) ||
-								fileIsAlwaysStrict(context.filename, current)
-							) {
-								context.report({ node, messageId: "redundantUseStrict" });
-							}
-							return;
-						}
-						if (
-							current.type === "BlockStatement" &&
-							current.body.some(isUseStrictDirective)
-						) {
+					if (current.type === "BlockStatement" && isFunctionBody(current)) {
+						if (hasStrictDirective(current)) {
 							context.report({ node, messageId: "redundantUseStrict" });
 							return;
 						}
-						current = current.parent;
 					}
+					current = current.parent;
 				}
 			},
 		};

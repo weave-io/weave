@@ -6,7 +6,8 @@
  * after each bad construct by skipping to the next safe boundary.
  */
 
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, type Result, Result as ResultClass } from "neverthrow";
+import { z } from "zod";
 import type {
   AgentBlock,
   ArrayValue,
@@ -31,8 +32,229 @@ import {
   CONFIG_ERRORS_TRUNCATED,
 } from "./config-error-policy.js";
 import type { ParseError } from "./errors.js";
+import type {
+  SafeGraphCopyBudget,
+  SafeGraphObject,
+  SafeGraphValue,
+} from "./safe-graph-copy.js";
+import { copySafeGraph } from "./safe-graph-copy.js";
+import { MAX_CONFIG_ARRAY_LENGTH } from "./schema-common.js";
 import type { SourcePos } from "./tokens.js";
 import { type Token, TokenType } from "./tokens.js";
+
+const INVALID_TOKEN_STREAM_FOUND = "[invalid token stream]";
+const INVALID_TOKEN_STREAM_EXPECTED = "valid token stream";
+const TOKEN_STREAM_LIMIT_FOUND = "[token stream exceeds parser limit]";
+const ARRAY_ITEM_LIMIT_FOUND = "[array item limit exceeded]";
+
+/**
+ * Maximum number of tokens retained by one parser snapshot.
+ *
+ * A valid workflow may contain 512 steps. A maximal bounded step can carry
+ * two 512-item artifact lists plus its scalar fields and four reconciliation
+ * handlers. Eight thousand tokens per step covers that shape, delimiters, and
+ * separators. Keep the multiplier explicit so this owner budget stays tied to
+ * the public list bound instead of becoming an unbounded source-size allowance.
+ */
+const MAX_WORKFLOW_STEP_TOKEN_BUDGET = 8_192;
+export const MAX_PARSER_TOKEN_COUNT =
+  MAX_CONFIG_ARRAY_LENGTH * MAX_WORKFLOW_STEP_TOKEN_BUDGET;
+
+const PARSER_TOKEN_SNAPSHOT_BUDGET: SafeGraphCopyBudget = {
+  maxDepth: 4,
+  // One token has four fields plus the token itself. The factor leaves room
+  // for the root array and future token metadata without removing the cap.
+  maxNodes: MAX_PARSER_TOKEN_COUNT * 6,
+  maxProperties: MAX_PARSER_TOKEN_COUNT * 6,
+  maxPropertiesPerObject: 512,
+  maxArrayLength: MAX_PARSER_TOKEN_COUNT,
+  // Four token keys plus token values contribute roughly 24 units each.
+  maxStringLength: MAX_PARSER_TOKEN_COUNT * 32,
+};
+
+function defineOwnProperty<T extends object, K extends keyof T>(
+  target: T,
+  key: K,
+  value: T[K],
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function appendOwn<T>(target: T[], value: T): void {
+  Object.defineProperty(target, String(target.length), {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function invalidTokenStreamErrors(): ParseError[] {
+  const error: ParseError = {
+    type: "UnexpectedToken",
+    line: 0,
+    column: 0,
+    found: INVALID_TOKEN_STREAM_FOUND,
+    expected: INVALID_TOKEN_STREAM_EXPECTED,
+  };
+  return boundConfigErrors<ParseError>([error], () => error);
+}
+
+const TokenTypeSchema = z.enum([
+  TokenType.Identifier,
+  TokenType.String,
+  TokenType.Number,
+  TokenType.LBrace,
+  TokenType.RBrace,
+  TokenType.LBracket,
+  TokenType.RBracket,
+  TokenType.Comma,
+  TokenType.Newline,
+  TokenType.EOF,
+]);
+const TokenStringSchema = z.string();
+const TokenPositionSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
+
+function isSafeGraphRecord(value: SafeGraphValue): value is SafeGraphObject {
+  return value !== null && Object(value) === value && !Array.isArray(value);
+}
+
+function parseTokenType(value: SafeGraphValue): TokenType | null {
+  const parsed = TokenTypeSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseTokenString(value: SafeGraphValue): string | null {
+  const parsed = TokenStringSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseTokenPosition(value: SafeGraphValue): number | null {
+  const parsed = TokenPositionSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function hasOnlyTokenFields(record: SafeGraphObject): boolean {
+  const keys = Object.keys(record);
+  return (
+    keys.length === 4 &&
+    keys.includes("type") &&
+    keys.includes("value") &&
+    keys.includes("line") &&
+    keys.includes("column")
+  );
+}
+
+function isTokenValueValid(type: TokenType, value: string): boolean {
+  switch (type) {
+    case TokenType.Identifier:
+      return /^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(value);
+    case TokenType.Number:
+      return /^-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/.test(value);
+    case TokenType.LBrace:
+      return value === "{";
+    case TokenType.RBrace:
+      return value === "}";
+    case TokenType.LBracket:
+      return value === "[";
+    case TokenType.RBracket:
+      return value === "]";
+    case TokenType.Comma:
+      return value === ",";
+    case TokenType.Newline:
+      return value === "\n";
+    case TokenType.EOF:
+      return value === "";
+    case TokenType.String:
+      return true;
+  }
+}
+
+function snapshotToken(value: SafeGraphValue): Token | null {
+  if (!isSafeGraphRecord(value) || !hasOnlyTokenFields(value)) return null;
+  const typeValue = parseTokenType(value.type);
+  const tokenValue = parseTokenString(value.value);
+  const lineValue = parseTokenPosition(value.line);
+  const columnValue = parseTokenPosition(value.column);
+  if (
+    typeValue === null ||
+    tokenValue === null ||
+    lineValue === null ||
+    columnValue === null ||
+    !isTokenValueValid(typeValue, tokenValue)
+  ) {
+    return null;
+  }
+  return {
+    type: typeValue,
+    value: tokenValue,
+    line: lineValue,
+    column: columnValue,
+  };
+}
+
+function tokenStreamLimitErrors(): ParseError[] {
+  const error: ParseError = {
+    type: "UnexpectedToken",
+    line: 0,
+    column: 0,
+    found: TOKEN_STREAM_LIMIT_FOUND,
+    expected: `at most ${MAX_PARSER_TOKEN_COUNT} tokens`,
+  };
+  return boundConfigErrors<ParseError>([error], () => error);
+}
+
+function snapshotTokenStream(tokens: Token[]): Result<Token[], ParseError[]> {
+  const isArray = ResultClass.fromThrowable(
+    () => Array.isArray(tokens),
+    () => false,
+  )();
+  if (isArray.isErr() || !isArray.value) return err(invalidTokenStreamErrors());
+
+  const tokenCount = ResultClass.fromThrowable(
+    () => tokens.length,
+    () => invalidTokenStreamErrors(),
+  )();
+  if (tokenCount.isErr()) return err(tokenCount.error);
+  if (!Number.isSafeInteger(tokenCount.value) || tokenCount.value < 0) {
+    return err(invalidTokenStreamErrors());
+  }
+  if (tokenCount.value > MAX_PARSER_TOKEN_COUNT) {
+    return err(tokenStreamLimitErrors());
+  }
+
+  const copied = copySafeGraph(tokens, PARSER_TOKEN_SNAPSHOT_BUDGET);
+  if (copied.isErr()) return err(invalidTokenStreamErrors());
+  if (!Array.isArray(copied.value) || copied.value.length === 0) {
+    return err(invalidTokenStreamErrors());
+  }
+
+  const snapshot: Token[] = [];
+  for (const value of copied.value) {
+    const token = snapshotToken(value);
+    if (token === null) return err(invalidTokenStreamErrors());
+    appendOwn(snapshot, token);
+  }
+
+  const eof = snapshot[snapshot.length - 1];
+  if (
+    eof === undefined ||
+    eof.type !== TokenType.EOF ||
+    snapshot.slice(0, -1).some((token) => token.type === TokenType.EOF)
+  ) {
+    return err(invalidTokenStreamErrors());
+  }
+  return ok(snapshot);
+}
 
 class Parser {
   readonly #tokens: Token[];
@@ -72,7 +294,7 @@ class Parser {
       return token;
     }
     const expected = value ? `'${value}'` : type;
-    this.#errors.push({
+    appendOwn(this.#errors, {
       type: "UnexpectedToken",
       line: token.line,
       column: token.column,
@@ -116,7 +338,7 @@ class Parser {
     if (token.type === TokenType.EOF) return null;
 
     if (token.type !== TokenType.Identifier) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "UnexpectedToken",
         line: token.line,
         column: token.column,
@@ -150,7 +372,7 @@ class Parser {
     const nameTok = this.#current();
 
     if (nameTok.type !== TokenType.Identifier) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "MissingBlockName",
         line: nameTok.line,
         column: nameTok.column,
@@ -174,7 +396,7 @@ class Parser {
     this.#skipNewlines();
     // Expect closing brace
     if (this.#current().type !== TokenType.RBrace) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "UnclosedBlock",
         line: pos.line,
         column: pos.column,
@@ -201,7 +423,7 @@ class Parser {
     const nameTok = this.#current();
 
     if (nameTok.type !== TokenType.Identifier) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "MissingBlockName",
         line: nameTok.line,
         column: nameTok.column,
@@ -231,8 +453,19 @@ class Parser {
       if (cur.type === TokenType.RBrace || cur.type === TokenType.EOF) break;
 
       if (cur.type === TokenType.Identifier && cur.value === "step") {
+        if (steps.length >= MAX_CONFIG_ARRAY_LENGTH) {
+          appendOwn(this.#errors, {
+            type: "UnexpectedToken",
+            line: cur.line,
+            column: cur.column,
+            found: ARRAY_ITEM_LIMIT_FOUND,
+            expected: `at most ${MAX_CONFIG_ARRAY_LENGTH} workflow steps`,
+          });
+          this.#skipWorkflowRemainder();
+          continue;
+        }
         const step = this.#parseStepBlock();
-        if (step) steps.push(step);
+        if (step) appendOwn(steps, step);
         continue;
       }
 
@@ -240,7 +473,7 @@ class Parser {
       if (!prop) continue;
 
       if (seenPropertyKeys.has(prop.key)) {
-        this.#errors.push({
+        appendOwn(this.#errors, {
           type: "UnexpectedToken",
           line: prop.pos.line,
           column: prop.pos.column,
@@ -256,11 +489,11 @@ class Parser {
         continue;
       }
 
-      properties.push(prop);
+      appendOwn(properties, prop);
     }
 
     if (this.#current().type !== TokenType.RBrace) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "UnclosedBlock",
         line: pos.line,
         column: pos.column,
@@ -276,8 +509,28 @@ class Parser {
       steps,
       pos,
     };
-    if (extendsValue !== undefined) workflowBlock.extends = extendsValue;
+    if (extendsValue !== undefined) {
+      defineOwnProperty(workflowBlock, "extends", extendsValue);
+    }
     return workflowBlock;
+  }
+
+  #skipWorkflowRemainder(): void {
+    // The workflow opening brace has already been consumed. Leave its closing
+    // brace for #parseWorkflowBlock so recovery does not consume the next
+    // top-level declaration.
+    let braceDepth = 1;
+    while (this.#current().type !== TokenType.EOF) {
+      const token = this.#current();
+      if (token.type === TokenType.RBrace) {
+        if (braceDepth === 1) return;
+        braceDepth -= 1;
+        this.#advance();
+        continue;
+      }
+      if (token.type === TokenType.LBrace) braceDepth += 1;
+      this.#advance();
+    }
   }
 
   #parseStepBlock(): StepBlock | null {
@@ -288,7 +541,7 @@ class Parser {
     const nameTok = this.#current();
 
     if (nameTok.type !== TokenType.Identifier) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "MissingBlockName",
         line: nameTok.line,
         column: nameTok.column,
@@ -317,7 +570,7 @@ class Parser {
 
     for (const prop of rawProperties) {
       if (seenPropertyKeys.has(prop.key)) {
-        this.#errors.push({
+        appendOwn(this.#errors, {
           type: "UnexpectedToken",
           line: prop.pos.line,
           column: prop.pos.column,
@@ -336,12 +589,12 @@ class Parser {
         insertAfter = prop.value.value;
         continue;
       }
-      properties.push(prop);
+      appendOwn(properties, prop);
     }
 
     this.#skipNewlines();
     if (this.#current().type !== TokenType.RBrace) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "UnclosedBlock",
         line: pos.line,
         column: pos.column,
@@ -351,8 +604,12 @@ class Parser {
     }
 
     const stepBlock: StepBlock = { name, properties, pos };
-    if (insertBefore !== undefined) stepBlock.insert_before = insertBefore;
-    if (insertAfter !== undefined) stepBlock.insert_after = insertAfter;
+    if (insertBefore !== undefined) {
+      defineOwnProperty(stepBlock, "insert_before", insertBefore);
+    }
+    if (insertAfter !== undefined) {
+      defineOwnProperty(stepBlock, "insert_after", insertAfter);
+    }
     return stepBlock;
   }
 
@@ -370,7 +627,7 @@ class Parser {
         targetValue !== "hooks" &&
         targetValue !== "skills")
     ) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "UnexpectedToken",
         line: targetTok.line,
         column: targetTok.column,
@@ -419,7 +676,7 @@ class Parser {
       slotTok.type !== TokenType.Identifier ||
       slotTok.value !== "before-plan"
     ) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "UnexpectedToken",
         line: slotTok.line,
         column: slotTok.column,
@@ -438,10 +695,10 @@ class Parser {
     const steps: string[] = [];
     for (const el of arrayValue.elements) {
       if (el.kind === "string" || el.kind === "identifier") {
-        steps.push(el.value);
+        appendOwn(steps, el.value);
         continue;
       }
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "UnexpectedToken",
         line: el.pos.line,
         column: el.pos.column,
@@ -478,7 +735,7 @@ class Parser {
       if (cur.type === TokenType.RBrace || cur.type === TokenType.EOF) break;
 
       const prop = this.#parseProperty();
-      if (prop) properties.push(prop);
+      if (prop) appendOwn(properties, prop);
     }
 
     return properties;
@@ -488,7 +745,7 @@ class Parser {
     const keyTok = this.#current();
 
     if (keyTok.type !== TokenType.Identifier) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "UnexpectedToken",
         line: keyTok.line,
         column: keyTok.column,
@@ -526,7 +783,7 @@ class Parser {
         value: {
           kind: "boolean",
           value: true,
-          pos,
+          pos: { line: pos.line, column: pos.column },
         } satisfies BooleanValue,
         pos,
         bare: true,
@@ -599,14 +856,14 @@ class Parser {
           value: {
             kind: "identifier",
             value: token.value,
-            pos,
+            pos: { line: pos.line, column: pos.column },
           } satisfies IdentifierValue,
-          pos,
+          pos: { line: pos.line, column: pos.column },
         };
         return {
           kind: "block",
           properties: [nameProp, ...block.properties],
-          pos,
+          pos: { line: pos.line, column: pos.column },
         } satisfies BlockValue;
       }
       return {
@@ -624,7 +881,7 @@ class Parser {
       return this.#parseBlockLiteral();
     }
 
-    this.#errors.push({
+    appendOwn(this.#errors, {
       type: "UnexpectedToken",
       line: token.line,
       column: token.column,
@@ -633,6 +890,15 @@ class Parser {
     });
     this.#skipToNextBoundary();
     return null;
+  }
+
+  #skipArrayLiteralRemainder(): void {
+    let depth = 1;
+    while (depth > 0 && this.#current().type !== TokenType.EOF) {
+      const token = this.#advance();
+      if (token.type === TokenType.LBracket) depth += 1;
+      if (token.type === TokenType.RBracket) depth -= 1;
+    }
   }
 
   #parseArrayLiteral(): ArrayValue | null {
@@ -646,8 +912,21 @@ class Parser {
       this.#current().type !== TokenType.RBracket &&
       this.#current().type !== TokenType.EOF
     ) {
+      if (elements.length >= MAX_CONFIG_ARRAY_LENGTH) {
+        const token = this.#current();
+        appendOwn(this.#errors, {
+          type: "UnexpectedToken",
+          line: token.line,
+          column: token.column,
+          found: ARRAY_ITEM_LIMIT_FOUND,
+          expected: `at most ${MAX_CONFIG_ARRAY_LENGTH} array items`,
+        });
+        this.#skipArrayLiteralRemainder();
+        return null;
+      }
+
       const el = this.#parseValue();
-      if (el) elements.push(el);
+      if (el) appendOwn(elements, el);
 
       this.#skipNewlines();
 
@@ -659,7 +938,7 @@ class Parser {
     }
 
     if (this.#current().type !== TokenType.RBracket) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "UnclosedBlock",
         line: pos.line,
         column: pos.column,
@@ -679,7 +958,7 @@ class Parser {
 
     this.#skipNewlines();
     if (this.#current().type !== TokenType.RBrace) {
-      this.#errors.push({
+      appendOwn(this.#errors, {
         type: "UnclosedBlock",
         line: pos.line,
         column: pos.column,
@@ -701,7 +980,7 @@ class Parser {
     while (this.#current().type !== TokenType.EOF) {
       const before = this.#cursor;
       const node = this.#parseTopLevel();
-      if (node) nodes.push(node);
+      if (node) appendOwn(nodes, node);
       // Safety: if nothing was consumed and we are not at EOF, advance one
       // token to prevent an infinite loop on stray tokens (e.g. a lone `}`
       // left over from error recovery stopping AT a boundary delimiter).
@@ -734,5 +1013,7 @@ class Parser {
  * Errors are collected and returned together.
  */
 export function parse(tokens: Token[]): Result<AstNode[], ParseError[]> {
-  return new Parser(tokens).parse();
+  const snapshot = snapshotTokenStream(tokens);
+  if (snapshot.isErr()) return err(snapshot.error);
+  return new Parser(snapshot.value).parse();
 }

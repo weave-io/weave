@@ -15,12 +15,22 @@ import {
   MAX_CONFIG_ERROR_PATH_LENGTH,
 } from "./config-error-policy.js";
 import type { ValidationError } from "./errors.js";
-import { copySafeGraph } from "./safe-graph-copy.js";
+import {
+  copySafeGraph,
+  MAX_SAFE_GRAPH_ARRAY_LENGTH,
+  MAX_SAFE_GRAPH_DEPTH,
+  MAX_SAFE_GRAPH_PROPERTIES_PER_OBJECT,
+  MAX_SAFE_GRAPH_STRING_LENGTH,
+  type SafeGraphCopyBudget,
+  type SafeGraphValue,
+} from "./safe-graph-copy.js";
+import { findSchemaOutputBlocker } from "./safe-schema-input.js";
 import {
   type JsonValue,
   type WeaveConfig,
   WeaveConfigSchema,
 } from "./schema.js";
+import { MAX_CONFIG_ARRAY_LENGTH } from "./schema-common.js";
 
 // ---------------------------------------------------------------------------
 // Validation diagnostic and AST structure bounds
@@ -31,6 +41,33 @@ export const MAX_VALIDATION_PATH_LENGTH = MAX_CONFIG_ERROR_PATH_LENGTH;
 export const MAX_VALIDATION_MESSAGE_LENGTH = MAX_CONFIG_ERROR_FIELD_LENGTH;
 export const MAX_VALIDATION_DIAGNOSTIC_SIZE = MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE;
 export const VALIDATION_DIAGNOSTICS_TRUNCATED = CONFIG_ERRORS_TRUNCATED;
+
+/**
+ * AST graph capacity for one valid workflow. A maximal step can contain two
+ * 512-item artifact lists; each artifact contributes its block, two fields,
+ * values, and source positions after parser normalization. Thirty-two thousand
+ * values/properties per step is a conservative owner budget for that shape.
+ */
+const MAX_AST_VALUES_PER_WORKFLOW_STEP = 32_768;
+const MAX_AST_GRAPH_OVERHEAD = 1_024;
+export const MAX_VALIDATION_AST_NODES =
+  MAX_AST_GRAPH_OVERHEAD +
+  MAX_CONFIG_ARRAY_LENGTH * MAX_AST_VALUES_PER_WORKFLOW_STEP;
+export const MAX_VALIDATION_AST_PROPERTIES =
+  MAX_AST_GRAPH_OVERHEAD +
+  MAX_CONFIG_ARRAY_LENGTH * MAX_AST_VALUES_PER_WORKFLOW_STEP;
+
+const VALIDATION_AST_COPY_BUDGET: SafeGraphCopyBudget = {
+  // Keep the structural depth guard compatible with parser recovery; the
+  // schema's adapter-depth rule reports deeper but otherwise safe ASTs.
+  maxDepth: MAX_SAFE_GRAPH_DEPTH,
+  maxNodes: MAX_VALIDATION_AST_NODES,
+  maxProperties: MAX_VALIDATION_AST_PROPERTIES,
+  maxPropertiesPerObject: MAX_SAFE_GRAPH_PROPERTIES_PER_OBJECT,
+  maxArrayLength: MAX_SAFE_GRAPH_ARRAY_LENGTH,
+  // Aggregate string content scales with the 512-step workflow bound.
+  maxStringLength: MAX_SAFE_GRAPH_STRING_LENGTH * MAX_CONFIG_ARRAY_LENGTH,
+};
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const STRUCTURAL_ERROR_COLLECTION_LIMIT = MAX_VALIDATION_ISSUES + 1;
@@ -169,6 +206,15 @@ function boundValidationErrors(errors: ValidationError[]): ValidationError[] {
   }));
 }
 
+function appendOwn<T>(target: T[], value: T): void {
+  Object.defineProperty(target, String(target.length), {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
 function structuralError(
   errors: ValidationError[],
   path: string,
@@ -182,10 +228,10 @@ function structuralError(
     message,
   };
   if (property !== undefined) {
-    error.line = property.pos.line;
-    error.column = property.pos.column;
+    defineOwnProperty(error, "line", property.pos.line);
+    defineOwnProperty(error, "column", property.pos.column);
   }
-  errors.push(error);
+  appendOwn(errors, error);
 }
 
 function validatePropertyStructure(
@@ -458,12 +504,12 @@ function emptyDisabledItemsByTarget(): DisabledItemsByTarget {
   return Object.setPrototypeOf({}, null);
 }
 
-function defineOwnProperty(
-  record: ValidatorJsonObject | DisabledItemsByTarget,
-  key: string,
-  value: JsonValue,
+function defineOwnProperty<T extends object, K extends keyof T>(
+  target: T,
+  key: K,
+  value: T[K],
 ): void {
-  Object.defineProperty(record, key, {
+  Object.defineProperty(target, key, {
     value,
     enumerable: true,
     configurable: true,
@@ -677,7 +723,7 @@ function astToPlainObject(nodes: AstNode[]): AstPlainConversion {
         for (const step of node.steps) {
           if (!seenExtendBeforePlanSteps.has(step)) {
             seenExtendBeforePlanSteps.add(step);
-            extendBeforePlanSteps.push(step);
+            appendOwn(extendBeforePlanSteps, step);
           }
         }
         break;
@@ -759,7 +805,7 @@ function validateAdapterAst(
   errors: ValidationError[],
 ): void {
   if (value.kind === "identifier") {
-    errors.push({
+    appendOwn(errors, {
       type: "ValidationError",
       path,
       message: `adapter settings accept JSON values only; identifier '${value.value}' is not valid`,
@@ -767,7 +813,7 @@ function validateAdapterAst(
     return;
   }
   if (value.kind === "number" && !Number.isFinite(value.value)) {
-    errors.push({
+    appendOwn(errors, {
       type: "ValidationError",
       path,
       message: "adapter settings numbers must be finite",
@@ -775,7 +821,7 @@ function validateAdapterAst(
     return;
   }
   if (depth > 4) {
-    errors.push({
+    appendOwn(errors, {
       type: "ValidationError",
       path,
       message: "adapter setting nesting exceeds maximum depth of 4",
@@ -794,7 +840,7 @@ function validateAdapterAst(
   for (const property of value.properties) {
     const propertyPath = `${path}.${property.key}`;
     if (seen.has(property.key)) {
-      errors.push({
+      appendOwn(errors, {
         type: "ValidationError",
         path: propertyPath,
         message: `duplicate adapter setting key '${property.key}'`,
@@ -819,7 +865,7 @@ function validateOpaqueAdapterSettings(ast: AstNode[]): ValidationError[] {
     for (const harness of adapters.value.properties) {
       const path = `settings.adapters.${harness.key}`;
       if (harnesses.has(harness.key)) {
-        errors.push({
+        appendOwn(errors, {
           type: "ValidationError",
           path,
           message: `duplicate adapter setting key '${harness.key}'`,
@@ -832,7 +878,7 @@ function validateOpaqueAdapterSettings(ast: AstNode[]): ValidationError[] {
         canonicalAstJson(harness.value),
       ).byteLength;
       if (bytes > 64 * 1024) {
-        errors.push({
+        appendOwn(errors, {
           type: "ValidationError",
           path,
           message: `adapter settings exceed the 64 KiB canonical JSON limit (${bytes} bytes)`,
@@ -918,22 +964,44 @@ const safelyValidateCopiedAst = Result.fromThrowable(validateCopiedAst, () =>
   invalidAstError("AST input has an invalid shape"),
 );
 
+function parseCopiedAst(
+  value: SafeGraphValue,
+): Result<AstNode[], ValidationError[]> {
+  const outputBlockerKey = findSchemaOutputBlocker(CopiedAstNodeListSchema);
+  if (outputBlockerKey !== null) {
+    return err(
+      invalidAstError(
+        `AST schema output contains an inherited property that blocks safe materialization: ${outputBlockerKey}`,
+      ),
+    );
+  }
+
+  const parsed = CopiedAstNodeListSchema.safeParse(value);
+  if (!parsed.success) {
+    return err(invalidAstError("AST input has an invalid shape"));
+  }
+  return ok(parsed.data);
+}
+
+const safelyParseCopiedAst = Result.fromThrowable(parseCopiedAst, () =>
+  invalidAstError("AST input has an invalid shape"),
+);
+
 /**
  * Direct AST input is copied first, then parsed into `AstNode[]`.
- * The type parameter is unconstrained so hostile graphs can be rejected at the
- * copy/parse boundary without a typed assertion.
+ * Runtime callers still cross the descriptor-safe boundary before validation.
  */
-export function validate<DirectAst>(
-  ast: DirectAst,
+export function validate(
+  ast: AstNode[],
 ): Result<WeaveConfig, ValidationError[]> {
-  const copied = copySafeGraph(ast);
+  const copied = copySafeGraph(ast, VALIDATION_AST_COPY_BUDGET);
   if (copied.isErr()) return err(invalidAstError(copied.error.message));
   if (!Array.isArray(copied.value)) {
     return err(invalidAstError("AST input must be an array"));
   }
-  const parsedAst = CopiedAstNodeListSchema.safeParse(copied.value);
-  if (!parsedAst.success) {
-    return err(invalidAstError("AST input has an invalid shape"));
-  }
-  return safelyValidateCopiedAst(parsedAst.data).andThen((result) => result);
+  const parsedAst = safelyParseCopiedAst(copied.value);
+  if (parsedAst.isErr()) return err(parsedAst.error);
+  return parsedAst.value.andThen((value) =>
+    safelyValidateCopiedAst(value).andThen((result) => result),
+  );
 }

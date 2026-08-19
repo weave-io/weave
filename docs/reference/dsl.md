@@ -177,15 +177,19 @@ agent my-helper {
 | `prompt_file` | string | Path to a `.md` file, resolved relative to the config scope's `prompts/` directory. Mutually exclusive with `prompt`. |
 | `prompt_append` | string | Inline text appended after the primary prompt source. Rendered as a Mustache template. Mutually exclusive with `prompt_append_file`. |
 | `prompt_append_file` | string | Path to a `.md` file appended after the primary prompt source. Mutually exclusive with `prompt_append`. |
-| `models` | string[] | Ordered model preference list. Adapters translate to concrete harness model fields. |
+| `models` | string[] | Ordered model preference list, with at most 512 entries. Adapters translate to concrete harness model fields. |
 | `mode` | `primary` \| `subagent` \| `all` | Adapter-facing context hint. `primary` = main/user-facing; `subagent` = delegated specialist; `all` = usable in both. |
 | `temperature` | number | Sampling temperature hint passed to adapters. |
 | `fast` | literal `true` | Optional neutral request for provider acceleration. Only `fast true` is valid. Omit it to preserve provider defaults. See [Fast intent](#fast-intent). |
 | `tool_policy` | block | Abstract capability map. See [Tool Policy](#tool-policy). |
 | `triggers` | string[] | Optional ordered routing guidance shown to delegating agents. Each entry is a nonblank string. |
 | `skills` | string[] | Skill names to load for this agent. |
-| `review_models` | string[] | Optional. One or more model identifiers materialized as independent reviewer variants when config is loaded/composed. Loom/Tapestry prompts route review requests to the base agent plus each generated variant. See [Review Models](#review-models). |
+| `review_models` | string[] | Optional list of one or more model identifiers, with at most 512 entries. Entries materialize as independent reviewer variants when config is loaded/composed. Loom/Tapestry prompts route review requests to the base agent plus each generated variant. See [Review Models](#review-models). |
 | `delegation` | block | Optional per-agent narrowing of `max_children` and `max_concurrency`. Values may not exceed project settings. |
+
+### Configuration list limit
+
+Each bounded configuration list accepts at most **512 items**. This includes agent and category `models`, agent `review_models`, `skills`, `triggers`, routing exclusions, disabled-item lists, workflow `steps`, and other workflow lists. The limit is inclusive: 512 items are accepted and 513 items are rejected with bounded diagnostics.
 
 ### Fast intent
 
@@ -357,7 +361,7 @@ category frontend {
 | Field | Type | Description |
 | --- | --- | --- |
 | `description` | string | **Required and non-blank.** Routing metadata for the generated `shuttle-{category}` agent. It appears wherever that agent is shown, including the delegation tables of Loom and Tapestry, so describe the category's domain and when to select it. |
-| `models` | string[] | Model preference list for this category's shuttle agent |
+| `models` | string[] | Model preference list for this category's shuttle agent, with at most 512 entries |
 | `triggers` | string[] | Optional ordered routing guidance copied to the generated category agent |
 | `fast` | literal `true` | Optional neutral provider acceleration intent for the generated category agent |
 | `prompt_append` | string | Text appended to the base shuttle prompt for this category |
@@ -452,7 +456,7 @@ workflow secure-feature {
 | --- | --- | --- |
 | `description` | string | Human-readable workflow label |
 | `version` | number | Schema version for migration compatibility |
-| `step` | named block | One or more (see below) |
+| `step` | named block | One or more, up to 512 steps (see below) |
 
 ### Step Fields
 
