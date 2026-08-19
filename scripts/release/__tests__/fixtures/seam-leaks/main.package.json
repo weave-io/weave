@@ -1,0 +1,4 @@
+{
+  "name": "@weaveio/seam-leak-main",
+  "main": "scripts/release/__tests__/fixtures/local-registry/deprecation-seam.ts"
+}

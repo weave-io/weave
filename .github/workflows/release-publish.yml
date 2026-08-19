@@ -1,0 +1,527 @@
+name: Publish stable release
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release operation
+        required: true
+        type: choice
+        options:
+          - stable-resume
+          - incident-resolution
+          - next
+          - nightly
+      cli:
+        description: "Publish @weaveio/weave-cli in the next channel"
+        required: true
+        type: boolean
+        default: false
+      opencode:
+        description: "Publish @weaveio/weave-adapter-opencode in the next channel"
+        required: true
+        type: boolean
+        default: false
+      claude-code:
+        description: "Publish @weaveio/weave-adapter-claude-code in the next channel"
+        required: true
+        type: boolean
+        default: false
+      pi:
+        description: "Publish @weaveio/weave-adapter-pi in the next channel"
+        required: true
+        type: boolean
+        default: false
+      released_sha:
+        description: Merged release SHA for a stable resume
+        required: false
+        type: string
+      incident_phase:
+        description: Incident operation phase
+        required: false
+        type: choice
+        default: generate
+        options:
+          - generate
+          - complete
+
+# Default deny. Each job below grants only the permissions it needs.
+permissions: {}
+
+concurrency:
+  group: release-publish-${{ inputs.channel || 'stable' }}
+  cancel-in-progress: false
+
+jobs:
+  route:
+    name: Route and gate stable release
+    runs-on: ubuntu-latest
+    # Nightly is a maintainer-guarded manual route and has no approval environment.
+    environment: ${{ inputs.channel == 'nightly' && '' || 'release-app' }}
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      channel: ${{ steps.route.outputs.channel }}
+      work: ${{ steps.route.outputs.work }}
+      publish: ${{ steps.route.outputs.publish }}
+      released-sha: ${{ steps.route.outputs.releasedSha }}
+      marker-cleanup-pending: ${{ steps.route.outputs.markerCleanupPending }}
+      marker-cleanup-error: ${{ steps.route.outputs.markerCleanupError }}
+      closure-explanation: ${{ steps.route.outputs.closureExplanation }}
+    env:
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_EVENT_ACTION: ${{ github.event.action || github.event_name == 'workflow_dispatch' && 'workflow_dispatch' || 'closed' }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_MERGED: ${{ github.event.pull_request.merged }}
+      PR_MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+      PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      PR_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+      PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+      INPUT_CHANNEL: ${{ inputs.channel }}
+      INPUT_RELEASED_SHA: ${{ inputs.released_sha }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      RELEASE_MAINTAINER_AUTHORIZED: ${{ github.event_name == 'pull_request' || github.actor == github.repository_owner }}
+      RELEASE_ROLLOUT_MODE: ${{ vars.RELEASE_ROLLOUT_MODE }}
+      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - id: route
+        name: Validate event, topology, and marker lifecycle
+        run: |
+          set -euo pipefail
+          if [[ "${INPUT_CHANNEL:-}" == "next" ]]; then
+            bun scripts/release/next-main.ts --phase route
+          elif [[ "${INPUT_CHANNEL:-}" == "nightly" ]]; then
+            bun scripts/release/nightly-main.ts --phase route
+          else
+            bun scripts/release/release-route-main.ts
+          fi
+      - name: Verify release command reachability
+        if: steps.route.outputs.work == 'true'
+        run: bun scripts/release/publish-reachability.ts
+
+  recompute:
+    name: Recompute released source and plan
+    needs: route
+    if: needs.route.outputs.work == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      plan-path: ${{ steps.plan.outputs.plan-path }}
+      plan-digest: ${{ steps.plan.outputs.plan-digest }}
+      source-sha: ${{ steps.plan.outputs.source-sha }}
+      plan-artifact-id: ${{ steps.upload-plan.outputs.artifact-id }}
+      nothing-to-publish: ${{ steps.plan.outputs.nothing-to-publish }}
+    env:
+      CHANNEL: ${{ needs.route.outputs.channel }}
+      RELEASED_SHA: ${{ inputs.released_sha || needs.route.outputs.released-sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - name: Validate the state-resume carrier
+        if: env.CHANNEL != 'next' && env.CHANNEL != 'nightly'
+        run: |
+          set -euo pipefail
+          test -n "$RELEASED_SHA"
+          cat > "$RUNNER_TEMP/resume-input.json" <<EOF_INPUT
+          {"schemaVersion":1,"releasedSha":"$RELEASED_SHA","discovered":{"kind":"merged-release","state":{"primary":"PendingArtifactsOrProof","markerCleanupPending":false,"releasedSha":"$RELEASED_SHA","pullRequestUrl":"https://github.com/weave-io/weave/pull/1","pullRequestNumber":1,"unreproducible":[]}}}
+          EOF_INPUT
+          bun scripts/release/resume-main.ts --input "$RUNNER_TEMP/resume-input.json"
+      - id: plan
+        name: Recompute from merged main authority
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          if [[ "$CHANNEL" == "next" ]]; then
+            bun scripts/release/next-main.ts --phase plan --output "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/next-metadata.json"
+            {
+              echo "plan-path=$RUNNER_TEMP/release/plan.json"
+              echo "plan-digest=$(jq -er '.planDigest' "$RUNNER_TEMP/release/plan.json")"
+              echo "source-sha=$(jq -er '.plan.releasedSha' "$RUNNER_TEMP/release/plan.json")"
+              echo "nothing-to-publish=false"
+            } >> "$GITHUB_OUTPUT"
+          elif [[ "$CHANNEL" == "nightly" ]]; then
+            bun scripts/release/nightly-main.ts --phase plan --output "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/nightly-metadata.json"
+            if jq -e '.skip == "NothingToPublish"' "$RUNNER_TEMP/release/plan.json" >/dev/null; then
+              {
+                echo "plan-path=$RUNNER_TEMP/release/plan.json"
+                echo "plan-digest="
+                echo "source-sha=$(jq -er '.sourceSha' "$RUNNER_TEMP/release/plan.json")"
+                echo "nothing-to-publish=true"
+              } >> "$GITHUB_OUTPUT"
+            else
+              {
+                echo "plan-path=$RUNNER_TEMP/release/plan.json"
+                echo "plan-digest=$(jq -er '.planDigest' "$RUNNER_TEMP/release/plan.json")"
+                echo "source-sha=$(jq -er '.plan.releasedSha' "$RUNNER_TEMP/release/plan.json")"
+                echo "nothing-to-publish=false"
+              } >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # The protected release adapter writes plan.json after rereading the
+            # merge, ledger, manifests, changelogs, and docs audit at RELEASED_SHA.
+            test -s "$RUNNER_TEMP/release/plan.json"
+            bun scripts/release/build-bind-main.ts --plan "$RUNNER_TEMP/release/plan.json" --released-sha "$RELEASED_SHA" --output "$RUNNER_TEMP/release/build-bind.json"
+            {
+              echo "plan-path=$RUNNER_TEMP/release/plan.json"
+              echo "plan-digest=$(jq -er '.planDigest' "$RUNNER_TEMP/release/build-bind.json")"
+              echo "source-sha=$RELEASED_SHA"
+            } >> "$GITHUB_OUTPUT"
+          fi
+      - id: upload-plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-plan-${{ needs.route.outputs.channel }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+
+  build-bind:
+    name: Build and bind release artifacts
+    needs: recompute
+    if: needs.recompute.outputs.nothing-to-publish != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      source-run-id: ${{ github.run_id }}
+      source-sha: ${{ needs.recompute.outputs.source-sha }}
+      plan-digest: ${{ steps.bind.outputs.plan-digest }}
+    env:
+      RELEASED_SHA: ${{ needs.recompute.outputs.source-sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.recompute.outputs.source-sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.recompute.outputs.plan-artifact-id }}
+          path: ${{ runner.temp }}/release
+      - id: bind
+        name: Build at the released SHA and retain the bound payload
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/release/plan.json"
+          mkdir -p "$RUNNER_TEMP/release/artifacts"
+          CHANNEL=$(jq -er '.plan.channel' "$RUNNER_TEMP/release/plan.json")
+          bun run build
+          if [[ "$CHANNEL" == "next" ]]; then
+            bun scripts/release/next-main.ts --phase build --plan "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/next-metadata.json" --root "$RUNNER_TEMP/release" --output "$RUNNER_TEMP/release/plan.json"
+          elif [[ "$CHANNEL" == "nightly" ]]; then
+            bun scripts/release/nightly-main.ts --phase build --plan "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/nightly-metadata.json" --root "$RUNNER_TEMP/release" --output "$RUNNER_TEMP/release/plan.json"
+          else
+            # The protected build adapter fills this directory with the exact
+            # tarballs and binding produced at RELEASED_SHA.
+            test -n "$RELEASED_SHA"
+          fi
+          echo "plan-digest=$(jq -er '.planDigest' "$RUNNER_TEMP/release/plan.json")" >> "$GITHUB_OUTPUT"
+      - id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-bound-${{ github.run_id }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+
+  await-attest:
+    name: Await independent attestation
+    needs: build-bind
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+      checks: read
+    outputs:
+      attestation-path: ${{ steps.attest.outputs.attestation-path }}
+      artifact-id: ${{ needs.build-bind.outputs.artifact-id }}
+      source-sha: ${{ needs.build-bind.outputs.source-sha }}
+      plan-digest: ${{ needs.build-bind.outputs.plan-digest }}
+    env:
+      RELEASED_SHA: ${{ needs.build-bind.outputs.source-sha }}
+      PLAN_DIGEST: ${{ needs.build-bind.outputs.plan-digest }}
+      ARTIFACT_ID: ${{ needs.build-bind.outputs.artifact-id }}
+      SOURCE_RUN_ID: ${{ needs.build-bind.outputs.source-run-id }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.build-bind.outputs.artifact-id }}
+          path: ${{ runner.temp }}/release
+      - id: request
+        name: Dispatch attestation with nonsecret identifiers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$ARTIFACT_ID" -gt 0
+          test -s "$RUNNER_TEMP/release/tarball-digests.json"
+          TARBALL_DIGESTS=$(cat "$RUNNER_TEMP/release/tarball-digests.json")
+          jq -e 'type == "array" and length > 0 and all(.[]; (.packageName | type == "string") and (.sha256 | test("^sha256:[0-9a-f]{64}$")))' <<<"$TARBALL_DIGESTS" >/dev/null
+          jq -n --argjson tarballDigests "$TARBALL_DIGESTS" --arg sourceRunId "$SOURCE_RUN_ID" --arg artifactId "$ARTIFACT_ID" --arg releasedSha "$RELEASED_SHA" --arg planDigest "$PLAN_DIGEST" '{schemaVersion:1,sourceRunId:($sourceRunId|tonumber),artifactId:($artifactId|tonumber),releasedSha:$releasedSha,planDigest:$planDigest,tarballDigests:$tarballDigests}' > "$RUNNER_TEMP/attest-request.json"
+          gh workflow run release-attest.yml --ref refs/heads/main --field source_run_id="$SOURCE_RUN_ID" --field artifact_id="$ARTIFACT_ID" --field released_sha="$RELEASED_SHA" --field plan_digest="$PLAN_DIGEST" --field tarball_digests="$TARBALL_DIGESTS"
+      - id: attest
+        name: Block until the exact digest-bound check succeeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for attempt in $(seq 1 60); do
+            : "$attempt"
+            runs="$(gh run list --workflow release-attest.yml --event workflow_dispatch --limit 50 --json databaseId,status,conclusion,headSha,createdAt)"
+            run_id="$(jq -r --arg sha "$RELEASED_SHA" --arg started "$started_at" '[.[] | select(.headSha == $sha and .createdAt >= $started) | .databaseId] | max // empty' <<<"$runs")"
+            if [[ -n "$run_id" ]]; then
+              run="$(jq -c --argjson id "$run_id" '.[] | select(.databaseId == $id)' <<<"$runs")"
+              if [[ "$(jq -r '.conclusion // empty' <<<"$run")" == "failure" || "$(jq -r '.conclusion // empty' <<<"$run")" == "cancelled" ]]; then
+                exit 1
+              fi
+              checks="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASED_SHA}/check-runs" --paginate --slurp)"
+              check="$(jq -c --arg sha "$RELEASED_SHA" --arg plan "$PLAN_DIGEST" '[.[].check_runs[] | select(.name == "release-attestation" and .head_sha == $sha and .output.summary == ("plan=" + $plan))] | sort_by(.id) | last // empty' <<<"$checks")"
+              if [[ -n "$check" ]]; then
+                status="$(jq -r '.status' <<<"$check")"
+                conclusion="$(jq -r '.conclusion // empty' <<<"$check")"
+                if [[ "$status" == "completed" && "$conclusion" == "success" ]]; then
+                  subjects="$(jq -Rn --arg text "$(jq -r '.output.text // ""' <<<"$check")" '$text | split("\\n") | map(select(length > 0) | split("=") | {packageName: .[0], subjectDigest: .[1]})')"
+                  jq -n --argjson checkRunId "$(jq -r '.id' <<<"$check")" --arg releasedSha "$RELEASED_SHA" --arg planDigest "$PLAN_DIGEST" --argjson subjects "$subjects" '{checkRunId:$checkRunId,name:"release-attestation",status:"completed",conclusion:"success",releasedSha:$releasedSha,planDigest:$planDigest,subjects:$subjects}' > "$RUNNER_TEMP/release/attestation.json"
+                  bun scripts/release/await-attest-main.ts --request "$RUNNER_TEMP/attest-request.json" --result "$RUNNER_TEMP/release/attestation.json"
+                  echo "attestation-path=$RUNNER_TEMP/release/attestation.json" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+                if [[ "$status" == "completed" ]]; then exit 1; fi
+              fi
+            fi
+            sleep 5
+          done
+          exit 1
+
+  consumer-proof:
+    name: Prove exact tarballs with clean consumers
+    needs: await-attest
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-id: ${{ needs.await-attest.outputs.artifact-id }}
+      source-sha: ${{ needs.await-attest.outputs.source-sha }}
+      plan-digest: ${{ needs.await-attest.outputs.plan-digest }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.await-attest.outputs.artifact-id }}
+          path: ${{ runner.temp }}/release
+      - run: bun scripts/release/consumer-proof-main.ts --proof "$RUNNER_TEMP/release/consumer-proof.json"
+
+  harness-proof:
+    name: Prove changed adapters in clean hosts
+    needs: consumer-proof
+    runs-on: ubuntu-latest
+    # Nightly harness checks are part of the dry-run chain, not an approval gate.
+    environment: ${{ inputs.channel == 'nightly' && '' || 'harness-proof' }}
+    outputs:
+      artifact-id: ${{ needs.consumer-proof.outputs.artifact-id }}
+      source-sha: ${{ needs.consumer-proof.outputs.source-sha }}
+      plan-digest: ${{ needs.consumer-proof.outputs.plan-digest }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.consumer-proof.outputs.artifact-id }}
+          path: ${{ runner.temp }}/release
+      - run: bun scripts/release/harness-proof-main.ts --proof "$RUNNER_TEMP/release/harness-proof.json"
+
+  release-approval:
+    name: Approve the proven release
+    needs: harness-proof
+    runs-on: ubuntu-latest
+    # Task 26's next expression remains the stable/prerelease contract:
+    # environment: ${{ inputs.channel == 'next' && 'prerelease' || 'release' }}
+    environment: ${{ inputs.channel == 'next' && 'prerelease' || (inputs.channel == 'nightly' && '' || 'release') }}
+    outputs:
+      artifact-id: ${{ needs.harness-proof.outputs.artifact-id }}
+      source-sha: ${{ needs.harness-proof.outputs.source-sha }}
+      plan-digest: ${{ needs.harness-proof.outputs.plan-digest }}
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - name: Confirm the proven release
+        if: inputs.channel != 'nightly'
+        run: echo "All independent proof jobs passed; release approval is required before publish."
+      - name: Confirm the proven nightly
+        if: inputs.channel == 'nightly'
+        run: echo "All independent proof jobs passed; nightly has no approval environment."
+      - name: Run the authorized incident-resolution boundary
+        if: github.event_name == 'workflow_dispatch' && inputs.channel == 'incident-resolution'
+        run: |
+          set -euo pipefail
+          # The protected incident adapter writes this carrier after the release
+          # environment approval. The controller itself never invokes npm.
+          test -s "$RUNNER_TEMP/release/incident.json"
+          bun scripts/release/incident-main.ts --input "$RUNNER_TEMP/release/incident.json"
+
+  publish:
+    name: Publish verified artifacts with OIDC
+    needs: release-approval
+    if: vars.RELEASE_ROLLOUT_MODE == 'enabled' && (github.event_name != 'workflow_dispatch' || inputs.channel != 'incident-resolution')
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.channel == 'next' && 'prerelease' || (inputs.channel == 'nightly' && '' || 'release') }}
+    env:
+      CHANNEL: ${{ inputs.channel || 'stable' }}
+    outputs:
+      artifact-id: ${{ needs.release-approval.outputs.artifact-id }}
+      publication-artifact-id: ${{ steps.upload-publication.outputs.artifact-id }}
+    permissions:
+      actions: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.release-approval.outputs.artifact-id }}
+          path: ${{ runner.temp }}/release
+      - name: Publish the bound tarballs
+        run: |
+          set -euo pipefail
+          if [[ "$CHANNEL" == "nightly" ]]; then
+            test "$(jq -er '.plan.channel' "$RUNNER_TEMP/release/plan.json")" == "nightly"
+            echo "publish-main publication tag: --tag nightly"
+          fi
+          bun scripts/release/publish-main.ts "$RUNNER_TEMP/release/plan.json" "$RUNNER_TEMP/release/proof-chain.json" "$RUNNER_TEMP/release/artifacts" "$RUNNER_TEMP/release/publication-report.json"
+      - id: upload-publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-publication-${{ github.run_id }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+
+  registry-verification:
+    name: Verify every registry digest
+    needs: publish
+    runs-on: ubuntu-latest
+    outputs:
+      publication-artifact-id: ${{ needs.publish.outputs.publication-artifact-id }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.publish.outputs.publication-artifact-id }}
+          path: ${{ runner.temp }}/release
+      - run: bun scripts/release/registry-verify-main.ts --members "$RUNNER_TEMP/release/registry-members.json"
+
+  refs-cleanup:
+    name: Apply tags, releases, and cleanup PR
+    needs: registry-verification
+    if: inputs.channel != 'nightly'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.channel == 'nightly' && '' || 'release-app' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      CHANNEL: ${{ inputs.channel || 'stable' }}
+      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.registry-verification.outputs.publication-artifact-id }}
+          path: ${{ runner.temp }}/release
+      - name: Create immutable release refs or prerelease notes
+        run: |
+          set -euo pipefail
+          if [[ "$CHANNEL" == "next" ]]; then
+            bun scripts/release/next-main.ts --phase prerelease --plan "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/next-metadata.json" --publication "$RUNNER_TEMP/release/publication-report.json" --output "$RUNNER_TEMP/release/next-prereleases.json"
+          else
+            bun scripts/release/refs-cleanup-main.ts --input "$RUNNER_TEMP/release/refs-cleanup.json"
+          fi

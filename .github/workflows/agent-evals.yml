@@ -81,8 +81,7 @@ on:
 # id-token: none   — no OIDC needed (no cloud provider push)
 # packages: none   — no package registry operations
 # pull-requests: none — no PR write operations
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   # ---------------------------------------------------------------------------

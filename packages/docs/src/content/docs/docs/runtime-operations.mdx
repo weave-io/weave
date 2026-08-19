@@ -79,7 +79,7 @@ bun run docs:preview
 Typecheck the docs package:
 
 ```bash
-bun run --filter '@weave/docs' typecheck
+bun run --filter '@weaveio/weave-docs' typecheck
 ```
 
 Expected build output is a static Astro/Starlight site under the docs package output directory. Sentinel QA or browser navigation should be run against a served build or dev server, not against source files.
@@ -102,7 +102,7 @@ Before deploying docs, run:
 
 ```bash
 bun run docs:build
-bun run --filter '@weave/docs' typecheck
+bun run --filter '@weaveio/weave-docs' typecheck
 ```
 
 If the site is deployed under a repository subpath, set the build base environment consistently with the hosting target. After deployment, navigate the landing page, docs home, a guide page, a reference page, and a compatibility route.

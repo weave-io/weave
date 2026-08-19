@@ -1,4 +1,5 @@
 # @weaveio/weave-adapter-opencode
+<<<<<<< HEAD
 
 ## 0.1.0
 
@@ -9,3 +10,5 @@
 ### Patch Changes
 
 - 9ae688c: Rename npm scope from `@weave` to `@weaveio` and add publish pipeline
+=======
+>>>>>>> 0598b0fe (chore(release): add package license metadata)

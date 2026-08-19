@@ -2,7 +2,7 @@
 
 This is the top-level entry point for Weave's documentation corpus. Start here to navigate guides, architecture decision records (ADRs), and formal specs.
 
-The published docs site is built from the Astro + Starlight package at [`packages/docs/`](../packages/docs). That package is for **public documentation** and the marketing landing page. This `docs/` directory remains the **internal documentation corpus** for architecture, ADRs, specs, and implementation guidance.
+The published docs site is built from the Astro + Starlight package at [`packages/docs/`](../packages/docs/README.md). That package is for **public documentation** and the marketing landing page. This `docs/` directory remains the **internal documentation corpus** for architecture, ADRs, specs, and implementation guidance.
 
 ---
 
@@ -30,6 +30,9 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [Eval XSS Policy](eval-xss-policy.md) | Markdown and report rendering XSS policy, `explanation` field schema-level blocking, `escapeHtml()` requirements, banned rendering paths, defence-in-depth layers, test coverage |
 | [Category Routing Findings](category-routing-findings.md) | Phase 1 prompt-enrichment eval results, acceptance gate outcomes, token cost, scaling data, and Phase 2 deterministic matcher decision |
 | [Legacy Architecture](legacy-architecture.md) | Alpha / OpenCode-era reference (read-only history) |
+| [Stable Release Trains](stable-release-trains.md) | Stable cut, CAS fix, immutable checkout, and expiry policy |
+| [Release Automation](release-automation.md) | Artifact identity, OIDC publishing, channels, and manual MFA `latest` promotion |
+| [Release Runbook](../RELEASING.md) | Operator procedure, recovery, external setup evidence, and release PR issue linkage |
 
 ---
 
@@ -45,6 +48,7 @@ ADRs record decisions with meaningful trade-offs. They are durable — once acce
 | [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) | `startExecution` as the sole authorized execution entry point |
 | [ADR 0005 — Remediation Decisions for Specs 24–28](adr/0005-five-spec-remediation-decisions.md) | Accepted answers to open questions across Specs 24–28 |
 | [ADR 0006 — End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md) | Full Loom → Pattern → Tapestry → Weft/Warp flow; legacy vs. current model; where issue #52 fits. **Note:** the "add default_workflow" guidance in the "Where Issue #52 Fits" section is superseded by [Spec 29](specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) — ordinary usage is Loom-led, not workflow-driven. |
+| [ADR 0007 — Artifact-First OIDC Releases](adr/0007-artifact-first-oidc-releases.md) | Bundled public packs, OIDC channels, immutable release records, and no-unpublish policy |
 
 ---
 

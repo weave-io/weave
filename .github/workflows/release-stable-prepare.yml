@@ -1,0 +1,593 @@
+name: Prepare stable release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli:
+        description: "Prepare @weaveio/weave-cli"
+        required: true
+        type: boolean
+        default: false
+      opencode:
+        description: "Prepare @weaveio/weave-adapter-opencode"
+        required: true
+        type: boolean
+        default: false
+      claude-code:
+        description: "Prepare @weaveio/weave-adapter-claude-code"
+        required: true
+        type: boolean
+        default: false
+      pi:
+        description: "Prepare @weaveio/weave-adapter-pi"
+        required: true
+        type: boolean
+        default: false
+      thinking:
+        description: "Thinking level for the release agents"
+        required: true
+        type: choice
+        default: medium
+        options:
+          - off
+          - minimal
+          - low
+          - medium
+          - high
+          - xhigh
+          - max
+
+# The default-deny policy is intentional. Each job below grants only the read
+# or write permission it needs. There is deliberately no workflow-wide
+# replacement setting: replacing a pending dispatch would silently lose an explicit request.
+permissions: {}
+
+jobs:
+  authorize:
+    name: Authorize stable preparation request
+    runs-on: ubuntu-latest
+    environment: release-app
+    permissions:
+      contents: read
+    outputs:
+      selected: ${{ steps.request.outputs.selected }}
+      thinking: ${{ steps.request.outputs.thinking }}
+    env:
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+      PREPARE_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - id: request
+        name: Validate request and maintainer authorization
+        run: |
+          # Task 9 authorization is the first controller operation.
+          # It calls assertStableRequestAuthorized before any plan or AI work.
+          bun scripts/release/prepare-main.ts --phase authorize --attempt 1
+          {
+            echo "selected={\"cli\":${INPUT_CLI},\"opencode\":${INPUT_OPENCODE},\"claude-code\":${INPUT_CLAUDE_CODE},\"pi\":${INPUT_PI}}"
+            echo "thinking=${INPUT_THINKING}"
+          } >> "$GITHUB_OUTPUT"
+
+  plan:
+    name: Compute closure, versions, and evidence
+    needs: authorize
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    env:
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ needs.authorize.outputs.thinking }}
+      PREPARE_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - name: Verify green main and compute the bounded plan
+        run: bun scripts/release/prepare-main.ts --phase plan --attempt 1 --output "$RUNNER_TEMP/stable-plan.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-prepare-plan-1
+          path: ${{ runner.temp }}/stable-plan.json
+          if-no-files-found: error
+          retention-days: 1
+
+  docs-release-audit:
+    name: Run deterministic and AI release docs gate
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: release-ai
+    permissions:
+      contents: read
+    env:
+      WEAVE_RELEASE_AI_API_KEY: ${{ secrets.WEAVE_RELEASE_AI_API_KEY }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-plan-1
+          path: ${{ runner.temp }}/stable-plan
+      - name: Re-run the complete SHA-bound release docs gate
+        run: bun scripts/release/prepare-main.ts --phase docs-release-audit --attempt 1 --input "$RUNNER_TEMP/stable-plan/stable-plan.json" --output "$RUNNER_TEMP/docs-audit.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-prepare-docs-audit-1
+          path: ${{ runner.temp }}/docs-audit.json
+          if-no-files-found: error
+          retention-days: 1
+
+  changelog-ai:
+    name: Generate changelog prose
+    needs: [plan, docs-release-audit]
+    runs-on: ubuntu-latest
+    environment: release-ai
+    permissions:
+      contents: read
+    env:
+      WEAVE_RELEASE_AI_API_KEY: ${{ secrets.WEAVE_RELEASE_AI_API_KEY }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-plan-1
+          path: ${{ runner.temp }}/stable-plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-docs-audit-1
+          path: ${{ runner.temp }}/docs-audit
+      - name: Run the isolated changelog agent
+        run: bun scripts/release/prepare-main.ts --phase changelog-ai --attempt 1 --input "$RUNNER_TEMP/stable-plan/stable-plan.json" --docs-audit "$RUNNER_TEMP/docs-audit/docs-audit.json" --output "$RUNNER_TEMP/changelog-ai.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-prepare-changelog-ai-1
+          path: ${{ runner.temp }}/changelog-ai.json
+          if-no-files-found: error
+          retention-days: 1
+
+  open-pr:
+    name: Claim marker and open stable release PR
+    needs: [authorize, plan, docs-release-audit, changelog-ai]
+    runs-on: ubuntu-latest
+    environment: release-app
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    env:
+      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    outputs:
+      outcome: ${{ steps.create.outputs.outcome }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-plan-1
+          path: ${{ runner.temp }}/stable-plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-docs-audit-1
+          path: ${{ runner.temp }}/docs-audit
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-changelog-ai-1
+          path: ${{ runner.temp }}/changelog-ai
+      - id: create
+        name: Create only through Task 9 ownership and finalize
+        run: |
+          set +e
+          # Task 9 sequence: runPreparedCreation ->
+          # acquireCreationOwnership -> finalizeCreation;
+          # every pre-visible-PR failure uses abortOwnedCreation.
+          bun scripts/release/prepare-main.ts --phase open-pr --attempt 1 --input "$RUNNER_TEMP/stable-plan/stable-plan.json" --docs-audit "$RUNNER_TEMP/docs-audit/docs-audit.json" --changelog "$RUNNER_TEMP/changelog-ai/changelog-ai.json"
+          status=$?
+          echo "outcome=${PREPARE_OUTCOME:-unknown}" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+  plan-2:
+    name: Replan 2 after PreparationStale
+    needs: open-pr
+    if: always() && needs.open-pr.outputs.outcome == 'PreparationStale'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    env:
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/release/prepare-main.ts --phase plan --attempt 2 --output "$RUNNER_TEMP/stable-plan.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-prepare-plan-2
+          path: ${{ runner.temp }}/stable-plan.json
+          if-no-files-found: error
+          retention-days: 1
+
+  docs-release-audit-2:
+    name: Re-run release docs gate 2
+    needs: plan-2
+    if: needs.plan-2.result == 'success'
+    runs-on: ubuntu-latest
+    environment: release-ai
+    permissions:
+      contents: read
+    env:
+      WEAVE_RELEASE_AI_API_KEY: ${{ secrets.WEAVE_RELEASE_AI_API_KEY }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-plan-2
+          path: ${{ runner.temp }}/stable-plan
+      - run: bun scripts/release/prepare-main.ts --phase docs-release-audit --attempt 2 --input "$RUNNER_TEMP/stable-plan/stable-plan.json" --output "$RUNNER_TEMP/docs-audit.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-prepare-docs-audit-2
+          path: ${{ runner.temp }}/docs-audit.json
+          if-no-files-found: error
+          retention-days: 1
+
+  changelog-ai-2:
+    name: Generate changelog prose 2
+    needs: [plan-2, docs-release-audit-2]
+    if: needs.docs-release-audit-2.result == 'success'
+    runs-on: ubuntu-latest
+    environment: release-ai
+    permissions:
+      contents: read
+    env:
+      WEAVE_RELEASE_AI_API_KEY: ${{ secrets.WEAVE_RELEASE_AI_API_KEY }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-plan-2
+          path: ${{ runner.temp }}/stable-plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-docs-audit-2
+          path: ${{ runner.temp }}/docs-audit
+      - run: bun scripts/release/prepare-main.ts --phase changelog-ai --attempt 2 --input "$RUNNER_TEMP/stable-plan/stable-plan.json" --docs-audit "$RUNNER_TEMP/docs-audit/docs-audit.json" --output "$RUNNER_TEMP/changelog-ai.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-prepare-changelog-ai-2
+          path: ${{ runner.temp }}/changelog-ai.json
+          if-no-files-found: error
+          retention-days: 1
+
+  open-pr-2:
+    name: Claim marker and open stable release PR 2
+    needs: [plan-2, docs-release-audit-2, changelog-ai-2]
+    if: needs.changelog-ai-2.result == 'success'
+    runs-on: ubuntu-latest
+    environment: release-app
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    env:
+      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    outputs:
+      outcome: ${{ steps.create.outputs.outcome }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-plan-2
+          path: ${{ runner.temp }}/stable-plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-docs-audit-2
+          path: ${{ runner.temp }}/docs-audit
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-changelog-ai-2
+          path: ${{ runner.temp }}/changelog-ai
+      - id: create
+        run: |
+          set +e
+          # Task 9 sequence: runPreparedCreation ->
+          # acquireCreationOwnership -> finalizeCreation;
+          # every pre-visible-PR failure uses abortOwnedCreation.
+          bun scripts/release/prepare-main.ts --phase open-pr --attempt 2 --input "$RUNNER_TEMP/stable-plan/stable-plan.json" --docs-audit "$RUNNER_TEMP/docs-audit/docs-audit.json" --changelog "$RUNNER_TEMP/changelog-ai/changelog-ai.json"
+          status=$?
+          echo "outcome=${PREPARE_OUTCOME:-unknown}" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+  plan-3:
+    name: Replan 3 after PreparationStale
+    needs: open-pr-2
+    if: always() && needs.open-pr-2.outputs.outcome == 'PreparationStale'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    env:
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/release/prepare-main.ts --phase plan --attempt 3 --output "$RUNNER_TEMP/stable-plan.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-prepare-plan-3
+          path: ${{ runner.temp }}/stable-plan.json
+          if-no-files-found: error
+          retention-days: 1
+
+  docs-release-audit-3:
+    name: Re-run release docs gate 3
+    needs: plan-3
+    if: needs.plan-3.result == 'success'
+    runs-on: ubuntu-latest
+    environment: release-ai
+    permissions:
+      contents: read
+    env:
+      WEAVE_RELEASE_AI_API_KEY: ${{ secrets.WEAVE_RELEASE_AI_API_KEY }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-plan-3
+          path: ${{ runner.temp }}/stable-plan
+      - run: bun scripts/release/prepare-main.ts --phase docs-release-audit --attempt 3 --input "$RUNNER_TEMP/stable-plan/stable-plan.json" --output "$RUNNER_TEMP/docs-audit.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-prepare-docs-audit-3
+          path: ${{ runner.temp }}/docs-audit.json
+          if-no-files-found: error
+          retention-days: 1
+
+  changelog-ai-3:
+    name: Generate changelog prose 3
+    needs: [plan-3, docs-release-audit-3]
+    if: needs.docs-release-audit-3.result == 'success'
+    runs-on: ubuntu-latest
+    environment: release-ai
+    permissions:
+      contents: read
+    env:
+      WEAVE_RELEASE_AI_API_KEY: ${{ secrets.WEAVE_RELEASE_AI_API_KEY }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-plan-3
+          path: ${{ runner.temp }}/stable-plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-docs-audit-3
+          path: ${{ runner.temp }}/docs-audit
+      - run: bun scripts/release/prepare-main.ts --phase changelog-ai --attempt 3 --input "$RUNNER_TEMP/stable-plan/stable-plan.json" --docs-audit "$RUNNER_TEMP/docs-audit/docs-audit.json" --output "$RUNNER_TEMP/changelog-ai.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-prepare-changelog-ai-3
+          path: ${{ runner.temp }}/changelog-ai.json
+          if-no-files-found: error
+          retention-days: 1
+
+  open-pr-3:
+    name: Claim marker and open stable release PR 3
+    needs: [plan-3, docs-release-audit-3, changelog-ai-3]
+    if: needs.changelog-ai-3.result == 'success'
+    runs-on: ubuntu-latest
+    environment: release-app
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    env:
+      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
+      INPUT_THINKING: ${{ inputs.thinking }}
+    outputs:
+      outcome: ${{ steps.create.outputs.outcome }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-plan-3
+          path: ${{ runner.temp }}/stable-plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-docs-audit-3
+          path: ${{ runner.temp }}/docs-audit
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: stable-prepare-changelog-ai-3
+          path: ${{ runner.temp }}/changelog-ai
+      - id: create
+        run: |
+          set +e
+          # Task 9 sequence: runPreparedCreation ->
+          # acquireCreationOwnership -> finalizeCreation;
+          # every pre-visible-PR failure uses abortOwnedCreation.
+          bun scripts/release/prepare-main.ts --phase open-pr --attempt 3 --input "$RUNNER_TEMP/stable-plan/stable-plan.json" --docs-audit "$RUNNER_TEMP/docs-audit/docs-audit.json" --changelog "$RUNNER_TEMP/changelog-ai/changelog-ai.json"
+          status=$?
+          echo "outcome=${PREPARE_OUTCOME:-unknown}" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            {
+              echo '## Stable release preparation failed'
+              echo "Typed result: ${PREPARE_OUTCOME:-unknown}"
+              echo "Recovery: https://github.com/${GITHUB_REPOSITORY}/actions/workflows/release-stable-prepare.yml"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
+  recovery-summary:
+    name: Record stable preparation recovery link
+    if: always()
+    needs:
+      - authorize
+      - plan
+      - docs-release-audit
+      - changelog-ai
+      - open-pr
+      - plan-2
+      - docs-release-audit-2
+      - changelog-ai-2
+      - open-pr-2
+      - plan-3
+      - docs-release-audit-3
+      - changelog-ai-3
+      - open-pr-3
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Write bounded recovery guidance
+        env:
+          RECOVERY_URL: https://github.com/${{ github.repository }}/actions/workflows/release-stable-prepare.yml
+        run: |
+          {
+            echo '## Stable release preparation'
+            echo 'Inspect the failed job summary for its typed terminal result.'
+            echo "Recovery and re-dispatch: ${RECOVERY_URL}"
+            echo 'CreationCleanupPending requires the read-only release doctor before resume.'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,36 @@
+---
+title: Releases
+description: Public package channels and adapter distribution status.
+---
+
+## Public packages
+
+| Package | Release status | Use |
+| --- | --- | --- |
+| `@weaveio/weave-cli` | `latest` (stable), `next`, and `nightly` | The `weave` CLI and Claude Code materialization. |
+| `@weaveio/weave-adapter-opencode` | `latest` (stable), `next`, and `nightly` | OpenCode plugin adapter. |
+| `@weaveio/weave-adapter-claude-code` | `latest` (stable), `next`, and `nightly` | Standalone Claude Code adapter. Most users should use the CLI's `compose` command. |
+| `@weaveio/weave-adapter-pi` | `latest` (stable), `next`, and `nightly` | Shipped Pi extension; check the package peer requirement before installing. |
+
+Core, config, and engine packages are implementation layers bundled into public artifacts. They are not supported direct installation targets.
+
+## Install channels
+
+Use `latest` for stable installs. Use `next` or `nightly` to test those release channels. All four public packages are released on all three channels.
+
+```sh
+bun add --global @weaveio/weave-cli@latest
+bunx @weaveio/weave-cli@latest --help
+```
+
+Pin the OpenCode plugin to an exact published version in `opencode.json` or `opencode.jsonc`:
+
+```text
+@weaveio/weave-adapter-opencode@<exact-version>
+```
+
+Pi installs through Pi's package command; see [Pi](../adapters/pi/). The standalone Claude Code adapter is a library; most users install the CLI and run `weave compose --adapter claude-code`.
+
+## Verify a release
+
+Use the exact package version and its registry metadata when you need reproducible setup. Do not treat a mutable channel name as a version pin. Published release records include the package tarball and checksum.

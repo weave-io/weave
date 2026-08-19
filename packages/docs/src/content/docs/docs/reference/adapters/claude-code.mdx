@@ -1,0 +1,50 @@
+---
+title: Claude Code
+description: Materialize Weave agents for Claude Code with the compose command.
+---
+
+## Generate the configuration
+
+The CLI includes Claude Code materialization:
+
+```sh
+weave compose --adapter claude-code --init
+```
+
+The composed Claude Code output defaults to `.weave/plugins/claude-code/`. Use `--project-root` to select another project and `--out-dir` to select another compose output directory.
+
+`--init` separately creates the Claude Code bootstrap plugin at `./weave-bootstrap-plugin` by default. If you use `--bootstrap-dir`, it writes that bootstrap plugin there instead; it does not change the compose output directory.
+
+## Use the result
+
+Reload Claude Code or start a new session after generation. The generated files provide Weave's agents and prompts to Claude Code; they do not add OpenCode's runtime command surface.
+
+The generated files provide the plan-entry command only: `/weave:start`, with `/start-work` as a compatibility alias that behaves identically.
+
+Validate before composing:
+
+```sh
+weave validate --project
+weave compose --adapter claude-code
+```
+
+The standalone `@weaveio/weave-adapter-claude-code` package is published on
+`latest` (stable), `next`, and `nightly`. For the supported CLI path, use the
+adapter bundled in `@weaveio/weave-cli`.
+
+## Supported versions and channels
+
+This static adapter does not enforce a Claude Code version range. The host
+must support plugin directories, agent files, and generated command files.
+
+## Provider acceleration is unsupported
+
+Claude Code has a native fast mode through `/fast`, Option/Alt+O, and the Agent SDK's `settings.fastMode`. None of those belongs to this adapter's static file materialization: subagent frontmatter has no fast-mode field, and hooks cover tool, session, and subagent events rather than provider request changes and provider response evidence.
+
+An agent's `fast true` therefore changes no generated file. The adapter writes no frontmatter field, environment value, prompt instruction, or provider control, changes no provider request or header, and generated markdown never claims that acceleration was requested or applied. The `provider-fast-activation` capability reports `unsupported` with the bounded reason `harness-seam-unavailable`.
+
+This is an optional-capability gap. It warns and never blocks agent or command materialization.
+
+Support can be enabled only after a runtime Agent SDK integration provides per-attempt response proof, or an official materialization field provides equivalent proof, verified in a real harness.
+
+See [Packages](../../packages/) for package roles and the [support matrix](./) for release status.

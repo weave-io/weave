@@ -1,0 +1,5 @@
+name: seam-leak-workflow-uses
+jobs:
+  leak:
+    steps:
+      - uses: ./scripts/release/__tests__/fixtures/local-registry/deprecation-seam.ts

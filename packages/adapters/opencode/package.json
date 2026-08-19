@@ -6,12 +6,15 @@
     "registry": "https://registry.npmjs.org/"
   },
   "description": "OpenCode plugin adapter for the Weave orchestration framework",
+  "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "module": "./dist/index.js",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "exports": {
     ".": {
@@ -28,14 +31,16 @@
     }
   },
   "scripts": {
-    "build": "bun run --filter @weaveio/weave-core build && bun run --filter @weaveio/weave-engine --filter @weaveio/weave-config build && bun build ./src/index.ts --outdir ./dist --target bun && bun build ./src/plugin.ts --outfile ./dist/plugin.js --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "build": "bun ../../../scripts/build-public-packages.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@opencode-ai/plugin": "~1.15.9",
     "@opencode-ai/sdk": "~1.15.9",
-    "neverthrow": "^8.2.0"
+    "mustache": "^4.2.0",
+    "neverthrow": "^8.2.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@weaveio/weave-config": "workspace:*",

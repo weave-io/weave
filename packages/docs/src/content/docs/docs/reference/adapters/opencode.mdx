@@ -1,8 +1,69 @@
 ---
-title: OpenCode Adapter Reference Moved
-description: Compatibility route for consolidated OpenCode and adapter docs.
+title: OpenCode
+description: Install and configure the published Weave adapter for OpenCode.
 ---
 
-This page is kept for existing links after the public docs consolidation. OpenCode setup and debugging now live in [OpenCode](../../../opencode/), and adapter support lookup lives in [Adapters](../).
+## Install
 
-Current support note: use `@weave/adapter-opencode/plugin`; the registered commands are `/weave:start` and `/start-work`.
+Add the canonical package name to OpenCode's `opencode.json` or `opencode.jsonc`:
+
+```json
+{
+  "plugin": [
+    "@weaveio/weave-adapter-opencode@<exact-version>"
+  ]
+}
+```
+
+OpenCode resolves the package's `server` export to the plugin entry point.
+Use an exact version for reproducible installs. Replace it with `latest`,
+`next`, or `nightly` when you explicitly want a channel tag. Do not point the
+plugin at `dist/index.js` or a source file.
+
+## Supported versions and channels
+
+The adapter is published on `latest` (stable), `next`, and `nightly`. Its
+package declares `@opencode-ai/plugin` and `@opencode-ai/sdk` `~1.15.9`; no
+independent OpenCode version floor is encoded. Use an OpenCode release
+compatible with those APIs.
+
+## Configure Weave
+
+Create `.weave/config.weave`, then validate it:
+
+```sh
+weave init --scope local --yes
+weave validate --project
+```
+
+OpenCode fetches the plugin package at startup. Restart OpenCode after changing the plugin version or Weave configuration.
+
+## Commands
+
+The adapter registers:
+
+- `/weave:start` to start work from the configured workflow surface.
+- `/start-work` as a compatibility alias for `/weave:start`.
+
+The adapter also maps Weave agents, model preferences, prompt composition, and supported policy fields to OpenCode's native configuration.
+
+## Provider acceleration is unsupported
+
+An agent's `fast true` is neutral intent. OpenCode's plugin surface can change a request through `chat.params` and `chat.headers`, but its public plugin events and assistant messages expose no correlated official response-body evidence — no OpenAI `service_tier` and no Anthropic `usage.speed` — for a successful call. A successful status, an error payload, or ordinary token usage is not evidence.
+
+The adapter therefore sends no acceleration control and changes no request option or header. The `provider-fast-activation` capability reports `unsupported` with the bounded reason `response-proof-unavailable`. Materialized agent configuration never claims that acceleration was requested or applied.
+
+This is an optional-capability gap. It warns and never blocks descriptor materialization, agent mapping, commands, or lifecycle.
+
+Support can be enabled only after the plugin contract exposes correlated official response-body evidence for the same attempt, proven in a real harness. Mocked unit coverage is not that proof.
+
+## Verify loading
+
+Use OpenCode's own diagnostics:
+
+```sh
+opencode debug config
+opencode debug info
+```
+
+These commands verify the resolved plugin and configuration. See the [support matrix](./) for the boundary between implementation and release status.

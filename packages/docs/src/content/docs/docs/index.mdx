@@ -12,7 +12,7 @@ tableOfContents:
 
 Weave is a harness-agnostic prompt and agent-configuration API. You describe agents, categories, workflows, prompts, model preferences, and abstract tool policy in `.weave` files. Weave parses that intent into a normalized configuration; adapters translate it into whatever a concrete harness needs.
 
-The current public implementation is intentionally narrower than the long-term product vision. The OpenCode adapter is implemented today. Claude Code and Pi are future or placeholder targets. The CLI helps you initialize, validate, inspect, and migrate configuration, but it does not launch agent harnesses for you. `weave run` refuses execution and points you back to adapter-native, explicit execution.
+The public surface is the stable CLI and OpenCode adapter, plus Claude Code file materialization bundled in the CLI. The standalone Claude Code adapter is nightly-only. The CLI helps you initialize, validate, inspect, migrate, and compose configuration; it does not launch harnesses for you.
 
 ## Pick Your Path
 
@@ -41,6 +41,7 @@ Reference pages answer lookup questions without sending you across many short ro
 | [DSL Reference](reference/dsl/) | Supported `.weave` syntax, fields, values, workflow extension rules, and unsupported stale syntax. |
 | [Adapter Reference](reference/adapters/) | Adapter support matrix, OpenCode capabilities, command surfaces, and degraded behavior. |
 | [Package Reference](reference/packages/) | Workspace package responsibilities and ownership boundaries. |
+| [Release Reference](reference/releases/) | Public packages, channels, checksums, provenance, and the no-unpublish policy. |
 
 ## Current Support Boundaries
 
@@ -48,11 +49,11 @@ These boundaries are repeated across the guides because they prevent common setu
 
 | Topic | Current behavior |
 | --- | --- |
-| Adapter support | Only OpenCode is implemented. Other adapter names are future or placeholder targets. |
-| OpenCode plugin entry | Use `@weave/adapter-opencode/plugin`. |
+| Adapter support | OpenCode is stable; Claude Code supports CLI-bundled file materialization and a nightly standalone adapter. |
+| OpenCode plugin entry | Use `@weaveio/weave-adapter-opencode@<exact-version>/plugin`. |
 | Registered OpenCode commands | The plugin registers `/weave:start` and `/start-work` prompt commands. |
 | Other `/weave:*` labels | `/weave:run`, `/weave:status`, `/weave:abort`, `/weave:advance`, and `/weave:health` are projection/helper labels unless an adapter explicitly wires them. |
-| CLI execution | `weave run` intentionally refuses to start harness runtimes. |
+| CLI execution | The CLI does not start harness runtimes. |
 | Eval support | `weave eval run` supports seven text-only suite families. Runtime-backed evals are not part of the current public surface. |
 | Stale syntax | DAG/fan-in snippets, colon-style `role:`, `routes`, and `weave build` are historical or unsupported. |
 

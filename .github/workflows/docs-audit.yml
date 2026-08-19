@@ -1,0 +1,163 @@
+name: Docs audit
+
+# This is deliberately pull-request-only. Fork code never receives the AI key
+# here; fork audits converge through docs-audit-followup.yml instead.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - packages/cli/**
+      - packages/adapters/**
+      - packages/docs/**
+      - docs/**
+      - README.md
+      - .changeset/**
+
+permissions: {}
+
+jobs:
+  docs-deterministic:
+    name: deterministic docs audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      # This job has no secrets. Scripts are disabled because the checkout is
+      # untrusted PR content; the checker itself is the only executed entry.
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Run deterministic docs checks
+        env:
+          AUDITED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          bun scripts/release/docs-audit/audit-main.ts
+          --phase deterministic
+          --content-root "$GITHUB_WORKSPACE"
+          --audited-sha "$AUDITED_SHA"
+          --output "$RUNNER_TEMP/docs-deterministic.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: docs-audit-deterministic-${{ github.run_id }}
+          path: ${{ runner.temp }}/docs-deterministic.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  docs-ai-audit:
+    name: same-repository docs AI audit
+    needs: docs-deterministic
+    if: >-
+      needs.docs-deterministic.result == 'success' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: release-ai
+    permissions:
+      contents: read
+    env:
+      WEAVE_RELEASE_AI_API_KEY: ${{ secrets.WEAVE_RELEASE_AI_API_KEY }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Run Task 19 isolated docs agent
+        env:
+          AUDITED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          bun scripts/release/docs-audit/audit-main.ts
+          --phase agent
+          --content-root "$GITHUB_WORKSPACE"
+          --audited-sha "$AUDITED_SHA"
+          --output "$RUNNER_TEMP/docs-ai.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: docs-audit-ai-${{ github.run_id }}
+          path: ${{ runner.temp }}/docs-ai.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  docs-ai-fork-skip:
+    name: fork AI audit skipped (follow-up required)
+    needs: docs-deterministic
+    if: >-
+      always() &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Explain the trusted follow-up
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo "## Fork docs audit"
+            echo
+            echo "The AI audit is skipped neutrally for fork pull requests."
+            echo
+            echo "Dispatch **Docs audit follow-up** with PR number ${PR_NUMBER}."
+            echo "The protected main controller will fetch the fork head and API tarball as quarantined data only."
+            echo "It will not execute, install, or check out fork content."
+            echo "The follow-up posts a digest-bound result and reruns the terminal docs-audit check."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  docs-audit:
+    name: docs-audit
+    needs: [docs-deterministic, docs-ai-audit]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      AUDITED_SHA: ${{ github.event.pull_request.head.sha }}
+      DETERMINISTIC_JOB_RESULT: ${{ needs.docs-deterministic.result }}
+      AI_JOB_RESULT: ${{ needs.docs-ai-audit.result }}
+    steps:
+      # The gate code is always read from protected main. Feeder artifacts are
+      # bounded data and are never imported as controller code.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: docs-audit-deterministic-${{ github.run_id }}
+          path: ${{ runner.temp }}/docs-deterministic
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: docs-audit-ai-${{ github.run_id }}
+          path: ${{ runner.temp }}/docs-ai
+      - name: Publish the one terminal docs-audit check
+        run: >-
+          bun scripts/release/docs-audit/gate-main.ts
+          --audited-sha "$AUDITED_SHA"
+          --classification public-impact
+          --deterministic "$RUNNER_TEMP/docs-deterministic/docs-deterministic.json"
+          --ai "$RUNNER_TEMP/docs-ai/docs-ai.json"
+          --deterministic-job-result "$DETERMINISTIC_JOB_RESULT"
+          --ai-job-result "$AI_JOB_RESULT"
+          --follow-up-status awaiting
+          --output "$RUNNER_TEMP/docs-audit-gate.json"
+          --post true

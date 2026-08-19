@@ -1,0 +1,8 @@
+{
+  "name": "@weaveio/seam-leak-host-metadata",
+  "pi": {
+    "extensions": [
+      "scripts/release/__tests__/fixtures/local-registry/deprecation-seam.ts"
+    ]
+  }
+}
