@@ -12,6 +12,10 @@ import {
   authorizePermissionSessionCall,
   validatePermissionSession,
 } from "../permissions/session.js";
+import {
+  createExecutionLeaseId,
+  createWorkflowInstanceId,
+} from "../runtime/types.js";
 import { ABSTRACT_CAPABILITIES } from "../tool-policy.js";
 import { lifecycleValidationError } from "./errors.js";
 import { sanitizeMetadata } from "./metadata.js";
@@ -40,110 +44,120 @@ const PERMISSION_CONTEXT_FIELDS = [
   "approvalUiAvailable",
 ] as const;
 
-type SnapshotRecord = Record<string, unknown>;
-type ReflectedEntry = {
-  readonly key: PropertyKey;
-  readonly descriptor: PropertyDescriptor | undefined;
+type SnapshotFields = ReadonlyMap<string, PropertyDescriptor>;
+type ObjectLike<T> = T & object;
+
+const isObjectLike = <T>(value: T): value is ObjectLike<T> =>
+  value !== null && Object(value) === value;
+
+const primitiveTag = <T>(value: T): string => {
+  const tagged = Result.fromThrowable(
+    () => Object.prototype.toString.call(value),
+    () => "[object Object]",
+  )();
+  return tagged.isOk() ? tagged.value : "[object Object]";
 };
+
+const invalidPlainRecord = (
+  path: string,
+): ReturnType<typeof lifecycleValidationError> =>
+  lifecycleValidationError(`${path} must be a plain object`, path);
 
 /**
  * Snapshot a trusted-shaped record without invoking getters. All reflection is
  * inside one neverthrow boundary so hostile proxies cannot escape as throws.
  */
-function snapshotPlainRecord(
-  input: unknown,
+function snapshotPlainRecord<T>(
+  input: T,
   fields: readonly string[],
   path: string,
-): Result<SnapshotRecord, LifecycleValidationError> {
+): Result<SnapshotFields, LifecycleValidationError> {
   const reflected = Result.fromThrowable(
     () => {
-      if (typeof input !== "object" || input === null)
-        return { valid: false as const };
+      if (!isObjectLike(input)) return err(invalidPlainRecord(path));
       const prototype = Object.getPrototypeOf(input);
-      const keys = Reflect.ownKeys(input);
-      const entries: ReflectedEntry[] = keys.map((key) => ({
-        key,
-        descriptor: Object.getOwnPropertyDescriptor(input, key),
-      }));
-      return { valid: true as const, prototype, entries };
-    },
-    () => lifecycleValidationError(`${path} must be a plain object`, path),
-  )();
-  if (reflected.isErr()) return err(reflected.error);
-  if (!reflected.value.valid)
-    return err(
-      lifecycleValidationError(`${path} must be a plain object`, path),
-    );
-  if (
-    reflected.value.prototype !== Object.prototype &&
-    reflected.value.prototype !== null
-  )
-    return err(
-      lifecycleValidationError(`${path} must be a plain object`, path),
-    );
-  if (reflected.value.entries.length !== fields.length)
-    return err(
-      lifecycleValidationError(
-        `${path} has unexpected or missing fields`,
-        path,
-      ),
-    );
+      if (prototype !== Object.prototype && prototype !== null)
+        return err(invalidPlainRecord(path));
 
-  const snapshot: SnapshotRecord = {};
-  const seen = new Set<string>();
-  for (const entry of reflected.value.entries) {
-    if (typeof entry.key !== "string" || !fields.includes(entry.key))
-      return err(
-        lifecycleValidationError(
-          `${path} has unexpected or missing fields`,
-          path,
-        ),
-      );
-    if (seen.has(entry.key))
-      return err(
-        lifecycleValidationError(
-          `${path} has unexpected or missing fields`,
-          path,
-        ),
-      );
-    seen.add(entry.key);
-    const descriptor = entry.descriptor;
-    if (
-      !descriptor ||
-      descriptor.enumerable !== true ||
-      !("value" in descriptor)
-    )
-      return err(
-        lifecycleValidationError(
-          `${path}.${entry.key} must be an own enumerable data property`,
-          `${path}.${entry.key}`,
-        ),
-      );
-    snapshot[entry.key] = descriptor.value;
-  }
-  for (const field of fields)
-    if (!seen.has(field))
-      return err(
-        lifecycleValidationError(
-          `${path} has unexpected or missing fields`,
-          path,
-        ),
-      );
-  return ok(snapshot);
+      const allowed = new Set(fields);
+      const descriptors = new Map<string, PropertyDescriptor>();
+      for (const key of Reflect.ownKeys(input)) {
+        if (Object.prototype.toString.call(key) !== "[object String]")
+          return err(
+            lifecycleValidationError(
+              `${path} has unexpected or missing fields`,
+              path,
+            ),
+          );
+        const field = String(key);
+        if (!allowed.has(field))
+          return err(
+            lifecycleValidationError(
+              `${path} has unexpected or missing fields`,
+              path,
+            ),
+          );
+        const descriptor = Object.getOwnPropertyDescriptor(input, field);
+        if (
+          descriptor === undefined ||
+          descriptor.enumerable !== true ||
+          !("value" in descriptor)
+        )
+          return err(
+            lifecycleValidationError(
+              `${path}.${field} must be an own enumerable data property`,
+              `${path}.${field}`,
+            ),
+          );
+        descriptors.set(field, descriptor);
+      }
+      if (descriptors.size !== fields.length)
+        return err(
+          lifecycleValidationError(
+            `${path} has unexpected or missing fields`,
+            path,
+          ),
+        );
+      for (const field of fields)
+        if (!descriptors.has(field))
+          return err(
+            lifecycleValidationError(
+              `${path} has unexpected or missing fields`,
+              path,
+            ),
+          );
+      return ok(descriptors);
+    },
+    () => invalidPlainRecord(path),
+  )();
+  return reflected.andThen((result) => result);
 }
 
 function requiredText(
-  record: SnapshotRecord,
+  fields: SnapshotFields,
   field: string,
 ): Result<string, LifecycleValidationError> {
-  const value = record[field];
-  if (typeof value !== "string" || value.length === 0)
+  const value = fields.get(field)?.value;
+  if (primitiveTag(value) !== "[object String]")
     return err(lifecycleValidationError(`${field} is required`, field));
+  const text = String(value);
+  if (text.length === 0)
+    return err(lifecycleValidationError(`${field} is required`, field));
+  return ok(text);
+}
+
+function requiredBoolean(
+  fields: SnapshotFields,
+  field: string,
+): Result<boolean, LifecycleValidationError> {
+  const value = fields.get(field)?.value;
+  if (value !== true && value !== false)
+    return err(lifecycleValidationError(`${field} must be boolean`, field));
   return ok(value);
 }
 
-function captureRegisteredInput(
-  input: RegisteredBeforeToolInput,
+function captureRegisteredInput<T>(
+  input: T,
 ): Result<RegisteredBeforeToolInput, LifecycleValidationError> {
   const topLevel = snapshotPlainRecord(input, REGISTERED_INPUT_FIELDS, "input");
   if (topLevel.isErr()) return err(topLevel.error);
@@ -158,7 +172,7 @@ function captureRegisteredInput(
   if (toolName.isErr()) return err(toolName.error);
 
   const permission = snapshotPlainRecord(
-    topLevel.value.permission,
+    topLevel.value.get("permission")?.value,
     PERMISSION_CONTEXT_FIELDS,
     "permission",
   );
@@ -172,16 +186,16 @@ function captureRegisteredInput(
     "registryGeneration",
   );
   if (registryGeneration.isErr()) return err(registryGeneration.error);
-  if (typeof permission.value.approvalUiAvailable !== "boolean")
-    return err(
-      lifecycleValidationError(
-        "approvalUiAvailable must be boolean",
-        "permission.approvalUiAvailable",
-      ),
-    );
+  const approvalUiAvailable = requiredBoolean(
+    permission.value,
+    "approvalUiAvailable",
+  );
+  if (approvalUiAvailable.isErr()) return err(approvalUiAvailable.error);
 
-  const sessionCheck = validatePermissionSession(permission.value.session);
-  if (sessionCheck.isErr())
+  const session = validatePermissionSession(
+    permission.value.get("session")?.value,
+  );
+  if (session.isErr())
     return err(
       lifecycleValidationError(
         "permission.session must be a PermissionSession instance",
@@ -190,19 +204,17 @@ function captureRegisteredInput(
     );
 
   return ok({
-    workflowInstanceId:
-      workflowInstanceId.value as RegisteredBeforeToolInput["workflowInstanceId"],
-    leaseId: leaseId.value as RegisteredBeforeToolInput["leaseId"],
+    workflowInstanceId: createWorkflowInstanceId(workflowInstanceId.value),
+    leaseId: createExecutionLeaseId(leaseId.value),
     agentName: agentName.value,
     toolName: toolName.value,
     permission: {
-      session: permission.value
-        .session as RegisteredBeforeToolInput["permission"]["session"],
+      session: session.value,
       project: project.value,
       controllerSession: controllerSession.value,
       registryGeneration: registryGeneration.value,
-      call: permission.value.call,
-      approvalUiAvailable: permission.value.approvalUiAvailable,
+      call: permission.value.get("call")?.value,
+      approvalUiAvailable: approvalUiAvailable.value,
     },
   });
 }
@@ -239,9 +251,7 @@ export function previewToolPolicy(
         "effectiveToolPolicy",
       ),
     );
-  if (
-    !(ABSTRACT_CAPABILITIES as readonly string[]).includes(input.toolCapability)
-  )
+  if (!ABSTRACT_CAPABILITIES.includes(input.toolCapability))
     return errAsync(
       lifecycleValidationError(
         `toolCapability '${input.toolCapability}' is not a recognized abstract capability`,
@@ -265,22 +275,11 @@ export function previewToolPolicy(
  * {@link authorizePermissionSessionCall} entry so attacker-controlled own or
  * prototype `authorizeCall` methods cannot redirect the decision.
  */
-export function beforeTool(
-  input: RegisteredBeforeToolInput,
-): RegisteredBeforeToolResult {
+export function beforeTool<T>(input: T): RegisteredBeforeToolResult {
   const captured = captureRegisteredInput(input);
   if (captured.isErr()) return errAsync(captured.error);
   const permission = captured.value.permission;
-  const session = validatePermissionSession(permission.session);
-  if (session.isErr())
-    return errAsync(
-      lifecycleValidationError(
-        "permission.session must be a PermissionSession instance",
-        "permission.session",
-      ),
-    );
-  // Non-virtual dispatch: never look up session.authorizeCall on the instance.
-  return authorizePermissionSessionCall(session.value, {
+  return authorizePermissionSessionCall(permission.session, {
     project: permission.project,
     session: permission.controllerSession,
     agentName: captured.value.agentName,

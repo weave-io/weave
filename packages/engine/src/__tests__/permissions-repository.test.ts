@@ -32,23 +32,19 @@ const record = (grantId = "grant"): DurablePermissionGrantRecord => ({
   createdAt: 1,
   state: "active",
 });
-const IDENTITY_FIELDS = [
-  "projectIdentity",
-  "agentName",
-  "registrationOwner",
-  "toolIdentity",
-  "registrationRevision",
-  "policyFingerprint",
-  "requestSchemaVersion",
-  "requestDigest",
-] as const;
-
 describe("permission repository helpers", () => {
   test("grantIdentityKey is Result-safe, order-independent, and collision-free", () => {
     const left = grantIdentityKey(identity);
-    const reversed = Object.fromEntries(
-      [...IDENTITY_FIELDS].reverse().map((field) => [field, identity[field]]),
-    ) as unknown as GrantIdentityEnvelope;
+    const reversed: GrantIdentityEnvelope = {
+      requestDigest: identity.requestDigest,
+      requestSchemaVersion: identity.requestSchemaVersion,
+      policyFingerprint: identity.policyFingerprint,
+      registrationRevision: identity.registrationRevision,
+      toolIdentity: identity.toolIdentity,
+      registrationOwner: identity.registrationOwner,
+      agentName: identity.agentName,
+      projectIdentity: identity.projectIdentity,
+    };
     const right = grantIdentityKey(reversed);
     expect(left.isOk()).toBe(true);
     expect(right.isOk()).toBe(true);
@@ -89,12 +85,21 @@ describe("permission repository helpers", () => {
       "getPrototypeOf",
     ] as const;
     for (const trap of traps) {
-      const hostileIdentity = new Proxy(identity, {
-        [trap]: () => {
+      const handler: ProxyHandler<object> = {};
+      if (trap === "getOwnPropertyDescriptor")
+        handler.getOwnPropertyDescriptor = () => {
           throw new Error(`TOP_SECRET_${trap}`);
-        },
-      });
-      const key = grantIdentityKey(hostileIdentity as never);
+        };
+      if (trap === "ownKeys")
+        handler.ownKeys = () => {
+          throw new Error(`TOP_SECRET_${trap}`);
+        };
+      if (trap === "getPrototypeOf")
+        handler.getPrototypeOf = () => {
+          throw new Error(`TOP_SECRET_${trap}`);
+        };
+      const hostileIdentity = new Proxy(identity, handler);
+      const key = grantIdentityKey(hostileIdentity);
       expect(key.isErr()).toBe(true);
       expect(key._unsafeUnwrapErr().type).toBe("invalid_output");
       expect(key.isOk() ? key.value : "").toBe("");
@@ -102,7 +107,7 @@ describe("permission repository helpers", () => {
         "TOP_SECRET",
       );
 
-      const equal = grantIdentitiesEqual(identity, hostileIdentity as never);
+      const equal = grantIdentitiesEqual(identity, hostileIdentity);
       expect(equal.isErr()).toBe(true);
       expect(equal._unsafeUnwrapErr().type).toBe("invalid_output");
     }
@@ -110,7 +115,11 @@ describe("permission repository helpers", () => {
     // Accessor-only identities are rejected (no data-property descriptors).
     const accessorIdentity = new Proxy(identity, {
       getOwnPropertyDescriptor: (target, prop) => {
-        if (typeof prop !== "string" || !(prop in target)) return undefined;
+        if (
+          Object.prototype.toString.call(prop) !== "[object String]" ||
+          !(prop in target)
+        )
+          return;
         return {
           enumerable: true,
           configurable: true,
@@ -120,7 +129,7 @@ describe("permission repository helpers", () => {
         };
       },
     });
-    const accessorKey = grantIdentityKey(accessorIdentity as never);
+    const accessorKey = grantIdentityKey(accessorIdentity);
     expect(accessorKey.isErr()).toBe(true);
     expect(accessorKey._unsafeUnwrapErr().type).toBe("invalid_output");
 
@@ -129,8 +138,8 @@ describe("permission repository helpers", () => {
         throw new Error("TOP_SECRET_record");
       },
     });
-    const cloned = cloneDurableGrant(hostileRecord as never);
-    const summarized = summarizeDurableGrant(hostileRecord as never);
+    const cloned = cloneDurableGrant(hostileRecord);
+    const summarized = summarizeDurableGrant(hostileRecord);
     expect(cloned.isErr()).toBe(true);
     expect(summarized.isErr()).toBe(true);
     expect(cloned._unsafeUnwrapErr().type).toBe("invalid_output");
@@ -176,7 +185,11 @@ describe("permission repository helpers", () => {
 
     const accessorRow = new Proxy(row, {
       getOwnPropertyDescriptor: (target, prop) => {
-        if (typeof prop !== "string" || !(prop in target)) return undefined;
+        if (
+          Object.prototype.toString.call(prop) !== "[object String]" ||
+          !(prop in target)
+        )
+          return;
         return {
           enumerable: true,
           configurable: true,
@@ -204,7 +217,8 @@ describe("permission repository helpers", () => {
       "TOP_SECRET",
     );
 
-    const incomplete = { ...row } as Record<string, unknown>;
+    type StorageFixture = { [key: string]: string | number | null };
+    const incomplete: StorageFixture = { ...row };
     delete incomplete.request_digest;
     expect(hydrateDurableGrant(incomplete)._unsafeUnwrapErr().type).toBe(
       "invalid_output",
@@ -271,7 +285,7 @@ describe("in-memory permission approval repository", () => {
       )._unsafeUnwrapErr().type,
     ).toBe("invalid_output");
     const repo = new InMemoryPermissionApprovalRepository();
-    const rejected = await repo.saveMany([hostile as never]);
+    const rejected = await repo.saveMany([hostile]);
     expect(rejected._unsafeUnwrapErr().type).toBe("invalid_output");
     expect(JSON.stringify(rejected._unsafeUnwrapErr())).not.toContain(
       "TOP_SECRET",
@@ -287,7 +301,7 @@ describe("in-memory permission approval repository", () => {
             getOwnPropertyDescriptor: () => {
               throw new Error("TOP_SECRET_descriptor");
             },
-          }) as never,
+          }),
         )
       )._unsafeUnwrapErr().type,
     ).toBe("invalid_output");
@@ -307,7 +321,7 @@ describe("in-memory permission approval repository", () => {
         getPrototypeOf: () => {
           throw new Error("TOP_SECRET_mixed");
         },
-      }) as never,
+      }),
     ]);
     expect(mixed._unsafeUnwrapErr().type).toBe("invalid_output");
     expect(
@@ -323,10 +337,7 @@ describe("in-memory permission approval repository", () => {
     const valid = new InMemoryPermissionApprovalRepository();
     expect(
       (
-        await valid.saveMany([
-          record(),
-          { ...record("bad"), scope: "once" as "durable" },
-        ])
+        await valid.saveMany([record(), { ...record("bad"), scope: "once" }])
       ).isErr(),
     ).toBe(true);
     expect((await valid.list("project"))._unsafeUnwrap()).toHaveLength(0);

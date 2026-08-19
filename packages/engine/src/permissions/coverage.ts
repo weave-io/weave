@@ -5,12 +5,6 @@
  * call this pure engine helper with an explicit immutable context. The engine
  * never discovers harness tools or knows concrete harness names beyond the
  * opaque string identities supplied here.
- *
- * Concrete adapter wiring that fails tool-policy readiness on
- * `incomplete_coverage` is issue #21 "Enforce registered-tool policy".
- * This module supplies only the neutral proof primitive and its contract.
- *
- * See: docs/reference/permissions.md
  */
 
 import { err, ok, Result } from "neverthrow";
@@ -35,16 +29,39 @@ const CONTEXT_FIELDS = [
   "unmanagedThirdPartyToolIdentities",
   "diagnostics",
 ] as const;
-
 const DIAGNOSTICS_FIELDS = ["includeToolIdentities"] as const;
-
-const INVENTORY_FIELDS = [
-  "nativeToolIdentities",
-  "weaveOwnedToolIdentities",
-  "interceptedToolIdentities",
-  "bypassableToolIdentities",
-  "unmanagedThirdPartyToolIdentities",
-] as const;
+type SnapshotFields = ReadonlyMap<string, PropertyDescriptor>;
+type ObjectLike<T> = T & object;
+type CapturedInventoryLists = {
+  readonly nativeToolIdentities: readonly string[];
+  readonly weaveOwnedToolIdentities: readonly string[];
+  readonly interceptedToolIdentities: readonly string[];
+  readonly bypassableToolIdentities: readonly string[];
+  readonly unmanagedThirdPartyToolIdentities: readonly string[];
+};
+type MutableInvalidCoverage = {
+  type: "invalid_coverage";
+  message: string;
+  path?: string;
+};
+type MutableIncompleteCoverage = {
+  type: "incomplete_coverage";
+  reason: PermissionCoverageIncompleteReason;
+  message: string;
+  toolIdentity?: string;
+};
+type MutableCoverageProof = {
+  generationId: string;
+  metadataIdentity: string;
+  requiredCount: number;
+  registeredCount: number;
+  interceptedCount: number;
+  unmanagedCount: number;
+  requiredToolIdentities?: readonly string[];
+  registeredToolIdentities?: readonly string[];
+  interceptedToolIdentities?: readonly string[];
+  unmanagedToolIdentities?: readonly string[];
+};
 
 export type PermissionCoverageIncompleteReason =
   | "missing_registration"
@@ -72,19 +89,7 @@ export interface PermissionCoverageDiagnosticsPolicy {
   readonly includeToolIdentities: boolean;
 }
 
-/**
- * Explicit adapter-supplied coverage context.
- *
- * - `nativeToolIdentities` / `weaveOwnedToolIdentities` MUST be registered and
- *   non-bypassably intercepted.
- * - Every identity present in the sealed registry (including registered
- *   third-party tools) MUST appear in `interceptedToolIdentities`.
- * - `unmanagedThirdPartyToolIdentities` may remain unregistered; Weave issues
- *   no permit for them.
- * - The engine snapshots plain data once and never re-enters getters/proxies.
- * - Inventory arrays use the shared one-shot descriptor snapshot (prototype,
- *   ownKeys, length, indexed data descriptors captured exactly once).
- */
+/** Explicit adapter-supplied coverage context. */
 export interface PermissionCoverageContext {
   readonly registry: PermissionRegistryGeneration;
   readonly nativeToolIdentities: readonly string[];
@@ -108,8 +113,6 @@ export interface PermissionCoverageProof {
   readonly unmanagedToolIdentities?: readonly string[];
 }
 
-type SnapshotRecord = Record<string, unknown>;
-
 type CapturedContext = Readonly<{
   registry: PermissionRegistryGeneration;
   generationId: string;
@@ -123,85 +126,107 @@ type CapturedContext = Readonly<{
   includeToolIdentities: boolean;
 }>;
 
+const completed = (): Result<void, PermissionCoverageError> => ok(void 0);
+
 const compareCodeUnits = (a: string, b: string): number => {
   if (a < b) return -1;
   if (a > b) return 1;
   return 0;
 };
 
-const invalid = (message: string, path?: string): PermissionCoverageError => ({
-  type: "invalid_coverage",
-  ...(path === undefined ? {} : { path }),
-  message,
-});
+const invalid = (message: string, path?: string): PermissionCoverageError => {
+  const error: MutableInvalidCoverage = { type: "invalid_coverage", message };
+  if (path !== undefined) error.path = path;
+  return error;
+};
 
 const incomplete = (
   reason: PermissionCoverageIncompleteReason,
   message: string,
   toolIdentity?: string,
-): PermissionCoverageError => ({
-  type: "incomplete_coverage",
-  reason,
-  ...(toolIdentity === undefined ? {} : { toolIdentity }),
-  message,
-});
-
-const hasLoneSurrogate = (value: string): boolean => {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      if (index + 1 >= value.length) return true;
-      const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) return true;
-      index += 1;
-      continue;
-    }
-    if (code >= 0xdc00 && code <= 0xdfff) return true;
-  }
-  return false;
+): PermissionCoverageError => {
+  const error: MutableIncompleteCoverage = {
+    type: "incomplete_coverage",
+    reason,
+    message,
+  };
+  if (toolIdentity !== undefined) error.toolIdentity = toolIdentity;
+  return error;
 };
 
-function snapshotPlainRecord(
-  input: unknown,
+const primitiveTag = <T>(value: T): string => {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (Object(value) === value) return "object";
+  const tagged = Result.fromThrowable(
+    () => Object.prototype.toString.call(value),
+    () => "[object Object]",
+  )();
+  return tagged.isOk() ? tagged.value : "[object Object]";
+};
+
+const isObjectLike = <T>(value: T): value is ObjectLike<T> =>
+  value !== null && value !== undefined && Object(value) === value;
+
+const parseText = <T>(
+  value: T,
+  path: string,
+): Result<string, PermissionCoverageError> => {
+  if (primitiveTag(value) !== "[object String]")
+    return err(invalid(`${path} must be a nonempty string`, path));
+  const text = String(value);
+  if (text.length === 0 || /[\uD800-\uDFFF]/u.test(text))
+    return err(invalid(`${path} must be a nonempty string`, path));
+  return ok(text);
+};
+
+const parseBoolean = <T>(
+  value: T,
+  path: string,
+): Result<boolean, PermissionCoverageError> => {
+  if (primitiveTag(value) !== "[object Boolean]")
+    return err(invalid(`${path} must be a boolean`, path));
+  return ok(value === true);
+};
+
+function snapshotPlainRecord<T>(
+  input: T,
   fields: readonly string[],
   path: string,
-): Result<SnapshotRecord, PermissionCoverageError> {
+): Result<SnapshotFields, PermissionCoverageError> {
   return Result.fromThrowable(
     () => {
-      if (typeof input !== "object" || input === null)
+      if (!isObjectLike(input) || Array.isArray(input))
         return err(invalid(`${path} must be a plain object`, path));
-      const prototype = Object.getPrototypeOf(input);
-      if (prototype !== Object.prototype && prototype !== null)
+      if (Object.getPrototypeOf(input) !== Object.prototype)
         return err(invalid(`${path} must be a plain object`, path));
-
       const keys = Reflect.ownKeys(input);
       if (keys.length !== fields.length)
         return err(invalid(`${path} has unexpected or missing fields`, path));
-
-      const snapshot: SnapshotRecord = Object.create(null);
-      const seen = new Set<string>();
+      const allowed = new Set(fields);
+      const snapshot = new Map<string, PropertyDescriptor>();
       for (const key of keys) {
-        if (typeof key !== "string" || !fields.includes(key))
+        if (Object.prototype.toString.call(key) !== "[object String]")
           return err(invalid(`${path} has unexpected or missing fields`, path));
-        if (seen.has(key))
+        const text = String(key);
+        if (!allowed.has(text))
           return err(invalid(`${path} has unexpected or missing fields`, path));
-        seen.add(key);
-        const descriptor = Object.getOwnPropertyDescriptor(input, key);
+        const descriptor = Object.getOwnPropertyDescriptor(input, text);
         if (
-          !descriptor ||
+          descriptor === undefined ||
           descriptor.enumerable !== true ||
           !("value" in descriptor)
         )
           return err(
             invalid(
-              `${path}.${key} must be an own enumerable data property`,
-              `${path}.${key}`,
+              `${path}.${String(key)} must be an own enumerable data property`,
+              `${path}.${String(key)}`,
             ),
           );
-        snapshot[key] = descriptor.value;
+        snapshot.set(text, descriptor);
       }
       for (const field of fields) {
-        if (!seen.has(field))
+        if (!snapshot.has(field))
           return err(invalid(`${path} has unexpected or missing fields`, path));
       }
       return ok(snapshot);
@@ -210,36 +235,24 @@ function snapshotPlainRecord(
   )().andThen((result) => result);
 }
 
-function captureToolIdentity(
-  value: unknown,
+function captureToolIdentity<T>(
+  value: T,
   path: string,
 ): Result<string, PermissionCoverageError> {
-  return Result.fromThrowable(
-    () => {
-      if (typeof value !== "string" || value.length === 0)
-        return err(invalid(`${path} must be a nonempty string`, path));
-      if (hasLoneSurrogate(value))
-        return err(invalid(`${path} contains a lone surrogate`, path));
-      const bytes = utf8Bytes(value, TOOL_IDENTITY_MAX_BYTES);
-      if (bytes.isErr())
-        return err(
-          invalid(
-            `${path} exceeds ${TOOL_IDENTITY_MAX_BYTES} UTF-8 bytes`,
-            path,
-          ),
-        );
-      return ok(value);
-    },
-    () => invalid(`${path} must be a nonempty string`, path),
-  )().andThen((result) => result);
+  return parseText(value, path).andThen((text) => {
+    const bytes = utf8Bytes(text, TOOL_IDENTITY_MAX_BYTES);
+    if (bytes.isErr())
+      return err(
+        invalid(`${path} exceeds ${TOOL_IDENTITY_MAX_BYTES} UTF-8 bytes`, path),
+      );
+    return ok(text);
+  });
 }
 
-function captureIdentityList(
-  value: unknown,
+function captureIdentityList<T>(
+  value: T,
   path: string,
 ): Result<readonly string[], PermissionCoverageError> {
-  // One-shot descriptor snapshot: never reread live length/indices. A vanishing
-  // inventory proxy must fail invalid_coverage, not yield zero-count readiness.
   const snapshotted = snapshotArrayOnce(value).mapErr(() =>
     invalid(`${path} must be a plain dense array`, path),
   );
@@ -249,32 +262,27 @@ function captureIdentityList(
       invalid(`${path} exceeds ${MAX_INVENTORY_SIZE} identities`, path),
     );
 
-  return Result.fromThrowable(
-    () => {
-      const captured: string[] = [];
-      const seen = new Set<string>();
-      for (let index = 0; index < snapshotted.value.length; index += 1) {
-        const entryPath = `${path}[${index}]`;
-        const identity = captureToolIdentity(
-          snapshotted.value[index],
-          entryPath,
-        );
-        if (identity.isErr()) return err(identity.error);
-        if (seen.has(identity.value))
-          return err(
-            incomplete(
-              "duplicate_identity",
-              "tool identity list contains a duplicate",
-              identity.value,
-            ),
-          );
-        seen.add(identity.value);
-        captured.push(identity.value);
-      }
-      return ok(Object.freeze(captured.slice()) as readonly string[]);
-    },
-    () => invalid(`${path} must be a plain dense array`, path),
-  )().andThen((result) => result);
+  const captured: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < snapshotted.value.length; index += 1) {
+    const entryPath = `${path}[${index}]`;
+    const identity = captureToolIdentity(
+      snapshotted.value[index]?.value,
+      entryPath,
+    );
+    if (identity.isErr()) return err(identity.error);
+    if (seen.has(identity.value))
+      return err(
+        incomplete(
+          "duplicate_identity",
+          "tool identity list contains a duplicate",
+          identity.value,
+        ),
+      );
+    seen.add(identity.value);
+    captured.push(identity.value);
+  }
+  return ok(Object.freeze(captured.slice()));
 }
 
 function captureRegistrySnapshot(
@@ -289,104 +297,108 @@ function captureRegistrySnapshot(
 > {
   return Result.fromThrowable(
     () => {
-      // Authoritative path: module-private non-virtual accessors, not public
-      // instance/prototype lookup/get/inventory methods.
       const meta = readRegistryGenerationMeta(registry);
       if (meta.isErr())
         return err(
           invalid("registry generation metadata is invalid", "registry"),
         );
-      const generationId = meta.value.id;
-      const metadataIdentity = meta.value.identity;
-      if (
-        typeof generationId !== "string" ||
-        generationId.length === 0 ||
-        typeof metadataIdentity !== "string" ||
-        metadataIdentity.length === 0
-      )
-        return err(
-          invalid("registry generation metadata is invalid", "registry"),
-        );
-
       const inventoryResult = readRegistryInventory(registry);
       if (inventoryResult.isErr())
-        return err(invalid("registry inventory is invalid", "registry"));
-      const inventory = inventoryResult.value;
-      if (!Array.isArray(inventory))
         return err(invalid("registry inventory is invalid", "registry"));
 
       const registered: string[] = [];
       const seen = new Set<string>();
-      for (const entry of inventory) {
-        if (!entry || typeof entry !== "object")
-          return err(
-            invalid("registry inventory entry is invalid", "registry"),
-          );
-        const toolIdentity = (entry as { toolIdentity?: unknown }).toolIdentity;
-        if (typeof toolIdentity !== "string" || toolIdentity.length === 0)
-          return err(
-            invalid("registry inventory entry is invalid", "registry"),
-          );
-        if (seen.has(toolIdentity))
+      for (const entry of inventoryResult.value) {
+        const identity = captureToolIdentity(
+          entry.toolIdentity,
+          "registry.inventory.toolIdentity",
+        );
+        if (identity.isErr())
+          return err(invalid("registry inventory is invalid", "registry"));
+        if (seen.has(identity.value))
           return err(
             incomplete(
               "duplicate_identity",
               "registry inventory contains a duplicate",
-              toolIdentity,
+              identity.value,
             ),
           );
-        seen.add(toolIdentity);
-        registered.push(toolIdentity);
+        seen.add(identity.value);
+        registered.push(identity.value);
       }
       registered.sort(compareCodeUnits);
       return ok({
-        generationId,
-        metadataIdentity,
-        registeredToolIdentities: Object.freeze(
-          registered,
-        ) as readonly string[],
+        generationId: meta.value.id,
+        metadataIdentity: meta.value.identity,
+        registeredToolIdentities: Object.freeze(registered.slice()),
       });
     },
     () => invalid("registry generation could not be snapshotted", "registry"),
   )().andThen((result) => result);
 }
 
-function captureContext(
-  input: unknown,
+function captureContext<T>(
+  input: T,
 ): Result<CapturedContext, PermissionCoverageError> {
   const top = snapshotPlainRecord(input, CONTEXT_FIELDS, "context");
   if (top.isErr()) return err(top.error);
-
-  const branded = validatePermissionRegistryGeneration(top.value.registry);
+  const registryValue = top.value.get("registry")?.value;
+  const branded = validatePermissionRegistryGeneration(registryValue);
   if (branded.isErr())
     return err(
       invalid("registry must be a sealed branded generation", "registry"),
     );
-
   const registrySnapshot = captureRegistrySnapshot(branded.value);
   if (registrySnapshot.isErr()) return err(registrySnapshot.error);
 
-  const lists: Record<(typeof INVENTORY_FIELDS)[number], readonly string[]> =
-    Object.create(null);
-  for (const field of INVENTORY_FIELDS) {
-    const captured = captureIdentityList(top.value[field], field);
-    if (captured.isErr()) return err(captured.error);
-    lists[field] = captured.value;
-  }
+  const nativeToolIdentities = captureIdentityList(
+    top.value.get("nativeToolIdentities")?.value,
+    "nativeToolIdentities",
+  );
+  const weaveOwnedToolIdentities = captureIdentityList(
+    top.value.get("weaveOwnedToolIdentities")?.value,
+    "weaveOwnedToolIdentities",
+  );
+  const interceptedToolIdentities = captureIdentityList(
+    top.value.get("interceptedToolIdentities")?.value,
+    "interceptedToolIdentities",
+  );
+  const bypassableToolIdentities = captureIdentityList(
+    top.value.get("bypassableToolIdentities")?.value,
+    "bypassableToolIdentities",
+  );
+  const unmanagedThirdPartyToolIdentities = captureIdentityList(
+    top.value.get("unmanagedThirdPartyToolIdentities")?.value,
+    "unmanagedThirdPartyToolIdentities",
+  );
+  if (nativeToolIdentities.isErr()) return err(nativeToolIdentities.error);
+  if (weaveOwnedToolIdentities.isErr())
+    return err(weaveOwnedToolIdentities.error);
+  if (interceptedToolIdentities.isErr())
+    return err(interceptedToolIdentities.error);
+  if (bypassableToolIdentities.isErr())
+    return err(bypassableToolIdentities.error);
+  if (unmanagedThirdPartyToolIdentities.isErr())
+    return err(unmanagedThirdPartyToolIdentities.error);
+  const lists: CapturedInventoryLists = {
+    nativeToolIdentities: nativeToolIdentities.value,
+    weaveOwnedToolIdentities: weaveOwnedToolIdentities.value,
+    interceptedToolIdentities: interceptedToolIdentities.value,
+    bypassableToolIdentities: bypassableToolIdentities.value,
+    unmanagedThirdPartyToolIdentities: unmanagedThirdPartyToolIdentities.value,
+  };
 
   const diagnostics = snapshotPlainRecord(
-    top.value.diagnostics,
+    top.value.get("diagnostics")?.value,
     DIAGNOSTICS_FIELDS,
     "diagnostics",
   );
   if (diagnostics.isErr()) return err(diagnostics.error);
-  if (typeof diagnostics.value.includeToolIdentities !== "boolean")
-    return err(
-      invalid(
-        "diagnostics.includeToolIdentities must be a boolean",
-        "diagnostics.includeToolIdentities",
-      ),
-    );
+  const includeToolIdentities = parseBoolean(
+    diagnostics.value.get("includeToolIdentities")?.value,
+    "diagnostics.includeToolIdentities",
+  );
+  if (includeToolIdentities.isErr()) return err(includeToolIdentities.error);
 
   return ok(
     Object.freeze({
@@ -400,7 +412,7 @@ function captureContext(
       bypassableToolIdentities: lists.bypassableToolIdentities,
       unmanagedThirdPartyToolIdentities:
         lists.unmanagedThirdPartyToolIdentities,
-      includeToolIdentities: diagnostics.value.includeToolIdentities,
+      includeToolIdentities: includeToolIdentities.value,
     }),
   );
 }
@@ -433,7 +445,6 @@ function verifySemantics(
         nativeWeave,
       ),
     );
-
   const nativeUnmanaged = findOverlap(context.nativeToolIdentities, unmanaged);
   if (nativeUnmanaged !== undefined)
     return err(
@@ -443,7 +454,6 @@ function verifySemantics(
         nativeUnmanaged,
       ),
     );
-
   const weaveUnmanaged = findOverlap(
     context.weaveOwnedToolIdentities,
     unmanaged,
@@ -467,7 +477,6 @@ function verifySemantics(
         ),
       );
   }
-
   for (const identity of context.nativeToolIdentities) {
     if (!registered.has(identity))
       return err(
@@ -478,7 +487,6 @@ function verifySemantics(
         ),
       );
   }
-
   for (const identity of context.weaveOwnedToolIdentities) {
     if (!registered.has(identity))
       return err(
@@ -489,7 +497,6 @@ function verifySemantics(
         ),
       );
   }
-
   for (const identity of context.registeredToolIdentities) {
     if (!intercepted.has(identity))
       return err(
@@ -500,7 +507,6 @@ function verifySemantics(
         ),
       );
   }
-
   for (const identity of context.bypassableToolIdentities) {
     if (native.has(identity) || weave.has(identity) || registered.has(identity))
       return err(
@@ -511,8 +517,7 @@ function verifySemantics(
         ),
       );
   }
-
-  return ok(undefined);
+  return completed();
 }
 
 function assertStableSnapshot(
@@ -532,7 +537,6 @@ function assertStableSnapshot(
             "registry generation changed during coverage verification",
           ),
         );
-
       const live = captureRegistrySnapshot(context.registry);
       if (live.isErr()) return err(live.error);
       if (
@@ -545,7 +549,6 @@ function assertStableSnapshot(
             "registry generation changed during coverage verification",
           ),
         );
-
       if (
         live.value.registeredToolIdentities.length !==
           context.registeredToolIdentities.length ||
@@ -560,8 +563,7 @@ function assertStableSnapshot(
             "registry inventory changed during coverage verification",
           ),
         );
-
-      return ok(undefined);
+      return completed();
     },
     () =>
       incomplete(
@@ -589,39 +591,29 @@ function buildProof(
       const unmanaged = [...context.unmanagedThirdPartyToolIdentities].sort(
         compareCodeUnits,
       );
-
-      const proof: PermissionCoverageProof = {
+      const proof: MutableCoverageProof = {
         generationId: context.generationId,
         metadataIdentity: context.metadataIdentity,
         requiredCount: required.length,
         registeredCount: registered.length,
         interceptedCount: intercepted.length,
         unmanagedCount: unmanaged.length,
-        ...(context.includeToolIdentities
-          ? {
-              requiredToolIdentities: Object.freeze(required),
-              registeredToolIdentities: Object.freeze(registered),
-              interceptedToolIdentities: Object.freeze(intercepted),
-              unmanagedToolIdentities: Object.freeze(unmanaged),
-            }
-          : {}),
       };
+      if (context.includeToolIdentities) {
+        proof.requiredToolIdentities = Object.freeze(required);
+        proof.registeredToolIdentities = Object.freeze(registered);
+        proof.interceptedToolIdentities = Object.freeze(intercepted);
+        proof.unmanagedToolIdentities = Object.freeze(unmanaged);
+      }
       return ok(Object.freeze(proof));
     },
     () => invalid("unable to build coverage proof"),
   )().andThen((result) => result);
 }
 
-/**
- * Verify that an adapter-supplied inventory and interception claim covers the
- * sealed registry generation for tool-policy readiness.
- *
- * Returns an immutable proof on success. Adapters map `incomplete_coverage`
- * and `invalid_coverage` to the required `tool-policy-mapping` readiness
- * failure for the controller generation.
- */
-export function verifyPermissionCoverage(
-  context: PermissionCoverageContext,
+/** Verify that an adapter-supplied inventory covers the sealed registry. */
+export function verifyPermissionCoverage<T>(
+  context: T,
 ): Result<PermissionCoverageProof, PermissionCoverageError> {
   return Result.fromThrowable(
     () => {

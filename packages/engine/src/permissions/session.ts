@@ -1,5 +1,6 @@
 import { err, errAsync, ok, Result, ResultAsync } from "neverthrow";
 import type { EffectiveToolPolicy } from "../tool-policy.js";
+import { snapshotArrayOnce } from "./array-snapshot.js";
 import {
   cloneAndFreezeJson,
   normalizePermissionRequests,
@@ -24,10 +25,9 @@ import type {
   JsonValue,
   PendingPermissionRequestView,
   PermissionApprovalRepository,
-  PermissionApprovalResponse,
   PermissionAuditEvent,
   PermissionCallInput,
-  PermissionChallengeConsumeInput,
+  PermissionDecision,
   PermissionError,
   PermissionExecutionSnapshot,
   PermissionGrantSummary,
@@ -38,25 +38,33 @@ import type {
 } from "./types.js";
 
 const invalid = (): PermissionError => ({ type: "invalid_output" });
-const unsafe = (): PermissionError => ({
-  type: "unsafe_input",
-  path: "$",
-});
 const repositoryFailure = (): PermissionError => ({
   type: "repository_failure",
 });
 const failure = <T>(error: PermissionError): ResultAsync<T, PermissionError> =>
   errAsync(error);
 
-type Snapshot = Readonly<Record<string, unknown>>;
-type CapturedChoice = Readonly<{
-  requestId: unknown;
-  decision: unknown;
-  scope?: unknown;
-  expiresAt?: unknown;
-}>;
+type ObjectLike<T> = T & object;
+type SnapshotFields = ReadonlyMap<string, PropertyDescriptor>;
+type PrimitiveTag = "null" | "undefined" | "string" | "number" | "object";
+type MutableCapturedChoice = {
+  requestId: string;
+  decision: "allow" | "deny";
+  scope?: GrantScope;
+  expiresAt?: number;
+};
+type CapturedChoice = Readonly<MutableCapturedChoice>;
+type MutablePolicies = { [agentName: string]: EffectiveToolPolicy };
+
+const POLICY_FIELDS = [
+  "read",
+  "write",
+  "execute",
+  "delegate",
+  "network",
+] as const;
 type CapturedResponse = Readonly<{
-  challenge: unknown;
+  challenge: string;
   choices: readonly CapturedChoice[];
 }>;
 type CapturedCall = Readonly<{
@@ -126,128 +134,144 @@ type Permit = {
   readonly bindings: readonly string[];
 };
 
-const objectSnapshot = (
-  value: unknown,
+const primitiveTag = <T>(value: T): PrimitiveTag => {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (Object(value) === value) return "object";
+  const tagged = Result.fromThrowable(
+    () => Object.prototype.toString.call(value),
+    () => "[object Object]",
+  )();
+  if (tagged.isErr()) return "object";
+  if (tagged.value === "[object String]") return "string";
+  if (tagged.value === "[object Number]") return "number";
+  return "object";
+};
+
+const isObjectLike = <T>(value: T): value is ObjectLike<T> =>
+  value !== null && value !== undefined && Object(value) === value;
+
+function objectSnapshot<T>(
+  value: T,
   allowed: readonly string[] | undefined,
   required: readonly string[],
-): Result<Snapshot, PermissionError> =>
-  Result.fromThrowable(
+): Result<SnapshotFields, PermissionError> {
+  return Result.fromThrowable(
     () => {
-      if (
-        !value ||
-        typeof value !== "object" ||
-        Array.isArray(value) ||
-        Object.getPrototypeOf(value) !== Object.prototype
-      )
+      if (!isObjectLike(value) || Array.isArray(value)) return err(invalid());
+      if (Object.getPrototypeOf(value) !== Object.prototype)
         return err(invalid());
+      const keys = Reflect.ownKeys(value);
       const allowedSet = allowed === undefined ? undefined : new Set(allowed);
-      const keys = Reflect.ownKeys(value);
-      const keySet = new Set(keys);
-      const entries: [string, unknown][] = [];
+      if (allowed !== undefined && keys.length > allowed.length)
+        return err(invalid());
+      if (keys.length < required.length) return err(invalid());
+      const fields = new Map<string, PropertyDescriptor>();
       for (const key of keys) {
-        if (typeof key !== "string" || (allowedSet && !allowedSet.has(key)))
+        if (Object.prototype.toString.call(key) !== "[object String]")
           return err(invalid());
-        const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        if (!descriptor?.enumerable || !("value" in descriptor))
+        const text = String(key);
+        if (allowedSet !== undefined && !allowedSet.has(text))
           return err(invalid());
-        entries.push([key, descriptor.value]);
+        const descriptor = Object.getOwnPropertyDescriptor(value, text);
+        if (
+          descriptor === undefined ||
+          descriptor.enumerable !== true ||
+          !("value" in descriptor)
+        )
+          return err(invalid());
+        fields.set(text, descriptor);
       }
-      if (required.some((key) => !keySet.has(key))) return err(invalid());
-      return ok(Object.freeze(Object.fromEntries(entries)));
+      for (const field of required) {
+        if (!fields.has(field)) return err(invalid());
+      }
+      return ok(fields);
     },
     () => invalid(),
   )().andThen((result) => result);
+}
 
-const arraySnapshot = (
-  value: unknown,
-): Result<readonly unknown[], PermissionError> =>
-  Result.fromThrowable(
-    () => {
-      if (
-        !Array.isArray(value) ||
-        Object.getPrototypeOf(value) !== Array.prototype
-      )
-        return err(invalid());
-      const length = Object.getOwnPropertyDescriptor(value, "length");
-      if (
-        !length ||
-        !("value" in length) ||
-        length.enumerable ||
-        !Number.isSafeInteger(length.value) ||
-        length.value < 0
-      )
-        return err(invalid());
-      const keys = Reflect.ownKeys(value);
-      if (keys.length !== length.value + 1 || !keys.includes("length"))
-        return err(invalid());
-      const values: unknown[] = [];
-      for (let index = 0; index < length.value; index += 1) {
-        const key = String(index);
-        const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        if (!descriptor?.enumerable || !("value" in descriptor))
-          return err(invalid());
-        values.push(descriptor.value);
-      }
-      for (const key of keys) {
-        if (key === "length") continue;
-        if (typeof key !== "string" || !/^\d+$/.test(key))
-          return err(invalid());
-        const index = Number(key);
-        if (!Number.isSafeInteger(index) || index < 0 || index >= length.value)
-          return err(invalid());
-      }
-      return ok(Object.freeze(values));
-    },
-    () => invalid(),
-  )().andThen((result) => result);
+function arraySnapshot<T>(
+  value: T,
+): Result<readonly PropertyDescriptor[], PermissionError> {
+  return snapshotArrayOnce(value).mapErr(() => invalid());
+}
 
-const validText = (value: unknown, max: number): value is string => {
-  if (typeof value !== "string" || value.length === 0) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
+const validText = <T>(value: T, max: number): value is T & string => {
+  if (primitiveTag(value) !== "string") return false;
+  const text = String(value);
+  if (text.length === 0) return false;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
     if (code >= 0xd800 && code <= 0xdbff) {
-      if (index + 1 >= value.length) return false;
-      const next = value.charCodeAt(index + 1);
+      if (index + 1 >= text.length) return false;
+      const next = text.charCodeAt(index + 1);
       if (next < 0xdc00 || next > 0xdfff) return false;
       index += 1;
       continue;
     }
     if (code >= 0xdc00 && code <= 0xdfff) return false;
   }
-  return new TextEncoder().encode(value).byteLength <= max;
+  return new TextEncoder().encode(text).byteLength <= max;
 };
 
-const decision = (value: unknown): value is "allow" | "deny" | "ask" =>
+const decision = <T>(value: T): value is T & PermissionDecision =>
   value === "allow" || value === "deny" || value === "ask";
 
-const actualRegistry = (
-  value: unknown,
+const actualRegistry = <T>(
+  value: T,
 ): Result<PermissionRegistryGeneration, PermissionError> =>
   validatePermissionRegistryGeneration(value).mapErr(() => invalid());
 
-const isClock = (value: unknown): value is Clock => typeof value === "function";
-const isIdSource = (value: unknown): value is IdSource =>
-  typeof value === "function";
-const isRepository = (
-  value: unknown,
-): value is PermissionApprovalRepository => {
+type Callable = (...args: never[]) => never;
+
+const isCallable = <T>(value: T): value is T & Callable => {
+  const source = Result.fromThrowable(
+    () => Function.prototype.toString.call(value),
+    () => "",
+  )();
+  return source.isOk() && !source.value.trimStart().startsWith("class ");
+};
+const isClock = <T>(value: T): value is T & Clock => isCallable(value);
+const isIdSource = <T>(value: T): value is T & IdSource => isCallable(value);
+
+const hasCallableMethod = <T>(value: T, name: string): boolean => {
+  if (!isObjectLike(value)) return false;
+  let current: object | null = value;
+  while (current !== null) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, name);
+    if (descriptor !== undefined)
+      return "value" in descriptor && isCallable(descriptor.value);
+    current = Object.getPrototypeOf(current);
+  }
+  return false;
+};
+
+const isRepository = <T>(
+  value: T,
+): value is T & PermissionApprovalRepository => {
   const checked = Result.fromThrowable(
-    () => {
-      if (!value || typeof value !== "object") return false;
-      const object = value;
-      return (
-        typeof Reflect.get(object, "saveMany") === "function" &&
-        typeof Reflect.get(object, "list") === "function" &&
-        typeof Reflect.get(object, "revoke") === "function" &&
-        typeof Reflect.get(object, "match") === "function"
-      );
-    },
+    () =>
+      hasCallableMethod(value, "saveMany") &&
+      hasCallableMethod(value, "list") &&
+      hasCallableMethod(value, "revoke") &&
+      hasCallableMethod(value, "match"),
     () => false,
   )();
   return checked.isOk() && checked.value;
 };
 
-const captureCall = (value: unknown): Result<CapturedCall, PermissionError> =>
+const textField = (
+  fields: SnapshotFields,
+  name: string,
+  max: number,
+): Result<string, PermissionError> => {
+  const value = fields.get(name)?.value;
+  if (!validText(value, max)) return err(invalid());
+  return ok(String(value));
+};
+
+const captureCall = <T>(value: T): Result<CapturedCall, PermissionError> =>
   objectSnapshot(
     value,
     [
@@ -269,40 +293,38 @@ const captureCall = (value: unknown): Result<CapturedCall, PermissionError> =>
       "approvalUiAvailable",
     ],
   ).andThen((fields) => {
-    const project = fields.project;
-    const session = fields.session;
-    const agentName = fields.agentName;
-    const toolIdentity = fields.toolIdentity;
-    const registryGeneration = fields.registryGeneration;
-    const approvalUiAvailable = fields.approvalUiAvailable;
+    const project = textField(fields, "project", 256);
+    const session = textField(fields, "session", 256);
+    const agentName = textField(fields, "agentName", 256);
+    const toolIdentity = textField(fields, "toolIdentity", 256);
+    const registryGeneration = textField(fields, "registryGeneration", 256);
+    const approvalUiAvailable = fields.get("approvalUiAvailable")?.value;
     if (
-      !validText(project, 256) ||
-      !validText(session, 256) ||
-      !validText(agentName, 256) ||
-      !validText(toolIdentity, 256) ||
-      !validText(registryGeneration, 256) ||
-      typeof approvalUiAvailable !== "boolean"
+      project.isErr() ||
+      session.isErr() ||
+      agentName.isErr() ||
+      toolIdentity.isErr() ||
+      registryGeneration.isErr() ||
+      (approvalUiAvailable !== true && approvalUiAvailable !== false)
     )
       return err(invalid());
-    return cloneAndFreezeJson(fields.call).andThen((call) =>
-      Result.fromThrowable(
-        () =>
-          Object.freeze({
-            project,
-            session,
-            agentName,
-            toolIdentity,
-            registryGeneration,
-            call,
-            approvalUiAvailable,
-          }),
-        () => unsafe(),
-      )(),
+    return cloneAndFreezeJson(fields.get("call")?.value).andThen((call) =>
+      ok(
+        Object.freeze({
+          project: project.value,
+          session: session.value,
+          agentName: agentName.value,
+          toolIdentity: toolIdentity.value,
+          registryGeneration: registryGeneration.value,
+          call,
+          approvalUiAvailable,
+        }),
+      ),
     );
   });
 
-const captureChallengeInput = (
-  value: unknown,
+const captureChallengeInput = <T>(
+  value: T,
 ): Result<CapturedChallengeInput, PermissionError> =>
   objectSnapshot(
     value,
@@ -323,71 +345,99 @@ const captureChallengeInput = (
       "registryGeneration",
     ],
   ).andThen((fields) => {
+    const challenge = textField(fields, "challenge", 256);
+    const project = textField(fields, "project", 256);
+    const session = textField(fields, "session", 256);
+    const agentName = textField(fields, "agentName", 256);
+    const toolIdentity = textField(fields, "toolIdentity", 256);
+    const registryGeneration = textField(fields, "registryGeneration", 256);
     if (
-      !validText(fields.challenge, 256) ||
-      !validText(fields.project, 256) ||
-      !validText(fields.session, 256) ||
-      !validText(fields.agentName, 256) ||
-      !validText(fields.toolIdentity, 256) ||
-      !validText(fields.registryGeneration, 256)
+      challenge.isErr() ||
+      project.isErr() ||
+      session.isErr() ||
+      agentName.isErr() ||
+      toolIdentity.isErr() ||
+      registryGeneration.isErr()
     )
       return err(invalid());
     return ok(
       Object.freeze({
-        challenge: fields.challenge,
-        project: fields.project,
-        session: fields.session,
-        agentName: fields.agentName,
-        toolIdentity: fields.toolIdentity,
-        registryGeneration: fields.registryGeneration,
+        challenge: challenge.value,
+        project: project.value,
+        session: session.value,
+        agentName: agentName.value,
+        toolIdentity: toolIdentity.value,
+        registryGeneration: registryGeneration.value,
       }),
     );
   });
 
-const captureChoice = (
-  value: unknown,
-): Result<CapturedChoice, PermissionError> =>
+const captureChoice = <T>(value: T): Result<CapturedChoice, PermissionError> =>
   objectSnapshot(
     value,
     ["requestId", "decision", "scope", "expiresAt"],
     ["requestId", "decision"],
-  ).map((fields) =>
-    Object.freeze({
-      requestId: fields.requestId,
-      decision: fields.decision,
-      ...(Object.hasOwn(fields, "scope") ? { scope: fields.scope } : {}),
-      ...(Object.hasOwn(fields, "expiresAt")
-        ? { expiresAt: fields.expiresAt }
-        : {}),
-    }),
-  );
+  ).andThen((fields) => {
+    const requestId = textField(fields, "requestId", 256);
+    const rawDecision = fields.get("decision")?.value;
+    if (
+      requestId.isErr() ||
+      (rawDecision !== "allow" && rawDecision !== "deny")
+    )
+      return err(invalid());
+    const choice: MutableCapturedChoice = {
+      requestId: requestId.value,
+      decision: rawDecision,
+    };
+    if (fields.has("scope")) {
+      const scope = fields.get("scope")?.value;
+      if (scope !== undefined) {
+        if (scope !== "once" && scope !== "session" && scope !== "durable")
+          return err(invalid());
+        choice.scope = scope;
+      }
+    }
+    if (fields.has("expiresAt")) {
+      const expiresAt = fields.get("expiresAt")?.value;
+      if (expiresAt !== undefined) {
+        if (primitiveTag(expiresAt) !== "number") return err(invalid());
+        const numericExpiry = Number(expiresAt);
+        if (!Number.isSafeInteger(numericExpiry) || numericExpiry < 0)
+          return err(invalid());
+        choice.expiresAt = numericExpiry;
+      }
+    }
+    return ok(Object.freeze(choice));
+  });
 
-const captureResponse = (
-  value: unknown,
+const captureResponse = <T>(
+  value: T,
 ): Result<CapturedResponse, PermissionError> =>
   objectSnapshot(
     value,
     ["challenge", "choices"],
     ["challenge", "choices"],
-  ).andThen((fields) =>
-    arraySnapshot(fields.choices).andThen((choices) => {
+  ).andThen((fields) => {
+    const challenge = textField(fields, "challenge", 256);
+    if (challenge.isErr()) return err(invalid());
+    return arraySnapshot(fields.get("choices")?.value).andThen((choices) => {
       const captured: CapturedChoice[] = [];
-      for (const choice of choices) {
-        const checked = captureChoice(choice);
+      for (const descriptor of choices) {
+        const checked = captureChoice(descriptor.value);
         if (checked.isErr()) return err(checked.error);
         captured.push(checked.value);
       }
       return ok(
         Object.freeze({
-          challenge: fields.challenge,
+          challenge: challenge.value,
           choices: Object.freeze(captured),
         }),
       );
-    }),
-  );
+    });
+  });
 
-const capturePermit = (
-  value: unknown,
+const capturePermit = <T>(
+  value: T,
 ): Result<CapturedPermitInput, PermissionError> =>
   objectSnapshot(
     value,
@@ -410,30 +460,30 @@ const capturePermit = (
       "call",
     ],
   ).andThen((fields) => {
-    const permit = fields.permit;
-    const project = fields.project;
-    const session = fields.session;
-    const agentName = fields.agentName;
-    const toolIdentity = fields.toolIdentity;
-    const registryGeneration = fields.registryGeneration;
+    const permit = textField(fields, "permit", 256);
+    const project = textField(fields, "project", 256);
+    const session = textField(fields, "session", 256);
+    const agentName = textField(fields, "agentName", 256);
+    const toolIdentity = textField(fields, "toolIdentity", 256);
+    const registryGeneration = textField(fields, "registryGeneration", 256);
     if (
-      !validText(permit, 256) ||
-      !validText(project, 256) ||
-      !validText(session, 256) ||
-      !validText(agentName, 256) ||
-      !validText(toolIdentity, 256) ||
-      !validText(registryGeneration, 256)
+      permit.isErr() ||
+      project.isErr() ||
+      session.isErr() ||
+      agentName.isErr() ||
+      toolIdentity.isErr() ||
+      registryGeneration.isErr()
     )
       return err(invalid());
-    return cloneAndFreezeJson(fields.call).andThen((call) =>
+    return cloneAndFreezeJson(fields.get("call")?.value).andThen((call) =>
       ok(
         Object.freeze({
-          permit,
-          project,
-          session,
-          agentName,
-          toolIdentity,
-          registryGeneration,
+          permit: permit.value,
+          project: project.value,
+          session: session.value,
+          agentName: agentName.value,
+          toolIdentity: toolIdentity.value,
+          registryGeneration: registryGeneration.value,
           call,
         }),
       ),
@@ -464,29 +514,17 @@ export interface PermissionRegistryReplacement {
   readonly registry: PermissionRegistryGeneration;
 }
 
-let activateSessionInternal!: (
-  input: PermissionSessionTestingOptions,
+let activateSessionInternal!: <T>(
+  input: T,
 ) => ResultAsync<PermissionSession, PermissionError>;
 const sessionConstructionToken = Symbol("PermissionSession");
 const sessionBrand = new WeakSet<object>();
-
-/**
- * Captured original prototype methods for non-virtual authoritative dispatch.
- * Bound once after the class body and before constructor/prototype freeze so
- * engine paths never look up attacker-controlled own or prototype methods.
- */
-let authorizeCallOriginal!: (
-  this: PermissionSession,
-  input: PermissionCallInput,
-) => ResultAsync<PermissionOutcome, PermissionError>;
-let consumePermitOriginal!: (
-  this: PermissionSession,
-  input: PermissionPermitConsumeInput,
-) => ResultAsync<PermissionExecutionSnapshot, PermissionError>;
+const sessionInstances = new WeakMap<object, PermissionSession>();
 
 export class PermissionSession {
   static {
-    activateSessionInternal = (input) => PermissionSession.#activate(input);
+    activateSessionInternal = <T>(input: T) =>
+      PermissionSession.#activate(input);
   }
 
   #o: PermissionSessionTestingOptions;
@@ -527,6 +565,7 @@ export class PermissionSession {
     if (token !== sessionConstructionToken)
       throw new TypeError("invalid session construction token");
     sessionBrand.add(this);
+    sessionInstances.set(this, this);
     this.#o = o;
     this.#registry = o.registry;
     this.#observedGenerationIds.add(initialGenerationId);
@@ -541,8 +580,8 @@ export class PermissionSession {
     Object.freeze(this);
   }
 
-  static #activate(
-    input: PermissionSessionTestingOptions,
+  static #activate<T>(
+    input: T,
   ): ResultAsync<PermissionSession, PermissionError> {
     const captured = objectSnapshot(
       input,
@@ -572,50 +611,51 @@ export class PermissionSession {
     );
     if (captured.isErr()) return failure(captured.error);
     const fields = captured.value;
-    const project = fields.project;
-    const session = fields.session;
-    const requestSchemaVersion = fields.requestSchemaVersion;
-    const monotonicClock = fields.monotonicClock;
-    const wallClock = fields.wallClock;
-    const ids = fields.ids;
-    const repository = fields.repository;
+    const project = textField(fields, "project", 256);
+    const session = textField(fields, "session", 256);
+    const requestSchemaVersion = textField(fields, "requestSchemaVersion", 64);
+    if (project.isErr()) return failure(project.error);
+    if (session.isErr()) return failure(session.error);
+    if (requestSchemaVersion.isErr())
+      return failure(requestSchemaVersion.error);
+
+    const monotonicClockValue = fields.get("monotonicClock")?.value;
+    const wallClockValue = fields.get("wallClock")?.value;
+    const idsValue = fields.get("ids")?.value;
+    const repositoryValue = fields.get("repository")?.value;
     if (
-      !validText(project, 256) ||
-      !validText(session, 256) ||
-      !validText(requestSchemaVersion, 64) ||
-      !isClock(monotonicClock) ||
-      !isClock(wallClock) ||
-      !isIdSource(ids) ||
-      !isRepository(repository)
+      !isClock(monotonicClockValue) ||
+      !isClock(wallClockValue) ||
+      !isIdSource(idsValue) ||
+      !isRepository(repositoryValue)
     )
       return failure(invalid());
-    const registry = actualRegistry(fields.registry);
+
+    const registry = actualRegistry(fields.get("registry")?.value);
     if (registry.isErr()) return failure(registry.error);
-    const policies = objectSnapshot(fields.policies, undefined, []);
-    if (policies.isErr() || Object.keys(policies.value).length === 0)
+    const policies = objectSnapshot(
+      fields.get("policies")?.value,
+      undefined,
+      [],
+    );
+    if (policies.isErr() || policies.value.size === 0)
       return failure(invalid());
-    const policyKeys: readonly string[] = [
-      "read",
-      "write",
-      "execute",
-      "delegate",
-      "network",
-    ];
-    const copiedPolicies: Record<string, EffectiveToolPolicy> = {};
+
+    const copiedPolicies: MutablePolicies = Object.create(null);
     const fingerprints = new Map<string, string>();
-    for (const agent of Object.keys(policies.value)) {
+    for (const [agent, descriptor] of policies.value) {
       if (!validText(agent, 256)) return failure(invalid());
       const rawPolicy = objectSnapshot(
-        policies.value[agent],
-        policyKeys,
-        policyKeys,
+        descriptor.value,
+        POLICY_FIELDS,
+        POLICY_FIELDS,
       );
       if (rawPolicy.isErr()) return failure(rawPolicy.error);
-      const read = rawPolicy.value.read;
-      const write = rawPolicy.value.write;
-      const execute = rawPolicy.value.execute;
-      const delegate = rawPolicy.value.delegate;
-      const network = rawPolicy.value.network;
+      const read = rawPolicy.value.get("read")?.value;
+      const write = rawPolicy.value.get("write")?.value;
+      const execute = rawPolicy.value.get("execute")?.value;
+      const delegate = rawPolicy.value.get("delegate")?.value;
+      const network = rawPolicy.value.get("network")?.value;
       if (
         !decision(read) ||
         !decision(write) ||
@@ -624,7 +664,7 @@ export class PermissionSession {
         !decision(network)
       )
         return failure(invalid());
-      const policy = Object.freeze({
+      const policy: EffectiveToolPolicy = Object.freeze({
         read,
         write,
         execute,
@@ -636,40 +676,41 @@ export class PermissionSession {
       if (fingerprint.isErr()) return failure(fingerprint.error);
       fingerprints.set(agent, fingerprint.value);
     }
-    const capacity = Object.hasOwn(fields, "auditCapacity")
-      ? fields.auditCapacity
-      : 512;
-    if (
-      typeof capacity !== "number" ||
-      !Number.isSafeInteger(capacity) ||
-      capacity < 1 ||
-      capacity > 4096
-    )
+
+    let capacity = 512;
+    if (fields.has("auditCapacity")) {
+      const capacityValue = fields.get("auditCapacity")?.value;
+      if (primitiveTag(capacityValue) !== "number") return failure(invalid());
+      capacity = Number(capacityValue);
+    }
+    if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 4096)
       return failure(invalid());
+
     const monoSeed = Result.fromThrowable(
-      () => monotonicClock(),
+      () => monotonicClockValue(),
       () => invalid(),
     )().andThen((value) =>
       Number.isSafeInteger(value) && value >= 0 ? ok(value) : err(invalid()),
     );
     if (monoSeed.isErr()) return failure(monoSeed.error);
     const wallSeed = Result.fromThrowable(
-      () => wallClock(),
+      () => wallClockValue(),
       () => invalid(),
     )().andThen((value) =>
       Number.isSafeInteger(value) && value >= 0 ? ok(value) : err(invalid()),
     );
     if (wallSeed.isErr()) return failure(wallSeed.error);
+
     const options: PermissionSessionTestingOptions = {
-      project,
-      session,
+      project: project.value,
+      session: session.value,
       registry: registry.value,
       policies: Object.freeze(copiedPolicies),
-      requestSchemaVersion,
-      monotonicClock,
-      wallClock,
-      ids,
-      repository,
+      requestSchemaVersion: requestSchemaVersion.value,
+      monotonicClock: monotonicClockValue,
+      wallClock: wallClockValue,
+      ids: idsValue,
+      repository: repositoryValue,
       auditCapacity: capacity,
     };
     const generationMeta = readRegistryGenerationMeta(registry.value);
@@ -699,8 +740,8 @@ export class PermissionSession {
     };
     const run = this.#tail.then(execute, execute);
     this.#tail = run.then(
-      () => undefined,
-      () => undefined,
+      () => void 0,
+      () => void 0,
     );
     return ResultAsync.fromPromise(run, () => invalid()).andThen(
       (result) => result,
@@ -858,29 +899,30 @@ export class PermissionSession {
     errorCategory?: PermissionError["type"],
     outcome?: "approved" | "rejected" | "policy_denied",
   ): void {
-    const common = {
+    type MutableAuditCommon = {
+      project: string;
+      agentName: string;
+      toolIdentity?: string;
+      timestamp: number;
+    };
+    const common: MutableAuditCommon = {
       project: this.#o.project,
       agentName,
-      ...(toolIdentity === undefined ? {} : { toolIdentity }),
       timestamp,
     };
+    if (toolIdentity !== undefined) common.toolIdentity = toolIdentity;
+
     let event: PermissionAuditEvent;
     if (type === "authorization_denied") {
-      if (outcome === "policy_denied")
-        event = Object.freeze({
-          ...common,
-          type,
-          ...(count === undefined ? {} : { count }),
-          outcome,
-        });
-      else if (errorCategory)
-        event = Object.freeze({
-          ...common,
-          type,
-          ...(count === undefined ? {} : { count }),
-          errorCategory,
-        });
-      else return;
+      if (outcome === "policy_denied") {
+        if (count === undefined)
+          event = Object.freeze({ ...common, type, outcome });
+        else event = Object.freeze({ ...common, type, count, outcome });
+      } else if (errorCategory) {
+        if (count === undefined)
+          event = Object.freeze({ ...common, type, errorCategory });
+        else event = Object.freeze({ ...common, type, count, errorCategory });
+      } else return;
     } else if (type === "approval_requested") {
       if (toolIdentity === undefined || count === undefined) return;
       event = Object.freeze({ ...common, type, toolIdentity, count });
@@ -892,10 +934,7 @@ export class PermissionSession {
       if (toolIdentity === undefined) return;
       event = Object.freeze({ ...common, type, toolIdentity });
     } else {
-      event = Object.freeze({
-        ...common,
-        type,
-      });
+      event = Object.freeze({ ...common, type });
     }
     this.#auditLog.push(event);
     while (this.#auditLog.length > (this.#o.auditCapacity ?? 512))
@@ -1019,9 +1058,7 @@ export class PermissionSession {
     )().andThen((result) => result);
   }
 
-  authorizeCall(
-    input: PermissionCallInput,
-  ): ResultAsync<PermissionOutcome, PermissionError> {
+  authorizeCall<T>(input: T): ResultAsync<PermissionOutcome, PermissionError> {
     const actual = validatePermissionSession(this);
     if (actual.isErr()) return failure(actual.error);
     const captured = captureCall(input);
@@ -1317,9 +1354,9 @@ export class PermissionSession {
     return ok({ kind: "authorized", permit: prepared.value.id });
   }
 
-  answerChallenge(
-    input: PermissionChallengeConsumeInput,
-    response: PermissionApprovalResponse,
+  answerChallenge<T, U>(
+    input: T,
+    response: U,
   ): ResultAsync<PermissionOutcome, PermissionError> {
     const actual = validatePermissionSession(this);
     if (actual.isErr()) return failure(actual.error);
@@ -1437,7 +1474,6 @@ export class PermissionSession {
       if (choice.expiresAt !== undefined) {
         if (
           choice.scope !== "durable" ||
-          typeof choice.expiresAt !== "number" ||
           !Number.isSafeInteger(choice.expiresAt) ||
           choice.expiresAt <= wall
         )
@@ -1489,7 +1525,7 @@ export class PermissionSession {
           createdAt: wall,
           state: "active",
         };
-        if (typeof choice.expiresAt === "number")
+        if (choice.expiresAt !== undefined)
           durable.push({ ...record, expiresAt: choice.expiresAt });
         else durable.push(record);
       }
@@ -1569,9 +1605,7 @@ export class PermissionSession {
     return ok({ kind: "authorized", permit: prepared.value.id });
   }
 
-  cancelChallenge(
-    input: PermissionChallengeConsumeInput,
-  ): ResultAsync<void, PermissionError> {
+  cancelChallenge<T>(input: T): ResultAsync<void, PermissionError> {
     const actual = validatePermissionSession(this);
     if (actual.isErr()) return failure(actual.error);
     const captured = captureChallengeInput(input);
@@ -1607,11 +1641,11 @@ export class PermissionSession {
     if (!this.#challenges.delete(input.challenge))
       return this.fail(this.challengeState(input.challenge), "session", wall);
     this.#challengeTombstones.add(input.challenge);
-    return ok(undefined);
+    return ok(void 0);
   }
 
-  consumePermit(
-    input: PermissionPermitConsumeInput,
+  consumePermit<T>(
+    input: T,
   ): ResultAsync<PermissionExecutionSnapshot, PermissionError> {
     const actual = validatePermissionSession(this);
     if (actual.isErr()) return failure(actual.error);
@@ -1762,14 +1796,12 @@ export class PermissionSession {
     return ok(snapshot.value);
   }
 
-  replaceRegistry(
-    input: PermissionRegistryReplacement,
-  ): ResultAsync<void, PermissionError> {
+  replaceRegistry<T>(input: T): ResultAsync<void, PermissionError> {
     const actual = validatePermissionSession(this);
     if (actual.isErr()) return failure(actual.error);
     const captured = objectSnapshot(input, ["registry"], ["registry"]);
     if (captured.isErr()) return failure(captured.error);
-    const registry = actualRegistry(captured.value.registry);
+    const registry = actualRegistry(captured.value.get("registry")?.value);
     if (registry.isErr()) return failure(registry.error);
     const replacement: CapturedReplacement = Object.freeze({
       registry: registry.value,
@@ -1812,7 +1844,7 @@ export class PermissionSession {
     this.#observedGenerationIds.add(nextMeta.value.id);
     this.#registry = input.registry;
     this.record("registry_replaced", "session", wall);
-    return ok(undefined);
+    return ok(void 0);
   }
 
   close(): ResultAsync<void, PermissionError> {
@@ -1824,13 +1856,13 @@ export class PermissionSession {
       // Advance both high-waters even when only wall is recorded.
       void now.value.mono;
       const wall = now.value.wall;
-      if (this.#closed) return ok(undefined);
+      if (this.#closed) return ok(void 0);
       this.#closed = true;
       this.#grants.clear();
       this.#challenges.clear();
       this.#permits.clear();
       this.record("session_closed", "session", wall);
-      return ok(undefined);
+      return ok(void 0);
     });
   }
 
@@ -1877,7 +1909,7 @@ export class PermissionSession {
       );
       if (result.isErr()) return this.fail(result.error, "session", wall);
       this.record("grant_revoked", "session", wall);
-      return ok(undefined);
+      return ok(void 0);
     });
   }
 
@@ -1895,8 +1927,10 @@ export class PermissionSession {
 
 // Capture originals before freeze so authoritative engine paths never perform
 // virtual own/prototype method lookup on attacker-controlled surfaces.
-authorizeCallOriginal = PermissionSession.prototype.authorizeCall;
-consumePermitOriginal = PermissionSession.prototype.consumePermit;
+const originalMethods = {
+  authorizeCall: PermissionSession.prototype.authorizeCall,
+  consumePermit: PermissionSession.prototype.consumePermit,
+};
 
 // Freeze constructor and prototype so static mutation and prototype method
 // replacement cannot redirect construction or public method dispatch after
@@ -1906,12 +1940,13 @@ Object.freeze(PermissionSession.prototype);
 Object.freeze(PermissionSession);
 
 /** Internal brand guard. This symbol is intentionally omitted from the root API. */
-export function validatePermissionSession(
-  value: unknown,
+export function validatePermissionSession<T>(
+  value: T,
 ): Result<PermissionSession, PermissionError> {
-  if (typeof value !== "object" || value === null || !sessionBrand.has(value))
-    return err(invalid());
-  return ok(value as PermissionSession);
+  if (!isObjectLike(value) || !sessionBrand.has(value)) return err(invalid());
+  const session = sessionInstances.get(value);
+  if (session === undefined) return err(invalid());
+  return ok(session);
 }
 
 /**
@@ -1919,8 +1954,8 @@ export function validatePermissionSession(
  * Validates the brand, invokes the captured original `authorizeCall`, and wraps
  * so no throw or rejection escapes as an untyped failure.
  */
-export function authorizePermissionSessionCall(
-  session: unknown,
+export function authorizePermissionSessionCall<T>(
+  session: T,
   input: PermissionCallInput,
 ): ResultAsync<PermissionOutcome, PermissionError> {
   const actual = validatePermissionSession(session);
@@ -1928,7 +1963,7 @@ export function authorizePermissionSessionCall(
   return ResultAsync.fromPromise(
     (async () => {
       const started = Result.fromThrowable(
-        () => authorizeCallOriginal.call(actual.value, input),
+        () => originalMethods.authorizeCall.call(actual.value, input),
         () => invalid(),
       )();
       if (started.isErr()) return err(started.error);
@@ -1943,8 +1978,8 @@ export function authorizePermissionSessionCall(
  * Public `session.consumePermit` on a frozen genuine instance is also safe
  * because the prototype method is immutable; this helper avoids virtual lookup.
  */
-export function consumePermissionSessionPermit(
-  session: unknown,
+export function consumePermissionSessionPermit<T>(
+  session: T,
   input: PermissionPermitConsumeInput,
 ): ResultAsync<PermissionExecutionSnapshot, PermissionError> {
   const actual = validatePermissionSession(session);
@@ -1952,7 +1987,7 @@ export function consumePermissionSessionPermit(
   return ResultAsync.fromPromise(
     (async () => {
       const started = Result.fromThrowable(
-        () => consumePermitOriginal.call(actual.value, input),
+        () => originalMethods.consumePermit.call(actual.value, input),
         () => invalid(),
       )();
       if (started.isErr()) return err(started.error);
@@ -1963,15 +1998,15 @@ export function consumePermissionSessionPermit(
 }
 
 /** Internal activation path. It is not part of the package root API. */
-export function activatePermissionSessionInternal(
-  input: PermissionSessionTestingOptions,
+export function activatePermissionSessionInternal<T>(
+  input: T,
 ): ResultAsync<PermissionSession, PermissionError> {
   return activateSessionInternal(input);
 }
 
 /** Test-only activation path for injected repositories, clocks, and IDs. */
-export function activatePermissionSessionForTesting(
-  input: PermissionSessionTestingOptions,
+export function activatePermissionSessionForTesting<T>(
+  input: T,
 ): ResultAsync<PermissionSession, PermissionError> {
   return activatePermissionSessionInternal(input);
 }

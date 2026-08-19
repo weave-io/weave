@@ -19,16 +19,18 @@ describe("permission canonicalization", () => {
   test("normalizes negative zero and rejects unsafe values", () => {
     expect(canonicalizeJson(-0)._unsafeUnwrap()).toBe("0");
     expect(canonicalizeJson(Infinity).isErr()).toBe(true);
-    expect(canonicalizeJson(Symbol("x") as never).isErr()).toBe(true);
+    expect(canonicalizeJson(Symbol("x")).isErr()).toBe(true);
   });
   test("clones without touching or freezing source", () => {
     const source = { nested: { value: 1 } };
     const result = cloneAndFreezeJson(source);
     expect(result.isOk()).toBe(true);
     expect(Object.isFrozen(source)).toBe(false);
-    expect(
-      Object.isFrozen((result._unsafeUnwrap() as { nested: object }).nested),
-    ).toBe(true);
+    const copied = result._unsafeUnwrap();
+    if (copied === null || Array.isArray(copied)) throw new Error("fixture");
+    // SAFETY: cloneAndFreezeJson returns a closed JSON object for this plain object fixture.
+    const copiedObject = copied as { readonly nested: object };
+    expect(Object.isFrozen(copiedObject.nested)).toBe(true);
   });
   test("never invokes accessors and rejects extra request fields", () => {
     let called = false;
@@ -45,7 +47,7 @@ describe("permission canonicalization", () => {
       unresolved: true,
       display: { summary: "x" },
       capability: "read",
-    } as never;
+    };
     expect(validateRequest(request).isErr()).toBe(true);
   });
   test("keeps hostile keys out of unsafe paths and supports prototype-like keys", () => {
@@ -56,7 +58,10 @@ describe("permission canonicalization", () => {
       "TOP_SECRET",
     );
 
-    const value = Object.create(null) as Record<string, unknown>;
+    type PrototypeFixture = {
+      readonly [key: string]: string | { readonly safe: boolean };
+    };
+    const value: PrototypeFixture = Object.create(null);
     Object.defineProperty(value, "__proto__", {
       value: "safe",
       enumerable: true,
@@ -67,14 +72,17 @@ describe("permission canonicalization", () => {
       enumerable: true,
       writable: true,
     });
-    const copy = cloneAndFreezeJson(value)._unsafeUnwrap() as Record<
-      string,
-      unknown
-    >;
+    const copiedValue = cloneAndFreezeJson(value)._unsafeUnwrap();
+    if (copiedValue === null || Array.isArray(copiedValue))
+      throw new Error("fixture");
+    // SAFETY: cloneAndFreezeJson returns a closed JSON object for this plain fixture.
+    const copy = copiedValue as PrototypeFixture;
     expect(Object.getOwnPropertyDescriptor(copy, "__proto__")?.value).toBe(
       "safe",
     );
-    expect((copy.constructor as unknown as { safe: boolean }).safe).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(copy, "constructor")?.value).toEqual(
+      { safe: true },
+    );
     expect(Object.getPrototypeOf(copy)).toBeNull();
   });
   test("maps reflection traps and unsafe resolver constraints to closed results", () => {
@@ -85,11 +93,24 @@ describe("permission canonicalization", () => {
       "get",
     ] as const;
     for (const trap of traps) {
-      const value = new Proxy({ x: 1 }, {
-        [trap]: () => {
+      const handler: ProxyHandler<object> = {};
+      if (trap === "getPrototypeOf")
+        handler.getPrototypeOf = () => {
           throw new Error(`TOP_SECRET_${trap}`);
-        },
-      } as ProxyHandler<object>);
+        };
+      if (trap === "ownKeys")
+        handler.ownKeys = () => {
+          throw new Error(`TOP_SECRET_${trap}`);
+        };
+      if (trap === "getOwnPropertyDescriptor")
+        handler.getOwnPropertyDescriptor = () => {
+          throw new Error(`TOP_SECRET_${trap}`);
+        };
+      if (trap === "get")
+        handler.get = () => {
+          throw new Error(`TOP_SECRET_${trap}`);
+        };
+      const value = new Proxy({ x: 1 }, handler);
       const result = cloneAndFreezeJson(value);
       if (trap === "get") {
         expect(result.isOk()).toBe(true);
@@ -116,7 +137,7 @@ describe("permission canonicalization", () => {
         target: { kind: "file", identifier: "x" },
         display: { summary: "read" },
         constraints,
-      } as never,
+      },
     ]);
     expect(result._unsafeUnwrapErr().type).toBe("invalid_output");
     expect(JSON.stringify(result._unsafeUnwrapErr())).not.toContain(
@@ -205,17 +226,17 @@ describe("permission canonicalization", () => {
     };
     let lengthReads = 0;
     const changing = new Proxy([denyRequest], {
-      get(target, prop, receiver) {
+      get(_target, prop, _receiver) {
         if (prop === "length") {
           lengthReads += 1;
           // Classic TOCTOU: first live length read passes non-empty, later
           // reads return 0 and skip elements. Descriptor snapshot keeps deny.
           return lengthReads <= 1 ? 1 : 0;
         }
-        return Reflect.get(target, prop, receiver);
+        return void 0;
       },
     });
-    const result = normalizePermissionRequests(changing as never);
+    const result = normalizePermissionRequests(changing);
     expect(result.isOk()).toBe(true);
     const value = result._unsafeUnwrap();
     expect(value).toHaveLength(1);
@@ -257,10 +278,10 @@ describe("permission canonicalization", () => {
             configurable: true,
           };
         }
-        return undefined;
+        return;
       },
     });
-    const result = normalizePermissionRequests(changing as never);
+    const result = normalizePermissionRequests(changing);
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().type).toBe("invalid_output");
     expect(JSON.stringify(result._unsafeUnwrapErr())).not.toContain("run rm");
@@ -276,6 +297,26 @@ describe("permission canonicalization", () => {
       "getOwnPropertyDescriptor",
     ] as const;
     for (const trap of traps) {
+      type ResolverFixture = {
+        readonly unresolved: boolean;
+        readonly capability: string;
+        readonly operation: string;
+        readonly target: { readonly kind: string; readonly identifier: string };
+        readonly display: { readonly summary: string };
+      };
+      const handler: ProxyHandler<ResolverFixture[]> = {};
+      if (trap === "getPrototypeOf")
+        handler.getPrototypeOf = () => {
+          throw new Error(`TOP_SECRET_ARRAY_${trap}`);
+        };
+      if (trap === "ownKeys")
+        handler.ownKeys = () => {
+          throw new Error(`TOP_SECRET_ARRAY_${trap}`);
+        };
+      if (trap === "getOwnPropertyDescriptor")
+        handler.getOwnPropertyDescriptor = () => {
+          throw new Error(`TOP_SECRET_ARRAY_${trap}`);
+        };
       const value = new Proxy(
         [
           {
@@ -286,13 +327,9 @@ describe("permission canonicalization", () => {
             display: { summary: "read" },
           },
         ],
-        {
-          [trap]: () => {
-            throw new Error(`TOP_SECRET_ARRAY_${trap}`);
-          },
-        } as ProxyHandler<object>,
+        handler,
       );
-      const result = normalizePermissionRequests(value as never);
+      const result = normalizePermissionRequests(value);
       expect(result.isErr()).toBe(true);
       expect(result._unsafeUnwrapErr().type).toBe("invalid_output");
       expect(JSON.stringify(result._unsafeUnwrapErr())).not.toContain(
@@ -309,7 +346,7 @@ describe("permission canonicalization", () => {
 
   test("fail-fast rejects hostile sparse array lengths without length-driven allocation", () => {
     const sparseLength = (length: number) =>
-      new Proxy([] as unknown[], {
+      new Proxy([], {
         ownKeys: () => ["length"],
         getOwnPropertyDescriptor(_target, prop) {
           if (prop === "length") {
@@ -320,11 +357,11 @@ describe("permission canonicalization", () => {
               configurable: false,
             };
           }
-          return undefined;
+          return;
         },
-        get(target, prop, receiver) {
+        get(_target, prop, _receiver) {
           if (prop === "length") return length;
-          return Reflect.get(target, prop, receiver);
+          return void 0;
         },
       });
 
@@ -363,7 +400,7 @@ describe("permission canonicalization", () => {
             configurable: false,
           };
         }
-        return Reflect.getOwnPropertyDescriptor(target, prop);
+        return Object.getOwnPropertyDescriptor(target, prop);
       },
     });
     const result = cloneAndFreezeJson(proxy);

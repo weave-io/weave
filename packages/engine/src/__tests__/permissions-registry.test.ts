@@ -12,11 +12,19 @@ import {
   readRegistryInventory,
   validatePermissionRegistryGeneration,
 } from "../permissions/registry.js";
+import type {
+  JsonValue,
+  PermissionRegistrationContext,
+  PermissionResolver,
+} from "../permissions/types.js";
 
-const registration = (
-  toolIdentity: string,
-  extra: Record<string, unknown> = {},
-) => ({
+type RegistrationExtra = {
+  readonly owner?: string;
+  readonly revision?: string;
+  readonly resolver?: PermissionResolver | string;
+};
+
+const registration = (toolIdentity: string, extra: RegistrationExtra = {}) => ({
   toolIdentity,
   owner: "owner",
   revision: "1",
@@ -92,7 +100,9 @@ describe("permission registry", () => {
         }),
       ).toThrow();
       expect(() =>
-        (one.value.inventory() as unknown as unknown[]).push({}),
+        Object.defineProperty(one.value.inventory(), "0", {
+          value: {},
+        }),
       ).toThrow();
     }
     expect(Reflect.ownKeys(a)).not.toContain("registrations");
@@ -215,13 +225,13 @@ describe("permission registry", () => {
         "fromToken",
       ),
     ).toBeUndefined();
-    expect(
-      () =>
-        new (
-          PermissionRegistryGeneration as unknown as new (
-            ...args: unknown[]
-          ) => unknown
-        )(Symbol("forged"), [], "custom-identity", "custom-generation"),
+    expect(() =>
+      Reflect.construct(PermissionRegistryGeneration, [
+        Symbol("forged"),
+        [],
+        "custom-identity",
+        "custom-generation",
+      ]),
     ).toThrow();
   });
 
@@ -229,13 +239,11 @@ describe("permission registry", () => {
     expect(Object.isFrozen(PermissionRegistryGeneration)).toBe(true);
     expect(Object.isFrozen(PermissionRegistryGeneration.prototype)).toBe(true);
     expect(() => {
-      (
-        PermissionRegistryGeneration as unknown as {
-          fromToken: unknown;
-        }
-      ).fromToken = () => {
-        throw new Error("should not install");
-      };
+      Object.defineProperty(PermissionRegistryGeneration, "fromToken", {
+        value: () => {
+          throw new Error("should not install");
+        },
+      });
     }).toThrow();
     expect(() => {
       PermissionRegistryGeneration.prototype.lookup = () => ({
@@ -247,7 +255,7 @@ describe("permission registry", () => {
       });
     }).toThrow();
     expect(() => {
-      PermissionRegistryGeneration.prototype.get = () => undefined;
+      PermissionRegistryGeneration.prototype.get = () => void 0;
     }).toThrow();
     expect(() => {
       PermissionRegistryGeneration.prototype.inventory = () => [];
@@ -255,22 +263,18 @@ describe("permission registry", () => {
   });
 
   it("blocks patched static token capture and forged source/identity/id supply", () => {
-    const Generation = PermissionRegistryGeneration as unknown as {
-      fromToken?: (...args: unknown[]) => unknown;
-    };
-    let capturedToken: unknown;
     let installed = false;
     try {
-      Generation.fromToken = (token: unknown, ..._rest: unknown[]) => {
-        capturedToken = token;
-        installed = true;
-        return err({ type: "invalid_registry", message: "patched" });
-      };
+      Object.defineProperty(PermissionRegistryGeneration, "fromToken", {
+        value: () => {
+          installed = true;
+          return err({ type: "invalid_registry", message: "patched" });
+        },
+      });
     } catch {
       installed = false;
     }
     expect(installed).toBe(false);
-    expect(capturedToken).toBeUndefined();
     expect("fromToken" in PermissionRegistryGeneration).toBe(false);
 
     const builder = new PermissionRegistryBuilder();
@@ -279,7 +283,6 @@ describe("permission registry", () => {
     expect(sealed.isOk()).toBe(true);
     // Seal still succeeds through the module-private factory; no public token
     // surface exists for an attacker to wrap or supply custom identity/id.
-    expect(capturedToken).toBeUndefined();
     if (sealed.isOk()) {
       const meta = readRegistryGenerationMeta(sealed.value)._unsafeUnwrap();
       expect(meta.id.length).toBeGreaterThan(0);
@@ -355,7 +358,7 @@ describe("permission registry", () => {
     const builder = new PermissionRegistryBuilder();
     builder.register(registration("tool"));
     const generation = builder.seal()._unsafeUnwrap();
-    const forged = Object.create(generation) as typeof generation;
+    const forged = Object.create(generation);
     const proxied = new Proxy(generation, {});
     const methodCopied = {
       lookup: generation.lookup.bind(generation),
@@ -368,11 +371,9 @@ describe("permission registry", () => {
       const checked = validatePermissionRegistryGeneration(value);
       expect(checked.isErr()).toBe(true);
       expect(checked._unsafeUnwrapErr().type).toBe("invalid_registry");
-      expect(lookupRegistryRegistration(value as never, "tool").isErr()).toBe(
-        true,
-      );
-      expect(readRegistryInventory(value as never).isErr()).toBe(true);
-      expect(readRegistryGenerationMeta(value as never).isErr()).toBe(true);
+      expect(lookupRegistryRegistration(value, "tool").isErr()).toBe(true);
+      expect(readRegistryInventory(value).isErr()).toBe(true);
+      expect(readRegistryGenerationMeta(value).isErr()).toBe(true);
     }
   });
 
@@ -392,12 +393,25 @@ describe("permission registry", () => {
       "get",
     ] as const;
     for (const trap of traps) {
-      const hostile = new Proxy(registration("x"), {
-        [trap]: () => {
+      const handler: ProxyHandler<object> = {};
+      if (trap === "getPrototypeOf")
+        handler.getPrototypeOf = () => {
           throw new Error(`TOP_SECRET_${trap}`);
-        },
-      } as ProxyHandler<object>);
-      const result = new PermissionRegistryBuilder().register(hostile as never);
+        };
+      if (trap === "ownKeys")
+        handler.ownKeys = () => {
+          throw new Error(`TOP_SECRET_${trap}`);
+        };
+      if (trap === "getOwnPropertyDescriptor")
+        handler.getOwnPropertyDescriptor = () => {
+          throw new Error(`TOP_SECRET_${trap}`);
+        };
+      if (trap === "get")
+        handler.get = () => {
+          throw new Error(`TOP_SECRET_${trap}`);
+        };
+      const hostile = new Proxy(registration("x"), handler);
+      const result = new PermissionRegistryBuilder().register(hostile);
       if (trap === "get") {
         expect(result.isOk()).toBe(true);
         continue;
@@ -415,13 +429,13 @@ describe("permission registry", () => {
         },
       },
     );
-    const result = invokePermissionResolver(() => ok([]), {}, context as never);
+    const result = invokePermissionResolver(() => ok([]), {}, context);
     expect(result._unsafeUnwrapErr().type).toBe("invalid_registration");
   });
 
   it("rejects fake and malicious resolver Result values without escaping", () => {
     const fake = invokePermissionResolver(
-      () => ({ value: [], isOk: () => true }) as never,
+      () => ({ value: [], isOk: () => true }),
       {},
       { toolIdentity: "x", owner: "o", revision: "1" },
     );
@@ -435,7 +449,7 @@ describe("permission registry", () => {
       },
     );
     const result = invokePermissionResolver(
-      () => hostile as never,
+      () => hostile,
       {},
       {
         toolIdentity: "x",
@@ -455,8 +469,8 @@ describe("permission registry", () => {
       call,
       context,
     }: {
-      call: import("../permissions/types.js").JsonValue;
-      context: import("../permissions/types.js").PermissionRegistrationContext;
+      call: JsonValue;
+      context: PermissionRegistrationContext;
     }) => {
       frozen = Object.isFrozen(call) && Object.isFrozen(context);
       return ok([]);

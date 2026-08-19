@@ -1,12 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import { err, ok, type ResultAsync } from "neverthrow";
-import { PermissionRegistryBuilder } from "../permissions/registry.js";
+import {
+  PermissionRegistryBuilder,
+  type PermissionRegistryGeneration,
+} from "../permissions/registry.js";
 import { InMemoryPermissionApprovalRepository } from "../permissions/repository.js";
 import {
   activatePermissionSessionForTesting,
   type PermissionSessionTestingOptions,
 } from "../permissions/session.js";
 import type {
+  JsonValue,
   PermissionApprovalChoice,
   PermissionCallInput,
   PermissionError,
@@ -38,37 +42,51 @@ const ids = () => {
   let n = 0;
   return () => `id-${++n}`;
 };
-const request = (
-  overrides: Partial<PermissionRequest> = {},
-): PermissionRequest =>
-  ({
-    unresolved: false,
-    capability: "read",
-    operation: "read",
-    target: { kind: "file", identifier: "a" },
-    display: { summary: "read a" },
-    ...overrides,
-  }) as PermissionRequest;
+type RequestOverrides = {
+  capability?: "read" | "write" | "execute" | "delegate" | "network";
+  target?: { kind: string; identifier: string };
+};
+const request = (overrides: RequestOverrides = {}): PermissionRequest => ({
+  unresolved: false,
+  capability: overrides.capability ?? "read",
+  operation: "read",
+  target: overrides.target ?? { kind: "file", identifier: "a" },
+  display: { summary: "read a" },
+});
 const unresolved = (): PermissionRequest => ({
   unresolved: true,
   display: { summary: "unknown action" },
 });
-const registry = (
-  resolver: PermissionResolver = () => ok([request()]),
+const defaultResolver: PermissionResolver = () => ok([request()]);
+function registry(): PermissionRegistryGeneration;
+function registry(
+  resolver: PermissionResolver | undefined,
+  tool?: string,
+  owner?: string,
+  revision?: string,
+): PermissionRegistryGeneration;
+function registry<T>(
+  resolver: T,
+  tool?: string,
+  owner?: string,
+  revision?: string,
+): PermissionRegistryGeneration;
+function registry<T>(
+  resolver?: T,
   tool = "tool",
   owner = "owner",
   revision = "1",
-) => {
+) {
   const b = new PermissionRegistryBuilder();
   b.register({
     toolIdentity: tool,
     owner,
     revision,
     summary: "tool",
-    resolver,
+    resolver: resolver === undefined ? defaultResolver : resolver,
   });
   return b.seal()._unsafeUnwrap();
-};
+}
 const input = (
   r: ReturnType<typeof registry>,
   overrides: Partial<PermissionCallInput> = {},
@@ -143,7 +161,7 @@ const answer = (challenge: string, id: string, c = choice(id)) => ({
   challenge,
   choices: [c],
 });
-const error = async (value: ResultAsync<unknown, PermissionError>) =>
+const error = async <T>(value: ResultAsync<T, PermissionError>) =>
   (await value)._unsafeUnwrapErr().type;
 
 const approval = (outcome: PermissionOutcome) => {
@@ -159,13 +177,9 @@ const authorized = (outcome: PermissionOutcome) => {
 
 describe("PermissionSession red phase", () => {
   it("validates activation inputs and binds policy immutably", async () => {
-    expect(
-      await error(
-        activatePermissionSessionForTesting(
-          {} as PermissionSessionTestingOptions,
-        ),
-      ),
-    ).toBe("invalid_output");
+    expect(await error(activatePermissionSessionForTesting({}))).toBe(
+      "invalid_output",
+    );
     const p = policy();
     const a = await activate({ policies: { agent: p } });
     p.read = "deny";
@@ -198,14 +212,24 @@ describe("PermissionSession red phase", () => {
         "resolver_threw",
       ],
       [() => ok([]), "empty_output"],
-      [() => ok([request({ unresolved: true })]), "invalid_output"],
+      [
+        () =>
+          ok([
+            {
+              unresolved: true,
+              display: { summary: "unknown action" },
+              capability: "read",
+            },
+          ]),
+        "invalid_output",
+      ],
     ] as const) {
       const r = registry(resolver);
       const a = await activate({ registry: r });
       expect(await error(a.session.authorizeCall(input(r)))).toBe(type);
     }
     const calls: Array<
-      [unknown, { toolIdentity: string; owner: string; revision: string }]
+      [JsonValue, { toolIdentity: string; owner: string; revision: string }]
     > = [];
     const r = registry(({ call, context }) => {
       calls.push([call, context]);
@@ -675,7 +699,7 @@ describe("PermissionSession red phase", () => {
         sessionGrant.session.replaceRegistry({
           registry: second,
           idle: true,
-        } as never),
+        }),
       ),
     ).toBe("invalid_output");
     expect(await error(sessionGrant.session.authorizeCall(input(first)))).toBe(
@@ -813,7 +837,8 @@ describe("PermissionSession red phase", () => {
       registry: r,
       policies: { agent: policy("allow") },
     });
-    const live: { value: number; nested: { flag: string } } = {
+    type LiveCall = { value: number; nested: { flag: string } };
+    const live: LiveCall = {
       value: 1,
       nested: { flag: "ok" },
     };
@@ -832,10 +857,12 @@ describe("PermissionSession red phase", () => {
     });
     expect(consumed.isOk()).toBe(true);
     if (!consumed.isOk()) throw new Error("expected snapshot");
-    const snapshot = consumed.value as {
-      value: number;
-      nested: { flag: string };
+    type ExecutionSnapshot = {
+      readonly value: number;
+      readonly nested: { readonly flag: string };
     };
+    // SAFETY: consumePermit returns the deep-frozen engine-owned snapshot for this fixture.
+    const snapshot = consumed.value as ExecutionSnapshot;
     live.value = 99;
     live.nested.flag = "mutated";
     expect(snapshot).toEqual({ value: 1, nested: { flag: "ok" } });

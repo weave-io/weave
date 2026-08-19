@@ -10,16 +10,25 @@ import {
   type PermissionSessionTestingOptions,
 } from "../permissions/session.js";
 import type {
+  GrantScope,
+  JsonValue,
   PermissionApprovalChoice,
   PermissionApprovalRepository,
   PermissionCallInput,
+  PermissionCapability,
+  PermissionDisplay,
   PermissionRequest,
+  PermissionTarget,
 } from "../permissions/types.js";
 import type { EffectiveToolPolicy } from "../tool-policy.js";
 
 type Clock = { now: number; get: () => number; advance: (ms: number) => void };
 const clock = (): Clock => {
-  const value = { now: 1_000 } as Clock;
+  const value: Clock = {
+    now: 1_000,
+    get: () => 0,
+    advance: () => {},
+  };
   value.get = () => value.now;
   value.advance = (ms) => {
     value.now += ms;
@@ -39,15 +48,36 @@ const policy = (
   delegate: value,
   network: value,
 });
-const request = (patch: Partial<PermissionRequest> = {}): PermissionRequest =>
-  ({
+type RequestPatch = {
+  capability?: PermissionCapability;
+  operation?: string;
+  target?: PermissionTarget;
+  display?: PermissionDisplay;
+  constraints?: JsonValue;
+};
+type MutableGrantableRequest = {
+  unresolved: false;
+  capability: PermissionCapability;
+  operation: string;
+  target: PermissionTarget;
+  display: PermissionDisplay;
+  constraints?: JsonValue;
+};
+const request = (patch: RequestPatch = {}): PermissionRequest => {
+  const value: MutableGrantableRequest = {
     unresolved: false,
     capability: "read",
     operation: "read",
     target: { kind: "file", identifier: "a" },
     display: { summary: "read a" },
-    ...patch,
-  }) as PermissionRequest;
+  };
+  if (patch.capability !== undefined) value.capability = patch.capability;
+  if (patch.operation !== undefined) value.operation = patch.operation;
+  if (patch.target !== undefined) value.target = patch.target;
+  if (patch.display !== undefined) value.display = patch.display;
+  if (patch.constraints !== undefined) value.constraints = patch.constraints;
+  return value;
+};
 const makeRegistry = (
   resolver = () => ok([request()]),
   tool = "tool",
@@ -97,18 +127,28 @@ const call = (
   approvalUiAvailable: true,
   ...patch,
 });
-const error = async (result: ResultAsync<unknown, { type: string }>) =>
-  (await result)._unsafeUnwrapErr().type;
+const error = async <T, E extends { readonly type: string }>(
+  result: ResultAsync<T, E>,
+) => (await result)._unsafeUnwrapErr().type;
+type MutableApprovalChoice = {
+  requestId: string;
+  decision: "allow";
+  scope?: GrantScope;
+  expiresAt?: number;
+};
 const allow = (
   requestId: string,
   scope: PermissionApprovalChoice["scope"] = "once",
   expiresAt?: number,
-): PermissionApprovalChoice => ({
-  requestId,
-  decision: "allow",
-  scope,
-  ...(expiresAt === undefined ? {} : { expiresAt }),
-});
+): PermissionApprovalChoice => {
+  const choice: MutableApprovalChoice = {
+    requestId,
+    decision: "allow",
+  };
+  if (scope !== undefined) choice.scope = scope;
+  if (expiresAt !== undefined) choice.expiresAt = expiresAt;
+  return choice;
+};
 const response = (
   challenge: string,
   requestIds: readonly string[],
@@ -140,7 +180,11 @@ describe("permission contract — permission session security", () => {
   it("rejects field-specific malformed activation values and freezes policy", async () => {
     const c = clock();
     const options = base(c);
-    const cases: readonly [keyof PermissionSessionTestingOptions, unknown][] = [
+    type MalformedActivationValue = string | number | undefined;
+    const cases: readonly [
+      keyof PermissionSessionTestingOptions,
+      MalformedActivationValue,
+    ][] = [
       ["project", "x".repeat(257)],
       ["session", "\ud800"],
       ["requestSchemaVersion", "x".repeat(65)],
@@ -160,7 +204,7 @@ describe("permission contract — permission session security", () => {
           activatePermissionSessionForTesting({
             ...options,
             [field]: value,
-          } as PermissionSessionTestingOptions),
+          }),
         ),
       ).toBe("invalid_output");
     const source = policy();
@@ -191,7 +235,11 @@ describe("permission contract — permission session security", () => {
       },
       {
         challenge: first.challenge,
-        choices: idsFor.map((id) => allow(id, "allow-missing" as never)),
+        choices: idsFor.map((id) => ({
+          requestId: id,
+          decision: "allow",
+          scope: "allow-missing",
+        })),
       },
       {
         challenge: first.challenge,
@@ -211,7 +259,7 @@ describe("permission contract — permission session security", () => {
         await error(
           session.answerChallenge(
             challengeInput(registry, first.challenge),
-            bad as never,
+            bad,
           ),
         ),
       ).toMatch(/invalid|scope/);
@@ -287,7 +335,7 @@ describe("permission contract — permission session security", () => {
       revoke: inner.revoke.bind(inner),
       match: () => {
         matches++;
-        return okAsync(undefined);
+        return okAsync(void 0);
       },
     };
     const session = await activate(base(c, registry, repository));
@@ -368,22 +416,21 @@ describe("permission contract — permission session security", () => {
           }),
         ),
       ).toBe("invalid_output");
-    const getter = Object.create(Object.prototype) as Record<string, unknown>;
+    const getter = policy();
     let invoked = false;
     Object.defineProperty(getter, "read", {
+      configurable: true,
       enumerable: true,
       get: () => {
         invoked = true;
         return "ask";
       },
     });
-    for (const key of ["write", "execute", "delegate", "network"])
-      getter[key] = "ask";
     expect(
       await error(
         activatePermissionSessionForTesting({
           ...valid,
-          policies: { agent: getter as never },
+          policies: { agent: getter },
         }),
       ),
     ).toBe("invalid_output");
@@ -402,7 +449,7 @@ describe("permission contract — permission session security", () => {
         await error(
           activatePermissionSessionForTesting({
             ...valid,
-            policies: policies as never,
+            policies,
           }),
         ),
       ).toBe("invalid_output");
@@ -447,7 +494,7 @@ describe("permission contract — permission session security", () => {
       "next-request",
       "next-challenge",
     ];
-    const idSource = () => sequence.shift() as string;
+    const idSource = () => sequence.shift() ?? "";
     const registry = makeRegistry(() =>
       ok([request(), request({ operation: "write", capability: "write" })]),
     );
@@ -556,7 +603,7 @@ describe("permission contract — permission session security", () => {
     };
     const ids = (() => {
       const sequence = ["request", "challenge", ""];
-      return () => sequence.shift() as string;
+      return () => sequence.shift() ?? "";
     })();
     const registry = makeRegistry();
     const session = await activate({ ...base(c, registry, repository), ids });
@@ -661,7 +708,11 @@ describe("permission contract — permission session security", () => {
     ).toBe("invalid_output");
 
     const hostileChoice = Object.defineProperty(
-      { requestId, decision: "allow" as const, scope: "once" as const },
+      {
+        requestId,
+        decision: "allow",
+        scope: "once",
+      } satisfies PermissionApprovalChoice,
       "scope",
       { enumerable: true, get: () => "session" },
     );
@@ -886,16 +937,18 @@ describe("permission contract — permission session security", () => {
       Object.defineProperty(denySession, "consumePermit", {
         value: () => {
           forgedConsume += 1;
-          return okAsync(undefined);
+          return okAsync(void 0);
         },
         configurable: true,
       });
     }).toThrow();
     expect(() => {
-      (denySession as { authorizeCall: unknown }).authorizeCall = () => {
-        forgedAuthorize += 1;
-        return okAsync({ kind: "authorized", permit: forgedPermit });
-      };
+      Object.assign(denySession, {
+        authorizeCall: () => {
+          forgedAuthorize += 1;
+          return okAsync({ kind: "authorized", permit: forgedPermit });
+        },
+      });
     }).toThrow();
 
     // Prototype method assignment / defineProperty must not stick.
@@ -909,7 +962,7 @@ describe("permission contract — permission session security", () => {
       Object.defineProperty(PermissionSession.prototype, "consumePermit", {
         value: () => {
           forgedConsume += 1;
-          return okAsync(undefined);
+          return okAsync(void 0);
         },
         configurable: true,
       });
@@ -919,19 +972,19 @@ describe("permission contract — permission session security", () => {
         okAsync({ kind: "authorized", permit: forgedPermit });
     }).toThrow();
     expect(() => {
-      PermissionSession.prototype.cancelChallenge = () => okAsync(undefined);
+      PermissionSession.prototype.cancelChallenge = () => okAsync(void 0);
     }).toThrow();
     expect(() => {
-      PermissionSession.prototype.replaceRegistry = () => okAsync(undefined);
+      PermissionSession.prototype.replaceRegistry = () => okAsync(void 0);
     }).toThrow();
     expect(() => {
-      PermissionSession.prototype.close = () => okAsync(undefined);
+      PermissionSession.prototype.close = () => okAsync(void 0);
     }).toThrow();
     expect(() => {
       PermissionSession.prototype.listDurableGrants = () => okAsync([]);
     }).toThrow();
     expect(() => {
-      PermissionSession.prototype.revokeDurableGrant = () => okAsync(undefined);
+      PermissionSession.prototype.revokeDurableGrant = () => okAsync(void 0);
     }).toThrow();
     expect(() => {
       PermissionSession.prototype.listAudit = () => okAsync([]);
@@ -940,11 +993,13 @@ describe("permission contract — permission session security", () => {
     // Constructor static mutation must not install attacker surfaces.
     let staticInstalled = false;
     try {
-      (PermissionSession as unknown as { fromToken: unknown }).fromToken =
-        () => {
+      Object.defineProperty(PermissionSession, "fromToken", {
+        value: () => {
           staticInstalled = true;
           throw new Error("should not install");
-        };
+        },
+        configurable: true,
+      });
     } catch {
       staticInstalled = false;
     }
@@ -1013,17 +1068,18 @@ describe("permission contract — permission session security", () => {
     const changingResolver = () => {
       let lengthReads = 0;
       const changing = new Proxy([denyRequest], {
-        get(target, prop, receiver) {
+        get(target, prop) {
           if (prop === "length") {
             lengthReads += 1;
             // Old multi-read path: first length>=1 passes, later length 0
             // yields empty unique set and issues a permit under all-deny.
             return lengthReads <= 1 ? 1 : 0;
           }
-          return Reflect.get(target, prop, receiver);
+          if (prop === "0") return target[0];
+          return;
         },
       });
-      return ok(changing as unknown as PermissionRequest[]);
+      return ok(changing);
     };
     const registry = makeRegistry(changingResolver);
     const session = await activate({
@@ -1063,10 +1119,10 @@ describe("permission contract — permission session security", () => {
               configurable: true,
             };
           }
-          return undefined;
+          return;
         },
       });
-      return ok(changing as unknown as PermissionRequest[]);
+      return ok(changing);
     };
     const registry = makeRegistry(inconsistentResolver);
     const session = await activate({
@@ -1109,10 +1165,10 @@ describe("permission contract — permission session security", () => {
               configurable: true,
             };
           }
-          return undefined;
+          return;
         },
       });
-      return ok(changing as unknown as PermissionRequest[]);
+      return ok(changing);
     };
     const registry = makeRegistry(resolver);
     const session = await activate({
@@ -1144,15 +1200,16 @@ describe("permission contract — permission session security", () => {
     const changingResolver = () => {
       let lengthReads = 0;
       const changing = new Proxy([denyRequest], {
-        get(target, prop, receiver) {
+        get(target, prop) {
           if (prop === "length") {
             lengthReads += 1;
             return lengthReads <= 1 ? 1 : 0;
           }
-          return Reflect.get(target, prop, receiver);
+          if (prop === "0") return target[0];
+          return;
         },
       });
-      return ok(changing as unknown as PermissionRequest[]);
+      return ok(changing);
     };
     const registry = makeRegistry(changingResolver);
     // All-deny: empty-request TOCTOU would authorize + consume with empty bindings.

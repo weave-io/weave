@@ -78,6 +78,15 @@ const activate = async (
   });
   return { session: session._unsafeUnwrap(), registry };
 };
+type RegisteredWithLegacyFields = RegisteredBeforeToolInput & {
+  effectiveToolPolicy?: EffectiveToolPolicy;
+  toolCapability?: string;
+};
+type MissingRegisteredInput = Pick<
+  RegisteredBeforeToolInput,
+  "workflowInstanceId" | "leaseId" | "agentName" | "toolName"
+>;
+
 const registered = (
   session: PermissionSession,
   registryGeneration: string,
@@ -100,10 +109,9 @@ const registered = (
 const result = async <T>(
   value: ResultAsync<T, LifecycleError | PermissionError>,
 ): Promise<T> => (await value)._unsafeUnwrap();
-const errorType = async (
-  value: ResultAsync<unknown, LifecycleError | PermissionError>,
-): Promise<LifecycleError["type"] | PermissionError["type"]> =>
-  (await value)._unsafeUnwrapErr().type;
+const errorType = async <T, E extends LifecycleError | PermissionError>(
+  value: ResultAsync<T, E>,
+): Promise<E["type"]> => (await value)._unsafeUnwrapErr().type;
 
 describe("beforeTool registered permission overload", () => {
   it("keeps legacy policy decisions in the non-authoritative preview", async () => {
@@ -190,10 +198,10 @@ describe("beforeTool registered permission overload", () => {
 
   it("rejects extra legacy policy fields on registered input", async () => {
     const a = await activate("allow");
-    const input = registered(
+    const input: RegisteredWithLegacyFields = registered(
       a.session,
       a.registry.id,
-    ) as RegisteredBeforeToolInput & Record<string, unknown>;
+    );
     input.effectiveToolPolicy = policy("allow");
     input.toolCapability = "read";
     expect(await errorType(beforeTool(input))).toBe("validation");
@@ -207,7 +215,7 @@ describe("beforeTool registered permission overload", () => {
       toolCapability: "read",
       toolName: "tool",
       effectiveToolPolicy: policy("allow"),
-    } as unknown as RegisteredBeforeToolInput;
+    };
     expect(await errorType(beforeTool(legacy))).toBe("validation");
   });
 
@@ -234,7 +242,7 @@ describe("beforeTool registered permission overload", () => {
   it("validates lifecycle context before calling the session", async () => {
     const a = await activate();
     const calls: string[] = [];
-    const session = Object.create(a.session) as PermissionSession;
+    const session = Object.create(a.session);
     const call: PermissionCallInput = {
       project: "project",
       session: "controller",
@@ -250,16 +258,20 @@ describe("beforeTool registered permission overload", () => {
         return a.session.authorizeCall(call);
       },
     });
-    const omittedPermission = { ...registered(session, a.registry.id) };
-    delete (omittedPermission as { permission?: unknown }).permission;
-    const missing: RegisteredBeforeToolInput[] = [
+    const omittedPermission: MissingRegisteredInput = {
+      workflowInstanceId: createWorkflowInstanceId("workflow"),
+      leaseId: createExecutionLeaseId("lease"),
+      agentName: "agent",
+      toolName: "tool",
+    };
+    const missing = [
       registered(session, a.registry.id, {
         workflowInstanceId: createWorkflowInstanceId(""),
       }),
       registered(session, a.registry.id, {
         leaseId: createExecutionLeaseId(""),
       }),
-      omittedPermission as RegisteredBeforeToolInput,
+      omittedPermission,
       registered(session, a.registry.id, { permission: undefined }),
     ];
     for (const input of missing)
@@ -278,7 +290,7 @@ describe("beforeTool registered permission overload", () => {
       call: {},
       approvalUiAvailable: true,
     };
-    const forged = Object.create(a.session) as PermissionSession;
+    const forged = Object.create(a.session);
     const proxied = new Proxy(a.session, {});
     const copied = a.session.authorizeCall;
     for (const value of [forged, proxied]) {
@@ -286,9 +298,14 @@ describe("beforeTool registered permission overload", () => {
       expect(result.isErr()).toBe(true);
       expect(result._unsafeUnwrapErr().type).toBe("invalid_output");
     }
-    expect(await errorType(beforeTool(registered(forged, a.registry.id)))).toBe(
-      "validation",
-    );
+    const forgedInput = {
+      ...registered(a.session, a.registry.id),
+      permission: {
+        ...registered(a.session, a.registry.id).permission,
+        session: forged,
+      },
+    };
+    expect(await errorType(beforeTool(forgedInput))).toBe("validation");
   });
 
   it("clones the raw call before issuing a permit", async () => {
@@ -329,17 +346,17 @@ describe("beforeTool registered permission overload", () => {
       });
     }).toThrow();
     expect(() => {
-      (denied.session as { authorizeCall: unknown }).authorizeCall = () => {
+      denied.session.authorizeCall = (input) => {
         hijacked += 1;
-        return ok({ kind: "authorized", permit: "forged" });
+        return denied.session.authorizeCall(input);
       };
     }).toThrow();
 
     // Prototype freeze blocks class-wide hijack attempts.
     expect(() => {
-      PermissionSession.prototype.authorizeCall = () => {
+      PermissionSession.prototype.authorizeCall = (input) => {
         hijacked += 1;
-        return ok({ kind: "authorized", permit: "forged" }) as never;
+        return denied.session.authorizeCall(input);
       };
     }).toThrow();
 

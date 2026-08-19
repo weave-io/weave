@@ -10,13 +10,13 @@ import { ok } from "neverthrow";
 import {
   createPermissionService,
   type PermissionCoverageContext,
-  type PermissionCoverageProof,
   PermissionRegistryBuilder,
   type PermissionRegistryGeneration,
   type PermissionRequest,
   type PermissionSession,
   verifyPermissionCoverage,
 } from "../index.js";
+import type { JsonValue } from "../permissions/types.js";
 import { createInMemoryRuntimeStore } from "../runtime/memory-store.js";
 import type { EffectiveToolPolicy } from "../tool-policy.js";
 
@@ -28,17 +28,13 @@ const allowPolicy = (): EffectiveToolPolicy => ({
   network: "allow",
 });
 
-const grantable = (
-  overrides: Partial<PermissionRequest> = {},
-): PermissionRequest =>
-  ({
-    unresolved: false,
-    capability: "read",
-    operation: "read",
-    target: { kind: "file", identifier: "a.txt" },
-    display: { summary: "read a.txt" },
-    ...overrides,
-  }) as PermissionRequest;
+const grantable = (): PermissionRequest => ({
+  unresolved: false,
+  capability: "read",
+  operation: "read",
+  target: { kind: "file", identifier: "a.txt" },
+  display: { summary: "read a.txt" },
+});
 
 const register = (
   builder: PermissionRegistryBuilder,
@@ -88,7 +84,7 @@ const context = (
  * managed calls through PermissionService + permit consumption. No harness.
  */
 class FakePermissionAdapter {
-  readonly executions: Array<{ toolIdentity: string; call: unknown }> = [];
+  readonly executions: Array<{ toolIdentity: string; call: JsonValue }> = [];
   readonly intercepted = new Set<string>();
   readonly bypassable = new Set<string>();
   unmanagedThirdParty: string[] = [];
@@ -160,7 +156,7 @@ class FakePermissionAdapter {
 
   async invoke(
     toolIdentity: string,
-    call: unknown,
+    call: JsonValue,
   ): Promise<"executed" | "unmanaged" | "blocked"> {
     if (!this.#session || !this.#registry) throw new Error("not activated");
     if (!this.intercepted.has(toolIdentity)) {
@@ -197,7 +193,7 @@ class FakePermissionAdapter {
 
   async replayPermit(
     toolIdentity: string,
-    call: unknown,
+    call: JsonValue,
     permit: string,
   ): Promise<boolean> {
     if (!this.#session || !this.#registry) throw new Error("not activated");
@@ -244,7 +240,7 @@ describe("verifyPermissionCoverage", () => {
       }),
     );
     expect(proof.isOk()).toBe(true);
-    const value = proof._unsafeUnwrap() as PermissionCoverageProof;
+    const value = proof._unsafeUnwrap();
     expect(value.generationId).toBe(registry.id);
     expect(value.metadataIdentity).toBe(registry.identity);
     expect(value.requiredCount).toBe(2);
@@ -407,7 +403,7 @@ describe("verifyPermissionCoverage", () => {
         interceptedToolIdentities: ["native.read"],
       }),
       extra: true,
-    } as unknown as PermissionCoverageContext;
+    };
     expect(verifyPermissionCoverage(extras)._unsafeUnwrapErr().type).toBe(
       "invalid_coverage",
     );
@@ -415,7 +411,7 @@ describe("verifyPermissionCoverage", () => {
     expect(
       verifyPermissionCoverage({
         registry: { id: "forged", identity: "x", inventory: () => [] },
-      } as unknown as PermissionCoverageContext)._unsafeUnwrapErr().type,
+      })._unsafeUnwrapErr().type,
     ).toBe("invalid_coverage");
   });
 
@@ -444,19 +440,19 @@ describe("verifyPermissionCoverage", () => {
     const registry = seal([{ identity: "native.read" }]);
     let lengthReads = 0;
     const vanishingNative = new Proxy(["native.read"], {
-      get(target, prop, receiver) {
+      get(_target, prop, _receiver) {
         if (prop === "length") {
           lengthReads += 1;
           // Classic multi-read TOCTOU would observe length 1 then 0 and emit
           // requiredCount 0. Descriptor snapshot keeps the native identity.
           return lengthReads <= 1 ? 1 : 0;
         }
-        return Reflect.get(target, prop, receiver);
+        return void 0;
       },
     });
     const result = verifyPermissionCoverage(
       context(registry, {
-        nativeToolIdentities: vanishingNative as unknown as string[],
+        nativeToolIdentities: vanishingNative,
         weaveOwnedToolIdentities: [],
         interceptedToolIdentities: ["native.read"],
         diagnostics: { includeToolIdentities: true },
@@ -472,7 +468,8 @@ describe("verifyPermissionCoverage", () => {
     const registry = seal([{ identity: "native.read" }]);
     // ownKeys claims index 0 while length says empty — disappearing identity
     // must not collapse to zero-count success.
-    const vanishing = new Proxy([] as string[], {
+    const sparseTarget: string[] = [];
+    const vanishing = new Proxy(sparseTarget, {
       ownKeys() {
         return ["0", "length"];
       },
@@ -493,12 +490,12 @@ describe("verifyPermissionCoverage", () => {
             configurable: true,
           };
         }
-        return undefined;
+        return;
       },
     });
     const result = verifyPermissionCoverage(
       context(registry, {
-        nativeToolIdentities: vanishing as unknown as string[],
+        nativeToolIdentities: vanishing,
         weaveOwnedToolIdentities: [],
         interceptedToolIdentities: ["native.read"],
       }),
@@ -518,14 +515,23 @@ describe("verifyPermissionCoverage", () => {
       "getOwnPropertyDescriptor",
     ] as const;
     for (const trap of traps) {
-      const hostile = new Proxy(["native.read"], {
-        [trap]: () => {
+      const handler: ProxyHandler<string[]> = {};
+      if (trap === "getPrototypeOf")
+        handler.getPrototypeOf = () => {
           throw new Error(`TOP_SECRET_COVERAGE_${trap}`);
-        },
-      } as ProxyHandler<object>);
+        };
+      if (trap === "ownKeys")
+        handler.ownKeys = () => {
+          throw new Error(`TOP_SECRET_COVERAGE_${trap}`);
+        };
+      if (trap === "getOwnPropertyDescriptor")
+        handler.getOwnPropertyDescriptor = () => {
+          throw new Error(`TOP_SECRET_COVERAGE_${trap}`);
+        };
+      const hostile = new Proxy(["native.read"], handler);
       const result = verifyPermissionCoverage(
         context(registry, {
-          nativeToolIdentities: hostile as unknown as string[],
+          nativeToolIdentities: hostile,
           weaveOwnedToolIdentities: [],
           interceptedToolIdentities: ["native.read"],
         }),
@@ -746,7 +752,8 @@ describe("fake adapter permission coverage enforcement", () => {
     adapter.sealRegistry();
     await adapter.activate();
 
-    const live: { path: string; nested: { flag: string } } = {
+    type LiveCall = { path: string; nested: { flag: string } };
+    const live: LiveCall = {
       path: "allowed",
       nested: { flag: "safe" },
     };
@@ -755,15 +762,19 @@ describe("fake adapter permission coverage enforcement", () => {
     live.path = "mutated-after-consume";
     live.nested.flag = "mutated-nested";
     expect(adapter.executions).toHaveLength(1);
-    const executed = adapter.executions[0].call as {
-      path: string;
-      nested: { flag: string };
+    type ExecutedCall = {
+      readonly path: string;
+      readonly nested: { readonly flag: string };
     };
+    const executedValue = adapter.executions[0]?.call;
+    if (executedValue === undefined) throw new Error("missing execution");
+    // SAFETY: the adapter records the frozen engine snapshot returned by consumePermit.
+    const executed = executedValue as ExecutedCall;
     expect(executed).toEqual({ path: "allowed", nested: { flag: "safe" } });
     expect(Object.isFrozen(executed)).toBe(true);
     expect(Object.isFrozen(executed.nested)).toBe(true);
     expect(() => {
-      (executed as { path: string }).path = "rewrite";
+      Object.defineProperty(executed, "path", { value: "rewrite" });
     }).toThrow();
 
     // Descriptor/get proxy disagreement: authorize+consume see data descriptor.
@@ -771,12 +782,12 @@ describe("fake adapter permission coverage enforcement", () => {
     const proxyCall = new Proxy(
       { path: "proxy-allowed" },
       {
-        get(target, prop, receiver) {
+        get(_target, prop, _receiver) {
           if (prop === "path" && afterConsume) return "changed-at-execution";
-          return Reflect.get(target, prop, receiver);
+          return void 0;
         },
         ownKeys: () => ["path"],
-        getOwnPropertyDescriptor(target, prop) {
+        getOwnPropertyDescriptor(_target, prop) {
           if (prop === "path") {
             return {
               configurable: true,
@@ -785,7 +796,7 @@ describe("fake adapter permission coverage enforcement", () => {
               value: "proxy-allowed",
             };
           }
-          return Reflect.getOwnPropertyDescriptor(target, prop);
+          return Object.getOwnPropertyDescriptor(_target, prop);
         },
         getPrototypeOf: () => Object.prototype,
       },
@@ -795,6 +806,6 @@ describe("fake adapter permission coverage enforcement", () => {
     expect(adapter.executions[0].call).toEqual({ path: "proxy-allowed" });
     afterConsume = true;
     // Live get now disagrees — adapter already executed the snapshot.
-    expect((proxyCall as { path: string }).path).toBe("changed-at-execution");
+    expect(proxyCall.path).toBe("changed-at-execution");
   });
 });
