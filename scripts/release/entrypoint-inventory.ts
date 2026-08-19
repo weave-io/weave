@@ -11,7 +11,8 @@
  * Task 14 registers the one pre-existing new-pipeline root,
  * `publish-main.ts`; Task 15 adds the read-only `doctor.ts` root; Task 22 adds
  * the CI API report controller; Task 23 adds the stable preparation
- * controller. Later tasks add, rename, or remove entries in the same change.
+ * controller; Task 24 adds the automatic regeneration controller. Later tasks
+ * add, rename, or remove entries in the same change.
  * Test-only roots are never inventoried as production.
  */
 
@@ -93,6 +94,12 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "legacy",
     rationale:
       "Task 23 stable release-PR preparation controller. It validates the maintainer request and delegates marker ownership/finalization to Task 9; it never publishes.",
+  },
+  {
+    path: "scripts/release/regenerate-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 24 automatic main-advance regeneration controller. It delegates only compare-and-swap updates to Task 9 and never creates a pull request.",
   },
 ] as const satisfies readonly ProductionEntrypoint[];
 

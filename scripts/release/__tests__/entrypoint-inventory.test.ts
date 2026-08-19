@@ -21,7 +21,7 @@ import {
 const ROOT = resolve(import.meta.dir, "../../..");
 
 describe("entrypoint inventory", () => {
-  it("registers the Task 14, 15, 22, and 23 production roots", () => {
+  it("registers the Task 14, 15, 22, 23, and 24 production roots", () => {
     expect(PRODUCTION_ENTRYPOINTS).toEqual([
       {
         path: "scripts/release/publish-main.ts",
@@ -47,12 +47,19 @@ describe("entrypoint inventory", () => {
         rationale:
           "Task 23 stable release-PR preparation controller. It validates the maintainer request and delegates marker ownership/finalization to Task 9; it never publishes.",
       },
+      {
+        path: "scripts/release/regenerate-main.ts",
+        role: "legacy",
+        rationale:
+          "Task 24 automatic main-advance regeneration controller. It delegates only compare-and-swap updates to Task 9 and never creates a pull request.",
+      },
     ]);
     expect(validateEntrypointInventory().isOk()).toBe(true);
     expect(inventoriedPaths()).toContain("scripts/release/publish-main.ts");
     expect(inventoriedPaths()).toContain("scripts/release/doctor.ts");
     expect(inventoriedPaths()).toContain("scripts/release/api-reports.ts");
     expect(inventoriedPaths()).toContain("scripts/release/prepare-main.ts");
+    expect(inventoriedPaths()).toContain("scripts/release/regenerate-main.ts");
     expect(PRODUCTION_ROOT_CLASSES).toHaveLength(14);
   });
 

@@ -92,6 +92,43 @@ ownership or PR absence, it returns `CreationCleanupPending`; run the doctor and
 resume command in the failure summary. A visible PR always keeps its marker and
 its URL is reported. A race loser polls and returns `ReleasePrExists { url }`.
 
+## Automatic regeneration
+
+A push to `main` is the only automatic regeneration entry point. The guarded
+`workflow_dispatch` path is a maintainer retry, not a release request. It never
+creates a PR. The workflow has no shared release-PR concurrency group; Task 9
+marker ownership and compare-and-swap leases serialize updates without dropping
+main pushes.
+
+Detection is read-only. No marker and no open stable PR is a neutral green
+no-op. A marker with no visible PR is treated as creation-in-progress and gets a
+bounded wait. The workflow never creates a PR in either case. A self release
+merge or Changeset-cleanup merge is skipped only when the merge changed no
+pending Changeset. If it changed one, regeneration continues.
+
+The jobs are separate: plan, deterministic and conditional-AI docs re-audit,
+changelog AI, and update-pr. The docs and changelog jobs use the release-AI
+credential. The update-pr job uses the release App credential and is the only
+job that calls Task 9 `regenerate`. Every artifact is bounded and SHA-bound to
+the latest green `main` head. A docs failure leaves the PR and marker
+byte-identical, publishes a typed `docs-audit` blocking check, and leaves the
+`release-policy` freshness check blocking merge until `main` is fixed and the
+workflow succeeds.
+
+A passing run preserves human prose for unchanged `sourceChangesets` identity
+sets. It asks the model only for new or changed identity sets. When a human edit
+and new generated prose target the same identity, the run returns
+`EditConflict` with both versions and does not update the PR. Successful updates
+record explicit automatic or maintainer-retry attribution and `regeneratedFrom`
+provenance.
+
+Task 9 performs a pre-CAS `main` recheck, force-with-lease update, bounded lease
+retries, monotonic freshness validation, and `RegenerationSuperseded`
+convergence. Ruleset stale-approval dismissal plus the `release-policy`
+freshness check invalidates approvals from an older base. For recovery, fix a
+docs or prose conflict on `main` or in the PR, then wait for the next push or run
+the guarded retry. Do not delete the marker or create a replacement PR.
+
 ## Manual promotion and rollback
 
 The standalone release control records the prior `latest` values and emits the
