@@ -380,7 +380,7 @@ jobs:
       - name: Upload eval bundle artifacts
         # actions/upload-artifact v4.6.2
         # SHA pinned to the upstream commit for this tag — immune to tag mutation.
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         # always() ensures artifacts are uploaded even when the eval step exits
         # non-zero (e.g. one or more cases failed or publication failed).
         # Partial results are still useful for diagnosis and historical comparison.
