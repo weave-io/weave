@@ -278,7 +278,7 @@ describe("live transcript rows match the prototype's renderPiNative design", () 
     expect(has("retry · attempt 2")).toBe(true);
 
     // -- streaming assistant reply ----------------------------------------
-    expect(has("● shuttle · streaming reply")).toBe(true);
+    expect(has("shuttle · streaming reply")).toBe(true);
     expect(has("  the reporter drops rows")).toBe(true);
 
     // -- and NONE of the diagnostic strings the old renderer emitted -------
@@ -592,7 +592,7 @@ describe("every streamed event kind matches its prototype fixture", () => {
       { type: "message_update", delta: { text: "half an answer" } },
     ]);
     expect(streaming).toEqual([
-      "● shuttle · streaming reply",
+      "shuttle · streaming reply",
       "  half an answer",
       "",
     ]);

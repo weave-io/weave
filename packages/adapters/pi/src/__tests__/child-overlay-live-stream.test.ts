@@ -44,6 +44,8 @@ import {
   type MemoryOverlaySourceChild,
   mergeChildOverlayReplaySteps,
 } from "../child-overlay.js";
+import { childOverlayTranscriptInput } from "../child-overlay-facts.js";
+import { renderOverlayPiNative } from "../child-overlay-pi-native.js";
 import { transcriptFromOverlayEntries } from "../child-overlay-replay.js";
 import {
   CHILD_OVERLAY_BURST_REPAINT_CEILING,
@@ -63,6 +65,7 @@ import type { TimerHandle, TimerPort } from "../child-timer.js";
 import type { PiChildTranscriptState } from "../child-transcript.js";
 import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 import type { PiUiThemePort } from "../types.js";
+import { plainPaint } from "../ui-paint.js";
 
 initTheme("default");
 
@@ -466,6 +469,17 @@ function reasoningUpdate(
   };
 }
 
+function nativeRows(
+  controller: ReturnType<typeof createChildOverlayController>,
+): string[] {
+  const view = controller.view()._unsafeUnwrap();
+  return renderOverlayPiNative(
+    plainPaint(),
+    childOverlayTranscriptInput(view),
+    WIDTH,
+  ).plain.map((row) => row.replace(/\s+$/u, ""));
+}
+
 describe("the live stream drops what must not reach the pane", () => {
   it("applies an event for the focused live child", async () => {
     const h = await harness();
@@ -475,6 +489,91 @@ describe("the live stream drops what must not reach the pane", () => {
     });
     expect(outcome.kind).toBe("applied");
     expect(h.controller.view()._unsafeUnwrap().entries).toHaveLength(1);
+  });
+
+  it("shows the first authoritative text delta through the full live path", async () => {
+    const h = await harness();
+    const ingest = (event: unknown): void => {
+      expect(h.stream.ingest(CHILD_ID, event)).toEqual({ kind: "applied" });
+    };
+
+    // Pre-fix red evidence from Pi 0.84.2: parser, fanout, overlay mapping,
+    // reduction and replay all returned content, but native-render printed
+    // `● shuttle · streaming reply` with only `  ▍` after message_start. The
+    // first content-free contract failure was therefore the renderer seam,
+    // not message correlation or a missing text delta.
+    ingest({
+      type: "message_start",
+      message: { role: "assistant", model: "test-model", content: [] },
+    });
+    expect(nativeRows(h.controller)).not.toContain("shuttle · streaming reply");
+
+    ingest({
+      type: "message_update",
+      usage: { input: 1, output: 1 },
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    expect(nativeRows(h.controller)).not.toContain("shuttle · streaming reply");
+
+    ingest({
+      type: "message_update",
+      usage: { input: 1, output: 1 },
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 1,
+        delta: "first valid fragment",
+      },
+    });
+    expect(nativeRows(h.controller)).toContain("shuttle · streaming reply");
+    expect(nativeRows(h.controller)).toContain("  first valid fragment");
+    expect(nativeRows(h.controller)).not.toContain(
+      "● shuttle · streaming reply",
+    );
+
+    ingest({
+      type: "message_update",
+      usage: { input: 1, output: 2 },
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 1,
+        delta: " and the next fragment",
+      },
+    });
+    const growing = nativeRows(h.controller);
+    expect(
+      growing.filter((row) => row === "shuttle · streaming reply"),
+    ).toHaveLength(1);
+    expect(growing).toContain("  first valid fragment and the next fragment");
+
+    ingest({
+      type: "message_update",
+      usage: { input: 1, output: 3 },
+      assistantMessageEvent: {
+        type: "text_end",
+        contentIndex: 1,
+        content: "first valid fragment and the next fragment",
+      },
+    });
+    ingest({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        model: "test-model",
+        content: [
+          { type: "text", text: "first valid fragment and the next fragment" },
+        ],
+      },
+    });
+    const settled = nativeRows(h.controller);
+    expect(settled.some((row) => row === "shuttle · streaming reply")).toBe(
+      false,
+    );
+    expect(
+      settled.filter((row) =>
+        row.includes("first valid fragment and the next fragment"),
+      ),
+    ).toHaveLength(1);
+    h.stream.dispose();
   });
 
   it("drops an event addressed to a child the reader is not looking at", async () => {

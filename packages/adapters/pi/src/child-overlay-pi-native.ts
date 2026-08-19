@@ -3,12 +3,13 @@
  * ported, and fed from authoritative production transcript entries.
  *
  * `prototypes/weave-pi-tui-grilling.ts` settled this surface in round 3 and it
- * is the design record: a two-column role gutter, one glyph per event family,
- * a bare tool call signature with its result on a `⎿` continuation, a
- * deliberately understated reasoning SUMMARY, and a streaming caret that moves
- * to its own row rather than overflowing the column. Under Native Settlement
- * this pane is also the OUTCOME surface — the final response, the captured
- * failure and the retry record are ordinary rows in the same one style.
+ * is the design record: a compact role gutter for prompts and tools, a bare
+ * tool call signature with its result on a `⎿` continuation, a deliberately
+ * understated reasoning SUMMARY, and a plain streaming assistant reply. A
+ * streaming caret moves to its own row rather than overflowing the column.
+ * Under Native Settlement this pane is also the OUTCOME surface — the final
+ * response, the captured failure and the retry record are ordinary rows in the
+ * same one style.
  *
  * What production changes, and why:
  *
@@ -554,15 +555,14 @@ function replyLabel(
 /**
  * Does this assistant entry have anything for a reader to look at?
  *
- * Streaming is visible even while empty, because the caret is the message: it
- * is what says the child is answering right now. A settled pane has no caret,
- * so the same entry becomes invisible once its lifecycle produced no prose.
+ * A lifecycle marker is not an answer. Hide the entry until a valid text
+ * delta gives the reader bounded prose; the streaming header and caret then
+ * appear together with that first visible fragment. A classified provider
+ * error remains visible even when the failed turn has no prose.
  */
 function assistantEntryHasVisibleRows(
   entry: PiChildTranscriptAssistantEntry,
-  settled: boolean,
 ): boolean {
-  if (entry.streaming && !settled) return true;
   if (entry.stopReason === "error") return true;
   return safeTrim(entry.text || entry.markdown).length > 0;
 }
@@ -635,23 +635,20 @@ function renderEntryRows(
 
     case "assistant": {
       // A tool-use turn is an assistant message with no prose of its own: the
-      // reply IS the tool rows below it. A bare `● shuttle · reply` header over
-      // nothing states a message the reader cannot read, so an entry with no
-      // visible text, no visible reasoning, no caret and no classified failure
-      // renders nothing at all.
-      if (!assistantEntryHasVisibleRows(entry, input.settled)) return [];
+      // reply IS the tool rows below it. A header over nothing states a message
+      // the reader cannot read, so an entry with no visible text, no visible
+      // reasoning, no caret and no classified failure renders nothing at all.
+      if (!assistantEntryHasVisibleRows(entry)) return [];
       const rows: string[] = [];
       const streaming = entry.streaming && !input.settled;
       const label = replyLabel(
         entry,
         !entry.streaming && entry.id === finalAssistantId,
       );
-      rows.push(
-        headRow(
-          `${gutter(paint, "assistant", "run")} ${dim(`${input.childName} · ${label}`)}`,
-          width,
-        ),
-      );
+      const header = streaming
+        ? dim(`${input.childName} · ${label}`)
+        : `${gutter(paint, "assistant", "run")} ${dim(`${input.childName} · ${label}`)}`;
+      rows.push(headRow(header, width));
       const body = bodyRows(
         entry.text || entry.markdown,
         width,
