@@ -41,11 +41,12 @@ digest, and every tarball digest. Missing, pending, failed, or foreign results
 block consumer proof, harness proof, environment approval, and publish.
 
 The `release` environment approval follows all proof jobs. Only the `publish`
-job in the trusted workflow has `id-token: write`, and it has no App token. It
-invokes the existing `publish-main.ts` entrypoint. The App-token `refs-cleanup`
-job runs only after every registry digest is verified. It creates tags and
-releases without updating an existing conflicting ref, then opens the
-changeset-cleanup PR.
+job in the trusted workflow has `id-token: write`, and it has no App
+installation token. It invokes the existing `publish-main.ts` entrypoint. The
+`refs-cleanup` job mints a short-lived App installation token from protected
+`release-app` credentials only after every registry digest is verified. It
+creates tags and releases without updating an existing conflicting ref, then
+opens the changeset-cleanup PR.
 
 ## The `next` channel
 

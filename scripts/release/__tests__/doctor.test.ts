@@ -14,6 +14,9 @@ import {
   type NpmPackageObservation,
   parseDoctorMode,
   parseTrustedPublisherResponse,
+  RELEASE_APP_CREDENTIAL_NAMES,
+  RELEASE_APP_SECRET_ENVIRONMENTS,
+  REQUIRED_RELEASE_SECRET_NAMES,
   verifyDoctorSnapshot,
 } from "../doctor.js";
 import { PRODUCTION_ENTRYPOINTS } from "../entrypoint-inventory.js";
@@ -165,12 +168,24 @@ function snapshotFor(mode: DoctorMode = "final"): DoctorSnapshot {
       },
       app: {
         installationReadable: true,
-        permissions: { contents: "write", pullRequests: "write" },
+        permissions: {
+          contents: "write",
+          pullRequests: "write",
+          checks: "write",
+          members: "read",
+        },
       },
       secrets: {
         readable: true,
-        repositoryNames: ["RELEASE_APP_TOKEN", "WEAVE_RELEASE_AI_API_KEY"],
-        environmentNames: { release: [], prerelease: [] },
+        repositoryNames: [],
+        environmentNames: {
+          release: [],
+          prerelease: [],
+          "release-ai": ["WEAVE_RELEASE_AI_API_KEY"],
+          "release-app": ["RELEASE_APP_ID", "RELEASE_APP_PRIVATE_KEY"],
+          "docs-audit-patch": ["RELEASE_APP_ID", "RELEASE_APP_PRIVATE_KEY"],
+          "release-refs": ["RELEASE_APP_ID", "RELEASE_APP_PRIVATE_KEY"],
+        },
       },
     },
     attestationWorkflow: {
@@ -483,7 +498,12 @@ describe("release doctor", () => {
           ...base.github,
           app: {
             ...base.github.app,
-            permissions: { contents: "read", pullRequests: "write" },
+            permissions: {
+              contents: "read",
+              pullRequests: "write",
+              checks: "write",
+              members: "read",
+            },
           },
         },
       },
@@ -491,7 +511,13 @@ describe("release doctor", () => {
         ...base,
         github: {
           ...base.github,
-          secrets: { ...base.github.secrets, repositoryNames: [] },
+          secrets: {
+            ...base.github.secrets,
+            environmentNames: {
+              ...base.github.secrets.environmentNames,
+              "release-ai": [],
+            },
+          },
         },
       },
       { ...base, harness: { ...base.harness, proofJobsAvailable: false } },
@@ -500,6 +526,73 @@ describe("release doctor", () => {
     ];
     for (const snapshot of failures)
       doctorFailure(verifyDoctorSnapshot(snapshot, "final"));
+  });
+
+  it("requires protected App credentials in every mutation environment", () => {
+    const base = snapshotFor("final");
+    const missing = {
+      ...base,
+      github: {
+        ...base.github,
+        secrets: {
+          ...base.github.secrets,
+          environmentNames: {
+            ...base.github.secrets.environmentNames,
+            "release-refs": [],
+          },
+        },
+      },
+    };
+    const failure = doctorFailure(verifyDoctorSnapshot(missing, "final"));
+    expect(failure.failures[0]?.detail).toContain("release-refs");
+    expect(RELEASE_APP_CREDENTIAL_NAMES).toEqual([
+      "RELEASE_APP_ID",
+      "RELEASE_APP_PRIVATE_KEY",
+    ]);
+    expect(RELEASE_APP_SECRET_ENVIRONMENTS).toEqual([
+      "release-app",
+      "docs-audit-patch",
+      "release-refs",
+    ]);
+    expect(REQUIRED_RELEASE_SECRET_NAMES).not.toContain(
+      ["RELEASE", "APP", "TOKEN"].join("_"),
+    );
+  });
+
+  it("rejects obsolete and repository-wide App credential metadata", () => {
+    const base = snapshotFor("final");
+    const obsoleteName = ["RELEASE", "APP", "TOKEN"].join("_");
+    const obsolete = {
+      ...base,
+      github: {
+        ...base.github,
+        secrets: {
+          ...base.github.secrets,
+          repositoryNames: [obsoleteName],
+        },
+      },
+    };
+    const obsoleteFailure = doctorFailure(
+      verifyDoctorSnapshot(obsolete, "final"),
+    );
+    expect(obsoleteFailure.failures[0]?.detail).toContain("obsolete");
+
+    const repositoryCredential = {
+      ...base,
+      github: {
+        ...base.github,
+        secrets: {
+          ...base.github.secrets,
+          repositoryNames: ["RELEASE_APP_ID"],
+        },
+      },
+    };
+    const repositoryFailure = doctorFailure(
+      verifyDoctorSnapshot(repositoryCredential, "final"),
+    );
+    expect(repositoryFailure.failures[0]?.detail).toContain(
+      "repository-wide App credential",
+    );
   });
 
   it("requires old-system operational proof and the old schedule before cutover", () => {

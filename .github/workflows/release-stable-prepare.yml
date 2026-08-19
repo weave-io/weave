@@ -60,6 +60,13 @@ jobs:
       INPUT_THINKING: ${{ inputs.thinking }}
       PREPARE_ACTOR: ${{ github.actor }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-members: read
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: main
@@ -70,6 +77,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - id: request
         name: Validate request and maintainer authorization
+        env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Task 9 authorization is the first controller operation.
           # It calls assertStableRequestAuthorized before any plan or AI work.
@@ -197,7 +206,6 @@ jobs:
       pull-requests: write
       checks: read
     env:
-      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
       INPUT_CLI: ${{ inputs.cli }}
       INPUT_OPENCODE: ${{ inputs.opencode }}
       INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
@@ -206,6 +214,15 @@ jobs:
     outputs:
       outcome: ${{ steps.create.outputs.outcome }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: main
@@ -228,6 +245,8 @@ jobs:
           path: ${{ runner.temp }}/changelog-ai
       - id: create
         name: Create only through Task 9 ownership and finalize
+        env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           set +e
           # Task 9 sequence: runPreparedCreation ->
@@ -356,7 +375,6 @@ jobs:
       pull-requests: write
       checks: read
     env:
-      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
       INPUT_CLI: ${{ inputs.cli }}
       INPUT_OPENCODE: ${{ inputs.opencode }}
       INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
@@ -365,6 +383,15 @@ jobs:
     outputs:
       outcome: ${{ steps.create.outputs.outcome }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: main
@@ -386,6 +413,8 @@ jobs:
           name: stable-prepare-changelog-ai-2
           path: ${{ runner.temp }}/changelog-ai
       - id: create
+        env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           set +e
           # Task 9 sequence: runPreparedCreation ->
@@ -514,7 +543,6 @@ jobs:
       pull-requests: write
       checks: read
     env:
-      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
       INPUT_CLI: ${{ inputs.cli }}
       INPUT_OPENCODE: ${{ inputs.opencode }}
       INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
@@ -523,6 +551,15 @@ jobs:
     outputs:
       outcome: ${{ steps.create.outputs.outcome }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: main
@@ -544,6 +581,8 @@ jobs:
           name: stable-prepare-changelog-ai-3
           path: ${{ runner.temp }}/changelog-ai
       - id: create
+        env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           set +e
           # Task 9 sequence: runPreparedCreation ->

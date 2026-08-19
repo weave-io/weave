@@ -613,11 +613,11 @@ describe("workflow shape", () => {
     ]) {
       const block = jobBlock(job);
       expect(block).toContain("WEAVE_RELEASE_AI_API_KEY");
-      expect(block).not.toContain("RELEASE_APP_TOKEN");
+      expect(block).not.toContain("RELEASE_APP_INSTALLATION_TOKEN");
     }
     for (const job of ["open-pr", "open-pr-2", "open-pr-3"]) {
       const block = jobBlock(job);
-      expect(block).toContain("RELEASE_APP_TOKEN");
+      expect(block).toContain("RELEASE_APP_INSTALLATION_TOKEN");
       expect(block).toContain("acquireCreationOwnership");
       expect(block).toContain("finalizeCreation");
       expect(block).toContain("abortOwnedCreation");

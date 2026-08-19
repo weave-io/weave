@@ -1,9 +1,10 @@
 # Release security boundaries
 
 This document is the Task 31 static security sign-off for the six Phase C
-workflows. It records the credential, permission, execution, artifact, fork,
-and authentication boundaries. The checked-in contract is enforced by
-`scripts/release/publish-reachability.ts` and the existing action-pin checker.
+workflows and the retained legacy `publish.yml` release-refs path. It records
+the credential, permission, execution, artifact, fork, and authentication
+boundaries. The checked-in contract is enforced by
+`scripts/release/publish-reachability.ts` and the action-pin checker.
 A permission or credential change must update the checker, this table, and the
 focused tests in `scripts/release/__tests__/publish-reachability.test.ts` in
 the same change.
@@ -16,10 +17,18 @@ the permissions in the tables below.
 only job in that workflow with `id-token: write`.
 - `release-attest.yml#attest` is an independent, non-reusable attestation path.
 It has `id-token: write` for provenance and cannot reach `publish-main.ts`.
-- `RELEASE_APP_TOKEN` is used only after a `release-app` environment gate for
-GitHub mutation. `WEAVE_RELEASE_AI_API_KEY` is used only after `release-ai`.
-AI and harness authentication uses API keys. CI does not receive npm tokens,
-npm configuration credentials, OAuth tokens, refresh tokens, subscription
+- `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` are protected credentials.
+They exist only as environment secrets in `release-app`, `docs-audit-patch`,
+and the retained legacy `release-refs` gate. Every job that needs App
+authority runs the pinned
+`actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1`
+action, then passes only its short-lived output as
+`RELEASE_APP_INSTALLATION_TOKEN` to the controller or `gh`. Installation
+tokens expire after one hour and are never stored as secrets. Nightly has no
+App environment and does not mint a token.
+- `WEAVE_RELEASE_AI_API_KEY` is used only after `release-ai`. AI and harness
+authentication uses API keys. CI does not receive npm tokens, npm
+configuration credentials, OAuth tokens, refresh tokens, subscription
 sessions, or persisted harness sessions.
 - The workflow graph rejects `pull_request_target`, `npm deprecate`, direct
 `npm publish`, fixture seams, and test-only release paths. It also rejects any
@@ -39,19 +48,19 @@ workflow root is `{}`.
 
 | Job | Credential | Environment / gate | Exact `GITHUB_TOKEN` permissions |
 | --- | --- | --- | --- |
-| `authorize` | none | `release-app`; Task 9 maintainer authorization | `contents: read` |
+| `authorize` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` | `release-app`; mint with `members: read` for Task 9 maintainer authorization | `contents: read` |
 | `plan` | none | follows `authorize` | `contents: read`, `checks: read` |
 | `docs-release-audit` | `WEAVE_RELEASE_AI_API_KEY` | `release-ai` | `contents: read` |
 | `changelog-ai` | `WEAVE_RELEASE_AI_API_KEY` | `release-ai` | `contents: read` |
-| `open-pr` | `RELEASE_APP_TOKEN` | `release-app`; marker ownership and creation gate | `contents: write`, `pull-requests: write`, `checks: read` |
+| `open-pr` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` | `release-app`; mint from protected App credentials, then marker ownership and creation gate | `contents: write`, `pull-requests: write`, `checks: read` |
 | `plan-2` | none | only after `PreparationStale` | `contents: read`, `checks: read` |
 | `docs-release-audit-2` | `WEAVE_RELEASE_AI_API_KEY` | `release-ai` | `contents: read` |
 | `changelog-ai-2` | `WEAVE_RELEASE_AI_API_KEY` | `release-ai` | `contents: read` |
-| `open-pr-2` | `RELEASE_APP_TOKEN` | `release-app`; retry ownership gate | `contents: write`, `pull-requests: write`, `checks: read` |
+| `open-pr-2` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` | `release-app`; mint from protected App credentials, then retry ownership gate | `contents: write`, `pull-requests: write`, `checks: read` |
 | `plan-3` | none | only after `PreparationStale` | `contents: read`, `checks: read` |
 | `docs-release-audit-3` | `WEAVE_RELEASE_AI_API_KEY` | `release-ai` | `contents: read` |
 | `changelog-ai-3` | `WEAVE_RELEASE_AI_API_KEY` | `release-ai` | `contents: read` |
-| `open-pr-3` | `RELEASE_APP_TOKEN` | `release-app`; retry ownership gate | `contents: write`, `pull-requests: write`, `checks: read` |
+| `open-pr-3` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` | `release-app`; mint from protected App credentials, then retry ownership gate | `contents: write`, `pull-requests: write`, `checks: read` |
 | `recovery-summary` | none | failure summary only | `{}` |
 
 All jobs check out `main` with `persist-credentials: false`. AI jobs run the
@@ -61,12 +70,12 @@ protected controller and receive no write permission.
 
 | Job | Credential | Environment / gate | Exact `GITHUB_TOKEN` permissions |
 | --- | --- | --- | --- |
-| `manual-authorize` | `RELEASE_APP_TOKEN` | `release-app`; dispatch authorization | `contents: read` |
+| `manual-authorize` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` | `release-app`; mint with `members: read` for dispatch authorization | `contents: read` |
 | `detect` | none | push or authorized dispatch detection | `contents: read`, `checks: read`, `pull-requests: read` |
 | `plan` | none | protected `main` recomputation | `contents: read`, `checks: read` |
 | `docs-release-audit` | `WEAVE_RELEASE_AI_API_KEY`, `github.token` for the check | `release-ai` | `contents: read`, `checks: write` |
 | `changelog-ai` | `WEAVE_RELEASE_AI_API_KEY` | `release-ai` | `contents: read` |
-| `update-pr` | `RELEASE_APP_TOKEN` | `release-app`; update ownership gate | `contents: write`, `pull-requests: write`, `checks: write` |
+| `update-pr` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` | `release-app`; mint from protected App credentials, then update ownership gate | `contents: write`, `pull-requests: write`, `checks: write` |
 | `recovery-summary` | none | failure summary only | `{}` |
 
 The automatic path is restricted to the checked-in `main` topology. The
@@ -77,7 +86,7 @@ update an open release PR.
 
 | Job | Credential | Environment / gate | Exact `GITHUB_TOKEN` permissions |
 | --- | --- | --- | --- |
-| `route` | `RELEASE_APP_TOKEN` for marker/API mutation | `release-app`, except `nightly`; closed-PR or maintainer-authorized dispatch | `contents: read`, `pull-requests: read` |
+| `route` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` for marker/API mutation | `release-app`, except `nightly`; mint with `contents: write` only after the gate | `contents: read`, `pull-requests: read` |
 | `recompute` | none | protected `main`; source and plan authority | `contents: read`, `checks: read` |
 | `build-bind` | none | exact recomputed source SHA | `contents: read`, `actions: write` |
 | `await-attest` | `github.token` as `GH_TOKEN` for dispatch, polling, and checks | exact bound artifact | `contents: read`, `actions: write`, `checks: read` |
@@ -86,12 +95,19 @@ update an open release PR.
 | `release-approval` | none | `release` for stable/incident, `prerelease` for `next`, no environment for `nightly` | `contents: read`, `checks: read` |
 | `publish` | OIDC only; no npm token, App token, AI key, or OAuth credential | `release` for stable/incident, `prerelease` for `next`, no environment for `nightly`; rollout must be enabled | `actions: write`, `contents: read`, `id-token: write` |
 | `registry-verification` | none | after publication | `contents: read`, `actions: read` |
-| `refs-cleanup` | `RELEASE_APP_TOKEN` | `release-app`; skipped for `nightly` | `contents: write`, `pull-requests: write` |
+| `refs-cleanup` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` | `release-app`, skipped for `nightly`; mint after the gate | `contents: write`, `pull-requests: write` |
 
 The Phase C checker compares every job above, including omitted permissions,
 to the checked-in contract. `publish` invokes only
 `scripts/release/publish-main.ts`; the command is reached only after the
 artifact, attestation, consumer, harness, approval, and rollout gates.
+
+The retained `.github/workflows/publish.yml#release-refs` job is also an App
+authority path during pre-cutover. It uses the separate `release-refs`
+environment, which must contain the same `RELEASE_APP_ID` and
+`RELEASE_APP_PRIVATE_KEY` metadata as `release-app` and `docs-audit-patch`.
+The checker and doctor both require this duplicate environment-secret
+contract; they do not weaken it to repository-wide secrets.
 
 ### `release-attest.yml` (Task 25)
 
@@ -121,9 +137,9 @@ terminal gate remain safe for fork events.
 | Job | Credential | Environment / gate | Exact `GITHUB_TOKEN` permissions |
 | --- | --- | --- | --- |
 | `followup-audit` | `github.token` for bounded PR reads; `WEAVE_RELEASE_AI_API_KEY` | `release-ai`; maintainer-dispatched PR number | `contents: read`, `pull-requests: read` |
-| `followup-post` | `RELEASE_APP_TOKEN` | `release-app`; posts the digest-bound result | `contents: read`, `pull-requests: write`, `checks: write` |
-| `docs-audit` | `RELEASE_APP_TOKEN` | `release-app`; terminal check rerun | `contents: read`, `checks: write` |
-| `apply-patches` | `RELEASE_APP_TOKEN` as `GH_TOKEN` and `RELEASE_APP_TOKEN` | `docs-audit-patch`; explicit boolean and approval | `contents: write`, `pull-requests: write` |
+| `followup-post` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` | `release-app`; mint, then post the digest-bound result | `contents: read`, `pull-requests: write`, `checks: write` |
+| `docs-audit` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` | `release-app`; mint, then rerun the terminal check | `contents: read`, `checks: write` |
+| `apply-patches` | ephemeral `RELEASE_APP_INSTALLATION_TOKEN` as `GH_TOKEN` and controller input | `docs-audit-patch`; mint after the explicit boolean and approval gate | `contents: write`, `pull-requests: write` |
 
 `followup-main.ts` downloads a fork as bounded regular-file data below a
 separate quarantine root. It validates the repository, base branch, archive,
@@ -190,7 +206,10 @@ publication. `validateProofCredentials` accepts only named `api-key`
 credentials. The workflow security lint rejects npm token/config names,
 OAuth/subscription/refresh/session names, and non-API-key AI or harness
 credentials. The old publisher's shell guard only checks inherited state; it
-does not provide a credential and is intentionally allowed.
+does not provide a credential and is intentionally allowed. The App
+installation contract is Contents: write, Pull requests: write, Checks: write
+when a check mutation needs it, and Members: read for organization/team
+authorization. Each mint step requests only the permissions used by that job.
 
 All workflow action references are full SHAs and are checked by
 `scripts/ci/verify-action-pins.ts`. No CI workflow uses `pull_request_target`.
@@ -221,10 +240,11 @@ fail one of these checks before merge.
 
 The repository-side static review is recorded by this document, the exact
 Phase C contract, and the focused regression tests. External sign-off still
-requires a maintainer comment on release issue `#143` confirming the six
+requires a maintainer comment on release issue `#143` confirming the seven
 GitHub environment protection rules (`release-app`, `release-ai`, `release`,
-`prerelease`, `harness-proof`, and `docs-audit-patch`), their required
-reviewers, and the current unrelated OIDC allowlist. If repository/API access
+`prerelease`, `harness-proof`, `docs-audit-patch`, and `release-refs`), their
+required reviewers, the duplicate App credential metadata in the three App
+environments, and the current unrelated OIDC allowlist. If repository/API access
 is unavailable, attach the GitHub Actions environment settings and the
 maintainer authorization audit as the external evidence; do not treat this
 static review as proof of those GitHub-side settings.

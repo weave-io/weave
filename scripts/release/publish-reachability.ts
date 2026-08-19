@@ -248,6 +248,117 @@ export const PHASE_C_ENVIRONMENT_CONTRACTS: Readonly<
   },
 };
 
+export const GITHUB_APP_TOKEN_ACTION_REF =
+  "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1" as const;
+export const RELEASE_APP_INSTALLATION_TOKEN_ENV =
+  "RELEASE_APP_INSTALLATION_TOKEN" as const;
+const GITHUB_APP_TOKEN_OUTPUT =
+  "steps.release-app-token.outputs.token" as const;
+const RELEASE_APP_ID_SECRET_REF = "secrets.RELEASE_APP_ID" as const;
+const RELEASE_APP_PRIVATE_KEY_SECRET_REF =
+  "secrets.RELEASE_APP_PRIVATE_KEY" as const;
+const OBSOLETE_APP_TOKEN_SECRET_REF = `secrets.${[
+  "RELEASE",
+  "APP",
+  "TOKEN",
+].join("_")}`;
+
+type AppTokenJobContract = Readonly<{
+  environment: string;
+  permissions: Readonly<Record<string, string>>;
+  condition?: string;
+}>;
+
+/**
+ * Every job that receives App authority is listed explicitly. The retained
+ * legacy publisher is included because it remains scheduled during
+ * pre-cutover. A job not in this map must not mint or receive an App token.
+ */
+const APP_TOKEN_JOB_CONTRACTS: Readonly<
+  Record<string, Readonly<Record<string, AppTokenJobContract>>>
+> = {
+  [RELEASE_STABLE_PREPARE_WORKFLOW_PATH]: {
+    authorize: {
+      environment: "release-app",
+      permissions: { members: "read" },
+    },
+    "open-pr": {
+      environment: "release-app",
+      permissions: {
+        contents: "write",
+        "pull-requests": "write",
+        checks: "read",
+      },
+    },
+    "open-pr-2": {
+      environment: "release-app",
+      permissions: {
+        contents: "write",
+        "pull-requests": "write",
+        checks: "read",
+      },
+    },
+    "open-pr-3": {
+      environment: "release-app",
+      permissions: {
+        contents: "write",
+        "pull-requests": "write",
+        checks: "read",
+      },
+    },
+  },
+  [RELEASE_STABLE_REGENERATE_WORKFLOW_PATH]: {
+    "manual-authorize": {
+      environment: "release-app",
+      permissions: { members: "read" },
+    },
+    "update-pr": {
+      environment: "release-app",
+      permissions: {
+        contents: "write",
+        "pull-requests": "write",
+        checks: "write",
+      },
+    },
+  },
+  [RELEASE_PUBLISH_WORKFLOW_PATH]: {
+    route: {
+      environment: NIGHTLY_OR_RELEASE_APP_ENVIRONMENT,
+      permissions: { contents: "write" },
+      condition: "inputs.channel != 'nightly'",
+    },
+    "refs-cleanup": {
+      environment: NIGHTLY_OR_RELEASE_APP_ENVIRONMENT,
+      permissions: { contents: "write", "pull-requests": "write" },
+      condition: "inputs.channel != 'nightly'",
+    },
+  },
+  [DOCS_AUDIT_FOLLOWUP_WORKFLOW_PATH]: {
+    "followup-post": {
+      environment: "release-app",
+      permissions: {
+        contents: "read",
+        "pull-requests": "write",
+        checks: "write",
+      },
+    },
+    "docs-audit": {
+      environment: "release-app",
+      permissions: { contents: "read", checks: "write" },
+    },
+    "apply-patches": {
+      environment: "docs-audit-patch",
+      permissions: { contents: "write", "pull-requests": "write" },
+    },
+  },
+  ".github/workflows/publish.yml": {
+    "release-refs": {
+      environment: "release-refs",
+      permissions: { contents: "write", "pull-requests": "write" },
+    },
+  },
+};
+
 export interface WorkflowJobShape {
   readonly id: string;
   readonly needs: readonly string[];
@@ -563,7 +674,182 @@ export function lintPhaseCSecurity(
         });
     }
   }
-  return lintWorkflowCredentialBoundaries(workflows);
+  const credentialLint = lintWorkflowCredentialBoundaries(workflows);
+  if (credentialLint.isErr()) return credentialLint;
+  return lintAppTokenSecurity(workflows);
+}
+
+/**
+ * Verify the short-lived App-token boundary independently of GitHub's YAML
+ * parser. This catches credential movement that the permission/environment
+ * shape alone cannot see: missing mint steps, stale direct secrets, token use
+ * before minting, and App credentials crossing into non-App jobs.
+ */
+function lintAppTokenSecurity(
+  workflows: readonly WorkflowShape[],
+): Result<void, PublishReachabilityError> {
+  for (const workflow of workflows) {
+    const source = withoutYamlComments(workflow.text);
+    if (source.includes(OBSOLETE_APP_TOKEN_SECRET_REF))
+      return appTokenViolation(
+        workflow.path,
+        "workflow still references the obsolete stored App token secret",
+      );
+
+    const expectedJobs = APP_TOKEN_JOB_CONTRACTS[workflow.path] ?? {};
+    for (const job of workflow.jobs) {
+      const contract = expectedJobs[job.id];
+      const block = workflowJobBlock(workflow, job.id);
+      if (block === undefined)
+        return appTokenViolation(
+          workflow.path,
+          `cannot read the ${job.id} job block for App-token validation`,
+        );
+      const hasMint = block.includes(`uses: ${GITHUB_APP_TOKEN_ACTION_REF}`);
+      const hasInstallationToken = block.includes(
+        RELEASE_APP_INSTALLATION_TOKEN_ENV,
+      );
+      const hasMintedOutput = block.includes(GITHUB_APP_TOKEN_OUTPUT);
+      const hasAppCredential =
+        block.includes(RELEASE_APP_ID_SECRET_REF) ||
+        block.includes(RELEASE_APP_PRIVATE_KEY_SECRET_REF);
+      if (contract === undefined) {
+        if (
+          hasMint ||
+          hasInstallationToken ||
+          hasMintedOutput ||
+          hasAppCredential
+        )
+          return appTokenViolation(
+            workflow.path,
+            `${job.id} is not authorized to mint or receive an App token or protected App credential`,
+          );
+        continue;
+      }
+      if (job.environment !== contract.environment)
+        return appTokenViolation(
+          workflow.path,
+          `${job.id} App credentials are not behind the exact ${contract.environment} environment gate`,
+        );
+      if (!hasMint)
+        return appTokenViolation(
+          workflow.path,
+          `${job.id} must mint its App token with the pinned official action`,
+        );
+      if (!block.includes(RELEASE_APP_ID_SECRET_REF))
+        return appTokenViolation(
+          workflow.path,
+          `${job.id} must read RELEASE_APP_ID from its protected environment`,
+        );
+      if (!block.includes(RELEASE_APP_PRIVATE_KEY_SECRET_REF))
+        return appTokenViolation(
+          workflow.path,
+          `${job.id} must read RELEASE_APP_PRIVATE_KEY from its protected environment`,
+        );
+      const mintIndex = block.indexOf(`uses: ${GITHUB_APP_TOKEN_ACTION_REF}`);
+      const outputIndex = block.indexOf(GITHUB_APP_TOKEN_OUTPUT);
+      if (outputIndex < 0 || mintIndex < 0 || mintIndex >= outputIndex)
+        return appTokenViolation(
+          workflow.path,
+          `${job.id} must use only the minted action output after the mint step`,
+        );
+      if (!block.includes(`id: release-app-token`))
+        return appTokenViolation(
+          workflow.path,
+          `${job.id} must expose the pinned mint step as release-app-token`,
+        );
+      const requestedPermissions = readActionPermissions(block);
+      if (!samePermissionMap(requestedPermissions, contract.permissions))
+        return appTokenViolation(
+          workflow.path,
+          `${job.id} must request only its contracted App permissions`,
+        );
+      for (const match of block.matchAll(
+        /^\s*(RELEASE_APP_INSTALLATION_TOKEN|GH_TOKEN):\s*(.+?)\s*$/gm,
+      )) {
+        const value = match[2];
+        if (value === undefined || !value.includes(GITHUB_APP_TOKEN_OUTPUT))
+          return appTokenViolation(
+            workflow.path,
+            `${job.id} must pass only the minted action output to its controller or gh step`,
+          );
+      }
+      if (
+        contract.condition !== undefined &&
+        !block.includes(contract.condition)
+      )
+        return appTokenViolation(
+          workflow.path,
+          `${job.id} must keep its App mint behind ${contract.condition}`,
+        );
+    }
+
+    for (const jobId of Object.keys(expectedJobs)) {
+      const job = workflow.jobs.find((candidate) => candidate.id === jobId);
+      if (job === undefined)
+        return appTokenViolation(
+          workflow.path,
+          `${jobId} is missing from the App-token contract`,
+        );
+    }
+
+    let outsideJobSource = source;
+    for (const job of workflow.jobs) {
+      const block = workflowJobBlock(workflow, job.id);
+      if (block !== undefined)
+        outsideJobSource = outsideJobSource.replace(block, "");
+    }
+    if (
+      outsideJobSource.includes(GITHUB_APP_TOKEN_ACTION_REF) ||
+      outsideJobSource.includes(RELEASE_APP_INSTALLATION_TOKEN_ENV) ||
+      outsideJobSource.includes(GITHUB_APP_TOKEN_OUTPUT) ||
+      outsideJobSource.includes(RELEASE_APP_ID_SECRET_REF) ||
+      outsideJobSource.includes(RELEASE_APP_PRIVATE_KEY_SECRET_REF)
+    )
+      return appTokenViolation(
+        workflow.path,
+        "App token action, output, or protected credentials must stay inside an authorized job",
+      );
+  }
+  return ok(undefined);
+}
+
+function appTokenViolation(
+  origin: string,
+  reason: string,
+): Result<never, PublishReachabilityError> {
+  return err({
+    type: "PublishReachabilityViolation",
+    kind: "CredentialBoundaryViolation",
+    origin,
+    target: RELEASE_APP_INSTALLATION_TOKEN_ENV,
+    reason,
+  });
+}
+
+function readActionPermissions(block: string): WorkflowPermissionMap {
+  const permissions: Record<string, string> = {};
+  for (const match of block.matchAll(
+    /^\s+permission-([A-Za-z0-9-]+):\s*([^\s#]+)\s*$/gm,
+  )) {
+    const permission = match[1];
+    const value = match[2];
+    if (permission !== undefined && value !== undefined)
+      permissions[permission] = value;
+  }
+  return permissions;
+}
+
+function workflowJobBlock(
+  workflow: WorkflowShape,
+  jobId: string,
+): string | undefined {
+  const lines = withoutYamlComments(workflow.text).split("\n");
+  const start = lines.findIndex(
+    (line) => line === `  ${jobId}:` || line.startsWith(`  ${jobId}: `),
+  );
+  if (start < 0) return undefined;
+  return lines.slice(start, nextJobLine(lines, start + 1)).join("\n");
 }
 
 /** Alias used by CI and by external boundary tests. */
@@ -789,7 +1075,7 @@ const ALLOWED_SERVICE_CREDENTIAL_NAMES = new Set([
   "EVAL_RESULTS_REPO_TOKEN",
   "GH_TOKEN",
   "GITHUB_TOKEN",
-  "RELEASE_APP_TOKEN",
+  "RELEASE_APP_INSTALLATION_TOKEN",
 ]);
 
 function credentialBoundaryViolation(name: string): string | undefined {
