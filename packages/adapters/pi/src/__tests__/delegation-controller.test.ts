@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
 import { err, errAsync, ok, okAsync, ResultAsync } from "neverthrow";
-import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
+import {
+  MAX_CWD_LENGTH,
+  type PiModelTransitionBody,
+} from "../child-control-bodies.js";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { WEAVE_CHILD_ID_ENV, WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
@@ -711,6 +714,151 @@ describe("PiDelegationController", () => {
       outputByteLength: 2,
       interventionCount: 0,
     });
+  });
+
+  it("applies authenticated model truth before recovery confirmation without settling the parent tool", async () => {
+    const port = new FakeChildProcessPort();
+    const from = { provider: "origin", id: "model-a" };
+    const to = { provider: "fallback", id: "model-b" };
+    const observed: unknown[] = [];
+    const controller = makeController(config(GENEROUS), port, {
+      onModelTransition: (_childId, transition) => observed.push(transition),
+    });
+    const resultPromise = controller.delegate(
+      request({
+        bootstrap: {
+          mode: "ordinary",
+          agentName: "shuttle",
+          composedPrompt: "You are Shuttle.",
+          models: [],
+          correlationId: "child-1",
+          context: {
+            parentAgentName: "loom",
+            parentDepth: 0,
+            cwd: "/project",
+          },
+          resolvedModel: from,
+        },
+      }),
+    );
+    await flushUntil(
+      () => port.spawnedProcesses.length === 1,
+      "model-transition child spawn",
+    );
+    const spawned = spawnedAt(port, 0);
+    await sendHandshakeOnly(spawned, port, "gen-1");
+    await flush();
+    const secret = extractSecret(spawned, port);
+    const childId = childIdOf(spawned, port);
+    const ack = await signEnvelope(
+      {
+        childId,
+        generationId: "gen-1",
+        direction: "child-to-parent",
+        sequence: 2,
+        nonce: Buffer.from(new WebCryptoRandomPort().randomBytes(16)).toString(
+          "hex",
+        ),
+        correlationId: childId,
+        kind: "bootstrap-ack",
+        body: { resolvedModel: from },
+      },
+      secret,
+      new WebCryptoHmacPort(),
+    );
+    spawned.emitLine(ack._unsafeUnwrap());
+    await flushUntil(
+      () => hasPostAckDispatch(spawned),
+      "model-transition child task dispatch",
+    );
+
+    const applied = {
+      schemaVersion: 1 as const,
+      transitionId: "123e4567-e89b-42d3-a456-426614174000",
+      failureClass: "provider_unavailable" as const,
+      from,
+      to,
+      phase: "applied" as const,
+    };
+    const signTransition = (sequence: number, body: PiModelTransitionBody) =>
+      signEnvelope(
+        {
+          childId,
+          generationId: "gen-1",
+          direction: "child-to-parent" as const,
+          sequence,
+          nonce: Buffer.from(
+            new WebCryptoRandomPort().randomBytes(16),
+          ).toString("hex"),
+          correlationId: childId,
+          kind: "model-transition" as const,
+          body,
+        },
+        secret,
+        new WebCryptoHmacPort(),
+      );
+    spawned.emitLine((await signTransition(3, applied))._unsafeUnwrap());
+    await flush();
+    expect(
+      (await controller.resolveOverlayChild(childId))._unsafeUnwrap().model,
+    ).toBe("model-b");
+    expect(observed).toEqual([applied]);
+
+    spawned.emitLine(
+      (
+        await signTransition(4, { ...applied, phase: "recovery-confirmed" })
+      )._unsafeUnwrap(),
+    );
+    await flush();
+    expect(observed).toEqual([
+      applied,
+      { ...applied, phase: "recovery-confirmed" },
+    ]);
+    let settled = false;
+    void resultPromise.then(() => {
+      settled = true;
+    });
+    expect(settled).toBe(false);
+
+    const settledEnvelope = await signEnvelope(
+      {
+        childId,
+        generationId: "gen-1",
+        direction: "child-to-parent",
+        sequence: 5,
+        nonce: Buffer.from(new WebCryptoRandomPort().randomBytes(16)).toString(
+          "hex",
+        ),
+        correlationId: childId,
+        kind: "settled",
+        body: { outcome: "failed", reason: "finished" },
+      },
+      secret,
+      new WebCryptoHmacPort(),
+    );
+    spawned.emitLine(settledEnvelope._unsafeUnwrap());
+    expect((await resultPromise)._unsafeUnwrap()).toEqual({
+      outcome: "failed",
+      reason: "finished",
+    });
+
+    // A signed transition that arrives after terminal settlement belongs to
+    // the old child epoch. It must not repaint the card or reopen the parent
+    // result, even though its envelope is otherwise authentic and in order.
+    spawned.emitLine(
+      (
+        await signTransition(6, {
+          ...applied,
+          transitionId: "123e4567-e89b-42d3-a456-426614174001",
+          phase: "recovery-confirmed",
+        })
+      )._unsafeUnwrap(),
+    );
+    await flush();
+    expect(observed).toEqual([
+      applied,
+      { ...applied, phase: "recovery-confirmed" },
+    ]);
   });
 
   it("denies (never queues) once max_children is reached for that parent", async () => {

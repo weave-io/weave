@@ -234,7 +234,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - A bare `turn_start` never suppresses or releases fallback settlement.
     - Failed partial assistant output remains durable but never concatenates with successful child output.
 
-- [ ] 6. Report applied and recovery-confirmed child model transitions securely
+- [x] 6. Report applied and recovery-confirmed child model transitions securely
   - **What**: Extend the authenticated child-control protocol with nonterminal model-transition phases so the parent knows actual model truth and can distinguish application from confirmed recovery.
   - **Files**: `packages/adapters/pi/src/child-envelope.ts`, `packages/adapters/pi/src/child-control-bodies.ts`, `packages/adapters/pi/src/child-runtime.ts`, `packages/adapters/pi/src/rpc-child.ts`, `packages/adapters/pi/src/delegation-controller.ts`, `packages/adapters/pi/src/child-tree.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-control-bodies.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/rpc-child.test.ts`, `packages/adapters/pi/src/__tests__/delegation-controller.test.ts`, `packages/adapters/pi/src/__tests__/child-tree.test.ts`.
   - **Depends on**: Tasks 4–5.

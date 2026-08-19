@@ -26,9 +26,13 @@ import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
   makeCancelBody,
+  modelIdentityBodiesEqual,
+  modelTransitionFactsEqual,
   type PiBootstrapAckBody,
   type PiBootstrapBody,
   type PiDelegateRequestBody,
+  type PiModelIdentityBody,
+  type PiModelTransitionBody,
   type PiTransferChunkBody,
   type PiTransferResultBody,
   parseControlBody,
@@ -251,6 +255,15 @@ export interface PiRpcChildDeps {
     request: PiDelegateRequestBody,
   ) => void;
   /**
+   * Receives one authenticated, nonterminal child model transition. `applied`
+   * updates parent model truth; `recovery-confirmed` is an admission fact for
+   * a later projection. Neither phase owns settlement.
+   */
+  readonly onModelTransition?: (
+    childId: string,
+    transition: PiModelTransitionBody,
+  ) => void;
+  /**
    * Invoked once per settled assistant message this child reports (Pi adapter contract
    *), immediately after the existing in-memory `usage` aggregate is
    * updated. Carries only bounded safe scalars (a stable message id and
@@ -374,6 +387,18 @@ const MAX_LIVE_RPC_MESSAGE_LENGTH = 64 * 1024;
 const MAX_GET_ENTRIES = 256;
 const MAX_GET_ENTRIES_BYTES = 512 * 1024;
 const MAX_LIVE_JSON_DEPTH = 8;
+/** Candidate catalogs are bounded; retain at most one transition per candidate. */
+const MAX_MODEL_TRANSITIONS = 64;
+
+function freezeModelTransitionBody(
+  transition: PiModelTransitionBody,
+): PiModelTransitionBody {
+  return Object.freeze({
+    ...transition,
+    from: Object.freeze({ ...transition.from }),
+    to: Object.freeze({ ...transition.to }),
+  });
+}
 
 function invalidSpawnSession<T>(reason: string): Result<T, string> {
   return err(`invalid session spawn configuration: ${reason}`);
@@ -889,6 +914,9 @@ export class PiRpcChild {
         request: PiDelegateRequestBody,
       ) => void)
     | undefined;
+  private readonly onModelTransition:
+    | ((childId: string, transition: PiModelTransitionBody) => void)
+    | undefined;
   private readonly onAssistantUsageObserved:
     | ((usage: {
         readonly id: string;
@@ -982,6 +1010,12 @@ export class PiRpcChild {
   private thinkingObserved = false;
   private toolActivityObserved = false;
   private readonly seenUsageMessageIds = new Set<string>();
+  /** The complete authenticated model identity last accepted for this child. */
+  private currentModelIdentity: PiModelIdentityBody | undefined;
+  /** The one transition currently awaiting its recovery-confirmed phase. */
+  private modelTransition: PiModelTransitionBody | undefined;
+  /** Retains accepted transition IDs so stale phases cannot be replayed. */
+  private readonly seenModelTransitionIds = new Set<string>();
   private readonly liveRpcPending = new Map<string, LiveRpcPending>();
   /** Native Pi sends no response acknowledgement, so successful writes consume these IDs. */
   private readonly outstandingExtensionUiRequestIds = new Set<string>();
@@ -1086,6 +1120,7 @@ export class PiRpcChild {
     this.baseEnv = deps.baseEnv ?? {};
     this.now = deps.now ?? (() => Date.now());
     this.onDelegationRequest = deps.onDelegationRequest;
+    this.onModelTransition = deps.onModelTransition;
     this.onAssistantUsageObserved = deps.onAssistantUsageObserved;
     this.onStreamingUpdate = deps.onStreamingUpdate;
     this.sessionObserver = deps.sessionObserver;
@@ -1439,11 +1474,70 @@ export class PiRpcChild {
   }
 
   /**
+   * Admits one model transition after the envelope-level authentication and
+   * running-state checks. The complete identity is compared as one value so a
+   * provider/model pair can never be observed half-updated by the parent.
+   */
+  private admitModelTransition(transition: PiModelTransitionBody): boolean {
+    const prior = this.modelTransition;
+    if (transition.phase === "applied") {
+      if (
+        this.seenModelTransitionIds.has(transition.transitionId) ||
+        prior?.phase === "applied" ||
+        this.seenModelTransitionIds.size >= MAX_MODEL_TRANSITIONS ||
+        modelIdentityBodiesEqual(transition.from, transition.to) ||
+        this.currentModelIdentity === undefined ||
+        !modelIdentityBodiesEqual(transition.from, this.currentModelIdentity) ||
+        (prior !== undefined &&
+          !modelIdentityBodiesEqual(transition.from, prior.to))
+      ) {
+        return false;
+      }
+      this.seenModelTransitionIds.add(transition.transitionId);
+      this.modelTransition = transition;
+      this.currentModelIdentity = transition.to;
+      return true;
+    }
+    if (
+      prior === undefined ||
+      prior.phase !== "applied" ||
+      !modelTransitionFactsEqual(transition, prior) ||
+      !modelIdentityBodiesEqual(transition.from, prior.from) ||
+      !modelIdentityBodiesEqual(transition.to, prior.to) ||
+      this.currentModelIdentity === undefined ||
+      !modelIdentityBodiesEqual(transition.to, this.currentModelIdentity)
+    ) {
+      return false;
+    }
+    this.modelTransition = transition;
+    return true;
+  }
+
+  /** Delivers only bounded transition facts; callback failures never leak data. */
+  private notifyModelTransition(transition: PiModelTransitionBody): void {
+    if (this.onModelTransition === undefined) return;
+    const callback = Result.fromThrowable(
+      () => this.onModelTransition?.(this.childId, transition),
+      () => "onModelTransition_failed" as const,
+    )();
+    callback.match(
+      () => undefined,
+      (code) => {
+        this.logger.warn(
+          { childId: this.childId, code },
+          "child model transition callback failed",
+        );
+      },
+    );
+  }
+
+  /**
    * Enforces the child's strict protocol state machine (Pi adapter contract):
    * `handshake` only while awaiting it, `bootstrap-ack` only while a
    * bootstrap is outstanding, `settled` only once bootstrap has been
    * confirmed applied, `cancelled` only while a cancellation is in
-   * flight, and `delegate-request` only once running. Any message arriving
+   * flight, `model-transition` only while running and before settlement, and
+   * `delegate-request` only once running. Any message arriving
    * out of this order - duplicated, premature, late, or
    * of an unknown/illegal kind - fails closed instead of being silently
    * accepted or merely observed.
@@ -1526,6 +1620,40 @@ export class PiRpcChild {
         return;
       }
       resolvers.resolve(parsed.value);
+      return;
+    }
+    if (envelope.kind === "model-transition") {
+      if (
+        this.status !== "running" ||
+        this.settled ||
+        this.disposed ||
+        this.settlementDraining ||
+        this.settlementCapturePending
+      ) {
+        this.failOutstanding(makeChildReplyLateFailure(this.childId));
+        return;
+      }
+      const parsed = parseControlBody("model-transition", envelope.body);
+      if (!parsed.ok) {
+        this.failOutstanding(
+          makeChildEnvelopeMalformedFailure(
+            this.childId,
+            "model-transition-invalid",
+          ),
+        );
+        return;
+      }
+      const transition = freezeModelTransitionBody(parsed.value);
+      if (!this.admitModelTransition(transition)) {
+        this.failOutstanding(
+          makeChildEnvelopeMalformedFailure(
+            this.childId,
+            "model-transition-invalid",
+          ),
+        );
+        return;
+      }
+      this.notifyModelTransition(transition);
       return;
     }
     if (envelope.kind === "settled") {
@@ -2884,6 +3012,11 @@ export class PiRpcChild {
         );
       }
     }
+    // Bootstrap acknowledgement establishes the one complete identity against
+    // which the first authenticated `applied` phase must compare. Prefer the
+    // child's bounded echo because it is the identity it actually applied;
+    // retain the parent's expected identity only when the echo is omitted.
+    this.currentModelIdentity = ack.resolvedModel ?? expected.resolvedModel;
     return okAsync(undefined);
   }
 

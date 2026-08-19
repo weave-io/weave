@@ -518,6 +518,93 @@ describe("PiChildRuntime.admitControlLine", () => {
   });
 });
 
+describe("PiChildRuntime.reportModelTransition", () => {
+  const applied = {
+    schemaVersion: 1 as const,
+    transitionId: "123e4567-e89b-42d3-a456-426614174000",
+    failureClass: "provider_unavailable" as const,
+    from: { provider: "origin", id: "model-a", name: "Origin" },
+    to: { provider: "fallback", id: "model-b", name: "Fallback" },
+    phase: "applied" as const,
+  };
+
+  it("reports applied then recovery-confirmed as nonterminal phases", async () => {
+    const { runtime, output } = await buildActivatedRuntime();
+    const first = await runtime.reportModelTransition(applied);
+    expect(first.isOk()).toBe(true);
+    expect(runtime.isActivated()).toBe(true);
+    expect((output.lines.at(-1) as Record<string, unknown>).kind).toBe(
+      "model-transition",
+    );
+    expect((output.lines.at(-1) as Record<string, unknown>).body).toEqual(
+      applied,
+    );
+
+    const confirmed = await runtime.reportModelTransition({
+      ...applied,
+      phase: "recovery-confirmed",
+    });
+    expect(confirmed.isOk()).toBe(true);
+    expect(runtime.isActivated()).toBe(true);
+    expect(output.lines).toHaveLength(3);
+    expect((output.lines.at(-1) as Record<string, unknown>).body).toEqual({
+      ...applied,
+      phase: "recovery-confirmed",
+    });
+  });
+
+  it("fails closed on phase order and duplicate phases without sending another body", async () => {
+    const firstRuntime = await buildActivatedRuntime();
+    const premature = await firstRuntime.runtime.reportModelTransition({
+      ...applied,
+      phase: "recovery-confirmed",
+    });
+    expect(premature.isErr()).toBe(true);
+    expect(firstRuntime.output.lines).toHaveLength(1);
+
+    const { runtime, output } = await buildActivatedRuntime();
+    expect((await runtime.reportModelTransition(applied)).isOk()).toBe(true);
+    expect((await runtime.reportModelTransition(applied)).isErr()).toBe(true);
+    expect(
+      (
+        await runtime.reportModelTransition({
+          ...applied,
+          phase: "recovery-confirmed",
+        })
+      ).isOk(),
+    ).toBe(true);
+    expect(
+      (
+        await runtime.reportModelTransition({
+          ...applied,
+          phase: "recovery-confirmed",
+        })
+      ).isErr(),
+    ).toBe(true);
+    expect(output.lines).toHaveLength(3);
+  });
+
+  it("rejects a transition after terminal settlement or cancellation", async () => {
+    const settled = await buildActivatedRuntime();
+    expect(
+      (
+        await settled.runtime.reportSettled("failed", { reason: "done" })
+      ).isOk(),
+    ).toBe(true);
+    expect((await settled.runtime.reportModelTransition(applied)).isErr()).toBe(
+      true,
+    );
+    expect(settled.output.lines).toHaveLength(2);
+
+    const cancelled = await buildActivatedRuntime();
+    expect((await cancelled.runtime.reportCancelled()).isOk()).toBe(true);
+    expect(
+      (await cancelled.runtime.reportModelTransition(applied)).isErr(),
+    ).toBe(true);
+    expect(cancelled.output.lines).toHaveLength(2);
+  });
+});
+
 describe("PiChildRuntime.reportSettled / reportCancelled", () => {
   it("writes a settled envelope with the outcome and output", async () => {
     const { runtime, output } = await buildActivatedRuntime();

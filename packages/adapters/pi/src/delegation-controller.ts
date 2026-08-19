@@ -22,6 +22,9 @@ import {
   MAX_CWD_LENGTH,
   MAX_NAME_LENGTH,
   type PiDelegateRequestBody,
+  type PiModelIdentityBody,
+  type PiModelTransitionBody,
+  parseControlBody,
 } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type {
@@ -212,6 +215,11 @@ export interface PiDelegationControllerDeps {
   readonly onChildSessionEvent?: (
     childId: string,
     event: PiChildSessionEvent,
+  ) => void;
+  /** Receives authenticated child model facts after local truth updates. */
+  readonly onModelTransition?: (
+    childId: string,
+    transition: PiModelTransitionBody,
   ) => void;
   readonly inspectionRegistry?: PiChildInspectionRegistry;
   readonly pathContainment?: PathContainmentPort;
@@ -534,8 +542,10 @@ interface PiThreadState {
   readonly ownerParentSessionId: string | undefined;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string>>;
-  /** Concrete model identity the thread's runs are dispatched with, if known. */
-  readonly model: string | undefined;
+  /** Concrete model id the thread's runs are dispatched with, if known. */
+  model: string | undefined;
+  /** Complete applied provider/model identity, updated atomically by auth facts. */
+  modelIdentity: PiModelIdentityBody | undefined;
   /** Thinking/reasoning intent recorded for the thread's runs, if known. */
   readonly reasoning: string | undefined;
   /** Newest run's child id. A new one is minted for every run. */
@@ -632,22 +642,24 @@ function readActiveLeafId(entries: readonly unknown[]): string | undefined {
 
 function bootstrapRuntimeMeta(bootstrap: unknown): {
   readonly model?: string;
+  readonly provider?: string;
+  readonly modelIdentity?: PiModelIdentityBody;
   readonly thinkingLevel?: string;
 } {
-  if (typeof bootstrap !== "object" || bootstrap === null) return {};
-  const record = bootstrap as Record<string, unknown>;
-  const resolved = record.resolvedModel;
-  const identity =
-    typeof resolved === "object" && resolved !== null
-      ? (resolved as Record<string, unknown>)
-      : undefined;
-  const id = identity?.id;
-  const thinkingLevel = record.thinkingLevel;
+  const parsed = parseControlBody("bootstrap", bootstrap);
+  if (!parsed.ok) return {};
+  const resolved = parsed.value.resolvedModel;
   return {
-    ...(typeof id === "string" && id !== "" ? { model: id } : {}),
-    ...(typeof thinkingLevel === "string" && thinkingLevel !== ""
-      ? { thinkingLevel }
-      : {}),
+    ...(resolved === undefined
+      ? {}
+      : {
+          model: resolved.id,
+          provider: resolved.provider,
+          modelIdentity: resolved,
+        }),
+    ...(parsed.value.thinkingLevel === undefined
+      ? {}
+      : { thinkingLevel: parsed.value.thinkingLevel }),
   };
 }
 
@@ -1765,13 +1777,17 @@ export class PiDelegationController {
     request: PiDelegationRequest,
   ): void {
     const existing = this.threads.get(threadId);
+    const runtime = bootstrapRuntimeMeta(request.bootstrap);
     if (existing !== undefined) {
       existing.latestChildId = childId;
       existing.status = "running";
       existing.running = true;
+      if (runtime.modelIdentity !== undefined) {
+        existing.modelIdentity = runtime.modelIdentity;
+        existing.model = runtime.modelIdentity.id;
+      }
       return;
     }
-    const runtime = bootstrapRuntimeMeta(request.bootstrap);
     const liveParent = this.deps.threadRefs?.()?.liveParentSessionId();
     this.threads.set(threadId, {
       threadId,
@@ -1786,6 +1802,7 @@ export class PiDelegationController {
       cwd: request.cwd,
       env: request.env,
       model: runtime.model,
+      modelIdentity: runtime.modelIdentity,
       reasoning: runtime.thinkingLevel,
       latestChildId: childId,
       status: "running",
@@ -2128,6 +2145,7 @@ export class PiDelegationController {
       cwd: metadata.cwd,
       env: {},
       model: metadata.model,
+      modelIdentity: undefined,
       reasoning: metadata.reasoning,
       latestChildId: record.childId,
       status: record.status,
@@ -2682,6 +2700,44 @@ export class PiDelegationController {
     );
   }
 
+  /**
+   * Applies an authenticated child model fact before notifying observers.
+   * Provider and model id stay inside one canonical identity object; the
+   * recovery-confirmed phase only notifies the projection seam and never
+   * changes settlement state.
+   */
+  private handleChildModelTransition(
+    childId: string,
+    transition: PiModelTransitionBody,
+  ): void {
+    const state = this.findLiveThreadState(childId);
+    if (transition.phase === "applied" && state !== undefined) {
+      state.modelIdentity = transition.to;
+      state.model = transition.to.id;
+    }
+    if (transition.phase === "applied") {
+      this.deps.inspectionRegistry
+        ?.updateModelIdentity(childId, transition.to)
+        .match(
+          () => undefined,
+          () => undefined,
+        );
+    }
+    Result.fromThrowable(
+      () => this.deps.onModelTransition?.(childId, transition),
+      () => "onModelTransition_failed" as const,
+    )().match(
+      () => undefined,
+      (code) => {
+        this.deps.logger.warn(
+          { childId, code },
+          "delegation model transition callback failed",
+        );
+      },
+    );
+    this.notifyTreeChanged();
+  }
+
   private spawnNow(
     childId: string,
     request: PiDelegationRequest,
@@ -2721,6 +2777,8 @@ export class PiDelegationController {
           body: PiDelegateRequestBody,
         ) =>
           this.handleChildDelegationRequest(relayChildId, correlationId, body),
+        onModelTransition: (transitionChildId, transition) =>
+          this.handleChildModelTransition(transitionChildId, transition),
         onAssistantUsageObserved: (usage) => {
           this.deps.telemetry
             ?.recordAssistantUsage({
@@ -3418,6 +3476,8 @@ export class PiDelegationController {
             now: this.deps.now,
             onDelegationRequest: (relayId, correlationId, body) =>
               this.handleChildDelegationRequest(relayId, correlationId, body),
+            onModelTransition: (transitionChildId, transition) =>
+              this.handleChildModelTransition(transitionChildId, transition),
             onAssistantUsageObserved: (usage) => {
               this.deps.telemetry
                 ?.recordAssistantUsage({

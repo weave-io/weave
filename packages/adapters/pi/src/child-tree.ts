@@ -5,7 +5,15 @@
  * tested without a real host.
  */
 
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "neverthrow";
+import type { PiModelIdentityBody } from "./child-control-bodies.js";
 import {
   parsePiChildSessionEvent,
   preserveUnknownChildEvent,
@@ -77,8 +85,12 @@ export interface PiChildInspectionRegistration {
   readonly snapshot: () => PiChildTreeNode;
   readonly workflowInstanceId?: string;
   readonly stepName?: string;
-  /** Concrete model the child was bootstrapped with, when the parent resolved one. */
+  /** Concrete model id the child was bootstrapped with, when known. */
   readonly model?: string;
+  /** Provider paired with the authenticated applied model, when known. */
+  readonly provider?: string;
+  /** Complete authenticated model identity, updated atomically on `applied`. */
+  readonly modelIdentity?: PiModelIdentityBody;
   /** Core-owned thinking intent sent alongside the model. */
   readonly thinkingLevel?: string;
   readonly onInterrupted?: () => void;
@@ -235,17 +247,59 @@ export class PiChildInspectionRegistry {
     );
   }
 
+  /**
+   * Updates one live child's complete applied model identity as one fact.
+   * This is intentionally an in-memory projection; Task 9's durable event is
+   * the persistence authority, so a transient update never writes raw child
+   * control data to history.
+   */
+  updateModelIdentity(
+    id: string,
+    identity: PiModelIdentityBody,
+  ): Result<void, PiChildInspectionHistoryError> {
+    const registration = this.live.get(id);
+    if (registration === undefined) {
+      return err({
+        kind: "history-write-failed",
+        operation: "checkpoint",
+        reason: "invalid",
+      });
+    }
+    const modelIdentity =
+      identity.name === undefined
+        ? { provider: identity.provider, id: identity.id }
+        : {
+            provider: identity.provider,
+            id: identity.id,
+            name: identity.name,
+          };
+    this.live.set(id, {
+      ...registration,
+      model: modelIdentity.id,
+      provider: modelIdentity.provider,
+      modelIdentity,
+    });
+    return ok(undefined);
+  }
+
   /** Model and thinking intent the child was bootstrapped with, when known. */
   getChildRuntimeMeta(id: string): {
     readonly model?: string;
+    readonly provider?: string;
+    readonly modelIdentity?: PiModelIdentityBody;
     readonly thinkingLevel?: string;
   } {
     const registration = this.live.get(id);
     if (registration === undefined) return {};
+    const model = registration.model ?? registration.modelIdentity?.id;
+    const provider =
+      registration.provider ?? registration.modelIdentity?.provider;
     return {
-      ...(registration.model === undefined
+      ...(model === undefined ? {} : { model }),
+      ...(provider === undefined ? {} : { provider }),
+      ...(registration.modelIdentity === undefined
         ? {}
-        : { model: registration.model }),
+        : { modelIdentity: registration.modelIdentity }),
       ...(registration.thinkingLevel === undefined
         ? {}
         : { thinkingLevel: registration.thinkingLevel }),

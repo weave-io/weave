@@ -13,7 +13,7 @@ import {
   type UnsignedEnvelopeInput,
   verifyEnvelope,
 } from "../child-envelope.js";
-import { canonicalizeToBytes } from "../strict-json.js";
+import { canonicalizeToBytes, type JsonValue } from "../strict-json.js";
 
 const randomPort = new WebCryptoRandomPort();
 const hmacPort = new WebCryptoHmacPort();
@@ -78,6 +78,33 @@ describe("signEnvelope / verifyEnvelope", () => {
     const verified = await verifyEnvelope(tampered, secretA, hmacPort);
     expect(verified.isErr()).toBe(true);
     expect(verified._unsafeUnwrapErr().type).toBe("MacMismatch");
+  });
+
+  it("authenticates the bounded model-transition body without exposing marker data", async () => {
+    const body = {
+      schemaVersion: 1 as const,
+      transitionId: "123e4567-e89b-42d3-a456-426614174000",
+      failureClass: "provider_unavailable" as const,
+      from: { provider: "origin", id: "model-a" },
+      to: { provider: "fallback", id: "model-b" },
+      phase: "recovery-confirmed" as const,
+    };
+    const signed = await signEnvelope(
+      baseInput({ kind: "model-transition", body }),
+      secretA,
+      hmacPort,
+    );
+    expect(signed.isOk()).toBe(true);
+    const verified = await verifyEnvelope(
+      signed._unsafeUnwrap() as unknown as JsonValue,
+      secretA,
+      hmacPort,
+    );
+    expect(verified.isOk()).toBe(true);
+    expect(verified._unsafeUnwrap().body).toEqual(body);
+    expect(JSON.stringify(verified._unsafeUnwrap().body)).not.toContain(
+      "recovery-marker",
+    );
   });
 
   it("rejects verification against the wrong secret", async () => {

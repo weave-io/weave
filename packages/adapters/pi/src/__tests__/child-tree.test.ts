@@ -343,6 +343,42 @@ describe("PiChildInspectionRegistry persistence", () => {
     ]);
   });
 
+  it("updates provider and model together for an authenticated applied transition", async () => {
+    const registry = new PiChildInspectionRegistry();
+    await registry.register({
+      id: "child",
+      parentId: ROOT_NODE_ID,
+      name: "child",
+      kind: "ordinary",
+      snapshot: () => node({ id: "child" }),
+      model: "model-a",
+      provider: "origin",
+    });
+    const result = registry.updateModelIdentity("child", {
+      provider: "fallback",
+      id: "model-b",
+      name: "Fallback",
+    });
+    expect(result.isOk()).toBe(true);
+    expect(registry.getChildRuntimeMeta("child")).toEqual({
+      model: "model-b",
+      provider: "fallback",
+      modelIdentity: {
+        provider: "fallback",
+        id: "model-b",
+        name: "Fallback",
+      },
+    });
+    expect(
+      registry
+        .updateModelIdentity("missing", {
+          provider: "fallback",
+          id: "model-b",
+        })
+        .isErr(),
+    ).toBe(true);
+  });
+
   it("rejects duplicate and closed recovered attachments without history writes", async () => {
     const writes: string[] = [];
     const registry = new PiChildInspectionRegistry({

@@ -57,6 +57,9 @@ export const PI_CONTROL_KINDS = [
   "delegate-response",
   "transfer-chunk",
   "transfer-result",
+  // Authenticated, nonterminal child model truth. The body carries its own
+  // phase machine; this kind is child-to-parent-only.
+  "model-transition",
 ] as const;
 export type PiControlKind = (typeof PI_CONTROL_KINDS)[number];
 

@@ -4,6 +4,7 @@ import {
   makeErrorBody,
   MAX_DELEGATION_TRIGGERS,
   MAX_SETTLEMENT_OUTPUT_BYTES,
+  MODEL_TRANSITION_SCHEMA_VERSION,
   parseControlBody,
   toModelIdentityBody,
 } from "../child-control-bodies.js";
@@ -28,6 +29,76 @@ const REQUIRED_BOOTSTRAP_FIELDS = {
   correlationId: "child-1",
   context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
 };
+
+const MODEL_TRANSITION_ID = "123e4567-e89b-42d3-a456-426614174000";
+
+function modelTransitionBody(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: MODEL_TRANSITION_SCHEMA_VERSION,
+    transitionId: MODEL_TRANSITION_ID,
+    failureClass: "provider_unavailable",
+    from: { provider: "origin", id: "model-a", name: "Origin" },
+    to: { provider: "fallback", id: "model-b", name: "Fallback" },
+    phase: "applied",
+    ...overrides,
+  };
+}
+
+describe("model-transition control body strict boundaries", () => {
+  it("accepts the exact applied and recovery-confirmed shapes", () => {
+    const applied = parseControlBody("model-transition", modelTransitionBody());
+    expect(applied.ok).toBe(true);
+    const confirmed = parseControlBody(
+      "model-transition",
+      modelTransitionBody({ phase: "recovery-confirmed" }),
+    );
+    expect(confirmed.ok).toBe(true);
+  });
+
+  it("rejects extra, malformed, and oversized identity data", () => {
+    expect(
+      parseControlBody("model-transition", modelTransitionBody({ token: "x" }))
+        .ok,
+    ).toBe(false);
+    expect(
+      parseControlBody(
+        "model-transition",
+        modelTransitionBody({ schemaVersion: 2 }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseControlBody(
+        "model-transition",
+        modelTransitionBody({ failureClass: "provider-secret" }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseControlBody(
+        "model-transition",
+        modelTransitionBody({ transitionId: "" }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseControlBody(
+        "model-transition",
+        modelTransitionBody({
+          to: { provider: "x".repeat(257), id: "model-b" },
+        }),
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("rejects accessor-backed bodies before schema validation", () => {
+    const body = modelTransitionBody();
+    Object.defineProperty(body, "phase", {
+      enumerable: true,
+      get: () => {
+        throw new Error("accessor must not run");
+      },
+    });
+    expect(parseControlBody("model-transition", body).ok).toBe(false);
+  });
+});
 
 describe("settled control body strict boundaries", () => {
   it("rejects legacy summary and accepts exact UTF-8 output boundaries", () => {

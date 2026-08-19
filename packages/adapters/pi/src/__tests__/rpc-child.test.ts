@@ -451,6 +451,8 @@ async function respondToRestoreVerification(data: {
 
 async function startRunningChild(
   deps: Partial<ConstructorParameters<typeof PiRpcChild>[5]> = {},
+  bootstrap: JsonValue = validBootstrap(),
+  ack: JsonValue = validAck(),
 ): Promise<{
   child: PiRpcChild;
   processPort: FakeChildProcessPort;
@@ -475,14 +477,185 @@ async function startRunningChild(
   const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
   await responder.send("handshake", "child-1", {}, secretBytes);
   expect((await spawnPromise).isOk()).toBe(true);
-  const runPromise = child.runTask(baseSpawnInput(), validBootstrap());
+  const runPromise = child.runTask(baseSpawnInput(), bootstrap);
   await flush();
-  await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+  await responder.send("bootstrap-ack", "child-1", ack, secretBytes);
   await flush();
   return { child, processPort, spawned, responder, secretBytes, runPromise };
 }
 
 describe("PiRpcChild", () => {
+  it("accepts authenticated model phases without settling and updates parent truth once per applied phase", async () => {
+    const from = { provider: "origin", id: "model-a", name: "Origin" };
+    const to = { provider: "fallback", id: "model-b", name: "Fallback" };
+    const transitions: unknown[] = [];
+    const running = await startRunningChild(
+      {
+        onModelTransition: (_childId, transition) => {
+          transitions.push(transition);
+        },
+      },
+      validBootstrap({ resolvedModel: from }),
+      validAck({ resolvedModel: from }),
+    );
+    let settled = false;
+    void running.runPromise.then(() => {
+      settled = true;
+    });
+
+    const applied = {
+      schemaVersion: 1 as const,
+      transitionId: "123e4567-e89b-42d3-a456-426614174000",
+      failureClass: "provider_unavailable" as const,
+      from,
+      to,
+      phase: "applied" as const,
+    };
+    await running.responder.send(
+      "model-transition",
+      "child-1",
+      applied,
+      running.secretBytes,
+    );
+    await flush();
+    expect(settled).toBe(false);
+    expect(transitions).toEqual([applied]);
+
+    await running.responder.send(
+      "model-transition",
+      "child-1",
+      { ...applied, phase: "recovery-confirmed" },
+      running.secretBytes,
+    );
+    await flush();
+    expect(settled).toBe(false);
+    expect(transitions).toEqual([
+      applied,
+      { ...applied, phase: "recovery-confirmed" },
+    ]);
+
+    await running.responder.send(
+      "settled",
+      "child-1",
+      { outcome: "failed", reason: "finished" },
+      running.secretBytes,
+    );
+    expect((await running.runPromise)._unsafeUnwrap()).toEqual({
+      outcome: "failed",
+      reason: "finished",
+    });
+  });
+
+  it("rejects recovery-before-applied, duplicate phases, and identity mismatch", async () => {
+    const from = { provider: "origin", id: "model-a" };
+    const to = { provider: "fallback", id: "model-b" };
+    const bootstrap = validBootstrap({ resolvedModel: from });
+    const ack = validAck({ resolvedModel: from });
+    const makeBody = (overrides: Record<string, unknown> = {}) => ({
+      schemaVersion: 1,
+      transitionId: "123e4567-e89b-42d3-a456-426614174000",
+      failureClass: "provider_unavailable",
+      from,
+      to,
+      phase: "applied",
+      ...overrides,
+    });
+
+    const premature = await startRunningChild({}, bootstrap, ack);
+    await premature.responder.send(
+      "model-transition",
+      "child-1",
+      makeBody({ phase: "recovery-confirmed" }),
+      premature.secretBytes,
+    );
+    await flush();
+    expect(premature.child.snapshot().status).toBe("failed");
+
+    const duplicate = await startRunningChild({}, bootstrap, ack);
+    const body = makeBody();
+    await duplicate.responder.send(
+      "model-transition",
+      "child-1",
+      body,
+      duplicate.secretBytes,
+    );
+    await flush();
+    expect(duplicate.child.snapshot().status).toBe("running");
+    await duplicate.responder.send(
+      "model-transition",
+      "child-1",
+      body,
+      duplicate.secretBytes,
+    );
+    await flush();
+    expect(duplicate.child.snapshot().status).toBe("failed");
+
+    const mismatch = await startRunningChild({}, bootstrap, ack);
+    await mismatch.responder.send(
+      "model-transition",
+      "child-1",
+      makeBody({ from: { provider: "other", id: "model-a" } }),
+      mismatch.secretBytes,
+    );
+    await flush();
+    expect(mismatch.child.snapshot().status).toBe("failed");
+  });
+
+  it("renews settlement inactivity for an authenticated model transition", async () => {
+    const from = { provider: "origin", id: "model-a" };
+    const to = { provider: "fallback", id: "model-b" };
+    const timers: Array<{ cancelled: boolean; fire: () => void }> = [];
+    const running = await startRunningChild(
+      {
+        timerPort: {
+          schedule: (callback) => {
+            const timer = {
+              cancelled: false,
+              fire: () => {
+                if (!timer.cancelled) callback();
+              },
+            };
+            timers.push(timer);
+            return { cancel: () => (timer.cancelled = true) };
+          },
+        },
+      },
+      validBootstrap({ resolvedModel: from }),
+      validAck({ resolvedModel: from }),
+    );
+    const originalSettlementTimer = timers.at(-1);
+    expect(originalSettlementTimer).toBeDefined();
+    await running.responder.send(
+      "model-transition",
+      "child-1",
+      {
+        schemaVersion: 1,
+        transitionId: "123e4567-e89b-42d3-a456-426614174001",
+        failureClass: "timeout",
+        from,
+        to,
+        phase: "applied",
+      },
+      running.secretBytes,
+    );
+    await flush();
+    const renewedSettlementTimer = timers.at(-1);
+    expect(renewedSettlementTimer).not.toBe(originalSettlementTimer);
+    expect(originalSettlementTimer?.cancelled).toBe(true);
+    expect(running.child.snapshot().status).toBe("running");
+    originalSettlementTimer?.fire();
+    await running.responder.send(
+      "settled",
+      "child-1",
+      { outcome: "failed", reason: "finished" },
+      running.secretBytes,
+    );
+    expect((await running.runPromise)._unsafeUnwrap()).toEqual({
+      outcome: "failed",
+      reason: "finished",
+    });
+  });
+
   it("verifies restore context before task content and exposes only bounded metadata", async () => {
     const observed: unknown[] = [];
     const running = await startRestoreChild({

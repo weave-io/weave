@@ -20,19 +20,22 @@ import {
   ResultAsync,
 } from "neverthrow";
 import {
+  modelIdentityBodiesEqual,
+  modelTransitionFactsEqual,
   type PiBootstrapAckBody,
   type PiDelegateRequestBody,
   type PiDelegateResponseBody,
+  type PiModelTransitionBody,
   type PiTransferResultBody,
   parseControlBody,
 } from "./child-control-bodies.js";
-import { projectDiagnosticText } from "./child-diagnostic-projection.js";
 import {
   generateNonceHex,
   type HmacPort,
   hexToBytes,
   type RandomPort,
 } from "./child-crypto.js";
+import { projectDiagnosticText } from "./child-diagnostic-projection.js";
 import {
   WEAVE_CHILD_ID_ENV,
   WEAVE_CHILD_SECRET_ENV,
@@ -79,6 +82,8 @@ export type PiChildOutputError = {
 
 /** How long a child waits for a correlated delegation reply. */
 const CHILD_CORRELATED_TIMEOUT_MS = 300_000;
+/** Bounded number of fallback transitions admitted by one child runtime. */
+const MAX_MODEL_TRANSITION_REPORTS = 64;
 
 export interface PiChildOutputPort {
   /** Writes one already-LF-terminated line directly to this process's own stdout. */
@@ -135,6 +140,14 @@ export class PiChildRuntime {
   private settledReported = false;
   /** Prevents concurrent terminal reports while allowing a failed report to retry. */
   private settledReportInFlight = false;
+  private cancelledReported = false;
+  private cancelledReportInFlight = false;
+  /** Prevents concurrent model-transition reports from racing their phase cursor. */
+  private modelTransitionReportInFlight = false;
+  /** Every accepted transition id is retained so a late phase cannot be reused. */
+  private readonly reportedModelTransitionIds = new Set<string>();
+  /** The last successfully reported phase in the current transition. */
+  private lastModelTransition: PiModelTransitionBody | undefined;
   /** Serializes allocation, signing, and output so failed sequences can be reused safely. */
   private outgoingSendTail: Promise<void> = Promise.resolve();
   /** Pending correlated delegation requests initiated by this child. */
@@ -292,8 +305,8 @@ export class PiChildRuntime {
       return;
     }
     // Every other kind (`handshake`, `bootstrap-ack`, `settled`, `cancelled`,
-    // `error`, `delegate-request`) is child-to-parent-only;
-    // a parent ever sending one of these back is always a protocol violation,
+    // `error`, `delegate-request`, `model-transition`) is
+    // child-to-parent-only; a parent ever sending one of these back is always a protocol violation,
     // never a message this side should legitimately see.
     this.deps.logger.warn(
       { childId: this.childId, kind: envelope.kind },
@@ -428,7 +441,12 @@ export class PiChildRuntime {
       reason?: string;
     },
   ): ResultAsync<void, PiChildRuntimeError> {
-    if (this.settledReported || this.settledReportInFlight) {
+    if (
+      this.settledReported ||
+      this.settledReportInFlight ||
+      this.cancelledReported ||
+      this.cancelledReportInFlight
+    ) {
       return errAsync({
         type: "EnvelopeSignFailed",
         reason: "settlement-already-reported",
@@ -472,7 +490,114 @@ export class PiChildRuntime {
   }
 
   reportCancelled(): ResultAsync<void, PiChildRuntimeError> {
-    return this.sendControl("cancelled", this.childId, {}).map(() => undefined);
+    if (
+      this.cancelledReported ||
+      this.cancelledReportInFlight ||
+      this.settledReported ||
+      this.settledReportInFlight
+    ) {
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: "terminal-already-reported",
+      });
+    }
+    this.cancelledReportInFlight = true;
+    return this.sendControl("cancelled", this.childId, {})
+      .map(() => {
+        this.cancelledReportInFlight = false;
+        this.cancelledReported = true;
+        return undefined;
+      })
+      .mapErr((failure) => {
+        this.cancelledReportInFlight = false;
+        return failure;
+      });
+  }
+
+  /**
+   * Reports one authenticated, nonterminal model transition. The lifecycle
+   * owner calls this only after it has proved the corresponding public Pi
+   * events; this transport method additionally enforces the child-local
+   * applied -\> recovery-confirmed order and never grants settlement authority.
+   */
+  reportModelTransition(
+    body: PiModelTransitionBody,
+  ): ResultAsync<void, PiChildRuntimeError> {
+    const parsed = parseControlBody("model-transition", body);
+    if (!parsed.ok) {
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: "model-transition-body-invalid",
+      });
+    }
+    if (
+      this.disposed ||
+      this.settledReported ||
+      this.settledReportInFlight ||
+      this.cancelledReported ||
+      this.cancelledReportInFlight ||
+      this.cancelAdmitted
+    ) {
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: "model-transition-after-terminal",
+      });
+    }
+    if (this.modelTransitionReportInFlight) {
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: "model-transition-report-in-flight",
+      });
+    }
+
+    const transition = parsed.value;
+    const prior = this.lastModelTransition;
+    if (transition.phase === "applied") {
+      if (
+        this.reportedModelTransitionIds.has(transition.transitionId) ||
+        prior?.phase === "applied" ||
+        this.reportedModelTransitionIds.size >= MAX_MODEL_TRANSITION_REPORTS
+      ) {
+        return errAsync({
+          type: "EnvelopeSignFailed",
+          reason: "model-transition-phase-order",
+        });
+      }
+      if (
+        modelIdentityBodiesEqual(transition.from, transition.to) ||
+        (prior !== undefined &&
+          !modelIdentityBodiesEqual(transition.from, prior.to))
+      ) {
+        return errAsync({
+          type: "EnvelopeSignFailed",
+          reason: "model-transition-identity-mismatch",
+        });
+      }
+    } else if (
+      prior === undefined ||
+      prior.phase !== "applied" ||
+      !modelTransitionFactsEqual(transition, prior)
+    ) {
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: "model-transition-phase-order",
+      });
+    }
+
+    this.modelTransitionReportInFlight = true;
+    return this.sendControl("model-transition", this.childId, transition)
+      .map(() => {
+        this.modelTransitionReportInFlight = false;
+        this.lastModelTransition = transition;
+        if (transition.phase === "applied") {
+          this.reportedModelTransitionIds.add(transition.transitionId);
+        }
+        return undefined;
+      })
+      .mapErr((failure) => {
+        this.modelTransitionReportInFlight = false;
+        return failure;
+      });
   }
 
   /** Proves to the parent that bootstrap completed before task work starts. */

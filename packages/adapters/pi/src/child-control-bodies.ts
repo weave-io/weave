@@ -21,6 +21,7 @@ import {
   type PiControlKind,
 } from "./child-envelope.js";
 import { PI_TRANSPORT_LIMITS } from "./errors.js";
+import { PI_FAILOVER_FAILURE_CLASSES } from "./model-failover-contract.js";
 import { canonicalizeToBytes, type JsonValue } from "./strict-json.js";
 import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
 
@@ -129,6 +130,20 @@ const ModelIdentityBodySchema = z
   })
   .strict();
 
+/** The only schema version accepted for authenticated child model facts. */
+export const MODEL_TRANSITION_SCHEMA_VERSION = 1 as const;
+
+const ModelTransitionBodySchema = z
+  .object({
+    schemaVersion: z.literal(MODEL_TRANSITION_SCHEMA_VERSION),
+    transitionId: NameSchema,
+    failureClass: z.enum(PI_FAILOVER_FAILURE_CLASSES),
+    from: ModelIdentityBodySchema,
+    to: ModelIdentityBodySchema,
+    phase: z.enum(["applied", "recovery-confirmed"]),
+  })
+  .strict();
+
 /**
  * A minimal host-supplied model identity: exactly the fields
  * {@link ModelIdentityBodySchema} accepts. Any real harness model object
@@ -161,6 +176,35 @@ export function toModelIdentityBody(
   return model.name === undefined
     ? { provider: model.provider, id: model.id }
     : { provider: model.provider, id: model.id, name: model.name };
+}
+
+/** Compares the canonical provider/model identity; `name` is display metadata. */
+export function modelIdentityBodiesEqual(
+  left: PiModelIdentityBody,
+  right: PiModelIdentityBody,
+): boolean {
+  return left.provider === right.provider && left.id === right.id;
+}
+
+function modelIdentityBodiesExactlyEqual(
+  left: PiModelIdentityBody,
+  right: PiModelIdentityBody,
+): boolean {
+  return modelIdentityBodiesEqual(left, right) && left.name === right.name;
+}
+
+/** Compares transition facts without treating the phase as part of identity. */
+export function modelTransitionFactsEqual(
+  left: PiModelTransitionBody,
+  right: PiModelTransitionBody,
+): boolean {
+  return (
+    left.schemaVersion === right.schemaVersion &&
+    left.transitionId === right.transitionId &&
+    left.failureClass === right.failureClass &&
+    modelIdentityBodiesExactlyEqual(left.from, right.from) &&
+    modelIdentityBodiesExactlyEqual(left.to, right.to)
+  );
 }
 
 /**
@@ -413,6 +457,7 @@ const CONTROL_BODY_SCHEMAS = {
   "delegate-response": DelegateResponseBodySchema,
   "transfer-chunk": TransferChunkBodySchema,
   "transfer-result": TransferResultBodySchema,
+  "model-transition": ModelTransitionBodySchema,
 } as const satisfies Record<PiControlKind, z.ZodType>;
 
 export type PiBootstrapBody = z.infer<typeof BootstrapBodySchema>;
@@ -424,6 +469,7 @@ export type PiDirectStepBootstrapBody = z.infer<
 >;
 export type PiBootstrapAckBody = z.infer<typeof BootstrapAckBodySchema>;
 export type PiModelIdentityBody = z.infer<typeof ModelIdentityBodySchema>;
+export type PiModelTransitionBody = z.infer<typeof ModelTransitionBodySchema>;
 export type PiTaskContextBody = z.infer<typeof TaskContextBodySchema>;
 export type PiCancelBody = z.infer<typeof CancelBodySchema>;
 export type PiSettledBody = z.infer<typeof SettledBodySchema>;
@@ -676,7 +722,7 @@ export function parseControlBody<K extends PiControlKind>(
   // the same bound at the direct parser boundary so tests and internal callers
   // cannot validate a bootstrap body that the authenticated transport would
   // reject later.
-  if (kind === "bootstrap") {
+  if (kind === "bootstrap" || kind === "model-transition") {
     const canonical = canonicalizeToBytes(copied.value);
     if (
       canonical.isErr() ||
