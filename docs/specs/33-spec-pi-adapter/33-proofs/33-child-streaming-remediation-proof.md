@@ -522,4 +522,3 @@ remained the Pi persistence boundary.
 The earlier exact-identity RED remains under `695e15a2`, and the historical
 2026-08-18 RED remains unchanged. Task 11 remains unchecked in
 `.weave/plans/pi-child-streaming-remediation.md`. Weft and Warp were not run.
-
