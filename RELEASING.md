@@ -48,6 +48,48 @@ The job graph is a straight chain. A failed step is safe to rerun because the
 publisher, refs, and cleanup operations are idempotent and each step rereads
 authority.
 
+## `next` prerelease
+
+Use `channel: next` to test a bounded set of packages from the current green
+`main`. This is a maintainer-only manual dispatch. Select one or more of the
+four required checkboxes (`cli`, `opencode`, `claude-code`, and `pi`); no model
+or thinking input is accepted. The route requires the `workflow_dispatch`
+event, `refs/heads/main`, the `weave-io/weave` repository, and Task 9
+maintainer authorization. The route summary records the seed and the computed
+closure.
+
+The controller closes the seed over shared changesets and bundled-artifact
+impacts, using the same closure rules as stable. It does not consume or delete
+changesets. It builds at the current `main` SHA and computes
+`<stable>-next.YYYYMMDD.sha12` in UTC. Version, dependency-range, and
+changelog changes exist only in the staging tree. The source checkout's
+package manifests and changelogs are byte-checked before and after packing;
+the checkout must remain unchanged.
+
+Each staged tarball contains a bounded, deterministic scratch changelog. It
+has the fixed current-prerelease notice, package/version/source identity,
+source history, pending changeset IDs and digests, and the canonical notes URL.
+It contains no model prose. The canonical stable changelog is not changed.
+The workflow also retains the deterministic notes artifact for the GitHub
+prerelease.
+
+`next` uses the same ordered chain as stable: independent exact attestation,
+clean-consumer proof for every closure member, and all five harness-proof
+stages for every changed adapter. Missing, skipped, or mismatched evidence
+blocks before the protected `prerelease` environment and before OIDC. Approval
+is enforced by that workflow environment; it is not an npm trusted-publisher
+environment claim. Only `publish` has `id-token: write`, and it publishes the
+bound bytes with npm's `next` dist-tag. Registry verification runs before refs.
+The final job creates immutable, create-once GitHub prerelease entries and tags with the
+deterministic wrapper and pending-changeset identities. It never moves
+`latest`.
+
+Rerun the same dispatch after a transient failure. Recompute and exact digest
+proof remain authoritative. Existing matching registry bytes, tags, and
+prereleases are skipped; conflicts stop the run. Do not edit source files,
+consume changesets, or create a manual stable changelog entry to repair a
+`next` run.
+
 ## Resume
 
 Dispatch `.github/workflows/release-publish.yml` with `channel: stable-resume`

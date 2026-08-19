@@ -9,12 +9,33 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: Stable release operation
+        description: Release operation
         required: true
         type: choice
         options:
           - stable-resume
           - incident-resolution
+          - next
+      cli:
+        description: "Publish @weaveio/weave-cli in the next channel"
+        required: true
+        type: boolean
+        default: false
+      opencode:
+        description: "Publish @weaveio/weave-adapter-opencode in the next channel"
+        required: true
+        type: boolean
+        default: false
+      claude-code:
+        description: "Publish @weaveio/weave-adapter-claude-code in the next channel"
+        required: true
+        type: boolean
+        default: false
+      pi:
+        description: "Publish @weaveio/weave-adapter-pi in the next channel"
+        required: true
+        type: boolean
+        default: false
       released_sha:
         description: Merged release SHA for a stable resume
         required: false
@@ -50,9 +71,10 @@ jobs:
       released-sha: ${{ steps.route.outputs.releasedSha }}
       marker-cleanup-pending: ${{ steps.route.outputs.markerCleanupPending }}
       marker-cleanup-error: ${{ steps.route.outputs.markerCleanupError }}
+      closure-explanation: ${{ steps.route.outputs.closureExplanation }}
     env:
       GITHUB_EVENT_NAME: ${{ github.event_name }}
-      GITHUB_EVENT_ACTION: ${{ github.event.action }}
+      GITHUB_EVENT_ACTION: ${{ github.event.action || github.event_name == 'workflow_dispatch' && 'workflow_dispatch' || 'closed' }}
       GITHUB_REPOSITORY: ${{ github.repository }}
       GITHUB_REF: ${{ github.ref }}
       GITHUB_ACTOR: ${{ github.actor }}
@@ -64,6 +86,10 @@ jobs:
       PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
       INPUT_CHANNEL: ${{ inputs.channel }}
       INPUT_RELEASED_SHA: ${{ inputs.released_sha }}
+      INPUT_CLI: ${{ inputs.cli }}
+      INPUT_OPENCODE: ${{ inputs.opencode }}
+      INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
+      INPUT_PI: ${{ inputs.pi }}
       RELEASE_MAINTAINER_AUTHORIZED: ${{ github.event_name == 'pull_request' || github.actor == github.repository_owner }}
       RELEASE_ROLLOUT_MODE: ${{ vars.RELEASE_ROLLOUT_MODE }}
       RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
@@ -78,7 +104,13 @@ jobs:
       - run: bun install --frozen-lockfile
       - id: route
         name: Validate event, topology, and marker lifecycle
-        run: bun scripts/release/release-route-main.ts
+        run: |
+          set -euo pipefail
+          if [[ "${INPUT_CHANNEL:-}" == "next" ]]; then
+            bun scripts/release/next-main.ts --phase route
+          else
+            bun scripts/release/release-route-main.ts
+          fi
       - name: Verify release command reachability
         if: steps.route.outputs.work == 'true'
         run: bun scripts/release/publish-reachability.ts
@@ -97,6 +129,7 @@ jobs:
       source-sha: ${{ steps.plan.outputs.source-sha }}
       plan-artifact-id: ${{ steps.upload-plan.outputs.artifact-id }}
     env:
+      CHANNEL: ${{ needs.route.outputs.channel }}
       RELEASED_SHA: ${{ inputs.released_sha || needs.route.outputs.released-sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -108,6 +141,7 @@ jobs:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
       - name: Validate the state-resume carrier
+        if: env.CHANNEL != 'next'
         run: |
           set -euo pipefail
           test -n "$RELEASED_SHA"
@@ -119,15 +153,25 @@ jobs:
         name: Recompute from merged main authority
         run: |
           set -euo pipefail
-          # The protected release adapter writes plan.json after rereading the
-          # merge, ledger, manifests, changelogs, and docs audit at RELEASED_SHA.
-          test -s "$RUNNER_TEMP/release/plan.json"
-          bun scripts/release/build-bind-main.ts --plan "$RUNNER_TEMP/release/plan.json" --released-sha "$RELEASED_SHA" --output "$RUNNER_TEMP/release/build-bind.json"
-          {
-            echo "plan-path=$RUNNER_TEMP/release/plan.json"
-            echo "plan-digest=$(jq -er '.planDigest' "$RUNNER_TEMP/release/build-bind.json")"
-            echo "source-sha=$RELEASED_SHA"
-          } >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/release"
+          if [[ "$CHANNEL" == "next" ]]; then
+            bun scripts/release/next-main.ts --phase plan --output "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/next-metadata.json"
+            {
+              echo "plan-path=$RUNNER_TEMP/release/plan.json"
+              echo "plan-digest=$(jq -er '.planDigest' "$RUNNER_TEMP/release/plan.json")"
+              echo "source-sha=$(jq -er '.plan.releasedSha' "$RUNNER_TEMP/release/plan.json")"
+            } >> "$GITHUB_OUTPUT"
+          else
+            # The protected release adapter writes plan.json after rereading the
+            # merge, ledger, manifests, changelogs, and docs audit at RELEASED_SHA.
+            test -s "$RUNNER_TEMP/release/plan.json"
+            bun scripts/release/build-bind-main.ts --plan "$RUNNER_TEMP/release/plan.json" --released-sha "$RELEASED_SHA" --output "$RUNNER_TEMP/release/build-bind.json"
+            {
+              echo "plan-path=$RUNNER_TEMP/release/plan.json"
+              echo "plan-digest=$(jq -er '.planDigest' "$RUNNER_TEMP/release/build-bind.json")"
+              echo "source-sha=$RELEASED_SHA"
+            } >> "$GITHUB_OUTPUT"
+          fi
       - id: upload-plan
         uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
         with:
@@ -146,13 +190,13 @@ jobs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       source-run-id: ${{ github.run_id }}
       source-sha: ${{ needs.recompute.outputs.source-sha }}
-      plan-digest: ${{ needs.recompute.outputs.plan-digest }}
+      plan-digest: ${{ steps.bind.outputs.plan-digest }}
     env:
       RELEASED_SHA: ${{ needs.recompute.outputs.source-sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: refs/heads/main
+          ref: ${{ needs.recompute.outputs.source-sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -162,15 +206,22 @@ jobs:
         with:
           artifact-ids: ${{ needs.recompute.outputs.plan-artifact-id }}
           path: ${{ runner.temp }}/release
-      - name: Build at the released SHA and retain the bound payload
+      - id: bind
+        name: Build at the released SHA and retain the bound payload
         run: |
           set -euo pipefail
           test -s "$RUNNER_TEMP/release/plan.json"
           mkdir -p "$RUNNER_TEMP/release/artifacts"
+          CHANNEL=$(jq -er '.plan.channel' "$RUNNER_TEMP/release/plan.json")
           bun run build
-          # The protected build adapter fills this directory with the exact
-          # tarballs and binding produced at RELEASED_SHA.
-          test -n "$RELEASED_SHA"
+          if [[ "$CHANNEL" == "next" ]]; then
+            bun scripts/release/next-main.ts --phase build --plan "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/next-metadata.json" --root "$RUNNER_TEMP/release" --output "$RUNNER_TEMP/release/plan.json"
+          else
+            # The protected build adapter fills this directory with the exact
+            # tarballs and binding produced at RELEASED_SHA.
+            test -n "$RELEASED_SHA"
+          fi
+          echo "plan-digest=$(jq -er '.planDigest' "$RUNNER_TEMP/release/plan.json")" >> "$GITHUB_OUTPUT"
       - id: upload
         uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
         with:
@@ -310,10 +361,10 @@ jobs:
       - run: bun scripts/release/harness-proof-main.ts --proof "$RUNNER_TEMP/release/harness-proof.json"
 
   release-approval:
-    name: Approve the proven stable release
+    name: Approve the proven release
     needs: harness-proof
     runs-on: ubuntu-latest
-    environment: release
+    environment: ${{ inputs.channel == 'next' && 'prerelease' || 'release' }}
     outputs:
       artifact-id: ${{ needs.harness-proof.outputs.artifact-id }}
       source-sha: ${{ needs.harness-proof.outputs.source-sha }}
@@ -343,9 +394,9 @@ jobs:
   publish:
     name: Publish verified artifacts with OIDC
     needs: release-approval
-    if: needs.route.outputs.publish == 'true' && vars.RELEASE_ROLLOUT_MODE == 'enabled' && (github.event_name != 'workflow_dispatch' || inputs.channel != 'incident-resolution')
+    if: vars.RELEASE_ROLLOUT_MODE == 'enabled' && (github.event_name != 'workflow_dispatch' || inputs.channel != 'incident-resolution')
     runs-on: ubuntu-latest
-    environment: release
+    environment: ${{ inputs.channel == 'next' && 'prerelease' || 'release' }}
     outputs:
       artifact-id: ${{ needs.release-approval.outputs.artifact-id }}
       publication-artifact-id: ${{ steps.upload-publication.outputs.artifact-id }}
@@ -408,6 +459,7 @@ jobs:
       contents: write
       pull-requests: write
     env:
+      CHANNEL: ${{ inputs.channel || 'stable' }}
       RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -422,4 +474,11 @@ jobs:
         with:
           artifact-ids: ${{ needs.registry-verification.outputs.publication-artifact-id }}
           path: ${{ runner.temp }}/release
-      - run: bun scripts/release/refs-cleanup-main.ts --input "$RUNNER_TEMP/release/refs-cleanup.json"
+      - name: Create immutable release refs or prerelease notes
+        run: |
+          set -euo pipefail
+          if [[ "$CHANNEL" == "next" ]]; then
+            bun scripts/release/next-main.ts --phase prerelease --plan "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/next-metadata.json" --publication "$RUNNER_TEMP/release/publication-report.json" --output "$RUNNER_TEMP/release/next-prereleases.json"
+          else
+            bun scripts/release/refs-cleanup-main.ts --input "$RUNNER_TEMP/release/refs-cleanup.json"
+          fi
