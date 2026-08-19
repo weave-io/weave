@@ -33,6 +33,10 @@
  * count matches and place its gutter without ever slicing a painted byte.
  */
 
+import {
+  PI_LIVE_REASONING_PARENT_PREFIX,
+  PI_LIVE_REASONING_TRUNCATION_MARKER,
+} from "./child-live-reasoning.js";
 import { boundText } from "./child-overlay-replay.js";
 import { stripPathLike } from "./child-overlay-search.js";
 import type { ChildOverlayEntry } from "./child-overlay-types.js";
@@ -47,7 +51,11 @@ import type {
   PiChildTranscriptEntry,
   PiChildTranscriptToolEntry,
 } from "./child-transcript.js";
-import { fitLineToWidth, measureWidth } from "./render-width.js";
+import {
+  fitLineToWidth,
+  measureWidth,
+  truncatePlainToWidth,
+} from "./render-width.js";
 import { type Paint, paintTone, plainPaint, type Tone } from "./ui-paint.js";
 import { cell, safeTrim, wrapIndented } from "./ui-rows.js";
 
@@ -159,6 +167,8 @@ export interface OverlayPiNativePane {
   readonly painted: readonly string[];
   readonly plain: readonly string[];
   readonly spans: readonly OverlayPiNativeSpan[];
+  /** Rows from the mounted-only reasoning projector, never indexed. */
+  readonly transientLines?: readonly string[];
 }
 
 /**
@@ -174,6 +184,8 @@ export interface OverlayPiNativeInput {
   readonly childName: string;
   /** The dispatching agent, when an authoritative source named one. */
   readonly parentName?: string;
+  /** Current mounted-only reasoning rows; never transcript or search data. */
+  readonly liveReasoningRows?: readonly string[];
   /**
    * The child has settled. A settled pane is frozen: the streaming caret is
    * gone and the newest assistant message is the final response, because
@@ -200,6 +212,8 @@ export interface OverlayTranscriptInput extends OverlayPiNativeInput {
 export interface OverlayTranscriptRender {
   readonly lines: readonly string[];
   readonly spans: readonly OverlayPiNativeSpan[];
+  /** Transient prefix rows, excluded from spans and search. */
+  readonly transientLines: readonly string[];
   /**
    * The ANSI-free text of those same rows, per entry: the search index the
    * controller matches queries against. It is produced here because only the
@@ -496,6 +510,34 @@ function gutter(paint: Paint, family: PiNativeFamily, tone: Tone): string {
   return paintTone(paint, tone, PI_NATIVE_GLYPH[family]);
 }
 
+/**
+ * Renders the only transient inspector reasoning surface. The projector has
+ * already applied the three-row/content bounds; this final width fit keeps the
+ * prefix and an honest truncation marker inside the pane without adding the
+ * rows to transcript spans or search indexes.
+ */
+function renderLiveReasoningRows(
+  paint: Paint,
+  input: OverlayPiNativeInput,
+  width: number,
+): string[] {
+  const rows = (input.liveReasoningRows ?? [])
+    .map((row) => safeTrim(row))
+    .filter((row) => row.length > 0);
+  return rows.map((row, index) => {
+    const label =
+      index === 0
+        ? `${PI_LIVE_REASONING_PARENT_PREFIX}${row}`
+        : `${PI_NATIVE_INDENT}${row}`;
+    return cell(
+      paint.text(
+        truncatePlainToWidth(label, width, PI_LIVE_REASONING_TRUNCATION_MARKER),
+      ),
+      width,
+    );
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Per-entry rendering
 // ---------------------------------------------------------------------------
@@ -522,11 +564,6 @@ function assistantEntryHasVisibleRows(
 ): boolean {
   if (entry.streaming && !settled) return true;
   if (entry.stopReason === "error") return true;
-  if (
-    entry.thinkingVisible &&
-    (safeTrim(entry.reasoningSummary).length > 0 || entry.reasoningObserved)
-  )
-    return true;
   return safeTrim(entry.text || entry.markdown).length > 0;
 }
 
@@ -571,44 +608,12 @@ function renderEntryRows(
       ];
     }
 
-    // A raw reasoning entry has no body: the transcript reducer stored none.
-    // The row states that the child reasoned and stops there.
-    case "thinking": {
-      if (!entry.thinkingVisible) {
-        return [
-          headRow(
-            `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning")} ${dim("[hidden]")}`,
-            width,
-          ),
-        ];
-      }
-      return [
-        headRow(
-          `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning")}`,
-          width,
-        ),
-      ];
-    }
-
-    // The host published an explicit summary. This is the ONE reasoning
-    // surface that may print prose.
-    case "reasoning_summary": {
-      if (!entry.thinkingVisible) {
-        return [
-          headRow(
-            `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning · SUMMARY")} ${dim("[hidden]")}`,
-            width,
-          ),
-        ];
-      }
-      return [
-        headRow(
-          `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning · SUMMARY")}`,
-          width,
-        ),
-        ...bodyRows(entry.text, width, PI_NATIVE_BODY_ROWS.reason, dim),
-      ];
-    }
+    // Retained generic-thinking and legacy summary entries are structural
+    // compatibility markers only. Live raw reasoning is rendered separately
+    // from the mounted projector and never from transcript entries.
+    case "thinking":
+    case "reasoning_summary":
+      return [];
 
     case "text":
     case "markdown": {
@@ -636,33 +641,6 @@ function renderEntryRows(
       // renders nothing at all.
       if (!assistantEntryHasVisibleRows(entry, input.settled)) return [];
       const rows: string[] = [];
-      // The reasoning that produced this reply is stated above it, exactly as
-      // the prototype orders them. Prose appears ONLY when the host itself
-      // published a summary; observed raw chain-of-thought is announced as a
-      // bare fact and its text is never held, let alone printed.
-      if (entry.thinkingVisible) {
-        if (safeTrim(entry.reasoningSummary).length > 0) {
-          rows.push(
-            headRow(
-              `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning · SUMMARY")}`,
-              width,
-            ),
-            ...bodyRows(
-              entry.reasoningSummary,
-              width,
-              PI_NATIVE_BODY_ROWS.reason,
-              dim,
-            ),
-          );
-        } else if (entry.reasoningObserved) {
-          rows.push(
-            headRow(
-              `${gutter(paint, "reason", "mute")} ${paint.muted("reasoning")}`,
-              width,
-            ),
-          );
-        }
-      }
       const streaming = entry.streaming && !input.settled;
       const label = replyLabel(
         entry,
@@ -836,8 +814,10 @@ export function renderOverlayPiNative(
   const columns = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
   const bare = plainPaint();
   const finalId = finalAssistantEntryId(input);
-  const painted: string[] = [];
-  const plain: string[] = [];
+  const transientLines = renderLiveReasoningRows(paint, input, columns);
+  const transientPlainLines = renderLiveReasoningRows(bare, input, columns);
+  const painted: string[] = [...transientLines];
+  const plain: string[] = [...transientPlainLines];
   const spans: OverlayPiNativeSpan[] = [];
   for (const entry of input.entries) {
     const rows = renderEntryRows(paint, entry, input, columns, finalId);
@@ -857,7 +837,7 @@ export function renderOverlayPiNative(
     }
     spans.push({ entryId, rows: rows.length + 1 });
   }
-  return { painted, plain, spans };
+  return { painted, plain, spans, transientLines: transientPlainLines };
 }
 
 /**
@@ -880,10 +860,10 @@ export function renderOverlayPiNative(
  * entry and a rendered row span.
  */
 export function overlayTranscriptSearchIndex(
-  pane: Pick<OverlayPiNativePane, "plain" | "spans">,
+  pane: Pick<OverlayPiNativePane, "plain" | "spans" | "transientLines">,
 ): Map<string, string> {
   const index = new Map<string, string>();
-  let row = 0;
+  let row = pane.transientLines?.length ?? 0;
   for (const span of pane.spans) {
     const rows = pane.plain.slice(row, row + span.rows);
     row += span.rows;
@@ -963,6 +943,7 @@ export function renderOverlayTranscript(
     return {
       lines,
       spans: rendered.spans,
+      transientLines: rendered.transientLines ?? [],
       searchIndex: searchIndexForWindow(
         overlayTranscriptSearchIndex(rendered),
         input.windowEntries,
@@ -972,24 +953,29 @@ export function renderOverlayTranscript(
   // Nothing the pane can draw yet (a window of bookkeeping-only entries, or
   // history that predates strict replay mapping). The bounded overlay entry
   // text still names the kinds, which beats an empty inspector.
-  const fallback = input.windowEntries.map((entry) =>
-    cell(
-      paint.muted(
-        fitLineToWidth(
-          boundText(
-            entry.expanded || entry.text.length <= 120
-              ? `[${entry.kind}] ${entry.text}`
-              : `[${entry.kind}] ${entry.text.slice(0, 117)}…`,
+  const fallback = input.windowEntries
+    .filter((entry) => entry.kind !== "thinking")
+    .map((entry) =>
+      cell(
+        paint.muted(
+          fitLineToWidth(
+            boundText(
+              entry.expanded || entry.text.length <= 120
+                ? `[${entry.kind}] ${entry.text}`
+                : `[${entry.kind}] ${entry.text.slice(0, 117)}…`,
+            ),
+            columns,
           ),
-          columns,
         ),
+        columns,
       ),
-      columns,
-    ),
-  );
+    );
   return {
     lines: failureRow === undefined ? fallback : [...fallback, failureRow],
-    spans: input.windowEntries.map((entry) => ({ entryId: entry.id, rows: 1 })),
+    spans: input.windowEntries
+      .filter((entry) => entry.kind !== "thinking")
+      .map((entry) => ({ entryId: entry.id, rows: 1 })),
+    transientLines: [],
     // The fallback prints the window entry's own text, which search already
     // matches directly, so it contributes no second index.
     searchIndex: new Map<string, string>(),

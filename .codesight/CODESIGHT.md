@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 342 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~38,300 tokens. Without it, AI exploration would cost ~108,200 tokens. **Saves ~69,900 tokens per conversation.**
-> **Last scanned:** 2026-08-19 03:04 — re-run after significant changes
+> **Token savings:** this file is ~38,400 tokens. Without it, AI exploration would cost ~108,200 tokens. **Saves ~69,900 tokens per conversation.**
+> **Last scanned:** 2026-08-19 03:52 — re-run after significant changes
 
 ---
 
@@ -295,13 +295,13 @@
   - const DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS
   - const MAX_PI_CHILD_LIFECYCLE_SETTINGS
 - `packages/adapters/pi/src/child-live-reasoning.ts`
+  - function emptyPiLiveReasoningSnapshot: (registryEntries) => PiLiveReasoningSnapshot
   - function createPiLiveReasoningRegistry: () => PiLiveReasoningRegistry
   - function createPiLiveReasoningProjector: (config) => PiLiveReasoningProjector
   - function projectPiLiveReasoningUpdate: (event, identity) => Result<PiLiveReasoningUpdate | undefined, PiLiveReasoningRejection>
   - function formatPiLiveReasoningParentLine: (text) => string
   - function formatPiLiveReasoningInspectorRows: (text) => readonly string[]
-  - function piLiveReasoningUtf8Bytes: (value) => number
-  - _...22 more_
+  - _...23 more_
 - `packages/adapters/pi/src/child-metadata-cache.ts`
   - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
   - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
@@ -469,7 +469,7 @@
   - function prependOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
   - function appendOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
   - function resolveLiveAssistantEntry: (state, phase) => string
-  - _...7 more_
+  - _...9 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort

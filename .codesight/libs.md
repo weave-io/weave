@@ -284,13 +284,13 @@
   - const DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS
   - const MAX_PI_CHILD_LIFECYCLE_SETTINGS
 - `packages/adapters/pi/src/child-live-reasoning.ts`
+  - function emptyPiLiveReasoningSnapshot: (registryEntries) => PiLiveReasoningSnapshot
   - function createPiLiveReasoningRegistry: () => PiLiveReasoningRegistry
   - function createPiLiveReasoningProjector: (config) => PiLiveReasoningProjector
   - function projectPiLiveReasoningUpdate: (event, identity) => Result<PiLiveReasoningUpdate | undefined, PiLiveReasoningRejection>
   - function formatPiLiveReasoningParentLine: (text) => string
   - function formatPiLiveReasoningInspectorRows: (text) => readonly string[]
-  - function piLiveReasoningUtf8Bytes: (value) => number
-  - _...22 more_
+  - _...23 more_
 - `packages/adapters/pi/src/child-metadata-cache.ts`
   - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
   - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
@@ -458,7 +458,7 @@
   - function prependOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
   - function appendOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
   - function resolveLiveAssistantEntry: (state, phase) => string
-  - _...7 more_
+  - _...9 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort

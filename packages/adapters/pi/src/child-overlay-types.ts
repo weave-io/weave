@@ -11,6 +11,10 @@
 import type { ResultAsync } from "neverthrow";
 import { z } from "zod";
 import type { ChildCompactState } from "./child-compact-render.js";
+import type {
+  PiLiveReasoningRegistry,
+  PiLiveReasoningSnapshot,
+} from "./child-live-reasoning.js";
 import type { PiChildProviderError } from "./child-provider-error.js";
 import {
   MAX_CHILD_EVENT_ITEMS,
@@ -485,6 +489,10 @@ export interface ChildOverlayConfig {
   readonly windowCap?: number;
   readonly maxLruChildren?: number;
   readonly maxSearchPages?: number;
+  /** Generation authority for the transient inspector reasoning projector. */
+  readonly liveReasoningGenerationId?: string;
+  /** Generation-local UI registry; never part of saved child state. */
+  readonly liveReasoningRegistry?: PiLiveReasoningRegistry;
 }
 
 export type ChildOverlayFallbackReason =
@@ -563,6 +571,11 @@ export interface ChildOverlayView {
    */
   readonly compact: ChildCompactState;
   readonly transcript: PiChildTranscriptState;
+  /**
+   * One mounted, display-only reasoning snapshot. It is not saved, replayed,
+   * searched, checkpointed, or written to any Weave-owned durable sink.
+   */
+  readonly liveReasoning?: PiLiveReasoningSnapshot;
   /**
    * Latest authoritative usage report for this child, or `undefined` when the
    * host has reported nothing usable. Never summed across runs and never

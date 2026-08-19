@@ -163,6 +163,7 @@ const OVERLAY_MIN_TRANSCRIPT_ROWS = 3;
 export interface OverlayRenderedTranscript {
   readonly lines: readonly string[];
   readonly spans: readonly OverlayLayoutSpan[];
+  readonly transientLines: readonly string[];
   /** ANSI-free text of those rows, per entry: the controller's search index. */
   readonly searchIndex: ReadonlyMap<string, string>;
 }
@@ -417,6 +418,11 @@ export function createChildOverlayCustomComponent(
   const finish = (): void => {
     if (finished) return;
     finished = true;
+    lines = [];
+    controller.close().match(
+      () => undefined,
+      () => undefined,
+    );
     Result.fromThrowable(
       () => {
         done();
@@ -965,6 +971,7 @@ export function createChildOverlayCustomComponent(
         : ok<OverlayRenderedTranscript, ChildOverlayFallbackRequired>({
             lines: [],
             spans: [],
+            transientLines: [],
             searchIndex: new Map(),
           });
     if (transcript.isErr()) {
@@ -989,18 +996,22 @@ export function createChildOverlayCustomComponent(
       () => undefined,
       () => undefined,
     );
+    const transientLines = transcript.value.transientLines;
+    const visibleTransientLines = transientLines.slice(0, transcriptBudget);
+    const historyLines = transcript.value.lines.slice(transientLines.length);
     const nav = childOverlayNavFacts(view, transcript.value.spans, search);
     const painted = nav.open
-      ? markSearchGutter(paint, nav, transcript.value.lines, geometry.pane)
-      : transcript.value.lines;
-    // The cue costs a transcript row, so it is budgeted rather than overlaid.
+      ? markSearchGutter(paint, nav, historyLines, geometry.pane)
+      : historyLines;
+    const historyBudget = Math.max(
+      0,
+      transcriptBudget - visibleTransientLines.length,
+    );
     const contentBudget =
-      view.scrollOffset > 0 && transcriptBudget > 0
-        ? transcriptBudget - 1
-        : transcriptBudget;
+      view.scrollOffset > 0 && historyBudget > 0
+        ? historyBudget - 1
+        : historyBudget;
     const scrollMax = Math.max(0, painted.length - contentBudget);
-    // Spans travel with the extent so the controller can translate a logical
-    // viewport into this layout's rendered rows.
     const measured = controller
       .setScrollExtent(scrollMax, transcript.value.spans)
       .match(
@@ -1010,6 +1021,7 @@ export function createChildOverlayCustomComponent(
     const scrollOffset = Math.min(measured, scrollMax);
     const end = Math.max(0, painted.length - scrollOffset);
     const pane = [
+      ...visibleTransientLines,
       ...transcriptWindow(
         paint,
         painted.slice(0, end),

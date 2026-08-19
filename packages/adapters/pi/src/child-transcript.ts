@@ -1984,6 +1984,12 @@ function renderEntry(
   width: number,
   largeEvent: boolean,
 ): PiChildTranscriptRenderedRow[] {
+  if (entry.kind === "thinking" || entry.kind === "reasoning_summary") {
+    // Retained markers preserve reducer compatibility only. They never become
+    // historical inspector rows; the mounted projector is the sole reasoning
+    // display surface.
+    return [];
+  }
   if (largeEvent) {
     return [
       row(
@@ -2023,32 +2029,6 @@ function renderEntry(
         width,
       ),
     );
-    if (entry.thinkingVisible) {
-      // Only a host-published summary has text. Observed raw reasoning states
-      // itself and nothing more.
-      if (entry.reasoningSummary)
-        rows.push(
-          row(
-            entry.id,
-            entry.sequence,
-            entry.kind,
-            "thinking",
-            `reasoning summary: ${entry.reasoningSummary}`,
-            width,
-          ),
-        );
-      else if (entry.reasoningObserved)
-        rows.push(
-          row(
-            entry.id,
-            entry.sequence,
-            entry.kind,
-            "thinking",
-            "reasoning: [not summarized]",
-            width,
-          ),
-        );
-    } else rows.push(hiddenRow(entry, "thinking", "thinking", width));
     if (entry.markdown)
       rows.push(
         row(
@@ -2188,25 +2168,17 @@ function renderEntry(
           : hiddenRow(entry, "images", "tool images", width),
       );
     }
-  } else if (
-    entry.kind === "text" ||
-    entry.kind === "thinking" ||
-    entry.kind === "reasoning_summary" ||
-    entry.kind === "markdown"
-  ) {
-    if (entry.kind === "thinking" && !entry.thinkingVisible)
-      rows.push(hiddenRow(entry, "text", entry.kind, width));
-    else
-      rows.push(
-        row(
-          entry.id,
-          entry.sequence,
-          entry.kind,
-          "text",
-          `${entry.kind}: ${entry.text || "[empty]"}`,
-          width,
-        ),
-      );
+  } else if (entry.kind === "text" || entry.kind === "markdown") {
+    rows.push(
+      row(
+        entry.id,
+        entry.sequence,
+        entry.kind,
+        "text",
+        `${entry.kind}: ${entry.text || "[empty]"}`,
+        width,
+      ),
+    );
   } else if (entry.kind === "image") {
     rows.push(
       entry.imagesVisible

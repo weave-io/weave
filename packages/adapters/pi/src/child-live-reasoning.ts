@@ -96,6 +96,28 @@ export interface PiLiveReasoningSnapshot {
   readonly registryEntries: number;
 }
 
+/** Empty display-only state used when no inspector projector is mounted. */
+export function emptyPiLiveReasoningSnapshot(
+  registryEntries = 0,
+): PiLiveReasoningSnapshot {
+  return {
+    childId: undefined,
+    generationId: undefined,
+    lifecycleEpoch: 0,
+    phase: "idle",
+    contentIndex: undefined,
+    text: "",
+    parentCardText: "",
+    inspectorRows: [],
+    parentCardLine: "",
+    active: false,
+    retainedBytes: 0,
+    omitted: false,
+    unprintable: false,
+    registryEntries,
+  };
+}
+
 export interface PiLiveReasoningProjectorConfig {
   readonly childId: string;
   readonly generationId: string;

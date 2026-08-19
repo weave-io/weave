@@ -6866,6 +6866,21 @@ export function createPiExtension(
                   return;
               }
             },
+            // The child runtime's authenticated projector is the only source
+            // of raw reasoning. Keep this callback on its separate inspector
+            // lane; it never re-enters the durable session-event reducer.
+            onInspectorReasoning: (update) => {
+              if (!startupOwnsGeneration()) return;
+              if (childOverlayCell.generationId !== generation.id) return;
+              const outcome = childOverlayLiveStream?.ingestReasoning(update);
+              if (outcome === undefined) return;
+              switch (outcome.kind) {
+                case "applied":
+                case "dropped":
+                case "failed":
+                  return;
+              }
+            },
             // Lazy wrapper (Pi adapter contract): `telemetryCell.telemetry` is only
             // populated once the Runtime Store opens successfully, below -
             // reading it here would always see `undefined`. A settled child
@@ -6920,7 +6935,10 @@ export function createPiExtension(
                   options,
                 ),
             }),
-            {},
+            {
+              liveReasoningGenerationId: generation.id,
+              liveReasoningRegistry: liveReasoningRegistryCell.value,
+            },
             {
               steer: (childId, generationId, text) => {
                 if (

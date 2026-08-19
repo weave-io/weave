@@ -381,7 +381,6 @@ describe("Pi child transcript reducer", () => {
       "follow_up:",
       "assistant",
       "text:",
-      "thinking:",
       "markdown:",
       "tool:",
       "tool arguments:",
@@ -399,7 +398,7 @@ describe("Pi child transcript reducer", () => {
       "unknown event:",
     ])
       expect(output).toContain(label);
-    expect(output).toContain("thinking: [hidden]");
+    expect(output).not.toContain("thinking:");
     expect(output).toContain("image: [hidden]");
     expect(output).toContain("[unavailable]");
     expect(output).not.toContain("SECRET_IMAGE_BYTES");
@@ -500,7 +499,6 @@ describe("Pi child transcript reducer", () => {
         "user",
         "assistant",
         "markdown",
-        "thinking",
         "tool",
         "image",
         "usage",

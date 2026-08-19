@@ -258,9 +258,9 @@ describe("live transcript rows match the prototype's renderPiNative design", () 
     expect(has("❯ loom → shuttle delegation prompt")).toBe(true);
     expect(has("  summarize the failing suite")).toBe(true);
 
-    // -- reasoning summary (never a thought stream) ------------------------
-    expect(has("✻ reasoning · SUMMARY")).toBe(true);
-    expect(has("  check the suite, then read the reporter")).toBe(true);
+    // -- retained reasoning markers render no rows -------------------------
+    expect(has("✻ reasoning · SUMMARY")).toBe(false);
+    expect(has("  check the suite, then read the reporter")).toBe(false);
 
     // -- tool call, progress, result ---------------------------------------
     expect(has("⚙ read(")).toBe(true);
@@ -474,17 +474,17 @@ describe("every streamed event kind matches its prototype fixture", () => {
     ]);
   });
 
-  it("reasoning summary", async () => {
+  it("legacy reasoning summaries render zero rows", async () => {
     expect(
       await rowsFor([{ type: "reasoning_summary", text: "read the reporter" }]),
-    ).toEqual(["✻ reasoning · SUMMARY", "  read the reporter", ""]);
+    ).toEqual([]);
   });
 
-  it("raw reasoning is a content-free marker, never a summary", async () => {
+  it("retained raw reasoning markers render zero rows", async () => {
     const rows = await rowsFor([
       { type: "thinking", text: "RAW_CHAIN_OF_THOUGHT" },
     ]);
-    expect(rows).toEqual(["✻ reasoning", ""]);
+    expect(rows).toEqual([]);
     expect(rows.join("\n")).not.toContain("RAW_CHAIN_OF_THOUGHT");
     expect(rows.join("\n")).not.toContain("SUMMARY");
   });

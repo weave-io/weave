@@ -433,10 +433,9 @@ describe("non-conversation events render nothing", () => {
       },
     ]);
     const joined = rows.join("\n");
-    // Observation 9 REVISED: a real `thinking_delta` is raw chain-of-thought.
-    // The pane states that the child reasoned and never quotes it, and it
-    // never calls it a SUMMARY, because the host published none.
-    expect(joined).toContain("✻ reasoning");
+    // A real `thinking_delta` reaches only the mounted live-reasoning lane;
+    // retained transcript markers render no historical reasoning row.
+    expect(joined).not.toContain("✻ reasoning");
     expect(joined).not.toContain("SUMMARY");
     expect(joined).not.toContain("check the reporter first");
     expect(joined).toContain("● shuttle · reply");
@@ -468,8 +467,8 @@ describe("non-conversation events render nothing", () => {
       },
     ]);
     const joined = rows.join("\n");
-    expect(joined).toContain("✻ reasoning · SUMMARY");
-    expect(joined).toContain("weighed two reporters");
+    expect(joined).not.toContain("✻ reasoning · SUMMARY");
+    expect(joined).not.toContain("weighed two reporters");
   });
 });
 

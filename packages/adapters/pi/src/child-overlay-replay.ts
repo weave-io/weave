@@ -635,8 +635,9 @@ function assistantEntryFromParts(
   else if (!hasText && (reasoned || parts.reasoningSummaries.length > 0))
     kind = "thinking";
   else if (!hasText && parts.images.length > 0) kind = "image";
-  // Raw reasoning contributes NO text to the entry label; only tool names and
-  // host-published summaries do.
+  // Raw reasoning contributes no text to the entry label. An explicit host
+  // summary remains a trusted historical fact, but the inspector renderer
+  // deliberately emits zero rows for this legacy summary-only entry.
   const text = hasText
     ? parts.text
     : boundText(

@@ -251,7 +251,9 @@ describe("Pi native transcript components", () => {
     const output = rendered.lines.join("\n");
 
     expect(output).toContain("plan the fix");
-    expect(output).toContain("Planning approach");
+    // Retained reasoning summaries are structural markers only. The mounted
+    // live-reasoning projector owns the sole reasoning display surface.
+    expect(output).not.toContain("Planning approach");
     expect(output).toContain("Here is the plan.");
     expect(output).not.toContain("extension ui: widget");
     expect(output).not.toContain("unknown event:");
@@ -280,12 +282,8 @@ describe("Pi native transcript components", () => {
     const answerIndex = rendered.lines.findIndex((line) =>
       line.includes("Here is the answer"),
     );
-    expect(thinkingIndex).toBeGreaterThanOrEqual(0);
-    expect(answerIndex).toBeGreaterThan(thinkingIndex);
-    expect(
-      rendered.lines.slice(thinkingIndex + 1, answerIndex).every(blank),
-    ).toBe(true);
-    expect(answerIndex - thinkingIndex).toBe(2);
+    expect(thinkingIndex).toBe(-1);
+    expect(answerIndex).toBeGreaterThanOrEqual(0);
     expect(blank(rendered.lines.at(-1) ?? "x")).toBe(true);
   });
 });

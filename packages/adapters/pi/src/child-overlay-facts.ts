@@ -411,6 +411,7 @@ export function childOverlayTranscriptInput(
       ? {}
       : { parentName: parent }),
     settled: view.readOnly,
+    liveReasoningRows: view.liveReasoning?.inspectorRows ?? [],
     ...(view.terminalError === undefined
       ? {}
       : { terminalError: view.terminalError }),

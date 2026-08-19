@@ -228,13 +228,13 @@ describe("raw reasoning never reaches a reader-visible or persisted surface", ()
     expect(JSON.stringify(entry)).not.toContain(RAW);
   });
 
-  it("renders an explicit host reasoning summary and calls it a summary", async () => {
+  it("renders no rows for an explicit legacy host reasoning summary", async () => {
     const view = await openView({}, [
       { type: "reasoning_summary", text: "weighed two fixes" },
     ]);
     const rows = overlayRows(view);
-    expect(rows).toContain("reasoning · SUMMARY");
-    expect(rows).toContain("weighed two fixes");
+    expect(rows).not.toContain("reasoning · SUMMARY");
+    expect(rows).not.toContain("weighed two fixes");
   });
 
   it("keeps a host reasoning summary out of the parent card", () => {
