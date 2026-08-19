@@ -14,6 +14,7 @@ import {
 } from "../permissions/registry.js";
 import type {
   JsonValue,
+  PermissionRegistration,
   PermissionRegistrationContext,
   PermissionResolver,
 } from "../permissions/types.js";
@@ -24,14 +25,27 @@ type RegistrationExtra = {
   readonly resolver?: PermissionResolver | string;
 };
 
-const registration = (toolIdentity: string, extra: RegistrationExtra = {}) => ({
-  toolIdentity,
-  owner: "owner",
-  revision: "1",
-  summary: "summary",
-  resolver: () => ok([]),
-  ...extra,
-});
+const registration = (
+  toolIdentity: string,
+  extra: RegistrationExtra = {},
+): PermissionRegistration => {
+  const value: PermissionRegistration = {
+    toolIdentity,
+    owner: extra.owner ?? "owner",
+    revision: extra.revision ?? "1",
+    summary: "summary",
+    resolver: () => ok([]),
+  };
+  if (extra.resolver !== undefined) {
+    Object.defineProperty(value, "resolver", {
+      configurable: true,
+      enumerable: true,
+      value: extra.resolver,
+      writable: true,
+    });
+  }
+  return value;
+};
 
 describe("permission registry", () => {
   it("validates required fields and UTF-8 byte limits", () => {
@@ -393,7 +407,7 @@ describe("permission registry", () => {
       "get",
     ] as const;
     for (const trap of traps) {
-      const handler: ProxyHandler<object> = {};
+      const handler: ProxyHandler<PermissionRegistration> = {};
       if (trap === "getPrototypeOf")
         handler.getPrototypeOf = () => {
           throw new Error(`TOP_SECRET_${trap}`);

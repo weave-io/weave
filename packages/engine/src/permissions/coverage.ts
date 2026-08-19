@@ -612,8 +612,8 @@ function buildProof(
 }
 
 /** Verify that an adapter-supplied inventory covers the sealed registry. */
-export function verifyPermissionCoverage<T>(
-  context: T,
+export function verifyPermissionCoverage(
+  context: PermissionCoverageContext,
 ): Result<PermissionCoverageProof, PermissionCoverageError> {
   return Result.fromThrowable(
     () => {

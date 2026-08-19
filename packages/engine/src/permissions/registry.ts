@@ -344,7 +344,9 @@ export class PermissionRegistryBuilder {
   #sealed = false;
   #poisoned = false;
 
-  register<T>(registration: T): Result<void, PermissionError> {
+  register(
+    registration: PermissionRegistration,
+  ): Result<void, PermissionError> {
     return Result.fromThrowable(
       () => {
         if (this.#sealed) return err(transition("builder is sealed"));

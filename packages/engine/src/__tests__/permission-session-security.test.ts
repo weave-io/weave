@@ -14,6 +14,7 @@ import type {
   JsonValue,
   PermissionApprovalChoice,
   PermissionApprovalRepository,
+  PermissionApprovalResponse,
   PermissionCallInput,
   PermissionCapability,
   PermissionDisplay,
@@ -153,7 +154,24 @@ const response = (
   challenge: string,
   requestIds: readonly string[],
   scope: PermissionApprovalChoice["scope"] = "once",
-) => ({ challenge, choices: requestIds.map((id) => allow(id, scope)) });
+): PermissionApprovalResponse => ({
+  challenge,
+  choices: requestIds.map((id) => allow(id, scope)),
+});
+const invalidScopeChoice = (requestId: string): PermissionApprovalChoice => {
+  const choice: PermissionApprovalChoice = {
+    requestId,
+    decision: "allow",
+    scope: "once",
+  };
+  Object.defineProperty(choice, "scope", {
+    configurable: true,
+    enumerable: true,
+    value: "allow-missing",
+    writable: true,
+  });
+  return choice;
+};
 const challengeInput = (
   registry: ReturnType<typeof makeRegistry>,
   challenge: string,
@@ -222,7 +240,7 @@ describe("permission contract — permission session security", () => {
     const first = (await session.authorizeCall(call(registry)))._unsafeUnwrap();
     if (first.kind !== "approval_required") throw new Error("fixture");
     const idsFor = first.requests.map((item) => item.requestId);
-    const invalid = [
+    const invalid: PermissionApprovalResponse[] = [
       { challenge: "wrong", choices: [] },
       response(first.challenge, []),
       {
@@ -235,11 +253,7 @@ describe("permission contract — permission session security", () => {
       },
       {
         challenge: first.challenge,
-        choices: idsFor.map((id) => ({
-          requestId: id,
-          decision: "allow",
-          scope: "allow-missing",
-        })),
+        choices: idsFor.map(invalidScopeChoice),
       },
       {
         challenge: first.challenge,

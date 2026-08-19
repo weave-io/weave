@@ -25,8 +25,10 @@ import type {
   JsonValue,
   PendingPermissionRequestView,
   PermissionApprovalRepository,
+  PermissionApprovalResponse,
   PermissionAuditEvent,
   PermissionCallInput,
+  PermissionChallengeConsumeInput,
   PermissionDecision,
   PermissionError,
   PermissionExecutionSnapshot,
@@ -1058,7 +1060,9 @@ export class PermissionSession {
     )().andThen((result) => result);
   }
 
-  authorizeCall<T>(input: T): ResultAsync<PermissionOutcome, PermissionError> {
+  authorizeCall(
+    input: PermissionCallInput,
+  ): ResultAsync<PermissionOutcome, PermissionError> {
     const actual = validatePermissionSession(this);
     if (actual.isErr()) return failure(actual.error);
     const captured = captureCall(input);
@@ -1354,9 +1358,9 @@ export class PermissionSession {
     return ok({ kind: "authorized", permit: prepared.value.id });
   }
 
-  answerChallenge<T, U>(
-    input: T,
-    response: U,
+  answerChallenge(
+    input: PermissionChallengeConsumeInput,
+    response: PermissionApprovalResponse,
   ): ResultAsync<PermissionOutcome, PermissionError> {
     const actual = validatePermissionSession(this);
     if (actual.isErr()) return failure(actual.error);
@@ -1605,7 +1609,9 @@ export class PermissionSession {
     return ok({ kind: "authorized", permit: prepared.value.id });
   }
 
-  cancelChallenge<T>(input: T): ResultAsync<void, PermissionError> {
+  cancelChallenge(
+    input: PermissionChallengeConsumeInput,
+  ): ResultAsync<void, PermissionError> {
     const actual = validatePermissionSession(this);
     if (actual.isErr()) return failure(actual.error);
     const captured = captureChallengeInput(input);
@@ -1644,8 +1650,8 @@ export class PermissionSession {
     return ok(void 0);
   }
 
-  consumePermit<T>(
-    input: T,
+  consumePermit(
+    input: PermissionPermitConsumeInput,
   ): ResultAsync<PermissionExecutionSnapshot, PermissionError> {
     const actual = validatePermissionSession(this);
     if (actual.isErr()) return failure(actual.error);
@@ -1796,7 +1802,9 @@ export class PermissionSession {
     return ok(snapshot.value);
   }
 
-  replaceRegistry<T>(input: T): ResultAsync<void, PermissionError> {
+  replaceRegistry(
+    input: PermissionRegistryReplacement,
+  ): ResultAsync<void, PermissionError> {
     const actual = validatePermissionSession(this);
     if (actual.isErr()) return failure(actual.error);
     const captured = objectSnapshot(input, ["registry"], ["registry"]);

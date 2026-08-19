@@ -15,6 +15,8 @@ import type {
   PermissionCallInput,
   PermissionError,
   PermissionOutcome,
+  PermissionRegistration,
+  PermissionRegistrationContext,
   PermissionRequest,
   PermissionResolver,
 } from "../permissions/types.js";
@@ -58,33 +60,35 @@ const unresolved = (): PermissionRequest => ({
   display: { summary: "unknown action" },
 });
 const defaultResolver: PermissionResolver = () => ok([request()]);
-function registry(): PermissionRegistryGeneration;
+type ResolverCandidate = (
+  input: Readonly<{
+    call: JsonValue;
+    context: PermissionRegistrationContext;
+  }>,
+) => object;
 function registry(
-  resolver: PermissionResolver | undefined,
-  tool?: string,
-  owner?: string,
-  revision?: string,
-): PermissionRegistryGeneration;
-function registry<T>(
-  resolver: T,
-  tool?: string,
-  owner?: string,
-  revision?: string,
-): PermissionRegistryGeneration;
-function registry<T>(
-  resolver?: T,
+  resolver?: ResolverCandidate,
   tool = "tool",
   owner = "owner",
   revision = "1",
-) {
+): PermissionRegistryGeneration {
   const b = new PermissionRegistryBuilder();
-  b.register({
+  const registration: PermissionRegistration = {
     toolIdentity: tool,
     owner,
     revision,
     summary: "tool",
-    resolver: resolver === undefined ? defaultResolver : resolver,
-  });
+    resolver: defaultResolver,
+  };
+  if (resolver !== undefined) {
+    Object.defineProperty(registration, "resolver", {
+      configurable: true,
+      enumerable: true,
+      value: resolver,
+      writable: true,
+    });
+  }
+  b.register(registration);
   return b.seal()._unsafeUnwrap();
 }
 const input = (
@@ -694,13 +698,9 @@ describe("PermissionSession red phase", () => {
     expect(
       (await sessionGrant.session.replaceRegistry({ registry: second })).isOk(),
     ).toBe(true);
+    const invalidReplacement = { registry: second, idle: true };
     expect(
-      await error(
-        sessionGrant.session.replaceRegistry({
-          registry: second,
-          idle: true,
-        }),
-      ),
+      await error(sessionGrant.session.replaceRegistry(invalidReplacement)),
     ).toBe("invalid_output");
     expect(await error(sessionGrant.session.authorizeCall(input(first)))).toBe(
       "stale_permission_state",

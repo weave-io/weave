@@ -408,9 +408,11 @@ describe("verifyPermissionCoverage", () => {
       "invalid_coverage",
     );
 
+    const forgedRegistry = new Proxy(registry, {});
     expect(
       verifyPermissionCoverage({
-        registry: { id: "forged", identity: "x", inventory: () => [] },
+        ...context(registry),
+        registry: forgedRegistry,
       })._unsafeUnwrapErr().type,
     ).toBe("invalid_coverage");
   });

@@ -21,6 +21,7 @@ import {
   ALLOWED_TEMPLATE_PATHS,
   buildTemplateContext,
   type ReviewRoutingContext,
+  toRendererTemplateContext,
 } from "./template-context.js";
 import {
   type RendererError,
@@ -391,68 +392,6 @@ function loadAppendSource(
     },
     reader,
   );
-}
-
-function toRendererTemplateContext(
-  context: AgentPromptTemplateContext,
-): TemplateContext {
-  const agent: TemplateContext = {
-    name: context.agent.name,
-    mode: context.agent.mode,
-    skills: [...context.agent.skills],
-    isCategory: context.agent.isCategory,
-  };
-  if (context.agent.description !== undefined) {
-    agent.description = context.agent.description;
-  }
-
-  const delegationTargets = context.delegation.targets.map((target) => {
-    const result: TemplateContext = {
-      name: target.name,
-      triggers: [...target.triggers],
-      isCategory: target.isCategory,
-    };
-    if (target.description !== undefined) {
-      result.description = target.description;
-    }
-    return result;
-  });
-
-  const rendererContext: TemplateContext = {
-    agent,
-    toolPolicy: {
-      effective: {
-        read: context.toolPolicy.effective.read,
-        write: context.toolPolicy.effective.write,
-        execute: context.toolPolicy.effective.execute,
-        delegate: context.toolPolicy.effective.delegate,
-        network: context.toolPolicy.effective.network,
-      },
-    },
-    delegation: { targets: delegationTargets },
-  };
-
-  if (context.category !== undefined) {
-    const category: TemplateContext = { name: context.category.name };
-    if (context.category.description !== undefined) {
-      category.description = context.category.description;
-    }
-    rendererContext.category = category;
-  }
-
-  if (context.reviewRouting !== undefined) {
-    rendererContext.reviewRouting = {
-      groups: context.reviewRouting.groups.map((group) => ({
-        sourceAgent: group.sourceAgent,
-        variants: group.variants.map((variant) => ({
-          name: variant.name,
-          model: variant.model,
-        })),
-      })),
-    };
-  }
-
-  return rendererContext;
 }
 
 /**

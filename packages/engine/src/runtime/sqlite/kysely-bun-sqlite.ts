@@ -103,7 +103,6 @@ class BunSqliteConnection implements DatabaseConnection {
   }
 
   // bun:sqlite does not support streaming; return an empty async iterable.
-  // eslint-disable-next-line require-yield
   async *streamQuery<R>(
     _compiledQuery: CompiledQuery,
     _chunkSize: number,
@@ -378,7 +377,6 @@ class BunSqliteMemoryConnection implements DatabaseConnection {
     return result;
   }
 
-  // eslint-disable-next-line require-yield
   async *streamQuery<R>(
     _compiledQuery: CompiledQuery,
     _chunkSize: number,
