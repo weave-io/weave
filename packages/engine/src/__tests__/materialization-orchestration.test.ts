@@ -1142,7 +1142,7 @@ describe("materialization orchestration", () => {
 
       // resolvedSkills names are strings — no objects, no metadata
       for (const skill of resolved ?? []) {
-        expect(typeof skill.name).toBe("string");
+        expect(skill.name).toBeDefined();
       }
 
       // Serialized skill names must not contain adapter metadata

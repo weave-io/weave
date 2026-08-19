@@ -617,6 +617,11 @@ export type EffectiveProbeResolution =
   | "duplicate"
   | "contradictory";
 
+interface ResolvedProbe {
+  resolution: EffectiveProbeResolution;
+  details?: string;
+}
+
 /**
  * One capability after probe lowering. Static declaration fields are preserved;
  * `effectiveReadiness` is the readiness used for profile evaluation.
@@ -668,10 +673,7 @@ export function lowerReadinessByProbe(
 function resolveProbeForId(
   id: CapabilityId,
   probes: readonly CapabilityProbeResult[],
-): {
-  resolution: EffectiveProbeResolution;
-  details?: string;
-} {
+): ResolvedProbe {
   const matches = probes.filter((probe) => probe.capabilityId === id);
   if (matches.length === 0) return { resolution: "missing" };
   if (matches.length > 1) {
@@ -742,20 +744,23 @@ export function evaluateEffectiveCapabilities(
       readiness: "unsupported",
     };
 
-    effectiveCapabilities.push({
+    const effectiveEntry: EffectiveCapabilityEntry = {
       ...base,
       // Profile evaluation consumes `readiness` as the effective level.
       readiness: effectiveReadiness,
       declaredReadiness,
       effectiveReadiness,
       probeResolution: resolved.resolution,
-      ...(resolved.details !== undefined
-        ? { probeDetails: resolved.details }
-        : {}),
-      ...(resolved.details !== undefined
-        ? { runtimeStatus: resolved.details }
-        : {}),
-    });
+    };
+    if (resolved.details !== undefined) {
+      effectiveCapabilities.push({
+        ...effectiveEntry,
+        probeDetails: resolved.details,
+        runtimeStatus: resolved.details,
+      });
+    } else {
+      effectiveCapabilities.push(effectiveEntry);
+    }
   }
 
   const effectiveContract: AdapterCapabilityContract = {

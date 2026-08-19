@@ -326,7 +326,7 @@ export function authorizePlanCoordinator(
       reason: `only the authorized plan coordinator "${authorizedCoordinator}" may apply transitions`,
     });
   }
-  return ok(undefined);
+  return ok<undefined, PlanStateError>(void 0);
 }
 
 /**

@@ -86,7 +86,7 @@ describe("previewToolPolicy", () => {
 
   it("returns validation error for missing workflowInstanceId", async () => {
     const result = await previewToolPolicy({
-      workflowInstanceId: "" as typeof wfId,
+      workflowInstanceId: createWorkflowInstanceId(""),
       leaseId,
       agentName: "shuttle",
       toolCapability: "read",
@@ -103,14 +103,18 @@ describe("previewToolPolicy", () => {
   });
 
   it("returns validation error for unrecognized toolCapability", async () => {
-    const result = await previewToolPolicy({
+    const invalidInput = {
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
-      toolCapability: "unknown" as "read",
+      toolCapability: "read" as const,
       toolName: "some-tool",
       effectiveToolPolicy: allAllowPolicy,
+    };
+    Object.defineProperty(invalidInput, "toolCapability", {
+      value: "unknown",
     });
+    const result = await previewToolPolicy(invalidInput);
 
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
@@ -128,10 +132,7 @@ describe("previewToolPolicy", () => {
       toolCapability: "read",
       toolName: "read_file",
       effectiveToolPolicy: allAllowPolicy,
-      metadata: { token: "secret" } as Record<
-        string,
-        string | number | boolean
-      >,
+      metadata: { token: "secret" },
     });
 
     expect(result.isErr()).toBe(true);
@@ -209,7 +210,7 @@ describe("inspectExecution", () => {
     const store = createInMemoryRuntimeStore();
 
     const result = await inspectExecution(
-      { workflowInstanceId: "" as typeof wfId },
+      { workflowInstanceId: createWorkflowInstanceId("") },
       store,
     );
 

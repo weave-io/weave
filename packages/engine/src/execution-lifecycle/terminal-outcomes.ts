@@ -16,6 +16,7 @@ import {
   okAsync,
   Result,
 } from "neverthrow";
+import { z } from "zod";
 import type { RuntimeStore } from "../runtime/store.js";
 import type { ArtifactApprovalActor } from "../runtime/types.js";
 import {
@@ -36,15 +37,78 @@ import type {
 
 const encoder = new TextEncoder();
 
+interface RecordCandidateObject {
+  readonly [key: string]: RecordCandidate;
+}
+
+type RecordCandidateCallable = (...args: never[]) => void;
+
+type RecordCandidate =
+  | RecordCandidateObject
+  | readonly RecordCandidate[]
+  | RecordCandidateCallable
+  | string
+  | number
+  | boolean
+  | bigint
+  | symbol
+  | null
+  | undefined;
+type ProvenanceScalar = string | number | boolean;
+
+interface CapturedDataRecord {
+  [key: string]: RecordCandidate;
+}
+
+interface CapturedProvenance {
+  [key: string]: ProvenanceScalar;
+}
+
+interface ArtifactApprovalUpdate {
+  actor: ArtifactApprovalActor;
+  decidedAt: string;
+  expectedRevision: number;
+  expectedDigest?: string;
+}
+
+const stringCandidateSchema = z.string();
+
+function isPlainRecordCandidate(
+  value: RecordCandidate,
+): value is RecordCandidateObject {
+  return (
+    value !== null &&
+    Object(value) === value &&
+    !Array.isArray(value) &&
+    !(value instanceof Function)
+  );
+}
+
+function stringCandidate(value: RecordCandidate): string | undefined {
+  const parsed = stringCandidateSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function isBooleanCandidate(value: RecordCandidate): value is boolean {
+  return value === true || value === false;
+}
+
+function isFiniteNumberCandidate(value: RecordCandidate): value is number {
+  return Number.isFinite(value);
+}
+
+function isStringPropertyKey(key: PropertyKey): key is string {
+  return String(key) === key;
+}
+
 function captureDataRecord(
-  value: unknown,
+  value: RecordCandidate,
   expectedKeys?: readonly string[],
-): NeverthrowResult<Readonly<Record<string, unknown>>, LifecycleError> {
+): NeverthrowResult<Readonly<CapturedDataRecord>, LifecycleError> {
   return Result.fromThrowable(
     () => {
       if (
-        value === null ||
-        typeof value !== "object" ||
+        !isPlainRecordCandidate(value) ||
         Array.isArray(value) ||
         Object.getPrototypeOf(value) !== Object.prototype
       ) {
@@ -53,12 +117,12 @@ function captureDataRecord(
         );
       }
       const keys = Reflect.ownKeys(value);
-      if (keys.some((key) => typeof key !== "string")) {
+      const stringKeys = keys.filter(isStringPropertyKey);
+      if (stringKeys.length !== keys.length) {
         return err(
           lifecycleValidationError("symbol keys are not allowed", "actor"),
         );
       }
-      const stringKeys = keys as string[];
       if (expectedKeys !== undefined) {
         if (stringKeys.length !== expectedKeys.length) {
           return err(
@@ -73,7 +137,7 @@ function captureDataRecord(
           }
         }
       }
-      const capture: Record<string, unknown> = Object.create(null);
+      const capture: CapturedDataRecord = Object.create(null);
       for (const key of stringKeys) {
         const descriptor = Object.getOwnPropertyDescriptor(value, key);
         if (
@@ -88,7 +152,8 @@ function captureDataRecord(
             ),
           );
         }
-        capture[key] = descriptor.value;
+        const descriptorValue: RecordCandidate = descriptor.value;
+        capture[key] = descriptorValue;
       }
       return ok(Object.freeze(capture));
     },
@@ -97,11 +162,8 @@ function captureDataRecord(
 }
 
 function captureProvenance(
-  value: unknown,
-): NeverthrowResult<
-  Readonly<Record<string, string | number | boolean>>,
-  LifecycleError
-> {
+  value: RecordCandidate,
+): NeverthrowResult<Readonly<CapturedProvenance>, LifecycleError> {
   const record = captureDataRecord(value);
   if (record.isErr()) {
     return err(
@@ -120,8 +182,7 @@ function captureProvenance(
       ),
     );
   }
-  const captured: Record<string, string | number | boolean> =
-    Object.create(null);
+  const captured: CapturedProvenance = Object.create(null);
   for (const key of keys) {
     const value = record.value[key];
     if (encoder.encode(key).byteLength > 64) {
@@ -132,8 +193,9 @@ function captureProvenance(
         ),
       );
     }
-    if (typeof value === "string") {
-      if (encoder.encode(value).byteLength > 512) {
+    const stringValue = stringCandidate(value);
+    if (stringValue !== undefined) {
+      if (encoder.encode(stringValue).byteLength > 512) {
         return err(
           lifecycleValidationError(
             "user provenance value is too long",
@@ -141,14 +203,14 @@ function captureProvenance(
           ),
         );
       }
+      captured[key] = stringValue;
+      continue;
+    }
+    if (isBooleanCandidate(value)) {
       captured[key] = value;
       continue;
     }
-    if (typeof value === "boolean") {
-      captured[key] = value;
-      continue;
-    }
-    if (typeof value === "number" && Number.isFinite(value)) {
+    if (isFiniteNumberCandidate(value)) {
       captured[key] = value;
       continue;
     }
@@ -166,7 +228,7 @@ function captureProvenance(
 }
 
 function captureActor(
-  input: unknown,
+  input: RecordCandidate,
 ): NeverthrowResult<ArtifactApprovalActor, LifecycleError> {
   const base = captureDataRecord(input);
   if (base.isErr()) return err(base.error);
@@ -181,10 +243,11 @@ function captureActor(
   if (kind === "agent") {
     const exact = captureDataRecord(input, ["kind", "agentName", "gate"]);
     if (exact.isErr()) return err(exact.error);
+    const agentName = stringCandidate(exact.value.agentName);
     if (
-      typeof exact.value.agentName !== "string" ||
-      exact.value.agentName.trim().length === 0 ||
-      encoder.encode(exact.value.agentName).byteLength > 128
+      agentName === undefined ||
+      agentName.trim().length === 0 ||
+      encoder.encode(agentName).byteLength > 128
     ) {
       return err(
         lifecycleValidationError(
@@ -204,7 +267,7 @@ function captureActor(
     return ok(
       Object.freeze({
         kind: "agent",
-        agentName: exact.value.agentName,
+        agentName,
         gate: exact.value.gate,
       }),
     );
@@ -330,7 +393,7 @@ export function approveArtifact(
         input.leaseId,
       );
       if (leaseCheck.isErr()) return errAsync(leaseCheck.error);
-      return okAsync(undefined);
+      return okAsync();
     })
     .andThen(() =>
       store.instances
@@ -341,7 +404,7 @@ export function approveArtifact(
             return errAsync(
               lifecycleNotFoundError(
                 "WorkflowInstance",
-                input.workflowInstanceId as string,
+                input.workflowInstanceId,
               ),
             );
           }
@@ -358,7 +421,7 @@ export function approveArtifact(
             return errAsync(
               lifecycleNotFoundError(
                 "ArtifactRef",
-                input.artifactId as string,
+                input.artifactId,
                 `Artifact '${input.artifactId}' not found in workflow instance`,
               ),
             );
@@ -409,19 +472,20 @@ export function approveArtifact(
           }
 
           const decidedAt = new Date().toISOString();
+          const approval: ArtifactApprovalUpdate = {
+            actor,
+            decidedAt,
+            expectedRevision: input.expectedRevision,
+          };
+          if (input.expectedDigest !== undefined) {
+            approval.expectedDigest = input.expectedDigest;
+          }
           return store.instances
             .updateArtifactApproval(
               input.workflowInstanceId,
               input.artifactId,
               input.approvalState,
-              {
-                actor,
-                decidedAt,
-                expectedRevision: input.expectedRevision,
-                ...(input.expectedDigest === undefined
-                  ? {}
-                  : { expectedDigest: input.expectedDigest }),
-              },
+              approval,
             )
             .mapErr((storeError): LifecycleError => {
               if (

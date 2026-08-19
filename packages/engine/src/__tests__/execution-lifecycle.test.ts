@@ -83,6 +83,15 @@ import {
 } from "@weaveio/weave-engine";
 import { errAsync, okAsync } from "neverthrow";
 
+function isSafeMetadataValue(value: SafeMetadata[string]): boolean {
+  return (
+    value === true ||
+    value === false ||
+    String(value) === value ||
+    Number.isFinite(value)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // MockPlanStateProvider
 // ---------------------------------------------------------------------------
@@ -163,8 +172,7 @@ describe("SafeMetadata", () => {
       bool: true,
     };
     for (const val of Object.values(meta)) {
-      const t = typeof val;
-      expect(["string", "number", "boolean"]).toContain(t);
+      expect(isSafeMetadataValue(val)).toBe(true);
     }
   });
 });
@@ -686,17 +694,17 @@ describe("public import paths", () => {
   it("lifecycle error factories are importable from @weaveio/weave-engine", () => {
     // These are already imported at the top of this file from @weaveio/weave-engine.
     // If the imports compile and resolve, this test passes.
-    expect(typeof lifecycleValidationError).toBe("function");
-    expect(typeof lifecycleNotFoundError).toBe("function");
-    expect(typeof lifecycleLeaseConflictError).toBe("function");
-    expect(typeof lifecyclePersistenceError).toBe("function");
-    expect(typeof lifecyclePolicyDecisionError).toBe("function");
+    expect(lifecycleValidationError).toBeDefined();
+    expect(lifecycleNotFoundError).toBeDefined();
+    expect(lifecycleLeaseConflictError).toBeDefined();
+    expect(lifecyclePersistenceError).toBeDefined();
+    expect(lifecyclePolicyDecisionError).toBeDefined();
   });
 
   it("ID factory helpers are importable from @weaveio/weave-engine", () => {
-    expect(typeof createWorkflowInstanceId).toBe("function");
-    expect(typeof createExecutionLeaseId).toBe("function");
-    expect(typeof createSessionSnapshotId).toBe("function");
+    expect(createWorkflowInstanceId).toBeDefined();
+    expect(createExecutionLeaseId).toBeDefined();
+    expect(createSessionSnapshotId).toBeDefined();
   });
 });
 
@@ -723,7 +731,7 @@ describe("observeSession (Runtime Store)", () => {
     if (!result.isOk()) return;
 
     const { snapshotId } = result.value;
-    expect(typeof snapshotId).toBe("string");
+    expect(snapshotId).toBeDefined();
     expect(snapshotId.length).toBeGreaterThan(0);
 
     // Verify the snapshot was persisted
@@ -754,10 +762,7 @@ describe("observeSession (Runtime Store)", () => {
         sessionStatus: "active",
         // TypeScript allows this because SafeMetadata is Record<string, string|number|boolean>
         // but the runtime sanitizer rejects it
-        metadata: { password: "hunter2" } as Record<
-          string,
-          string | number | boolean
-        >,
+        metadata: { password: "hunter2" },
       },
       store,
     );
@@ -777,10 +782,7 @@ describe("observeSession (Runtime Store)", () => {
         harnessName: "claude-code",
         agentName: "shuttle",
         sessionStatus: "idle",
-        metadata: { token: "secret-token-value" } as Record<
-          string,
-          string | number | boolean
-        >,
+        metadata: { token: "secret-token-value" },
       },
       store,
     );
@@ -794,7 +796,7 @@ describe("observeSession (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await observeSession(
       {
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
         harnessName: "opencode",
         agentName: "loom",
@@ -816,7 +818,7 @@ describe("observeSession (Runtime Store)", () => {
     const result = await observeSession(
       {
         workflowInstanceId: wfId,
-        leaseId: "" as typeof leaseId,
+        leaseId: createExecutionLeaseId(""),
         harnessName: "opencode",
         agentName: "loom",
         sessionStatus: "active",
@@ -930,7 +932,7 @@ describe("startExecution (Runtime Store)", () => {
     if (!result.isOk()) return;
 
     const { leaseId: acquiredLeaseId, effects } = result.value;
-    expect(typeof acquiredLeaseId).toBe("string");
+    expect(acquiredLeaseId).toBeDefined();
     expect(acquiredLeaseId.length).toBeGreaterThan(0);
     expect(effects).toHaveLength(0);
 
@@ -1023,7 +1025,7 @@ describe("startExecution (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await startExecution(
       {
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
         ownerId: "session-abc",
       },
       store,
@@ -1160,7 +1162,7 @@ describe("resumeExecution (Runtime Store)", () => {
     if (!result.isOk()) return;
 
     const { leaseId: newLeaseId, effects } = result.value;
-    expect(typeof newLeaseId).toBe("string");
+    expect(newLeaseId).toBeDefined();
     expect(newLeaseId.length).toBeGreaterThan(0);
     expect(effects).toHaveLength(0);
 
@@ -1191,7 +1193,7 @@ describe("resumeExecution (Runtime Store)", () => {
     // Acquire an initial lease (will expire in 1 hour from clockTime)
     const firstLeaseResult = await store.leases.acquire({
       workflowInstanceId: instanceId,
-      ownerId: "session-first-owner" as ReturnType<typeof createOwnerId>,
+      ownerId: createOwnerId("session-first-owner"),
       ttlMs: 1, // 1ms TTL — expires almost immediately
     });
     expect(firstLeaseResult.isOk()).toBe(true);
@@ -1233,7 +1235,7 @@ describe("resumeExecution (Runtime Store)", () => {
     // Acquire an active lease by another owner
     const firstLeaseResult = await store.leases.acquire({
       workflowInstanceId: instanceId,
-      ownerId: "session-foreign-owner" as ReturnType<typeof createOwnerId>,
+      ownerId: createOwnerId("session-foreign-owner"),
       ttlMs: 3_600_000, // 1 hour — unexpired
     });
     expect(firstLeaseResult.isOk()).toBe(true);
@@ -1283,7 +1285,7 @@ describe("resumeExecution (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await resumeExecution(
       {
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
         ownerId: "session-resume",
       },
       store,
@@ -1452,7 +1454,7 @@ describe("handleUserInterrupt (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await handleUserInterrupt(
       {
-        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
         signal: "pause",
       },
@@ -1472,7 +1474,7 @@ describe("handleUserInterrupt (Runtime Store)", () => {
     const result = await handleUserInterrupt(
       {
         workflowInstanceId: wfId,
-        leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+        leaseId: createExecutionLeaseId(""),
         signal: "cancel",
       },
       store,
@@ -1722,7 +1724,7 @@ describe("dispatchStep (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await dispatchStep(
       {
-        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
       },
       store,
@@ -1741,7 +1743,7 @@ describe("dispatchStep (Runtime Store)", () => {
     const result = await dispatchStep(
       {
         workflowInstanceId: wfId,
-        leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+        leaseId: createExecutionLeaseId(""),
       },
       store,
     );
@@ -1998,7 +2000,7 @@ describe("completeStep (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await completeStep(
       {
-        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
         stepName: "plan",
         completionSignal: { outcome: "success" },
@@ -2019,7 +2021,7 @@ describe("completeStep (Runtime Store)", () => {
     const result = await completeStep(
       {
         workflowInstanceId: wfId,
-        leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+        leaseId: createExecutionLeaseId(""),
         stepName: "plan",
         completionSignal: { outcome: "success" },
       },
@@ -2197,12 +2199,9 @@ describe("previewToolPolicy", () => {
   });
 
   it("unknown capability: returns LifecycleValidationError", async () => {
-    const result = await previewToolPolicy(
-      makeInput({
-        toolCapability:
-          "unknown" as StaticToolPolicyPreviewInput["toolCapability"],
-      }),
-    );
+    const input = makeInput();
+    Object.defineProperty(input, "toolCapability", { value: "unknown" });
+    const result = await previewToolPolicy(input);
 
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
@@ -2215,11 +2214,8 @@ describe("previewToolPolicy", () => {
   it("missing toolCapability: returns LifecycleValidationError", async () => {
     const input = makeInput();
     // Simulate missing toolCapability at runtime
-    const inputWithoutCapability = {
-      ...input,
-      toolCapability: "" as StaticToolPolicyPreviewInput["toolCapability"],
-    };
-    const result = await previewToolPolicy(inputWithoutCapability);
+    Object.defineProperty(input, "toolCapability", { value: "" });
+    const result = await previewToolPolicy(input);
 
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
@@ -2232,7 +2228,7 @@ describe("previewToolPolicy", () => {
   it("missing workflowInstanceId: returns LifecycleValidationError", async () => {
     const result = await previewToolPolicy(
       makeInput({
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
       }),
     );
 
@@ -2247,7 +2243,7 @@ describe("previewToolPolicy", () => {
   it("missing leaseId: returns LifecycleValidationError", async () => {
     const result = await previewToolPolicy(
       makeInput({
-        leaseId: "" as typeof leaseId,
+        leaseId: createExecutionLeaseId(""),
       }),
     );
 
@@ -2500,7 +2496,7 @@ describe("observeSession: metadata sanitization", () => {
         harnessName: "opencode",
         agentName: "loom",
         sessionStatus: "active",
-        metadata: { token: "secret-token" } as SafeMetadata,
+        metadata: { token: "secret-token" },
       },
       store,
     );
@@ -2523,7 +2519,7 @@ describe("observeSession: metadata sanitization", () => {
         harnessName: "opencode",
         agentName: "loom",
         sessionStatus: "active",
-        metadata: { jwt: "eyJhbGciOiJIUzI1NiJ9" } as SafeMetadata,
+        metadata: { jwt: "eyJhbGciOiJIUzI1NiJ9" },
       },
       store,
     );
@@ -2562,7 +2558,7 @@ describe("previewToolPolicy: metadata sanitization", () => {
   it("previewToolPolicy: returns validation error when metadata contains password key", async () => {
     const result = await previewToolPolicy(
       makeStaticToolPolicyPreviewInput({
-        metadata: { password: "hunter2" } as SafeMetadata,
+        metadata: { password: "hunter2" },
       }),
     );
 
@@ -2578,7 +2574,7 @@ describe("previewToolPolicy: metadata sanitization", () => {
   it("previewToolPolicy: returns validation error when metadata contains apiToken key", async () => {
     const result = await previewToolPolicy(
       makeStaticToolPolicyPreviewInput({
-        metadata: { apiToken: "sk-abc" } as SafeMetadata,
+        metadata: { apiToken: "sk-abc" },
       }),
     );
 
@@ -2904,7 +2900,7 @@ describe("startExecution: WorkflowExecutionContext", () => {
     if (!result.isOk()) return;
 
     const { leaseId: acquiredLeaseId } = result.value;
-    expect(typeof acquiredLeaseId).toBe("string");
+    expect(acquiredLeaseId).toBeDefined();
     expect(acquiredLeaseId.length).toBeGreaterThan(0);
 
     // Verify the lease is active and bound to the correct instance
@@ -3367,7 +3363,8 @@ describe("dispatchStep: configured workflow step resolution", () => {
       // (the rendered prompt "Create a plan for Add dark mode support (slug: add-dark-mode-support)"
       //  is non-empty)
       expect(effects[0].runAgent.promptMetadata).toBeDefined();
-      const pm = effects[0].runAgent.promptMetadata as PromptMetadata;
+      const pm = effects[0].runAgent.promptMetadata;
+      if (pm === undefined) return;
       expect(pm.byteLength).toBeGreaterThan(0);
     }
   });
@@ -3408,7 +3405,8 @@ describe("dispatchStep: configured workflow step resolution", () => {
       // The rendered prompt "Implement the plan at .weave/plans/add-dark-mode.md"
       // is non-empty — promptMetadata.byteLength reflects this
       expect(effects[0].runAgent.promptMetadata).toBeDefined();
-      const pm = effects[0].runAgent.promptMetadata as PromptMetadata;
+      const pm = effects[0].runAgent.promptMetadata;
+      if (pm === undefined) return;
       expect(pm.byteLength).toBeGreaterThan(0);
     }
   });
@@ -3578,7 +3576,7 @@ describe("dispatchStep: configured workflow step resolution", () => {
     const { effects } = result.value;
     if (effects[0]?.kind === "dispatch-agent") {
       const { correlationId } = effects[0].runAgent;
-      expect(typeof correlationId).toBe("string");
+      expect(correlationId).toBeDefined();
       // UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
       expect(correlationId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
@@ -4912,7 +4910,7 @@ describe("completeStep: completion method validation and gate logic", () => {
       expect(effects[0].runAgent.stepType).toBe("gate");
       expect(effects[0].runAgent.completionMethod).toBe("review_verdict");
       // Fresh correlation ID
-      expect(typeof effects[0].runAgent.correlationId).toBe("string");
+      expect(effects[0].runAgent.correlationId).toBeDefined();
       expect(effects[0].runAgent.correlationId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
@@ -6268,7 +6266,7 @@ describe("inspectExecution (execution lifecycle contract)", () => {
   it("returns validation error for missing workflowInstanceId", async () => {
     const store = createInMemoryRuntimeStore();
     const result = await inspectExecution(
-      { workflowInstanceId: "" as typeof wfId },
+      { workflowInstanceId: createWorkflowInstanceId("") },
       store,
     );
 
@@ -6457,7 +6455,7 @@ describe("inspectExecution (execution lifecycle contract)", () => {
     const result = await inspectExecution(
       {
         workflowInstanceId: instanceId,
-        metadata: { token: "secret" } as Record<string, string>,
+        metadata: { token: "secret" },
       },
       store,
     );
@@ -6722,7 +6720,7 @@ describe("startExecution: explicit authorization enforcement (ADR 0004)", () => 
 
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
-    expect(typeof result.value.leaseId).toBe("string");
+    expect(result.value.leaseId).toBeDefined();
   });
 
   it("succeeds when authorizationSource is omitted (backward-compat default: 'user')", async () => {
@@ -6906,7 +6904,7 @@ describe("resumeExecution: explicit authorization enforcement (ADR 0004)", () =>
 
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
-    expect(typeof result.value.leaseId).toBe("string");
+    expect(result.value.leaseId).toBeDefined();
   });
 
   it("succeeds when authorizationSource is omitted (backward-compat default: 'user')", async () => {
@@ -7570,6 +7568,15 @@ describe("ArtifactInputRole — type and constant surface", () => {
 // ---------------------------------------------------------------------------
 
 describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", () => {
+  type BaseWorkflowConfig = WorkflowExecutionContext["workflows"][string];
+  type RoleAwareWorkflowConfig = Omit<BaseWorkflowConfig, "steps"> & {
+    readonly steps: Array<
+      Omit<BaseWorkflowConfig["steps"][number], "inputs"> & {
+        readonly inputs?: ArtifactInputDecl[];
+      }
+    >;
+  };
+
   /**
    * Workflow fixture with mixed normative and informational inputs.
    *
@@ -7583,7 +7590,7 @@ describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", 
    * "plan" step:
    *   - no inputs (produces plan_path)
    */
-  const mixedInputWorkflows: WorkflowExecutionContext["workflows"] = {
+  const mixedInputWorkflows = {
     "mixed-inputs": {
       version: 1,
       steps: [
@@ -7611,7 +7618,7 @@ describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", 
               name: "context_doc",
               description: "Optional context document",
               role: "informational",
-            } as ArtifactInputDecl,
+            },
           ],
         },
         {
@@ -7626,7 +7633,7 @@ describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", 
               name: "build_report",
               description: "Build report (advisory)",
               role: "informational",
-            } as ArtifactInputDecl,
+            },
           ],
         },
       ],
@@ -7645,7 +7652,7 @@ describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", 
               name: "required_spec",
               description: "Required specification",
               role: "normative",
-            } as ArtifactInputDecl,
+            },
           ],
         },
       ],
@@ -7664,12 +7671,12 @@ describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", 
               name: "prior_analysis",
               description: "Prior analysis (advisory)",
               role: "informational",
-            } as ArtifactInputDecl,
+            },
           ],
         },
       ],
     },
-  };
+  } satisfies Record<string, RoleAwareWorkflowConfig>;
 
   /**
    * Helper: start an execution with workflow context.
@@ -8387,10 +8394,7 @@ describe("reconcileExecution (Runtime Store)", () => {
    * - implement: has reconciliation_handlers for user-revision-request
    * - security-review: no handlers (gate step)
    */
-  const reconcileWorkflows: Record<
-    string,
-    WorkflowExecutionContext["workflows"][string]
-  > = {
+  const reconcileWorkflows = {
     "reconcile-workflow": {
       name: "reconcile-workflow",
       description: "Test workflow for reconciliation",
@@ -8432,7 +8436,7 @@ describe("reconcileExecution (Runtime Store)", () => {
         },
       ],
     },
-  };
+  } satisfies WorkflowExecutionContext["workflows"];
 
   const reconcileContext: WorkflowExecutionContext = {
     workflowName: "reconcile-workflow",
@@ -8471,7 +8475,7 @@ describe("reconcileExecution (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await reconcileExecution(
       {
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
         reason: "user-revision-request",
         authorizationSource: "user",
@@ -8491,7 +8495,7 @@ describe("reconcileExecution (Runtime Store)", () => {
     const result = await reconcileExecution(
       {
         workflowInstanceId: wfId,
-        leaseId: "" as typeof leaseId,
+        leaseId: createExecutionLeaseId(""),
         reason: "user-revision-request",
         authorizationSource: "user",
       },
@@ -8507,15 +8511,14 @@ describe("reconcileExecution (Runtime Store)", () => {
 
   it("returns validation error for missing reason", async () => {
     const store = createInMemoryRuntimeStore();
-    const result = await reconcileExecution(
-      {
-        workflowInstanceId: wfId,
-        leaseId,
-        reason: "" as "user-revision-request",
-        authorizationSource: "user",
-      },
-      store,
-    );
+    const input = {
+      workflowInstanceId: wfId,
+      leaseId,
+      reason: "user-revision-request" as const,
+      authorizationSource: "user" as const,
+    };
+    Object.defineProperty(input, "reason", { value: "" });
+    const result = await reconcileExecution(input, store);
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
@@ -8526,15 +8529,14 @@ describe("reconcileExecution (Runtime Store)", () => {
 
   it("returns validation error for missing authorizationSource", async () => {
     const store = createInMemoryRuntimeStore();
-    const result = await reconcileExecution(
-      {
-        workflowInstanceId: wfId,
-        leaseId,
-        reason: "user-revision-request",
-        authorizationSource: "" as ReconciliationAuthorizationSource,
-      },
-      store,
-    );
+    const input = {
+      workflowInstanceId: wfId,
+      leaseId,
+      reason: "user-revision-request" as const,
+      authorizationSource: "user" as const,
+    };
+    Object.defineProperty(input, "authorizationSource", { value: "" });
+    const result = await reconcileExecution(input, store);
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
@@ -9036,10 +9038,7 @@ describe("reconcileExecution (Runtime Store)", () => {
         leaseId,
         reason: "user-revision-request",
         authorizationSource: "user",
-        metadata: { token: "secret" } as Record<
-          string,
-          string | number | boolean
-        >,
+        metadata: { token: "secret" },
       },
       store,
     );
@@ -9063,10 +9062,7 @@ describe("reconcileExecution — gate re-run (execution lifecycle contract)", ()
    * - review-gate: gate step (no handlers)
    * - security-gate: gate step (no handlers)
    */
-  const gateReRunWorkflows: Record<
-    string,
-    WorkflowExecutionContext["workflows"][string]
-  > = {
+  const gateReRunWorkflows = {
     "gate-rerun-workflow": {
       name: "gate-rerun-workflow",
       description: "Test workflow for gate re-run tests",
@@ -9119,7 +9115,7 @@ describe("reconcileExecution — gate re-run (execution lifecycle contract)", ()
         },
       ],
     },
-  };
+  } satisfies WorkflowExecutionContext["workflows"];
 
   const gateReRunContext: WorkflowExecutionContext = {
     workflowName: "gate-rerun-workflow",
@@ -9272,10 +9268,7 @@ describe("reconcileExecution — gate re-run (execution lifecycle contract)", ()
 
   it("review-rejection fail-closed: gateReRunStepName is still set even when no handler found", async () => {
     // Workflow with no handlers for review-rejection
-    const noHandlerWorkflows: Record<
-      string,
-      WorkflowExecutionContext["workflows"][string]
-    > = {
+    const noHandlerWorkflows = {
       "no-handler-workflow": {
         name: "no-handler-workflow",
         description: "Workflow with no review-rejection handlers",
@@ -9301,7 +9294,7 @@ describe("reconcileExecution — gate re-run (execution lifecycle contract)", ()
           },
         ],
       },
-    };
+    } satisfies WorkflowExecutionContext["workflows"];
 
     const noHandlerContext: WorkflowExecutionContext = {
       workflowName: "no-handler-workflow",
@@ -9400,10 +9393,7 @@ describe("reconcileExecution — before-plan exclusion (execution lifecycle cont
    * guarantee by simulating a step that has handlers but is in the before-plan
    * position (e.g. after config merge or composition bypasses schema validation).
    */
-  const beforePlanWorkflows: Record<
-    string,
-    WorkflowExecutionContext["workflows"][string]
-  > = {
+  const beforePlanWorkflows = {
     "before-plan-workflow": {
       name: "before-plan-workflow",
       description: "Workflow with before-plan extension point",
@@ -9453,7 +9443,7 @@ describe("reconcileExecution — before-plan exclusion (execution lifecycle cont
         },
       ],
     },
-  };
+  } satisfies WorkflowExecutionContext["workflows"];
 
   const beforePlanContext: WorkflowExecutionContext = {
     workflowName: "before-plan-workflow",
@@ -9519,10 +9509,7 @@ describe("reconcileExecution — before-plan exclusion (execution lifecycle cont
   it("before-plan step is skipped: routes to planning step when implement has no handler", async () => {
     // Workflow where only spec-review (before-plan) and plan have handlers,
     // but implement does not. The engine must skip spec-review and route to plan.
-    const noImplementHandlerWorkflows: Record<
-      string,
-      WorkflowExecutionContext["workflows"][string]
-    > = {
+    const noImplementHandlerWorkflows = {
       "no-implement-handler-workflow": {
         name: "no-implement-handler-workflow",
         description: "Workflow where implement has no handler",
@@ -9570,7 +9557,7 @@ describe("reconcileExecution — before-plan exclusion (execution lifecycle cont
           },
         ],
       },
-    };
+    } satisfies WorkflowExecutionContext["workflows"];
 
     const noImplementHandlerContext: WorkflowExecutionContext = {
       workflowName: "no-implement-handler-workflow",
@@ -9619,10 +9606,7 @@ describe("reconcileExecution — before-plan exclusion (execution lifecycle cont
   it("before-plan exclusion: fails closed when only before-plan steps have handlers", async () => {
     // Workflow where only the before-plan step has a handler — no valid handler
     // exists after exclusion, so the engine must fail closed.
-    const onlyBeforePlanHandlerWorkflows: Record<
-      string,
-      WorkflowExecutionContext["workflows"][string]
-    > = {
+    const onlyBeforePlanHandlerWorkflows = {
       "only-before-plan-handler-workflow": {
         name: "only-before-plan-handler-workflow",
         description: "Workflow where only before-plan step has handler",
@@ -9661,7 +9645,7 @@ describe("reconcileExecution — before-plan exclusion (execution lifecycle cont
           },
         ],
       },
-    };
+    } satisfies WorkflowExecutionContext["workflows"];
 
     const onlyBeforePlanContext: WorkflowExecutionContext = {
       workflowName: "only-before-plan-handler-workflow",
@@ -9709,10 +9693,7 @@ describe("reconcileExecution — before-plan exclusion (execution lifecycle cont
 
   it("workflow without extension_points.before_plan: no steps are excluded", async () => {
     // Workflow without before-plan extension point — all steps are eligible
-    const noExtensionWorkflows: Record<
-      string,
-      WorkflowExecutionContext["workflows"][string]
-    > = {
+    const noExtensionWorkflows = {
       "no-extension-workflow": {
         name: "no-extension-workflow",
         description: "Workflow without before-plan extension",
@@ -9739,7 +9720,7 @@ describe("reconcileExecution — before-plan exclusion (execution lifecycle cont
           },
         ],
       },
-    };
+    } satisfies WorkflowExecutionContext["workflows"];
 
     const noExtensionContext: WorkflowExecutionContext = {
       workflowName: "no-extension-workflow",
@@ -9802,10 +9783,7 @@ describe("reconcileExecution — immutable completed plan tasks (execution lifec
    * plan has reconciliation_handlers for user-revision-request.
    * implement has reconciliation_handlers for user-revision-request.
    */
-  const immutablePlanWorkflows: Record<
-    string,
-    WorkflowExecutionContext["workflows"][string]
-  > = {
+  const immutablePlanWorkflows = {
     "immutable-plan-workflow": {
       name: "immutable-plan-workflow",
       description: "Test workflow for immutable plan tests",
@@ -9843,7 +9821,7 @@ describe("reconcileExecution — immutable completed plan tasks (execution lifec
         },
       ],
     },
-  };
+  } satisfies WorkflowExecutionContext["workflows"];
 
   const immutablePlanContext: WorkflowExecutionContext = {
     workflowName: "immutable-plan-workflow",
@@ -10064,10 +10042,7 @@ describe("reconcileExecution — immutable completed plan tasks (execution lifec
 
   it("rejects reconciliation when plan_created step's plan is complete", async () => {
     // Workflow with plan_created completion method
-    const planCreatedWorkflows: Record<
-      string,
-      WorkflowExecutionContext["workflows"][string]
-    > = {
+    const planCreatedWorkflows = {
       "plan-created-workflow": {
         name: "plan-created-workflow",
         description: "Workflow with plan_created completion",
@@ -10095,7 +10070,7 @@ describe("reconcileExecution — immutable completed plan tasks (execution lifec
           },
         ],
       },
-    };
+    } satisfies WorkflowExecutionContext["workflows"];
 
     const planCreatedContext: WorkflowExecutionContext = {
       workflowName: "plan-created-workflow",
@@ -10288,7 +10263,7 @@ describe("reconcileExecution — closed reason set enforcement", () => {
       "review-gate",
       "security-gate",
     ];
-    const authorizedMap: Record<string, string> = {
+    const authorizedMap = {
       "execution-mismatch": "runtime",
       "user-revision-request": "user",
       "review-rejection": "review-gate",
@@ -10299,10 +10274,7 @@ describe("reconcileExecution — closed reason set enforcement", () => {
       const authorized = authorizedMap[reason];
       for (const source of allSources) {
         if (source === authorized) continue;
-        const result = validateReconciliationSource(
-          reason,
-          source as ReconciliationAuthorizationSource,
-        );
+        const result = validateReconciliationSource(reason, source);
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
           expect(result.error.type).toBe("policy_decision");

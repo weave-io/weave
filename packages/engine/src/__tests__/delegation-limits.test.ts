@@ -57,17 +57,17 @@ describe("resolveEffectiveDelegationLimits", () => {
   });
 
   it("rejects explicit project concurrency above max_children", () => {
-    const result = resolveEffectiveDelegationLimits({
-      ...config(`settings {
+    const base = config(`settings {
   delegation { max_children 2 }
-}`),
+}`);
+    const malformed: WeaveConfig = {
+      ...base,
       settings: {
-        ...config(`settings {
-  delegation { max_children 2 }
-}`).settings,
+        ...base.settings,
         delegation: { max_children: 2, max_concurrency: 3 },
       },
-    } as WeaveConfig);
+    };
+    const result = resolveEffectiveDelegationLimits(malformed);
     expect(result.isErr()).toBe(true);
   });
 

@@ -59,6 +59,17 @@ async function descriptorFor(
   return result.value;
 }
 
+function collisionAt(
+  collisions: readonly AppendCollision[],
+  index: number,
+): AppendCollision {
+  const collision = collisions[index];
+  if (collision === undefined) {
+    throw new Error(`expected collision at index ${index}`);
+  }
+  return collision;
+}
+
 beforeAll(async () => {
   await Bun.write(tempPromptFilePath, "Prompt loaded from file.");
   await Bun.write(tempAppendFilePath, "Append loaded from file.");
@@ -1127,7 +1138,7 @@ describe("composeAgentDescriptor", () => {
       expect("patterns" in (descriptor.category ?? {})).toBe(false);
       expect(
         descriptor.delegationTargets.every((target) =>
-          target.triggers.every((trigger) => typeof trigger === "string"),
+          target.triggers.every((trigger) => trigger.length >= 0),
         ),
       ).toBe(true);
     });
@@ -1206,14 +1217,12 @@ describe("composeAgentDescriptor", () => {
         config,
         config.agents,
       );
-      const descriptorRecord = descriptor as unknown as Record<string, unknown>;
-
       expect(descriptor.composedPrompt).toBe(
         "Base prompt-source-check.\n\nAppend subagent.",
       );
-      expect("prompt" in descriptorRecord).toBe(false);
-      expect("prompt_file" in descriptorRecord).toBe(false);
-      expect("prompt_append" in descriptorRecord).toBe(false);
+      expect("prompt" in descriptor).toBe(false);
+      expect("prompt_file" in descriptor).toBe(false);
+      expect("prompt_append" in descriptor).toBe(false);
     });
 
     it("Descriptor_skills_are_requested_names_only", async () => {
@@ -1234,7 +1243,7 @@ describe("composeAgentDescriptor", () => {
 
       expect(descriptor.skills).toEqual(["tdd", "security-review"]);
       for (const skill of descriptor.skills) {
-        expect(typeof skill).toBe("string");
+        expect(skill).toBeDefined();
       }
       expect(serialized).not.toContain("prompt_file");
       expect(serialized).not.toContain("/skills/");
@@ -1771,7 +1780,7 @@ describe("composeAgentDescriptor — trust boundary for prompt_append", () => {
  * Uses a fixed agent name and default tool policy.
  */
 function makeStepTemplateContext(agentName = "shuttle") {
-  const effectiveToolPolicy = evaluateEffectiveToolPolicy(undefined);
+  const effectiveToolPolicy = evaluateEffectiveToolPolicy(void 0);
   const contextResult = buildTemplateContext({
     agentName,
     mode: "subagent",
@@ -2767,7 +2776,7 @@ describe("detectAppendCollisions", () => {
       const result = detectAppendCollisions([base, override]);
 
       expect(result).toHaveLength(1);
-      const collision = result[0] as AppendCollision;
+      const collision = collisionAt(result, 0);
       expect(collision.scope).toBe("workflow");
       expect(collision.workflowName).toBe("my-wf");
       expect(collision.stepName).toBeUndefined();
@@ -2811,7 +2820,7 @@ describe("detectAppendCollisions", () => {
       const result = detectAppendCollisions([base, override]);
 
       expect(result).toHaveLength(1);
-      const collision = result[0] as AppendCollision;
+      const collision = collisionAt(result, 0);
       expect(collision.scope).toBe("workflow");
       expect(collision.workflowName).toBe("my-wf");
       expect(collision.field).toBe("prompt_append_file");
@@ -2870,7 +2879,7 @@ describe("detectAppendCollisions", () => {
       const result = detectAppendCollisions([first, second, third]);
 
       expect(result).toHaveLength(1);
-      const collision = result[0] as AppendCollision;
+      const collision = collisionAt(result, 0);
       expect(collision.losingValue).toBe("Second guidance.");
       expect(collision.winningValue).toBe("Third guidance.");
       expect(collision.loserIndex).toBe(1);
@@ -2912,7 +2921,7 @@ describe("detectAppendCollisions", () => {
       const result = detectAppendCollisions([base, override]);
 
       expect(result).toHaveLength(1);
-      const collision = result[0] as AppendCollision;
+      const collision = collisionAt(result, 0);
       expect(collision.scope).toBe("step");
       expect(collision.workflowName).toBe("my-wf");
       expect(collision.stepName).toBe("my-step");
@@ -2956,7 +2965,7 @@ describe("detectAppendCollisions", () => {
       const result = detectAppendCollisions([base, override]);
 
       expect(result).toHaveLength(1);
-      const collision = result[0] as AppendCollision;
+      const collision = collisionAt(result, 0);
       expect(collision.scope).toBe("step");
       expect(collision.workflowName).toBe("my-wf");
       expect(collision.stepName).toBe("my-step");

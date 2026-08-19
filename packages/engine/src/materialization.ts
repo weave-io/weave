@@ -19,6 +19,7 @@ import {
   generateReviewVariants,
   type ReviewVariantConflictError,
 } from "./review-variants.js";
+import { evaluateEffectiveToolPolicy } from "./tool-policy.js";
 
 /** Adapter-provided input for public agent materialization. */
 export interface MaterializationInput {
@@ -121,6 +122,22 @@ function filterDisabled(
   return entries.filter(([agentName]) => !disabled.includes(agentName));
 }
 
+function buildReviewVariantPlaceholder(
+  agentName: string,
+  agentConfig: AgentConfig,
+): AgentDescriptor {
+  return {
+    name: agentName,
+    composedPrompt: "",
+    models: agentConfig.models === undefined ? [] : [...agentConfig.models],
+    mode: agentConfig.mode ?? "subagent",
+    effectiveToolPolicy: evaluateEffectiveToolPolicy(agentConfig.tool_policy),
+    rawToolPolicy: agentConfig.tool_policy,
+    delegationTargets: [],
+    skills: agentConfig.skills === undefined ? [] : [...agentConfig.skills],
+  };
+}
+
 /**
  * Compose all adapter-facing agent descriptors from a resolved Weave config.
  *
@@ -193,20 +210,16 @@ export function materializeAgents(
   ).map(([agentName, agentConfig]) => ({
     agentName,
     agentConfig,
-    entrySource: { source: "explicit" } as EntrySource,
+    entrySource: { source: "explicit" } satisfies EntrySource,
   }));
 
-  const generatedEntries = filterDisabled(
-    Object.entries(generatedShuttles).map(
-      ([agentName, generated]) =>
-        [agentName, generated.config] as [string, AgentConfig],
-    ),
-    disabled,
-  ).map(([agentName, agentConfig]) => ({
-    agentName,
-    agentConfig,
-    entrySource: { source: "category-shuttle" } as EntrySource,
-  }));
+  const generatedEntries = Object.entries(generatedShuttles)
+    .filter(([agentName]) => !disabled.includes(agentName))
+    .map(([agentName, generated]) => ({
+      agentName,
+      agentConfig: generated.config,
+      entrySource: { source: "category-shuttle" } satisfies EntrySource,
+    }));
 
   const reviewVariantEntries = Object.entries(generatedReviewVariants)
     .filter(([agentName]) => !disabled.includes(agentName))
@@ -217,7 +230,7 @@ export function materializeAgents(
         source: "review-variant",
         sourceAgentName: generated.sourceAgentName,
         reviewModel: generated.reviewModel,
-      } as EntrySource,
+      } satisfies EntrySource,
     }));
 
   const allTypedEntries = [
@@ -237,24 +250,17 @@ export function materializeAgents(
   // These are pre-built before the main composition loop (review variants are
   // generated before composition) so they are available for all primary agents.
   const prebuiltReviewVariants: MaterializedAgent[] = reviewVariantEntries.map(
-    ({ agentName: rvName, agentConfig: _rvConfig, entrySource: rvSource }) => {
-      const rv = rvSource as {
-        source: "review-variant";
-        sourceAgentName: string;
-        reviewModel: string;
-      };
-      return {
-        agentName: rvName,
-        // descriptor is a placeholder — only agentName/source/reviewMeta are
-        // used by buildReviewRoutingContext; the real descriptor is composed later.
-        descriptor: null as unknown as import("./compose.js").AgentDescriptor,
-        source: "review-variant" as const,
-        reviewMeta: {
-          sourceAgentName: rv.sourceAgentName,
-          reviewModel: rv.reviewModel,
-        },
-      };
-    },
+    ({ agentName, agentConfig, entrySource }) => ({
+      agentName,
+      // The descriptor is a placeholder — only agentName/source/reviewMeta are
+      // used by buildReviewRoutingContext; the real descriptor is composed later.
+      descriptor: buildReviewVariantPlaceholder(agentName, agentConfig),
+      source: "review-variant",
+      reviewMeta: {
+        sourceAgentName: entrySource.sourceAgentName,
+        reviewModel: entrySource.reviewModel,
+      },
+    }),
   );
 
   const compositionPromises = allTypedEntries.map(

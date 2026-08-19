@@ -33,12 +33,12 @@ async function composeTapestry(source: string): Promise<string> {
   const shuttleMap = generateCategoryShuttles(config);
   if (shuttleMap.isErr()) throw new Error(shuttleMap.error.message);
 
-  const allAgents: Record<string, AgentConfig> = {
+  const allAgents = {
     ...config.agents,
     ...Object.fromEntries(
       Object.entries(shuttleMap.value).map(([k, v]) => [k, v.config]),
     ),
-  };
+  } satisfies Record<string, AgentConfig>;
 
   const tapestryConfig = allAgents.tapestry;
   if (tapestryConfig === undefined) throw new Error("tapestry agent not found");
@@ -255,7 +255,7 @@ describe("category shuttle delegation -- composition scaling", () => {
       const shuttleMap = generateCategoryShuttles(config);
       expect(shuttleMap.isOk()).toBe(true);
 
-      const allAgents: Record<string, AgentConfig> = {
+      const allAgents = {
         ...config.agents,
         ...Object.fromEntries(
           Object.entries(shuttleMap._unsafeUnwrap()).map(([k, v]) => [
@@ -263,7 +263,7 @@ describe("category shuttle delegation -- composition scaling", () => {
             v.config,
           ]),
         ),
-      };
+      } satisfies Record<string, AgentConfig>;
 
       const tapestryConfig = allAgents.tapestry;
       if (tapestryConfig === undefined)

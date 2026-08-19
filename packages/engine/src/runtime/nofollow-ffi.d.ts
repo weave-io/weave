@@ -25,8 +25,8 @@
  *
  * Not part of the package's public surface — no barrel re-export.
  */
-import { dlopen, type Pointer } from "bun:ffi";
-import { Result, ResultAsync } from "neverthrow";
+import type { dlopen, Pointer } from "bun:ffi";
+import type { Result, ResultAsync } from "neverthrow";
 /** Generic low-level FFI failure. Callers map this onto their own error type. */
 export interface NoFollowFfiError {
     readonly message: string;

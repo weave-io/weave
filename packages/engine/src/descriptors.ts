@@ -38,12 +38,11 @@ function copyDelegation(
 
 function copyRouting(routing: AgentConfig["routing"]): AgentConfig["routing"] {
   if (routing === undefined) return undefined;
-  return {
-    ...routing,
-    ...(routing.delegation_exclude === undefined
-      ? {}
-      : { delegation_exclude: [...routing.delegation_exclude] }),
-  };
+  const copied = { ...routing };
+  if (routing.delegation_exclude !== undefined) {
+    copied.delegation_exclude = [...routing.delegation_exclude];
+  }
+  return copied;
 }
 
 /**

@@ -176,9 +176,7 @@ describe("evaluateEffectiveCapabilities", () => {
     const evaluation = evaluateEffectiveCapabilities(
       contractWith("native"),
       probes((id) =>
-        (OPTIONAL_CAPABILITIES as readonly string[]).includes(id)
-          ? "unavailable"
-          : "ok",
+        OPTIONAL_CAPABILITIES.includes(id) ? "unavailable" : "ok",
       ),
     );
     expect(evaluation.healthOnlyMode).toBe(false);
@@ -328,9 +326,7 @@ describe("provider-fast-activation effective readiness", () => {
     const evaluation = evaluateEffectiveCapabilities(
       requiredOnly,
       probes((id) =>
-        (REQUIRED_CAPABILITIES as readonly string[]).includes(id)
-          ? "ok"
-          : "unavailable",
+        REQUIRED_CAPABILITIES.includes(id) ? "ok" : "unavailable",
       ),
     );
     expect(evaluation.healthOnlyMode).toBe(false);

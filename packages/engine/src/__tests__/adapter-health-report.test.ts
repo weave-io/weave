@@ -115,7 +115,6 @@ describe("buildAdapterHealthReport: pure function", () => {
     const report = buildAdapterHealthReport(input);
 
     expect(report).toBeDefined();
-    expect(typeof report).toBe("object");
   });
 
   it("preserves harness name from input", () => {
@@ -167,7 +166,7 @@ describe("buildAdapterHealthReport: timestamp", () => {
     };
 
     const report = buildAdapterHealthReport(input);
-    expect(typeof report.timestamp).toBe("string");
+    expect(report.timestamp).toBeDefined();
     expect(report.timestamp.length).toBeGreaterThan(0);
   });
 

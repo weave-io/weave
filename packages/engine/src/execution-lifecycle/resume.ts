@@ -41,7 +41,6 @@ import { mapConflictToLeaseConflict, mapStoreError } from "./lease.js";
 import { sanitizeMetadata } from "./metadata.js";
 import type {
   ExecutionAuthorizationSource,
-  LifecycleEffect,
   LifecycleError,
   ResumeExecutionInput,
   ResumeExecutionOutput,
@@ -110,7 +109,7 @@ export function resumeExecution(
         .andThen((existing): ResultAsync<ExecutionLease, RuntimeStoreError> => {
           if (existing === null) {
             return errAsync(
-              notFoundError("WorkflowInstance", workflowInstanceId as string),
+              notFoundError("WorkflowInstance", workflowInstanceId),
             );
           }
           if (
@@ -121,7 +120,7 @@ export function resumeExecution(
               conflictError(
                 "WorkflowInstance",
                 "Workflow instance is in a terminal status and cannot be resumed",
-                workflowInstanceId as string,
+                workflowInstanceId,
               ),
             );
           }
@@ -142,15 +141,17 @@ export function resumeExecution(
       }
       return mapStoreError(storeError);
     })
-    .map((lease) => ({ leaseId: lease.id, effects: [] as LifecycleEffect[] }));
+    .map((lease) => ({ leaseId: lease.id, effects: [] }));
 }
 
 /** Validate an optional takeover correlation's shape before any store access. */
 function validateRecoveryTakeover(
   takeover: ResumeRecoveryTakeover | undefined,
 ): Result<ResumeRecoveryTakeover | undefined, LifecycleError> {
-  if (takeover === undefined) return ok(undefined);
-  if (!takeover.expectedLeaseId || !takeover.expectedLeaseId.trim()) {
+  if (takeover === undefined) {
+    return ok<ResumeRecoveryTakeover | undefined, LifecycleError>(void 0);
+  }
+  if (!takeover.expectedLeaseId?.trim()) {
     return err(
       lifecycleValidationError(
         "recoveryTakeover.expectedLeaseId is required",
@@ -158,10 +159,7 @@ function validateRecoveryTakeover(
       ),
     );
   }
-  if (
-    !takeover.expectedOwnerId ||
-    !(takeover.expectedOwnerId as string).trim()
-  ) {
+  if (!takeover.expectedOwnerId?.trim()) {
     return err(
       lifecycleValidationError(
         "recoveryTakeover.expectedOwnerId is required",

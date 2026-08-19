@@ -7,7 +7,14 @@
  * appear here — see `docs/architecture/adapter-boundary.md` and Spec 33 §15.2.
  */
 
-import { err, errAsync, ok, okAsync, type Result, type ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "neverthrow";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +39,29 @@ export const AdapterCommandRequestSchema = z
   .strict();
 
 export type AdapterCommandRequest = z.infer<typeof AdapterCommandRequestSchema>;
+
+/** A record value accepted at the opaque envelope boundary before parsing. */
+interface AdapterCommandInputRecord {
+  readonly [key: string]: AdapterCommandInput;
+}
+
+/** A callable value accepted at the opaque envelope boundary before parsing. */
+type AdapterCommandInputCallable = (
+  ...args: readonly AdapterCommandInput[]
+) => AdapterCommandInput;
+
+/** Runtime candidates accepted at the opaque envelope boundary before parsing. */
+type AdapterCommandInput =
+  | AdapterCommandInputRecord
+  | readonly AdapterCommandInput[]
+  | AdapterCommandInputCallable
+  | string
+  | number
+  | boolean
+  | bigint
+  | symbol
+  | null
+  | undefined;
 
 /** Opaque success envelope. Result bytes are adapter-owned JSON text. */
 export const AdapterCommandResultSchema = z
@@ -101,7 +131,7 @@ export function createAdapterCommandRegistry(
 
 /** Validates envelope shape only. Never inspects payload semantics. */
 export function parseAdapterCommandRequest(
-  value: unknown,
+  value: AdapterCommandInput,
 ): Result<AdapterCommandRequest, AdapterCommandError> {
   const parsed = AdapterCommandRequestSchema.safeParse(value);
   if (!parsed.success) {
@@ -122,7 +152,7 @@ export function parseAdapterCommandRequest(
  */
 export function dispatchAdapterCommand(
   registry: AdapterCommandRegistry,
-  request: unknown,
+  request: AdapterCommandInput,
 ): ResultAsync<AdapterCommandResult, AdapterCommandError> {
   const envelope = parseAdapterCommandRequest(request);
   if (envelope.isErr()) return errAsync(envelope.error);
@@ -137,23 +167,25 @@ export function dispatchAdapterCommand(
     return errAsync({ type: "CommandNotRegistered", adapter, command });
   }
 
-  return handler(payloadJson).mapErr(
-    (failure): AdapterCommandError => ({
-      type: "HandlerFailed",
-      adapter,
-      command,
-      message: failure.message,
-    }),
-  ).andThen((resultJson) => {
-    const result = AdapterCommandResultSchema.safeParse({ resultJson });
-    if (!result.success) {
-      return errAsync<AdapterCommandResult, AdapterCommandError>({
+  return handler(payloadJson)
+    .mapErr(
+      (failure): AdapterCommandError => ({
         type: "HandlerFailed",
         adapter,
         command,
-        message: "handler returned an invalid opaque result envelope",
-      });
-    }
-    return okAsync(result.data);
-  });
+        message: failure.message,
+      }),
+    )
+    .andThen((resultJson) => {
+      const result = AdapterCommandResultSchema.safeParse({ resultJson });
+      if (!result.success) {
+        return errAsync<AdapterCommandResult, AdapterCommandError>({
+          type: "HandlerFailed",
+          adapter,
+          command,
+          message: "handler returned an invalid opaque result envelope",
+        });
+      }
+      return okAsync(result.data);
+    });
 }

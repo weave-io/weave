@@ -451,8 +451,8 @@ describe("mixed required+optional failures and warnings", () => {
     expect(result.ready).toBe(false);
     expect(result.failures).toHaveLength(2);
     expect(result.warnings).toHaveLength(2);
-    const failureIds = [...result.failures.map((f) => f.capabilityId)].sort();
-    const warningIds = [...result.warnings.map((w) => w.capabilityId)].sort();
+    const failureIds = result.failures.map((f) => f.capabilityId).sort();
+    const warningIds = result.warnings.map((w) => w.capabilityId).sort();
     expect(failureIds).toEqual(["event-logging", "workflow-persistence"]);
     expect(warningIds).toEqual(["analytics-dashboard", "eval-integration"]);
   });
@@ -522,7 +522,7 @@ describe("sanitized JSON fixture", () => {
     const json = JSON.stringify(result, null, 2);
 
     // Must be parseable
-    const parsed = JSON.parse(json) as typeof result;
+    const parsed = JSON.parse(json);
     expect(parsed.ready).toBe(true);
     expect(parsed.failures).toHaveLength(0);
     expect(parsed.warnings.length).toBeGreaterThanOrEqual(2);

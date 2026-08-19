@@ -24,6 +24,7 @@
  * NOT exported from packages/engine/src/index.ts (internal module).
  */
 
+import type { TemplateSpans } from "mustache";
 import Mustache from "mustache";
 import { err, ok, type Result } from "neverthrow";
 
@@ -87,7 +88,7 @@ type MustacheToken = [
   startIndex: number,
   endIndex: number,
   children?: MustacheToken[],
-  ...rest: unknown[],
+  ...rest: (string | number | boolean)[],
 ];
 
 // ---------------------------------------------------------------------------
@@ -196,9 +197,26 @@ function escapeRegex(s: string): string {
  * Parse a Mustache template source string into tokens.
  * Returns a typed Result — never throws for expected parse failures.
  */
+function normalizeMustacheTokens(tokens: TemplateSpans): MustacheToken[] {
+  return tokens.map((token) => {
+    const [type, value, startIndex, endIndex] = token;
+    const children = token[4];
+    if ((type === "#" || type === "^") && Array.isArray(children)) {
+      return [
+        type,
+        value,
+        startIndex,
+        endIndex,
+        normalizeMustacheTokens(children),
+      ];
+    }
+    return [type, value, startIndex, endIndex];
+  });
+}
+
 function parseTemplate(source: string): Result<MustacheToken[], RendererError> {
   try {
-    const tokens = Mustache.parse(source) as MustacheToken[];
+    const tokens = normalizeMustacheTokens(Mustache.parse(source));
     return ok(tokens);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
@@ -224,7 +242,7 @@ function collectTokens(tokens: MustacheToken[]): MustacheToken[] {
     result.push(token);
     const children = token[4];
     if (Array.isArray(children) && children.length > 0) {
-      result.push(...collectTokens(children as MustacheToken[]));
+      result.push(...collectTokens(children));
     }
   }
   return result;
@@ -297,7 +315,7 @@ function validateTokens(
       const children = token[4];
       if (Array.isArray(children) && children.length > 0) {
         const childResult = validateTokens(
-          children as MustacheToken[],
+          children,
           allowedPaths,
           resolvedSectionPath,
         );
@@ -324,7 +342,7 @@ function validateTokens(
     }
   }
 
-  return ok(undefined);
+  return ok();
 }
 
 /**
@@ -395,7 +413,7 @@ function validatePath(
   }
 
   // Full path must be explicitly in the allowed set
-  if (allowedPaths.has(path)) return ok(undefined);
+  if (allowedPaths.has(path)) return ok();
 
   return err({
     type: "UnknownPath",
@@ -408,15 +426,48 @@ function validatePath(
 // Function/callable value rejection
 // ---------------------------------------------------------------------------
 
+interface TemplateRecordCandidate {
+  readonly [key: string]: TemplateValueCandidate;
+}
+
+type TemplateCallable = (...args: never[]) => void;
+
+type TemplateValueCandidate =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | readonly TemplateValueCandidate[]
+  | TemplateRecordCandidate
+  | TemplateCallable;
+
+function isTemplateCallable(
+  value: TemplateValueCandidate,
+): value is TemplateCallable {
+  return value instanceof Function;
+}
+
+function isTemplateContextRecord(
+  value: TemplateValueCandidate,
+): value is TemplateRecordCandidate {
+  return (
+    value !== null &&
+    Object(value) === value &&
+    !Array.isArray(value) &&
+    !(value instanceof Function)
+  );
+}
+
 /**
  * Recursively scan a context value for any function or callable.
  * Returns an error if any callable is found.
  */
 function rejectFunctionValues(
-  value: unknown,
+  value: TemplateValueCandidate,
   path: string,
 ): Result<void, RendererError> {
-  if (typeof value === "function") {
+  if (isTemplateCallable(value)) {
     return err({
       type: "FunctionValue",
       path,
@@ -429,11 +480,11 @@ function rejectFunctionValues(
       const check = rejectFunctionValues(value[i], `${path}[${i}]`);
       if (check.isErr()) return check;
     }
-    return ok(undefined);
+    return ok();
   }
 
-  if (value !== null && typeof value === "object") {
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+  if (isTemplateContextRecord(value)) {
+    for (const [key, val] of Object.entries(value)) {
       const check = rejectFunctionValues(
         val,
         path === "" ? key : `${path}.${key}`,
@@ -442,7 +493,7 @@ function rejectFunctionValues(
     }
   }
 
-  return ok(undefined);
+  return ok();
 }
 
 /**

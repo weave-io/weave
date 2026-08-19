@@ -151,11 +151,9 @@ describe("generateReviewVariants — basic generation", () => {
         review_models ["openai/gpt-5"]
       }
     `);
-    const weft = config.agents["weft"];
+    const weft = config.agents.weft;
     if (weft === undefined) throw new Error("Expected weft agent");
-    (weft as { review_models?: string[] }).review_models = [
-      "openai/gpt-5#not-a-level",
-    ];
+    weft.review_models = ["openai/gpt-5#not-a-level"];
 
     const variants = generateReviewVariants(config)._unsafeUnwrap();
     expect(variants["weft-openai-gpt-5-not-a-level"].config.models).toEqual([
@@ -338,12 +336,9 @@ describe("generateReviewVariants — conflict detection", () => {
       }
     `);
     // Artificially inject a duplicate review model to simulate the collision.
-    const weft = config.agents["weft"];
+    const weft = config.agents.weft;
     if (weft) {
-      (weft as { review_models?: string[] }).review_models = [
-        "openai/gpt-5",
-        "openai/gpt-5",
-      ];
+      weft.review_models = ["openai/gpt-5", "openai/gpt-5"];
     }
     const result = generateReviewVariants(config);
     expect(result.isErr()).toBe(true);

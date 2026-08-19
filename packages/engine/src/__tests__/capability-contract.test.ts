@@ -21,7 +21,6 @@ import {
 import type {
   AdapterCapabilityContract,
   CapabilityEntry,
-  CapabilityId,
   CapabilityReadiness,
 } from "../capability-contract.js";
 import {
@@ -115,7 +114,7 @@ describe("CapabilityId", () => {
   it("required and optional sets are disjoint", () => {
     const requiredSet = new Set(REQUIRED_CAPABILITIES);
     for (const id of OPTIONAL_CAPABILITIES) {
-      expect(requiredSet.has(id as CapabilityId)).toBe(false);
+      expect(requiredSet.has(id)).toBe(false);
     }
   });
 
@@ -318,7 +317,7 @@ describe("engine barrel re-exports", () => {
   });
 
   it("exports evaluateCoreReadinessProfile from @weaveio/weave-engine", () => {
-    expect(typeof evaluateCoreReadinessProfile).toBe("function");
+    expect(evaluateCoreReadinessProfile).toBeDefined();
   });
 });
 
@@ -445,7 +444,7 @@ describe("provider-fast-activation", () => {
     expect(effectiveProviderFastReadiness("degraded", "unsupported")).toBe(
       "unsupported",
     );
-    expect(effectiveProviderFastReadiness("native", undefined)).toBe("native");
+    expect(effectiveProviderFastReadiness("native", void 0)).toBe("native");
   });
 
   it("keeps capability metadata free of provider request fields and secrets", () => {

@@ -17,6 +17,10 @@ import type {
   LifecycleError,
 } from "./types.js";
 
+type MutableInspectExecutionOutput = {
+  -readonly [Key in keyof InspectExecutionOutput]: InspectExecutionOutput[Key];
+};
+
 /**
  * Inspect the current execution state of a workflow instance.
  *
@@ -57,10 +61,7 @@ export function inspectExecution(
     .andThen((instance) => {
       if (instance === null) {
         return errAsync(
-          lifecycleNotFoundError(
-            "WorkflowInstance",
-            input.workflowInstanceId as string,
-          ),
+          lifecycleNotFoundError("WorkflowInstance", input.workflowInstanceId),
         );
       }
 
@@ -72,7 +73,7 @@ export function inspectExecution(
             activeLease !== null &&
             activeLease.workflowInstanceId === instance.id;
 
-          const output: InspectExecutionOutput = {
+          const output: MutableInspectExecutionOutput = {
             workflowInstanceId: instance.id,
             status: instance.status,
             workflowName: instance.workflowName,
@@ -83,16 +84,16 @@ export function inspectExecution(
             artifacts: instance.artifacts,
             stepAttempts: instance.stepAttempts,
             hasActiveLease,
-            ...(instance.currentStepName !== undefined
-              ? { currentStepName: instance.currentStepName }
-              : {}),
-            ...(instance.completedAt !== undefined
-              ? { completedAt: instance.completedAt }
-              : {}),
-            ...(instance.errorMessage !== undefined
-              ? { errorMessage: instance.errorMessage }
-              : {}),
           };
+          if (instance.currentStepName !== undefined) {
+            output.currentStepName = instance.currentStepName;
+          }
+          if (instance.completedAt !== undefined) {
+            output.completedAt = instance.completedAt;
+          }
+          if (instance.errorMessage !== undefined) {
+            output.errorMessage = instance.errorMessage;
+          }
 
           return output;
         });

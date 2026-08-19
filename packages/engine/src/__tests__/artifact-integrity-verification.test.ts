@@ -24,12 +24,11 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig } from "@weaveio/weave-core";
 import {
-  createExecutionLeaseId,
+  type ConsumedArtifactRecord,
   createInMemoryRuntimeStore,
   createWorkflowInstanceId,
   dispatchStep,
   startExecution,
-  type ConsumedArtifactRecord,
   type WorkflowExecutionContext,
 } from "@weaveio/weave-engine";
 
@@ -338,8 +337,8 @@ describe("integrity verification — mismatched digest fails closed", () => {
     // Should mention revision
     expect(error.message).toContain("revision");
     // Should reference the rule
-    if ("rule" in error) {
-      expect((error as { rule?: string }).rule).toBe("artifact_integrity");
+    if (error.type === "policy_decision") {
+      expect(error.rule).toBe("artifact_integrity");
     }
   });
 
@@ -513,8 +512,8 @@ describe("integrity verification — malformed digest format", () => {
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("validation");
-    if ("field" in error) {
-      expect((error as { field?: string }).field).toContain("plan_path");
+    if (error.type === "validation") {
+      expect(error.field).toContain("plan_path");
     }
   });
 });

@@ -46,6 +46,7 @@ import {
   ALL_CAPABILITY_IDS,
   buildAdapterHealthReport,
   type CapabilityEntry,
+  type CapabilityProbeResult,
   type SafeAdapterInitInput,
 } from "../capability-contract.js";
 import { runtimeHealth } from "../runtime-command-operations/health.js";
@@ -108,7 +109,7 @@ function makeContractWithCommandEntrypoints(
  * Build a fixture `SafeAdapterInitInput` with all required capabilities native
  * and the `command-entrypoints` capability set to the given readiness.
  */
-function okProbesForAll(): import("../capability-contract.js").CapabilityProbeResult[] {
+function okProbesForAll(): CapabilityProbeResult[] {
   return ALL_CAPABILITY_IDS.map((id) => ({
     capabilityId: id,
     probeStatus: "ok" as const,

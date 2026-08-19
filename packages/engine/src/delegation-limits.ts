@@ -46,15 +46,12 @@ export type DelegationAuthorizationError = {
   reason: string;
 };
 
-const MAX_EFFECTIVE_DELEGATION_LIMITS: Record<
-  keyof EffectiveDelegationLimits,
-  number
-> = {
+const MAX_EFFECTIVE_DELEGATION_LIMITS = {
   maxChildren: MAX_DELEGATION_LIMITS.max_children,
   maxConcurrency: MAX_DELEGATION_LIMITS.max_concurrency,
   maxDepth: MAX_DELEGATION_LIMITS.max_depth,
   maxProcesses: MAX_DELEGATION_LIMITS.max_processes,
-};
+} satisfies Record<keyof EffectiveDelegationLimits, number>;
 
 function validateLimit(
   field: keyof EffectiveDelegationLimits,

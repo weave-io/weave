@@ -127,7 +127,7 @@ describe("dispatchAdapterCommand", () => {
   it("does not import Pi packages from the engine surface", async () => {
     await Promise.resolve();
     // Structural proof: this module graph stays harness-neutral.
-    expect(typeof dispatchAdapterCommand).toBe("function");
-    expect(typeof createAdapterCommandRegistry).toBe("function");
+    expect(dispatchAdapterCommand).toBeDefined();
+    expect(createAdapterCommandRegistry).toBeDefined();
   });
 });

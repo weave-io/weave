@@ -393,13 +393,71 @@ function loadAppendSource(
   );
 }
 
+function toRendererTemplateContext(
+  context: AgentPromptTemplateContext,
+): TemplateContext {
+  const agent: TemplateContext = {
+    name: context.agent.name,
+    mode: context.agent.mode,
+    skills: [...context.agent.skills],
+    isCategory: context.agent.isCategory,
+  };
+  if (context.agent.description !== undefined) {
+    agent.description = context.agent.description;
+  }
+
+  const delegationTargets = context.delegation.targets.map((target) => {
+    const result: TemplateContext = {
+      name: target.name,
+      triggers: [...target.triggers],
+      isCategory: target.isCategory,
+    };
+    if (target.description !== undefined) {
+      result.description = target.description;
+    }
+    return result;
+  });
+
+  const rendererContext: TemplateContext = {
+    agent,
+    toolPolicy: {
+      effective: {
+        read: context.toolPolicy.effective.read,
+        write: context.toolPolicy.effective.write,
+        execute: context.toolPolicy.effective.execute,
+        delegate: context.toolPolicy.effective.delegate,
+        network: context.toolPolicy.effective.network,
+      },
+    },
+    delegation: { targets: delegationTargets },
+  };
+
+  if (context.category !== undefined) {
+    const category: TemplateContext = { name: context.category.name };
+    if (context.category.description !== undefined) {
+      category.description = context.category.description;
+    }
+    rendererContext.category = category;
+  }
+
+  if (context.reviewRouting !== undefined) {
+    rendererContext.reviewRouting = {
+      groups: context.reviewRouting.groups.map((group) => ({
+        sourceAgent: group.sourceAgent,
+        variants: group.variants.map((variant) => ({
+          name: variant.name,
+          model: variant.model,
+        })),
+      })),
+    };
+  }
+
+  return rendererContext;
+}
+
 /**
  * Render a template source string with the given context.
  * Returns Result<string, ComposeError>.
- *
- * AgentPromptTemplateContext is cast to TemplateContext because it satisfies
- * the structural requirements but lacks the index signature. The cast is safe
- * because all values in AgentPromptTemplateContext are TemplateContextValue-compatible.
  */
 function renderPromptTemplate(
   source: string,
@@ -410,7 +468,7 @@ function renderPromptTemplate(
 ): Result<string, ComposeError> {
   const renderResult = renderTemplate(
     source,
-    context as unknown as TemplateContext,
+    toRendererTemplateContext(context),
     { allowedPaths: ALLOWED_TEMPLATE_PATHS },
   );
 
@@ -597,7 +655,9 @@ function findScalarCollision(
   // Collect all (index, value) pairs where the field is defined
   const defined: Array<{ index: number; value: string }> = [];
   for (let i = 0; i < configs.length; i++) {
-    const value = extract(configs[i] as WeaveConfig);
+    const config = configs[i];
+    if (config === undefined) continue;
+    const value = extract(config);
     if (value !== undefined) {
       defined.push({ index: i, value });
     }
@@ -607,11 +667,9 @@ function findScalarCollision(
   if (defined.length < 2) return undefined;
 
   // The winner is the last (highest-priority) entry; the loser is the one before it
-  const winner = defined[defined.length - 1] as {
-    index: number;
-    value: string;
-  };
-  const loser = defined[defined.length - 2] as { index: number; value: string };
+  const winner = defined.at(-1);
+  const loser = defined.at(-2);
+  if (winner === undefined || loser === undefined) return undefined;
 
   return {
     losingValue: loser.value,
@@ -654,7 +712,10 @@ function loadAppendSourceFromInput(
   }
 
   if (input.prompt_append_file === undefined) {
-    return okAsync(undefined);
+    return okAsync<
+      { content: string; fromFile: boolean } | undefined,
+      ComposeError
+    >(void 0);
   }
 
   const appendFilePath = input.prompt_append_file;
