@@ -41,6 +41,7 @@ import type { PiChildRefRecord } from "../child-session-refs.js";
 import { createPiChildSessionStorageAuthority } from "../child-session-storage-authority.js";
 import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 import { MAX_FINAL_OUTPUT_BYTES } from "../child-tree.js";
+import type { TimerHandle, TimerPort } from "../child-timer.js";
 import {
   createChildUiEventDiagnostics,
   recordChildUiEventDrop,
@@ -101,7 +102,13 @@ import {
   type PiThreadSourceFactoryInput,
   type PiThreadSources,
 } from "../thread-sources.js";
-import type { IdGenerator, PiEnvPort } from "../types.js";
+import type {
+  IdGenerator,
+  PiEnvPort,
+  PiToolRenderContext,
+  PiToolResult,
+  PiUiThemePort,
+} from "../types.js";
 import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
@@ -532,6 +539,31 @@ function mutableChildRefSource(
 
 async function flushBackgroundWork(): Promise<void> {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();
+}
+
+class ScriptedExtensionTimerPort implements TimerPort {
+  private readonly pending = new Map<() => void, number>();
+
+  schedule(callback: () => void, delayMs: number): TimerHandle {
+    let active = true;
+    const pending = (): void => {
+      if (active) callback();
+    };
+    this.pending.set(pending, delayMs);
+    return {
+      cancel: () => {
+        active = false;
+      },
+    };
+  }
+
+  fireUi(): void {
+    const callbacks = [...this.pending.entries()]
+      .filter(([, delayMs]) => delayMs === 50)
+      .map(([callback]) => callback);
+    for (const callback of callbacks) this.pending.delete(callback);
+    for (const callback of callbacks) callback();
+  }
 }
 
 async function authenticateDirectChild(
@@ -4825,8 +4857,8 @@ function installDelegationLifecycleExtension(
   host: RecordingFakePiHost,
   processPort: FakeChildProcessPort,
   overrides: Partial<PiExtensionDeps> = {},
-): void {
-  installExtension(host, "0.81.1", {
+): PiExtensionInstance {
+  return installExtension(host, "0.81.1", {
     capabilityProber: allOkCapabilityProber(),
     configActivator: fakeConfigActivator(
       {
@@ -8861,6 +8893,203 @@ describe("createPiExtension: real-dispatch active-child shortcut", () => {
     host.finishCustom();
     await flushBackgroundWork();
     expect(host.getEditorComponentForTest()).toBe(modalFactory);
+  });
+
+  it("reproduces the exact-identity live lanes at the production extension seam", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.effectiveKeybindingConfig = { "app.interrupt": "ctrl+c" };
+    const processPort = new FakeChildProcessPort();
+    const timer = new ScriptedExtensionTimerPort();
+    const factory = installDelegationLifecycleExtension(host, processPort, {
+      childTimerPort: timer,
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor({
+                delegationTargets: [
+                  {
+                    name: "shuttle",
+                    description: "General specialist",
+                    triggers: [],
+                    isCategory: false,
+                  },
+                ],
+              }),
+            },
+          ],
+          errors: [],
+        },
+        {
+          ...DELEGATION_LIFECYCLE_CONFIG,
+          settings: { adapters: { pi: { child_inspection: {} } } },
+        } as unknown as WeaveConfig,
+      ),
+    });
+
+    await host.triggerSessionStart();
+    const registration = host.registerToolCalls.find(
+      (tool) => tool.name === "weave_delegate",
+    );
+    expect(registration).toBeDefined();
+    if (registration === undefined) throw new Error("delegate tool missing");
+    expect(registration.renderResult).toBeDefined();
+    if (registration.renderResult === undefined) {
+      throw new Error("delegate result renderer missing");
+    }
+
+    const updates: PiToolResult[] = [];
+    const execution = registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      (update) => updates.push(update),
+      host.createSessionContext(),
+    );
+    for (let tick = 0; tick < 80 && processPort.spawnedProcesses.length === 0; tick += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    expect(processPort.spawnedProcesses).toHaveLength(1);
+    const child = processPort.spawnedProcesses[0];
+    if (child === undefined) throw new Error("child missing");
+    const send = await authenticateDirectChild(processPort, child);
+    for (let tick = 0; tick < 80 && updates.length === 0; tick += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    expect(updates.length).toBeGreaterThan(0);
+
+    const overlayBefore = host.customCalls.length;
+    void host.invokeShortcut("alt+1");
+    for (let tick = 0; tick < 80 && host.customCalls.length === overlayBefore; tick += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    expect(host.customCalls.length).toBe(overlayBefore + 1);
+
+    const update = (assistantMessageEvent: Record<string, unknown>) => ({
+      type: "message_update",
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+      assistantMessageEvent,
+    });
+    child.emitLines([
+      { type: "message_start", message: { role: "assistant", content: [] } },
+      update({ type: "thinking_start", contentIndex: 0 }),
+      update({ type: "thinking_delta", contentIndex: 0, delta: "r" }),
+    ]);
+    await flushBackgroundWork();
+
+    const theme: PiUiThemePort = {
+      fg: (_color, text) => text,
+      bold: (text) => text,
+    };
+    const renderContext: PiToolRenderContext = {
+      args: { agent: "shuttle", task: "do it" },
+      toolCallId: "call-1",
+      state: {},
+      lastComponent: undefined,
+      invalidate: () => undefined,
+    };
+    const renderCard = (result: PiToolResult): string =>
+      registration.renderResult?.(
+        result,
+        { expanded: false, isPartial: true },
+        theme,
+        renderContext,
+      )
+        ?.render(120)
+        .join("\n") ?? "";
+
+    const parentReasoning = renderCard(updates.at(-1) ?? updates[0]);
+    timer.fireUi();
+    const inspectorReasoning = host.renderCustom().join("\n");
+
+    child.emitLines([
+      {
+        type: "tool_execution_start",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        args: { command: "bun test" },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        result: {
+          role: "toolResult",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          content: [{ type: "text", text: "ok" }],
+          isError: false,
+          timestamp: 1,
+        },
+        isError: false,
+      },
+    ]);
+    await flushBackgroundWork();
+    timer.fireUi();
+    const inspectorAfterTool = host.renderCustom().join("\n");
+    child.emitLines([
+      update({ type: "thinking_end", contentIndex: 0, content: "r" }),
+      { type: "message_start", message: { role: "assistant", content: [] } },
+      update({ type: "text_start", contentIndex: 1 }),
+      update({ type: "text_delta", contentIndex: 1, delta: "a" }),
+    ]);
+    await flushBackgroundWork();
+    timer.fireUi();
+    const assistantBefore = host.renderCustom().join("\n");
+    child.emitLine(update({ type: "text_delta", contentIndex: 1, delta: "b" }));
+    await flushBackgroundWork();
+    timer.fireUi();
+    const assistantAfter = host.renderCustom().join("\n");
+
+    child.emitLine({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "terminal answer" }],
+      },
+    });
+    await send("settled", {
+      outcome: "completed",
+      assistantOutput: "terminal answer",
+      interventionCount: 0,
+    });
+    const settled = await execution;
+    await flushBackgroundWork();
+    const settledCard = renderCard(settled);
+    host.inputCustom("\u001b");
+    host.finishCustom();
+    await flushBackgroundWork();
+
+    const counts = factory.liveReasoningCountsForTest();
+    const diagnostics = factory.childUiEventDiagnosticsForTest();
+    expect({
+      parentReasoning: parentReasoning.includes("↪ reasoning • r"),
+      inspectorReasoning: inspectorReasoning.includes("↪ reasoning • r"),
+      toolStarts: (inspectorAfterTool.match(/⚙ bash\(/gu) ?? []).length,
+      toolResults: (inspectorAfterTool.match(/⎿/gu) ?? []).length,
+      assistantHeader: assistantBefore.includes("shuttle · streaming reply"),
+      assistantGrowth: assistantAfter.includes("  ab"),
+      settledCardLeaksAnswer: settledCard.includes("terminal answer"),
+      countsEmpty:
+        counts.registryEntries === 0 &&
+        counts.retainedBytes === 0 &&
+        counts.inspectorRegistryEntries === 0 &&
+        counts.inspectorRetainedBytes === 0,
+      diagnostics: diagnostics.buckets,
+    }).toEqual({
+      parentReasoning: true,
+      inspectorReasoning: true,
+      toolStarts: 1,
+      toolResults: 1,
+      assistantHeader: true,
+      assistantGrowth: true,
+      settledCardLeaksAnswer: false,
+      countsEmpty: true,
+      diagnostics: [],
+    });
   });
 });
 
