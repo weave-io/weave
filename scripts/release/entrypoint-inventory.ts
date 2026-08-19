@@ -14,8 +14,8 @@
  * controller; Task 24 adds the automatic regeneration controller; Task 25
  * registers every stable publish and independent-attestation workflow root;
  * Task 26 adds the guarded `next` prerelease controller; Task 27 adds the
- * guarded manual `nightly` controller. Later tasks add,
- * rename, or remove entries in the same change.
+ * guarded manual `nightly` controller; Task 28 adds the CI policy controller.
+ * Later tasks add, rename, or remove entries in the same change.
  * Test-only roots are never inventoried as production.
  */
 
@@ -91,6 +91,12 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "legacy",
     rationale:
       "Task 22 CI API compatibility controller. It runs API Extractor and the checked-in surface-map gate; it performs no publication mutation.",
+  },
+  {
+    path: "scripts/release/release-policy-check.ts",
+    role: "legacy",
+    rationale:
+      "Task 28 required CI release-policy check. It validates changeset, ledger, release-surface, freshness, and cleanup policy; it never mutates a release.",
   },
   {
     path: "scripts/release/prepare-main.ts",
