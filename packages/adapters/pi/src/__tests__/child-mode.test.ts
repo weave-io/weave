@@ -151,10 +151,40 @@ class MinimalFakeHost implements PiExtensionApi {
     | { readonly kind: "model"; readonly model: PiModelInfo }
     | { readonly kind: "thinking"; readonly level: string }
   )[] = [];
+  private nextSetModelDeferred:
+    | {
+        readonly called: () => void;
+        readonly result: Promise<boolean>;
+      }
+    | undefined;
   thinkingLevelBehavior: "accept" | "throw" | "reject" = "accept";
+  deferNextSetModel(): {
+    called: Promise<void>;
+    settle: (succeeded: boolean) => void;
+  } {
+    let resolveCalled!: () => void;
+    let resolveResult!: (succeeded: boolean) => void;
+    const called = new Promise<void>((resolve) => {
+      resolveCalled = resolve;
+    });
+    const result = new Promise<boolean>((resolve) => {
+      resolveResult = resolve;
+    });
+    this.nextSetModelDeferred = {
+      called: resolveCalled,
+      result,
+    };
+    return { called, settle: resolveResult };
+  }
   async setModel(model: PiModelInfo): Promise<boolean> {
     this.setModelCalls.push(model);
     this.activationCalls.push({ kind: "model", model });
+    const deferred = this.nextSetModelDeferred;
+    this.nextSetModelDeferred = undefined;
+    if (deferred !== undefined) {
+      deferred.called();
+      return await deferred.result;
+    }
     return this.modelAccepted;
   }
   setThinkingLevel(level: string): void | Promise<void> {
@@ -174,13 +204,50 @@ class MinimalFakeHost implements PiExtensionApi {
     ctx: PiSessionContext,
   ): Promise<unknown> {
     const handlers = this.events.get(event) ?? [];
+    let currentPayload = payload;
     let result: unknown;
     for (const handler of handlers) {
-      const outcome = await handler(payload, ctx);
-      if (outcome !== undefined) result = outcome;
+      const outcome = await handler(currentPayload, ctx);
+      if (outcome !== undefined) {
+        result = outcome;
+        // Pi's context event is replacement-returning. Later trusted
+        // composition handlers receive Weave's filtered list; this models
+        // trusted composition, not hostile-extension isolation.
+        if (event === "context" && Array.isArray(outcome)) {
+          currentPayload = outcome;
+        }
+      }
     }
     return result;
   }
+}
+
+async function waitForMicrotasks(
+  predicate: () => boolean,
+  attempts = 100,
+): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error("test setup: timed out waiting for microtask event");
+}
+
+function waitForOutputLine(
+  output: FakeOutputPort,
+  predicate: (line: Record<string, unknown>) => boolean,
+): Promise<Record<string, unknown>> {
+  const existing = output.lines.find(predicate);
+  if (existing !== undefined) return Promise.resolve(existing);
+  return new Promise((resolve) => {
+    const previous = output.onLine;
+    output.onLine = (line) => {
+      previous?.(line);
+      if (!predicate(line)) return;
+      output.onLine = previous;
+      resolve(line);
+    };
+  });
 }
 
 function flush(): Promise<void> {
@@ -466,67 +533,100 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       error: { status: 429, message: "rate limited" },
       content: [{ type: "text", text: "partial failed output" }],
     } as const;
+    const deferred = host.deferNextSetModel();
     await host.fire(
       "message_end",
       { type: "message_end", message: failedMessage },
       recoveryCtx,
     );
-    await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
-    await waitFor(() => host.setModelCalls.length >= 2);
+    const fallbackSettlement = host.fire(
+      "agent_settled",
+      { type: "agent_settled" },
+      recoveryCtx,
+    );
+    await deferred.called;
     expect(host.setModelCalls.at(-1)?.id).toBe("second");
 
+    // Prove the native model event while the asynchronous setModel result is
+    // still unresolved. The marker cannot be emitted until both proofs arrive.
     await host.fire(
       "model_select",
       { type: "model_select", model: fallback },
       recoveryCtx,
     );
-    await waitFor(() => host.sentMessages.length === 1);
+    deferred.settle(true);
+    await fallbackSettlement;
+    await waitForMicrotasks(() => host.sentMessages.length === 1);
     const marker = host.sentMessages[0];
     expect(marker?.customType).toBe("weave.model-fallback.recovery-marker");
 
+    const durableHistory: unknown[] = [failedMessage, marker];
     await host.fire(
       "message_start",
       { type: "message_start", message: marker },
       recoveryCtx,
     );
+    const userMessage = { role: "user", content: "keep this history" };
+    const providerInput = [userMessage, failedMessage, marker];
+    const trustedContextInputs: Array<readonly unknown[]> = [];
+    host.on("context", (messages) => {
+      trustedContextInputs.push(messages as readonly unknown[]);
+      return undefined;
+    });
     const contextResult = await host.fire(
       "context",
-      [{ role: "user", content: "keep this history" }, failedMessage, marker],
+      providerInput,
       recoveryCtx,
     );
-    expect(contextResult).toEqual([
-      { role: "user", content: "keep this history" },
-    ]);
+    expect(contextResult).toEqual([userMessage]);
+    expect(trustedContextInputs).toEqual([[userMessage]]);
+    expect(providerInput).toEqual([userMessage, failedMessage, marker]);
+    expect(
+      (contextResult as readonly unknown[]).some(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          (entry as { readonly role?: unknown }).role === "user" &&
+          (entry as { readonly content?: unknown }).content === marker?.content,
+      ),
+    ).toBe(false);
 
     await host.fire("turn_start", { type: "turn_start" }, recoveryCtx);
+    const fallbackMessage = {
+      role: "assistant",
+      id: "fallback-assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "fallback answer" }],
+    } as const;
     await host.fire(
       "message_end",
-      {
-        type: "message_end",
-        message: {
-          role: "assistant",
-          id: "fallback-assistant",
-          stopReason: "stop",
-          content: [{ type: "text", text: "fallback answer" }],
-        },
-      },
+      { type: "message_end", message: fallbackMessage },
       recoveryCtx,
     );
+    durableHistory.push(fallbackMessage);
+    const settledLine = waitForOutputLine(
+      output,
+      (line) => line.kind === "settled",
+    );
     await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
-    await waitFor(
-      () => output.lines.filter((line) => line.kind === "settled").length === 1,
+    const settled = await settledLine;
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      1,
     );
-    const settled = output.lines.filter((line) => line.kind === "settled");
-    expect(settled).toHaveLength(1);
-    expect((settled[0]?.body as Record<string, unknown>).outcome).toBe(
-      "completed",
-    );
-    expect((settled[0]?.body as Record<string, unknown>).assistantOutput).toBe(
+    expect((settled.body as Record<string, unknown>).outcome).toBe("completed");
+    expect((settled.body as Record<string, unknown>).assistantOutput).toBe(
       "fallback answer",
     );
     expect(
-      (settled[0]?.body as Record<string, unknown>).assistantOutput,
+      (settled.body as Record<string, unknown>).assistantOutput,
     ).not.toContain("partial failed output");
+    expect(durableHistory).toEqual([failedMessage, marker, fallbackMessage]);
+
+    // A delayed duplicate settlement cannot publish another child result.
+    await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      1,
+    );
   });
 
   it("retries settlement once after a failed output write without leaving a sequence gap", async () => {

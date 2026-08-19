@@ -256,7 +256,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - Tamper, replay, sequence, phase-order, identity, and post-terminal tests fail closed.
     - Delegated, direct-step, and nested children share the same protocol path and frozen candidate semantics.
 
-- [ ] 7. Prove exact provider context and exact-once recovery behavior
+- [x] 7. Prove exact provider context and exact-once recovery behavior
   - **What**: Add focused integration tests around the fake Pi lifecycle and a captured provider-conversion boundary before any UI claims are accepted.
   - **Files**: `packages/adapters/pi/src/__tests__/model-failover-context.integration.test.ts` (new), `packages/adapters/pi/src/__tests__/model-failover-lifecycle.integration.test.ts` (new), `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/fakes/fake-pi-host.ts`, existing provider fake/capture utilities discovered under `packages/adapters/pi/src/__tests__/`.
   - **Depends on**: Tasks 4–6.

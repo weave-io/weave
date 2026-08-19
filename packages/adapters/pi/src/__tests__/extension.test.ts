@@ -13891,9 +13891,9 @@ describe("createPiExtension: primary model fallback C4a", () => {
     });
     if (marker === undefined) throw new Error("fallback marker was not sent");
 
-    // Pi's generic fake event helper intentionally ignores replacement return
-    // values. Invoke the registered public context hook directly so this test
-    // can assert the exact provider-only repair.
+    // Pi's context event is replacement-returning. A later trusted context
+    // handler must receive Weave's filtered list. This proves trusted
+    // composition, not hostile-extension isolation.
     await host.triggerEvent("message_start", {
       type: "message_start",
       message: marker,
@@ -13912,13 +13912,15 @@ describe("createPiExtension: primary model fallback C4a", () => {
       successfulAssistant,
     ];
     const durableInputSnapshot = [...durableInput];
-    const contextSubscription = host.onCalls.find(
-      (entry) => entry.event === "context",
-    );
-    if (contextSubscription === undefined) {
-      throw new Error("primary context hook was not registered");
-    }
-    const repairedContext = await contextSubscription.handler(
+    const trustedContextInputs: Array<readonly unknown[]> = [];
+    host.api.on("context", (messages) => {
+      trustedContextInputs.push(messages as readonly unknown[]);
+      return undefined;
+    });
+    host.appendDurableHistory(userMessage);
+    host.appendDurableHistory(failedAssistant);
+    host.appendSentMessageToDurableHistory();
+    const repairedContext = await host.triggerContext(
       durableInput,
       host.createSessionContext(),
     );
@@ -13926,8 +13928,16 @@ describe("createPiExtension: primary model fallback C4a", () => {
     expect(repairedContext).not.toContain(failedAssistant);
     expect(repairedContext).not.toContain(marker);
     expect(repairedContext).toContain(successfulAssistant);
+    expect(trustedContextInputs).toEqual([[userMessage, successfulAssistant]]);
     expect(durableInput).toEqual(durableInputSnapshot);
     expect(durableInput).toHaveLength(4);
+    host.captureProviderConversion(repairedContext);
+    expect(host.providerConversions).toEqual([
+      {
+        durableHistory: [userMessage, failedAssistant, marker],
+        providerMessages: [userMessage, successfulAssistant],
+      },
+    ]);
     await flushBackgroundWork();
 
     // The recovery run has its own successful assistant message, but it does
@@ -13937,6 +13947,7 @@ describe("createPiExtension: primary model fallback C4a", () => {
       type: "message_end",
       message: successfulAssistant,
     });
+    host.appendDurableHistory(successfulAssistant);
     await flushBackgroundWork();
     const modelFallbackEventTypesBeforeFinalSettlement = journalEntries
       .map((entry) =>
@@ -13988,6 +13999,15 @@ describe("createPiExtension: primary model fallback C4a", () => {
     expect(host.sentUserMessages).toHaveLength(0);
     expect(host.generatedTurnCount).toBe(0);
     expect(host.appendedEntries).toHaveLength(0);
+    expect(host.durableHistory).toEqual([
+      userMessage,
+      failedAssistant,
+      marker,
+      successfulAssistant,
+    ]);
+    expect(host.durableHistory).toContain(failedAssistant);
+    expect(host.durableHistory).toContain(marker);
+    expect(host.durableHistory.at(-1)).toBe(successfulAssistant);
     expect(host.beforeAgentStartCalls).toBe(0);
     expect(host.createSessionContext().sessionManager?.getSessionId()).toBe(
       nativeSessionId,

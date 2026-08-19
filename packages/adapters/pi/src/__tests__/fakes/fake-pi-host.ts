@@ -229,6 +229,14 @@ export interface RecordedSendMessage {
     | undefined;
 }
 
+/** One provider-conversion observation made by an integration fake. */
+export interface RecordedProviderConversion {
+  /** The native history at the moment conversion was requested. */
+  readonly durableHistory: readonly unknown[];
+  /** The exact replacement list handed toward provider conversion. */
+  readonly providerMessages: readonly unknown[];
+}
+
 export interface FakePiHostOptions {
   readonly mode?: PiMode;
   readonly trusted?: boolean;
@@ -299,6 +307,10 @@ export class RecordingFakePiHost {
     };
   }[] = [];
   readonly sendMessageCalls: RecordedSendMessage[] = [];
+  /** Durable native Pi history is deliberately separate from provider context. */
+  readonly durableHistory: unknown[] = [];
+  /** Captures provider-bound replacement lists without logging raw bodies. */
+  readonly providerConversions: RecordedProviderConversion[] = [];
   beforeAgentStartCalls = 0;
   getSystemPromptOptionsCalls = 0;
   getSystemPromptCalls = 0;
@@ -1011,6 +1023,50 @@ export class RecordingFakePiHost {
       await handler(payload, ctx);
     }
     return ctx;
+  }
+
+  /**
+   * Mirrors Pi's replacement-returning `context` chain. The first handler may
+   * return a filtered list; a later trusted composition handler then receives
+   * that list, while an undefined return keeps the current list unchanged.
+   */
+  async triggerContext(
+    messages: readonly unknown[],
+    ctx = this.createSessionContext(),
+  ): Promise<readonly unknown[]> {
+    let current = messages;
+    for (const handler of this.handlers.get("context") ?? []) {
+      const replacement = await handler(current, ctx);
+      if (Array.isArray(replacement)) current = replacement;
+    }
+    return current;
+  }
+
+  /** Append one entry to the fake's durable native-session history. */
+  appendDurableHistory(entry: unknown): void {
+    this.durableHistory.push(entry);
+  }
+
+  /** Capture the exact provider-only list after all context handlers run. */
+  captureProviderConversion(messages: readonly unknown[]): readonly unknown[] {
+    const providerMessages = [...messages];
+    this.providerConversions.push({
+      durableHistory: [...this.durableHistory],
+      providerMessages,
+    });
+    return providerMessages;
+  }
+
+  /**
+   * Mirrors Pi's durable custom-message append performed by `sendMessage`.
+   * Tests call this explicitly because the public fake records dispatch and
+   * durable history as two distinct host effects.
+   */
+  appendSentMessageToDurableHistory(
+    index = this.sendMessageCalls.length - 1,
+  ): void {
+    const sent = this.sendMessageCalls[index];
+    if (sent !== undefined) this.appendDurableHistory(sent.message);
   }
 
   /**
