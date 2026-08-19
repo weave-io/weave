@@ -528,8 +528,16 @@ export interface PiToolRenderOptions {
 }
 
 export interface PiToolRenderContext {
-  readonly args?: Record<string, unknown>;
-  readonly lastComponent?: PiToolRenderComponent;
+  /** Arguments shared by the call and result rows. */
+  readonly args: Record<string, unknown>;
+  /** Stable host identity for this tool row across partial/final renders. */
+  readonly toolCallId: string;
+  /** Mutable row-local state owned by the host renderer. */
+  readonly state: unknown;
+  /** Previously returned component for this render slot, if any. */
+  readonly lastComponent: PiToolRenderComponent | undefined;
+  /** Invalidates only this tool row in Pi's renderer. */
+  readonly invalidate: () => void;
   /**
    * Pi's own `ToolRenderContext.executionStarted`. A call renderer uses it to
    * stop drawing once the result renderer owns the entry, so a tool that draws

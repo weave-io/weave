@@ -124,6 +124,10 @@ import {
   type PiInspectorChild,
   type PiInspectorView,
 } from "./child-inspector.js";
+import {
+  createPiLiveReasoningRegistry,
+  type PiLiveReasoningRegistry,
+} from "./child-live-reasoning.js";
 import type { PiChildMetadataCache } from "./child-metadata-cache.js";
 import type {
   PiNativeSessionEntryPage,
@@ -2945,6 +2949,17 @@ export function createPiExtension(
   // The generation the held controller belongs to stays beside the instance
   // so replacement and authority checks can never drift apart.
   const delegationControllerCell = createDelegationControllerCell();
+  /** One generation-local card projector registry, keyed by Pi toolCallId. */
+  const liveReasoningRegistryCell: {
+    value: PiLiveReasoningRegistry | undefined;
+  } = { value: undefined };
+  const clearLiveReasoningRegistry = (): void => {
+    liveReasoningRegistryCell.value?.clear().match(
+      () => undefined,
+      () => undefined,
+    );
+    liveReasoningRegistryCell.value = undefined;
+  };
   /**
    * The single generation-scoped native-session authority (Spec 33 §5.6).
    *
@@ -3149,6 +3164,7 @@ export function createPiExtension(
     configRefreshCell.coordinator?.dispose();
     configRefreshCell.coordinator = undefined;
     clearPiCatalogCell(catalogCellHolder);
+    clearLiveReasoningRegistry();
   };
   /**
    * Runs the boundary refresh for the live generation. Total: an absent
@@ -3618,7 +3634,10 @@ export function createPiExtension(
           }
         }
         const targets = [...targetsByName.values()];
+        clearLiveReasoningRegistry();
         if (targets.length === 0) return [];
+        const liveReasoningRegistry = createPiLiveReasoningRegistry();
+        liveReasoningRegistryCell.value = liveReasoningRegistry;
 
         return [
           buildDelegationToolRegistration({
@@ -3655,6 +3674,8 @@ export function createPiExtension(
               )
                 ? delegationControllerCell.controller
                 : undefined,
+            liveReasoningRegistry,
+            getGenerationId: () => controller.getCurrentGeneration()?.id,
             parentId: ROOT_NODE_ID,
             parentDepth: 0,
             parentAgentName: primary.name,
@@ -5972,6 +5993,7 @@ export function createPiExtension(
       sessionTransitionRuntime.revokeForReplacement((prior) => {
         (prior as PiDelegationController).disposeAll();
       });
+      clearLiveReasoningRegistry();
       const startupSequence = sessionStartSequence;
       const startupStillCurrent = (): boolean =>
         sessionStartSequence === startupSequence;
@@ -6111,9 +6133,18 @@ export function createPiExtension(
       const startupHandle = startupOperation.value;
       const startupOwnsGeneration = (): boolean =>
         startupStillCurrent() && startupHandle.assertStillCurrent().isOk();
+      const generationCardReasoningRegistry = liveReasoningRegistryCell.value;
       const generationResources = new PiGenerationResourceOwner(
         generation.id,
-        () => generationSessionCtxCell.clear(generation.id),
+        () => {
+          generationSessionCtxCell.clear(generation.id);
+          if (
+            generationCardReasoningRegistry !== undefined &&
+            liveReasoningRegistryCell.value === generationCardReasoningRegistry
+          ) {
+            clearLiveReasoningRegistry();
+          }
+        },
       );
       const generationTelemetryCell: { telemetry: PiTelemetry | undefined } = {
         telemetry: undefined,
@@ -7933,6 +7964,9 @@ export function createPiExtension(
     sessionTransitionRuntime.register(pi);
 
     pi.on("session_shutdown", async (_event, ctx?: PiSessionContext) => {
+      // Release transient card reasoning before any asynchronous shutdown
+      // work. A stale renderer can therefore only observe an empty registry.
+      clearLiveReasoningRegistry();
       // Revoke synchronously, clear UI, then await bounded child stop. The
       // runtime owns the order so a replacement startup can publish new state
       // while best-effort cleanup continues on the captured snapshot.

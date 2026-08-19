@@ -2,16 +2,17 @@
  * Delegation card fact model (Pi adapter contract §6, UI design record §1).
  *
  * A pure, bounded view model for the inline `weave_delegate` card. It answers
- * five questions and nothing else: who is running, what they were asked to do,
- * the single most meaningful thing they have produced, what it has cost, and —
- * only once an authoritative settlement says so — how it ended.
+ * four questions and nothing else: who is running, what they were asked to do,
+ * what the run has cost, and — only once an authoritative settlement says so —
+ * how it ended. Child activity is a transient renderer concern, not a card
+ * fact.
  *
  * Honesty rules this module makes structural rather than remembered:
  *
  * - **Settlement is the only completion authority.** {@link PiDelegationCardFacts.terminal}
- *   is `undefined` unless a `settle` input arrived *and* that settlement named
- *   text. A `message_end` can therefore never produce a settled card, a `✓`
- *   glyph, or a completion claim, however many assistant messages end.
+ *   is `undefined` until a `settle` input arrives. A `message_end` can therefore
+ *   never produce a settled card, a `✓` glyph, or a completion claim, however
+ *   many assistant messages end.
  * - **Recovery is named only where the failure class documents one.** The gate
  *   is {@link CARD_RECOVERABLE_FAILURE_CLASSES}; an unclassified failure gets no
  *   advice at all.
@@ -19,7 +20,8 @@
  *   are omitted rather than guessed, so the renderer prints `—`.
  * - **Usage is latest-authoritative, never summed.** Each report replaces the
  *   previous one, matching the rule `child-overlay-telemetry.ts` applies.
- * - **Reasoning is a bounded summary.** Raw chain-of-thought is never retained.
+ * - **Reasoning is renderer-only.** A bounded raw-reasoning snapshot lives in
+ *   process memory and never enters card facts, details, or model-visible text.
  * - **Elapsed comes from the injected clock at event time**, never from render
  *   time, so a re-render cannot make a settled child look older.
  *
@@ -31,7 +33,6 @@
  * {@link PiDelegationCardError} and leaves the prior facts untouched.
  */
 import { err, ok, Result } from "neverthrow";
-import { appendAssistantStreamDelta } from "./assistant-stream-text.js";
 import {
   boundChildCompactId,
   CHILD_COMPACT_MAX_DEDUP_KEYS,
@@ -48,7 +49,6 @@ import {
   type PiChildProviderErrorDescriptor,
   parsePiChildProviderError,
 } from "./child-provider-error.js";
-import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
 import {
   type ChildUiEventDiagnosticsSink,
@@ -116,6 +116,10 @@ export const CARD_CANCELLED_RECORD =
 
 /** What a completed card may say when the child reported no tool terminal. */
 export const CARD_NO_TOOL_EVIDENCE = "no tool evidence recorded";
+/** Fixed terminal framing; settled child output stays in the tool API only. */
+export const CARD_COMPLETED_RECORD = "child completed";
+export const CARD_FAILED_RECORD = "child failed";
+export const CARD_SETTLEMENT_EVIDENCE = "authoritative settlement";
 
 // ---------------------------------------------------------------------------
 // Facts
@@ -125,12 +129,10 @@ export const CARD_NO_TOOL_EVIDENCE = "no tool evidence recorded";
 export type PiCardTone = "run" | "ok" | "warn" | "bad" | "mute";
 
 /**
- * Native Line activity vocabulary (prototype `ACTIVITY_GLYPH`).
+ * Compatibility vocabulary for the content-free activity placeholder.
  *
- * `say` is a child message still being written, or one that ended with no
- * authoritative settlement behind it. `reply` — the `✓` row — is reserved for
- * the settlement-named output, so a collapsed row can never imply an answer the
- * settlement has not published.
+ * New parent-card renders do not project a child activity kind or text. The
+ * placeholder remains versioned so older details payloads parse safely.
  */
 export type PiCardActivityKind =
   | "sent"
@@ -270,18 +272,9 @@ export interface PiDelegationCardState {
   readonly activity: PiCardActivityState | undefined;
   readonly openMessageId: string | undefined;
   /**
-   * The exact ordered concatenation of the deltas streamed into the message
-   * still being written, bounded.
-   *
-   * A delta is a fragment of a word as often as it is a word, so the card
-   * accumulates RAW and sanitizes the projection once. Sanitizing each
-   * fragment on arrival and joining the results with a space turned
-   * `["hel", "lo"]` into `hel lo` — an answer the child never gave, and one
-   * the inspector, which concatenated, disagreed with.
-   *
-   * It is held here rather than derived from the row because the row ring is
-   * bounded: a long tool-heavy run can evict a message row that is still
-   * being written, and the answer must not restart when it does.
+   * Legacy message-stream fields are retained in the state shape for replay
+   * compatibility. Task 5 never populates them, because assistant text belongs
+   * to the child inspector and the authoritative settled tool result.
    */
   readonly openMessageStream:
     | { readonly itemId: string; readonly raw: string }
@@ -456,289 +449,104 @@ function applyStartRun(
 
 function applyAssistantFragment(
   state: PiDelegationCardState,
-  input: Extract<ChildCompactReducerInput, { kind: "assistant_fragment" }>,
+  _input: Extract<ChildCompactReducerInput, { kind: "assistant_fragment" }>,
 ): PiDelegationCardState {
-  const rowId = `msg:${input.itemId}`;
-  const mode = input.mode ?? "append";
-  // The raw accumulation is keyed by the MESSAGE, not by the row: a `replace`
-  // frame and a different message both start a new answer, everything else
-  // extends the one in flight.
-  const carried =
-    mode === "replace" || state.openMessageStream?.itemId !== input.itemId
-      ? ""
-      : state.openMessageStream.raw;
-  const raw = appendAssistantStreamDelta(carried, input.text);
-  const text = boundText(sanitizeChildCompactText(raw), CARD_ROW_TEXT_MAX);
-
-  // A message head with no body yet is not an answer: it reports that the child
-  // is writing, and the live marker says the row may still grow.
-  const activity: PiCardActivityState =
-    text.length > 0
-      ? { kind: "say", text, live: true }
-      : { kind: "say", text: `${state.agentName} is writing`, live: true };
-
-  const opened: PiDelegationCardState = {
+  // Assistant text belongs to the authoritative settled tool result and the
+  // child inspector, never to the parent card. Keep only lifecycle and usage
+  // facts here; in particular, do not retain even a transient fragment in the
+  // card state that is later serialized as details.
+  return {
     ...state,
     phase: "responding",
-    openMessageId: input.itemId,
-    openMessageStream: { itemId: input.itemId, raw },
-    activity,
+    openMessageId: undefined,
+    openMessageStream: undefined,
   };
-  // A `message_start` OPENS a lifecycle; it is not something the child wrote.
-  // Its fragment is empty by construction, and materializing it put a blank
-  // `▌ shuttle` row in the expanded viewport — a row §1.12's literal bottom
-  // slice must not invent, because nothing on the child's transcript
-  // corresponds to it. The lifecycle still moves the Native Line (`is
-  // writing`), and the row appears with the first text the child actually
-  // wrote. An existing row is still rewritten, so a `replace` frame that
-  // clears an answer is not silently ignored.
-  if (text.length === 0 && !hasRow(state, rowId)) return opened;
-
-  return pushRow(opened, {
-    id: rowId,
-    kind: "msg",
-    head: state.agentName,
-    text,
-  });
 }
 
 function applyAssistantEnd(
   state: PiDelegationCardState,
   input: Extract<ChildCompactReducerInput, { kind: "assistant_end" }>,
 ): PiDelegationCardState {
-  const rowId = `msg:${input.itemId}`;
-  const existing = state.rows.find((row) => row.id === rowId);
-  // The terminal message carries the whole answer, so it replaces the
-  // accumulation. Without one, the streamed answer this card already holds is
-  // the honest text — including when the row itself was evicted from the ring.
-  const streamed =
-    state.openMessageStream?.itemId === input.itemId
-      ? sanitizeChildCompactText(state.openMessageStream.raw)
-      : (existing?.text ?? "");
-  const ended =
-    input.text !== undefined
-      ? sanitizeChildCompactText(appendAssistantStreamDelta("", input.text))
-      : "";
-  const text = boundText(
-    ended.length > 0 ? ended : streamed,
-    CARD_ROW_TEXT_MAX,
-  );
-
-  // An ended message is NOT a completion. It stays `say`, so `✓` remains
-  // reserved for the settlement-named output.
-  const activity: PiCardActivityState =
-    text.length > 0
-      ? { kind: "say", text, live: false }
-      : { kind: "say", text: `${state.agentName} is writing`, live: false };
-
-  const closed: PiDelegationCardState = {
+  return {
     ...state,
+    phase: "responding",
     openMessageId: undefined,
     openMessageStream: undefined,
     usage: mergeUsage(state.usage, input.usage),
-    activity,
   };
-  // A message that ended having said nothing leaves no row behind either: the
-  // viewport prints what the child wrote, and an empty message is not it.
-  if (text.length === 0 && !hasRow(state, rowId)) return closed;
-
-  return pushRow(closed, {
-    id: rowId,
-    kind: "msg",
-    head: state.agentName,
-    text,
-  });
 }
 
-/**
- * The child reasoned, stated as a bare fact.
- *
- * NEVER SHOW RAW CHAIN-OF-THOUGHT. The input kind carries no text at all, so
- * the row, the model-visible activity line and the persisted card details all
- * hold the same content-free word. The card never claims to summarize what it
- * has not been given: see {@link applyReasoningSummary} for the one trusted
- * surface that may print prose.
- */
+/** The child entered generic reasoning; its raw text uses the live projector. */
 function applyThinking(
   state: PiDelegationCardState,
-  input: Extract<ChildCompactReducerInput, { kind: "thinking" }>,
+  _input: Extract<ChildCompactReducerInput, { kind: "thinking" }>,
 ): PiDelegationCardState {
-  const text = "reasoning";
-  return {
-    ...pushRow(state, {
-      id: `think:${input.itemId}`,
-      kind: "think",
-      head: "thinking",
-      text,
-    }),
-    phase: "reasoning",
-    activity: { kind: "think", text, live: true },
-  };
+  // Generic thinking prose has its own process-memory projector. The durable
+  // card reducer keeps only the lifecycle phase; the renderer reads the
+  // projector through its TUI invalidation seam.
+  return { ...state, phase: "reasoning", activity: undefined };
 }
 
-/**
- * An explicit host-published reasoning summary, and the only reasoning prose
- * the card will ever print. It is bounded and sanitized like every other
- * child-authored string.
- */
+/** A summary event changes lifecycle only; it is not parent-card activity. */
 function applyReasoningSummary(
   state: PiDelegationCardState,
-  input: Extract<ChildCompactReducerInput, { kind: "reasoning_summary" }>,
+  _input: Extract<ChildCompactReducerInput, { kind: "reasoning_summary" }>,
 ): PiDelegationCardState {
-  const summary = boundText(
-    sanitizeChildCompactText(input.summary),
-    CARD_ROW_TEXT_MAX - "summary · ".length,
-  );
-  const text = `summary · ${summary.length > 0 ? summary : "…"}`;
-  return {
-    ...pushRow(state, {
-      id: `think:${input.itemId}`,
-      kind: "think",
-      head: "thinking",
-      text,
-    }),
-    phase: "reasoning",
-    activity: { kind: "think", text, live: true },
-  };
+  // A host summary is not the parent card's live activity source. Keep the
+  // phase for footer telemetry, but never copy summary prose into facts.
+  return { ...state, phase: "reasoning", activity: undefined };
 }
 
-/**
- * Tool activity, reported as NAME PLUS CANONICAL STATE and nothing else.
- *
- * `input.detail` is child-authored tool payload prose: a command's stdout, a
- * file read, a raw provider error body, an exception message. The delegation
- * card is not a place that prose may reach. Its facts become the model-visible
- * activity line of every tool result AND the `details` payload Pi persists with
- * the transcript entry and replays in a later session, so a single tool result
- * carrying an absolute path, a credential, a signed URL, or a stack frame would
- * copy that value into the parent's own context and onto disk.
- *
- * The rule is structural omission, not redaction: no pattern matcher decides
- * what is safe here, because the payload is simply never read. The card states
- * which tool ran and whether it is running, done, or failed - facts the card
- * derives from the event TYPE. The rich child payload stays where it already
- * lives, in the child overlay and the child transcript, which the human opens
- * deliberately and which the parent model never reads.
- */
+/** Tool events change lifecycle only; names and payloads stay in the inspector. */
 function applyTool(
   state: PiDelegationCardState,
   input: Extract<ChildCompactReducerInput, { kind: "tool" }>,
 ): PiDelegationCardState {
-  const phase = input.phase ?? "call";
-  const toolName = boundText(
-    sanitizeChildCompactText(input.toolName ?? ""),
-    CARD_ROW_HEAD_MAX,
-  );
-  const call =
-    toolName.length > 0
-      ? toolName
-      : (state.toolCalls.get(input.itemId) ?? "tool");
-  const toolCalls =
-    toolName.length > 0 && state.toolCalls.get(input.itemId) !== toolName
-      ? extendToolCalls(state.toolCalls, input.itemId, toolName)
-      : state.toolCalls;
-
-  if (phase === "call") {
-    return {
-      ...pushRow(state, {
-        id: `tool:${input.itemId}`,
-        kind: "tool",
-        head: call,
-        text: "",
-      }),
-      phase: "tool call",
-      toolCalls,
-      activity: { kind: "tool", text: call, live: true },
-    };
-  }
-
-  // A RESULT IS REPORTED AS ITS CALL PLUS ITS CANONICAL STATE - never the
-  // result payload itself.
-  const term = phaseTerm(phase);
-  const text = boundText(`${call} · ${term}`, CARD_ROW_TEXT_MAX);
-  const failed = phase === "error";
-  const withRow = pushRow(state, {
-    id: `result:${input.itemId}`,
-    kind: failed ? "error" : "result",
-    head: call,
-    text: term,
-  });
+  // Tool names, states, arguments, and result payloads belong to the child
+  // inspector. The parent card keeps only a closed lifecycle phase and never
+  // stores a tool label that could reach details or a viewport row.
   return {
-    ...withRow,
-    phase: "tool call",
-    toolCalls,
-    // Progress ticks keep a call open; a terminal closes it.
-    lastToolEvidence:
-      phase === "partial" ? state.lastToolEvidence : { call, term },
-    activity: {
-      kind: failed ? "error" : "tool",
-      text,
-      live: phase === "partial",
-    },
+    ...state,
+    phase: input.phase === "error" ? "tool error" : "tool call",
+    activity: undefined,
+    toolCalls: new Map<string, string>(),
+    lastToolEvidence: undefined,
   };
 }
 
 function applyQueue(
   state: PiDelegationCardState,
-  input: Extract<ChildCompactReducerInput, { kind: "queue" }>,
+  _input: Extract<ChildCompactReducerInput, { kind: "queue" }>,
 ): PiDelegationCardState {
-  const size = input.size;
-  const text =
-    size === undefined
-      ? "parent steered the child"
-      : `${size} queued · parent steered the child`;
-  return {
-    ...pushRow(state, {
-      id: `queue:${input.itemId}:${size ?? "n"}`,
-      kind: "queue",
-      head: "queue",
-      text,
-    }),
-    phase: "steered",
-    activity: { kind: "queue", text, live: false },
-  };
+  // Queue/intervention details are lifecycle facts, not parent-card child
+  // activity. The exact intervention count remains authoritative in the final
+  // tool result, outside this visual fact model.
+  return { ...state, phase: "steered", activity: undefined };
 }
 
 function applyStatus(
   state: PiDelegationCardState,
   input: Extract<ChildCompactReducerInput, { kind: "status" }>,
 ): PiDelegationCardState {
-  // A status report is a lifecycle fact, not a transcript row: it renames the
-  // footer's phase and adds nothing to the viewport or the Native Line.
-  const phase = boundText(
-    sanitizeChildCompactText(input.status ?? input.message ?? ""),
-    CARD_PHASE_MAX,
-  );
-  return phase.length > 0 ? { ...state, phase } : state;
+  // A status report is a lifecycle fact, not a transcript row. Its status and
+  // message fields are host prose, so neither is copied into the footer phase;
+  // a non-empty report only keeps the closed lifecycle word "running".
+  const hasStatus =
+    sanitizeChildCompactText(input.status ?? "").length > 0 ||
+    sanitizeChildCompactText(input.message ?? "").length > 0;
+  return hasStatus ? { ...state, phase: "running" } : state;
 }
 
 function applyRetry(
   state: PiDelegationCardState,
   input: Extract<ChildCompactReducerInput, { kind: "retry" }>,
 ): PiDelegationCardState {
-  const reason = boundText(
-    sanitizeChildCompactText(input.reason ?? ""),
-    CARD_ROW_TEXT_MAX,
-  );
-  const attempt = input.attempt;
-  const parts = [
-    attempt === undefined ? "retrying" : `retry ${attempt}`,
-    ...(reason.length > 0 ? [reason] : []),
-  ];
-  const text = boundText(parts.join(" · "), CARD_ROW_TEXT_MAX);
   return {
-    ...pushRow(state, {
-      id: `retry:${input.itemId}:${attempt ?? "n"}`,
-      kind: "retry",
-      head: "retry",
-      text,
-    }),
+    ...state,
     runAction: "retry",
-    // The attempt the child itself named. An unnamed attempt stays absent
-    // rather than becoming a fabricated `1`.
-    runAttempt: attempt ?? state.runAttempt,
+    runAttempt: input.attempt ?? state.runAttempt,
     phase: "bootstrap",
-    activity: { kind: "boot", text, live: false },
+    activity: undefined,
   };
 }
 
@@ -760,21 +568,11 @@ function applySettle(
   if (terminal === undefined) {
     return { ...settled, activity: freezeActivity(settled.activity) };
   }
-  // NATIVE SETTLE (prototype item 10, §1.13). The settlement rewrites the rail
-  // word, the Native Line and the footer verb, and ADDS NOTHING: no row, no
-  // banner, no border verdict, no action deck. The expanded viewport is a
-  // literal bottom slice of the child's own transcript (§1.12), so a
-  // card-authored `✓ COMPLETED` row would be a line the child never wrote,
-  // printed directly under the identical text the terminal message already
-  // holds. `terminal` carries the same verdict to the footer, and the Native
-  // Line states the headline once.
+  // Settlement changes only lifecycle framing. The authoritative child output
+  // is deliberately not copied into the card's activity or terminal facts.
   return {
     ...settled,
-    activity: {
-      kind: terminalActivityKind(terminal.outcome),
-      text: terminal.headline,
-      live: false,
-    },
+    activity: undefined,
   };
 }
 
@@ -788,13 +586,9 @@ export function projectDelegationCardFacts(
 ): PiDelegationCardFacts {
   const terminal = deriveTerminal(state);
   const settled = state.settlement !== undefined;
-  const rows = state.rows.slice(-CARD_VIEWPORT_ROWS).map(projectRow);
-  const above = state.producedRows - rows.length;
-  const activity = state.activity ?? {
-    kind: "boot" as const,
-    text: `${state.agentName} is starting`,
-    live: true,
-  };
+  // The parent card has no durable child transcript. Even if a caller hands a
+  // projection an older state shape, the persisted fact boundary is empty.
+  const rows: readonly PiCardViewportRow[] = [];
 
   return {
     schemaVersion: CARD_FACTS_SCHEMA_VERSION,
@@ -812,22 +606,18 @@ export function projectDelegationCardFacts(
     settled,
     assignment: state.assignment,
     activity: {
-      kind: activity.kind,
-      text: boundText(activity.text, CARD_ROW_TEXT_MAX),
-      live: settled ? false : activity.live,
+      kind: "boot",
+      text: "",
+      live: false,
     },
     telemetry: projectTelemetry(state),
     viewport: {
       rows,
-      above: Math.max(0, above),
-      atBottom: Math.max(0, above) + rows.length === state.producedRows,
+      above: 0,
+      atBottom: true,
     },
     ...(terminal !== undefined ? { terminal } : {}),
   };
-}
-
-function projectRow(row: PiCardRingRow): PiCardViewportRow {
-  return { kind: row.kind, head: row.head, text: row.text };
 }
 
 function projectTelemetry(
@@ -850,11 +640,7 @@ function projectTelemetry(
   };
 }
 
-/**
- * THE ONE GATE. Terminal facts exist only when an authoritative settlement has
- * landed AND that settlement named text, so the settled card cannot be reached
- * one microstep early even if a renderer wanted it.
- */
+/** Terminal facts appear only after an authoritative settlement arrives. */
 function deriveTerminal(
   state: PiDelegationCardState,
 ): PiCardTerminalFacts | undefined {
@@ -862,35 +648,16 @@ function deriveTerminal(
   if (settlement === undefined) return undefined;
 
   if (settlement.outcome === "completed") {
-    // Only the authoritative assistant output — never a completion CANDIDATE.
-    const headline = boundText(
-      sanitizeChildCompactText(settlement.assistantOutput ?? ""),
-      CARD_TERMINAL_TEXT_MAX,
-    );
-    if (headline.length === 0) return undefined;
-    const evidence = state.lastToolEvidence;
     return {
       outcome: "completed",
       verdict: "COMPLETED",
       glyph: "✓",
-      headline,
-      evidence: boundText(
-        `verified · ${
-          evidence === undefined
-            ? CARD_NO_TOOL_EVIDENCE
-            : `${evidence.call} · ${evidence.term}`
-        }`,
-        CARD_TERMINAL_TEXT_MAX,
-      ),
+      headline: CARD_COMPLETED_RECORD,
+      evidence: CARD_SETTLEMENT_EVIDENCE,
     };
   }
 
   if (settlement.outcome === "failed") {
-    const headline = boundText(
-      sanitizeChildCompactText(settlement.reason),
-      CARD_TERMINAL_TEXT_MAX,
-    );
-    if (headline.length === 0) return undefined;
     const failureClass = state.failureClass;
     const recovery =
       failureClass !== undefined && RECOVERABLE.has(failureClass)
@@ -903,11 +670,11 @@ function deriveTerminal(
       outcome: "failed",
       verdict: "FAILED",
       glyph: "✕",
-      headline,
-      evidence: boundText(
-        `${failureClass ?? "failure"} · child no longer running`,
-        CARD_TERMINAL_TEXT_MAX,
-      ),
+      headline: CARD_FAILED_RECORD,
+      evidence:
+        failureClass === undefined
+          ? CARD_SETTLEMENT_EVIDENCE
+          : boundText(failureClass, CARD_TERMINAL_TEXT_MAX),
       ...(recovery !== undefined ? { recovery } : {}),
     };
   }
@@ -921,19 +688,15 @@ function deriveTerminal(
   };
 }
 
-function terminalActivityKind(
-  outcome: PiCardTerminalFacts["outcome"],
-): PiCardActivityKind {
-  if (outcome === "completed") return "reply";
-  if (outcome === "failed") return "error";
-  return "cancel";
-}
-
 function statusWord(state: PiDelegationCardState): string {
   const settlement = state.settlement;
   if (settlement !== undefined) return settlement.outcome;
   if (state.startedAtMs === undefined) return "pending";
-  if (state.activity === undefined) return "starting";
+  // The parent card deliberately retains no child activity text. Lifecycle
+  // status therefore follows the reducer's closed phase vocabulary rather than
+  // the presence of an activity row.
+  if (state.phase === "bootstrap") return "starting";
+  if (state.phase === "steered") return "steered";
   return "running";
 }
 
@@ -942,8 +705,9 @@ function toneOf(state: PiDelegationCardState): PiCardTone {
   if (settlement?.outcome === "completed") return "ok";
   if (settlement?.outcome === "failed") return "bad";
   if (settlement?.outcome === "cancelled") return "mute";
-  if (state.activity?.kind === "error") return "bad";
-  if (state.activity?.kind === "queue") return "warn";
+  if (state.phase === "tool error" || state.phase === CARD_PROVIDER_ERROR_PHASE)
+    return "bad";
+  if (state.phase === "steered") return "warn";
   if (state.startedAtMs === undefined) return "mute";
   return "run";
 }
@@ -957,50 +721,6 @@ function freezeActivity(
 // ---------------------------------------------------------------------------
 // Ring
 // ---------------------------------------------------------------------------
-
-/**
- * Append or grow one viewport row.
- *
- * A row that already exists grows IN PLACE and does not advance the produced
- * count; a new row advances it by exactly one and may evict the oldest retained
- * row. `producedRows` is therefore monotone, which is what keeps `above` exact
- * after eviction.
- */
-function pushRow(
-  state: PiDelegationCardState,
-  row: PiCardRingRow,
-): PiDelegationCardState {
-  const bounded: PiCardRingRow = {
-    id: row.id,
-    kind: row.kind,
-    head: boundText(row.head, CARD_ROW_HEAD_MAX),
-    text: boundText(row.text, CARD_ROW_TEXT_MAX),
-  };
-  const index = state.rows.findIndex((entry) => entry.id === bounded.id);
-  if (index !== -1) {
-    const rows = [...state.rows];
-    rows[index] = bounded;
-    return { ...state, rows };
-  }
-  const rows = [...state.rows, bounded].slice(-CARD_VIEWPORT_RING_ROWS);
-  return { ...state, rows, producedRows: state.producedRows + 1 };
-}
-
-/** True when the ring already holds a row under this id. */
-function hasRow(state: PiDelegationCardState, id: string): boolean {
-  return state.rows.some((row) => row.id === id);
-}
-
-function extendToolCalls(
-  calls: ReadonlyMap<string, string>,
-  itemId: string,
-  toolName: string,
-): ReadonlyMap<string, string> {
-  const next = new Map(calls);
-  next.set(itemId, toolName);
-  if (next.size <= CARD_VIEWPORT_RING_ROWS) return next;
-  return new Map([...next].slice(-CARD_VIEWPORT_RING_ROWS));
-}
 
 // ---------------------------------------------------------------------------
 // Clock and telemetry helpers
@@ -1045,12 +765,6 @@ function totalTokensOf(
   const output = usage.outputTokens;
   if (input === undefined && output === undefined) return undefined;
   return (input ?? 0) + (output ?? 0);
-}
-
-function phaseTerm(phase: "partial" | "result" | "error"): string {
-  if (phase === "error") return "failed";
-  if (phase === "partial") return "running";
-  return "done";
 }
 
 /** `0.4s` · `38s` · `4m 12s` · `1h 03m`. Never rounded up into a claim. */
@@ -1155,23 +869,14 @@ export function applyDelegationCardProviderError(
   }
   // A settled run is a closed record: a late provider failure cannot rewrite it.
   if (state.settlement !== undefined) return ok(state);
-  const text = boundText(
-    sanitizeChildCompactText(formatPiChildProviderError(error)),
-    CARD_ROW_TEXT_MAX,
-  );
   const timed = withClock(state, stamp);
   return ok({
-    ...pushRow(timed, {
-      // Repeats of the same canonical failure grow in place rather than
-      // stacking, so `producedRows` stays an honest count of distinct facts.
-      id: `provider-error:${text}`,
-      kind: "error",
-      head: CARD_PROVIDER_ERROR_HEAD,
-      text,
-    }),
+    ...timed,
+    // Keep only the closed failure class for recovery framing. Provider
+    // message text is child payload and must not enter card facts/details.
     phase: CARD_PROVIDER_ERROR_PHASE,
     failureClass: error.class,
-    activity: { kind: "error", text, live: false },
+    activity: undefined,
   });
 }
 

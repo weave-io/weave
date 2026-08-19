@@ -35,7 +35,6 @@ import {
 import { getKeybindings, TUI } from "@earendil-works/pi-tui";
 import { PiChildCardProjection } from "../child-card-model.js";
 import { renderDelegationCard } from "../child-card-render.js";
-import { sanitizeChildCompactText } from "../child-compact-render.js";
 import {
   createChildOverlayController,
   createChildOverlayCustomComponent,
@@ -175,57 +174,44 @@ function cardRows(card: PiChildCardProjection): string[] {
   }).map((row) => stripAnsi(row).replace(/\s+$/u, ""));
 }
 
-describe("Bug A · the delegation card's Native Line carries streamed answer text", () => {
-  it("accumulates only text deltas and never relabels them reasoning", () => {
+describe("Task 5 · the parent card has reasoning-only live activity", () => {
+  it("keeps assistant and generic thinking streams out of facts and the card", () => {
     const card = projection();
     for (const raw of streamingLifecycle()) card.applySessionEvent(parsed(raw));
 
     const facts = card.facts();
-    expect(facts.activity.kind).toBe("say");
-    expect(facts.activity.text).toBe(FULL_ANSWER.trim());
-    expect(facts.activity.live).toBe(true);
-    expect(facts.activity.text).not.toContain("reasoning");
+    expect(facts.activity).toEqual({ kind: "boot", text: "", live: false });
+    expect(facts.viewport).toEqual({ rows: [], above: 0, atBottom: true });
+    expect(JSON.stringify(facts)).not.toContain(FULL_ANSWER.trim());
+    expect(JSON.stringify(facts)).not.toContain(RAW_COT);
+    expect(cardRows(card).join("\n")).not.toContain(FULL_ANSWER.trim());
+    expect(cardRows(card).join("\n")).not.toContain(RAW_COT);
   });
 
-  it("keeps the accumulated answer on the rendered pre-settlement card", () => {
+  it("does not create a reasoning row from a content-free structural thinking frame", () => {
     const card = projection();
-    for (const raw of streamingLifecycle()) card.applySessionEvent(parsed(raw));
-
-    const rows = cardRows(card);
-    expect(rows.some((row) => row.includes(FULL_ANSWER.trim()))).toBe(true);
-    expect(rows.some((row) => row.includes("reasoning"))).toBe(false);
+    for (const raw of streamingLifecycle().slice(0, 4))
+      card.applySessionEvent(parsed(raw));
+    expect(card.facts().activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
+    expect(card.facts().viewport.rows).toEqual([]);
   });
 
-  it("still reports a content-free reasoning fact while only thinking has arrived", () => {
-    const card = projection();
-    const events = streamingLifecycle().slice(0, 4);
-    for (const raw of events) card.applySessionEvent(parsed(raw));
-
-    const facts = card.facts();
-    expect(facts.activity.kind).toBe("think");
-    expect(facts.activity.text).toBe("reasoning");
-  });
-
-  it("reconciles the terminal message onto the same lifecycle without duplication", () => {
+  it("keeps settled output authoritative but never renders it as child activity", () => {
     const card = projection();
     for (const raw of streamingLifecycle()) card.applySessionEvent(parsed(raw));
     card.applySessionEvent(parsed(terminalEvent()));
-
-    const facts = card.facts();
-    expect(facts.activity.text).toBe(FULL_ANSWER.trim());
-    expect(facts.activity.live).toBe(false);
-    const messageRows = facts.viewport.rows.filter((row) => row.kind === "msg");
-    expect(messageRows).toHaveLength(1);
-    expect(messageRows[0]?.text).toBe(FULL_ANSWER.trim());
-  });
-
-  it("never prints raw chain-of-thought on any card surface", () => {
-    const card = projection();
-    for (const raw of streamingLifecycle()) card.applySessionEvent(parsed(raw));
-    card.applySessionEvent(parsed(terminalEvent()));
-
-    const serialized = JSON.stringify(card.facts());
-    expect(serialized).not.toContain(RAW_COT);
+    const settled = card.settle({
+      outcome: "completed",
+      assistantOutput: FULL_ANSWER,
+    });
+    expect(settled.terminal?.headline).toBe("child completed");
+    expect(settled.activity).toEqual({ kind: "boot", text: "", live: false });
+    expect(settled.viewport.rows).toEqual([]);
+    expect(cardRows(card).join("\n")).not.toContain(FULL_ANSWER.trim());
     expect(cardRows(card).join("\n")).not.toContain(RAW_COT);
   });
 });
@@ -620,44 +606,21 @@ function repeatingLifecycle(): readonly Record<string, unknown>[] {
 }
 
 describe("Bug B · repeated identical deltas all reach the answer", () => {
-  it("accumulates the exact answer through the real card projection", () => {
+  it("keeps repeated assistant deltas out of the parent card", () => {
     const card = projection();
     for (const raw of repeatingLifecycle()) card.applySessionEvent(parsed(raw));
 
-    const facts = card.facts();
-    expect(facts.activity.kind).toBe("say");
-    expect(facts.activity.text).toBe(REPEAT_ANSWER);
-    expect(facts.activity.text).not.toBe(DEDUPED_ANSWER);
-    // Every repeat is present, in order, exactly as many times as it was sent.
-    expect(facts.activity.text.split("the ")).toHaveLength(4);
-    expect(facts.activity.text.split("and ")).toHaveLength(3);
-  });
-
-  it("paints the exact answer on the rendered card", () => {
-    const card = projection();
-    for (const raw of repeatingLifecycle()) card.applySessionEvent(parsed(raw));
-
-    const rows = cardRows(card);
-    expect(rows.some((row) => row.includes(REPEAT_ANSWER))).toBe(true);
-    expect(rows.some((row) => row.includes(DEDUPED_ANSWER))).toBe(false);
-    expect(rows.join("\n")).not.toContain(RAW_COT);
-  });
-
-  it("keeps raw chain-of-thought off every card surface", () => {
-    const card = projection();
-    for (const raw of repeatingLifecycle()) card.applySessionEvent(parsed(raw));
-    card.applySessionEvent(
-      parsed({ type: "message_end", message: assistantMessage(REPEAT_ANSWER) }),
-    );
-
-    expect(JSON.stringify(card.facts())).not.toContain(RAW_COT);
+    expect(card.facts().activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
+    expect(card.facts().viewport.rows).toEqual([]);
+    expect(cardRows(card).join("\n")).not.toContain(REPEAT_ANSWER);
     expect(cardRows(card).join("\n")).not.toContain(RAW_COT);
   });
 
-  it("still suppresses a repeated `message_start` a host identified", () => {
-    // A host that names its messages states real identity: one message starts
-    // once. The repeat is a duplicate report, and applying it would replace the
-    // streamed answer with the empty message it carries.
+  it("does not turn repeated message starts into a parent-card row", () => {
     const named = (text: string) => ({
       ...assistantMessage(text),
       id: "asst-77",
@@ -666,17 +629,19 @@ describe("Bug B · repeated identical deltas all reach the answer", () => {
     card.applySessionEvent(
       parsed({ type: "message_start", message: named("") }),
     );
-    for (const delta of REPEAT_DELTAS) {
+    for (const delta of REPEAT_DELTAS)
       card.applySessionEvent(
         parsed(update({ type: "text_delta", contentIndex: 1, delta })),
       );
-    }
-    expect(card.facts().activity.text).toBe(REPEAT_ANSWER);
-
     card.applySessionEvent(
       parsed({ type: "message_start", message: named("") }),
     );
-    expect(card.facts().activity.text).toBe(REPEAT_ANSWER);
+    expect(card.facts().activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
+    expect(card.facts().viewport.rows).toEqual([]);
   });
 
   it("keeps every repeat in the inspector's live row and its rebuild", async () => {
@@ -795,9 +760,8 @@ describe("Bug B · deltas are concatenated exactly on every surface", () => {
     it(`accumulates ${script.name} identically on card and inspector`, async () => {
       const card = cardAnswerFrom(script.deltas);
       const inspector = await inspectorAnswerFrom(script.deltas);
-      expect(card).toBe(script.answer);
+      expect(card).toBe("");
       expect(inspector).toBe(script.answer);
-      expect(card).toBe(sanitizeChildCompactText(inspector));
     });
   }
 
@@ -805,10 +769,8 @@ describe("Bug B · deltas are concatenated exactly on every surface", () => {
     const deltas = ["line one", "\n", "line two"];
     const inspector = await inspectorAnswerFrom(deltas);
     expect(inspector).toBe("line one\nline two");
-    // The card is a one-line surface, so it collapses whitespace - and that
-    // is the ONLY difference the two surfaces are allowed to have.
-    expect(cardAnswerFrom(deltas)).toBe(sanitizeChildCompactText(inspector));
-    expect(cardAnswerFrom(deltas)).toBe("line one line two");
+    // The parent card deliberately has no assistant activity row at all.
+    expect(cardAnswerFrom(deltas)).toBe("");
   });
 
   it("bounds a long stream on both surfaces without inventing separators", async () => {
@@ -819,17 +781,11 @@ describe("Bug B · deltas are concatenated exactly on every surface", () => {
     );
     const card = cardAnswerFrom(deltas);
     const inspector = await inspectorAnswerFrom(deltas);
-    expect(card.length).toBeLessThanOrEqual(MAX_LATEST_OUTPUT_BYTES);
+    expect(card).toBe("");
     expect(inspector.length).toBeLessThanOrEqual(MAX_LATEST_OUTPUT_BYTES);
-    // No separator was invented anywhere in 8 000 fragments.
-    expect(card).not.toContain(" ");
+    // No separator was invented in the inspector's authoritative answer.
     expect(inspector).not.toContain(" ");
-    expect(card.startsWith("abcdabcd")).toBe(true);
-    // The card row has its own narrower display budget and marks the cut with
-    // an ellipsis; what it shows is a PREFIX of the same answer, never a
-    // differently assembled one.
-    expect(card.endsWith("\u2026")).toBe(true);
-    expect(inspector.startsWith(card.slice(0, -1))).toBe(true);
+    expect(inspector.startsWith("abcdabcd")).toBe(true);
   });
 
   it("replaces the accumulation with the terminal message, exactly once", async () => {
@@ -843,7 +799,12 @@ describe("Bug B · deltas are concatenated exactly on every surface", () => {
         parsed(update({ type: "text_delta", contentIndex: 1, delta })),
       );
     }
-    expect(card.facts().activity.text).toBe("partial answer");
+    expect(card.facts().activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
+    expect(card.facts().viewport.rows).toEqual([]);
     card.applySessionEvent(
       parsed({
         type: "message_end",
@@ -851,10 +812,12 @@ describe("Bug B · deltas are concatenated exactly on every surface", () => {
       }),
     );
     const facts = card.facts();
-    expect(facts.activity.text).toBe("partial answer, completed");
-    const messageRows = facts.viewport.rows.filter((row) => row.kind === "msg");
-    expect(messageRows).toHaveLength(1);
-    expect(messageRows[0]?.text).toBe("partial answer, completed");
+    expect(facts.activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
+    expect(facts.viewport.rows).toEqual([]);
 
     const { controller } = open(liveChild());
     (await controller.open(CHILD_ID))._unsafeUnwrap();
@@ -902,7 +865,12 @@ describe("Bug B · deltas are concatenated exactly on every surface", () => {
     card.applySessionEvent(
       parsed(update({ type: "text_delta", contentIndex: 1, delta: "second" })),
     );
-    expect(card.facts().activity.text).toBe("second");
+    expect(card.facts().activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
+    expect(card.facts().viewport.rows).toEqual([]);
   });
 });
 
@@ -944,8 +912,8 @@ describe("Bug A · a mixed-carrier frame reaches no surface at all", () => {
     card.applySessionEvent(parsed({ ...MIXED_CARRIER_FRAME }));
     const after = card.facts();
 
-    expect(after.activity.text).toBe("real");
-    expect(after.activity.kind).toBe("say");
+    expect(after.activity).toEqual({ kind: "boot", text: "", live: false });
+    expect(after.viewport.rows).toEqual([]);
     expect(after.viewport.rows).toEqual(before.viewport.rows);
     expect(JSON.stringify(after)).not.toContain(RAW_COT);
     expect(cardRows(card).join("\n")).not.toContain(RAW_COT);

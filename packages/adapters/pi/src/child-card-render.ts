@@ -14,9 +14,9 @@
  *    closed — so a card has one top edge, one bottom edge, and no corner
  *    inside it. Every interior row comes from {@link cardBody}.
  * 2. **Settlement changes words, not height.** The rail cell count depends on
- *    the width alone, and the body is always the assignment row plus the one
- *    Native Line, so a settled card is exactly as tall as the running card it
- *    replaced.
+ *    the width alone, and the body reserves the assignment row plus one
+ *    optional live-reasoning row, so a settled card is exactly as tall as the
+ *    running card it replaced.
  * 3. **Affordances outlive numbers.** The footer measures the action side
  *    first and offers the telemetry side only what survives, so `Alt+I` is the
  *    last hint standing and a number can never outlive `Ctrl+O`.
@@ -40,12 +40,9 @@
 import {
   CARD_TOOL_NAME,
   CARD_VIEWPORT_ROWS,
-  type PiCardActivityKind,
-  type PiCardRowKind,
-  type PiCardViewportRow,
   type PiDelegationCardFacts,
 } from "./child-card-model.js";
-import { measureWidth, truncatePlainToWidth } from "./render-width.js";
+import { truncatePlainToWidth } from "./render-width.js";
 import { type Ink, type Paint, plainPaint, toneInk } from "./ui-paint.js";
 import {
   clipRow,
@@ -96,7 +93,7 @@ export const CARD_RAIL_CELL_MAX = 3;
 /** The assignment budget: exactly one row, at every width, in every state. */
 export const CARD_ASSIGNMENT_ROW_MAX = 1;
 
-/** The Native Line budget: exactly one row, at every width, in every state. */
+/** The Native Line budget: at most one live-reasoning row. */
 export const CARD_ACTIVITY_ROW_MAX = 1;
 
 /** The hard row ceiling of the expanded region, the interior rule excluded. */
@@ -111,9 +108,6 @@ export const CARD_DETAIL_ROW_MIN = 7;
  */
 export const CARD_VIEWPORT_REGION_ROWS = CARD_VIEWPORT_ROWS + 1;
 
-/** Interior columns below which viewport prose is clipped harder. */
-const CARD_DETAIL_NARROW = 44;
-
 // ---------------------------------------------------------------------------
 // Vocabulary
 // ---------------------------------------------------------------------------
@@ -126,77 +120,12 @@ export const CARD_INSPECT_HINT = "Alt+I inspect child";
 export const CARD_INSPECT_HINT_MID = "Alt+I inspect";
 export const CARD_INSPECT_HINT_MIN = "Alt+I";
 
-/**
- * The streaming mark. A block element, so it is reachable only through
- * {@link glyph} and child text structurally cannot fake being live.
- */
-const CARD_STREAM_MARK = "▍";
-
 /** What the card says when the parent recorded no assignment sentence. */
 export const CARD_NO_ASSIGNMENT = "no assignment recorded";
 
 /** The status strip of the expanded viewport, in its two honest forms. */
 export const CARD_VIEWPORT_LIVE = "LIVE · following bottom";
 export const CARD_VIEWPORT_SETTLED = "AT BOTTOM · child settled";
-
-/**
- * The Native Line glyph vocabulary.
- *
- * `✓` belongs to `reply`, which the fact model reserves for the
- * settlement-named output, so a collapsed row can never imply an answer the
- * settlement has not published.
- */
-const ACTIVITY_GLYPH: Readonly<Record<PiCardActivityKind, string>> =
-  Object.freeze({
-    sent: "→",
-    boot: "◇",
-    think: "⤷",
-    tool: "⏵",
-    queue: "⇥",
-    say: "▸",
-    reply: "✓",
-    error: "✕",
-    cancel: "⊘",
-  });
-
-/** Prose ink per activity kind. `text` defers the glyph to the state's tone. */
-const ACTIVITY_INK: Readonly<Record<PiCardActivityKind, Ink>> = Object.freeze({
-  sent: "muted",
-  boot: "muted",
-  think: "think",
-  tool: "text",
-  queue: "warn",
-  say: "text",
-  reply: "text",
-  error: "bad",
-  cancel: "muted",
-});
-
-/** The child's own role gutters, as the viewport prints them. */
-const ROW_GLYPH: Readonly<Record<PiCardRowKind, string>> = Object.freeze({
-  boot: "·",
-  msg: "▌",
-  think: "✻",
-  tool: "⚙",
-  result: "⎿",
-  queue: "↯",
-  retry: "↺",
-  error: "✖",
-  settled: "✓",
-});
-
-/** Ink per viewport row kind. A failing row is visibly not a success. */
-const ROW_INK: Readonly<Record<PiCardRowKind, Ink>> = Object.freeze({
-  boot: "muted",
-  msg: "text",
-  think: "think",
-  tool: "text",
-  result: "muted",
-  queue: "warn",
-  retry: "warn",
-  error: "bad",
-  settled: "text",
-});
 
 // ---------------------------------------------------------------------------
 // Rows
@@ -240,6 +169,8 @@ export interface PiCardRenderOptions {
   /** Pi's own expanded flag for this tool entry. */
   readonly expanded?: boolean;
   readonly paint: Paint;
+  /** TUI-only raw reasoning line; never read from persisted facts. */
+  readonly liveReasoningLine?: string;
 }
 
 /** The rail column sizing for one width, and what narrowing costs. */
@@ -267,9 +198,12 @@ export function renderDelegationCard(
   options: PiCardRenderOptions,
 ): string[] {
   const width = normalizeCardWidth(options.width);
-  return composeDelegationCard(facts, width, options.expanded === true).map(
-    (row) => emit(row.row, width, options.paint),
-  );
+  return composeDelegationCard(
+    facts,
+    width,
+    options.expanded === true,
+    options.liveReasoningLine,
+  ).map((row) => emit(row.row, width, options.paint));
 }
 
 /**
@@ -282,6 +216,7 @@ export function composeDelegationCard(
   facts: PiDelegationCardFacts,
   width: number,
   expanded: boolean,
+  liveReasoningLine = "",
 ): readonly PiCardRow[] {
   const w = normalizeCardWidth(width);
   const inner = innerWidth(w);
@@ -298,9 +233,9 @@ export function composeDelegationCard(
       row: cardBody(w, identity),
       body: identity,
     });
-    rows.push(...zipBodyOnly(w, inner, facts));
+    rows.push(...zipBodyOnly(w, inner, facts, liveReasoningLine));
   } else {
-    rows.push(...zipRailAndBody(w, plan, facts));
+    rows.push(...zipRailAndBody(w, plan, facts, liveReasoningLine));
   }
 
   // The shell owns the separator: it is drawn here, once, so the expanded
@@ -418,8 +353,8 @@ function bodyRow(width: number, slot: PiCardSlot, content: Row): PiCardRow {
  * The card's top-edge left side: the tool, always. Settlement never writes a
  * verdict onto the frame.
  */
-function cardTitle(facts?: PiDelegationCardFacts): Row {
-  return [seg("alt", facts?.tool ?? CARD_TOOL_NAME)];
+function cardTitle(_facts?: PiDelegationCardFacts): Row {
+  return [seg("alt", CARD_TOOL_NAME)];
 }
 
 // ---------------------------------------------------------------------------
@@ -566,46 +501,29 @@ export function assignmentRows(
 }
 
 /**
- * Native Line: one semantic glyph plus the single most meaningful thing the
- * child has produced, and the streaming mark while that thing may still grow.
- *
- * It reads only the body width, never the terminal width and never the rail,
- * so two rails that leave the same number of body columns produce the same
- * row. It is the settled row too: settlement rewrites the sentence and adds no
- * row.
+ * Native Line: one transient raw-reasoning line, or no row when no printable
+ * reasoning is active. It reads only the body width, never persisted facts.
  */
 export function nativeLine(
-  facts: PiDelegationCardFacts,
+  _facts: PiDelegationCardFacts,
   bodyW: number,
+  liveReasoningLine = "",
 ): readonly Row[] {
-  const kind = facts.activity.kind;
-  const ink = ACTIVITY_INK[kind];
-  const live = facts.activity.live;
-  // The reasoning wording is decided by the model, not here: only a trusted
-  // host summary is allowed to say the word `summary`, and a raw reasoning
-  // marker must stay content-free. Re-prefixing here would relabel one as the
-  // other.
-  const text = facts.activity.text;
-  const body = clipText(text, Math.max(2, bodyW - (live ? 4 : 2)));
-  const row: Seg[] = [
-    seg(ink === "text" ? toneInk(facts.tone) : ink, `${ACTIVITY_GLYPH[kind]} `),
-    seg(ink, body),
-  ];
-  if (live) row.push(seg("dim", " "), glyph("acc", CARD_STREAM_MARK));
-  return [row];
+  const text = safeTrim(liveReasoningLine);
+  if (text.length === 0) return [];
+  return [[seg("think", clipText(text, Math.max(2, bodyW)))]];
 }
 
-/**
- * The body rows beneath the assignment. Exactly one, before and after
- * settlement, so a settled delegation costs the transcript what a running one
- * cost.
- */
+/** The optional live-reasoning row beneath the assignment. */
 function activityRows(
   facts: PiDelegationCardFacts,
   bodyW: number,
+  liveReasoningLine: string,
 ): readonly Row[] {
-  const produced = nativeLine(facts, bodyW).slice(0, CARD_ACTIVITY_ROW_MAX);
-  return produced.length > 0 ? produced : [[seg("dim", "")]];
+  return nativeLine(facts, bodyW, liveReasoningLine).slice(
+    0,
+    CARD_ACTIVITY_ROW_MAX,
+  );
 }
 
 /** The folded layout: no rail, so the body owns the whole inner width. */
@@ -613,13 +531,18 @@ function zipBodyOnly(
   width: number,
   inner: number,
   facts: PiDelegationCardFacts,
+  liveReasoningLine: string,
 ): readonly PiCardRow[] {
   const rows: PiCardRow[] = [];
   for (const row of assignmentRows(facts, inner)) {
     const body = clipRow(row, inner);
     rows.push({ slot: "task", row: cardBody(width, body), body });
   }
-  for (const [index, content] of activityRows(facts, inner).entries()) {
+  for (const [index, content] of activityRows(
+    facts,
+    inner,
+    liveReasoningLine,
+  ).entries()) {
     const body = clipRow(content, inner);
     rows.push({
       slot: index === 0 ? "activity" : "activity-detail",
@@ -634,9 +557,14 @@ function zipBodyOnly(
  * The slot one zipped body row belongs to: the assignment rows first, then the
  * one Native Line, then the blank cells a taller rail leaves behind.
  */
-function bodySlot(index: number, taskRows: number): PiCardSlot {
+function bodySlot(
+  index: number,
+  taskRows: number,
+  hasActivity: boolean,
+): PiCardSlot {
   if (index < taskRows) return "task";
-  return index === taskRows ? "activity" : "activity-detail";
+  if (hasActivity && index === taskRows) return "activity";
+  return "activity-detail";
 }
 
 /** The ordinary layout: the rail column beside the body column. */
@@ -644,20 +572,24 @@ function zipRailAndBody(
   width: number,
   plan: PiCardRailPlan,
   facts: PiDelegationCardFacts,
+  liveReasoningLine: string,
 ): readonly PiCardRow[] {
   const cells = railStatusFirst(facts, plan.railW, plan.tight);
   const taskCells = assignmentRows(facts, plan.bodyW);
-  const bodyCells: Row[] = [...taskCells, ...activityRows(facts, plan.bodyW)];
+  const bodyCells: Row[] = [
+    ...taskCells,
+    ...activityRows(facts, plan.bodyW, liveReasoningLine),
+  ];
+  const hasActivity = bodyCells.length > taskCells.length;
   const height = Math.max(cells.length, bodyCells.length);
 
   const rows: PiCardRow[] = [];
   for (let index = 0; index < height; index += 1) {
     const railCell = cells[index] ?? [];
     const bodyCell = bodyCells[index] ?? [];
-    const slot = bodySlot(index, taskCells.length);
     const clippedBody = clipRow(bodyCell, plan.bodyW);
     rows.push({
-      slot,
+      slot: bodySlot(index, taskCells.length, hasActivity),
       row: cardBody(width, [
         ...padRow(railCell, plan.railW),
         railDivider(),
@@ -843,13 +775,12 @@ export function detailRegion(
 ): readonly PiCardRow[] {
   const w = normalizeCardWidth(width);
   const inner = Math.max(6, w - 4);
-  const narrow = inner < CARD_DETAIL_NARROW;
   const content: Row[] = [
     viewportStrip(facts),
     ...padAbove(
-      facts.viewport.rows
-        .slice(-CARD_VIEWPORT_ROWS)
-        .map((row) => clipRow(viewportRow(row, inner, narrow), inner)),
+      // The parent card never replays child transcript rows. The inspector
+      // owns tool and assistant detail; this fixed region remains shell-only.
+      [],
       CARD_VIEWPORT_ROWS,
     ),
   ];
@@ -867,45 +798,9 @@ export function detailRegion(
  * bottom of a settled one, and how much scrollback is above it.
  */
 function viewportStrip(facts: PiDelegationCardFacts): Row {
-  const strip: Seg[] = [
+  return [
     seg("dim", facts.settled ? CARD_VIEWPORT_SETTLED : CARD_VIEWPORT_LIVE),
   ];
-  const above = Math.max(0, facts.viewport.above);
-  if (above > 0) {
-    // Fixed padding is built with `fill`, never with spaces inside a segment:
-    // `seg` collapses whitespace runs, so a segment cannot carry layout.
-    strip.push(
-      fill("dim", " ", 2),
-      seg("dim", `↑ ${above} row${above === 1 ? "" : "s"} above`),
-    );
-  }
-  return strip;
-}
-
-/** One transcript row: role gutter, bounded head label, then the text. */
-function viewportRow(
-  row: PiCardViewportRow,
-  inner: number,
-  narrow: boolean,
-): Row {
-  const ink = ROW_INK[row.kind];
-  const head = safeTrim(row.head);
-  const headBudget = Math.max(2, Math.floor(inner / 3));
-  // The head is a bounded label, so it is printed whole or not at all: a head
-  // that had to be cut would put a second `…` on a line whose text already
-  // carries one.
-  if (head.length > 0 && !narrow && measureWidth(head) <= headBudget) {
-    const lead: Seg[] = [
-      glyph(ink, `${ROW_GLYPH[row.kind]} `),
-      seg("muted", head),
-      fill("dim", " ", 2),
-    ];
-    const used = lead.reduce((total, s) => total + measureWidth(s.t), 0);
-    return [...lead, seg(ink, clipText(row.text, Math.max(2, inner - used)))];
-  }
-  const lead: Seg[] = [glyph(ink, `${ROW_GLYPH[row.kind]} `)];
-  const used = lead.reduce((total, s) => total + measureWidth(s.t), 0);
-  return [...lead, seg(ink, clipText(row.text, Math.max(2, inner - used)))];
 }
 
 /** Keep the last `target` rows and pad above, so content sits on the bottom. */

@@ -29,6 +29,8 @@ export const PI_LIVE_REASONING_PARENT_PREFIX = "↪ reasoning • ";
 
 /** Generic Pi 0.84.2 phases that are allowed into the live projector. */
 export const PI_LIVE_REASONING_PHASES = ["start", "delta", "end"] as const;
+/** Maximum number of concurrent card/inspector projectors in one generation. */
+export const PI_LIVE_REASONING_MAX_REGISTRY_ENTRIES = 64;
 export type PiLiveReasoningPhase = (typeof PI_LIVE_REASONING_PHASES)[number];
 
 /** A bounded, terminal-safe update that is never a session event. */
@@ -721,6 +723,17 @@ export class PiLiveReasoningRegistry {
         () => undefined,
       );
     }
+    this.entries.delete(key);
+    while (this.entries.size >= PI_LIVE_REASONING_MAX_REGISTRY_ENTRIES) {
+      const oldest = this.entries.keys().next().value;
+      if (typeof oldest !== "string") break;
+      const evicted = this.entries.get(oldest);
+      this.entries.delete(oldest);
+      evicted?.clear().match(
+        () => undefined,
+        () => undefined,
+      );
+    }
     this.entries.set(key, projector);
     return ok(undefined);
   }
@@ -741,6 +754,15 @@ export class PiLiveReasoningRegistry {
 
   size(): number {
     return this.entries.size;
+  }
+
+  /** Total bytes retained by all live projectors in this generation. */
+  retainedBytes(): number {
+    let total = 0;
+    for (const projector of this.entries.values()) {
+      total += projector.snapshot().retainedBytes;
+    }
+    return total;
   }
 
   clear(): Result<void, never> {
@@ -781,6 +803,7 @@ export class PiLiveReasoningProjector {
   private diagnostics: ChildUiEventDiagnosticsSink | undefined;
   private parentCardObserver: PiLiveReasoningObserver | undefined;
   private inspectorObserver: PiLiveReasoningObserver | undefined;
+  private readonly invalidationObservers = new Set<() => void>();
   private readonly registry: PiLiveReasoningRegistry | undefined;
   private registryKey: string | undefined;
   private state: MutableState;
@@ -898,14 +921,18 @@ export class PiLiveReasoningProjector {
       }
     }
     const normalized = normalizeTerminalText(safeUpdate.text);
-    const bounded = newestUtf8(normalized.text, PI_LIVE_REASONING_MAX_BYTES);
+    // The marker is an internal transport value from the child projector, not
+    // printable reasoning. Preserve its meaning when the parent card applies
+    // the update; otherwise the marker itself would become a live card row.
+    const markerOnly = safeUpdate.text === PI_LIVE_REASONING_UNPRINTABLE_MARKER;
+    const displayText = markerOnly ? "" : normalized.text;
+    const bounded = newestUtf8(displayText, PI_LIVE_REASONING_MAX_BYTES);
     this.state.text = bounded.text;
     this.state.retainedBytes = textEncoder.encode(bounded.text).byteLength;
     this.state.omitted = this.state.omitted || bounded.omitted;
     this.state.unprintable =
       this.state.text.length === 0 &&
-      (safeUpdate.text === PI_LIVE_REASONING_UNPRINTABLE_MARKER ||
-        (normalized.hadInput && !normalized.hadPrintable));
+      (markerOnly || (normalized.hadInput && !normalized.hadPrintable));
     this.state.phase = safeUpdate.phase;
     const appliedUpdate: PiLiveReasoningUpdate = {
       ...safeUpdate,
@@ -915,6 +942,7 @@ export class PiLiveReasoningProjector {
       this.notify(this.parentCardObserver, appliedUpdate);
       this.notify(this.inspectorObserver, appliedUpdate);
     }
+    this.invalidateObservers();
     return ok(this.snapshot());
   }
 
@@ -953,6 +981,22 @@ export class PiLiveReasoningProjector {
   /** Alias used by UI ports that call their transient value a state. */
   stateSnapshot(): PiLiveReasoningSnapshot {
     return this.snapshot();
+  }
+
+  /**
+   * Adds the host renderer's row-local invalidation callback. This is a
+   * process-memory UI seam only; it never becomes part of a tool result or a
+   * persisted card fact.
+   */
+  registerInvalidation(invalidate: () => void): Result<void, never> {
+    if (this.state.released) return ok(undefined);
+    this.invalidationObservers.add(invalidate);
+    return ok(undefined);
+  }
+
+  unregisterInvalidation(invalidate: () => void): Result<void, never> {
+    this.invalidationObservers.delete(invalidate);
+    return ok(undefined);
   }
 
   clear(): Result<void, never> {
@@ -1015,6 +1059,7 @@ export class PiLiveReasoningProjector {
       this.notify(this.parentCardObserver, update);
       this.notify(this.inspectorObserver, update);
     }
+    this.invalidateObservers();
     return ok(update);
   }
 
@@ -1117,6 +1162,10 @@ export class PiLiveReasoningProjector {
       unprintable: false,
       released: true,
     };
+    // Clear the bounded buffer before repainting. A host invalidation therefore
+    // can only observe the empty snapshot and cannot replay the last sentinel.
+    this.invalidateObservers();
+    this.invalidationObservers.clear();
     if (registry !== undefined && key !== undefined) {
       registry.unregister(key, this).match(
         () => undefined,
@@ -1128,6 +1177,23 @@ export class PiLiveReasoningProjector {
     this.inspectorObserver = undefined;
     this.diagnostics = undefined;
     return ok(undefined);
+  }
+
+  private invalidateObservers(): void {
+    for (const invalidate of this.invalidationObservers) {
+      Result.fromThrowable(
+        () => invalidate(),
+        () => undefined,
+      )().match(
+        () => undefined,
+        () =>
+          recordChildUiEventFailure(
+            this.diagnostics,
+            "fanout",
+            "callback-failed",
+          ),
+      );
+    }
   }
 }
 
