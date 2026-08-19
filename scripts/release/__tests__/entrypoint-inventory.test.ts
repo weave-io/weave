@@ -21,11 +21,12 @@ import {
 const ROOT = resolve(import.meta.dir, "../../..");
 
 describe("entrypoint inventory", () => {
-  it("registers the Task 14, 15, 22, 23, 24, 25, 26, and 27 production roots", () => {
+  it("registers the Task 14, 15, 22, 23, 24, 25, 26, 27, and 28 production roots", () => {
     expect(PRODUCTION_ENTRYPOINTS.map((entry) => entry.path)).toEqual([
       "scripts/release/publish-main.ts",
       "scripts/release/doctor.ts",
       "scripts/release/api-reports.ts",
+      "scripts/release/release-policy-check.ts",
       "scripts/release/prepare-main.ts",
       "scripts/release/regenerate-main.ts",
       "scripts/release/attest-main.ts",
@@ -47,6 +48,9 @@ describe("entrypoint inventory", () => {
     expect(inventoriedPaths()).toContain("scripts/release/publish-main.ts");
     expect(inventoriedPaths()).toContain("scripts/release/doctor.ts");
     expect(inventoriedPaths()).toContain("scripts/release/api-reports.ts");
+    expect(inventoriedPaths()).toContain(
+      "scripts/release/release-policy-check.ts",
+    );
     expect(inventoriedPaths()).toContain("scripts/release/prepare-main.ts");
     expect(inventoriedPaths()).toContain("scripts/release/regenerate-main.ts");
     expect(inventoriedPaths()).toContain("scripts/release/attest-main.ts");

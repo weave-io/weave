@@ -40,12 +40,17 @@ required checks as this exact set:
 - `docs-audit`
 
 `docs-audit` is the stable terminal check. Do not make conditional feeder jobs
-such as `docs-ai-audit` required directly.
+such as `docs-ai-audit` or the fork follow-up required directly. These four
+names are the complete required-check set; conditional feeder jobs are never
+required on their own.
 
 Enable **Require a pull request → Dismiss stale pull request approvals when new
 commits are pushed**. This setting is part of the release safety contract. A
 ruleset with the right check names but without stale-approval dismissal fails
-the doctor.
+the doctor. Stale-approval dismissal complements the `release-policy`
+freshness check: dismissal invalidates an approval after any new commit, while
+freshness rejects a release plan whose `baseSha` is no longer current `main`.
+Both controls are required.
 
 ### Release GitHub App and team
 
