@@ -30,7 +30,7 @@ jobs:
           client-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-members: read
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -66,7 +66,7 @@ jobs:
       GITHUB_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
       REGENERATION_ATTRIBUTION: ${{ github.event_name == 'workflow_dispatch' && 'maintainer-retry' || 'automatic-main-advance' }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -118,7 +118,7 @@ jobs:
       GITHUB_REF: ${{ github.ref }}
       GITHUB_ACTOR: ${{ github.actor }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -150,7 +150,7 @@ jobs:
       GITHUB_ACTOR: ${{ github.actor }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -184,7 +184,7 @@ jobs:
       GITHUB_REF: ${{ github.ref }}
       GITHUB_ACTOR: ${{ github.actor }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -234,7 +234,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
           permission-checks: write
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false

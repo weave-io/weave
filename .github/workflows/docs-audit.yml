@@ -23,7 +23,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
@@ -63,7 +63,7 @@ jobs:
     env:
       WEAVE_RELEASE_AI_API_KEY: ${{ secrets.WEAVE_RELEASE_AI_API_KEY }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
@@ -128,7 +128,7 @@ jobs:
     steps:
       # The gate code is always read from protected main. Feeder artifacts are
       # bounded data and are never imported as controller code.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           repository: ${{ github.repository }}
           ref: refs/heads/main

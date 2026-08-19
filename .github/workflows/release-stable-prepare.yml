@@ -67,7 +67,7 @@ jobs:
           client-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-members: read
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -103,7 +103,7 @@ jobs:
       INPUT_THINKING: ${{ needs.authorize.outputs.thinking }}
       PREPARE_ACTOR: ${{ github.actor }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -135,7 +135,7 @@ jobs:
       INPUT_PI: ${{ inputs.pi }}
       INPUT_THINKING: ${{ inputs.thinking }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -171,7 +171,7 @@ jobs:
       INPUT_PI: ${{ inputs.pi }}
       INPUT_THINKING: ${{ inputs.thinking }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -223,7 +223,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
           permission-checks: read
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -272,7 +272,7 @@ jobs:
       INPUT_PI: ${{ inputs.pi }}
       INPUT_THINKING: ${{ inputs.thinking }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -304,7 +304,7 @@ jobs:
       INPUT_PI: ${{ inputs.pi }}
       INPUT_THINKING: ${{ inputs.thinking }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -340,7 +340,7 @@ jobs:
       INPUT_PI: ${{ inputs.pi }}
       INPUT_THINKING: ${{ inputs.thinking }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -392,7 +392,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
           permission-checks: read
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -440,7 +440,7 @@ jobs:
       INPUT_PI: ${{ inputs.pi }}
       INPUT_THINKING: ${{ inputs.thinking }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -472,7 +472,7 @@ jobs:
       INPUT_PI: ${{ inputs.pi }}
       INPUT_THINKING: ${{ inputs.thinking }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -508,7 +508,7 @@ jobs:
       INPUT_PI: ${{ inputs.pi }}
       INPUT_THINKING: ${{ inputs.thinking }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
@@ -560,7 +560,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
           permission-checks: read
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: main
           persist-credentials: false
