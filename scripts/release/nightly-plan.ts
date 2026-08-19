@@ -1,5 +1,5 @@
 import { logger } from "@weaveio/weave-engine";
-import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import {
   BunChangesetFileSystem,
   type ChangesetBump,
@@ -8,14 +8,22 @@ import {
 } from "./changeset-policy.js";
 import type { Clock } from "./clock.js";
 import { BunCommandRunner } from "./command-runner.js";
-import { PUBLIC_PACKAGES, type PublicPackageName } from "./constants.js";
+import { PUBLIC_PACKAGE_NAMES, type PublicPackageName } from "./constants.js";
 import {
   type ReleaseInvocation,
   validateReleaseInvocation,
 } from "./input-validation.js";
 import {
+  isJsonObject,
+  isJsonString,
+  type JsonObject,
+  type JsonValue,
+  parseJsonValue,
+} from "./json.js";
+import {
   NightlyVersionSchema,
   ReleaseOperationSchema,
+  type StableTrainRecord,
   StableTrainRecordSchema,
 } from "./model.js";
 import {
@@ -144,6 +152,12 @@ export class NightlyPlanner {
   }
 }
 
+function isPublicPackageName(value: string): value is PublicPackageName {
+  return PUBLIC_PACKAGE_NAMES.some((name) => name === value);
+}
+
+const isStringValue = isJsonString;
+
 function isNightly(invocation: ReleaseInvocation): boolean {
   if (invocation.eventName === "schedule") return true;
   return invocation.operation === "nightly" && invocation.channel === "nightly";
@@ -155,11 +169,10 @@ function collectBumps(
   const bumps = new Map<PublicPackageName, ChangesetBump>();
   for (const changeset of changesets)
     for (const [name, bump] of changeset.releases)
-      if (name in PUBLIC_PACKAGES) {
-        const publicName = name as PublicPackageName;
-        const previous = bumps.get(publicName);
+      if (isPublicPackageName(name)) {
+        const previous = bumps.get(name);
         if (previous === undefined || BUMP_WEIGHT[bump] > BUMP_WEIGHT[previous])
-          bumps.set(publicName, bump);
+          bumps.set(name, bump);
       }
   return bumps;
 }
@@ -299,7 +312,7 @@ export async function runPreflight(
   }
   const plan = await new NightlyPlanner(
     new NpmCliRegistryClient(new BunCommandRunner()),
-    { now: () => serverDate, sleep: () => okAsync(undefined) },
+    { now: () => serverDate, sleep: () => okAsync() },
   ).plan({
     invocation: invocation.value,
     changesets: changesets.value,
@@ -323,23 +336,26 @@ export async function runPreflight(
   return 0;
 }
 
-function parseStableTrain(value: string | undefined) {
+function parseStableTrain(
+  value: string | undefined,
+): StableTrainRecord | undefined {
   if (value === undefined) return undefined;
-  const decoded = Result.fromThrowable(
-    () => JSON.parse(value) as unknown,
-    () => undefined,
-  )();
+  const decoded = parseJsonValue(value);
   if (decoded.isErr()) return undefined;
   const record = StableTrainRecordSchema.safeParse(decoded.value);
   return record.success ? record.data : undefined;
 }
 
 type PreflightResponseError = { type: "GitHubResponse" };
-type MainRef = { object: { sha: string }; date: string };
+type MainRef = JsonObject & {
+  readonly object: JsonObject & { readonly sha: string };
+  readonly date: string;
+};
+type PreflightResponse = JsonObject & { readonly date: string };
 function fetchJson(
   path: string,
   token: string,
-): ResultAsync<unknown, PreflightResponseError> {
+): ResultAsync<PreflightResponse, PreflightResponseError> {
   return ResultAsync.fromPromise(
     fetch(`https://api.github.com/repos/weave-io/weave${path}`, {
       headers: {
@@ -348,50 +364,44 @@ function fetchJson(
       },
     }),
     () => ({ type: "GitHubResponse" as const }),
-  )
-    .andThen((response) =>
-      response.ok
-        ? ResultAsync.fromPromise(response.json(), () => ({
-            type: "GitHubResponse" as const,
-          })).map((body) => ({
-            body,
-            date: response.headers.get("date") ?? "",
-          }))
-        : errAsync({ type: "GitHubResponse" as const }),
-    )
-    .map(({ body, date }) => ({ ...(body as Record<string, unknown>), date }));
+  ).andThen((response) => {
+    if (!response.ok) return errAsync({ type: "GitHubResponse" as const });
+    return ResultAsync.fromPromise(response.text(), () => ({
+      type: "GitHubResponse" as const,
+    })).andThen((text) => {
+      const parsed = parseJsonValue(text);
+      if (parsed.isErr()) return errAsync({ type: "GitHubResponse" as const });
+      if (!isJsonObject(parsed.value))
+        return errAsync({ type: "GitHubResponse" as const });
+      const body = parsed.value;
+      const withDate = Object.assign({}, body, {
+        date: response.headers.get("date") ?? "",
+      });
+      return okAsync(withDate);
+    });
+  });
 }
-function isMainRef(value: unknown): value is MainRef {
+function isMainRef(value: JsonValue): value is MainRef {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "date" in value &&
-    typeof value.date === "string" &&
-    "object" in value &&
-    typeof value.object === "object" &&
-    value.object !== null &&
-    "sha" in value.object &&
-    typeof value.object.sha === "string" &&
+    isJsonObject(value) &&
+    isStringValue(value.date) &&
+    isJsonObject(value.object) &&
+    isStringValue(value.object.sha) &&
     /^[0-9a-f]{40}$/.test(value.object.sha)
   );
 }
-function hasGreenRequiredCheck(value: unknown): boolean {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("check_runs" in value) ||
-    !Array.isArray(value.check_runs)
-  )
-    return false;
-  return value.check_runs.some(
-    (check) =>
-      typeof check === "object" &&
-      check !== null &&
-      "name" in check &&
-      check.name === REQUIRED_MAIN_CHECK &&
-      "conclusion" in check &&
-      check.conclusion === "success",
-  );
+function hasGreenRequiredCheck(value: JsonValue): boolean {
+  if (!isCheckRunsPayload(value)) return false;
+  return value.check_runs.some(isGreenCheck);
+}
+function isCheckRunsPayload(
+  value: JsonValue,
+): value is JsonValue & { readonly check_runs: readonly JsonValue[] } {
+  return isJsonObject(value) && Array.isArray(value.check_runs);
+}
+function isGreenCheck(value: JsonValue): boolean {
+  if (!isJsonObject(value)) return false;
+  return value.name === REQUIRED_MAIN_CHECK && value.conclusion === "success";
 }
 function loadChangesets(): ResultAsync<readonly ParsedChangeset[], unknown> {
   const files = new BunChangesetFileSystem();
@@ -418,14 +428,14 @@ function loadPackageVersions(): ResultAsync<
   Record<PublicPackageName, string>,
   string
 > {
-  const locations: Record<PublicPackageName, string> = {
+  const locations = {
     "@weaveio/weave-cli": "packages/cli/package.json",
     "@weaveio/weave-adapter-opencode":
       "packages/adapters/opencode/package.json",
     "@weaveio/weave-adapter-claude-code":
       "packages/adapters/claude-code/package.json",
     "@weaveio/weave-adapter-pi": "packages/adapters/pi/package.json",
-  };
+  } satisfies Record<PublicPackageName, string>;
   return ResultAsync.fromPromise(
     Promise.all(
       Object.entries(locations).map(
@@ -434,18 +444,31 @@ function loadPackageVersions(): ResultAsync<
     ),
     () => "package manifest read failed",
   ).andThen((entries) => {
-    const versions: Partial<Record<PublicPackageName, string>> = {};
+    const versions = new Map<PublicPackageName, string>();
     for (const [name, manifest] of entries) {
-      if (
-        typeof manifest !== "object" ||
-        manifest === null ||
-        !("version" in manifest) ||
-        typeof manifest.version !== "string"
-      )
+      if (!isJsonObject(manifest) || !isStringValue(manifest.version))
         return errAsync("package manifest has no version");
-      versions[name as PublicPackageName] = manifest.version;
+      if (!isPublicPackageName(name))
+        return errAsync("package manifest has an unknown package");
+      versions.set(name, manifest.version);
     }
-    return okAsync(versions as Record<PublicPackageName, string>);
+    const cli = versions.get("@weaveio/weave-cli");
+    const openCode = versions.get("@weaveio/weave-adapter-opencode");
+    const claude = versions.get("@weaveio/weave-adapter-claude-code");
+    const pi = versions.get("@weaveio/weave-adapter-pi");
+    if (
+      cli === undefined ||
+      openCode === undefined ||
+      claude === undefined ||
+      pi === undefined
+    )
+      return errAsync("package manifest set is incomplete");
+    return okAsync({
+      "@weaveio/weave-cli": cli,
+      "@weaveio/weave-adapter-opencode": openCode,
+      "@weaveio/weave-adapter-claude-code": claude,
+      "@weaveio/weave-adapter-pi": pi,
+    });
   });
 }
 

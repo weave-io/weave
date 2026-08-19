@@ -1,10 +1,11 @@
 import { logger } from "@weaveio/weave-engine";
-import { err, ok, Result, ResultAsync } from "neverthrow";
+import { err, ok, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import { SystemClock } from "./clock.js";
 import { BunCommandRunner } from "./command-runner.js";
 import { BunFileSystem } from "./filesystem.js";
 import { GitHubRestClient } from "./github-client.js";
+import { parseJsonValue } from "./json.js";
 import { ArtifactManifestSchema } from "./model.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
 import { ReleaseOrchestrator } from "./release-orchestrator.js";
@@ -89,10 +90,7 @@ if (!input.success) {
 }
 
 function parseJson(text: string) {
-  return Result.fromThrowable(
-    () => JSON.parse(text) as unknown,
-    () => ({ type: "InvalidJson" as const }),
-  )();
+  return parseJsonValue(text).mapErr(() => ({ type: "InvalidJson" as const }));
 }
 
 async function loadPayload(directory: string) {

@@ -1,7 +1,6 @@
 import { join, resolve } from "node:path";
 import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
-
 import {
   PRIVATE_PACKAGE_NAMES,
   type PrivatePackageName,
@@ -13,6 +12,7 @@ import {
   type PublicPackageBuild,
   type PublicPackageName,
 } from "./release/constants.js";
+import { isJsonObject, isJsonString, parseJsonValue } from "./release/json.js";
 
 export type PublicPackageBuildError =
   | {
@@ -122,7 +122,7 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
         type: "Filesystem" as const,
         path: destination,
         operation: "copy" as const,
-      })).map(() => undefined),
+      })).andThen(() => okAsync()),
     );
   }
 
@@ -171,7 +171,7 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
       type: "Filesystem" as const,
       path,
       operation: "write" as const,
-    })).map(() => undefined);
+    })).andThen(() => okAsync());
   }
 
   private run(
@@ -184,7 +184,7 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
       path,
       operation,
     })).andThen((exitCode) => {
-      if (exitCode === 0) return okAsync(undefined);
+      if (exitCode === 0) return okAsync();
       return errAsync({ type: "Filesystem" as const, path, operation });
     });
   }
@@ -273,7 +273,7 @@ export class PublicPackageBuilder {
   private runTypeScriptProjects(
     projects: readonly string[],
   ): ResultAsync<void, PublicPackageBuildError> {
-    let result = okAsync<void, PublicPackageBuildError>(undefined);
+    let result: ResultAsync<void, PublicPackageBuildError> = okAsync();
     for (const project of projects) {
       result = result.andThen(() =>
         this.runTool(["bun", "x", "tsc", "-p", project], {
@@ -290,7 +290,7 @@ export class PublicPackageBuilder {
     packageName: PublicPackageName,
     declarations: readonly PublicDeclarationBuild[],
   ): ResultAsync<void, PublicPackageBuildError> {
-    let result = okAsync<void, PublicPackageBuildError>(undefined);
+    let result: ResultAsync<void, PublicPackageBuildError> = okAsync();
     for (const declaration of declarations) {
       result = result
         .andThen(() =>
@@ -323,7 +323,7 @@ export class PublicPackageBuilder {
   ): ResultAsync<void, PublicPackageBuildError> {
     const directory = join(PUBLIC_PACKAGES[packageName].directory, "dist");
     return this.fileSystem.listDeclarationFiles(directory).andThen((files) => {
-      let result = okAsync<void, PublicPackageBuildError>(undefined);
+      let result: ResultAsync<void, PublicPackageBuildError> = okAsync();
       for (const output of files) {
         result = result.andThen(() =>
           this.fileSystem.readText(output).andThen((contents) => {
@@ -335,7 +335,7 @@ export class PublicPackageBuilder {
               privatePackageName === undefined &&
               !hasPrivateDeclarationPathReference(contents)
             ) {
-              return okAsync(undefined);
+              return okAsync();
             }
             return errAsync({
               type: "PrivateDependencyReference" as const,
@@ -357,7 +357,7 @@ export class PublicPackageBuilder {
     const expected = new Set(declarations.map(({ output }) => output));
     const directory = join(PUBLIC_PACKAGES[packageName].directory, "dist");
     return this.fileSystem.listDeclarationFiles(directory).andThen((files) => {
-      let result = okAsync<void, PublicPackageBuildError>(undefined);
+      let result: ResultAsync<void, PublicPackageBuildError> = okAsync();
       for (const file of files) {
         if (expected.has(file)) continue;
         result = result.andThen(() => this.fileSystem.removeFile(file));
@@ -377,7 +377,7 @@ export class PublicPackageBuilder {
         .replaceAll("@weaveio/weave-config", "the configuration package")
         .replaceAll("@weaveio/weave-engine", "the engine package")
         .replaceAll("@weaveio/weave-core", "the core package");
-      if (sanitized === contents) return okAsync(undefined);
+      if (sanitized === contents) return okAsync();
       return this.fileSystem.writeText(declaration.output, sanitized);
     });
   }
@@ -404,7 +404,7 @@ export class PublicPackageBuilder {
         );
       }
     }
-    return result.map(() => undefined);
+    return result.andThen(() => okAsync());
   }
 
   private transpileEntry(
@@ -481,18 +481,15 @@ export class PublicPackageBuilder {
     contents: string,
     path: string,
   ): Result<{ version: string }, PublicPackageBuildError> {
-    const parsed = Result.fromThrowable(
-      () => JSON.parse(contents) as unknown,
-      () => ({ type: "CliManifest" as const, path }),
-    )();
+    const parsed = parseJsonValue(contents).mapErr(() => ({
+      type: "CliManifest" as const,
+      path,
+    }));
     if (parsed.isErr()) return err(parsed.error);
-    if (typeof parsed.value !== "object" || parsed.value === null) {
+    if (!isJsonObject(parsed.value)) return err({ type: "CliManifest", path });
+    const version = parsed.value.version;
+    if (!isJsonString(version) || version.length === 0)
       return err({ type: "CliManifest", path });
-    }
-    const version = (parsed.value as { version?: unknown }).version;
-    if (typeof version !== "string" || version.length === 0) {
-      return err({ type: "CliManifest", path });
-    }
     return ok({ version });
   }
 
@@ -500,7 +497,7 @@ export class PublicPackageBuilder {
     packageName: PublicPackageName,
     entries: readonly { output: string }[],
   ): ResultAsync<void, PublicPackageBuildError> {
-    let result = okAsync<void, PublicPackageBuildError>(undefined);
+    let result: ResultAsync<void, PublicPackageBuildError> = okAsync();
     for (const entry of entries) {
       result = result.andThen(() =>
         this.fileSystem.readText(entry.output).andThen((contents) => {
@@ -508,7 +505,7 @@ export class PublicPackageBuilder {
             packageName,
             contents,
           );
-          if (privatePackageName === undefined) return okAsync(undefined);
+          if (privatePackageName === undefined) return okAsync();
           return errAsync({
             type: "PrivateDependencyReference" as const,
             packageName,
@@ -581,7 +578,7 @@ export class PublicPackageBuilder {
       ]),
       () => error,
     ).andThen(([exitCode, diagnostics]) => {
-      if (exitCode === 0) return okAsync(undefined);
+      if (exitCode === 0) return okAsync();
       return errAsync({ ...error, diagnostics });
     });
   }
@@ -589,13 +586,13 @@ export class PublicPackageBuilder {
   private copyBootstrap(
     files?: readonly string[],
   ): ResultAsync<void, PublicPackageBuildError> {
-    if (files === undefined) return okAsync(undefined);
+    if (files === undefined) return okAsync();
     const sourceRoot = "packages/adapters/claude-code/src/bootstrap";
     const destinations = [
       "packages/adapters/claude-code/dist/bootstrap",
       "packages/cli/dist/bootstrap",
     ];
-    let result = okAsync<void, PublicPackageBuildError>(undefined);
+    let result: ResultAsync<void, PublicPackageBuildError> = okAsync();
     for (const destination of destinations) {
       for (const file of files) {
         const target = join(destination, file);

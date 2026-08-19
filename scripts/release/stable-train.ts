@@ -6,10 +6,8 @@ import type {
 } from "./changeset-policy.js";
 import type { Clock } from "./clock.js";
 import type { PublicPackageName } from "./constants.js";
-import {
-  type STABLE_TRAIN_STATES,
-  STABLE_TRAIN_TRANSITIONS,
-} from "./constants.js";
+import { PUBLIC_PACKAGE_NAMES, STABLE_TRAIN_TRANSITIONS } from "./constants.js";
+import { canonicalizeJson } from "./json.js";
 import { type StableTrainRecord, StableTrainRecordSchema } from "./model.js";
 
 export type StableTrainError =
@@ -32,16 +30,15 @@ export interface StableTrainContent {
   subjectSha: string;
   cutAt: string;
   expiresAt: string;
-  state: string;
+  state: StableTrainRecord["state"];
   packages: readonly string[];
   versions: Readonly<Record<string, string>>;
   artifactManifestDigest?: string;
-  consumedChangesets?: readonly { path: string; preimageDigest: string }[];
-  metadataWrites?: readonly {
+  consumedChangesets?: readonly {
     path: string;
-    contentsDigest: string;
-    contents: string;
+    preimageDigest: string;
   }[];
+  metadataWrites?: readonly StableMetadataWrite[];
   artifactIds?: readonly number[];
 }
 
@@ -91,11 +88,11 @@ export interface PartialPublishRecoveryMetadata {
   metadataDigest: string;
 }
 
-export function canonicalTrainJson(record: object): string {
-  return JSON.stringify(sortObject(record));
+export function canonicalTrainJson<T>(record: T): string {
+  return canonicalizeJson(record);
 }
 
-export function trainRecordDigest(record: StableTrainContent): string {
+export function trainRecordDigest<T>(record: T): string {
   return `sha256:${Bun.CryptoHasher.hash("sha256", canonicalTrainJson(record), "hex")}`;
 }
 
@@ -130,11 +127,13 @@ export function assertCurrentArtifactIdentity(
       reason:
         "artifact identity is stale; rebuild and bind the current attempt",
     });
-  return ok(undefined);
+  return ok();
 }
 
+type StableTrainInput = Parameters<typeof StableTrainRecordSchema.safeParse>[0];
+
 export function validateStableTrain(
-  record: unknown,
+  record: StableTrainInput,
 ): Result<StableTrainRecord, StableTrainError> {
   const parsed = StableTrainRecordSchema.safeParse(record);
   if (!parsed.success)
@@ -157,10 +156,8 @@ export function transitionStableTrain(
   record: StableTrainRecord,
   state: StableTrainRecord["state"],
 ): Result<StableTrainRecord, StableTrainError> {
-  const allowed = STABLE_TRAIN_TRANSITIONS[
-    record.state
-  ] as readonly (typeof STABLE_TRAIN_STATES)[number][];
-  if (!allowed.includes(state))
+  const allowed = STABLE_TRAIN_TRANSITIONS[record.state];
+  if (!allowed.some((candidate) => candidate === state))
     return err({ type: "InvalidTransition", from: record.state, to: state });
   const { recordDigest: _recordDigest, ...content } = record;
   const next = { ...content, state };
@@ -220,7 +217,7 @@ export function guardTrainExpiry(
       expiresAt: record.expiresAt,
       now: now.toISOString(),
     });
-  return ok(undefined);
+  return ok();
 }
 
 /** Creates a content-addressed stable train from the server's main ref and clock. */
@@ -268,12 +265,18 @@ export function planStableCut(
     consumedChangesets,
     metadataWrites,
   };
-  const record = {
+  const candidate = {
     ...content,
     recordDigest: trainRecordDigest(content),
-  } as StableTrainRecord;
+  };
+  const checked = StableTrainRecordSchema.safeParse(candidate);
+  if (!checked.success)
+    return err({
+      type: "InvalidTrainRecord",
+      issues: checked.error.issues.map((issue) => issue.message),
+    });
   return ok({
-    record,
+    record: checked.data,
     expectedHeadSha: input.mainHeadSha,
     worktree: {
       consumedChangesets,
@@ -322,17 +325,23 @@ export function invalidateArtifacts(
     artifactManifestDigest: _manifest,
     ...content
   } = record;
-  return {
+  const candidate = {
     ...content,
     recordDigest: trainRecordDigest(content),
-  } as StableTrainRecord;
+  };
+  const checked = StableTrainRecordSchema.safeParse(candidate);
+  return checked.success ? checked.data : record;
+}
+
+interface DerivedVersions {
+  [packageName: string]: string;
 }
 
 function deriveVersions(
   changesets: readonly ParsedChangeset[],
   base: Readonly<Record<PublicPackageName, string>>,
   reserved: Readonly<Record<string, readonly string[]>>,
-): Record<string, string> {
+): DerivedVersions {
   const bumps = new Map<string, ChangesetBump>();
   const weight = { patch: 1, minor: 2, major: 3 } as const;
   for (const changeset of changesets)
@@ -341,25 +350,33 @@ function deriveVersions(
       if (previous === undefined || weight[bump] > weight[previous])
         bumps.set(name, bump);
     }
-  return Object.fromEntries(
-    [...bumps].map(([name, bump]) => {
-      let version = bumpVersion(base[name as PublicPackageName], bump);
-      while (reserved[name]?.includes(version))
-        version = bumpVersion(version, "patch");
-      return [name, version];
-    }),
-  );
+  const versions: DerivedVersions = {};
+  for (const [name, bump] of bumps) {
+    if (!isPublicPackageName(name)) continue;
+    let version = bumpVersion(base[name], bump);
+    while (reserved[name]?.includes(version))
+      version = bumpVersion(version, "patch");
+    versions[name] = version;
+  }
+  return versions;
 }
+function isPublicPackageName(value: string): value is PublicPackageName {
+  return PUBLIC_PACKAGE_NAMES.some((name) => name === value);
+}
+
 function bumpVersion(version: string, bump: ChangesetBump): string {
   const [major, minor, patch] = version.split(".").map(Number);
   if (bump === "major") return `${major + 1}.0.0`;
   if (bump === "minor") return `${major}.${minor + 1}.0`;
   return `${major}.${minor}.${patch + 1}`;
 }
-function metadataWrite(
-  name: string,
-  version: string,
-): { path: string; contentsDigest: string; contents: string } {
+interface StableMetadataWrite {
+  readonly path: string;
+  readonly contentsDigest: string;
+  readonly contents: string;
+}
+
+function metadataWrite(name: string, version: string): StableMetadataWrite {
   const contents = `${name} ${version}\n`;
   return {
     path: `.release/versions/${name.replace("/", "-")}.txt`,
@@ -369,21 +386,4 @@ function metadataWrite(
 }
 function digest(value: string): string {
   return `sha256:${Bun.CryptoHasher.hash("sha256", value, "hex")}`;
-}
-
-function sortObject(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortObject);
-  if (value !== null && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => compareKeys(left, right))
-        .map(([key, child]) => [key, sortObject(child)]),
-    );
-  return value;
-}
-
-function compareKeys(left: string, right: string): number {
-  if (left < right) return -1;
-  if (left > right) return 1;
-  return 0;
 }

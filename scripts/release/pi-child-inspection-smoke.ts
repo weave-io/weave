@@ -10,6 +10,7 @@ import {
   type PiSettlementValidationObservation,
   validateRepeatedSettlements,
 } from "../../packages/adapters/pi/src/repeated-settlement-validator.js";
+import { isJsonString, type JsonValue } from "./json.js";
 
 export interface SmokeBinding {
   readonly artifactSha256: string;
@@ -38,6 +39,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const SUBJECT_SHA = /^[a-f0-9]{40}$/;
 export const CHECKLIST_VERSION = 2;
 const MAX_EVIDENCE_BYTES = 256_000;
+const isStringJsonValue = isJsonString;
 const SMOKE_ROWS = [
   "S024-native-and-fallback-rendering",
   "S025-narrow-width",
@@ -109,14 +111,14 @@ export async function validateLargeOutputSmoke(
 }
 
 /** Keep evidence bounded and remove private child material before it is persisted. */
-export function sanitizedAssertion(value: unknown): string {
-  const text = JSON.stringify(value, (_key, child) =>
-    typeof child === "string"
-      ? child
-          .replaceAll(/(secret|token|password|private|canary)/gi, "[redacted]")
-          .slice(0, 256)
-      : child,
-  );
+export function sanitizedAssertion(value: JsonValue): string {
+  const text = JSON.stringify(value, (_key, child) => {
+    if (isStringJsonValue(child))
+      return child
+        .replaceAll(/(secret|token|password|private|canary)/gi, "[redacted]")
+        .slice(0, 256);
+    return child;
+  });
   return text.length > 512 ? `${text.slice(0, 512)}…` : text;
 }
 export function artifactDigest(bytes: Uint8Array): string {
@@ -156,9 +158,9 @@ export async function runAutonomousSmoke(input: {
         childSettlementMissingCount: 0,
       }),
     ],
-    ...(input.reportPath === undefined ? {} : { reportPath: input.reportPath }),
   };
-  return ok(report);
+  if (input.reportPath === undefined) return ok(report);
+  return ok({ ...report, reportPath: input.reportPath });
 }
 
 type ChildResult = ResultAsync<
@@ -224,12 +226,16 @@ async function runPty(
 ): Promise<{ code: number; output: string }> {
   // expect allocates the controlling PTY. The only bytes sent to it are slash
   // commands; there is no prompt, model-generated task, or human input.
+  const firstExtension = extensions[0];
+  const secondExtension = extensions[1];
+  if (firstExtension === undefined || secondExtension === undefined)
+    throw new Error("smoke requires two extensions");
   const driver = join(cwd, `.smoke-driver-${crypto.randomUUID()}.exp`);
   const quote = (value: string) =>
     value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
   await Bun.write(
     driver,
-    `set timeout 30\nlog_user 1\nspawn /bin/sh -c "exec '${quote(piBin)}' --offline --extension '${quote(extensions[0]!)}' --extension '${quote(extensions[1]!)}'"\nsleep 3\nsend "/smoke-fixture ${quote(sentinel)}\\r"\nsleep 1\nsend "\\003\\003"\nsleep 1\nsend "/quit\\r"\nsleep 1\nclose\nwait\ncatch wait result\nexit [lindex $result 3]\n`,
+    `set timeout 30\nlog_user 1\nspawn /bin/sh -c "exec '${quote(piBin)}' --offline --extension '${quote(firstExtension)}' --extension '${quote(secondExtension)}'"\nsleep 3\nsend "/smoke-fixture ${quote(sentinel)}\\r"\nsleep 1\nsend "\\003\\003"\nsleep 1\nsend "/quit\\r"\nsleep 1\nclose\nwait\ncatch wait result\nexit [lindex $result 3]\n`,
   );
   const child = Bun.spawn(["expect", "-f", driver], {
     cwd,
@@ -246,12 +252,14 @@ async function runPty(
   return { code, output: `${out}\\n${error}`.slice(0, MAX_EVIDENCE_BYTES) };
 }
 
-function parseArgs(argv: readonly string[]): {
+interface SmokeCliArgs {
   artifact: string;
   repeat: number;
   maxParallelism: number;
   report?: string;
-} {
+}
+
+function parseArgs(argv: readonly string[]): SmokeCliArgs {
   let artifact = "";
   let repeat = 0;
   let maxParallelism = 4;
@@ -282,12 +290,9 @@ function parseArgs(argv: readonly string[]): {
     throw new Error(
       "usage: --artifact <tarball> --repeat-oversized-settlement 10 [--max-parallelism N] [--report path]",
     );
-  return {
-    artifact,
-    repeat,
-    maxParallelism,
-    ...(report === undefined ? {} : { report }),
-  };
+  const parsed: SmokeCliArgs = { artifact, repeat, maxParallelism };
+  if (report !== undefined) parsed.report = report;
+  return parsed;
 }
 
 async function cli(): Promise<number> {
@@ -432,9 +437,9 @@ async function cli(): Promise<number> {
 if (import.meta.main)
   cli()
     .then((code) => process.exit(code))
-    .catch((error: unknown) => {
+    .catch((cause: unknown) => {
       process.stderr.write(
-        `${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : "smoke failed" })}\n`,
+        `${JSON.stringify({ ok: false, error: cause instanceof Error ? cause.message : "smoke failed" })}\n`,
       );
       process.exit(1);
     });

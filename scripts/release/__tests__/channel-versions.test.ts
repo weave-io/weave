@@ -15,7 +15,7 @@ import {
   renderChannelVersion,
   sourceShaFromNightlyVersion,
 } from "../channel-versions.js";
-import { PUBLIC_PACKAGES, type PublicPackageName } from "../constants.js";
+import { PUBLIC_PACKAGE_NAMES, type PublicPackageName } from "../constants.js";
 import {
   EMPTY_CONSUMPTION_LEDGER,
   parseConsumptionLedger,
@@ -29,10 +29,17 @@ const CLAUDE = "@weaveio/weave-adapter-claude-code";
 const PI = "@weaveio/weave-adapter-pi";
 const SHA = "abcdef1234567890abcdef1234567890abcdef12";
 const SHORT = SHA.slice(0, 12);
-const packages = Object.keys(PUBLIC_PACKAGES) as PublicPackageName[];
-const versions = Object.fromEntries(
-  packages.map((name) => [name, "0.0.1"]),
-) as Record<PublicPackageName, string>;
+type ChannelVersionFixture = {
+  readonly [PackageName in PublicPackageName]: string;
+};
+
+const packages = [...PUBLIC_PACKAGE_NAMES];
+const versions: ChannelVersionFixture = {
+  [CLI]: "0.0.1",
+  [OPENCODE]: "0.0.1",
+  [CLAUDE]: "0.0.1",
+  [PI]: "0.0.1",
+};
 const manifests: readonly WorkspaceManifest[] = packages.map((name) => ({
   name,
   dependencies: [],

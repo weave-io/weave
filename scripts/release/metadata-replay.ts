@@ -9,6 +9,7 @@ import {
 import type { Clock } from "./clock.js";
 import type { FileSystem } from "./filesystem.js";
 import type { GitHubRefClient } from "./github-client.js";
+import { canonicalizeJson } from "./json.js";
 import {
   MetadataBranchSchema,
   type MetadataReplayRecord,
@@ -83,7 +84,7 @@ export class MetadataReplay {
   }
 
   applyReplay(
-    record: unknown,
+    record: MetadataReplayInput,
     branch: string,
   ): ResultAsync<ReplayPlan, MetadataReplayError> {
     const checked = validateReplay(record, branch);
@@ -93,14 +94,14 @@ export class MetadataReplay {
         .reduce<ResultAsync<void, MetadataReplayError>>(
           (chain, mutation) =>
             chain.andThen(() => this.applyMutation(mutation)),
-          okAsync(undefined),
+          okAsync(),
         )
         .map(() => plan),
     );
   }
 
   verifyIdempotent(
-    record: unknown,
+    record: MetadataReplayInput,
     branch: string,
   ): ResultAsync<boolean, MetadataReplayError> {
     const checked = validateReplay(record, branch);
@@ -279,11 +280,15 @@ export class MetadataReplay {
 export function metadataReplayDigest(
   record: Omit<MetadataReplayRecord, "recordDigest">,
 ): string {
-  return `sha256:${Bun.CryptoHasher.hash("sha256", JSON.stringify(sortObject(record)), "hex")}`;
+  return `sha256:${Bun.CryptoHasher.hash("sha256", canonicalizeJson(record), "hex")}`;
 }
 
+type MetadataReplayInput = Parameters<
+  typeof MetadataReplayRecordSchema.safeParse
+>[0];
+
 export function validateReplay(
-  record: unknown,
+  record: MetadataReplayInput,
   branch: string,
 ): Result<MetadataReplayRecord, MetadataReplayError> {
   if (ReleaseBranchSchema.safeParse(branch).success)
@@ -326,19 +331,9 @@ export function validatePullRequestHead(
       type: "ReplayPolicyViolation",
       reason: "release branches cannot be PR heads",
     });
-  return ok(undefined);
+  return ok();
 }
 
 function digest(contents: string): string {
   return `sha256:${Bun.CryptoHasher.hash("sha256", contents, "hex")}`;
-}
-function sortObject(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortObject);
-  if (value !== null && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, child]) => [key, sortObject(child)]),
-    );
-  return value;
 }

@@ -50,7 +50,7 @@
  * valid documents with zero versions, so this parser validates the repository
  * as it stands today and as it will stand after the first release.
  */
-import { err, ok, Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 import type { ChangesetIdentity } from "./changeset-policy.js";
 import type { PublicPackageName } from "./constants.js";
@@ -59,10 +59,14 @@ import {
   type ConsumptionLedger,
   type ConsumptionLedgerError,
   LEDGER_BLOCK_MARKER,
-  LedgerBlockSchema,
+  LedgerChangesetIdentitySchema,
+  LedgerChangesetIdSchema,
+  LedgerPackageNameSchema,
+  LedgerStableVersionSchema,
   parseConsumptionLedger,
   renderLedgerBlock,
 } from "./consumption-ledger.js";
+import { parseJsonValue } from "./json.js";
 
 /** Every section a canonical changelog may carry, in render order. */
 export const CHANGELOG_SECTIONS = [
@@ -111,10 +115,10 @@ const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
  * Identity, package, and version contracts come from the ledger block, so the
  * two formats can never drift apart on what a changeset or a version is.
  */
-const ChangesetIdentitySchema = LedgerBlockSchema.shape.changesets.element;
-const ChangesetIdSchema = ChangesetIdentitySchema.shape.id;
-const PublicPackageNameSchema = LedgerBlockSchema.shape.package;
-const StableVersionSchema = LedgerBlockSchema.shape.version;
+const ChangesetIdentitySchema = LedgerChangesetIdentitySchema;
+const ChangesetIdSchema = LedgerChangesetIdSchema;
+const PublicPackageNameSchema = LedgerPackageNameSchema;
+const StableVersionSchema = LedgerStableVersionSchema;
 
 /** A ref an entry may cite: only what the controller supplied as evidence. */
 export const ChangelogRefSchema = z.discriminatedUnion("kind", [
@@ -809,7 +813,7 @@ function readVersionHeading(
     sections: [],
     ledgerBlocks: 0,
   });
-  return ok(undefined);
+  return ok();
 }
 
 function readSectionHeading(
@@ -856,7 +860,7 @@ function readSectionHeading(
       previous: previous.name,
     });
   version.sections.push({ name, entries: [] });
-  return ok(undefined);
+  return ok();
 }
 
 function readEntryMarker(
@@ -893,10 +897,9 @@ function readEntryMarker(
       line: lineNumber,
       issues: [`unsupported entry marker schema ${schemaVersion}`],
     });
-  const decoded = Result.fromThrowable(
-    () => JSON.parse(match[2] ?? "") as unknown,
-    (cause) => String(cause),
-  )();
+  const decoded = parseJsonValue(match[2] ?? "").mapErr(
+    (error) => error.message,
+  );
   if (decoded.isErr())
     return err({
       type: "MalformedEntryMarker",
@@ -916,7 +919,7 @@ function readEntryMarker(
     });
   state.pending = ids.data;
   state.pendingLine = lineNumber;
-  return ok(undefined);
+  return ok();
 }
 
 function readEntryLine(
@@ -971,14 +974,16 @@ function readEntryLine(
       });
   }
   section.entries.push({ ids, prose: split.prose, refs: split.refs });
-  return ok(undefined);
+  return ok();
 }
 
 /** Splits an entry line into prose and the trailing supplied-ref list. */
-function splitRefs(body: string): {
-  prose: string;
-  refs: readonly ChangelogRef[];
-} {
+interface ChangelogRefSplit {
+  readonly prose: string;
+  readonly refs: readonly ChangelogRef[];
+}
+
+function splitRefs(body: string): ChangelogRefSplit {
   const match = REF_SUFFIX.exec(body);
   if (match === null) return { prose: body.trim(), refs: [] };
   const refs = (match[1] ?? "").split(", ").map(readRefToken);
@@ -1017,7 +1022,7 @@ function claimLedgerBlock(
       path: source.path,
       version: version.version,
     });
-  return ok(undefined);
+  return ok();
 }
 
 /** Checks a finished version: one ledger block, no trailing empty section. */
@@ -1026,7 +1031,7 @@ function closeVersion(
   state: ScanState,
 ): Result<void, ChangelogFormatError> {
   const version = state.versions.at(-1) ?? null;
-  if (version === null) return ok(undefined);
+  if (version === null) return ok();
   const section = version.sections.at(-1) ?? null;
   if (section !== null && section.entries.length === 0)
     return err({
@@ -1041,7 +1046,7 @@ function closeVersion(
       path: source.path,
       version: version.version,
     });
-  return ok(undefined);
+  return ok();
 }
 
 function pendingWithoutEntry(

@@ -6,6 +6,7 @@ import {
   PUBLIC_PACKAGES,
   RELEASE_CHANNELS,
 } from "../constants.js";
+import type { JsonObject } from "../json.js";
 import {
   PublicManifestBuilder,
   type PublicManifestError,
@@ -30,16 +31,16 @@ class MemoryFileSystem implements PublicManifestFileSystem {
 
   writeText(path: string, contents: string) {
     this.files.set(path, contents);
-    return okAsync(undefined);
+    return okAsync();
   }
 
   ensureDirectory(path: string) {
     this.directories.push(path);
-    return okAsync(undefined);
+    return okAsync();
   }
 }
 
-function sourceManifest(overrides: Record<string, unknown> = {}) {
+function sourceManifest(overrides: Readonly<JsonObject> = {}): JsonObject {
   return {
     name: "@weaveio/weave-cli",
     version: "1.2.3",

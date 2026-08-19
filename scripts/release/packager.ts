@@ -1,13 +1,15 @@
 import { join, resolve } from "node:path";
 import { logger } from "@weaveio/weave-engine";
-import { err, errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
   PUBLIC_PACKAGE_BUILDS,
+  PUBLIC_PACKAGE_NAMES,
   PUBLIC_PACKAGES,
   type PublicPackageBuild,
   type PublicPackageName,
 } from "./constants.js";
+import { parseJsonValue } from "./json.js";
 import {
   type PackagePolicyError,
   PackagePolicyValidator,
@@ -16,6 +18,7 @@ import {
   BunPublicManifestFileSystem,
   PublicManifestBuilder,
   type PublicManifestError,
+  type StagedPublicManifest,
 } from "./public-manifest.js";
 
 export type PackagerError =
@@ -28,6 +31,10 @@ export type PackagerError =
 export type ReleaseCheckoutError =
   | PackagerError
   | { type: "DirtyReleaseCheckout"; phase: "before" | "after"; status: string };
+
+const PackOutputSchema = z
+  .array(z.object({ filename: z.string().min(1) }))
+  .min(1);
 
 export interface ReleaseCheckout {
   status(root: string): ResultAsync<string, PackagerError>;
@@ -134,9 +141,10 @@ export class PublicPackagePackager {
     let result = okAsync<readonly string[], PackagerError>([]);
     const packageNames =
       plannedVersions === undefined
-        ? (Object.keys(PUBLIC_PACKAGES) as PublicPackageName[])
+        ? PUBLIC_PACKAGE_NAMES
         : Object.keys(plannedVersions).filter(
-            (name): name is PublicPackageName => name in PUBLIC_PACKAGES,
+            (name): name is PublicPackageName =>
+              PUBLIC_PACKAGE_NAMES.some((known) => known === name),
           );
     for (const packageName of packageNames) {
       result = result.andThen((tarballs) =>
@@ -241,7 +249,7 @@ export class PublicPackagePackager {
     if (build.bootstrap !== undefined)
       for (const file of build.bootstrap) files.add(`dist/bootstrap/${file}`);
     if (packageName !== "@weaveio/weave-cli") files.add("README.md");
-    let result = okAsync<void, PackagerError>(undefined);
+    let result: ResultAsync<void, PackagerError> = okAsync();
     for (const file of files) {
       const destination = join(stage, file);
       result = result.andThen(() => this.copy(join(source, file), destination));
@@ -255,7 +263,7 @@ export class PublicPackagePackager {
     source: string,
     root: string,
     plannedVersion?: string,
-  ): ResultAsync<unknown, PackagerError> {
+  ): ResultAsync<StagedPublicManifest, PackagerError> {
     return this.manifestBuilder
       .stage(
         join(source, "package.json"),
@@ -278,7 +286,7 @@ export class PublicPackagePackager {
         type: "Filesystem" as const,
         path: destination,
         operation: "write" as const,
-      })).map(() => undefined),
+      })).andThen(() => okAsync()),
     );
   }
 
@@ -287,7 +295,7 @@ export class PublicPackagePackager {
       type: "Filesystem" as const,
       path,
       operation: "write" as const,
-    })).map(() => undefined);
+    })).andThen(() => okAsync());
   }
 
   private makeExecutable(path: string): ResultAsync<void, PackagerError> {
@@ -300,7 +308,7 @@ export class PublicPackagePackager {
       }),
     ).andThen((code) =>
       code === 0
-        ? okAsync(undefined)
+        ? okAsync()
         : errAsync({
             type: "Filesystem" as const,
             path,
@@ -321,22 +329,23 @@ export class PublicPackagePackager {
     output: string,
     destination: string,
   ): Result<string, PackagerError> {
-    const parsed = Result.fromThrowable(
-      () => JSON.parse(output) as unknown,
-      () => ({ type: "PackOutput" as const, directory: destination }),
-    )();
-    if (
-      parsed.isErr() ||
-      !Array.isArray(parsed.value) ||
-      typeof parsed.value[0] !== "object" ||
-      parsed.value[0] === null
-    )
-      return err({ type: "PackOutput", directory: destination });
-    const filename = (parsed.value[0] as { filename?: unknown }).filename;
-    if (typeof filename !== "string")
+    const parsed = parseJsonValue(output)
+      .mapErr(() => ({
+        type: "PackOutput" as const,
+        directory: destination,
+      }))
+      .andThen((value) => {
+        const checked = PackOutputSchema.safeParse(value);
+        return checked.success
+          ? ok(checked.data)
+          : err({ type: "PackOutput" as const, directory: destination });
+      });
+    if (parsed.isErr()) return err(parsed.error);
+    const first = parsed.value.at(0);
+    if (first === undefined)
       return err({ type: "PackOutput", directory: destination });
     return Result.fromThrowable(
-      () => join(destination, filename),
+      () => join(destination, first.filename),
       () => ({ type: "PackOutput" as const, directory: destination }),
     )();
   }
@@ -381,7 +390,7 @@ function parsePlannedVersions(
   if (value === undefined || value === "") return undefined;
   const parsed = Result.fromThrowable(
     () => JSON.parse(value),
-    () => undefined,
+    () => {},
   )();
   if (parsed.isErr()) return undefined;
   const versions = z.record(z.string(), z.string()).safeParse(parsed.value);

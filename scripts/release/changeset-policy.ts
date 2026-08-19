@@ -56,6 +56,7 @@ import {
 import {
   PRIVATE_PACKAGE_NAMES,
   type PrivatePackageName,
+  PUBLIC_PACKAGE_NAMES,
   PUBLIC_PACKAGES,
   type PublicPackageName,
 } from "./constants.js";
@@ -67,6 +68,18 @@ export type ChangesetBump = (typeof CHANGESET_BUMPS)[number];
 /** The only bumps a pre-1.0 changeset may declare. */
 export const PRE_RELEASE_BUMPS = ["patch", "minor"] as const;
 export type PreReleaseBump = (typeof PRE_RELEASE_BUMPS)[number];
+
+function isChangesetBump(value: string): value is ChangesetBump {
+  return CHANGESET_BUMPS.some((bump) => bump === value);
+}
+
+function isPrivatePackageName(value: string): value is PrivatePackageName {
+  return PRIVATE_PACKAGE_NAMES.some((name) => name === value);
+}
+
+function isPublicPackageName(value: string): value is PublicPackageName {
+  return PUBLIC_PACKAGE_NAMES.some((name) => name === value);
+}
 
 /** What a change does to the public surface, before it becomes a bump. */
 export const CHANGE_KINDS = ["breaking", "feature", "fix"] as const;
@@ -263,12 +276,12 @@ export function deriveChangesetIdentity(
 export function classifyChangedPath(path: string): ChangedPathImpact {
   const normalized = path.replace(/^\.\//, "");
   if (isNonArtifactPath(normalized)) return { kind: "none" };
-  for (const [packageName, metadata] of Object.entries(PUBLIC_PACKAGES))
-    if (normalized.startsWith(`${metadata.directory}/`))
-      return { kind: "public", packageName: packageName as PublicPackageName };
-  for (const [source, directory] of Object.entries(PRIVATE_SOURCE_DIRECTORIES))
-    if (normalized.startsWith(`${directory}/`))
-      return { kind: "bundled", source: source as PrivatePackageName };
+  for (const packageName of PUBLIC_PACKAGE_NAMES)
+    if (normalized.startsWith(`${PUBLIC_PACKAGES[packageName].directory}/`))
+      return { kind: "public", packageName };
+  for (const source of PRIVATE_PACKAGE_NAMES)
+    if (normalized.startsWith(`${PRIVATE_SOURCE_DIRECTORIES[source]}/`))
+      return { kind: "bundled", source };
   return { kind: "none" };
 }
 
@@ -487,9 +500,9 @@ function parseDocument(
         path,
         reason: "Duplicate package target",
       });
-    if (!CHANGESET_BUMPS.includes(bump as ChangesetBump))
+    if (!isChangesetBump(bump))
       return err({ type: "UnknownBump", path, packageName, bump });
-    releases.set(packageName, bump as ChangesetBump);
+    releases.set(packageName, bump);
   }
   return ok({ releases, body: lines.slice(end + 1) });
 }
@@ -535,19 +548,19 @@ function validateDocument(
   const errors: ChangesetPolicyError[] = [];
   const releases = new Map<PublicPackageName, PreReleaseBump>();
   for (const [packageName, bump] of document.releases) {
-    if (PRIVATE_PACKAGE_NAMES.includes(packageName as PrivatePackageName)) {
+    if (isPrivatePackageName(packageName)) {
       errors.push({
         type: "PrivateTarget",
         path,
-        packageName: packageName as PrivatePackageName,
+        packageName,
       });
       continue;
     }
-    if (!(packageName in PUBLIC_PACKAGES)) {
+    if (!isPublicPackageName(packageName)) {
       errors.push({ type: "UnknownPackage", path, packageName });
       continue;
     }
-    const target = packageName as PublicPackageName;
+    const target = packageName;
     if (bump === "major") {
       errors.push({ type: "MajorBumpRejected", path, packageName: target });
       continue;
@@ -568,11 +581,11 @@ function validateDocument(
     errors.push({ type: "UnmarkedBreakingChange", path });
   const bundledSources: PrivatePackageName[] = [];
   for (const source of body.bundledSources) {
-    if (!PRIVATE_PACKAGE_NAMES.includes(source as PrivatePackageName)) {
+    if (!isPrivatePackageName(source)) {
       errors.push({ type: "UnknownBundledSource", path, source });
       continue;
     }
-    const known = source as PrivatePackageName;
+    const known = source;
     bundledSources.push(known);
     for (const packageName of PRIVATE_SOURCE_IMPACTS[known])
       if (!releases.has(packageName))

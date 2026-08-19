@@ -24,14 +24,14 @@ import type {
  * evidence remains mandatory and is verified by
  * `scripts/release/__tests__/acceptance-manifest.test.ts`.
  */
-export const PACKED_PROOF_REGISTRY: Readonly<Record<string, TestEvidence>> = {
+export const PACKED_PROOF_REGISTRY = {
   P001: {
     file: "scripts/release/__tests__/pi-adapter-packed.test.ts",
     name: "packs @weaveio/weave-adapter-pi with an inventory-clean, policy-valid tarball",
   },
   P002: {
     file: "scripts/release/__tests__/pi-adapter-fake-host-consumer.test.ts",
-    name: "installs the packed tarball against a local fake ${HOST_PACKAGE_NAME}@${EXACT_TESTED_HOST_VERSION} host, without network or starting Pi",
+    name: `installs the packed tarball against a local fake \${HOST_PACKAGE_NAME}@\${EXACT_TESTED_HOST_VERSION} host, without network or starting Pi`,
   },
   P003: {
     file: "packages/adapters/pi/src/__tests__/child-inspection-render.test.ts",
@@ -73,7 +73,7 @@ export const PACKED_PROOF_REGISTRY: Readonly<Record<string, TestEvidence>> = {
     file: "packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts",
     name: "pages >10k entries through readSessionEntryPage only with opaque cursors",
   },
-};
+} satisfies Readonly<Record<string, TestEvidence>>;
 
 export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequirement[] =
   [

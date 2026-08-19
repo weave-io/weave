@@ -12,6 +12,7 @@ import {
   verifyManifestAgainstPlan,
 } from "../artifact-manifest.js";
 import { RELEASE_PR_MARKER_REF } from "../constants.js";
+import { isJsonObject, type JsonObject, parseJsonValue } from "../json.js";
 import type { ArtifactManifest } from "../model.js";
 import {
   assertPlanPathAllowed,
@@ -187,19 +188,29 @@ type PlanManifestDigest = ReleasePlanBinding["manifestDigests"][number];
 type PlanEntryPointDigest = ReleasePlanBinding["entryPointDigests"][number];
 
 function versionAt(index: number): PlanVersion {
-  return plan().versions[index] as PlanVersion;
+  const value = plan().versions[index];
+  if (value === undefined) throw new Error(`missing plan version ${index}`);
+  return value;
 }
 function changelogAt(index: number): PlanChangelogDigest {
-  return plan().changelogDigests[index] as PlanChangelogDigest;
+  const value = plan().changelogDigests[index];
+  if (value === undefined) throw new Error(`missing changelog digest ${index}`);
+  return value;
 }
 function tarballAt(index: number): PlanTarball {
-  return binding().tarballs[index] as PlanTarball;
+  const value = binding().tarballs[index];
+  if (value === undefined) throw new Error(`missing tarball ${index}`);
+  return value;
 }
 function manifestDigestAt(index: number): PlanManifestDigest {
-  return binding().manifestDigests[index] as PlanManifestDigest;
+  const value = binding().manifestDigests[index];
+  if (value === undefined) throw new Error(`missing manifest digest ${index}`);
+  return value;
 }
 function entryPointAt(index: number): PlanEntryPointDigest {
-  return binding().entryPointDigests[index] as PlanEntryPointDigest;
+  const value = binding().entryPointDigests[index];
+  if (value === undefined) throw new Error(`missing entry point ${index}`);
+  return value;
 }
 
 /** A merged plan: released, and carrying the build that proved that SHA. */
@@ -444,7 +455,7 @@ describe("canonical serialization", () => {
   });
 
   it("serializes and digests independently of key order", () => {
-    const reordered = reorderKeys(plan()) as ReleasePlan;
+    const reordered = reorderedPlan();
     expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(plan()));
     expect(expectOk(serializeReleasePlan(reordered))).toBe(
       expectOk(serializeReleasePlan(plan())),
@@ -454,18 +465,23 @@ describe("canonical serialization", () => {
 
   it("round-trips the workflow-artifact envelope with a self-checking digest", () => {
     const artifact = expectOk(serializeReleasePlanArtifact(plan()));
-    const parsed = expectOk(
-      validatePlanArtifact(JSON.parse(artifact) as unknown),
-    );
+    const parsedArtifact = parseJsonValue(artifact);
+    if (parsedArtifact.isErr()) throw new Error(parsedArtifact.error.message);
+    const parsed = expectOk(validatePlanArtifact(parsedArtifact.value));
     expect(parsed.plan).toEqual(plan());
     expect(parsed.planDigest).toBe(releasePlanDigest(plan()));
   });
 
   it("rejects an envelope whose digest names another plan", () => {
-    const artifact = JSON.parse(
-      expectOk(serializeReleasePlanArtifact(plan())),
-    ) as Record<string, unknown>;
-    const tampered = { ...artifact, planDigest: digest("other-plan") };
+    const artifactText = expectOk(serializeReleasePlanArtifact(plan()));
+    const artifactValue = parseJsonValue(artifactText);
+    if (artifactValue.isErr()) throw new Error(artifactValue.error.message);
+    if (!isJsonObject(artifactValue.value))
+      throw new Error("serialized plan artifact is not an object");
+    const tampered: JsonObject = Object.fromEntries([
+      ...Object.entries(artifactValue.value),
+      ["planDigest", digest("other-plan")],
+    ]);
     const error = expectErr(validatePlanArtifact(tampered));
     expect(error.type).toBe("InvalidReleasePlanArtifact");
   });
@@ -649,7 +665,13 @@ describe("plan carriers", () => {
     ).toBe(expectOk(renderPlanMetadataBlock(plan())));
   });
 
-  it.each<[string, string, string]>([
+  it.each<
+    [
+      string,
+      string,
+      Extract<ReleasePlanError, { type: "ForbiddenPlanCarrier" }>["reason"],
+    ]
+  >([
     [
       "a committed repository path",
       `${REPOSITORY_ROOT}/.release/plan.json`,
@@ -675,7 +697,9 @@ describe("plan carriers", () => {
   ])("refuses %s", (_name, path, reason) => {
     const error = expectErr(assertPlanPathAllowed(path, CARRIER_OPTIONS));
     expect(error.type).toBe("ForbiddenPlanCarrier");
-    expect((error as { reason: string }).reason).toBe(reason);
+    if (error.type !== "ForbiddenPlanCarrier")
+      throw new Error(`unexpected carrier error: ${error.type}`);
+    expect(error.reason).toBe(reason);
   });
 
   it("refuses to read or write a plan through a committed path", () => {
@@ -920,7 +944,9 @@ describe("recompute-before-trust", () => {
     );
     const error = expectErr(result);
     expect(error.type).toBe("PlanDivergence");
-    expect((error as { path: string }).path).toBe(path);
+    if (error.type !== "PlanDivergence")
+      throw new Error(`unexpected recompute error: ${error.type}`);
+    expect(error.path).toBe(path);
   });
 
   it("names baseSha when a stored plan claims another preparation SHA", async () => {
@@ -1302,7 +1328,10 @@ describe("plan-aware artifacts", () => {
     },
   ];
   function uploadedAt(index: number): PlanBoundArtifact["artifacts"][number] {
-    return uploaded[index] as PlanBoundArtifact["artifacts"][number];
+    const value = uploaded[index];
+    if (value === undefined)
+      throw new Error(`missing uploaded artifact ${index}`);
+    return value;
   }
 
   function bound(): PlanBoundArtifact {
@@ -1410,13 +1439,19 @@ function omit<T extends object>(value: T, key: keyof T): Omit<T, keyof T> {
   return rest;
 }
 
-/** Same data, different key order at every depth. */
-function reorderKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(reorderKeys);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .reverse()
-      .map(([key, nested]) => [key, reorderKeys(nested)]),
-  );
+function reorderedPlan(): ReleasePlan {
+  const original = plan();
+  return {
+    binding: original.binding,
+    docsAudit: original.docsAudit,
+    releasedSha: original.releasedSha,
+    baseSha: original.baseSha,
+    changelogDigests: original.changelogDigests,
+    versions: original.versions,
+    consumed: original.consumed,
+    closure: original.closure,
+    seed: original.seed,
+    channel: original.channel,
+    schemaVersion: original.schemaVersion,
+  };
 }

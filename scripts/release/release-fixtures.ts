@@ -143,10 +143,10 @@ export class FixtureGitHub implements GitHubClient {
     );
   }
   createRelease() {
-    return okAsync(undefined);
+    return okAsync();
   }
   createTag() {
-    return okAsync(undefined);
+    return okAsync();
   }
   private artifacts(): ActionsArtifactMetadata[] {
     return this.fixture.artifacts.map((artifact) => ({

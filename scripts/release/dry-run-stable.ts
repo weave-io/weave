@@ -1,4 +1,5 @@
 import { okAsync } from "neverthrow";
+import type { StableTrainRecord } from "./model.js";
 import { scanCredentialSources } from "./package-policy.js";
 import {
   assertCurrentArtifactIdentity,
@@ -26,12 +27,23 @@ const cut = () =>
     changesetContents: { ".changeset/stable.md": "stable" },
     packageVersions: FIXTURE_VERSIONS,
   });
+function checkedTrain(
+  content: Omit<StableTrainRecord, "recordDigest">,
+): StableTrainRecord {
+  const result = validateStableTrain({
+    ...content,
+    recordDigest: trainRecordDigest(content),
+  });
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
 const planned = cut();
 if (planned.isErr()) process.exit(2);
 const record = planned.value.record;
 const clock = (date: string) => ({
   now: () => new Date(date),
-  sleep: () => okAsync(undefined),
+  sleep: () => okAsync(),
 });
 await runScenarios("release-dry-stable", [
   {
@@ -57,11 +69,14 @@ await runScenarios("release-dry-stable", [
   {
     name: "partial-publish-reservation",
     verify: () =>
-      partialPublishRecoveryMetadata({
-        ...record,
-        state: "partial",
-        recordDigest: trainRecordDigest({ ...record, state: "partial" }),
-      } as never).recovery === "fresh-main-cut",
+      (() => {
+        const { recordDigest: _recordDigest, ...content } = record;
+        return (
+          partialPublishRecoveryMetadata(
+            checkedTrain({ ...content, state: "partial" }),
+          ).recovery === "fresh-main-cut"
+        );
+      })(),
   },
   {
     name: "cas-drift",
@@ -76,15 +91,18 @@ await runScenarios("release-dry-stable", [
   {
     name: "rerun-artifact",
     verify: () =>
-      assertCurrentArtifactIdentity(
-        {
-          ...record,
-          artifactIds: [1],
-          artifactManifestDigest: `sha256:${"a".repeat(64)}`,
-        } as never,
-        `sha256:${"b".repeat(64)}`,
-        [2],
-      ).isErr(),
+      (() => {
+        const { recordDigest: _recordDigest, ...content } = record;
+        return assertCurrentArtifactIdentity(
+          checkedTrain({
+            ...content,
+            artifactIds: [1],
+            artifactManifestDigest: `sha256:${"a".repeat(64)}`,
+          }),
+          `sha256:${"b".repeat(64)}`,
+          [2],
+        ).isErr();
+      })(),
   },
   {
     name: "credential-source",

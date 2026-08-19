@@ -10,9 +10,6 @@ export class SystemClock implements Clock {
     return new Date();
   }
   sleep(milliseconds: number): ResultAsync<void, never> {
-    return ResultAsync.fromPromise(
-      Bun.sleep(milliseconds),
-      () => undefined as never,
-    );
+    return ResultAsync.fromSafePromise(Bun.sleep(milliseconds));
   }
 }

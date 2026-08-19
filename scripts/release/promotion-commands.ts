@@ -13,6 +13,10 @@ import {
   PromotionAuthorizationSchema,
 } from "./release-orchestrator.js";
 
+type PromotionAuthorizationInput = Parameters<
+  typeof PromotionAuthorizationSchema.safeParse
+>[0];
+
 export interface PromotionCommandSummary {
   priorLatestCaptureCommands: readonly string[];
   promoteCommands: readonly string[];
@@ -26,7 +30,7 @@ export type PromotionCommandError =
 
 /** Builds manual, version-pinned promotion commands from an authorized package set. */
 export function promotionCommands(
-  authorization: unknown,
+  authorization: PromotionAuthorizationInput,
   priorLatestVersions?: Readonly<Record<string, string>>,
 ): Result<PromotionCommandSummary, { type: "InvalidPromotionAuthorization" }> {
   const parsed = PromotionAuthorizationSchema.safeParse(authorization);
@@ -47,7 +51,7 @@ export function promotionCommands(
 
 /** Reads prior tags in the verified control binary and returns human-only text. */
 export function promotionCommandsFromRegistry(
-  authorization: unknown,
+  authorization: PromotionAuthorizationInput,
   registry: NpmRegistryClient,
 ): ResultAsync<PromotionCommandSummary, PromotionCommandError> {
   const parsed = PromotionAuthorizationSchema.safeParse(authorization);
@@ -57,7 +61,7 @@ export function promotionCommandsFromRegistry(
     parsed.data.packages.map((packageName) =>
       registry.distTagLs(packageName).andThen((tags) => {
         const latest = tags.latest;
-        if (typeof latest !== "string")
+        if (!isStringValue(latest))
           return errAsync({ type: "MissingPriorLatest" as const, packageName });
         return okAsync([packageName, latest] as const);
       }),
@@ -71,13 +75,17 @@ export function promotionCommandsFromRegistry(
   });
 }
 
+function isStringValue(value: string | undefined): value is string {
+  return value !== undefined;
+}
+
 function rollbackCommands(
   authorization: PromotionAuthorization,
   priorLatestVersions: Readonly<Record<string, string>> | undefined,
 ): Result<readonly string[], { type: "InvalidPromotionAuthorization" }> {
   if (priorLatestVersions === undefined) return ok([]);
   for (const packageName of authorization.packages)
-    if (typeof priorLatestVersions[packageName] !== "string")
+    if (priorLatestVersions[packageName] === undefined)
       return err({ type: "InvalidPromotionAuthorization" });
   return ok(
     authorization.packages.map(

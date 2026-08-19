@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { ReleaseChannel } from "./constants.js";
 import {
   NPM_DIGEST_PREFIX,
-  PUBLIC_PACKAGES,
+  PUBLIC_PACKAGE_NAMES,
   RELEASE_CHANNELS,
   RELEASE_CONTROL_REF,
   RELEASE_EVENTS,
@@ -39,12 +39,7 @@ export const UtcTimestampSchema = z
       new Date(value).toISOString() === value,
     "must be a real UTC timestamp",
   );
-export const PackageNameSchema = z.enum(
-  Object.keys(PUBLIC_PACKAGES) as [
-    keyof typeof PUBLIC_PACKAGES,
-    ...(keyof typeof PUBLIC_PACKAGES)[],
-  ],
-);
+export const PackageNameSchema = z.enum(PUBLIC_PACKAGE_NAMES);
 export const ReleaseChannelSchema = z.enum(RELEASE_CHANNELS);
 export const ReleaseOperationSchema = z.enum(RELEASE_OPERATIONS);
 export const StableTrainStateSchema = z.enum(STABLE_TRAIN_STATES);
@@ -59,6 +54,72 @@ export const CanonicalRefSchema = z.union([
   ReleaseBranchSchema,
   MetadataBranchSchema,
 ]);
+
+export const StableTrainRecordSchema = z
+  .object({
+    schemaVersion: z.literal(TRAIN_SCHEMA_VERSION),
+    recordDigest: DigestSchema,
+    trainRef: ReleaseBranchSchema,
+    subjectSha: FullShaSchema,
+    cutAt: UtcTimestampSchema,
+    expiresAt: UtcTimestampSchema,
+    state: StableTrainStateSchema,
+    packages: z.array(PackageNameSchema).min(1).max(2),
+    versions: z.record(z.string(), SemVerSchema),
+    artifactManifestDigest: DigestSchema.optional(),
+    /** Replay input: exact stable changesets removed on the release branch. */
+    consumedChangesets: z
+      .array(
+        z
+          .object({ path: z.string().min(1), preimageDigest: DigestSchema })
+          .strict(),
+      )
+      .optional(),
+    /** Replay input: deterministic package/changelog writes made at the cut. */
+    metadataWrites: z
+      .array(
+        z
+          .object({
+            path: z.string().min(1),
+            contentsDigest: DigestSchema,
+            contents: z.string(),
+          })
+          .strict(),
+      )
+      .optional(),
+    /** Actions artifact IDs are deliberately discarded after a stable fix. */
+    artifactIds: z.array(z.number().int().positive()).optional(),
+  })
+  .strict()
+  .superRefine((record, context) => {
+    validatePackageSet(record, context);
+    if (
+      Object.values(record.versions).some(
+        (version) => !StableVersionSchema.safeParse(version).success,
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["versions"],
+        message: "stable versions cannot include prerelease or build metadata",
+      });
+    if (record.packages.includes("@weaveio/weave-adapter-claude-code"))
+      context.addIssue({
+        code: "custom",
+        path: ["packages"],
+        message: "stable trains cannot contain Claude Code",
+      });
+    if (
+      Date.parse(record.expiresAt) - Date.parse(record.cutAt) !==
+      7 * 24 * 60 * 60 * 1000
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["expiresAt"],
+        message: "expiresAt must be exactly seven days after cutAt",
+      });
+  });
+
 export const StableTagSchema = z
   .string()
   .regex(
@@ -123,7 +184,7 @@ export const ArtifactManifestSchema = z
       .min(1)
       .max(RELEASE_INPUT_LIMITS.artifactCount),
     /** Stable payloads embed the train record advanced by control-plane gates. */
-    stableTrain: z.unknown().optional(),
+    stableTrain: StableTrainRecordSchema.optional(),
   })
   .strict()
   .superRefine((manifest, context) => {
@@ -243,7 +304,7 @@ export const ArtifactBindingRecordSchema = z
     releaseSubjectSha: FullShaSchema,
     manifestDigest: DigestSchema,
     /** Stable train advanced after Actions assigned immutable artifact identity. */
-    stableTrain: z.unknown().optional(),
+    stableTrain: StableTrainRecordSchema.optional(),
     files: z
       .array(ArtifactBindingFileSchema)
       .min(1)
@@ -279,71 +340,6 @@ export const ArtifactBindingRecordSchema = z
           message: "stable bindings require a bound stable train",
         });
     }
-  });
-
-export const StableTrainRecordSchema = z
-  .object({
-    schemaVersion: z.literal(TRAIN_SCHEMA_VERSION),
-    recordDigest: DigestSchema,
-    trainRef: ReleaseBranchSchema,
-    subjectSha: FullShaSchema,
-    cutAt: UtcTimestampSchema,
-    expiresAt: UtcTimestampSchema,
-    state: StableTrainStateSchema,
-    packages: z.array(PackageNameSchema).min(1).max(2),
-    versions: z.record(z.string(), SemVerSchema),
-    artifactManifestDigest: DigestSchema.optional(),
-    /** Replay input: exact stable changesets removed on the release branch. */
-    consumedChangesets: z
-      .array(
-        z
-          .object({ path: z.string().min(1), preimageDigest: DigestSchema })
-          .strict(),
-      )
-      .optional(),
-    /** Replay input: deterministic package/changelog writes made at the cut. */
-    metadataWrites: z
-      .array(
-        z
-          .object({
-            path: z.string().min(1),
-            contentsDigest: DigestSchema,
-            contents: z.string(),
-          })
-          .strict(),
-      )
-      .optional(),
-    /** Actions artifact IDs are deliberately discarded after a stable fix. */
-    artifactIds: z.array(z.number().int().positive()).optional(),
-  })
-  .strict()
-  .superRefine((record, context) => {
-    validatePackageSet(record, context);
-    if (
-      Object.values(record.versions).some(
-        (version) => !StableVersionSchema.safeParse(version).success,
-      )
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["versions"],
-        message: "stable versions cannot include prerelease or build metadata",
-      });
-    if (record.packages.includes("@weaveio/weave-adapter-claude-code"))
-      context.addIssue({
-        code: "custom",
-        path: ["packages"],
-        message: "stable trains cannot contain Claude Code",
-      });
-    if (
-      Date.parse(record.expiresAt) - Date.parse(record.cutAt) !==
-      7 * 24 * 60 * 60 * 1000
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["expiresAt"],
-        message: "expiresAt must be exactly seven days after cutAt",
-      });
   });
 
 /** Immutable replay payload copied from a finalized stable train. */

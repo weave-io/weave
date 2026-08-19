@@ -34,7 +34,7 @@ export function validateApiExtractorConfig(
     () => ({ type: "InvalidApiExtractorConfig" as const, path }),
   )();
   if (result.isErr()) return err(result.error);
-  return ok(undefined);
+  return ok();
 }
 
 export function validateApiExtractorConfigs(): Result<
@@ -45,7 +45,7 @@ export function validateApiExtractorConfigs(): Result<
     const result = validateApiExtractorConfig(path);
     if (result.isErr()) return err(result.error);
   }
-  return ok(undefined);
+  return ok();
 }
 
 if (import.meta.main) {

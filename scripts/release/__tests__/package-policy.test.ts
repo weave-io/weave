@@ -8,7 +8,11 @@ import {
   releaseChannelsFor,
   resolvePublishablePackage,
 } from "../package-policy.js";
-import type { TarEntry, TarInspector } from "../tar-inspector.js";
+import {
+  type TarEntry,
+  type TarInspectionError,
+  TarInspector,
+} from "../tar-inspector.js";
 
 const CATALOG = [
   "@weaveio/weave-cli",
@@ -136,6 +140,16 @@ describe("PackagePolicyValidator", () => {
   });
 });
 
+class FixedTarInspector extends TarInspector {
+  constructor(private readonly entries: readonly TarEntry[]) {
+    super();
+  }
+
+  override inspect(_archive: Uint8Array): ReturnType<TarInspector["inspect"]> {
+    return ok<readonly TarEntry[], TarInspectionError>(this.entries);
+  }
+}
+
 function fakeInspector(dependencies: Record<string, string>): TarInspector {
   const entries: TarEntry[] = [
     entry(
@@ -151,19 +165,19 @@ function fakeInspector(dependencies: Record<string, string>): TarInspector {
     entry("package/dist/plugin.d.ts", "export {};"),
     entry("package/README.md", "# Test package"),
   ];
-  return { inspect: () => ok(entries) } as unknown as TarInspector;
+  return new FixedTarInspector(entries);
 }
 
 function nullManifestInspector(): TarInspector {
   const entries: TarEntry[] = [entry("package/package.json", "null")];
-  return { inspect: () => ok(entries) } as unknown as TarInspector;
+  return new FixedTarInspector(entries);
 }
 
 function namedManifestInspector(packageName: string): TarInspector {
   const entries: TarEntry[] = [
     entry("package/package.json", JSON.stringify({ name: packageName })),
   ];
-  return { inspect: () => ok(entries) } as unknown as TarInspector;
+  return new FixedTarInspector(entries);
 }
 
 function entry(path: string, contents: string): TarEntry {

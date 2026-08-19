@@ -114,7 +114,7 @@ export function checkLinks(
     }
   }
   if (errors.length > 0) return err(errors);
-  return ok(undefined);
+  return ok();
 }
 
 export async function loadDocuments(root = "."): Promise<DocumentStore> {

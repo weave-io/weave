@@ -1,11 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
+import { z } from "zod";
 import {
   HOST_PACKAGE_NAME,
   HOST_VERSION_FLOOR,
   isSupportedHostVersion,
 } from "../../../packages/adapters/pi/src/host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../../../packages/adapters/pi/src/host-compatibility-matrix.js";
+import { AcceptanceManifestSchema } from "../acceptance-manifest.js";
+import { isJsonObject, isJsonString, parseJsonValue } from "../json.js";
 import { PackagePolicyValidator } from "../package-policy.js";
 import { BunPackageCommandRunner, PublicPackagePackager } from "../packager.js";
 import { TarInspector } from "../tar-inspector.js";
@@ -43,11 +46,15 @@ const ACCEPTANCE_FIXTURE_SMOKE = join(
  * clean-room `import()` can link without starting Pi or touching the
  * network; they carry no adapter behavior of their own.
  */
-const FAKE_HOST_PACKAGES: Record<string, { version: string; source: string }> =
-  {
-    "@earendil-works/pi-coding-agent": {
-      version: EXACT_TESTED_HOST_VERSION,
-      source: `export const VERSION = "${EXACT_TESTED_HOST_VERSION}";
+interface FakeHostPackage {
+  readonly version: string;
+  readonly source: string;
+}
+
+const FAKE_HOST_PACKAGES = {
+  "@earendil-works/pi-coding-agent": {
+    version: EXACT_TESTED_HOST_VERSION,
+    source: `export const VERSION = "${EXACT_TESTED_HOST_VERSION}";
 export class CustomEditor {}
 export class ToolExecutionComponent {}
 export class UserMessageComponent {}
@@ -61,17 +68,17 @@ export function createLsToolDefinition() {}
 export function createReadToolDefinition() {}
 export function createWriteToolDefinition() {}
 `,
-    },
-    "@earendil-works/pi-ai": {
-      version: EXACT_TESTED_HOST_VERSION,
-      source: "export function StringEnum(values) { return values; }\n",
-    },
-    "@earendil-works/pi-tui": {
-      version: EXACT_TESTED_HOST_VERSION,
-      source:
-        "export function matchesKey() { return false; }\nexport function isKeyRelease() { return false; }\nexport function truncateToWidth(text) { return text; }\nexport function visibleWidth(text) { return text.length; }\nexport function getKeybindings() { return { getResolvedBindings: () => ({}) }; }\nexport class Markdown {}\nexport class Text {}\n",
-    },
-  };
+  },
+  "@earendil-works/pi-ai": {
+    version: EXACT_TESTED_HOST_VERSION,
+    source: "export function StringEnum(values) { return values; }\n",
+  },
+  "@earendil-works/pi-tui": {
+    version: EXACT_TESTED_HOST_VERSION,
+    source:
+      "export function matchesKey() { return false; }\nexport function isKeyRelease() { return false; }\nexport function truncateToWidth(text) { return text; }\nexport function visibleWidth(text) { return text.length; }\nexport function getKeybindings() { return { getResolvedBindings: () => ({}) }; }\nexport class Markdown {}\nexport class Text {}\n",
+  },
+} satisfies Readonly<Record<string, FakeHostPackage>>;
 
 /**
  * Real, already-resolved runtime dependencies the packed artifact declares
@@ -149,15 +156,18 @@ describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)
       // Real release evidence artifacts from checked-in fixtures, loaded and scanned
       // exactly as CI expects them to prove the adapter’s non-PI evidence.
       const manifestText = await Bun.file(ACCEPTANCE_FIXTURE_MANIFEST).text();
-      const manifestJson = JSON.parse(manifestText) as {
-        schemaVersion: number;
-        requirements: unknown[];
-        host: { package: string; floorVersion: string; supportedRange: string };
-      };
+      const parsedManifest = parseJsonValue(manifestText);
+      if (parsedManifest.isErr()) throw new Error(parsedManifest.error.message);
+      const manifestResult = AcceptanceManifestSchema.safeParse(
+        parsedManifest.value,
+      );
+      if (!manifestResult.success)
+        throw new Error(JSON.stringify(manifestResult.error.issues));
+      const manifestJson = manifestResult.data;
       expect(manifestJson.schemaVersion).toBe(1);
       expect(manifestJson.requirements).toHaveLength(28);
       expect(manifestJson.host.package).toBe(HOST_PACKAGE_NAME);
-      expect(typeof manifestJson.host.floorVersion).toBe("string");
+      expect(manifestJson.host.floorVersion.length).toBeGreaterThan(0);
       expect(manifestJson.host.supportedRange).toContain(">=0.81.1");
 
       const smokeText = await Bun.file(ACCEPTANCE_FIXTURE_SMOKE).text();
@@ -167,13 +177,22 @@ describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)
       const manifestEntry = inspected.value.find(
         (entry) => entry.path === "package/package.json",
       );
-      expect(manifestEntry).toBeDefined();
-      const manifest = JSON.parse(
-        new TextDecoder().decode(manifestEntry?.contents),
-      ) as { peerDependencies: Record<string, string> };
-      expect(manifest.peerDependencies[HOST_PACKAGE_NAME]).toBe(
-        `>=${HOST_VERSION_FLOOR}`,
+      if (manifestEntry === undefined)
+        throw new Error("packed manifest entry is missing");
+      const parsedPackageManifest = parseJsonValue(
+        new TextDecoder().decode(manifestEntry.contents),
       );
+      if (parsedPackageManifest.isErr())
+        throw new Error(parsedPackageManifest.error.message);
+      if (!isJsonObject(parsedPackageManifest.value))
+        throw new Error("packed manifest is not an object");
+      const peerDependencies = parsedPackageManifest.value.peerDependencies;
+      if (!isJsonObject(peerDependencies))
+        throw new Error("packed manifest has no peerDependencies object");
+      const hostRange = peerDependencies[HOST_PACKAGE_NAME];
+      if (!isJsonString(hostRange))
+        throw new Error("packed manifest has no host peer range");
+      expect(hostRange).toBe(`>=${HOST_VERSION_FLOOR}`);
 
       // materialize the packed artifact - no npm install, no network
       const packageDir = join(
@@ -217,8 +236,9 @@ describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)
       const extensionEntry = inspected.value.find(
         (entry) => entry.path === "package/dist/extension.js",
       );
-      expect(extensionEntry).toBeDefined();
-      expect(new TextDecoder().decode(extensionEntry?.contents)).not.toContain(
+      if (extensionEntry === undefined)
+        throw new Error("packed extension entry is missing");
+      expect(new TextDecoder().decode(extensionEntry.contents)).not.toContain(
         "import.meta.require",
       );
 
@@ -226,17 +246,25 @@ describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)
       // isolation, without npm/network - and the extension's default
       // factory is only type/shape-inspected, never invoked, so Pi is
       // never started
-      const indexModule = (await import(
+      interface PackedIndexModule {
+        readonly ADAPTER_PACKAGE_IDENTITY?: string;
+      }
+      const indexModule: PackedIndexModule = await import(
         new URL(`file://${join(packageDir, "dist/index.js")}`).href
-      )) as Record<string, unknown>;
+      );
       expect(indexModule.ADAPTER_PACKAGE_IDENTITY).toBe(
         "@weaveio/weave-adapter-pi",
       );
 
-      const extensionModule = (await import(
+      interface PackedExtensionModule {
+        readonly default?: unknown;
+      }
+      const extensionModule: PackedExtensionModule = await import(
         new URL(`file://${join(packageDir, "dist/extension.js")}`).href
-      )) as { default?: unknown };
-      expect(typeof extensionModule.default).toBe("function");
+      );
+      expect(z.function().safeParse(extensionModule.default).success).toBe(
+        true,
+      );
     } finally {
       await consumer.cleanup();
       await Bun.spawn(["rm", "-rf", root]).exited;

@@ -14,6 +14,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import {
   MAX_HOST_MODULE_PROOF_LINE_LENGTH,
   type PiHostModuleProofLineSpecifier,
@@ -24,6 +25,12 @@ import {
   CODEX_PROVIDER_SUBPATH_SPECIFIER,
   PI_HOST_MODULE_SPECIFIERS,
 } from "../../packages/adapters/pi/src/host-module-redirect.js";
+import {
+  isJsonObject,
+  isJsonString,
+  type JsonValue,
+  parseJsonValue,
+} from "../release/json.js";
 
 const log = logger.child({ module: "verify-pi-host-singleton" });
 
@@ -85,6 +92,22 @@ export type VerifyArgs = {
   readonly allowSkip: boolean;
 };
 
+const HostPackageIdentitySchema = z.object({
+  name: z.string().min(1),
+  version: z.string().min(1),
+});
+const ProofSpecifierSchema = z
+  .object({
+    specifier: z.enum(PI_HOST_MODULE_SPECIFIERS),
+    redirected: z.boolean(),
+    bareResolution: z.string().optional(),
+    loadedFrom: z.string().optional(),
+  })
+  .strict();
+type HostPackageIdentityInput = Parameters<
+  typeof HostPackageIdentitySchema.safeParse
+>[0];
+
 export type HostPresence =
   | { readonly status: "missing"; readonly reason: string }
   | { readonly status: "invalid"; readonly reason: string }
@@ -105,6 +128,12 @@ export type ParsedHostModuleProof = {
   readonly hostVersion?: string;
   readonly specifiers: readonly PiHostModuleProofLineSpecifier[];
 };
+
+interface MutableParsedHostModuleProof {
+  hostRoot?: string;
+  hostVersion?: string;
+  readonly specifiers: readonly PiHostModuleProofLineSpecifier[];
+}
 
 export type MappedPathClassification = {
   readonly checkoutEarendilPaths: readonly string[];
@@ -161,6 +190,9 @@ export type VerifyFailure = {
 };
 
 export type VerifyEnv = Readonly<Record<string, string | undefined>>;
+export interface ProofEnvironment {
+  [key: string]: string;
+}
 
 /**
  * Parse CLI flags. Only `--allow-skip` is recognized; anything else fails
@@ -200,61 +232,27 @@ export function decideSkip(
 }
 
 export function parseHostPackageIdentity(
-  value: unknown,
+  value: HostPackageIdentityInput,
 ): Result<
   { readonly name: string; readonly version: string },
   { readonly reason: "host-package-mismatch" }
 > {
-  if (typeof value !== "object" || value === null) {
-    return err({ reason: "host-package-mismatch" });
-  }
-  if (!("name" in value) || !("version" in value)) {
-    return err({ reason: "host-package-mismatch" });
-  }
-  if (typeof value.name !== "string" || value.name.length === 0) {
-    return err({ reason: "host-package-mismatch" });
-  }
-  if (typeof value.version !== "string" || value.version.length === 0) {
-    return err({ reason: "host-package-mismatch" });
-  }
-  return ok({ name: value.name, version: value.version });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  const parsed = HostPackageIdentitySchema.safeParse(value);
+  return parsed.success
+    ? ok(parsed.data)
+    : err({ reason: "host-package-mismatch" });
 }
 
 function parseProofSpecifier(
-  value: unknown,
+  value: JsonValue,
 ): Result<PiHostModuleProofLineSpecifier, VerifyFailure> {
-  if (!isRecord(value)) {
+  const parsed = ProofSpecifierSchema.safeParse(value);
+  if (!parsed.success)
     return err({
       type: "ProofInvalid",
-      message: "specifier entry is not an object",
+      message: "invalid host module proof specifier",
     });
-  }
-  if (typeof value.specifier !== "string" || value.specifier.length === 0) {
-    return err({
-      type: "ProofInvalid",
-      message: "specifier entry is missing specifier",
-    });
-  }
-  if (typeof value.redirected !== "boolean") {
-    return err({
-      type: "ProofInvalid",
-      message: `specifier ${value.specifier} is missing redirected`,
-    });
-  }
-  const bareResolution =
-    typeof value.bareResolution === "string" ? value.bareResolution : undefined;
-  const loadedFrom =
-    typeof value.loadedFrom === "string" ? value.loadedFrom : undefined;
-  return ok({
-    specifier: value.specifier as PiHostModuleProofLineSpecifier["specifier"],
-    redirected: value.redirected,
-    ...(bareResolution === undefined ? {} : { bareResolution }),
-    ...(loadedFrom === undefined ? {} : { loadedFrom }),
-  });
+  return ok(parsed.data);
 }
 
 /**
@@ -280,21 +278,27 @@ export function parseProofLine(
       message: "proof line exceeds the bounded size",
     });
   }
-  const parsed = Result.fromThrowable(
-    () => JSON.parse(line) as unknown,
+  const parsed = parseJsonValue(line).mapErr(
     (): VerifyFailure => ({
       type: "ProofInvalid",
       message: "proof line is not valid JSON",
     }),
-  )();
+  );
   if (parsed.isErr()) return err(parsed.error);
-  if (!isRecord(parsed.value) || !isRecord(parsed.value.weaveHostModuleProof)) {
+  if (!isJsonObject(parsed.value)) {
     return err({
       type: "ProofInvalid",
       message: "JSON is not a weaveHostModuleProof line",
     });
   }
-  const body = parsed.value.weaveHostModuleProof;
+  const proofValue = parsed.value.weaveHostModuleProof;
+  if (!isJsonObject(proofValue)) {
+    return err({
+      type: "ProofInvalid",
+      message: "JSON is not a weaveHostModuleProof line",
+    });
+  }
+  const body = proofValue;
   if (!Array.isArray(body.specifiers)) {
     return err({
       type: "ProofInvalid",
@@ -307,15 +311,14 @@ export function parseProofLine(
     if (specifier.isErr()) return err(specifier.error);
     specifiers.push(specifier.value);
   }
-  const hostRoot =
-    typeof body.hostRoot === "string" ? body.hostRoot : undefined;
-  const hostVersion =
-    typeof body.hostVersion === "string" ? body.hostVersion : undefined;
-  return ok({
-    ...(hostRoot === undefined ? {} : { hostRoot }),
-    ...(hostVersion === undefined ? {} : { hostVersion }),
-    specifiers,
-  });
+  const hostRoot = isJsonString(body.hostRoot) ? body.hostRoot : undefined;
+  const hostVersion = isJsonString(body.hostVersion)
+    ? body.hostVersion
+    : undefined;
+  const result: MutableParsedHostModuleProof = { specifiers };
+  if (hostRoot !== undefined) result.hostRoot = hostRoot;
+  if (hostVersion !== undefined) result.hostVersion = hostVersion;
+  return ok(result);
 }
 
 /** Scan captured stdout/stderr for the first valid proof line. */
@@ -578,9 +581,9 @@ export function evaluateSingletonProof(input: {
 export function buildProofEnv(
   source: VerifyEnv,
   overrides: Readonly<Record<string, string>>,
-): Record<string, string> {
+): ProofEnvironment {
   const omitted = new Set<string>(CHILD_ENV_OMIT);
-  const env: Record<string, string> = {};
+  const env: ProofEnvironment = {};
   for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
     if (omitted.has(key)) continue;
@@ -656,19 +659,26 @@ async function pathExists(path: string): Promise<boolean> {
   return Bun.file(path).exists();
 }
 
-function readJsonFile(
-  path: string,
-): ResultAsync<
-  unknown,
-  { readonly type: "JsonReadFailed"; readonly path: string }
-> {
-  return ResultAsync.fromThrowable(
-    () => Bun.file(path).json(),
-    (): { readonly type: "JsonReadFailed"; readonly path: string } => ({
+interface JsonReadFailure {
+  readonly type: "JsonReadFailed";
+  readonly path: string;
+}
+
+function readJsonFile(path: string): ResultAsync<JsonValue, JsonReadFailure> {
+  return ResultAsync.fromPromise(
+    Bun.file(path).text(),
+    (): JsonReadFailure => ({
       type: "JsonReadFailed",
       path,
     }),
-  )();
+  ).andThen((text) =>
+    parseJsonValue(text).mapErr(
+      (): JsonReadFailure => ({
+        type: "JsonReadFailed",
+        path,
+      }),
+    ),
+  );
 }
 
 async function resolveHostPresence(
@@ -804,7 +814,7 @@ async function listCheckoutCopyPaths(repoRoot: string): Promise<string[]> {
       }
       return names;
     },
-    () => [] as string[],
+    () => [],
   );
   const isolated = await glob();
   if (isolated.isOk()) found.push(...isolated.value);
@@ -828,7 +838,7 @@ function signalPid(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
     () => {
       process.kill(pid, signal);
     },
-    () => undefined,
+    () => {},
   )();
 }
 
@@ -899,14 +909,14 @@ async function terminateSpawned(
   signalPid(pid, "SIGTERM");
   const term = await Promise.race([
     subprocess.exited.then((exitCode) => ({ exitCode })),
-    delay(KILL_WAIT_MS).then(() => undefined),
+    delay(KILL_WAIT_MS).then(() => {}),
   ]);
   if (term !== undefined) return ok(term);
   subprocess.kill("SIGKILL");
   signalPid(pid, "SIGKILL");
   const killed = await Promise.race([
     subprocess.exited.then((exitCode) => ({ exitCode })),
-    delay(KILL_WAIT_MS).then(() => undefined),
+    delay(KILL_WAIT_MS).then(() => {}),
   ]);
   if (killed === undefined) {
     return err({
@@ -926,7 +936,7 @@ async function removeDir(path: string): Promise<Result<void, VerifyFailure>> {
       message: `failed to remove ${path}`,
     });
   }
-  return ok(undefined);
+  return ok();
 }
 
 async function createTempCwd(): Promise<Result<string, VerifyFailure>> {
@@ -950,10 +960,8 @@ async function readUntilProof(
   const stdout = spawned.subprocess.stdout;
   const stderr = spawned.subprocess.stderr;
   if (
-    stdout === undefined ||
-    stderr === undefined ||
-    typeof stdout === "number" ||
-    typeof stderr === "number"
+    !(stdout instanceof ReadableStream) ||
+    !(stderr instanceof ReadableStream)
   ) {
     return err({
       type: "SpawnFailed",
@@ -973,10 +981,7 @@ async function readUntilProof(
     reader: ReadableStreamDefaultReader<Uint8Array>,
   ): Promise<void> => {
     while (true) {
-      const chunk = await ResultAsync.fromPromise(
-        reader.read(),
-        () => undefined,
-      );
+      const chunk = await ResultAsync.fromPromise(reader.read(), () => {});
       if (chunk.isErr() || chunk.value.done) return;
       spawned.output = appendBounded(
         spawned.output,

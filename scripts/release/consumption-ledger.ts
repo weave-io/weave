@@ -41,12 +41,16 @@
  * The heading-only changelog stubs that precede the first canonical stable
  * release contain no blocks, so the empty ledger is a valid, expected state.
  */
-import { err, ok, okAsync, Result, type ResultAsync } from "neverthrow";
+import { err, ok, okAsync, type Result, type ResultAsync } from "neverthrow";
 import { z } from "zod";
 import type { ChangesetIdentity } from "./changeset-policy.js";
-import { PUBLIC_PACKAGES, type PublicPackageName } from "./constants.js";
+import {
+  PUBLIC_PACKAGE_NAMES,
+  PUBLIC_PACKAGES,
+  type PublicPackageName,
+} from "./constants.js";
 import type { FileSystemError } from "./errors.js";
-import { publishablePackageNames } from "./package-policy.js";
+import { parseJsonValue } from "./json.js";
 
 /** Opening word of every hidden mapping block. */
 export const LEDGER_BLOCK_MARKER = "weave-release-ledger" as const;
@@ -65,24 +69,26 @@ const BLOCK_HEADER = new RegExp(`^${LEDGER_BLOCK_MARKER}:(\\d+)$`);
 const COMMENT_OPEN = "<!--";
 const COMMENT_CLOSE = "-->";
 
-const PublicPackageNameSchema = z.enum(
-  publishablePackageNames() as [PublicPackageName, ...PublicPackageName[]],
-);
+export const LedgerPackageNameSchema = z.enum(PUBLIC_PACKAGE_NAMES);
 
-const ChangesetIdentitySchema = z
+export const LedgerChangesetIdSchema = z.string().regex(CHANGESET_ID);
+export const LedgerSourceDigestSchema = z.string().regex(SHA256_HEX);
+export const LedgerChangesetIdentitySchema = z
   .object({
-    id: z.string().regex(CHANGESET_ID),
-    sourceDigest: z.string().regex(SHA256_HEX),
+    id: LedgerChangesetIdSchema,
+    sourceDigest: LedgerSourceDigestSchema,
   })
   .strict();
+
+export const LedgerStableVersionSchema = z.string().regex(STABLE_VERSION);
 
 /** The validated payload of one hidden mapping block. */
 export const LedgerBlockSchema = z
   .object({
-    package: PublicPackageNameSchema,
-    version: z.string().regex(STABLE_VERSION),
+    package: LedgerPackageNameSchema,
+    version: LedgerStableVersionSchema,
     changesets: z
-      .array(ChangesetIdentitySchema)
+      .array(LedgerChangesetIdentitySchema)
       .min(1)
       .max(MAX_LEDGER_BLOCK_CHANGESETS),
   })
@@ -256,7 +262,7 @@ export function loadConsumptionLedger(
 ): ResultAsync<ConsumptionLedger, ConsumptionLedgerError> {
   let loaded: ResultAsync<readonly ChangelogSource[], ConsumptionLedgerError> =
     okAsync([]);
-  for (const packageName of publishablePackageNames()) {
+  for (const packageName of PUBLIC_PACKAGE_NAMES) {
     const path = `${root}/${PUBLIC_PACKAGES[packageName].directory}/CHANGELOG.md`;
     loaded = loaded.andThen((sources) =>
       reader
@@ -348,10 +354,7 @@ function readLedgerBlock(
       schemaVersion,
     });
   const payload = newline === -1 ? "" : trimmed.slice(newline + 1);
-  const decoded = Result.fromThrowable(
-    () => JSON.parse(payload) as unknown,
-    (cause) => String(cause),
-  )();
+  const decoded = parseJsonValue(payload).mapErr((error) => error.message);
   if (decoded.isErr())
     return err({
       type: "InvalidLedgerJson",
@@ -445,7 +448,7 @@ function indexRecords(
 function orderRecords(
   records: readonly ConsumedChangeset[],
 ): readonly ConsumedChangeset[] {
-  const catalog = publishablePackageNames();
+  const catalog = PUBLIC_PACKAGE_NAMES;
   return [...records].sort((left, right) => {
     const byPackage =
       catalog.indexOf(left.packageName) - catalog.indexOf(right.packageName);

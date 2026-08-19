@@ -1,6 +1,26 @@
 import { describe, expect, it } from "bun:test";
 import { generateAcceptanceManifest } from "../generate-acceptance-manifest.js";
 
+const EXPECTED_PASSING_IDS = new Set([
+  "PI-ACT",
+  "PI-MAT",
+  "PI-PRM",
+  "PI-SKL",
+  "PI-MDL",
+  "PI-CMD",
+  "PI-CMP",
+  "PI-REC",
+  "PI-PLN",
+  "PI-ART",
+  "PI-PER",
+  "PI-DIA",
+  "PI-USG",
+  "PI-CAP",
+  "PI-ERR",
+  "PI-PKG",
+  "PI-MODE",
+]);
+
 /**
  * Proof that the acceptance-manifest generator produces a real,
  * schema-valid, evidence-verified manifest from the current working tree -
@@ -43,29 +63,7 @@ describe("generateAcceptanceManifest", () => {
     ]);
     expect(
       manifest.requirements
-        .filter((row) =>
-          (
-            [
-              "PI-ACT",
-              "PI-MAT",
-              "PI-PRM",
-              "PI-SKL",
-              "PI-MDL",
-              "PI-CMD",
-              "PI-CMP",
-              "PI-REC",
-              "PI-PLN",
-              "PI-ART",
-              "PI-PER",
-              "PI-DIA",
-              "PI-USG",
-              "PI-CAP",
-              "PI-ERR",
-              "PI-PKG",
-              "PI-MODE",
-            ] as readonly string[]
-          ).includes(row.id),
-        )
+        .filter((row) => EXPECTED_PASSING_IDS.has(row.id))
         .every((row) => row.result === "pass"),
     ).toBe(true);
   }, 60_000);

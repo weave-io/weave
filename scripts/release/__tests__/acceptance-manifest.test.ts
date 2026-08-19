@@ -17,6 +17,7 @@ import {
   PiAdapterFailureRecoverySchema,
 } from "../../../packages/adapters/pi/src/errors.js";
 import {
+  type AcceptanceManifest,
   ARTIFACT_APPROVAL_ACTOR_KINDS,
   BunEvidenceFileReader,
   buildAcceptanceManifest,
@@ -35,6 +36,19 @@ import {
   BunSmokeChecklistReader,
   parseSmokeChecklist,
 } from "../smoke-checklist.js";
+
+interface EvidenceFileMap {
+  [path: string]: string;
+}
+
+function requiredRequirement(
+  manifest: AcceptanceManifest,
+  id: string,
+): AcceptanceManifest["requirements"][number] {
+  const requirement = manifest.requirements.find((row) => row.id === id);
+  if (requirement === undefined) throw new Error(`missing requirement ${id}`);
+  return requirement;
+}
 
 function checklistResults(
   ids: Iterable<string>,
@@ -103,7 +117,12 @@ describe("buildAcceptanceManifest + validateAcceptanceManifestStructure", () => 
       artifactBinding: VALID_ARTIFACT_BINDING,
       requirements: [
         ...ACCEPTANCE_MANIFEST_REQUIREMENTS.slice(1),
-        ACCEPTANCE_MANIFEST_REQUIREMENTS[1]!,
+        (() => {
+          const requirement = ACCEPTANCE_MANIFEST_REQUIREMENTS[1];
+          if (requirement === undefined)
+            throw new Error("missing duplicate fixture requirement");
+          return requirement;
+        })(),
       ],
     });
     const result = validateAcceptanceManifestStructure(manifest);
@@ -174,7 +193,7 @@ describe("buildAcceptanceManifest + validateAcceptanceManifestStructure", () => 
       artifactBinding: VALID_ARTIFACT_BINDING,
       requirements: ACCEPTANCE_MANIFEST_REQUIREMENTS,
     });
-    const first = manifest.requirements[0]!;
+    const first = requiredRequirement(manifest, "PI-CAP");
     for (const reference of ["docs/specs/legacy.md#old", "33§7"]) {
       const candidate = {
         ...manifest,
@@ -206,32 +225,32 @@ describe("verifyAcceptanceManifestEvidence (mocked reader)", () => {
     // Closed-set rows (PI-CAP/PI-CMD/PI-LIF) need every member literally
     // present somewhere in their referenced files, same as a real test file
     // would contain them via imports/loops/assertions elsewhere in the file.
-    const capRow = manifest.requirements.find((row) => row.id === "PI-CAP")!;
+    const capRow = requiredRequirement(manifest, "PI-CAP");
     for (const test of Object.values(capRow.tests))
       files[test.file] = `${files[test.file]}\n${ALL_CAPABILITY_IDS.join(" ")}`;
-    const cmdRow = manifest.requirements.find((row) => row.id === "PI-CMD")!;
+    const cmdRow = requiredRequirement(manifest, "PI-CMD");
     for (const test of Object.values(cmdRow.tests))
       files[test.file] =
         `${files[test.file]}\n${[...WEAVE_COMMAND_NAMES, ...WEAVE_COMMAND_CLASSIFICATIONS].join(" ")}`;
-    const lifRow = manifest.requirements.find((row) => row.id === "PI-LIF")!;
+    const lifRow = requiredRequirement(manifest, "PI-LIF");
     for (const test of Object.values(lifRow.tests))
       files[test.file] =
         `${files[test.file]}\n${LIFECYCLE_OPERATIONS.join(" ")}`;
-    const delRow = manifest.requirements.find((row) => row.id === "PI-DEL")!;
+    const delRow = requiredRequirement(manifest, "PI-DEL");
     for (const test of Object.values(delRow.tests))
       files[test.file] = `${files[test.file]}\n${PI_CONTROL_KINDS.join(" ")}`;
-    const plnRow = manifest.requirements.find((row) => row.id === "PI-PLN")!;
+    const plnRow = requiredRequirement(manifest, "PI-PLN");
     for (const test of Object.values(plnRow.tests))
       files[test.file] = `${files[test.file]}\n${PLAN_TASK_STATES.join(" ")}`;
-    const artRow = manifest.requirements.find((row) => row.id === "PI-ART")!;
+    const artRow = requiredRequirement(manifest, "PI-ART");
     for (const test of Object.values(artRow.tests))
       files[test.file] =
         `${files[test.file]}\n${[...ARTIFACT_APPROVAL_ACTOR_KINDS, ...RECONCILIATION_AUTHORIZATION_SOURCES].join(" ")}`;
-    const pkgRow = manifest.requirements.find((row) => row.id === "PI-PKG")!;
+    const pkgRow = requiredRequirement(manifest, "PI-PKG");
     for (const test of Object.values(pkgRow.tests))
       files[test.file] =
         `${files[test.file]}\n${HOST_BOUNDARY_TOKENS.join(" ")}`;
-    const errRow = manifest.requirements.find((row) => row.id === "PI-ERR")!;
+    const errRow = requiredRequirement(manifest, "PI-ERR");
     for (const test of Object.values(errRow.tests))
       files[test.file] = `${files[test.file]}\n${[
         ...PiAdapterFailureCodeSchema.options,
@@ -351,11 +370,12 @@ describe("verifyAcceptanceManifestEvidence (mocked reader)", () => {
     // Strip every mention of one required capability ID from the PI-CAP files only.
     const capRow = manifest.requirements.find((row) => row.id === "PI-CAP");
     expect(capRow).toBeDefined();
-    for (const test of Object.values(capRow!.tests))
-      files[test.file] = files[test.file]!.replaceAll(
-        "config-materialization",
-        "",
-      );
+    if (capRow === undefined) throw new Error("missing PI-CAP fixture row");
+    for (const test of Object.values(capRow.tests)) {
+      const content = files[test.file];
+      if (content === undefined) throw new Error("missing fixture content");
+      files[test.file] = content.replaceAll("config-materialization", "");
+    }
 
     const report = await verifyAcceptanceManifestEvidence(manifest, {
       reader: new FakeFileReader(files),
@@ -371,8 +391,9 @@ describe("verifyAcceptanceManifestEvidence (mocked reader)", () => {
       (issue) => issue.requirementId === "PI-CAP",
     );
     expect(capIssue).toBeDefined();
+    if (capIssue === undefined) throw new Error("missing PI-CAP issue");
     expect(
-      capIssue!.problems.some((problem) =>
+      capIssue.problems.some((problem) =>
         problem.includes("config-materialization"),
       ),
     ).toBe(true);
@@ -385,8 +406,8 @@ describe("verifyAcceptanceManifestEvidence orphan evidence detection (mocked rea
     requirements: ACCEPTANCE_MANIFEST_REQUIREMENTS,
   });
 
-  const allFilesPresent = (): Record<string, string> => {
-    const files: Record<string, string> = {};
+  const allFilesPresent = (): EvidenceFileMap => {
+    const files: EvidenceFileMap = {};
     for (const requirement of manifest.requirements)
       for (const test of Object.values(requirement.tests))
         files[test.file] =

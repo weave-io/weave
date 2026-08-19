@@ -7,7 +7,7 @@ import {
   metadataReplayDigest,
   validatePullRequestHead,
 } from "../metadata-replay.js";
-import { trainRecordDigest } from "../stable-train.js";
+import { trainRecordDigest, validateStableTrain } from "../stable-train.js";
 
 class MemoryFiles implements FileSystem {
   readonly files = new Map<string, string>();
@@ -25,17 +25,17 @@ class MemoryFiles implements FileSystem {
   }
   writeText(path: string, contents: string) {
     this.files.set(path, contents);
-    return okAsync(undefined);
+    return okAsync();
   }
   delete(path: string) {
     this.files.delete(path);
-    return okAsync(undefined);
+    return okAsync();
   }
 }
 
 const clock: Clock = {
   now: () => new Date("2026-07-20T00:00:00.000Z"),
-  sleep: () => okAsync(undefined),
+  sleep: () => okAsync(),
 };
 const branch = "release-metadata/20260720-aaaaaaaaaaaa";
 
@@ -66,10 +66,12 @@ function replay(files: MemoryFiles) {
       },
     ],
   };
-  const train = {
+  const checked = validateStableTrain({
     ...trainContent,
     recordDigest: trainRecordDigest(trainContent),
-  } as never;
+  });
+  if (checked.isErr()) throw new Error(JSON.stringify(checked.error));
+  const train = checked.value;
   const result = tool.generateReplayRecord(train);
   if (result.isErr()) throw new Error(result.error.type);
   return { tool, record: result.value };

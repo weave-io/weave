@@ -17,7 +17,7 @@ export class FixtureRegistry implements NpmRegistryClient {
   ) {}
 
   publish(): ResultAsync<void, RegistryError> {
-    return okAsync(undefined);
+    return okAsync();
   }
   viewVersion(): ResultAsync<string, RegistryError> {
     return okAsync("");
@@ -29,7 +29,7 @@ export class FixtureRegistry implements NpmRegistryClient {
     return okAsync({});
   }
   verifyPublished(): ResultAsync<void, RegistryError> {
-    return okAsync(undefined);
+    return okAsync();
   }
   listVersions(name: string): ResultAsync<readonly string[], RegistryError> {
     return okAsync(this.versions[name] ?? []);
@@ -64,7 +64,7 @@ export async function runScenarios(
 
 export const FIXTURE_CLOCK = {
   now: () => new Date("2026-07-19T12:00:00.000Z"),
-  sleep: () => okAsync(undefined),
+  sleep: () => okAsync(),
 };
 export const FIXTURE_VERSIONS = {
   "@weaveio/weave-cli": "0.1.0",

@@ -45,6 +45,11 @@ export const ChannelVersionSchema = z.string().regex(CHANNEL_VERSION);
 export const ShortShaSchema = z.string().regex(SHORT_SHA);
 
 export type Channel = "next" | "nightly";
+type ChannelDiffValue =
+  | readonly string[]
+  | Result<readonly string[], unknown>
+  | PromiseLike<readonly string[]>
+  | ResultAsyncType<readonly string[], unknown>;
 
 export type ChannelVersionError =
   | { type: "InvalidSourceSha"; sourceSha: string }
@@ -141,23 +146,20 @@ export function computeWouldBeNextStableVersions(
       type: "InvalidChangesetInput",
       reason: "a consumed changeset was modified after ledger consumption",
     });
-  const versions = { ...input.packageVersions } as Record<
-    PublicPackageName,
-    string
-  >;
+  const versions = { ...input.packageVersions };
   const catalog = publishablePackageNames();
   for (const packageName of catalog) {
     if (versions[packageName] === undefined)
       return err({ type: "InvalidPackageVersionMap", packageName });
   }
   for (const packageName of Object.keys(versions)) {
-    if (!catalog.includes(packageName as PublicPackageName))
+    if (!catalog.some((catalogPackage) => catalogPackage === packageName))
       return err({ type: "InvalidPackageVersionMap", packageName });
   }
-  for (const [packageName, version] of Object.entries(versions) as [
-    PublicPackageName,
-    string,
-  ][]) {
+  for (const packageName of catalog) {
+    const version = versions[packageName];
+    if (version === undefined)
+      return err({ type: "InvalidPackageVersionMap", packageName });
     if (!STABLE_VERSION.test(version))
       return err({ type: "InvalidStableVersion", packageName, version });
   }
@@ -381,7 +383,7 @@ function checkCollision(
   packageName: PublicPackageName,
   version: string,
 ): ResultAsync<void, ChannelVersionError> {
-  if (registry === undefined) return okAsync(undefined);
+  if (registry === undefined) return okAsync();
   return registry
     .listVersions(packageName)
     .mapErr((error) => ({
@@ -393,7 +395,7 @@ function checkCollision(
     .andThen((versions) =>
       versions.includes(version)
         ? errAsync({ type: "RegistryCollision" as const, packageName, version })
-        : okAsync(undefined),
+        : okAsync(),
     );
 }
 
@@ -402,7 +404,7 @@ function latestNightlySourceSha(
 ): ResultAsync<string | null, ChannelVersionError> {
   const packages = publishablePackageNames();
   let found: { date: string; version: string; sha: string } | undefined;
-  let result: ResultAsync<void, ChannelVersionError> = okAsync(undefined);
+  let result: ResultAsync<void, ChannelVersionError> = okAsync();
   for (const packageName of packages)
     result = result.andThen(() =>
       registry
@@ -433,7 +435,7 @@ function latestNightlySourceSha(
             )
               found = { date, version, sha };
           }
-          return okAsync(undefined);
+          return okAsync();
         }),
     );
   return result.map(() => found?.sha ?? null);
@@ -478,26 +480,16 @@ function readChangedPaths(
 }
 
 function isResultLike(
-  value: unknown,
+  value: ChannelDiffValue,
 ): value is Result<readonly string[], unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "isErr" in value &&
-    "match" in value &&
-    typeof value.match === "function"
-  );
+  return z.object({ match: z.function() }).safeParse(value).success;
 }
 
 function isPromiseLike(
-  value: unknown,
+  value: ChannelDiffValue,
 ): value is PromiseLike<readonly string[]> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "then" in value &&
-    typeof value.then === "function"
-  );
+  const parsed = z.record(z.string(), z.unknown()).safeParse(value);
+  return parsed.success && z.function().safeParse(parsed.data.then).success;
 }
 
 function normalizeSha12(sourceSha: string): string | null {
