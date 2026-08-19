@@ -16,6 +16,7 @@
 
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { err, ok, Result } from "neverthrow";
+import { z } from "zod";
 import {
   initializationError,
   migrationVersionError,
@@ -606,8 +607,8 @@ function validateMigrationDefinitions(): Result<void, RuntimeStoreError> {
   return ok(undefined);
 }
 
-function parseSchemaVersion(value: unknown): Result<number, RuntimeStoreError> {
-  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) {
+function parseSchemaVersion(value: string): Result<number, RuntimeStoreError> {
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
     return err(
       initializationError("Invalid schema_version in runtime_metadata"),
     );
@@ -622,10 +623,7 @@ function parseSchemaVersion(value: unknown): Result<number, RuntimeStoreError> {
   return ok(parsed);
 }
 
-interface AppliedMigrationRow {
-  readonly version: number;
-  readonly name: string;
-}
+type AppliedMigrationRow = z.infer<typeof migrationLedgerRowSchema>;
 
 function validateAppliedMigrations(
   rows: readonly AppliedMigrationRow[],
@@ -636,7 +634,7 @@ function validateAppliedMigrations(
     if (!Number.isSafeInteger(row.version) || row.version <= previousVersion) {
       return err(initializationError("Invalid schema_migrations ledger"));
     }
-    if (typeof row.name !== "string" || row.name.length === 0) {
+    if (row.name.length === 0) {
       return err(initializationError("Invalid schema_migrations ledger"));
     }
     previousVersion = row.version;
@@ -664,44 +662,54 @@ function validateAppliedMigrations(
 // permission_grants schema verification
 // ---------------------------------------------------------------------------
 
-interface TableInfoRow {
-  readonly cid: number;
-  readonly name: string;
-  readonly type: string;
-  readonly notnull: number;
-  readonly dflt_value: string | number | null;
-  readonly pk: number;
-}
+const relationRowSchema = z.object({ type: z.string() });
+const relationRowNullableSchema = relationRowSchema.nullable();
+const metadataValueRowSchema = z.object({ value: z.string() });
+const metadataValueRowNullableSchema = metadataValueRowSchema.nullable();
+const migrationLedgerRowSchema = z.object({
+  version: z.number(),
+  name: z.string(),
+});
+const tableInfoRowSchema = z.object({
+  cid: z.number(),
+  name: z.string(),
+  type: z.string(),
+  notnull: z.number(),
+  dflt_value: z.union([z.string(), z.number(), z.null()]),
+  pk: z.number(),
+});
+const indexListRowSchema = z.object({
+  seq: z.number(),
+  name: z.string(),
+  unique: z.number(),
+  origin: z.string(),
+  partial: z.number(),
+});
+const indexInfoRowSchema = z.object({
+  seqno: z.number(),
+  cid: z.number(),
+  name: z.string().nullable(),
+});
+const indexXInfoRowSchema = z.object({
+  seqno: z.number(),
+  cid: z.number(),
+  name: z.string().nullable(),
+  desc: z.number(),
+  coll: z.string(),
+  key: z.number(),
+});
+const schemaObjectRowSchema = z.object({
+  type: z.string(),
+  name: z.string(),
+  tbl_name: z.string(),
+  sql: z.string().nullable(),
+});
 
-interface IndexListRow {
-  readonly seq: number;
-  readonly name: string;
-  readonly unique: number;
-  readonly origin: string;
-  readonly partial: number;
-}
-
-interface IndexInfoRow {
-  readonly seqno: number;
-  readonly cid: number;
-  readonly name: string | null;
-}
-
-interface IndexXInfoRow {
-  readonly seqno: number;
-  readonly cid: number;
-  readonly name: string | null;
-  readonly desc: number;
-  readonly coll: string;
-  readonly key: number;
-}
-
-interface SchemaObjectRow {
-  readonly type: string;
-  readonly name: string;
-  readonly tbl_name: string;
-  readonly sql: string | null;
-}
+type TableInfoRow = z.infer<typeof tableInfoRowSchema>;
+type IndexListRow = z.infer<typeof indexListRowSchema>;
+type IndexInfoRow = z.infer<typeof indexInfoRowSchema>;
+type IndexXInfoRow = z.infer<typeof indexXInfoRowSchema>;
+type SchemaObjectRow = z.infer<typeof schemaObjectRowSchema>;
 
 /** SQLite autoindex name shape; suffix numbering is not stable across versions. */
 const SQLITE_AUTOINDEX_NAME = /^sqlite_autoindex_permission_grants_[1-9]\d*$/;
@@ -716,49 +724,61 @@ function quoteIdent(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }
 
+type SqliteSchemaReadError = "sqlite-schema-read";
+
 function readRelationType(
   db: Database,
   tableName: string,
-): Result<"table" | "view" | null, unknown> {
+): Result<"table" | "view" | null, SqliteSchemaReadError> {
   return Result.fromThrowable(
-    () => {
-      const row = db
+    () =>
+      db
         .prepare(
           "SELECT type FROM sqlite_master WHERE name = ? AND type IN ('table', 'view')",
         )
-        .get(tableName) as { type: string } | null;
-      if (row === null) return null;
-      if (row.type === "table" || row.type === "view") return row.type;
-      return null;
-    },
-    (cause) => cause,
-  )();
+        .get(tableName),
+    () => "sqlite-schema-read" as const,
+  )().andThen((raw) => {
+    const parsed = relationRowNullableSchema.safeParse(raw);
+    if (!parsed.success) return err("sqlite-schema-read" as const);
+    if (parsed.data === null)
+      return ok<"table" | "view" | null, SqliteSchemaReadError>(null);
+    const relationType = parsed.data.type;
+    if (relationType === "table" || relationType === "view") {
+      return ok<"table" | "view" | null, SqliteSchemaReadError>(relationType);
+    }
+    return ok<"table" | "view" | null, SqliteSchemaReadError>(null);
+  });
 }
 
 function readTableInfo(
   db: Database,
   tableName: string,
-): Result<readonly TableInfoRow[], unknown> {
+): Result<readonly TableInfoRow[], SqliteSchemaReadError> {
   return Result.fromThrowable(
-    () =>
-      db
-        .prepare(`PRAGMA table_info(${quoteIdent(tableName)})`)
-        .all() as TableInfoRow[],
-    (cause) => cause,
-  )();
+    () => db.prepare(`PRAGMA table_info(${quoteIdent(tableName)})`).all(),
+    () => "sqlite-schema-read" as const,
+  )().andThen((raw) => {
+    const parsed = tableInfoRowSchema.array().safeParse(raw);
+    return parsed.success
+      ? ok(parsed.data)
+      : err("sqlite-schema-read" as const);
+  });
 }
 
 function readIndexList(
   db: Database,
   tableName: string,
-): Result<readonly IndexListRow[], unknown> {
+): Result<readonly IndexListRow[], SqliteSchemaReadError> {
   return Result.fromThrowable(
-    () =>
-      db
-        .prepare(`PRAGMA index_list(${quoteIdent(tableName)})`)
-        .all() as IndexListRow[],
-    (cause) => cause,
-  )();
+    () => db.prepare(`PRAGMA index_list(${quoteIdent(tableName)})`).all(),
+    () => "sqlite-schema-read" as const,
+  )().andThen((raw) => {
+    const parsed = indexListRowSchema.array().safeParse(raw);
+    return parsed.success
+      ? ok(parsed.data)
+      : err("sqlite-schema-read" as const);
+  });
 }
 
 /**
@@ -768,7 +788,7 @@ function readIndexList(
 function readSchemaObjectsForTable(
   db: Database,
   tableName: string,
-): Result<readonly SchemaObjectRow[], unknown> {
+): Result<readonly SchemaObjectRow[], SqliteSchemaReadError> {
   return Result.fromThrowable(
     () =>
       db
@@ -778,20 +798,33 @@ function readSchemaObjectsForTable(
            WHERE tbl_name = ?
            ORDER BY type, name`,
         )
-        .all(tableName) as SchemaObjectRow[],
-    (cause) => cause,
-  )();
+        .all(tableName),
+    () => "sqlite-schema-read" as const,
+  )().andThen((raw) => {
+    const parsed = schemaObjectRowSchema.array().safeParse(raw);
+    return parsed.success
+      ? ok(parsed.data)
+      : err("sqlite-schema-read" as const);
+  });
 }
 
 function indexColumnNames(db: Database, indexName: string): readonly string[] {
-  const rows = db
-    .prepare(`PRAGMA index_info(${quoteIdent(indexName)})`)
-    .all() as IndexInfoRow[];
-  return rows
+  const rows: Result<readonly IndexInfoRow[], SqliteSchemaReadError> =
+    Result.fromThrowable(
+      () => db.prepare(`PRAGMA index_info(${quoteIdent(indexName)})`).all(),
+      () => "sqlite-schema-read" as const,
+    )().andThen((raw) => {
+      const parsed = indexInfoRowSchema.array().safeParse(raw);
+      return parsed.success
+        ? ok(parsed.data)
+        : err("sqlite-schema-read" as const);
+    });
+  if (rows.isErr()) return [];
+  return rows.value
     .slice()
     .sort((left, right) => left.seqno - right.seqno)
     .map((row) => row.name)
-    .filter((name): name is string => typeof name === "string");
+    .filter((name): name is string => name !== null);
 }
 
 function indexColumnsMatch(
@@ -812,18 +845,21 @@ function indexColumnsMatch(
  * JavaScript comparison would reject.
  */
 function indexKeyCollationsAreBinary(db: Database, indexName: string): boolean {
-  const rows = Result.fromThrowable(
-    () =>
-      db
-        .prepare(`PRAGMA index_xinfo(${quoteIdent(indexName)})`)
-        .all() as IndexXInfoRow[],
-    (cause) => cause,
-  )();
+  const rows: Result<readonly IndexXInfoRow[], SqliteSchemaReadError> =
+    Result.fromThrowable(
+      () => db.prepare(`PRAGMA index_xinfo(${quoteIdent(indexName)})`).all(),
+      () => "sqlite-schema-read" as const,
+    )().andThen((raw) => {
+      const parsed = indexXInfoRowSchema.array().safeParse(raw);
+      return parsed.success
+        ? ok(parsed.data)
+        : err("sqlite-schema-read" as const);
+    });
   if (rows.isErr()) return false;
   for (const row of rows.value) {
     // key=1 marks indexed columns; key=0 is the trailing rowid/payload slot.
     if (row.key !== 1) continue;
-    if (typeof row.coll !== "string" || row.coll !== "BINARY") return false;
+    if (row.coll !== "BINARY") return false;
   }
   return true;
 }
@@ -834,7 +870,7 @@ function indexKeyCollationsAreBinary(db: Database, indexName: string): boolean {
  * Autoindex rows have null sql and are covered by `PRAGMA index_xinfo`.
  */
 function sqlDeclaresOnlyBinaryCollations(sql: string | null): boolean {
-  if (typeof sql !== "string" || sql.length === 0) return false;
+  if (sql === null || sql.length === 0) return false;
   const pattern =
     /\bCOLLATE\s+("([^"]*)"|`([^`]*)`|\[([^\]]*)\]|([A-Za-z_][A-Za-z0-9_]*))/gi;
   let match: RegExpExecArray | null = pattern.exec(sql);
@@ -862,9 +898,14 @@ function verifyNoDatabaseTriggers(
         .prepare(
           "SELECT name FROM sqlite_master WHERE type = 'trigger' LIMIT 1",
         )
-        .get() as { name: string } | null,
-    (cause) => cause,
-  )();
+        .get(),
+    () => "sqlite-schema-read" as const,
+  )().andThen((raw) => {
+    const parsed = z.object({ name: z.string() }).nullable().safeParse(raw);
+    return parsed.success
+      ? ok(parsed.data)
+      : err("sqlite-schema-read" as const);
+  });
   if (read.isErr()) {
     return err(initializationError("Invalid runtime store schema", read.error));
   }
@@ -1189,7 +1230,7 @@ function ensureBootstrapTables(db: Database): Result<void, RuntimeStoreError> {
 }
 
 function runAllows(
-  statement: { run: (...params: SQLQueryBindings[]) => unknown },
+  statement: { run: (...params: SQLQueryBindings[]) => void },
   params: readonly SQLQueryBindings[],
 ): boolean {
   try {
@@ -1201,7 +1242,7 @@ function runAllows(
 }
 
 function runRejects(
-  statement: { run: (...params: SQLQueryBindings[]) => unknown },
+  statement: { run: (...params: SQLQueryBindings[]) => void },
   params: readonly SQLQueryBindings[],
 ): boolean {
   return !runAllows(statement, params);
@@ -1582,21 +1623,26 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
   if (noTriggers.isErr()) return err(noTriggers.error);
 
   // Read current schema version
-  let storedVersion = 0;
-  try {
-    const row = db
-      .prepare(
-        "SELECT value FROM runtime_metadata WHERE key = 'schema_version'",
-      )
-      .get() as { value: string } | null;
-    if (row) {
-      const parsed = parseSchemaVersion(row.value);
-      if (parsed.isErr()) return err(parsed.error);
-      storedVersion = parsed.value;
+  const schemaVersionRead = Result.fromThrowable(
+    () =>
+      db
+        .prepare(
+          "SELECT value FROM runtime_metadata WHERE key = 'schema_version'",
+        )
+        .get(),
+    (cause) => initializationError("Failed to read schema version", cause),
+  )().andThen((raw) => {
+    const parsedRow = metadataValueRowNullableSchema.safeParse(raw);
+    if (!parsedRow.success) {
+      return err(
+        initializationError("Invalid schema_version in runtime_metadata"),
+      );
     }
-  } catch (cause) {
-    return err(initializationError("Failed to read schema version", cause));
-  }
+    if (parsedRow.data === null) return ok(0);
+    return parseSchemaVersion(parsedRow.data.value);
+  });
+  if (schemaVersionRead.isErr()) return err(schemaVersionRead.error);
+  const storedVersion = schemaVersionRead.value;
 
   // Fail if DB was created by a newer Weave version
   if (storedVersion > CURRENT_SCHEMA_VERSION) {
@@ -1610,16 +1656,22 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
   }
 
   // Validate the applied-version ledger before selecting pending work.
-  let applied: AppliedMigrationRow[];
-  try {
-    applied = db
-      .prepare(
-        "SELECT version, name FROM schema_migrations ORDER BY version ASC",
-      )
-      .all() as AppliedMigrationRow[];
-  } catch (cause) {
-    return err(initializationError("Failed to read schema migrations", cause));
-  }
+  const appliedRead = Result.fromThrowable(
+    () =>
+      db
+        .prepare(
+          "SELECT version, name FROM schema_migrations ORDER BY version ASC",
+        )
+        .all(),
+    (cause) => initializationError("Failed to read schema migrations", cause),
+  )().andThen((raw) => {
+    const parsed = migrationLedgerRowSchema.array().safeParse(raw);
+    return parsed.success
+      ? ok(parsed.data)
+      : err(initializationError("Failed to read schema migrations"));
+  });
+  if (appliedRead.isErr()) return err(appliedRead.error);
+  const applied: AppliedMigrationRow[] = appliedRead.value;
   const appliedValidation = validateAppliedMigrations(applied, storedVersion);
   if (appliedValidation.isErr()) return err(appliedValidation.error);
 
@@ -1723,16 +1775,19 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
  * Returns 0 if no version has been stored yet.
  */
 export function readSchemaVersion(db: Database): number {
-  try {
-    const row = db
-      .prepare(
-        "SELECT value FROM runtime_metadata WHERE key = 'schema_version'",
-      )
-      .get() as { value: string } | null;
-    if (!row) return 0;
-    const parsed = parseSchemaVersion(row.value);
-    return parsed.isOk() ? parsed.value : 0;
-  } catch {
-    return 0;
-  }
+  const read = Result.fromThrowable(
+    () =>
+      db
+        .prepare(
+          "SELECT value FROM runtime_metadata WHERE key = 'schema_version'",
+        )
+        .get(),
+    () => "sqlite-schema-read" as const,
+  )().andThen((raw) => {
+    const parsedRow = metadataValueRowNullableSchema.safeParse(raw);
+    if (!parsedRow.success || parsedRow.data === null) return ok(0);
+    const parsed = parseSchemaVersion(parsedRow.data.value);
+    return parsed.isOk() ? parsed : ok(0);
+  });
+  return read.isOk() ? read.value : 0;
 }

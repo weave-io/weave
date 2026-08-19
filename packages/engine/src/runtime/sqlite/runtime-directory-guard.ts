@@ -53,6 +53,7 @@
 
 import { basename } from "node:path";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { z } from "zod";
 
 import {
   cstr,
@@ -179,6 +180,30 @@ export interface RuntimeDirectoryHandle {
   close(): void;
 }
 
+const runtimeDirectoryGuardErrorSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("unavailable"), message: z.string() }),
+  z.object({
+    type: z.literal("symlink-rejected"),
+    message: z.string(),
+    cause: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("identity-changed"),
+    message: z.string(),
+    cause: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("io"),
+    message: z.string(),
+    cause: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("locked"),
+    message: z.string(),
+    cause: z.string().optional(),
+  }),
+]);
+
 export interface RuntimeDirectoryGuard {
   /**
    * Establishes a held, no-follow chain from `projectRoot` (assumed to
@@ -212,11 +237,18 @@ function mapFfiError(
   cause: NoFollowFfiError,
   type: RuntimeDirectoryGuardError["type"] = "io",
 ): RuntimeDirectoryGuardError {
-  return {
-    type,
-    message: cause.message,
-    cause: cause.cause,
-  } as RuntimeDirectoryGuardError;
+  switch (type) {
+    case "unavailable":
+      return { type, message: cause.message };
+    case "symlink-rejected":
+      return { type, message: cause.message, cause: cause.cause };
+    case "identity-changed":
+      return { type, message: cause.message, cause: cause.cause };
+    case "locked":
+      return { type, message: cause.message, cause: cause.cause };
+    case "io":
+      return { type, message: cause.message, cause: cause.cause };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -627,7 +659,10 @@ export class BunRuntimeDirectoryGuard implements RuntimeDirectoryGuard {
       })
       .andThen((rootIdentity) =>
         this.walkSegments(rootFd, segments, mode, loaded, flags).map(
-          (runtimeDirFd) => ({ rootIdentity, runtimeDirFd }),
+          (runtimeDirFd) => ({
+            rootIdentity,
+            runtimeDirFd,
+          }),
         ),
       )
       .andThen(({ rootIdentity, runtimeDirFd }) =>
@@ -707,14 +742,8 @@ export class BunRuntimeDirectoryGuard implements RuntimeDirectoryGuard {
         return currentFd;
       })(),
       (cause) => {
-        if (
-          typeof cause === "object" &&
-          cause !== null &&
-          "type" in cause &&
-          "message" in cause
-        ) {
-          return cause as RuntimeDirectoryGuardError;
-        }
+        const parsed = runtimeDirectoryGuardErrorSchema.safeParse(cause);
+        if (parsed.success) return parsed.data;
         return {
           type: "io",
           message: "failed to walk the runtime directory chain",
@@ -828,25 +857,27 @@ export class MemoryRuntimeDirectoryGuard implements RuntimeDirectoryGuard {
       });
     }
     const fullPath = [projectRoot, ...segments].join("/");
-    const guard = this;
     let closed = false;
 
     const handle: RuntimeDirectoryHandle = {
       path: fullPath,
-      identity(): ResultAsync<RuntimeFileIdentity, RuntimeDirectoryGuardError> {
+      identity: (): ResultAsync<
+        RuntimeFileIdentity,
+        RuntimeDirectoryGuardError
+      > => {
         if (closed) {
           return errAsync({ type: "unavailable", message: "handle is closed" });
         }
-        return okAsync(guard.runtimeIdentity);
+        return okAsync(this.runtimeIdentity);
       },
-      verifyLeaf(
+      verifyLeaf: (
         fileName: string,
         options: VerifyLeafOptions,
-      ): ResultAsync<RuntimeFileIdentity, RuntimeDirectoryGuardError> {
+      ): ResultAsync<RuntimeFileIdentity, RuntimeDirectoryGuardError> => {
         if (closed) {
           return errAsync({ type: "unavailable", message: "handle is closed" });
         }
-        const existing = guard.leaves.get(fileName);
+        const existing = this.leaves.get(fileName);
         if (existing?.isSymlink) {
           return errAsync({
             type: "symlink-rejected",
@@ -865,16 +896,16 @@ export class MemoryRuntimeDirectoryGuard implements RuntimeDirectoryGuard {
           isSymlink: false,
           bytes: new Uint8Array(0),
         };
-        guard.leaves.set(fileName, created);
+        this.leaves.set(fileName, created);
         return okAsync(created.identity);
       },
-      readLeafBytes(
+      readLeafBytes: (
         fileName: string,
-      ): ResultAsync<Uint8Array, RuntimeDirectoryGuardError> {
+      ): ResultAsync<Uint8Array, RuntimeDirectoryGuardError> => {
         if (closed) {
           return errAsync({ type: "unavailable", message: "handle is closed" });
         }
-        const existing = guard.leaves.get(fileName);
+        const existing = this.leaves.get(fileName);
         if (existing?.isSymlink) {
           return errAsync({
             type: "symlink-rejected",
@@ -883,15 +914,15 @@ export class MemoryRuntimeDirectoryGuard implements RuntimeDirectoryGuard {
         }
         return okAsync(existing?.bytes ?? new Uint8Array(0));
       },
-      writeLeafAtomic(
+      writeLeafAtomic: (
         fileName: string,
         bytes: Uint8Array,
         _mode: number,
-      ): ResultAsync<RuntimeFileIdentity, RuntimeDirectoryGuardError> {
+      ): ResultAsync<RuntimeFileIdentity, RuntimeDirectoryGuardError> => {
         if (closed) {
           return errAsync({ type: "unavailable", message: "handle is closed" });
         }
-        const existing = guard.leaves.get(fileName);
+        const existing = this.leaves.get(fileName);
         if (existing?.isSymlink) {
           return errAsync({
             type: "symlink-rejected",
@@ -908,32 +939,32 @@ export class MemoryRuntimeDirectoryGuard implements RuntimeDirectoryGuard {
           isSymlink: false,
           bytes,
         };
-        guard.leaves.set(fileName, updated);
+        this.leaves.set(fileName, updated);
         return okAsync(updated.identity);
       },
-      lockLeaf(
+      lockLeaf: (
         fileName: string,
-      ): ResultAsync<void, RuntimeDirectoryGuardError> {
+      ): ResultAsync<void, RuntimeDirectoryGuardError> => {
         if (closed) {
           return errAsync({ type: "unavailable", message: "handle is closed" });
         }
-        let mutex = guard.leafLocks.get(fileName);
+        let mutex = this.leafLocks.get(fileName);
         if (mutex === undefined) {
           mutex = new AsyncLeafMutex();
-          guard.leafLocks.set(fileName, mutex);
+          this.leafLocks.set(fileName, mutex);
         }
         return ResultAsync.fromSafePromise(mutex.acquire());
       },
-      unlockLeaf(
+      unlockLeaf: (
         fileName: string,
-      ): ResultAsync<void, RuntimeDirectoryGuardError> {
+      ): ResultAsync<void, RuntimeDirectoryGuardError> => {
         if (closed) {
           return errAsync({ type: "unavailable", message: "handle is closed" });
         }
-        guard.leafLocks.get(fileName)?.release();
+        this.leafLocks.get(fileName)?.release();
         return okAsync(undefined);
       },
-      close(): void {
+      close: (): void => {
         closed = true;
       },
     };
