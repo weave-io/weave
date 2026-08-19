@@ -59,6 +59,12 @@ import {
 } from "./child-envelope.js";
 import { normalizePiExtensionUiRequest } from "./child-extension-ui.js";
 import { PiLineFramer } from "./child-framing.js";
+import {
+  type PiLiveReasoningObserver,
+  PiLiveReasoningProjector,
+  type PiLiveReasoningRegistry,
+  type PiLiveReasoningSnapshot,
+} from "./child-live-reasoning.js";
 import type {
   PiChildProcessPort,
   PiSpawnedChildProcess,
@@ -71,6 +77,7 @@ import {
   type PiChildSessionEvent,
   PiExtensionUiResponseSchema,
   parsePiChildSessionEvent,
+  retainedChildSessionEvent,
 } from "./child-session-events.js";
 import {
   describePiChildSessionLaunchRejection,
@@ -281,6 +288,12 @@ export interface PiRpcChildDeps {
   readonly onStreamingUpdate?: (snapshot: PiChildTreeNode) => void;
   /** Receives each validated bounded child-session event. */
   readonly sessionObserver?: PiChildSessionObserver;
+  /** UI-only parent-card reasoning sink; never a session-event sink. */
+  readonly onParentCardReasoning?: PiLiveReasoningObserver;
+  /** UI-only inspector reasoning sink; independent from the parent card sink. */
+  readonly onInspectorReasoning?: PiLiveReasoningObserver;
+  /** Optional generation registry for bounded process-memory UI projectors. */
+  readonly liveReasoningRegistry?: PiLiveReasoningRegistry;
   /** Receives the full private terminal output; never projected to the model. */
   readonly onPrivateOutput?: (
     capture: PiChildPrivateOutputCapture,
@@ -910,6 +923,7 @@ export class PiRpcChild {
     | ((snapshot: PiChildTreeNode) => void)
     | undefined;
   private readonly sessionObserver: PiChildSessionObserver | undefined;
+  private readonly liveReasoning: PiLiveReasoningProjector;
   private readonly onPrivateOutput:
     | ((capture: PiChildPrivateOutputCapture) => PiChildSessionObserverResult)
     | undefined;
@@ -1097,6 +1111,14 @@ export class PiRpcChild {
     this.onAssistantUsageObserved = deps.onAssistantUsageObserved;
     this.onStreamingUpdate = deps.onStreamingUpdate;
     this.sessionObserver = deps.sessionObserver;
+    this.liveReasoning = new PiLiveReasoningProjector({
+      childId,
+      generationId,
+      parentCardObserver: deps.onParentCardReasoning,
+      inspectorObserver: deps.onInspectorReasoning,
+      diagnostics: deps.diagnostics,
+      registry: deps.liveReasoningRegistry,
+    });
     this.onPrivateOutput = deps.onPrivateOutput;
     this.onRestoreContextVerified = deps.onRestoreContextVerified;
     this.onInterventionCountChanged = deps.onInterventionCountChanged;
@@ -1127,6 +1149,11 @@ export class PiRpcChild {
 
   getInterventionCount(): number {
     return this.interventionCount;
+  }
+
+  /** UI-only live reasoning state; never included in `snapshot()`. */
+  liveReasoningSnapshot(): PiLiveReasoningSnapshot {
+    return this.liveReasoning.snapshot();
   }
 
   snapshot(): PiChildTreeNode {
@@ -2499,6 +2526,17 @@ export class PiRpcChild {
           parsed.data.requestId as string,
         );
       }
+      const liveReasoning = this.liveReasoning.accept(parsed.data);
+      if (liveReasoning.isErr()) {
+        recordChildUiEventInvalid(
+          this.diagnostics,
+          "live-reasoning-projection",
+          "mapping-invalid",
+        );
+      }
+      // The standard observer receives only the retained, content-free event.
+      // The live projector above is the sole UI-only path that may see the
+      // bounded transient reasoning update.
       this.forwardSessionEvent(parsed.data);
       this.observeResultContractEvent(parsed.data);
     } else {
@@ -2547,7 +2585,11 @@ export class PiRpcChild {
       // A durable-parser rejection is the first loss. Native Pi state still
       // advances below, but it must not also be counted as a later reasoning
       // projection rejection for the same frame.
-      if (parsed.success && carrier.kind === "rejected") {
+      if (
+        parsed.success &&
+        carrier.kind === "rejected" &&
+        !this.isGenericLiveReasoningFrame(record)
+      ) {
         recordChildUiEventInvalid(
           this.diagnostics,
           "live-reasoning-projection",
@@ -2658,9 +2700,11 @@ export class PiRpcChild {
   private forwardSessionEvent(event: PiChildSessionEvent): void {
     const observer = this.sessionObserver;
     if (observer === undefined || this.disposed) return;
+    const retained = retainedChildSessionEvent(event);
+    if (retained === undefined) return;
 
     const callback = Result.fromThrowable(
-      () => observer.onEvent(event),
+      () => observer.onEvent(retained),
       () => undefined,
     )();
     if (callback.isErr()) {
@@ -2684,6 +2728,25 @@ export class PiRpcChild {
     if (result.isErr()) {
       recordChildUiEventFailure(this.diagnostics, "fanout", "fanout-failed");
     }
+  }
+
+  private isGenericLiveReasoningFrame(
+    record: Record<string, JsonValue>,
+  ): boolean {
+    const assistant = record.assistantMessageEvent;
+    if (
+      typeof assistant !== "object" ||
+      assistant === null ||
+      Array.isArray(assistant)
+    ) {
+      return false;
+    }
+    const type = (assistant as Record<string, JsonValue>).type;
+    return (
+      type === "thinking_start" ||
+      type === "thinking_delta" ||
+      type === "thinking_end"
+    );
   }
 
   private projectUsageFromMessage(record: Record<string, JsonValue>): void {
@@ -3283,6 +3346,10 @@ export class PiRpcChild {
     // that reach here without going through `failOutstanding` (settlement's
     // own `finish()`, `dispose()`, completed cancellation).
     this.invalidateSettlementCapture();
+    this.liveReasoning.settle().match(
+      () => undefined,
+      () => undefined,
+    );
     this.outstandingExtensionUiRequestIds.clear();
     this.clearResponseDrainTimer();
     this.runtimeBudget.clear();

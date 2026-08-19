@@ -16,6 +16,14 @@
 import { err, ok, Result } from "neverthrow";
 
 export type {
+  PiLiveReasoningObserver,
+  PiLiveReasoningProjectorConfig,
+  PiLiveReasoningRejection,
+  PiLiveReasoningRejectionReason,
+  PiLiveReasoningSnapshot,
+  PiLiveReasoningUpdate,
+} from "./child-live-reasoning.js";
+export type {
   PiChildSessionEvent,
   PiExtensionUiResponse,
 } from "./child-session-events.js";

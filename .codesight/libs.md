@@ -283,6 +283,14 @@
   - interface PiChildLifecycleSettingsIssue
   - const DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS
   - const MAX_PI_CHILD_LIFECYCLE_SETTINGS
+- `packages/adapters/pi/src/child-live-reasoning.ts`
+  - function createPiLiveReasoningRegistry: () => PiLiveReasoningRegistry
+  - function createPiLiveReasoningProjector: (config) => PiLiveReasoningProjector
+  - function projectPiLiveReasoningUpdate: (event, identity) => Result<PiLiveReasoningUpdate | undefined, PiLiveReasoningRejection>
+  - function formatPiLiveReasoningParentLine: (text) => string
+  - function formatPiLiveReasoningInspectorRows: (text) => readonly string[]
+  - function piLiveReasoningUtf8Bytes: (value) => number
+  - _...21 more_
 - `packages/adapters/pi/src/child-metadata-cache.ts`
   - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
   - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
@@ -822,7 +830,7 @@
   - function messageUpdateObservesRawReasoning: (record) => boolean
   - type PiMessageUpdateRejection
   - type PiMessageUpdateCarrier
-  - _...2 more_
+  - _...3 more_
 - `packages/adapters/pi/src/model-failover-context.ts`
   - function repairPiFailoverContext: (input) => Result<readonly unknown[], PiFailoverContextRepairError>;
   - function repairPiFailoverContext: (messages, token, fingerprint) => Result<readonly unknown[], PiFailoverContextRepairError>;

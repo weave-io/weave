@@ -1546,6 +1546,10 @@ export function canonicalReasoningMessageUpdate(): PiChildSessionEvent {
  *
  * Everything else is retained exactly as `redactRawReasoningFromEvent`
  * describes: an unambiguous answer and pure framing unchanged.
+ *
+ * This is the durable Weave boundary. Standard session observers and every
+ * checkpoint caller must use this projection; the live reasoning projector is
+ * a separate UI-only branch and never changes this return shape.
  */
 export function retainedChildSessionEvent(
   event: PiChildSessionEvent,

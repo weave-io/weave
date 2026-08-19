@@ -11,6 +11,7 @@ import {
 import { WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import { MAX_NATIVE_RECORD_BYTES } from "../child-framing.js";
+import { PiLiveReasoningRegistry } from "../child-live-reasoning.js";
 import { encodeTransferChunks } from "../child-transfer.js";
 import type { PiChildTreeNode } from "../child-tree.js";
 import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
@@ -2916,6 +2917,65 @@ describe("PiRpcChild", () => {
     expect(child.snapshot().latestOutput).toBe("");
     expect(child.snapshot().reasoningObserved).toBe(true);
     expect(JSON.stringify(child.snapshot())).not.toContain("next thought");
+  });
+
+  it("fans out bounded live reasoning while the standard observer receives retention-safe events", async () => {
+    const processPort = new FakeChildProcessPort();
+    const registry = new PiLiveReasoningRegistry();
+    const parentUpdates: string[] = [];
+    const inspectorUpdates: string[] = [];
+    const sessionEvents: unknown[] = [];
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      liveReasoningRegistry: registry,
+      onParentCardReasoning: (update) => parentUpdates.push(update.text),
+      onInspectorReasoning: (update) => inspectorUpdates.push(update.text),
+      sessionObserver: {
+        onEvent: (event) => {
+          sessionEvents.push(event);
+          return ok(undefined);
+        },
+      },
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const sentinel = "LIVE-REASONING-SENTINEL";
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_start",
+        contentIndex: 0,
+        content: sentinel,
+      },
+    });
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 0,
+        delta: " tail",
+      },
+    });
+    expect(parentUpdates.at(-1)).toBe(`${sentinel} tail`);
+    expect(inspectorUpdates.at(-1)).toBe(`${sentinel} tail`);
+    expect(JSON.stringify(sessionEvents)).not.toContain(sentinel);
+    expect(JSON.stringify(child.snapshot())).not.toContain(sentinel);
+    expect(child.liveReasoningSnapshot().text).toBe(`${sentinel} tail`);
+    expect(registry.size()).toBe(1);
+
+    child.dispose();
+    expect(child.liveReasoningSnapshot().text).toBe("");
+    expect(child.liveReasoningSnapshot().retainedBytes).toBe(0);
+    expect(registry.size()).toBe(0);
   });
 
   it("refuses a frame that carries answer text and raw reasoning at once", async () => {

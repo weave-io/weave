@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 341 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~38,200 tokens. Without it, AI exploration would cost ~108,000 tokens. **Saves ~69,800 tokens per conversation.**
-> **Last scanned:** 2026-08-19 00:58 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 342 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~38,300 tokens. Without it, AI exploration would cost ~108,200 tokens. **Saves ~69,900 tokens per conversation.**
+> **Last scanned:** 2026-08-19 01:41 — re-run after significant changes
 
 ---
 
@@ -294,6 +294,14 @@
   - interface PiChildLifecycleSettingsIssue
   - const DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS
   - const MAX_PI_CHILD_LIFECYCLE_SETTINGS
+- `packages/adapters/pi/src/child-live-reasoning.ts`
+  - function createPiLiveReasoningRegistry: () => PiLiveReasoningRegistry
+  - function createPiLiveReasoningProjector: (config) => PiLiveReasoningProjector
+  - function projectPiLiveReasoningUpdate: (event, identity) => Result<PiLiveReasoningUpdate | undefined, PiLiveReasoningRejection>
+  - function formatPiLiveReasoningParentLine: (text) => string
+  - function formatPiLiveReasoningInspectorRows: (text) => readonly string[]
+  - function piLiveReasoningUtf8Bytes: (value) => number
+  - _...21 more_
 - `packages/adapters/pi/src/child-metadata-cache.ts`
   - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
   - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
@@ -833,7 +841,7 @@
   - function messageUpdateObservesRawReasoning: (record) => boolean
   - type PiMessageUpdateRejection
   - type PiMessageUpdateCarrier
-  - _...2 more_
+  - _...3 more_
 - `packages/adapters/pi/src/model-failover-context.ts`
   - function repairPiFailoverContext: (input) => Result<readonly unknown[], PiFailoverContextRepairError>;
   - function repairPiFailoverContext: (messages, token, fingerprint) => Result<readonly unknown[], PiFailoverContextRepairError>;
@@ -2235,7 +2243,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 374 test files found
+> 375 test files found
 
 ---
 
