@@ -429,6 +429,8 @@ export interface PiSessionManagerPort {
   getSessionId(): string;
   getSessionFile(): string | undefined;
   isPersisted(): boolean;
+  /** Reads the native entries when the host exposes them. */
+  getEntries?(): readonly unknown[];
   /**
    * The persisted session header of the file this manager is reading, when
    * the host exposes one.

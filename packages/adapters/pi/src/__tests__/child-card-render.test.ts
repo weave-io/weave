@@ -63,6 +63,7 @@ function facts(
     tool: CARD_TOOL_NAME,
     agentName: "shuttle",
     model: "gpt-5.6-sol",
+    appliedIdentity: { provider: "openai", id: "gpt-5.6-sol" },
     run: { number: 1, action: "start", phase: "reasoning" },
     status: "running",
     tone: "run",
@@ -247,7 +248,9 @@ describe("renderDelegationCard width safety", () => {
       for (const width of WIDTHS) {
         for (const expanded of [false, true]) {
           for (const line of lines(state.facts, width, expanded)) {
-            expect(measureWidth(line)).toBeLessThanOrEqual(width);
+            expect(measureWidth(line)).toBeLessThanOrEqual(
+              Math.max(width, CARD_MIN_WIDTH),
+            );
           }
         }
       }
@@ -348,7 +351,7 @@ describe("height", () => {
 // ---------------------------------------------------------------------------
 
 describe("the rail", () => {
-  it("keeps the state and the child name at every width", () => {
+  it("keeps the state and applied identity at every width", () => {
     for (const state of STATES) {
       for (const width of WIDTHS) {
         const plan = railPlan(width);
@@ -371,12 +374,21 @@ describe("the rail", () => {
         expect(rowText(cells[0] as Row)).toContain(
           state.facts.status.toUpperCase(),
         );
-        expect(rowText(cells[1] as Row)).toContain(state.facts.agentName);
+        if (!plan.tight) {
+          expect(rowText(cells[0] as Row)).toContain(
+            state.facts.appliedIdentity?.provider ?? "—",
+          );
+        }
+        expect(rowText(cells[1] as Row)).toContain(
+          state.facts.appliedIdentity?.id ?? "—",
+        );
+        expect(cells).toHaveLength(3);
+        expect(rowText(cells[2] as Row)).toBe("");
       }
     }
   });
 
-  it("drops elapsed first, and never the state or the name", () => {
+  it("keeps a blank third rail row and footer-only elapsed", () => {
     const tight = WIDTHS.filter(
       (width) => railPlan(width).tight && !railPlan(width).folded,
     );
@@ -384,7 +396,10 @@ describe("the rail", () => {
     for (const width of tight) {
       const plan = railPlan(width);
       const cells = railStatusFirst(facts(), plan.railW, plan.tight);
-      expect(cells).toHaveLength(2);
+      expect(cells).toHaveLength(3);
+      expect(rowText(cells[2] as Row)).toBe("");
+      expect(rowText(cells[0] as Row)).not.toContain("38s");
+      expect(rowText(cells[1] as Row)).not.toContain("38s");
     }
   });
 
@@ -680,7 +695,9 @@ describe("degradedDelegationCard", () => {
       expect(out.filter((line) => line.includes("╭"))).toHaveLength(1);
       expect(out.filter((line) => line.includes("╰"))).toHaveLength(1);
       for (const line of out) {
-        expect(measureWidth(line)).toBeLessThanOrEqual(width);
+        expect(measureWidth(line)).toBeLessThanOrEqual(
+          Math.max(width, CARD_MIN_WIDTH),
+        );
       }
       const body = out.join("\n");
       for (const forbidden of ["COMPLETED", "FAILED", "running", "✓"]) {
@@ -742,8 +759,8 @@ describe("facts from the model", () => {
     const projected = projectDelegationCardFacts(thinking._unsafeUnwrap());
 
     const out = lines(projected, 100, true);
-    expect(out[0]).toContain(CARD_TOOL_NAME);
-    expect(out.join("\n")).toContain("shuttle");
+    expect(out[0]).toContain("Shuttle");
+    expect(out.join("\n")).toContain("Shuttle");
     for (const line of out) expect(measureWidth(line)).toBeLessThanOrEqual(100);
   });
 });

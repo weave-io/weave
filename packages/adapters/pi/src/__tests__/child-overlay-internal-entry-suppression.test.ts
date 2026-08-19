@@ -28,6 +28,7 @@ import {
   transcriptFromOverlayEntries,
 } from "../child-overlay-replay.js";
 import type { ChildOverlayEntry } from "../child-overlay-types.js";
+import { PI_MODEL_FAILOVER_MARKER_TYPE } from "../model-failover-contract.js";
 import { plainPaint } from "../ui-paint.js";
 
 /** A user-visible custom fact the adapter must keep rendering as a status. */
@@ -145,6 +146,52 @@ describe("internal durable-result records never become overlay entries", () => {
     expect(rendered).not.toContain("result-chunk");
     expect(rendered).not.toContain("result-commit");
     expect(rendered).toContain("the run finished");
+    expect(rendered).toContain(VISIBLE_STATUS_TYPE);
+  });
+
+  it("drops only the exact hidden model-fallback marker", () => {
+    const marker = mapNativeSessionEntryToOverlay(
+      {
+        type: "custom",
+        id: "entry-fallback-marker",
+        customType: PI_MODEL_FAILOVER_MARKER_TYPE,
+        data: {
+          display: false,
+          token: "123e4567-e89b-42d3-a456-426614174000",
+        },
+      },
+      0,
+    );
+    const visible = mapNativeSessionEntryToOverlay(
+      {
+        type: "custom",
+        id: "entry-visible-weave",
+        customType: VISIBLE_STATUS_TYPE,
+        data: {},
+      },
+      1,
+    );
+
+    expect(marker.isOk()).toBe(true);
+    expect(marker._unsafeUnwrap()).toBeUndefined();
+    expect(visible.isOk()).toBe(true);
+    expect(visible._unsafeUnwrap()?.id).toBe("entry-visible-weave");
+
+    const rendered = renderOverlayPiNative(
+      plainPaint(),
+      {
+        entries: transcriptFromOverlayEntries(
+          [visible._unsafeUnwrap()].filter(
+            (entry): entry is ChildOverlayEntry => entry !== undefined,
+          ),
+        ).entries,
+        childName: "shuttle",
+        settled: true,
+      },
+      96,
+    ).plain.join("\n");
+    expect(rendered).not.toContain(PI_MODEL_FAILOVER_MARKER_TYPE);
+    expect(rendered).not.toContain("123e4567-e89b-42d3-a456-426614174000");
     expect(rendered).toContain(VISIBLE_STATUS_TYPE);
   });
 });

@@ -22,6 +22,7 @@ import {
   CARD_VIEWPORT_ROWS,
   type PiDelegationCardFacts,
 } from "../child-card-model.js";
+import { CARD_MIN_WIDTH } from "../child-card-render.js";
 import {
   boundDelegationCardDetails,
   buildDelegationToolRegistration,
@@ -484,7 +485,7 @@ describe("weave_delegate details payload", () => {
 });
 
 describe("weave_delegate renderResult", () => {
-  it("draws one framed card from a valid payload and re-renders at each width", () => {
+  it("draws one framed card from a valid payload and re-renders at each normalized width", () => {
     const registration = buildDelegationToolRegistration(rootDeps());
     const result: PiToolResult = {
       content: [{ type: "text", text: "reading delegation-tool.ts" }],
@@ -506,7 +507,9 @@ describe("weave_delegate renderResult", () => {
         (line) => line.startsWith("\u256d") || line.startsWith("\u2570"),
       );
       expect(corners).toHaveLength(2);
-      for (const line of lines) expect(line.length).toBeLessThanOrEqual(width);
+      const normalizedWidth = Math.max(width, CARD_MIN_WIDTH);
+      for (const line of lines)
+        expect(line.length).toBeLessThanOrEqual(normalizedWidth);
     }
     expect((component?.render(80) ?? []).join("\n")).toContain(
       "reading delegation-tool.ts",

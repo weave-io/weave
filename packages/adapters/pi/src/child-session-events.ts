@@ -5,6 +5,7 @@ import {
   isRawReasoningAssistantEventType,
   RAW_REASONING_PROSE_KEYS,
 } from "./message-update-carrier.js";
+import { isPiModelFailoverHiddenMarker } from "./model-failover-record.js";
 
 /** Bounds applied to observed private Pi protocol data. */
 export const MAX_CHILD_EVENT_STRING = 16_384;
@@ -1550,6 +1551,9 @@ export function canonicalReasoningMessageUpdate(): PiChildSessionEvent {
 export function retainedChildSessionEvent(
   event: PiChildSessionEvent,
 ): PiChildSessionEvent | undefined {
+  // The marker is durable control history, not a transcript fact. Suppress
+  // only its exact custom type; unrelated custom entries remain retained.
+  if (isPiModelFailoverHiddenMarker(event)) return undefined;
   if (event.type === "message_update") {
     const carrier = classifyPiMessageUpdate(event);
     if (carrier.kind === "rejected") return undefined;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { MarkdownTheme, TUI } from "@earendil-works/pi-tui";
 import type { PiDelegationCardFacts } from "../child-card-model.js";
+import { CARD_MIN_WIDTH } from "../child-card-render.js";
 import {
   createPiNativeTranscriptComponentFactory,
   degradedPiChildCardComponent,
@@ -317,7 +318,7 @@ describe("renderPiChildCardComponent", () => {
     bold: (text) => text,
   };
 
-  it("re-renders at the caller's width and clips every line to it", () => {
+  it("re-renders at the card's normalized width and clips every line to it", () => {
     const component = renderPiChildCardComponent(
       cardFacts(),
       { expanded: false },
@@ -328,7 +329,9 @@ describe("renderPiChildCardComponent", () => {
     for (const width of [12, 40, 80, 132]) {
       const lines = card.render(width);
       expect(lines.length).toBeGreaterThan(0);
-      for (const line of lines) expect(line.length).toBeLessThanOrEqual(width);
+      const normalizedWidth = Math.max(width, CARD_MIN_WIDTH);
+      for (const line of lines)
+        expect(line.length).toBeLessThanOrEqual(normalizedWidth);
     }
     // The cached width is re-served, and `invalidate()` clears the cache
     // without changing what the same width draws.

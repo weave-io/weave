@@ -33,7 +33,6 @@ import {
   type ChildOverlayMappingError,
   type ChildOverlayReplayStep,
   ChildOverlayRunOrdinalSchema,
-  OpaqueIdSchema,
   RunActionSchema,
 } from "./child-overlay-types.js";
 import {
@@ -53,6 +52,12 @@ import {
   reducePiChildTranscript,
 } from "./child-transcript.js";
 import { messageUpdateAnswerText } from "./message-update-carrier.js";
+import {
+  isPiModelFailoverHiddenMarker,
+  PI_MODEL_FAILOVER_ENTRY_TYPE,
+  parsePiModelFailoverNativeEntry,
+  parsePiModelFailoverRecord,
+} from "./model-failover-record.js";
 
 // ---------------------------------------------------------------------------
 // Native entry mapping (Task 4 adapt / child-transcript projection)
@@ -90,6 +95,29 @@ export {
   safeEntryId,
 } from "./child-overlay-native-parts.js";
 
+/**
+ * Rebuilds one retained event for replay without losing Weave-owned facts.
+ *
+ * The provider-error sanitizer intentionally projects unknown host events to
+ * their type only. The fallback event is different: its strict payload is a
+ * durable, reader-visible fact, so restore that one exact payload after the
+ * sanitizer has handled the rest of the event.
+ */
+function replaySafeEvent(
+  event: PiChildSessionEvent,
+): PiChildSessionEvent | undefined {
+  const redacted = redactProviderErrorFromEvent(event);
+  if (
+    event.type !== "unknown" ||
+    event.originalType !== PI_MODEL_FAILOVER_ENTRY_TYPE
+  ) {
+    return redacted;
+  }
+  const parsed = parsePiModelFailoverRecord(event.payload);
+  if (parsed.isErr() || redacted.type !== "unknown") return undefined;
+  return { ...redacted, payload: { ...parsed.value } };
+}
+
 /** Validates a synthesized child event through the shared bounded schema. */
 function replayEvent(candidate: unknown): ChildOverlayReplayStep | undefined {
   const parsed = parsePiChildSessionEvent(candidate);
@@ -106,7 +134,8 @@ function replayEvent(candidate: unknown): ChildOverlayReplayStep | undefined {
   // transcript reducer's and the registry's.
   const retained = retainedChildSessionEvent(parsed.data);
   if (retained === undefined) return undefined;
-  return { kind: "event", event: redactProviderErrorFromEvent(retained) };
+  const safe = replaySafeEvent(retained);
+  return safe === undefined ? undefined : { kind: "event", event: safe };
 }
 
 export function pushReplayEvent(
@@ -432,6 +461,41 @@ export function mapNativeSessionEntryToOverlay(
   entry: unknown,
   sequence: number,
 ): Result<ChildOverlayEntry | undefined, ChildOverlayMappingError> {
+  // The hidden recovery marker is durable control history, not transcript
+  // content. Its suppression is exact; ordinary custom entries remain below.
+  if (isPiModelFailoverHiddenMarker(entry)) return ok(undefined);
+
+  // Parse the Weave-owned event before the loose host schema. The strict parser
+  // rejects accessors, extra fields, and malformed payloads, while a nonmatching
+  // custom entry falls through to the ordinary custom-entry projection.
+  const fallback = parsePiModelFailoverNativeEntry(entry);
+  if (fallback.isErr()) return ok(undefined);
+  if (fallback.value !== undefined) {
+    const record = fallback.value;
+    const id = safeEntryId(
+      `fallback-${record.transitionId}`,
+      `fallback-${sequence}`,
+    );
+    const text = boundText(
+      `model fallback · ${record.to.provider}/${record.to.id}`,
+    );
+    const replay: ChildOverlayReplayStep[] = [];
+    const pushed = pushReplayEvent(replay, {
+      type: "unknown",
+      originalType: PI_MODEL_FAILOVER_ENTRY_TYPE,
+      payload: { ...record },
+    });
+    if (pushed.isErr()) return err(pushed.error);
+    return ok({
+      id,
+      sequence,
+      kind: "unknown",
+      text,
+      expanded: false,
+      replay,
+    });
+  }
+
   const message = NativeMessageSchema.safeParse(entry);
   if (message.success) {
     const id = safeEntryId(message.data.id, `entry-${sequence}`);
@@ -823,8 +887,10 @@ export function projectLiveEntry(
   // rejected projects no entry and no step at all.
   const retained = retainedChildSessionEvent(event);
   if (retained === undefined) return undefined;
+  const replayEventValue = replaySafeEvent(retained);
+  if (replayEventValue === undefined) return undefined;
   const replay: readonly ChildOverlayReplayStep[] = [
-    { kind: "event", event: retained },
+    { kind: "event", event: replayEventValue },
   ];
   switch (event.type) {
     case "message_start":
@@ -939,6 +1005,26 @@ export function projectLiveEntry(
         expanded,
         replay,
       };
+    case "unknown": {
+      if (isPiModelFailoverHiddenMarker(event)) return undefined;
+      if (event.originalType !== PI_MODEL_FAILOVER_ENTRY_TYPE) return undefined;
+      const parsed = parsePiModelFailoverRecord(event.payload);
+      if (parsed.isErr()) return undefined;
+      const record = parsed.value;
+      return {
+        id: safeEntryId(
+          `fallback-${record.transitionId}`,
+          `live-fallback-${sequence}`,
+        ),
+        sequence,
+        kind: "unknown",
+        text: boundText(
+          `model fallback · ${record.to.provider}/${record.to.id}`,
+        ),
+        expanded,
+        replay,
+      };
+    }
     // Replay is the contract. The reducer turns `queue_change` into a queue
     // row, so a live child showed the parent's queued follow-ups while the
     // same window rebuilt through `transcriptFromOverlayEntries` showed none.

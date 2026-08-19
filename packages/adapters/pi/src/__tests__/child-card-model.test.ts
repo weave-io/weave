@@ -16,10 +16,12 @@ import {
   CARD_VIEWPORT_RING_ROWS,
   CARD_VIEWPORT_ROWS,
   createDelegationCardState,
+  PiChildCardProjection,
   type PiDelegationCardFacts,
   type PiDelegationCardState,
   projectDelegationCardFacts,
 } from "../child-card-model.js";
+import { MODEL_TRANSITION_SCHEMA_VERSION } from "../child-control-bodies.js";
 import type { PiChildSessionEvent } from "../child-session-events.js";
 
 // ---------------------------------------------------------------------------
@@ -97,7 +99,8 @@ describe("child-card-model shape", () => {
     expect(f.schemaVersion).toBe(CARD_FACTS_SCHEMA_VERSION);
     expect(f.tool).toBe(CARD_TOOL_NAME);
     expect(f.agentName).toBe("shuttle");
-    expect(f.model).toBe("gpt-5.6-sol");
+    expect(f.appliedIdentity).toBeUndefined();
+    expect("model" in f).toBe(false);
     expect(f.run).toEqual({ number: 1, action: "start", phase: "bootstrap" });
     expect(f.status).toBe("pending");
     expect(f.tone).toBe("mute");
@@ -129,7 +132,7 @@ describe("child-card-model shape", () => {
     expect(codePoints(f.agentName)).toBeLessThanOrEqual(64);
     expect(codePoints(f.assignment)).toBeLessThanOrEqual(CARD_ASSIGNMENT_MAX);
     expect(f.assignment).not.toContain("title");
-    expect(codePoints(f.model ?? "")).toBeLessThanOrEqual(CARD_MODEL_MAX);
+    expect(codePoints(state.model ?? "")).toBeLessThanOrEqual(CARD_MODEL_MAX);
   });
 
   it("falls back to a safe agent name rather than an empty rail", () => {
@@ -137,6 +140,69 @@ describe("child-card-model shape", () => {
       createDelegationCardState({ agentName: "   ", assignment: "Do it." }),
     );
     expect(f.agentName).toBe("delegate");
+  });
+});
+
+describe("child-card model fallback transitions", () => {
+  const transitionId = "123e4567-e89b-42d3-a456-426614174000";
+  const body = (phase: "applied" | "recovery-confirmed") => ({
+    schemaVersion: MODEL_TRANSITION_SCHEMA_VERSION,
+    transitionId,
+    failureClass: "provider_unavailable" as const,
+    from: { provider: "openai", id: "gpt-5.6-sol", name: "GPT 5.6 Sol" },
+    to: { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude" },
+    phase,
+  });
+
+  it("updates the atom on applied, then rewrites one Native Line on confirmation", () => {
+    const projection = new PiChildCardProjection({
+      threadId: "thread-1",
+      agentName: "shuttle",
+      assignment: "Switch safely.",
+      model: "configured/model",
+      now: () => 1_000,
+    });
+    const before = projection.facts();
+    const applied = projection.applyModelTransition(body("applied"));
+    expect(applied.appliedIdentity).toEqual({
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude",
+    });
+    expect(applied.fallback).toBeUndefined();
+    expect(applied.viewport).toEqual(before.viewport);
+
+    const confirmed = projection.applyModelTransition(
+      body("recovery-confirmed"),
+    );
+    expect(confirmed.fallback).toMatchObject({
+      transitionId,
+      failureClass: "provider_unavailable",
+    });
+    expect(confirmed.activity).toEqual({
+      kind: "fallback",
+      text: "model fallback · anthropic/claude-sonnet-4-5",
+      live: false,
+    });
+    expect(confirmed.viewport).toEqual(applied.viewport);
+
+    const duplicate = projection.applyModelTransition(
+      body("recovery-confirmed"),
+    );
+    expect(duplicate).toEqual(confirmed);
+  });
+
+  it("does not fabricate a fallback event from an applied-only or orphan confirmation", () => {
+    const orphan = new PiChildCardProjection({
+      threadId: "thread-orphan",
+      agentName: "shuttle",
+      assignment: "Wait.",
+      now: () => 1_000,
+    });
+    const before = orphan.facts();
+    expect(orphan.applyModelTransition(body("recovery-confirmed"))).toEqual(
+      before,
+    );
   });
 });
 

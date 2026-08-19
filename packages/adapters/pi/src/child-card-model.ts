@@ -42,6 +42,7 @@ import {
   parseReducerInput,
   sanitizeChildCompactText,
 } from "./child-compact-render.js";
+import type { PiModelTransitionBody } from "./child-control-bodies.js";
 import {
   type PiChildErrorClass,
   type PiChildProviderError,
@@ -50,6 +51,11 @@ import {
 } from "./child-provider-error.js";
 import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
+import {
+  modelFailoverRecordFromTransition,
+  type PiModelFailoverIdentity,
+  type PiModelFailoverRecord,
+} from "./model-failover-record.js";
 import type { PiChildSettlement } from "./rpc-child.js";
 
 // ---------------------------------------------------------------------------
@@ -57,7 +63,7 @@ import type { PiChildSettlement } from "./rpc-child.js";
 // ---------------------------------------------------------------------------
 
 /** Payload version of {@link PiDelegationCardFacts}. Bumped on any shape change. */
-export const CARD_FACTS_SCHEMA_VERSION = 1;
+export const CARD_FACTS_SCHEMA_VERSION = 2;
 
 /** The tool the card always names. Settlement never rewrites it. */
 export const CARD_TOOL_NAME = "weave_delegate";
@@ -137,7 +143,8 @@ export type PiCardActivityKind =
   | "say"
   | "reply"
   | "error"
-  | "cancel";
+  | "cancel"
+  | "fallback";
 
 /** One retained transcript row, as the viewport prints it. */
 export interface PiCardViewportRow {
@@ -182,11 +189,20 @@ export interface PiCardTerminalFacts {
  * The complete view model of one delegation card. Every string is already
  * sanitized and bounded; every unknown is absent.
  */
+export interface PiCardAppliedIdentity {
+  readonly provider: string;
+  readonly id: string;
+  readonly name?: string;
+}
+
 export interface PiDelegationCardFacts {
   readonly schemaVersion: number;
   readonly tool: string;
   readonly agentName: string;
+  /** @deprecated Configured intent is not an applied fact and is never projected. */
   readonly model?: string;
+  readonly appliedIdentity?: PiCardAppliedIdentity;
+  readonly fallback?: PiModelFailoverRecord;
   readonly run: {
     readonly number: number;
     readonly action: ChildCompactRunAction;
@@ -255,7 +271,10 @@ interface PiCardActivityState {
  */
 export interface PiDelegationCardState {
   readonly agentName: string;
+  /** Configured intent is retained only for construction compatibility. */
   readonly model: string | undefined;
+  readonly appliedIdentity: PiCardAppliedIdentity | undefined;
+  readonly fallback: PiModelFailoverRecord | undefined;
   readonly assignment: string;
   readonly runNumber: number;
   readonly runAction: ChildCompactRunAction;
@@ -308,6 +327,8 @@ export function createDelegationCardState(
   return {
     agentName: boundName(config.agentName),
     model: boundOptional(config.model, CARD_MODEL_MAX),
+    appliedIdentity: undefined,
+    fallback: undefined,
     assignment: boundText(
       sanitizeChildCompactText(config.assignment),
       CARD_ASSIGNMENT_MAX,
@@ -796,7 +817,10 @@ export function projectDelegationCardFacts(
     schemaVersion: CARD_FACTS_SCHEMA_VERSION,
     tool: CARD_TOOL_NAME,
     agentName: state.agentName,
-    ...(state.model !== undefined ? { model: state.model } : {}),
+    ...(state.appliedIdentity !== undefined
+      ? { appliedIdentity: state.appliedIdentity }
+      : {}),
+    ...(state.fallback !== undefined ? { fallback: state.fallback } : {}),
     run: {
       number: state.runNumber,
       action: state.runAction,
@@ -824,6 +848,14 @@ export function projectDelegationCardFacts(
 
 function projectRow(row: PiCardRingRow): PiCardViewportRow {
   return { kind: row.kind, head: row.head, text: row.text };
+}
+
+function cardAppliedIdentity(
+  identity: PiModelFailoverIdentity,
+): PiCardAppliedIdentity {
+  return identity.name === undefined
+    ? { provider: identity.provider, id: identity.id }
+    : { provider: identity.provider, id: identity.id, name: identity.name };
 }
 
 function projectTelemetry(
@@ -939,7 +971,8 @@ function toneOf(state: PiDelegationCardState): PiCardTone {
   if (settlement?.outcome === "failed") return "bad";
   if (settlement?.outcome === "cancelled") return "mute";
   if (state.activity?.kind === "error") return "bad";
-  if (state.activity?.kind === "queue") return "warn";
+  if (state.activity?.kind === "queue" || state.activity?.kind === "fallback")
+    return "warn";
   if (state.startedAtMs === undefined) return "mute";
   return "run";
 }
@@ -1241,6 +1274,16 @@ export class PiChildCardProjection {
   private assignment: string;
   private agentName: string;
   private settled = false;
+  /**
+   * One authenticated switch has two phases with the same transition id:
+   * `applied` updates the identity, then `recovery-confirmed` publishes the
+   * durable visible fallback fact. Keep the phase, not only a flat id set, so
+   * the second phase is admitted exactly once.
+   */
+  private modelTransitionPhases = new Map<
+    string,
+    PiModelTransitionBody["phase"]
+  >();
 
   constructor(config: PiChildCardProjectionConfig) {
     this.config = config;
@@ -1292,9 +1335,14 @@ export class PiChildCardProjection {
     this.agentName = input.agentName ?? this.agentName;
     this.assignment = input.assignment ?? this.assignment;
     this.dedupKeys = new Set<string>();
+    this.modelTransitionPhases = new Map<
+      string,
+      PiModelTransitionBody["phase"]
+    >();
     this.activeMessageId = undefined;
     this.activeMessageIdInvented = false;
     this.settled = false;
+    const appliedIdentity = this.state.appliedIdentity;
     this.state = createDelegationCardState({
       agentName: this.agentName,
       assignment: this.assignment,
@@ -1302,6 +1350,9 @@ export class PiChildCardProjection {
       runNumber: this.runNumber,
       action: input.action,
     });
+    if (appliedIdentity !== undefined) {
+      this.state = { ...this.state, appliedIdentity };
+    }
     this.applyInput({
       kind: "start_run",
       threadId: this.threadId,
@@ -1349,6 +1400,52 @@ export class PiChildCardProjection {
       },
       () => undefined,
     );
+    return this.facts();
+  }
+
+  /**
+   * Applies one authenticated model transition. The applied identity is one
+   * immutable atom: provider, id, and optional name are replaced together.
+   * Recovery confirmation rewrites the existing Native Line and never adds a
+   * viewport row or any other card chrome.
+   */
+  applyModelTransition(
+    transition: PiModelTransitionBody,
+  ): PiDelegationCardFacts {
+    if (this.settled) return this.facts();
+    const priorPhase = this.modelTransitionPhases.get(transition.transitionId);
+    if (
+      priorPhase === "recovery-confirmed" ||
+      (transition.phase === "applied" && priorPhase === "applied")
+    ) {
+      return this.facts();
+    }
+    const record = modelFailoverRecordFromTransition(transition);
+    if (record.isErr()) return this.facts();
+    const appliedIdentity = cardAppliedIdentity(transition.to);
+    if (transition.phase === "applied") {
+      this.modelTransitionPhases.set(transition.transitionId, "applied");
+      this.state = { ...this.state, appliedIdentity };
+      return this.facts();
+    }
+    if (priorPhase !== "applied" || record.value === undefined) {
+      return this.facts();
+    }
+    this.modelTransitionPhases.set(
+      transition.transitionId,
+      "recovery-confirmed",
+    );
+    const destination = `${appliedIdentity.provider}/${appliedIdentity.id}`;
+    this.state = {
+      ...this.state,
+      appliedIdentity,
+      fallback: record.value,
+      activity: {
+        kind: "fallback",
+        text: `model fallback · ${destination}`,
+        live: false,
+      },
+    };
     return this.facts();
   }
 

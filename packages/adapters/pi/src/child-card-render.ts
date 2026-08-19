@@ -37,6 +37,7 @@
  * `nativeLine`, `cardFooter`, `composeEdge`, `detailRegion`, `childViewport`).
  */
 
+import { formatAgentDisplayName } from "./agent-display-name.js";
 import {
   CARD_TOOL_NAME,
   CARD_VIEWPORT_ROWS,
@@ -72,10 +73,10 @@ import {
  * lays out for is always the width {@link emit} clips to and the frame can
  * never be cut in half.
  */
-export const CARD_MIN_WIDTH = 12;
+export const CARD_MIN_WIDTH = 16;
 
 /** The rail column: one bar column plus the widest status word. */
-export const CARD_RAIL_W = 10;
+export const CARD_RAIL_W = 25;
 
 /** Gutter, divider, gutter — one column of air on each side of the rule. */
 export const CARD_RAIL_DIVIDER_W = 3;
@@ -88,7 +89,7 @@ export const CARD_RAIL_MIN_BODY = 17;
  * its droppable cell. The state word and the child name always survive;
  * elapsed is the cell that leaves.
  */
-export const CARD_RAIL_TIGHT_SLACK = 16;
+export const CARD_RAIL_TIGHT_SLACK = 12;
 
 /** The rail uses at most three cells. */
 export const CARD_RAIL_CELL_MAX = 3;
@@ -157,6 +158,7 @@ const ACTIVITY_GLYPH: Readonly<Record<PiCardActivityKind, string>> =
     reply: "✓",
     error: "✕",
     cancel: "⊘",
+    fallback: "↪",
   });
 
 /** Prose ink per activity kind. `text` defers the glyph to the state's tone. */
@@ -170,6 +172,7 @@ const ACTIVITY_INK: Readonly<Record<PiCardActivityKind, Ink>> = Object.freeze({
   reply: "text",
   error: "bad",
   cancel: "muted",
+  fallback: "warn",
 });
 
 /** The child's own role gutters, as the viewport prints them. */
@@ -213,6 +216,7 @@ export type PiCardSlot =
   | "frame-bottom"
   | "rule"
   | "identity"
+  | "identity-detail"
   | "task"
   | "activity"
   | "activity-detail"
@@ -292,12 +296,13 @@ export function composeDelegationCard(
     // The terminal cannot pay for a rail column, so identity folds into one
     // body row. This is the only place the card prints identity outside the
     // rail, and no footer may duplicate it.
-    const identity = identityRow(facts, inner);
-    rows.push({
-      slot: "identity",
-      row: cardBody(w, identity),
-      body: identity,
-    });
+    for (const [index, identity] of identityRows(facts, inner).entries()) {
+      rows.push({
+        slot: index === 0 ? "identity" : "identity-detail",
+        row: cardBody(w, identity),
+        body: identity,
+      });
+    }
     rows.push(...zipBodyOnly(w, inner, facts));
   } else {
     rows.push(...zipRailAndBody(w, plan, facts));
@@ -419,7 +424,9 @@ function bodyRow(width: number, slot: PiCardSlot, content: Row): PiCardRow {
  * verdict onto the frame.
  */
 function cardTitle(facts?: PiDelegationCardFacts): Row {
-  return [seg("alt", facts?.tool ?? CARD_TOOL_NAME)];
+  return facts === undefined
+    ? [seg("alt", CARD_TOOL_NAME)]
+    : [seg("bold", formatAgentDisplayName(facts.agentName))];
 }
 
 // ---------------------------------------------------------------------------
@@ -436,12 +443,15 @@ function cardTitle(facts?: PiDelegationCardFacts): Row {
 export function railPlan(width: number): PiCardRailPlan {
   const w = normalizeCardWidth(width);
   const inner = innerWidth(w);
+  const folded = inner < CARD_RAIL_W + CARD_RAIL_DIVIDER_W + CARD_RAIL_MIN_BODY;
   const tight =
-    inner < CARD_RAIL_W + CARD_RAIL_MIN_BODY + CARD_RAIL_TIGHT_SLACK;
-  const folded = inner < CARD_RAIL_W + CARD_RAIL_MIN_BODY;
-  const bodyW = folded
-    ? inner
-    : Math.max(6, inner - CARD_RAIL_W - CARD_RAIL_DIVIDER_W);
+    !folded &&
+    inner <
+      CARD_RAIL_W +
+        CARD_RAIL_DIVIDER_W +
+        CARD_RAIL_MIN_BODY +
+        CARD_RAIL_TIGHT_SLACK;
+  const bodyW = folded ? inner : inner - CARD_RAIL_W - CARD_RAIL_DIVIDER_W;
   return { tight, railW: CARD_RAIL_W, folded, bodyW };
 }
 
@@ -451,12 +461,11 @@ function railDivider(): Seg {
 }
 
 /**
- * Status first: the state word is the loudest thing in the card, the child
- * name is second, and elapsed is third and droppable.
+ * Status first: the state word and provider share row one, the applied model
+ * id is row two, and row three is deliberately blank. Elapsed is footer-only.
  *
- * The elapsed cell is always present at a width that pays for it, even when
- * the telemetry is not yet known, so the card's height is decided by the width
- * alone and cannot move when a usage event lands.
+ * The identity is one authenticated atom. A missing atom renders `—` rather
+ * than the configured model intent.
  */
 export function railStatusFirst(
   facts: PiDelegationCardFacts,
@@ -466,18 +475,22 @@ export function railStatusFirst(
   const ink = toneInk(facts.tone);
   // Rail cells are fixed-field identity, so they cut flush: the one cut mark
   // this line may carry belongs to the body column beside them.
-  const cells: Row[] = [
-    [
-      glyph(ink, "▌"),
-      seg(ink, clipCell(facts.status.toUpperCase(), Math.max(1, w - 1))),
-    ],
-    [seg("text", clipCell(facts.agentName, w))],
+  const identity = facts.appliedIdentity ?? { provider: "—", id: "—" };
+  const status: Seg[] = [
+    glyph(ink, "▌"),
+    seg(ink, ` ${clipCell(facts.status.toUpperCase(), Math.max(1, w - 1))}`),
   ];
   if (!tight) {
-    const elapsed = facts.telemetry.elapsed;
-    cells.push(elapsed === undefined ? [] : [seg("dim", clipCell(elapsed, w))]);
+    status.push(seg("dim", " "), seg("acc", clipCell(identity.provider, w)));
   }
-  return cells.slice(0, CARD_RAIL_CELL_MAX);
+  const model: Row = [
+    fill("dim", " ", 10),
+    seg("text", clipCell(identity.id, Math.max(1, w - 10))),
+  ];
+  return [clipRow(status, w), clipRow(model, w), []].slice(
+    0,
+    CARD_RAIL_CELL_MAX,
+  );
 }
 
 /**
@@ -489,25 +502,49 @@ export function railStatusFirst(
  * The ladder is richest first: state and child, then the state alone.
  */
 export function identityRow(facts: PiDelegationCardFacts, bodyW: number): Row {
+  return identityRows(facts, bodyW)[0] ?? [];
+}
+
+/** Two bounded folded rows: status, then display name and applied model id. */
+export function identityRows(
+  facts: PiDelegationCardFacts,
+  bodyW: number,
+): readonly Row[] {
   const ink = toneInk(facts.tone);
   const state = facts.status.toUpperCase();
-  const full: Row = [
-    glyph(ink, "▌"),
-    seg(ink, state),
-    seg("dim", " · "),
-    seg("text", facts.agentName),
-  ];
-  const fitted = fitRow(
-    [full, [glyph(ink, "▌"), seg(ink, state)]],
+  const identity = facts.appliedIdentity ?? { provider: "—", id: "—" };
+  const first = fitRow(
+    [
+      [
+        glyph(ink, "▌"),
+        seg(ink, state),
+        seg("dim", " · "),
+        seg("text", facts.agentName),
+      ],
+      [glyph(ink, "▌"), seg(ink, state)],
+    ],
     Math.max(0, bodyW),
   );
-  // The floor keeps the bar and cuts the word flush. The bar is the state's
-  // only colour-free signal, so it is the last thing the card gives up, and
-  // cutting the word without a mark leaves this line's one `…` to the prose
-  // rows below it.
-  return fitted.length > 0
-    ? fitted
-    : [glyph(ink, "▌"), seg(ink, clipCell(state, Math.max(1, bodyW - 1)))];
+  const second = fitRow(
+    [
+      [
+        seg("bold", formatAgentDisplayName(facts.agentName)),
+        seg("dim", " · "),
+        seg("text", identity.id),
+      ],
+      [seg("bold", formatAgentDisplayName(facts.agentName))],
+    ],
+    Math.max(0, bodyW),
+  );
+  const firstRow =
+    first.length > 0
+      ? first
+      : [glyph(ink, "▌"), seg(ink, clipCell(state, Math.max(1, bodyW - 1)))];
+  const secondRow =
+    second.length > 0
+      ? second
+      : [seg("text", clipCell(identity.id, Math.max(1, bodyW)))];
+  return [clipRow(firstRow, bodyW), clipRow(secondRow, bodyW)];
 }
 
 // ---------------------------------------------------------------------------

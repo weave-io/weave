@@ -646,7 +646,11 @@ describe("truncation", () => {
     const rows = composeDelegationCard(cardFacts(), 34, false);
     const railRow = rows.find((row) => row.slot === "activity");
     const line = emit(railRow?.row ?? [], 34, PLAIN);
-    expect(line).toContain("shuttle-i");
+    // The rail and body both reserve their own bounded suffixes. At this
+    // width the child label may be cut before the body text, but the live
+    // marker must remain visible and the row must carry one cut mark.
+    expect(line).toContain("⤷");
+    expect(line).toContain("▍");
     expect(cutMarks(line)).toBe(1);
   });
 

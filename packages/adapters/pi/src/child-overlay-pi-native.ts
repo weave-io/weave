@@ -47,6 +47,11 @@ import type {
   PiChildTranscriptEntry,
   PiChildTranscriptToolEntry,
 } from "./child-transcript.js";
+import {
+  isPiModelFailoverHiddenMarker,
+  PI_MODEL_FAILOVER_ENTRY_TYPE,
+} from "./model-failover-record.js";
+import { renderModelFallbackEvent } from "./model-fallback-event-render.js";
 import { fitLineToWidth, measureWidth } from "./render-width.js";
 import { type Paint, paintTone, plainPaint, type Tone } from "./ui-paint.js";
 import { cell, safeTrim, wrapIndented } from "./ui-rows.js";
@@ -553,6 +558,16 @@ function renderEntryRows(
   const dim = (value: string): string => paint.dim(value);
   const text = (value: string): string => paint.text(value);
   const bad = (value: string): string => paint.bad(value);
+
+  // Fallback is represented as an unknown transcript event so the reducer
+  // need not grow a second event vocabulary. Its durable payload still uses
+  // the one strict renderer shared with native-entry replay and primary UI.
+  if (entry.kind === "unknown") {
+    if (isPiModelFailoverHiddenMarker(entry)) return [];
+    if (entry.originalType === PI_MODEL_FAILOVER_ENTRY_TYPE) {
+      return [...renderModelFallbackEvent(entry.payload, width, paint)];
+    }
+  }
 
   switch (entry.kind) {
     case "task":

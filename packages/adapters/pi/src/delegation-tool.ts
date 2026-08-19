@@ -10,6 +10,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { DelegationTarget } from "@weaveio/weave-engine";
 import { err, ok, Result, ResultAsync } from "neverthrow";
 import { Type } from "typebox";
+import { formatDelegationAgentName } from "./agent-display-name.js";
 import {
   CARD_AGENT_NAME_MAX,
   CARD_ASSIGNMENT_MAX,
@@ -33,6 +34,7 @@ import {
   type PiDelegationCardFacts,
 } from "./child-card-model.js";
 import type { ChildCompactRunAction } from "./child-compact-render.js";
+import type { PiModelTransitionBody } from "./child-control-bodies.js";
 import {
   CHILD_CARD_NATIVE_RENDER_FAILED,
   degradedPiChildCardComponent,
@@ -52,6 +54,7 @@ import {
   makeChildAbortFailedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
+import { parsePiModelFailoverRecord } from "./model-failover-record.js";
 import type { PiParentSessionState } from "./primary-session.js";
 import { requirePersistentParentSession } from "./primary-session.js";
 import {
@@ -270,7 +273,7 @@ export interface PiDelegationToolDeps {
 }
 
 /** Payload version of {@link PiDelegationCardDetails}. Bumped on any shape change. */
-export const DELEGATION_CARD_DETAILS_VERSION = 1;
+export const DELEGATION_CARD_DETAILS_VERSION = 2;
 
 /**
  * The documented serialized ceiling of one details payload.
@@ -305,24 +308,8 @@ export type PiDelegationCardDetailsError = {
   readonly reason: "absent" | "foreign" | "malformed" | "oversized";
 };
 
-function formatNamePart(part: string): string {
-  if (part.length === 0) return part;
-  return `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`;
-}
-
 /** Formats normalized names for transcript display without changing tool identity. */
-export function formatDelegationAgentName(agentName: string): string {
-  if (agentName === "shuttle") return "Shuttle";
-  if (agentName.startsWith("shuttle-")) {
-    const category = agentName
-      .slice("shuttle-".length)
-      .split("-")
-      .map(formatNamePart)
-      .join("-");
-    return `${category}-Shuttle`;
-  }
-  return agentName.split("-").map(formatNamePart).join("-");
-}
+export { formatDelegationAgentName } from "./agent-display-name.js";
 
 function toolResult(
   text: PiToolResultContent["text"],
@@ -353,6 +340,7 @@ const CARD_ACTIVITY_KINDS: ReadonlySet<string> = new Set<PiCardActivityKind>([
   "reply",
   "error",
   "cancel",
+  "fallback",
 ]);
 
 const CARD_ROW_KINDS: ReadonlySet<string> = new Set<PiCardRowKind>([
@@ -380,13 +368,24 @@ const CARD_OUTCOMES: ReadonlySet<string> = new Set([
 ]);
 
 function isDetailsRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null) return false;
+  // Array.isArray can throw for a revoked proxy. A persisted details payload
+  // must fail closed, not escape the strict parser.
+  return Result.fromThrowable(
+    () => !Array.isArray(value),
+    () => false,
+  )().unwrapOr(false);
 }
 
 /** Accepts a string only when it is inside its documented code-point bound. */
 function boundedDetailsText(value: unknown, max: number): string | undefined {
   if (typeof value !== "string") return undefined;
   return Array.from(value).length <= max ? value : undefined;
+}
+
+function boundedIdentityText(value: unknown, max: number): string | undefined {
+  const text = boundedDetailsText(value, max);
+  return text !== undefined && text.trim().length > 0 ? text : undefined;
 }
 
 function boundedDetailsCount(value: unknown, max: number): number | undefined {
@@ -406,6 +405,65 @@ function parseCardViewportRow(value: unknown): PiCardViewportRow | undefined {
   const text = boundedDetailsText(value.text, CARD_ROW_TEXT_MAX);
   if (head === undefined || text === undefined) return undefined;
   return { kind: value.kind as PiCardRowKind, head, text };
+}
+
+/**
+ * Reads a persisted object through own enumerable data descriptors only.
+ * Applied identity is a trust boundary: inherited values, accessors, symbols,
+ * extra fields, and proxy traps must never become card facts.
+ */
+function strictCardRecord(
+  value: unknown,
+  allowed: readonly string[],
+): Record<string, unknown> | undefined {
+  if (!isDetailsRecord(value)) return undefined;
+  const prototype = Result.fromThrowable(
+    () => Object.getPrototypeOf(value),
+    () => "unreadable" as const,
+  )();
+  if (
+    prototype.isErr() ||
+    (prototype.value !== Object.prototype && prototype.value !== null)
+  )
+    return undefined;
+  const keys = Result.fromThrowable(
+    () => Reflect.ownKeys(value),
+    () => "unreadable" as const,
+  )();
+  if (keys.isErr()) return undefined;
+  const copy = Object.create(null) as Record<string, unknown>;
+  for (const key of keys.value) {
+    if (typeof key !== "string" || !allowed.includes(key)) return undefined;
+    const descriptor = Result.fromThrowable(
+      () => Object.getOwnPropertyDescriptor(value, key),
+      () => "unreadable" as const,
+    )();
+    if (descriptor.isErr() || descriptor.value === undefined) return undefined;
+    if (!("value" in descriptor.value) || descriptor.value.enumerable !== true)
+      return undefined;
+    Object.defineProperty(copy, key, {
+      value: descriptor.value.value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return copy;
+}
+
+/** Parses the applied identity as one strict, bounded atom. */
+function parseCardAppliedIdentity(
+  value: unknown,
+): PiDelegationCardFacts["appliedIdentity"] | undefined {
+  const record = strictCardRecord(value, ["provider", "id", "name"]);
+  if (record === undefined) return undefined;
+  const provider = boundedIdentityText(record.provider, CARD_MODEL_MAX);
+  const id = boundedIdentityText(record.id, CARD_MODEL_MAX);
+  if (provider === undefined || id === undefined) return undefined;
+  const hasName = Object.hasOwn(record, "name");
+  if (!hasName) return { provider, id };
+  const name = boundedIdentityText(record.name, CARD_MODEL_MAX);
+  return name === undefined ? undefined : { provider, id, name };
 }
 
 function parseCardTerminal(value: unknown): PiCardTerminalFacts | undefined {
@@ -452,7 +510,9 @@ function parseCardTerminal(value: unknown): PiCardTerminalFacts | undefined {
  */
 function parseCardFacts(value: unknown): PiDelegationCardFacts | undefined {
   if (!isDetailsRecord(value)) return undefined;
-  if (value.schemaVersion !== CARD_FACTS_SCHEMA_VERSION) return undefined;
+  const schemaVersion = value.schemaVersion;
+  if (schemaVersion !== 1 && schemaVersion !== CARD_FACTS_SCHEMA_VERSION)
+    return undefined;
   const tool = boundedDetailsText(value.tool, CARD_AGENT_NAME_MAX);
   const agentName = boundedDetailsText(value.agentName, CARD_AGENT_NAME_MAX);
   const status = boundedDetailsText(value.status, CARD_STATUS_MAX);
@@ -468,19 +528,39 @@ function parseCardFacts(value: unknown): PiDelegationCardFacts | undefined {
     return undefined;
   if (typeof value.settled !== "boolean") return undefined;
 
+  // Schema 1 called configured intent `model`. Keep that legacy fact only as
+  // a deprecated field; never promote it into applied identity. Current
+  // projections omit it and use the authenticated atom below instead.
   const model =
     value.model === undefined
       ? undefined
       : boundedDetailsText(value.model, CARD_MODEL_MAX);
   if (value.model !== undefined && model === undefined) return undefined;
 
+  let appliedIdentity: PiDelegationCardFacts["appliedIdentity"];
+  if (value.appliedIdentity !== undefined) {
+    appliedIdentity = parseCardAppliedIdentity(value.appliedIdentity);
+    if (appliedIdentity === undefined) return undefined;
+  }
+  let fallback: PiDelegationCardFacts["fallback"];
+  if (value.fallback !== undefined) {
+    const parsedFallback = parsePiModelFailoverRecord(value.fallback);
+    if (parsedFallback.isErr()) return undefined;
+    fallback = parsedFallback.value;
+  }
+
   const run = value.run;
   if (!isDetailsRecord(run)) return undefined;
   const runNumber = boundedDetailsCount(run.number, CARD_MAX_RUN_NUMBER);
   const phase = boundedDetailsText(run.phase, CARD_PHASE_MAX);
+  const attempt =
+    run.attempt === undefined
+      ? undefined
+      : boundedDetailsCount(run.attempt, CARD_MAX_RUN_NUMBER);
   if (
     runNumber === undefined ||
     phase === undefined ||
+    (run.attempt !== undefined && attempt === undefined) ||
     typeof run.action !== "string" ||
     !CARD_RUN_ACTIONS.has(run.action)
   )
@@ -533,10 +613,13 @@ function parseCardFacts(value: unknown): PiDelegationCardFacts | undefined {
     tool,
     agentName,
     ...(model !== undefined ? { model } : {}),
+    ...(appliedIdentity !== undefined ? { appliedIdentity } : {}),
+    ...(fallback !== undefined ? { fallback } : {}),
     run: {
       number: runNumber,
       action: run.action as ChildCompactRunAction,
       phase,
+      ...(attempt !== undefined ? { attempt } : {}),
     },
     status,
     tone: value.tone as PiCardTone,
@@ -586,7 +669,10 @@ export function parseDelegationCardDetails(
   // A payload another extension (or an older adapter) wrote is foreign, not
   // broken: it degrades without ever being reported as this adapter's fault.
   if (details.kind !== "weave-delegation-card") return invalid("foreign");
-  if (details.version !== DELEGATION_CARD_DETAILS_VERSION)
+  if (
+    details.version !== 1 &&
+    details.version !== DELEGATION_CARD_DETAILS_VERSION
+  )
     return invalid("foreign");
   const bytes = serializedDetailsBytes(details);
   if (bytes === undefined) return invalid("malformed");
@@ -761,6 +847,11 @@ export class PiDelegationCardStream {
   private readonly projection: PiChildCardProjection;
   private readonly coalescer: PiCardUpdateCoalescer;
   private readonly onUpdate: ((update: PiToolResult) => void) | undefined;
+  /** Applied and recovery-confirmed share one authenticated transition id. */
+  private readonly modelTransitionPhases = new Map<
+    string,
+    PiModelTransitionBody["phase"]
+  >();
 
   constructor(config: PiDelegationCardStreamConfig) {
     this.projection = new PiChildCardProjection(config);
@@ -791,6 +882,7 @@ export class PiDelegationCardStream {
   }): void {
     const wasSettled = this.projection.isSettled();
     this.projection.startRun(input);
+    this.modelTransitionPhases.clear();
     // A strictly newer run clears settlement and reopens the card; anything
     // else leaves a settled run settled and must not repaint it.
     if (wasSettled && this.projection.isSettled()) return;
@@ -806,6 +898,21 @@ export class PiDelegationCardStream {
   applyProviderError(error: PiChildProviderError): void {
     if (this.projection.isSettled()) return;
     this.projection.applyProviderError(error);
+    this.coalescer.request("immediate");
+  }
+
+  /** Applies one authenticated model transition as an immediate card update. */
+  applyModelTransition(transition: PiModelTransitionBody): void {
+    if (this.projection.isSettled()) return;
+    const priorPhase = this.modelTransitionPhases.get(transition.transitionId);
+    if (
+      priorPhase === "recovery-confirmed" ||
+      (transition.phase === "applied" && priorPhase === "applied")
+    ) {
+      return;
+    }
+    this.modelTransitionPhases.set(transition.transitionId, transition.phase);
+    this.projection.applyModelTransition(transition);
     this.coalescer.request("immediate");
   }
 

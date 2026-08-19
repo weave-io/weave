@@ -21,6 +21,7 @@ import type {
 import type { SavedChildState } from "./child-overlay-window.js";
 import type { PiChildProviderError } from "./child-provider-error.js";
 import { formatPiChildProviderError } from "./child-provider-error-render.js";
+import { PI_MODEL_FAILOVER_MARKER_TYPE } from "./model-failover-contract.js";
 
 /** Bounded entry text with absolute path prefixes removed. */
 export function stripPathLike(value: string): string {
@@ -49,12 +50,20 @@ export function stripPathLike(value: string): string {
  * matching and everything on screen starts matching.
  */
 export function matchingEntryIds(
-  entries: readonly { readonly id: string; readonly text: string }[],
+  entries: readonly {
+    readonly id: string;
+    readonly text: string;
+    /** Optional exact native-event type for defensive marker suppression. */
+    readonly originalType?: string;
+  }[],
   needle: string,
   rendered?: ReadonlyMap<string, string>,
 ): string[] {
   const result: string[] = [];
   for (const entry of entries) {
+    // Suppress only the exact durable recovery marker. A broad `weave.*`
+    // filter would hide user-visible custom entries that share the namespace.
+    if (entry.originalType === PI_MODEL_FAILOVER_MARKER_TYPE) continue;
     if (stripPathLike(entry.text).toLowerCase().includes(needle)) {
       result.push(entry.id);
       continue;

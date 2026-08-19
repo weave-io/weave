@@ -313,7 +313,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - The design record explicitly locks the exact event copy, event drop order, card frame title, stacked applied identity, blank third row, footer-only elapsed value, and atomic failover update.
     - The design record states that no event appears for an applied-only switch or ordinary exhaustion.
 
-- [ ] 9. Implement the durable event, replay parity, and approved card geometry
+- [x] 9. Implement the durable event, replay parity, and approved card geometry
   - **What**: Port Task 8 into strict durable records, primary/child rendering, replay/search/restart paths, and delegation-card facts.
   - **Files**: `packages/adapters/pi/src/model-failover-record.ts` (new), `packages/adapters/pi/src/model-fallback-event-render.ts` (new), `packages/adapters/pi/src/agent-display-name.ts` (new), `packages/adapters/pi/src/child-card-model.ts`, `packages/adapters/pi/src/child-card-render.ts`, `packages/adapters/pi/src/delegation-tool.ts`, `packages/adapters/pi/src/child-overlay-pi-native.ts`, `packages/adapters/pi/src/child-overlay-replay.ts`, `packages/adapters/pi/src/child-overlay-search.ts`, `packages/adapters/pi/src/child-session-events.ts`, `packages/adapters/pi/src/types.ts`, and matching renderer/model/replay/search/restart tests.
   - **Depends on**: Task 8.

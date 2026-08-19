@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { DelegationTarget } from "@weaveio/weave-engine";
 import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
-import type { PiDelegationCardFacts } from "../child-card-model.js";
+import {
+  CARD_FACTS_SCHEMA_VERSION,
+  type PiDelegationCardFacts,
+} from "../child-card-model.js";
 import type { PiChildRefStatus } from "../child-session-refs.js";
 import type {
   PiDelegationController,
@@ -14,6 +17,7 @@ import {
   buildRelayedDelegationToolRegistration,
   CARD_DETAILS_INVALID_CODE,
   CARD_RENDER_FAILED_CODE,
+  DELEGATION_CARD_DETAILS_VERSION,
   formatDelegationAgentName,
   type PiDelegationCardDetails,
   type PiDelegationToolDeps,
@@ -36,7 +40,7 @@ import type {
 /** A minimal valid card payload, used where the facts themselves are not the subject. */
 function cardDetails(): PiDelegationCardDetails {
   const facts: PiDelegationCardFacts = {
-    schemaVersion: 1,
+    schemaVersion: CARD_FACTS_SCHEMA_VERSION,
     tool: "weave_delegate",
     agentName: "shuttle",
     run: { number: 1, action: "start", phase: "responding" },
@@ -48,7 +52,11 @@ function cardDetails(): PiDelegationCardDetails {
     telemetry: {},
     viewport: { rows: [], above: 0, atBottom: true },
   };
-  return { kind: "weave-delegation-card", version: 1, facts };
+  return {
+    kind: "weave-delegation-card",
+    version: DELEGATION_CARD_DETAILS_VERSION,
+    facts,
+  };
 }
 
 const TARGETS: readonly DelegationTarget[] = [
@@ -437,7 +445,7 @@ describe("buildDelegationToolRegistration", () => {
     expect(updates.length).toBeGreaterThanOrEqual(1);
     const startDetails = updates[0]?.details as PiDelegationCardDetails;
     expect(startDetails?.kind).toBe("weave-delegation-card");
-    expect(startDetails?.version).toBe(1);
+    expect(startDetails?.version).toBe(DELEGATION_CARD_DETAILS_VERSION);
     expect(startDetails?.facts.agentName).toBe("shuttle");
     expect(startDetails?.facts.run).toMatchObject({
       number: 1,
@@ -1710,7 +1718,7 @@ describe("weave_delegate thread lifecycle", () => {
     );
     const details = result.details as PiDelegationCardDetails;
     expect(details.kind).toBe("weave-delegation-card");
-    expect(details.version).toBe(1);
+    expect(details.version).toBe(DELEGATION_CARD_DETAILS_VERSION);
     expect(details.facts.agentName).toBe("shuttle");
     expect(details.facts.settled).toBe(true);
     expect(details.facts.status).toBe("completed");
