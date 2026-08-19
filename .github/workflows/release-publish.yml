@@ -103,7 +103,7 @@ jobs:
           client-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -146,7 +146,7 @@ jobs:
       CHANNEL: ${{ needs.route.outputs.channel }}
       RELEASED_SHA: ${{ inputs.released_sha || needs.route.outputs.released-sha }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -227,7 +227,7 @@ jobs:
     env:
       RELEASED_SHA: ${{ needs.recompute.outputs.source-sha }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ needs.recompute.outputs.source-sha }}
           persist-credentials: false
@@ -283,7 +283,7 @@ jobs:
       ARTIFACT_ID: ${{ needs.build-bind.outputs.artifact-id }}
       SOURCE_RUN_ID: ${{ needs.build-bind.outputs.source-run-id }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -354,7 +354,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -382,7 +382,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -411,7 +411,7 @@ jobs:
       contents: read
       checks: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -450,7 +450,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -487,7 +487,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -521,7 +521,7 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false

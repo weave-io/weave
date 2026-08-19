@@ -47,7 +47,7 @@ jobs:
       contents: read
       checks: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -82,7 +82,7 @@ jobs:
       stable-train: ${{ steps.plan.outputs.stable_train }}
     steps:
       # Always execute control code from the protected branch, not the dispatch ref.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -118,7 +118,7 @@ jobs:
       control-artifact-id: ${{ steps.control.outputs.artifact-id }}
       control-artifact-digest: ${{ steps.control.outputs.artifact-digest }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -164,7 +164,7 @@ jobs:
       binding-artifact-id: ${{ steps.binding.outputs.artifact-id }}
       binding-artifact-digest: ${{ steps.binding.outputs.artifact-digest }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -263,7 +263,7 @@ jobs:
           subject_sha="$(jq -er '.releaseSubjectSha' binding/binding.json)"
           echo "sha=$subject_sha" >> "$GITHUB_OUTPUT"
           jq --arg operation '${{ needs.preflight.outputs.operation }}' --arg subjectSha "$subject_sha" '. as $manifest | {repository:"weave-io/weave",workflowPath:".github/workflows/publish.yml",eventName:"workflow_dispatch",ref:"refs/heads/main",operation:$operation,channel:(if $operation == "nightly" then "nightly" else "stable" end),subjectSha:$subjectSha,packages:$manifest.packages,versions:$manifest.versions}' payload/manifest.json > invocation.json
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ steps.subject.outputs.sha }}
           path: subject-data
@@ -316,7 +316,7 @@ jobs:
       contents: read
       checks: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -338,7 +338,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -365,7 +365,7 @@ jobs:
       payload-artifact-id: ${{ steps.finalize.outputs.payload_artifact_id }}
       origin-run-id: ${{ steps.finalize.outputs.origin_run_id }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
@@ -397,7 +397,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: refs/heads/main
           persist-credentials: false
